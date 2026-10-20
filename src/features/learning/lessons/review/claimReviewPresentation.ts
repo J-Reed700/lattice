@@ -1,6 +1,7 @@
 import type {
   ActorDto,
   CheckerVerdictDto,
+  CheckResultDto,
   ClaimEvidencePassageDto,
   ClaimActionKindDto,
   ClaimEventPayloadDto,
@@ -202,6 +203,17 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
   }
 }
 
+/** A check's verdict in words. A claim the course supports elsewhere than
+ *  its section's citation stands, and its citation was moved to the passage
+ *  found. */
+function checkVerdict(result: CheckResultDto): string {
+  switch (result.verdict) {
+    case 'supported': return 'Supported';
+    case 'supported_elsewhere': return 'Supported elsewhere, citation repaired';
+    case 'failed': return verdictLabel(result.kind);
+  }
+}
+
 /** One history row in words. */
 export function describeEvent(payload: ClaimEventPayloadDto): string {
   switch (payload.kind) {
@@ -209,7 +221,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'checked': {
       const who = payload.check.checker.role === 'verifier' ? 'Verifier' : 'Checker';
       const result = payload.check.result;
-      const verdict = result.verdict === 'supported' ? 'supported' : verdictLabel(result.kind).toLowerCase();
+      const verdict = checkVerdict(result).toLowerCase();
       return `${who} (${payload.check.checker.model}): ${verdict}${payload.check.reason ? ` · ${payload.check.reason}` : ''}`;
     }
     case 'researched': return payload.queries.length
@@ -217,11 +229,12 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
       : 'Research had nothing to search';
     case 'repair_attempted': return `Repair ${payload.attempt}${payload.escalated ? ' (last try)' : ''}: ${repairOutcomeLabel(payload.outcome)}`;
     case 'executed': return payload.passed ? 'Example ran as shown' : 'Example did not run as shown';
+    case 'citation_repaired': return `Citation moved to the passage that supports it${payload.addedSource ? ', a source added to the lesson' : ''}: “${payload.quote}”`;
     case 'user_action': return describeUserAction(payload.action, payload.note);
     case 'evidence_attached': {
       const input = { saved_passage: 'a saved passage', link: 'a link', document: 'a file', pasted_text: 'pasted text' }[payload.provenance.input];
       const result = payload.result.outcome === 'no_passage' ? 'no passage mentions the claim'
-        : payload.result.check.result.verdict === 'supported' ? 'verified' : verdictLabel(payload.result.check.result.kind).toLowerCase();
+        : payload.result.check.result.verdict === 'failed' ? verdictLabel(payload.result.check.result.kind).toLowerCase() : 'verified';
       return `Added ${input}: ${result}`;
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
@@ -246,9 +259,9 @@ function side(check: CheckerVerdictDto): CheckerSide {
   const result = check.result;
   return {
     model: check.checker.model,
-    verdict: result.verdict === 'supported' ? 'Supported' : verdictLabel(result.kind),
+    verdict: checkVerdict(result),
     reason: check.reason,
-    supportingQuote: result.verdict === 'supported' ? result.supportingQuote : null,
+    supportingQuote: result.verdict === 'failed' ? null : result.supportingQuote,
     quotedSource: check.quotedSource,
     passages: check.passages,
   };

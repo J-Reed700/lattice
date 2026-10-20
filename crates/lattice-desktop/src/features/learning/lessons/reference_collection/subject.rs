@@ -1,12 +1,12 @@
 //! What a claim is about, read against the collection's own vocabulary.
 //!
-//! A deeper page of evidence is worth reading only while it mentions what
+//! A claim's corroboration list ends at its last passage that mentions what
 //! the claim is about: one of the claim's distinctive content terms, those no
 //! more common across the collection's passages than the median of the
 //! claim's own content terms. Words the whole subject shares (in a .NET
-//! collection, "net" or "core") do not count, so a walk through deeper
-//! evidence ends once only the subject's common vocabulary is left. Vector
-//! neighbours alone never count.
+//! collection, "net" or "core") do not count, so a list ends once only the
+//! subject's common vocabulary is left. Vector neighbours alone never count;
+//! they are read when they rank before the end.
 //!
 //! Each term's passage count comes from the store's full-text vocabulary, so
 //! the claim's terms are looked up as the store's tokenizer keeps words
@@ -30,7 +30,7 @@ const FUNCTION_WORDS: &[&str] = &[
 
 /// The words of `text` a keyword match should rest on, as the index keeps
 /// them: not function words.
-fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+pub(super) fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
@@ -38,10 +38,25 @@ fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(|word| indexed_term(&word))
 }
 
+/// How many of `query`'s content terms `text` holds, each counted once,
+/// read as the course index reads words (whole words, lower case, Latin
+/// diacritics removed): how well a stretch of a source matches a claim.
+pub(in crate::features::learning) fn shared_terms(query: &str, text: &str) -> usize {
+    let held: HashSet<String> = content_terms(text).collect();
+    content_terms(query)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|term| held.contains(term))
+        .count()
+}
+
 /// The terms that say what one query is about.
 #[derive(Debug, Clone, Default)]
 pub(in crate::features::learning) struct Subject {
     distinctive: HashSet<String>,
+    /// The query's terms are in the collection, but each is in every
+    /// passage: nothing tells one passage from another.
+    undivided: bool,
 }
 
 impl Subject {
@@ -52,14 +67,18 @@ impl Subject {
     /// page can contain it, so it neither keeps a walk going nor lowers the
     /// bar the real terms must meet), and a term in every passage.
     fn of(counts: impl IntoIterator<Item = (String, usize)>, passages: usize) -> Self {
+        let counts: Vec<(String, usize)> = counts.into_iter().collect();
         let mut wanted: Vec<(usize, String)> = counts
-            .into_iter()
+            .iter()
             .filter(|(_, count)| *count > 0 && *count < passages)
-            .map(|(term, count)| (count, term))
+            .map(|(term, count)| (*count, term.clone()))
             .collect();
         wanted.sort();
         let Some(&(median, _)) = wanted.get(wanted.len().saturating_sub(1) / 2) else {
-            return Self::default();
+            return Self {
+                distinctive: HashSet::new(),
+                undivided: counts.iter().any(|(_, count)| *count > 0),
+            };
         };
         Self {
             distinctive: wanted
@@ -67,7 +86,22 @@ impl Subject {
                 .filter(|(count, _)| *count <= median)
                 .map(|(_, term)| term)
                 .collect(),
+            undivided: false,
         }
+    }
+
+    /// Whether the query's terms are in the collection but each is in every
+    /// passage, as in a course of one short source: no passage is more on the
+    /// subject than another, so the subject sets no list's end and the whole
+    /// ranking is on it (see `claim_list`).
+    pub(in crate::features::learning) fn undivided(&self) -> bool {
+        self.undivided
+    }
+
+    /// Whether `term`, as the index keeps words, is one of the distinctive
+    /// terms.
+    pub(super) fn has(&self, term: &str) -> bool {
+        self.distinctive.contains(term)
     }
 
     /// Whether `text` mentions what the query is about.

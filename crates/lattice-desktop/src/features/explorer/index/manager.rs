@@ -143,7 +143,7 @@ pub(super) fn root_string(path: &Path) -> String {
 }
 
 pub(super) fn remove_dir(dir: &Path) {
-    match std::fs::remove_dir_all(dir) {
+    match lattice_core::shared::fs::removal::remove_dir_all(dir) {
         Ok(()) => info!(dir = %dir.display(), "Removed a folder index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!(dir = %dir.display(), %error, "Could not remove a folder index"),

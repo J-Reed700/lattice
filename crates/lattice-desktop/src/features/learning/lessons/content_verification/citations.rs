@@ -1,6 +1,7 @@
-//! The passages a lesson section cites, shown to the judge before retrieved
-//! ones when it checks a claim of that section, and the sources the lesson
-//! cites, whose passages are retrieved before the rest of the course's.
+//! The passages a lesson section cites, which pass A checks a claim of that
+//! section against and nothing else (course evidence index §5.1), and the
+//! sources the lesson cites anywhere, which pass B can read first when the
+//! order of its reaches says so (§5.2).
 use super::*;
 
 /// The retrieval kind of a passage a claim's own section cites.
@@ -8,9 +9,8 @@ pub(super) const CITED: &str = "cited";
 
 /// What a lesson cites. Per section (unit), the source passages it cites:
 /// each block's and question's quote resolved to its span in the saved
-/// references and widened like a retrieved passage. A claim sees its own
-/// section's first, and the sources the lesson cites anywhere before the
-/// rest of the course's.
+/// references and widened like a retrieved passage. A claim's pass A reads
+/// its own section's.
 #[derive(Default)]
 pub(super) struct Citations {
     by_unit: HashMap<usize, Vec<EvidencePassage>>,
@@ -80,6 +80,11 @@ impl Citations {
     pub(super) fn cites(&self, source_id: &str) -> bool {
         self.sources.contains(source_id)
     }
+
+    /// The source versions the lesson cites anywhere.
+    pub(super) fn sources(&self) -> &HashSet<String> {
+        &self.sources
+    }
 }
 
 pub(super) fn section_citations(
@@ -113,43 +118,6 @@ pub(super) fn section_citations(
         }
     }
     Ok(Citations::new(citations, by_index))
-}
-
-/// The next page of evidence for `claim`, in the `share` it has alongside
-/// `held`, skipping passages that overlap `shown`. Passages of the sources
-/// the lesson cites that mention the claim's subject come first, best first;
-/// passages from anywhere in the course fill the room they leave.
-pub(super) async fn lesson_sources_first(
-    llm: &dyn LLMPort,
-    references: &ReferenceCollection<'_>,
-    claim: &str,
-    share: usize,
-    held: &[EvidencePassage],
-    shown: &[EvidencePassage],
-    citations: &Citations,
-) -> Result<Vec<EvidencePassage>> {
-    let mut page = Vec::new();
-    if !citations.sources.is_empty() {
-        let subject = references.subject_of(claim).await?;
-        (page, _) = references
-            .verification_page_within(
-                claim,
-                shown,
-                |passage| {
-                    citations.cites(&passage.source_id) && subject.mentioned_in(&passage.text)
-                },
-                |passages| within_share(llm, share, held.iter().chain(passages)),
-            )
-            .await?;
-    }
-    let seen: Vec<_> = shown.iter().chain(&page).cloned().collect();
-    let (rest, _) = references
-        .verification_page(claim, &seen, |passages| {
-            within_share(llm, share, held.iter().chain(&page).chain(passages))
-        })
-        .await?;
-    page.extend(rest);
-    Ok(page)
 }
 
 /// Where a text names one of the lesson's sources by its index.
@@ -204,11 +172,13 @@ pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
     mentions
 }
 
-/// Add `cited` passages not overlapping `evidence` to it, in order, while
-/// they fit `share`; return the reference passages it now holds.
+/// Add `cited` passages not overlapping `evidence` to it, in citation
+/// order, while a check of `claim` against them alone fits the window: pass
+/// A's page, which needs no budget. Return the reference passages it now
+/// holds.
 pub(super) fn take_cited(
     llm: &dyn LLMPort,
-    share: usize,
+    claim: &str,
     evidence: &mut Vec<EvidencePassage>,
     cited: &[EvidencePassage],
 ) -> Vec<EvidencePassage> {
@@ -216,7 +186,7 @@ pub(super) fn take_cited(
         if evidence.iter().any(|shown| overlaps(shown, passage)) {
             continue;
         }
-        if !within_share(llm, share, evidence.iter().chain(std::iter::once(passage))) {
+        if !fits_window(llm, claim, evidence.iter().chain(std::iter::once(passage))) {
             break;
         }
         evidence.push(passage.clone());

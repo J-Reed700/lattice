@@ -19,10 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 mod citations;
 mod claim_ledger;
-use citations::{
-    lesson_sources_first, overlaps, section_citations, source_mentions, take_cited, Citations,
-    CITED,
-};
+use citations::{overlaps, section_citations, source_mentions, take_cited, Citations, CITED};
 pub(in crate::features::learning) use claim_ledger::{
     field_text, held_for_review, held_lessons, review_outcome, unit_texts, HeldForReview,
 };
@@ -31,11 +28,23 @@ mod coverage;
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
 mod claim_reuse;
 mod evidence_checks;
+pub(in crate::features::learning) use evidence_checks::Reach;
+#[cfg(test)]
+pub(in crate::features::learning) use evidence_checks::ORDERS;
+#[cfg(test)]
+pub(in crate::features::learning) use evidence_checks::{
+    page_budget, page_seconds, walk_pages, Depth, WalkedPage,
+};
+#[cfg(test)]
+use evidence_checks::{ContraryPassage, Pass, REACHES};
+use evidence_checks::{Paging, TwoPass, CHECKER_OUTPUT_TOKENS};
 mod evidence_selection;
 mod execution;
 mod general_knowledge;
 mod judge;
-pub(in crate::features::learning) use judge::{judge_for_publication, ranking, shown_of};
+pub(in crate::features::learning) use judge::{
+    judge_for_publication, judge_in_order, ranking, shown_of,
+};
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -192,6 +201,12 @@ struct Finding {
     /// is most of a finding's size and most findings have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     trust: Option<Box<provenance_gate::FindingTrust>>,
+    /// What the two passes made of the claim (course evidence index §5.1):
+    /// the pass and page that decided it, where pass B read, the passage it
+    /// found when the section's citations gave no support, and a passage
+    /// either pass found saying otherwise about a supported claim.
+    #[serde(flatten)]
+    two_pass: TwoPass,
 }
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
@@ -204,6 +219,14 @@ struct ClaimChecks {
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
+    /// What the judge's answers have cost this job, per claim, across its
+    /// passes: the answer size a pass B page is budgeted by
+    /// (`evidence_checks::page_budget`).
+    answers: std::sync::Mutex<evidence_checks::AnswerSize>,
+    /// What researching one claim on the web cost when this job's last
+    /// research round measured it: pass B's break-even weighs it before the
+    /// ledger's latest (`evidence_checks::walk`, D5).
+    research_cost: Option<std::time::Duration>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
@@ -322,6 +345,7 @@ impl ClaimReceipt {
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
             resolution: None,
+            two_pass: Default::default(),
             trust: None,
         })
     }
@@ -353,6 +377,10 @@ pub struct LessonVerificationReport {
     issues: Vec<String>,
     retrieval_mode: String,
     embedding_model: Option<String>,
+    /// The tokens a pass B page held at the end of the pass, or why it had
+    /// no budget (course evidence index §5.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page_budget: Option<String>,
     unexecuted_languages: Vec<String>,
 }
 
@@ -427,7 +455,7 @@ pub(in crate::features::learning) fn claim_share(
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
-        512,
+        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Strict,
     );
     if sharing <= 1 {
@@ -459,10 +487,48 @@ pub(in crate::features::learning) fn within_share<'p>(
         <= share
 }
 
-/// A claim's first page of evidence: passed example runs for its section,
-/// then its top-ranked passages, as many as its share of a batch call holds
-/// when `sharing` claims share the call. Deeper pages follow only for a
-/// claim the first page leaves unsupported (see `evidence_checks`).
+/// Whether `claim` checked alone against `passages` fits the judge's window
+/// beside its answer, by the calibrated estimate. The window bounds a page;
+/// it never sizes one (course evidence index §5.3).
+pub(in crate::features::learning) fn fits_window<'p>(
+    llm: &dyn LLMPort,
+    claim: &str,
+    passages: impl IntoIterator<Item = &'p EvidencePassage>,
+) -> bool {
+    let texts: Vec<String> = passages
+        .into_iter()
+        .map(|passage| passage.text.clone())
+        .collect();
+    ClaimChecker::new(
+        llm,
+        SamplingOverride::deterministic(),
+        CHECKER_OUTPUT_TOKENS,
+        CheckPolicy::Strict,
+    )
+    .located_fits(claim, &texts)
+}
+
+/// The passed example runs of section `unit`, as evidence: the section's
+/// own, so pass A reads them beside its citations.
+fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<EvidencePassage> {
+    observations
+        .iter()
+        .filter(|o| o.passed() && o.unit == Some(unit))
+        .map(|observation| EvidencePassage {
+            source_id: observation.id.clone(),
+            text: observation.evidence(),
+            start_byte: 0,
+            end_byte: 0,
+            retrieval_kind: "execution".into(),
+            score: 0.0,
+        })
+        .collect()
+}
+
+/// A claim's evidence when its section cites nothing: its section's passed
+/// example runs (pass A) and then pass B's first page, as a fresh check
+/// would select it (`evidence_checks`). For tests that bind a receipt to
+/// exactly what a check compares.
 #[cfg(test)]
 async fn evidence_for(
     llm: &dyn LLMPort,
@@ -470,59 +536,33 @@ async fn evidence_for(
     unit: usize,
     references: &ReferenceCollection<'_>,
     observations: &[execution::Observation],
-    sharing: usize,
 ) -> Result<Vec<EvidencePassage>> {
-    first_page(
-        llm,
-        claim,
-        unit,
-        references,
-        observations,
-        sharing,
-        &Citations::default(),
-    )
-    .await
+    let mut evidence = example_runs(observations, unit);
+    evidence.extend(
+        evidence_checks::first_page(llm, references, claim, &Citations::default(), &[]).await?,
+    );
+    Ok(evidence)
 }
 
-/// [`evidence_for`] with the passages the claim's section cites placed first,
-/// in citation order while they fit its share; the rest of the share is
-/// filled with retrieved passages that overlap none of them, those of the
-/// sources the lesson cites first. Cited passages that do not fit lead the
-/// claim's next page.
-async fn first_page(
-    llm: &dyn LLMPort,
-    claim: &str,
-    unit: usize,
-    references: &ReferenceCollection<'_>,
-    observations: &[execution::Observation],
-    sharing: usize,
-    citations: &Citations,
-) -> Result<Vec<EvidencePassage>> {
-    let mut evidence = Vec::new();
-    for observation in observations
-        .iter()
-        .filter(|o| o.passed() && o.unit == Some(unit))
-    {
-        evidence.push(EvidencePassage {
-            source_id: observation.id.clone(),
-            text: observation.evidence(),
-            start_byte: 0,
-            end_byte: 0,
-            retrieval_kind: "execution".into(),
-            score: 0.0,
-        });
+/// The order the judge reads a pass B `page` in, as positions in the page:
+/// by need ([`ranking`]), the most needed first, the next last and the rest
+/// inward alternately, so the most relevant passages sit at the edges and
+/// the least relevant at the centre, where a long prompt's middle is read
+/// least closely. The page's own order stays canonical: it keys the
+/// comparison and its receipt, whatever order the judge read. The most
+/// needed passages of a page cut for the window keep this order among
+/// themselves, so a shortened page reads the same way.
+fn reading_order(page: &[EvidencePassage]) -> Vec<usize> {
+    let (mut front, mut back) = (Vec::new(), Vec::new());
+    for (need, position) in ranking(page).into_iter().enumerate() {
+        if need % 2 == 0 {
+            front.push(position);
+        } else {
+            back.push(position);
+        }
     }
-    // Each claim searches the entire pinned collection independently of the
-    // author's selected passages. Contradictory passages are not filtered out.
-    // Execution output must not erase retrieved references when it is lengthy.
-    // The checker batches by its actual context budget, not a character count.
-    let share = claim_share(llm, claim, sharing);
-    let shown = take_cited(llm, share, &mut evidence, citations.of(unit));
-    let page =
-        lesson_sources_first(llm, references, claim, share, &evidence, &shown, citations).await?;
-    evidence.extend(page);
-    canonicalize_evidence(&mut evidence);
-    Ok(evidence)
+    front.extend(back.into_iter().rev());
+    front
 }
 
 fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
@@ -553,7 +593,7 @@ pub(in crate::features::learning) async fn live_retrieved_passages(
     claim: &str,
     references: &ReferenceCollection<'_>,
 ) -> Result<Vec<String>> {
-    Ok(evidence_for(llm, claim, 0, references, &[], 1)
+    Ok(evidence_for(llm, claim, 0, references, &[])
         .await?
         .into_iter()
         .map(|passage| passage.text)
@@ -584,7 +624,7 @@ pub(in crate::features::learning) async fn judge_batch_for_publication(
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
-        512,
+        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Strict,
     );
     checker

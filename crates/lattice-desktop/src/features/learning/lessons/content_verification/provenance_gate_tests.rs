@@ -86,6 +86,7 @@ fn finding(statement: &str, quote: &str, evidence: Vec<EvidencePassage>) -> Find
         evidence,
         supporting_quote: Some(quote.into()),
         resolution: None,
+        two_pass: Default::default(),
         trust: None,
     }
 }
@@ -437,6 +438,48 @@ fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
     ));
     claim.trust = Some(Box::new(trust));
     assert!(matches!(judge(&claim), Sufficiency::Contradicted { .. }));
+}
+
+#[test]
+fn a_contradiction_the_other_pass_found_is_weighed_as_a_contrary() {
+    let text = "The current stable Python is 3.13.";
+    let newer = "The current stable release is Python 3.14.";
+    let mut current = profile(ClaimKind::VersionBound, Some("Python"));
+    current.temporal = TemporalScope::Current;
+    // Pass A supported the claim; pass B found a passage saying otherwise.
+    let mut claim = finding(text, text, vec![passage("blog", text)]);
+    claim.two_pass.contrary.push(ContraryPassage {
+        passage: passage("python-org", newer),
+        quote: newer.into(),
+    });
+    let mut blog = facts(level("established"), "web:blog.example", text, Vec::new());
+    blog.dates.published = Some(1_750_000_000);
+    blog.dates.acquired_at = 1_760_000_000;
+    let mut org = facts(TrustLevel::Primary, "web:python.org", newer, Vec::new());
+    org.dates.published = Some(1_790_000_000);
+    org.dates.acquired_at = 1_790_000_000;
+    let trust = weighed(
+        &current,
+        &claim,
+        &HashMap::from([("blog".to_owned(), blog), ("python-org".to_owned(), org)]),
+    );
+    // The gate holds it beside the support, levelled for the claim's
+    // subject, and the overturn rule weighs it.
+    assert_eq!(trust.contrary.len(), 1);
+    assert_eq!(trust.contrary[0].source_version_id, "python-org");
+    assert_eq!(trust.contrary[0].trust.level, TrustLevel::Primary);
+    assert_eq!(trust.contrary[0].quote, newer);
+    assert!(trust.needs_scrutiny(), "research looks further");
+    // A contrary version with no facts is not counted, as a support is not.
+    let unweighed = weighed(
+        &current,
+        &claim,
+        &HashMap::from([(
+            "blog".to_owned(),
+            facts(level("established"), "web:blog.example", text, Vec::new()),
+        )]),
+    );
+    assert!(unweighed.contrary.is_empty());
 }
 
 #[test]

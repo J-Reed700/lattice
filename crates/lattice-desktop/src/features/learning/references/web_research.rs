@@ -244,32 +244,25 @@ pub(in crate::features::learning) async fn plan_needs(
             "needs": {"type": "array", "items": need_schema(Some(gaps.len()))}
         }
     });
-    let raw = crate::features::learning::generation::complete_json(
-        llm,
-        &format!("{PLAN_SYSTEM} {NEED_GUIDE}"),
-        json!({"topic":topic,"gaps":numbered,"existingSources":existing_sources,"alreadySearched":already_searched}).to_string(),
-        schema,
-        1200,
-    )
-    .await?;
-    let plan: PlannedAnswer =
-        crate::features::learning::generation::parse_json(&raw).map_err(|_| {
-            AppError::InvalidInput(
-                "The reference search planner's answer could not be read as a list of searches."
-                    .into(),
-            )
-        })?;
-    plan.needs
+    let accept = |raw: &str| -> Result<Vec<GapNeed>> {
+        let plan: PlannedAnswer =
+            crate::features::learning::generation::parse_json(raw).map_err(|_| {
+                AppError::InvalidInput(
+                    "The reference search planner's answer could not be read as a list of searches."
+                        .into(),
+                )
+            })?;
+        plan.needs
         .into_iter()
         .map(|GapNeed { gap, need }| {
             let served = gaps.get(gap).ok_or_else(|| {
-                AppError::Other(format!(
+                AppError::InvalidInput(format!(
                     "The reference search planner named gap {gap}, but it was given {}.",
                     gaps.len()
                 ))
             })?;
             let mut need = need.checked().ok_or_else(|| {
-                AppError::Other(
+                AppError::InvalidInput(
                     "The reference search planner proposed a search outside what a search allows: a query and rewordings of 3 to 240 characters, a listed kind, a listed registry, dates as YYYY-MM-DD, and a dated read that names its page's address."
                         .into(),
                 )
@@ -291,6 +284,18 @@ pub(in crate::features::learning) async fn plan_needs(
             Ok(GapNeed { gap, need })
         })
         .collect()
+    };
+    crate::features::learning::generation::complete_checked(
+        llm,
+        &format!("{PLAN_SYSTEM} {NEED_GUIDE}"),
+        json!({"topic":topic,"gaps":numbered,"existingSources":existing_sources,"alreadySearched":already_searched}).to_string(),
+        schema,
+        1200,
+        None,
+        None,
+        accept,
+    )
+    .await
 }
 
 /// Search providers may ignore site operators (including enrichment providers).

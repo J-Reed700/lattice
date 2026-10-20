@@ -13,7 +13,7 @@ use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::ConversationServiceTrait;
 use lattice_core::application::contracts::search::SearchRequestDto;
 use lattice_core::application::contracts::search::{
-    QueryBranches, RankedBranch, RerankOptions, Reranked,
+    QueryBranches, RankedBranch, RerankOptions, Reranked, Spread,
 };
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
@@ -117,7 +117,12 @@ impl HybridSearchTrait for FixedLibrary {
             answered: 2,
         }
     }
-    fn fuse(&self, _branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+    fn fuse(
+        &self,
+        _branches: Vec<RankedBranch>,
+        limit: usize,
+        _spread: Spread,
+    ) -> Vec<SearchResultDto> {
         self.passages.iter().take(limit).cloned().collect()
     }
     async fn rerank(&self, response: SearchResponseDto, _options: &RerankOptions) -> Reranked {
