@@ -47,6 +47,13 @@ impl Container {
         self.folder_index.as_ref()
     }
 
+    /// Every course's evidence index; `None` in test fixtures.
+    pub fn course_indexes(
+        &self,
+    ) -> Option<&Arc<crate::features::learning::references::course_index::CourseIndexes>> {
+        self.course_indexes.as_ref()
+    }
+
     pub fn db_conn(
         &self,
     ) -> &Arc<crate::infrastructure::persistence::database::DatabaseConnection> {

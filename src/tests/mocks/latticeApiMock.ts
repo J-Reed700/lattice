@@ -413,6 +413,11 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: { modelReady: false } }),
 
+    // A course's evidence index: ready unless a test says otherwise.
+    courseIndexStatus: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
+
     // Learning Tangents
     createLearningTangent: vi
       .fn()

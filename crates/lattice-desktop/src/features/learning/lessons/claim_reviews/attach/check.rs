@@ -36,9 +36,10 @@ pub(super) async fn passages_from(
                 <= room
         })
         .await?;
+    let subject = references.subject_of(statement).await?;
     Ok(page
         .into_iter()
-        .filter(|passage| references.mentions_subject_of(statement, &passage.text))
+        .filter(|passage| subject.mentioned_in(&passage.text))
         .collect())
 }
 

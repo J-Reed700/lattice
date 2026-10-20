@@ -48,7 +48,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
-            load_library: Arc::new(|| Box::pin(async { None })),
+            courses: None,
             refresh_sources: Arc::new(move |_| {
                 let error = error.clone();
                 Box::pin(async move { Err(error) })
@@ -441,7 +441,7 @@ async fn run_with_model(
         runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm,
-        load_library: Arc::new(|| Box::pin(async { None })),
+        courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: None,
         verifier: None,

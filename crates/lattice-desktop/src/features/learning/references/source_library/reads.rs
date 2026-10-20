@@ -1,6 +1,15 @@
 //! Reading source workspaces, versions, search hits and prepared sources.
 use super::*;
 
+/// A source's active version as the course index keys it: its immutable id,
+/// the title its passages are embedded under, and the hash of its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveVersion {
+    pub id: String,
+    pub title: String,
+    pub content_sha256: String,
+}
+
 impl LearningSourceLibraryRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningSourceWorkspaceDto> {
         self.workspace_with_deleted(program_id, false).await
@@ -250,17 +259,23 @@ impl LearningSourceLibraryRepository {
             })
             .collect())
     }
-    /// The library document each of the program's document snapshots was
-    /// captured from, keyed by snapshot version ID.
-    pub async fn library_documents(&self, program_id: &str) -> Result<HashMap<String, String>> {
-        let rows = sqlx::query("SELECT v.id,l.origin FROM learning_source_versions v JOIN learning_source_library l ON l.program_id=v.program_id AND l.id=v.source_id WHERE v.program_id=? AND l.kind='document'")
+    /// The active version of every source the program has not deleted, in
+    /// the order [`Self::verification_sources`] returns them, without their
+    /// text: what the course index holds, read cheaply enough to compare with
+    /// it on every use.
+    pub async fn active_versions(&self, program_id: &str) -> Result<Vec<ActiveVersion>> {
+        let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
             .bind(program_id)
             .fetch_all(&self.pool)
             .await
             .map_err(db)?;
         Ok(rows
             .into_iter()
-            .map(|row| (row.get("id"), row.get("origin")))
+            .map(|row| ActiveVersion {
+                id: row.get("id"),
+                title: row.get("title"),
+                content_sha256: row.get("content_sha256"),
+            })
             .collect())
     }
     /// The whole captured text of one version of the program's sources,

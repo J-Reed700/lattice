@@ -284,5 +284,10 @@ pub async fn delete_learning_program(
     LearningRepository::new(container.db_pool().clone())
         .delete(&id)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    // The course's evidence index goes with it (§3.4).
+    if let Some(courses) = container.course_indexes() {
+        courses.delete(&id).await;
+    }
+    Ok(())
 }

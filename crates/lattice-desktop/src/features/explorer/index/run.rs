@@ -16,7 +16,7 @@
 
 use super::dto::FolderIndexStatusDto;
 use crate::features::explorer::scope::Scope;
-use crate::infrastructure::passage_index::{Counts, PassageStore, Vectors};
+use crate::infrastructure::passage_index::{self, Counts, PassageStore, Vectors};
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
@@ -126,8 +126,8 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_files: 20_000,
-            batch_size: 16,
-            save_every: 500,
+            batch_size: passage_index::build::BATCH_SIZE,
+            save_every: passage_index::build::SAVE_EVERY,
         }
     }
 }

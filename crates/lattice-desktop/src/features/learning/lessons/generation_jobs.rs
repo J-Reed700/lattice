@@ -23,16 +23,6 @@ use std::sync::Arc;
 type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> + Send + Sync>;
 type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
-/// The library search for document references, once the embedding model
-/// it queries with is loaded; `None` leaves every reference to keywords.
-type LibraryLoader = Arc<
-    dyn Fn() -> BoxFuture<
-            'static,
-            Option<Arc<dyn lattice_core::application::ports::LibraryPassagesPort>>,
-        > + Send
-        + Sync,
->;
-
 /// `llm` pinned as the Learning model, for workers a test builds.
 #[cfg(test)]
 pub(in crate::features::learning) fn pinned_for_test(
@@ -59,7 +49,9 @@ pub(in crate::features::learning) struct LessonGenerationWorker {
     /// Where a lesson's worked examples run while it is verified.
     pub runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes,
     pub load_llm: ModelLoader,
-    pub load_library: LibraryLoader,
+    /// Every course's evidence index; `None` searches each lesson's
+    /// references by their words from memory, which the stage text says.
+    pub courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
     pub refresh_sources: SourceRefresh,
     pub research_web: Option<Arc<dyn lattice_core::application::ports::WebServiceTrait>>,
     /// The Verifier, for courses that opted into its audit (§14.3); `None`
@@ -236,21 +228,16 @@ impl LessonGenerationWorker {
         {
             return Err(AppError::InvalidInput("A reference is incomplete or was saved as an old excerpt. Replace it in Sources with complete text before preparing lessons.".into()));
         }
-        crate::features::learning::lesson_progress::stage(
-            "Getting the reference search model ready",
-        );
-        let library = (self.load_library)().await;
-        crate::features::learning::lesson_progress::stage(
-            "Matching saved references to the library",
-        );
-        let mut references =
-            crate::features::learning::reference_collection::ReferenceCollection::load(
-                &self.pool,
-                &job.program_id,
-                &program.sources,
-                library.as_deref(),
-            )
-            .await?;
+        // The course's index, held for the whole job and brought up to date
+        // before each lesson reads it, so captures meanwhile are picked up.
+        let course = match &self.courses {
+            Some(courses) => courses
+                .search(&job.program_id, context.cancellation().clone())
+                .await
+                .inspect_err(|error| tracing::warn!(%error, "Course index could not be opened"))
+                .ok(),
+            None => None,
+        };
         crate::features::learning::lesson_progress::stage("Getting the lesson model ready");
         // Held until every lesson is prepared: a model chosen meanwhile never
         // reaches this job.
@@ -277,9 +264,6 @@ impl LessonGenerationWorker {
                 }
                 crate::features::learning::lesson_progress::lesson(&lesson.title);
                 let sources = program_repo.verification_sources(&job.program_id).await?;
-                references = references
-                    .reload(&self.pool, &job.program_id, &sources)
-                    .await?;
                 program.sources = sources;
                 let saved = repo
                     .lesson_checkpoint(job_id, &lesson.id, "prepared-v1")
@@ -301,6 +285,17 @@ impl LessonGenerationWorker {
                     );
                     saved
                 } else {
+                    // Before every lesson it prepares, so references captured
+                    // meanwhile (by the user or by research) are searched too.
+                    crate::features::learning::lesson_progress::stage(
+                        "Bringing the course's reference index up to date",
+                    );
+                    let references =
+                        crate::features::learning::reference_collection::ReferenceCollection::current(
+                            course.as_ref(),
+                            &program.sources,
+                        )
+                        .await?;
                     // Keep the large multi-stage future on the heap. In debug
                     // builds, nesting it inline through task-local scopes can
                     // exhaust a runtime worker's stack before the network call.
@@ -532,7 +527,7 @@ mod repository_tests {
                 runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 verifier: None,
-                load_library: Arc::new(|| Box::pin(async { None })),
+                courses: None,
                 pool: pool.clone(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
                 load_llm: Arc::new(move || {

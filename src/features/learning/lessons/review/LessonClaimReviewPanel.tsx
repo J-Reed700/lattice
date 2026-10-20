@@ -25,6 +25,7 @@ import {
 } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { useLessonClaimReview, useResolveLearningClaim, useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromLearningEvidencePassage, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
 import type { ClaimActionRequestDto, ClaimReviewItemDto, LearningEvidencePassageDto, LessonClaimReviewDto, StopReasonDto } from '@/lib/bindings';
@@ -117,6 +118,8 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
   const query = useLessonClaimReview(programId, lessonId);
   const resolve = useResolveLearningClaim(programId, lessonId);
   const resume = useResumeLearningLessonReview(programId, lessonId);
+  // Resuming checks claims against the course's evidence.
+  const waitsForIndex = useEvidenceWaitsForIndex(programId);
   const review = query.data ?? null;
   const claims = useMemo(() => review?.claims ?? [], [review]);
   const [filter, setFilter] = useState<ClaimFilter | null>(null);
@@ -213,7 +216,8 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
   // An audit hold is fixed outside the claims (Settings, the course switch), so
   // no claim event is needed before Resume (§6.2, §14.6); the backend agrees.
   const resumeBlocked = jobActive ? 'Verification is running; it takes your changes into account at its next step.'
-    : review.state === 'needs_review' && hold === 'claims' && !review.changedSinceStop ? NOTHING_CHANGED : null;
+    : review.state === 'needs_review' && hold === 'claims' && !review.changedSinceStop ? NOTHING_CHANGED
+    : waitsForIndex ?? null;
   const resumeLabel = review.state === 'stopped' ? `Retry after fixing: ${review.stopReason?.fix ?? 'the cause above'}` : 'Resume verification';
 
   return (
@@ -224,7 +228,7 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
       <LessonAuditLine programId={programId} lessonId={lessonId} />
 
       {resumable && <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button type="button" disabled={Boolean(resumeBlocked) || resume.isPending} aria-describedby={resumeBlocked ? resumeHelp : undefined}
+        <button type="button" disabled={Boolean(resumeBlocked) || resume.isPending} title={resumeBlocked ?? undefined} aria-describedby={resumeBlocked ? resumeHelp : undefined}
           onClick={() => { resume.reset(); resume.mutate({ courseRevision }); }}
           className="inline-flex min-h-10 items-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg disabled:opacity-50">
           {resume.isPending && <LoaderCircle size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}

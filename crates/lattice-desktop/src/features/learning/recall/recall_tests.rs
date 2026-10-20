@@ -230,9 +230,8 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         .get_selector(&other.summary.id, &selector_id)
         .await
         .is_err());
-    // A pasted source has no library copy, so even with the library at hand
-    // it is ranked by keyword.
-    let library = crate::features::learning::reference_collection::tests::FakeLibrary::default();
+    // Without a course index the sources are ranked by their words, and the
+    // results say so.
     let search = recall
         .search_sources(
             &SearchLearningSourcesSemanticallyRequestDto {
@@ -240,13 +239,13 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
                 query: "repeated rule".into(),
                 limit: 10,
             },
-            Some(&library),
+            None,
         )
         .await?;
     assert!(!search.is_empty());
     assert_eq!(
         search.first().map(|item| item.retrieval_kind.as_str()),
-        Some("lexical_fallback")
+        Some("lexical")
     );
 
     let deletion = DeleteLearningSourceRequestDto {

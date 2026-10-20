@@ -22,6 +22,15 @@ use std::sync::Arc;
 pub trait EmbedderSource: Send + Sync {
     /// The active embedding model, loaded; `None` when there is none.
     async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>>;
+
+    /// The active model's identity, without loading it where the source can
+    /// tell (a status read must not load a model); `None` when there is no
+    /// active model. A source that cannot tell answers from the loaded model.
+    async fn identity(&self) -> Option<String> {
+        self.embedder()
+            .await
+            .map(|embedder| embedder.model_identity())
+    }
 }
 
 /// What a search or a build needs once the embedder has loaded.
@@ -39,6 +48,11 @@ pub struct LiveIndex {
     /// Held by whatever writes: a build for its whole run, a watcher for one
     /// update.
     pub writing: tokio::sync::Mutex<()>,
+    /// For an owner whose rows may change while it embeds (a course's): held
+    /// while pending passages are embedded, so two runs never embed the same
+    /// passages, while `writing` is held only for the row changes. An owner
+    /// that holds `writing` for a whole run needs neither apart.
+    pub embedding: tokio::sync::Mutex<()>,
 }
 
 impl LiveIndex {
@@ -48,6 +62,7 @@ impl LiveIndex {
             store,
             engine: RwLock::new(None),
             writing: tokio::sync::Mutex::new(()),
+            embedding: tokio::sync::Mutex::new(()),
         }
     }
 

@@ -20,6 +20,15 @@ use tokio_util::sync::CancellationToken;
 /// source's title in front, which needs the owner's own lookup.
 pub type EmbedText = Arc<dyn Fn(&Passage) -> String + Send + Sync>;
 
+/// Passages per `embed_batch` call: small, so a chat turn's query embedding
+/// waits behind at most one batch. Explorer's folder builds have always
+/// embedded in batches this size; a course's index embeds the same way.
+pub const BATCH_SIZE: usize = 16;
+
+/// Passages embedded between saves of the vectors file, which is what a
+/// crash can cost a build. Explorer's cadence, shared with a course's index.
+pub const SAVE_EVERY: usize = 500;
+
 /// How an index embeds: the model, and the owner's batch and save sizes.
 #[derive(Clone)]
 pub struct Embedding {

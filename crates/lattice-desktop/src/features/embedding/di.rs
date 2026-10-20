@@ -90,4 +90,11 @@ impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
             .map_err(|error| tracing::warn!(%error, "A passage index has no embedder"))
             .ok()
     }
+
+    /// The identity the library's index is bound to, which is the loaded
+    /// model's `model_identity`: read without loading anything.
+    async fn identity(&self) -> Option<String> {
+        let container = self.app.try_state::<Container>()?;
+        container.search.embedding_identity().map(str::to_owned)
+    }
 }

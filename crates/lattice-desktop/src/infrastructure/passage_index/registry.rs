@@ -73,6 +73,26 @@ pub async fn inspect(dir: &Path, prefix: &str) -> Result<Option<Inspected>> {
     read.map(Some).map_err(db_error("read the index"))
 }
 
+/// The document keys `dir`'s index holds, read without opening it for
+/// writing. `Ok(None)` when the directory has no `passages.db`.
+pub async fn document_keys(dir: &Path) -> Result<Option<Vec<String>>> {
+    if !dir.join(DB_FILE).exists() {
+        return Ok(None);
+    }
+    let mut connection = connect(dir).await.ok_or_else(|| {
+        AppError::Database(format!(
+            "Passage index: could not open {}",
+            dir.join(DB_FILE).display()
+        ))
+    })?;
+    let keys = sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
+        .fetch_all(&mut connection)
+        .await;
+    let _ = connection.close().await;
+    keys.map(Some)
+        .map_err(db_error("read the index's documents"))
+}
+
 /// Bytes on disk of the files directly in `dir`: `passages.db` with its
 /// journal, and the vectors files. 0 when it does not exist.
 pub fn dir_bytes(dir: &Path) -> u64 {

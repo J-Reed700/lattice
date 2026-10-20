@@ -378,7 +378,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
             web: &page,
             snapshots: &Frozen,
             documents: &NoLibrary,
-            ranking: None,
+            courses: None,
             llm: &model,
             job_id: None,
         },

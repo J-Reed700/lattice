@@ -257,6 +257,34 @@ impl PassageStore {
         Ok(store)
     }
 
+    /// A store that lives in memory for as long as it is open: no directory,
+    /// no vectors beside it, nothing on disk to clean up. For passages
+    /// searched by text for a moment, such as a collection built from sources
+    /// a caller already holds. One connection that never retires, because
+    /// each connection to an in-memory database is a database of its own.
+    pub async fn memory() -> Result<Self> {
+        let options = SqliteConnectOptions::new().in_memory(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_with(options)
+            .await
+            .map_err(db_error("open an in-memory store"))?;
+        sqlx::raw_sql(SCHEMA)
+            .execute(&pool)
+            .await
+            .map_err(db_error("create the schema"))?;
+        let store = Self {
+            dir: PathBuf::new(),
+            pool,
+        };
+        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
+        Ok(store)
+    }
+
+    /// The index directory; empty for a [`Self::memory`] store.
     pub fn dir(&self) -> &Path {
         &self.dir
     }

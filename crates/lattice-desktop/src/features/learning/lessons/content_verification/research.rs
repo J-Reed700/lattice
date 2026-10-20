@@ -530,7 +530,7 @@ async fn research<'a>(
         "Indexing {added} additional references; checking which saved comparisons can be reused"
     ));
     references
-        .reload(&context.pool, &context.program_id, &sources)
+        .reopen(&sources)
         .await
         .map(|references| Expansion::Saved(Box::new(references), searched))
 }

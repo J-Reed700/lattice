@@ -29,6 +29,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 
 use self::acquire::Acquired;
 pub(crate) use self::acquire::{capture_page, PageCapture};
@@ -38,6 +39,7 @@ use super::dto::ClaimActionRequestDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{record_verdict, Redecided};
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
+use crate::features::learning::references::course_index::CourseIndexes;
 use crate::features::learning::references::trust::outcomes::VerdictScope;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
@@ -104,9 +106,10 @@ pub struct AttachDeps<'a> {
     pub snapshots: &'a dyn ReferenceSnapshotPort,
     /// Where library documents are captured from.
     pub documents: &'a dyn LibraryPassagesPort,
-    /// Ranks library-captured sources by meaning, when an embedding model is
-    /// loaded; keyword ranking otherwise.
-    pub ranking: Option<&'a dyn LibraryPassagesPort>,
+    /// Every course's evidence index, which the attached source is chunked
+    /// into and checked through, never waiting for embedding; `None`
+    /// searches the course's sources by their words.
+    pub courses: Option<&'a Arc<CourseIndexes>>,
     /// The Learning model, pinned for this command.
     pub llm: &'a dyn LLMPort,
     /// The lesson's preparation job, when one is running.
@@ -239,8 +242,20 @@ pub async fn attach(
     let sources = LearningSourceLibraryRepository::new(deps.pool.clone())
         .verification_sources(request.program_id)
         .await?;
-    let references =
-        ReferenceCollection::load(deps.pool, request.program_id, &sources, deps.ranking).await?;
+    // The new source is chunked into the course's index before it is read;
+    // its embedding is left to a background build.
+    let course = match deps.courses {
+        Some(courses) => courses
+            .search(
+                request.program_id,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .inspect_err(|error| tracing::warn!(%error, "Course index could not be opened"))
+            .ok(),
+        None => None,
+    };
+    let references = ReferenceCollection::searchable_now(course.as_ref(), &sources).await?;
     let passages = match source.span {
         Some(span) => vec![check::picked_passage(&references, &version_id, span)?],
         None => check::passages_from(deps.llm, &references, &version_id, &statement).await?,

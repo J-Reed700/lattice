@@ -173,11 +173,11 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
         lesson_drafts::record_checkpoint("inventory-section-v1:legacy-fixture",json!({"inventory":original.units[0]})).await?;
-        let old_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":claim,"retrieval":collection.mode(),"embedding":collection.embedding_model()}).to_string()));
+        let old_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":claim,"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
         lesson_drafts::record_checkpoint(&old_selection,json!({"sources":evidence_selection::sources(&collection),"passages":evidence.iter().map(|p|json!({"source_id":p.source_id,"start":p.start_byte,"end":p.end_byte,"sha256":digest(&p.text)})).collect::<Vec<_>>()})).await?;
         let mut revised = claims(1);
         revised.units[0].claims[0].quote.push_str(". Corrected neighbor.");
-        let pending_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":revised.units[0].claims[0],"retrieval":collection.mode(),"embedding":collection.embedding_model()}).to_string()));
+        let pending_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":revised.units[0].claims[0],"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
         // The previous implementation re-retrieved after relocation. This
         // unfinished ranking change among already searched sources must not
         // displace the evidence of the completed comparison.

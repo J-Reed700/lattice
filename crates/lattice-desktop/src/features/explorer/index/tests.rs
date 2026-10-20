@@ -11,6 +11,7 @@ use crate::features::search::trait_def::HybridSearchUseCaseFactory;
 use crate::infrastructure::passage_index::chunking::lines::{
     self as chunker, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES,
 };
+use crate::infrastructure::passage_index::testing::{BatchGate, FakeEmbedder, DIM};
 use crate::infrastructure::passage_index::vectors::vectors_path;
 use crate::infrastructure::passage_index::{EmbedderSource, PassageStore, Vectors};
 use crate::infrastructure::vector_index::USearchVectorIndex;
@@ -28,109 +29,10 @@ use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-
-const DIM: usize = 16;
-
-/// Bag-of-words vectors: texts sharing words point the same way, which is
-/// all "by meaning" needs to mean in a test. Counts every passage it embeds.
-struct FakeEmbedder {
-    identity: String,
-    embedded: Mutex<Vec<String>>,
-    batches: AtomicUsize,
-    delay_ms: AtomicU64,
-    batch_gate: Mutex<Option<Arc<BatchGate>>>,
-}
-
-struct BatchGate {
-    permits: tokio::sync::Semaphore,
-    blocked: tokio::sync::Notify,
-}
-
-impl BatchGate {
-    fn new(allowed: usize) -> Arc<Self> {
-        Arc::new(Self {
-            permits: tokio::sync::Semaphore::new(allowed),
-            blocked: tokio::sync::Notify::new(),
-        })
-    }
-}
-
-impl FakeEmbedder {
-    fn new(identity: &str) -> Arc<Self> {
-        Arc::new(Self {
-            identity: identity.to_string(),
-            embedded: Mutex::new(Vec::new()),
-            batches: AtomicUsize::new(0),
-            delay_ms: AtomicU64::new(0),
-            batch_gate: Mutex::new(None),
-        })
-    }
-
-    fn embedded(&self) -> Vec<String> {
-        self.embedded.lock().clone()
-    }
-
-    fn forget_calls(&self) {
-        self.embedded.lock().clear();
-        self.batches.store(0, Ordering::SeqCst);
-    }
-
-    fn vector(text: &str) -> Vec<f32> {
-        let mut vector = [0.01f32; DIM];
-        for word in text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|word| word.len() > 2)
-        {
-            let bucket = word.to_lowercase().bytes().fold(7usize, |hash, byte| {
-                hash.wrapping_mul(31).wrapping_add(byte as usize)
-            }) % DIM;
-            vector[bucket] += 1.0;
-        }
-        let norm = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-        vector.iter().map(|x| x / norm).collect()
-    }
-}
-
-#[async_trait]
-impl EmbeddingPort for FakeEmbedder {
-    async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
-        Ok(Self::vector(text))
-    }
-    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let gate = self.batch_gate.lock().clone();
-        if let Some(gate) = gate {
-            match gate.permits.try_acquire() {
-                Ok(permit) => permit.forget(),
-                Err(_) => {
-                    gate.blocked.notify_one();
-                    if let Ok(permit) = gate.permits.acquire().await {
-                        permit.forget();
-                    }
-                }
-            }
-        }
-        let delay = self.delay_ms.load(Ordering::SeqCst);
-        if delay > 0 {
-            tokio::time::sleep(Duration::from_millis(delay)).await;
-        }
-        self.batches.fetch_add(1, Ordering::SeqCst);
-        self.embedded.lock().extend(texts.iter().cloned());
-        Ok(texts.iter().map(|text| Self::vector(text)).collect())
-    }
-    fn dimension(&self) -> usize {
-        DIM
-    }
-    fn model_identity(&self) -> String {
-        self.identity.clone()
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
 
 struct Source(Option<Arc<FakeEmbedder>>);
 

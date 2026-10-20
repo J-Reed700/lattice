@@ -193,9 +193,8 @@ async fn a_claim_with_no_content_term_past_its_first_page_stops_there() -> Resul
         })
         .await?;
     assert!(!next.is_empty(), "the fixture must leave a second page");
-    assert!(next
-        .iter()
-        .all(|p| !references.mentions_subject_of(CLAIM, &p.text)));
+    let subject = references.subject_of(CLAIM).await?;
+    assert!(next.iter().all(|p| !subject.mentioned_in(&p.text)));
 
     let results = evidence_checks::check(
         &model,
@@ -274,8 +273,8 @@ async fn deepening_stops_after_a_round_that_settles_nothing() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
+#[tokio::test]
+async fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
     let one = |id: &str, text: &str| reference(id.into(), text.into());
     let mut sources = vec![
         one("a1", "Alpha decays slowly."),
@@ -286,9 +285,10 @@ fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
     // Three invented names, in no passage, would pull the median to zero and
     // leave only themselves distinctive; excluded, "alpha" is distinctive.
     let claim = "OrderWidget CartFactory SkuHelper keep alpha above beta.";
-    assert!(references.mentions_subject_of(claim, "A note about alpha."));
-    assert!(!references.mentions_subject_of(claim, "A note about beta."));
-    assert!(!references.mentions_subject_of(claim, "OrderWidget CartFactory SkuHelper"));
+    let subject = references.subject_of(claim).await.unwrap();
+    assert!(subject.mentioned_in("A note about alpha."));
+    assert!(!subject.mentioned_in("A note about beta."));
+    assert!(!subject.mentioned_in("OrderWidget CartFactory SkuHelper"));
 }
 
 fn marker_collection() -> Vec<LearningSourceDto> {
