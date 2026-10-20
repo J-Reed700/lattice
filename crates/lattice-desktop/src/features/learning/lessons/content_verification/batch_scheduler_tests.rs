@@ -353,15 +353,24 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
     Ok(())
 }
 
+/// `count` claims of one section, as requests hold the claims of one
+/// section only.
 fn inventory(count: usize) -> Inventory {
+    sections(1, count)
+}
+
+/// `sections` sections of `claims` claims each, every statement its own.
+fn sections(sections: usize, claims: usize) -> Inventory {
     Inventory {
-        units: (0..count)
+        units: (0..sections)
             .map(|index| UnitClaims {
                 index,
-                claims: vec![Claim {
-                    quote: GOOD.into(),
-                    statement: GOOD.into(),
-                }],
+                claims: (0..claims)
+                    .map(|claim| Claim {
+                        quote: GOOD.into(),
+                        statement: format!("{GOOD} Case {}.", index * claims + claim),
+                    })
+                    .collect(),
                 non_factual_reason: String::new(),
             })
             .collect(),
@@ -437,11 +446,11 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
                 .findings
                 .iter()
                 .all(|f| f.verdict == ClaimVerdict::Supported));
-            let expected = if pass < 2 { 2 } else { 4 };
+            let expected = if pass < 2 { 1 } else { 2 };
             assert_eq!(
                 model.calls.lock().unwrap().len(),
                 expected,
-                "One request for each group, then zero requests for unchanged checkpoints"
+                "One request for the section, then zero requests for unchanged checkpoints"
             );
             assert_eq!(
                 model
@@ -482,9 +491,12 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut saved = inventory(170);
-    saved
-        .units
-        .retain(|unit| ![0, 85, 169].contains(&unit.index));
+    let missing: Vec<String> = [0, 85, 169]
+        .map(|index| saved.units[0].claims[index].statement.clone())
+        .into();
+    saved.units[0]
+        .claims
+        .retain(|claim| !missing.contains(&claim.statement));
     lesson_drafts::run(&repo, &job, &lesson, async {
         evidence_checks::check(
             &BatchModel::default(),
@@ -516,7 +528,15 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         }
         Ok(())
     })).await?;
-    let activity = repo.job(&job).await?.activity.unwrap();
+    let progress = repo.job(&job).await?;
+    assert!(
+        progress
+            .progress_message
+            .starts_with("Comparing 3 claims of section 1 with their evidence"),
+        "{}",
+        progress.progress_message
+    );
+    let activity = progress.activity.unwrap();
     assert_eq!(activity.checks_total, 170);
     assert_eq!(
         activity.checks_reused, 167,
@@ -527,7 +547,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert_eq!(
         *blocked.batch_sizes.lock().unwrap(),
         vec![3],
-        "Pending claims from separate inventory groups should share one request"
+        "Pending claims of one section share one request"
     );
     drop(repo);
     pool.close().await;
@@ -594,9 +614,9 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         ..Default::default()
     };
     let input = inventory(8);
-    let claim = &input.units[7].claims[0];
-    let evidence = evidence_for(&model, &claim.statement, 7, &references, &[], 8).await?;
-    let key = claim_receipt_key(&model, &ClaimChecks::key(7, claim, &evidence));
+    let claim = &input.units[0].claims[7];
+    let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
+    let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
         let mut retained=ClaimChecks::default();let candidate=candidate(GOOD);
         let work=check_evidence(&model,&candidate,&references,input,coverage(8),vec![],&mut retained);
@@ -649,4 +669,105 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     .await?;
     pool.close().await;
     Ok(())
+}
+
+#[tokio::test]
+async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = BatchModel::default();
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let report = check_evidence(
+            &model,
+            &candidate(GOOD),
+            &references,
+            sections(2, 3),
+            coverage(2),
+            vec![],
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(report.findings.len(), 6);
+        assert_eq!(*model.batch_sizes.lock().unwrap(), vec![3, 3]);
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+#[test]
+fn claims_are_packed_by_section_while_the_batch_estimate_holds_them() {
+    use lattice_core::application::services::claim_verification::{ClaimChecker, LocatedClaim};
+    let model = BatchModel::default();
+    // Pages of about ten thousand tokens each, each text its own, so a
+    // request holds a few; one page no request can hold.
+    let page = |claim: usize, chars: usize| {
+        vec![EvidencePassage {
+            source_id: format!("source-{claim}"),
+            text: format!("{claim} {}", "x".repeat(chars)),
+            start_byte: 0,
+            end_byte: chars,
+            retrieval_kind: "lexical_fallback".into(),
+            score: 0.0,
+            branch: None,
+            branch_score: 0.0,
+        }]
+    };
+    // Sections interleaved in claim order.
+    let claims: Vec<(usize, String, Vec<EvidencePassage>)> = (0..12)
+        .map(|claim| {
+            let chars = if claim == 5 { 400_000 } else { 40_000 };
+            (claim % 2, format!("Claim {claim}."), page(claim, chars))
+        })
+        .collect();
+    let requests = evidence_checks::packed(&model, claims.clone());
+    assert_eq!(
+        requests,
+        evidence_checks::packed(&model, claims.clone()),
+        "the same pages pack the same way, so a split is found again"
+    );
+    let unit = |ordinal: usize| claims[ordinal].0;
+    let checker = ClaimChecker::new(
+        &model,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    );
+    let targets = |request: &[usize]| -> Vec<LocatedClaim> {
+        request
+            .iter()
+            .map(|ordinal| LocatedClaim {
+                claim: claims[*ordinal].1.clone(),
+                passages: claims[*ordinal].2.iter().map(|p| p.text.clone()).collect(),
+            })
+            .collect()
+    };
+    assert!(
+        requests.len() > 2,
+        "a section's pages need more than one request"
+    );
+    for (at, request) in requests.iter().enumerate() {
+        assert!(request
+            .iter()
+            .all(|ordinal| unit(*ordinal) == unit(request[0])));
+        assert!(request.windows(2).all(|pair| pair[0] < pair[1]));
+        if request.len() > 1 {
+            assert!(checker.batch_fits(&targets(request)));
+        }
+        // The next claim of the section did not fit beside these.
+        if let Some(next) = requests
+            .get(at + 1)
+            .filter(|next| unit(next[0]) == unit(request[0]))
+        {
+            let mut grown = request.clone();
+            grown.push(next[0]);
+            assert!(!checker.batch_fits(&targets(&grown)));
+        }
+    }
+    // The page no request holds is checked alone, where its least needed
+    // passages give way.
+    assert!(requests.contains(&vec![5]));
+    assert!(!checker.batch_fits(&targets(&[5])));
 }

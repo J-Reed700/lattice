@@ -104,9 +104,10 @@ async fn judge(
     passages: &[String],
     ranking: &[usize],
 ) -> Result<(JudgeOutcome, Vec<usize>)> {
-    let (judgment, shown) = judge_for_publication(llm, claim, passages, ranking).await;
-    match judgment {
-        ClaimJudgment::Judged(outcome) => Ok((outcome, shown)),
+    let page_order: Vec<usize> = (0..passages.len()).collect();
+    let judged = judge_for_publication(llm, claim, passages, ranking, &page_order).await;
+    match judged.judgment {
+        ClaimJudgment::Judged(outcome) => Ok((outcome, judged.shown)),
         ClaimJudgment::Failed(error) => Err(error),
         ClaimJudgment::Unusable => Err(AppError::Other(
             "The claim check returned no usable verdict. The finding is kept; Repair can try again."
@@ -297,9 +298,8 @@ async fn resolve_factual(
     // A finding is checked alone, so its first page may fill the checker's
     // window. An unsupported verdict walks on to the next page, passages not
     // yet shown, while that page shares a content term with the claim.
-    let share = crate::features::learning::content_verification::claim_share(llm, &claim, 1);
     let fits = |passages: &[ReferencePassage]| {
-        crate::features::learning::content_verification::within_share(llm, share, passages.iter())
+        crate::features::learning::content_verification::fits_window(llm, &claim, passages)
     };
     let mut shown: Vec<ReferencePassage> = Vec::new();
     let mut decision = None;

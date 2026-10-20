@@ -73,6 +73,8 @@ fn passage(id: &str, text: &str) -> EvidencePassage {
         end_byte: text.len(),
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     }
 }
 
@@ -551,8 +553,9 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
         let checker = CountingChecker {
             calls: AtomicUsize::new(0),
         };
-        let (judged, _) =
-            judge_for_publication(&checker, statement, &[text.to_owned()], &[0]).await;
+        let judged = judge_for_publication(&checker, statement, &[text.to_owned()], &[0], &[0])
+            .await
+            .judgment;
         assert_eq!(
             checker.calls.load(Ordering::SeqCst),
             1,

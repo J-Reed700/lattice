@@ -84,6 +84,10 @@ impl LLMPort for PinnedLlm {
         self.inner().chars_per_token()
     }
 
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.inner().pace()
+    }
+
     fn count_tokens(&self, text: &str) -> usize {
         self.inner().count_tokens(text)
     }

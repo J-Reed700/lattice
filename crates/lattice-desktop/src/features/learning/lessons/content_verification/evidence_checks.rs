@@ -1,23 +1,41 @@
 //! Retrieve and restore individual comparisons, then batch only unfinished ones.
 //! Every decision retains its own evidence binding and durable receipt.
 //!
-//! Evidence is paged. A claim is first checked against its top-ranked
-//! passages, an equal share of its batch call's room. A claim that page
-//! leaves unsupported is checked again against its next page, passages it has
-//! not been shown, batched with the other claims still looking; the walk ends
-//! at the first supported or contradicted verdict, or when the next page has
-//! no passage mentioning the claim's subject (vector neighbours alone do not
-//! continue it). Deepening rounds continue only while the last round settled
-//! at least one claim as supported or contradicted. Each page's check has its
-//! own receipt.
+//! Evidence is paged by relevance, not by room (claim evidence pages design).
+//! A claim's first page holds the passages its own section cites and, from
+//! each source the lesson cites, the best passage on the claim's subject; a
+//! ring with nothing on the subject gives way to the next. A retrieved
+//! passage joins a page only above its ranking's cut, where that ranking's
+//! scores drop most clearly, and never when it does not mention the claim's
+//! subject. A claim that page leaves unsupported walks outward (see
+//! `deepening`): the lesson's remaining sources, the course's other sources
+//! one passage each with a counter-evidence page beside them, then every
+//! source's next-best passage. The walk ends at the first supported or
+//! contradicted verdict, or when nothing on the subject is left. Rings 1 and 2
+//! always run to the end; the deeper pages continue only while the last round
+//! settled a claim. Each page's check has its own receipt.
+//!
+//! The window bounds a request and never sizes a page. Claims of one section
+//! are packed into a request while the batch estimate holds them all; a page
+//! too long for its claim checked alone loses its least needed passages, and
+//! a request the backend counts past the window is checked in halves. The
+//! judge reads a page with its most needed passages at the edges; the page's
+//! canonical order still keys the comparison.
+//!
+//! Every check reports what its answer cost in output tokens; the job's
+//! mean, with the backend's measured pace, gives the deeper pages' budget
+//! (see `page_budget`), which each deepening round logs.
 //!
 //! Progress counts each claim once. A deeper page's check adds no check; it
 //! moves its claim out of the unresolved count when the page supports it.
 use super::*;
-use lattice_core::application::services::claim_verification::{LocatedClaim, ANSWER_ROOM_TOKENS};
-use std::collections::BTreeMap;
+use lattice_core::application::services::claim_verification::LocatedClaim;
 
-const BATCH_SIZE: usize = 8;
+mod deepening;
+mod page_budget;
+#[cfg(test)]
+pub(in crate::features::learning) use deepening::walk_pages;
+pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
 
 /// Each passage's label, by source version (`provenance_gate::passage_labels`).
 type Labels = HashMap<String, String>;
@@ -67,7 +85,6 @@ async fn prepare(
     retained: &ClaimChecks,
     ordinal: usize,
     located_claim: (usize, Claim),
-    sharing: usize,
     citations: &Citations,
 ) -> Result<PreparedClaim> {
     let (unit, claim) = located_claim;
@@ -85,7 +102,7 @@ async fn prepare(
         return Ok(PreparedClaim::Complete((ordinal, key, finding, true), true));
     }
     let evidence = evidence_selection::select(
-        llm, &claim, unit, references, sources, executions, retained, sharing, citations,
+        llm, &claim, unit, references, sources, executions, retained, citations,
     )
     .await?;
     let checked = as_checked(&claim, citations, references).statement;
@@ -124,25 +141,16 @@ async fn prepare(
             ));
         }
     }
-    let text = evidence
-        .iter()
-        .map(|p| format!("[{}]\n{}", p.source_id, p.text))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let local = if text.is_empty() {
-        Some(ClaimJudgment::Judged(JudgeOutcome {
+    // A page too long for the window is still checked: its least needed
+    // passages give way (`individual`).
+    let local = evidence.is_empty().then(|| {
+        ClaimJudgment::Judged(JudgeOutcome {
             verdict: ClaimVerdict::Unsupported,
             reason: Some("No relevant saved passages were found for this claim.".into()),
             quote: None,
             confidence: None,
-        }))
-    } else if llm.count_tokens(&text) + llm.count_tokens(&claim.statement) + ANSWER_ROOM_TOKENS
-        > llm.max_context_tokens()
-    {
-        Some(ClaimJudgment::Unusable)
-    } else {
-        None
-    };
+        })
+    });
     let pending = PendingClaim {
         ordinal,
         key,
@@ -223,20 +231,32 @@ async fn finish(
     Ok((pending.ordinal, pending.key, finding, false))
 }
 
-/// The claim as the checker reads it, each passage under its source's label
-/// (§18.6 of the provenance design): the label names the source so the
+/// Each passage of the claim's page under its source's label (§18.6 of the
+/// provenance design), in page order: the label names the source so the
 /// passage is never read as another one; the quotation must still come from
 /// the passage's own text.
+fn labelled(pending: &PendingClaim, labels: &Labels) -> Vec<String> {
+    pending
+        .evidence
+        .iter()
+        .map(|p| match labels.get(&p.source_id) {
+            Some(label) => format!("{label}\n{}", p.text),
+            None => p.text.clone(),
+        })
+        .collect()
+}
+
+/// The claim as the checker reads it: its labelled passages in reading
+/// order (`reading_order`), the most needed at the edges. A batch's passage
+/// bank keeps them in this order, so a passage two claims share sits at the
+/// first one's edge.
 fn target(pending: &PendingClaim, labels: &Labels) -> LocatedClaim {
+    let passages = labelled(pending, labels);
     LocatedClaim {
         claim: pending.checked.clone(),
-        passages: pending
-            .evidence
-            .iter()
-            .map(|p| match labels.get(&p.source_id) {
-                Some(label) => format!("{label}\n{}", p.text),
-                None => p.text.clone(),
-            })
+        passages: reading_order(&pending.evidence)
+            .into_iter()
+            .filter_map(|position| passages.get(position).cloned())
             .collect(),
     }
 }
@@ -269,19 +289,24 @@ async fn individual(
     llm: &dyn LLMPort,
     mut pending: PendingClaim,
     labels: &Labels,
-) -> Result<CheckedClaim> {
-    let input = target(&pending, labels);
-    let (judgment, shown) = judge_for_publication(
+) -> Result<(CheckedClaim, AnswerSize)> {
+    let judged = judge_for_publication(
         llm,
-        &input.claim,
-        &input.passages,
+        &pending.checked,
+        &labelled(&pending, labels),
         &ranking(&pending.evidence),
+        &reading_order(&pending.evidence),
     )
     .await;
+    let shown = judged.shown;
     let cut = shown.len() < pending.evidence.len();
     pending.evidence = shown_of(&pending.evidence, &shown);
-    let judgment = unlabelled(judgment, &pending, labels);
-    finish(pending, judgment, cut.then_some(shown)).await
+    let judgment = unlabelled(judged.judgment, &pending, labels);
+    let answer = AnswerSize::of(judged.output_tokens, 1);
+    Ok((
+        finish(pending, judgment, cut.then_some(shown)).await?,
+        answer,
+    ))
 }
 
 fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check) {
@@ -295,13 +320,15 @@ fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check
     results.push(result);
 }
 
+/// Check `pending`'s claims, with what the judge's answers to them cost.
 async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
     check: Check,
     labels: &Labels,
-) -> Result<Vec<CheckedClaim>> {
+) -> Result<(Vec<CheckedClaim>, AnswerSize)> {
     let mut results = Vec::new();
+    let mut answers = AnswerSize::default();
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
@@ -316,7 +343,9 @@ async fn group(
         let targets: Vec<_> = pending.iter().map(|item| target(item, labels)).collect();
         if pending.len() == 1 {
             for item in pending {
-                completed(&mut results, individual(llm, item, labels).await?, check);
+                let (result, answer) = individual(llm, item, labels).await?;
+                answers.add(answer);
+                completed(&mut results, result, check);
             }
             continue;
         }
@@ -346,12 +375,16 @@ async fn group(
             continue;
         }
         crate::features::learning::lesson_progress::stage(format!(
-            "Comparing a group of {} remaining claims with their assigned evidence",
-            pending.len()
+            "Comparing {} claims of section {} with their evidence",
+            pending.len(),
+            pending.first().map_or(0, |item| item.unit) + 1
         ));
         let _model_call = crate::features::learning::lesson_progress::model_call();
         let judgments = match judge_batch_for_publication(llm, &targets).await {
-            Ok(judgments) => judgments,
+            Ok(answered) => {
+                answers.add(AnswerSize::of(answered.output_tokens, targets.len()));
+                answered.judgments
+            }
             // A group the model could not finish, or one the backend counted
             // past the context window, is checked in halves on the same
             // evidence, so every receipt is unchanged.
@@ -398,10 +431,83 @@ async fn group(
             }
         }
         for item in unresolved {
-            completed(&mut results, individual(llm, item, labels).await?, check);
+            let (result, answer) = individual(llm, item, labels).await?;
+            answers.add(answer);
+            completed(&mut results, result, check);
         }
     }
-    Ok(results)
+    Ok((results, answers))
+}
+
+/// The model requests for `pending` (claim evidence pages §5): claims of
+/// one section at a time, in section and claim order, a request taking
+/// claims while the batch estimate says the window holds them all with their
+/// answers. A section's claims share its cited passages, which the bank
+/// holds once. The first claim that does not fit starts the next request;
+/// one whose page does not fit a request alone is checked alone, where its
+/// least needed passages give way. No count caps a request: the section
+/// bounds it. The same pages always pack the same way, so a restart
+/// rebuilds the same requests and finds their split checkpoints.
+fn pack(
+    llm: &dyn LLMPort,
+    mut pending: Vec<PendingClaim>,
+    labels: &Labels,
+) -> Vec<Vec<PendingClaim>> {
+    let checker = ClaimChecker::new(
+        llm,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    );
+    pending.sort_by_key(|item| (item.unit, item.ordinal));
+    let mut requests: Vec<Vec<PendingClaim>> = Vec::new();
+    let mut targets: Vec<LocatedClaim> = Vec::new();
+    for item in pending {
+        let next = target(&item, labels);
+        let joins = requests
+            .last()
+            .and_then(|request| request.first())
+            .is_some_and(|first| first.unit == item.unit)
+            && checker.batch_fits(&[targets.as_slice(), std::slice::from_ref(&next)].concat());
+        if !joins {
+            requests.push(Vec::new());
+            targets.clear();
+        }
+        targets.push(next);
+        if let Some(request) = requests.last_mut() {
+            request.push(item);
+        }
+    }
+    requests
+}
+
+/// The ordinals [`pack`] puts in each request for claims given as `(unit,
+/// statement, page)`, by ordinal.
+#[cfg(test)]
+pub(super) fn packed(
+    llm: &dyn LLMPort,
+    claims: Vec<(usize, String, Vec<EvidencePassage>)>,
+) -> Vec<Vec<usize>> {
+    let pending = claims
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, (unit, statement, evidence))| PendingClaim {
+            ordinal,
+            key: String::new(),
+            receipt_key: String::new(),
+            unit,
+            claim: Claim {
+                quote: statement.clone(),
+                statement: statement.clone(),
+            },
+            checked: statement,
+            evidence,
+        })
+        .collect();
+    pack(llm, pending, &Labels::new())
+        .into_iter()
+        .map(|request| request.iter().map(|item| item.ordinal).collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -459,14 +565,26 @@ pub(super) async fn check_with_citations(
     let mut results = Vec::new();
     let mut pending = Vec::new();
     let mut reused = 0;
-    // Claims share a batch call's room equally; one checked alone has it all.
-    let sharing = BATCH_SIZE.min(total);
     let mut decided = HashSet::new();
-    let mut entries = futures::stream::iter(entries.into_iter().enumerate()).chunks(BATCH_SIZE);
-    while let Some(entries) = entries.next().await {
+    // A section at a time, its claims together, as they are packed.
+    let mut sections: Vec<Vec<(usize, (usize, Claim))>> = Vec::new();
+    for (ordinal, entry) in entries.into_iter().enumerate() {
+        match sections.last_mut() {
+            Some(section)
+                if section
+                    .first()
+                    .is_some_and(|(_, (unit, _))| *unit == entry.0) =>
+            {
+                section.push((ordinal, entry));
+            }
+            _ => sections.push(vec![(ordinal, entry)]),
+        }
+    }
+    for section in sections {
+        let claims = section.len();
         // Drain the reads before any subsequent model work/checkpoint writes.
         // Unpolled prefetches can otherwise hold scarce database pool slots.
-        let prepared: Vec<_> = futures::stream::iter(entries)
+        let prepared: Vec<_> = futures::stream::iter(section)
             .map(|(ordinal, (unit, claim))| {
                 prepare(
                     llm,
@@ -476,11 +594,10 @@ pub(super) async fn check_with_citations(
                     retained,
                     ordinal,
                     (unit, claim),
-                    sharing,
                     citations,
                 )
             })
-            .buffered(BATCH_SIZE)
+            .buffered(claims)
             .try_collect()
             .await?;
         for item in prepared {
@@ -513,20 +630,31 @@ pub(super) async fn check_with_citations(
     crate::features::learning::lesson_progress::stage(format!(
         "{reused} saved checks reused · {model_checks} of {total} claims need model review"
     ));
-    // A group already carries several complete evidence sets. Run them one at
-    // a time rather than compete large prompt prefills on the same model.
-    let mut groups = futures::stream::iter(pending)
-        .chunks(BATCH_SIZE)
-        .map(|pending| group(llm, pending, Check::First, &labels))
+    // A request already carries several complete evidence sets. Run them one
+    // at a time rather than compete prompt prefills on the same model.
+    let mut answers = AnswerSize::default();
+    let mut groups = futures::stream::iter(pack(llm, pending, &labels))
+        .map(|request| group(llm, request, Check::First, &labels))
         .buffer_unordered(1);
     while let Some(batch) = groups.next().await {
-        results.extend(batch?);
+        let (batch, answered) = batch?;
+        answers.add(answered);
+        results.extend(batch);
         crate::features::learning::lesson_progress::stage(format!(
             "Completed {} of {model_checks} model checks · {reused} saved checks reused · {total} lesson claims",
             results.len() - resolved
         ));
     }
-    deepen(llm, references, &mut results, &decided, citations, &labels).await?;
+    deepening::deepen(
+        llm,
+        references,
+        &mut results,
+        &decided,
+        citations,
+        &labels,
+        answers,
+    )
+    .await?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     // The gate call (§18.6): every supported verdict's support is weighed
     // before the claim ledger sees it; no further model check is made.
@@ -538,183 +666,4 @@ pub(super) async fn check_with_citations(
             .count(),
     );
     Ok(results)
-}
-
-/// A claim still looking for evidence: what it has been shown so far.
-struct Walk {
-    unit: usize,
-    claim: Claim,
-    shown: Vec<EvidencePassage>,
-}
-
-/// Check every first-page result that is unsupported against its next pages
-/// until a page decides it or no page with a matching content term is left.
-/// A deciding page's finding replaces the first page's; the first page's key
-/// still names the decision, so a later pass on the same evidence reuses it.
-async fn deepen(
-    llm: &dyn LLMPort,
-    references: &ReferenceCollection<'_>,
-    results: &mut [CheckedClaim],
-    decided: &HashSet<usize>,
-    citations: &Citations,
-    labels: &Labels,
-) -> Result<()> {
-    let mut walks: BTreeMap<usize, Walk> = results
-        .iter()
-        .filter(|(ordinal, _, finding, _)| {
-            !decided.contains(ordinal) && finding.verdict == ClaimVerdict::Unsupported
-        })
-        .map(|(ordinal, _, finding, _)| {
-            (
-                *ordinal,
-                Walk {
-                    unit: finding.unit,
-                    claim: Claim {
-                        quote: finding.quote.clone(),
-                        statement: finding.statement.clone(),
-                    },
-                    shown: finding
-                        .evidence
-                        .iter()
-                        .filter(|passage| passage.retrieval_kind != "execution")
-                        .cloned()
-                        .collect(),
-                },
-            )
-        })
-        .collect();
-    let mut round = 0;
-    while !walks.is_empty() {
-        round += 1;
-        let sharing = BATCH_SIZE.min(walks.len());
-        let mut pending = Vec::new();
-        let mut outcomes = Vec::new();
-        for (ordinal, walk) in std::mem::take(&mut walks) {
-            let share = claim_share(llm, &walk.claim.statement, sharing);
-            // Cited passages of the section that did not fit an earlier page
-            // lead this one; retrieved passages not yet shown fill the rest.
-            let mut page: Vec<EvidencePassage> = Vec::new();
-            for passage in citations.of(walk.unit) {
-                if walk
-                    .shown
-                    .iter()
-                    .chain(&page)
-                    .any(|seen| overlaps(seen, passage))
-                {
-                    continue;
-                }
-                if !within_share(llm, share, page.iter().chain(std::iter::once(passage))) {
-                    break;
-                }
-                page.push(passage.clone());
-            }
-            let cited_left = !page.is_empty();
-            let shown: Vec<_> = walk.shown.iter().chain(&page).cloned().collect();
-            let retrieved = lesson_sources_first(
-                llm,
-                references,
-                &walk.claim.statement,
-                share,
-                &page,
-                &shown,
-                citations,
-            )
-            .await?;
-            page.extend(retrieved);
-            // A page that only shares the subject's common words, or only
-            // vector neighbours, ends the walk; the section's own citations
-            // never do.
-            if !cited_left
-                && !page.iter().any(|passage| {
-                    references.mentions_subject_of(&walk.claim.statement, &passage.text)
-                })
-            {
-                continue;
-            }
-            canonicalize_evidence(&mut page);
-            let checked = as_checked(&walk.claim, citations, references);
-            let key = ClaimChecks::key(walk.unit, &checked, &page);
-            let receipt_key = claim_receipt_key(llm, &key);
-            if let Some(finding) =
-                crate::features::learning::lesson_drafts::checkpoint(&receipt_key)
-                    .await?
-                    .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
-                    .and_then(|receipt| receipt.finding(walk.unit, &walk.claim, &page))
-            {
-                outcomes.push((ordinal, finding));
-            } else {
-                pending.push(PendingClaim {
-                    ordinal,
-                    key,
-                    receipt_key,
-                    unit: walk.unit,
-                    claim: walk.claim.clone(),
-                    checked: checked.statement,
-                    evidence: page,
-                });
-            }
-            // The page joins what the claim was shown once its check says
-            // what the judge saw: a passage cut for size was not shown.
-            walks.insert(ordinal, walk);
-        }
-        if !pending.is_empty() || !outcomes.is_empty() {
-            crate::features::learning::lesson_progress::deeper_page(
-                round + 1,
-                pending.len() + outcomes.len(),
-            );
-            // A saved check of this page is finished as soon as it is restored.
-            for (_, finding) in &outcomes {
-                crate::features::learning::lesson_progress::rechecked(
-                    finding.verdict == ClaimVerdict::Supported,
-                );
-            }
-        }
-        if !pending.is_empty() {
-            crate::features::learning::lesson_progress::stage(format!(
-                "Checking {} unsupported claims against their next page of evidence (page {})",
-                pending.len(),
-                round + 1
-            ));
-            let mut batches = futures::stream::iter(pending)
-                .chunks(BATCH_SIZE)
-                .map(|pending| group(llm, pending, Check::Deeper, labels))
-                .buffer_unordered(1);
-            while let Some(batch) = batches.next().await {
-                outcomes.extend(
-                    batch?
-                        .into_iter()
-                        .map(|(ordinal, _, finding, _)| (ordinal, finding)),
-                );
-            }
-        }
-        let mut settled = 0;
-        for (ordinal, finding) in outcomes {
-            if finding.verdict == ClaimVerdict::Unsupported {
-                if let Some(walk) = walks.get_mut(&ordinal) {
-                    walk.shown.extend(finding.evidence);
-                }
-                continue;
-            }
-            settled += usize::from(matches!(
-                finding.verdict,
-                ClaimVerdict::Supported | ClaimVerdict::Contradicted
-            ));
-            walks.remove(&ordinal);
-            if let Some(result) = results.iter_mut().find(|result| result.0 == ordinal) {
-                result.2 = finding;
-            }
-        }
-        tracing::info!(
-            round,
-            settled,
-            looking = walks.len(),
-            "Deepened the evidence of unsupported claims"
-        );
-        // Another round runs only while the last one settled a claim.
-        if settled == 0 {
-            break;
-        }
-    }
-    crate::features::learning::lesson_progress::deeper_done();
-    Ok(())
 }

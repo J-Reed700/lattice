@@ -3,13 +3,19 @@ use crate::features::llm::engine::sidecar_manager::weights_fixture::sparse_file;
 use crate::features::llm::engine::sidecar_manager::Footprint;
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::{
-    CompletionRequest, CompletionResponse, ModelOrigin,
+    CompletionRequest, CompletionResponse, ModelOrigin, Pace,
 };
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::runtime::jobs::JobFailure;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const GIB: u64 = 1024 * 1024 * 1024;
+
+/// The pace every fake loaded model reports.
+const FAKE_PACE: Pace = Pace {
+    prompt_tokens_per_second: 850.0,
+    output_tokens_per_second: 11.3,
+};
 
 /// A loaded model that says when it is unloaded.
 struct FakeLlm {
@@ -33,6 +39,9 @@ impl LLMPort for FakeLlm {
     }
     fn max_context_tokens(&self) -> usize {
         8_704
+    }
+    fn pace(&self) -> Option<Pace> {
+        Some(FAKE_PACE)
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -381,6 +390,26 @@ async fn a_pinned_model_counts_its_holder_until_the_last_clone_drops() {
     assert_eq!(in_use(&instances).0, 1, "a clone still holds it");
     drop(handed_to_a_subtask);
     assert_eq!(in_use(&instances), (0, vec![]));
+}
+
+/// A pinned model answers for the loaded one in everything, its measured
+/// pace included, so a job holding it can size its work by that pace.
+#[tokio::test]
+async fn a_pinned_model_reports_the_loaded_models_pace() {
+    let dir = tempfile::tempdir().unwrap();
+    let local = local_model(&dir, "ornith", 1);
+    let instances = LlmInstances::new();
+    let pinned = acquire_local(
+        &instances,
+        &FakeBudget::always(fits()),
+        &local,
+        None,
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap()
+    .into_port();
+    assert_eq!(pinned.pace(), Some(FAKE_PACE));
 }
 
 #[tokio::test]

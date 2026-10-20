@@ -123,6 +123,8 @@ fn passage(references: &ReferenceCollection<'_>, seen: &EvidenceSeen) -> Option<
         end_byte: seen.end_byte,
         retrieval_kind: USER_EVIDENCE.into(),
         score: 0.0,
+        branch: None,
+        branch_score: 0.0,
     })
 }
 

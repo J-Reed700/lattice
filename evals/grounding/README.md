@@ -146,3 +146,74 @@ LATTICE_CLAIM_CHECKER=<checker> \
 
 These pairs are the user's own content: they are not synthetic and are not
 committed unless the user chooses to.
+
+## Page recall: does the cited passage reach the judge?
+
+`live_page_recall_eval` (in
+`crates/lattice-desktop/src/features/learning/lessons/live_page_recall_eval.rs`)
+measures the page rule of
+[`2026-10-19-claim-evidence-pages.md`](../../docs/design/2026-10-19-claim-evidence-pages.md)
+(§9, "Eval") on a stored run, with no model. It reads what
+`scripts/lesson_claim_pairs.py extract` reads: every
+`learning_lesson_verifications.report_json` in the database, and the
+program's saved source versions, ranked by keyword alone
+(`ReferenceCollection::lexical`). The database is opened read-only.
+
+For every `supported` finding it walks the claim's pages under the current
+rule (ring 0 and ring 1 first, then the rest of the course, then the deeper
+pages) as if no page settled the claim, and stops at the page that holds the
+passage the stored judge cited. A section's citations are the passages the
+stored report marks `cited`. Each finding is one JSON line in the results
+file:
+
+| field | meaning |
+| --- | --- |
+| `old_page` | passages and estimated tokens of the stored page that decided the claim (its page index is not stored) |
+| `new_page` | the page (1 = first) that holds the cited passage under the new rule: a passage of its source that contains it, or covers its middle (the hit its context was widened around), since the new rule may draw the passage's edges a little differently; `null` when no page does |
+| `first_overlapping_page` | the first page with a passage overlapping the cited one, even if it holds only part of it |
+| `tokens_read_to_it` | estimated tokens of every page up to and including `new_page` |
+| `pages` | per page: its ring (`stage`), passages, tokens, whether each ranking had a clear gap (`clear`, `none`, `-` for no candidates) and whether a counter page ran |
+| `cited_mentions_subject` | whether the cited passage mentions the claim's subject; `false` is a passage the new rule never shows (decision D5) |
+| `modelled_seconds` | with a pace given: `new_rule`, the modelled time to reach the cited passage, and `old_deciding_page`, the same for the stored deciding page alone |
+| `skipped` | set when the cited passage's source changed after the run |
+
+The last lines printed sum it up: how many cited passages fail
+`mentions_subject_of`, how many findings reach the judge on each page, how
+many never do, the old and new token totals and, with a pace given, the
+modelled time totals and the page budget that pace gives.
+
+### Modelled time
+
+Every page a claim needs costs one more answer, so tokens read alone do not
+say which rule is faster. Set `LATTICE_PAGE_RECALL_PACE` to
+`"<prompt tokens/s>,<output tokens/s>,<answer tokens per claim>"`, read off
+a run's log: the prompt rate from llama.cpp's `prompt_ms` and evaluated
+prompt tokens, the output rate from its `tokens_per_second`, and the answer
+size as a check's output tokens divided by the claims it answered. Each
+finding the new rule reaches is then modelled as
+
+    seconds = Σ page tokens ÷ prompt rate + pages × answer tokens ÷ output rate
+
+over the pages up to the cited passage. The old rule's total uses each
+finding's stored deciding page as one page, a lower bound, since what the
+old rule read before that page is not stored. The summary line also prints
+the page budget the app derives from the same pace,
+`answer tokens per claim × prompt rate ÷ output rate` (design §13); the
+eval's pages are not yet sized by it. Without the variable, no time is
+modelled.
+
+Run it on a copy of your database or the live one (it never writes):
+
+```bash
+cd crates/lattice-desktop
+LATTICE_PAGE_RECALL_DB="<the app data folder>/lattice.db" \
+LATTICE_PAGE_RECALL_WINDOW=<the run's configured context window> \
+LATTICE_PAGE_RECALL_RESULTS=$PWD/../../evals/grounding/results/<date>-page-recall.jsonl \
+LATTICE_PAGE_RECALL_PROGRAM=<optional program id> \
+LATTICE_PAGE_RECALL_PACE="<optional prompt tok/s>,<output tok/s>,<answer tokens per claim>" \
+  cargo test --lib live_page_recall_eval -- --ignored --nocapture
+```
+
+The window bounds only how many of a section's citations page 1 holds. The
+results are the user's own content and, like `lesson-claims-<date>.jsonl`,
+are not committed unless the user chooses to.

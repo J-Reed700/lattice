@@ -16,6 +16,8 @@ use lattice_core::application::ports::LLMPort;
 mod claim_pairs;
 #[path = "live_course_e2e.rs"]
 mod course_e2e;
+#[path = "live_page_recall_eval.rs"]
+mod page_recall;
 #[path = "live_small_lesson.rs"]
 mod small;
 
@@ -92,15 +94,21 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
         let mut outcomes = Vec::new();
         if batched {
             for batch in claims.chunks(8) {
-                outcomes.extend(judge_batch_for_publication(&model, batch).await?);
+                outcomes.extend(judge_batch_for_publication(&model, batch).await?.judgments);
             }
         } else {
             for claim in &claims {
                 let ranking: Vec<usize> = (0..claim.passages.len()).collect();
                 outcomes.push(
-                    judge_for_publication(&model, &claim.claim, &claim.passages, &ranking)
-                        .await
-                        .0,
+                    judge_for_publication(
+                        &model,
+                        &claim.claim,
+                        &claim.passages,
+                        &ranking,
+                        &ranking,
+                    )
+                    .await
+                    .judgment,
                 );
             }
         }
@@ -264,6 +272,9 @@ impl LLMPort for ObservedModel {
     fn max_context_tokens(&self) -> usize {
         self.inner.max_context_tokens()
     }
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.inner.pace()
+    }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
@@ -346,9 +357,10 @@ async fn live_source_passage_judgments() -> Result<()> {
                 case["claim"].as_str().unwrap(),
                 &passages,
                 &(0..passages.len()).collect::<Vec<_>>(),
+                &(0..passages.len()).collect::<Vec<_>>(),
             )
             .await
-            .0
+            .judgment
         } else if let Some(context) = case.get("context") {
             if case["contextKind"] == "teaching" {
                 checker

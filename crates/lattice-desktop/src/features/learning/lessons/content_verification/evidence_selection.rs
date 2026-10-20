@@ -4,14 +4,17 @@
 //! A claim research was asked for is the exception: what research found leads
 //! its evidence, so the claim is checked again against it.
 use super::*;
+use crate::features::learning::reference_collection::{above_cut, best_per_source};
 
 /// The retrieval kind of a passage research found for the claim it serves.
 pub(super) const RESEARCHED: &str = "researched";
 
 const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
-/// How a claim's first page is ranked: the lesson's own sources first. A
-/// selection saved under another ranking is retrieved anew.
-const RANKING: &str = "lesson-sources-first";
+/// How a claim's first page is built: its section's citations, then one
+/// passage on its subject from each source the lesson cites, above its
+/// ranking's cut (claim evidence pages §4). A selection saved under another
+/// rule is retrieved anew.
+const RANKING: &str = "rings-by-gap-v1";
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -189,9 +192,32 @@ impl Selection {
                         .clone()
                         .unwrap_or_else(|| references.mode().into()),
                     score: 0.0,
+                    branch: None,
+                    branch_score: 0.0,
                 })
             })
             .collect()
+    }
+}
+
+/// The selection that saves `evidence` against the `current` sources: each
+/// passage's place and digest, and its kind when it is a citation or what
+/// research found. Ranking scores, of either kind, are no part of it.
+pub(super) fn selection_of(current: &[SourceBinding], evidence: &[EvidencePassage]) -> Selection {
+    Selection {
+        sources: current.to_vec(),
+        passages: evidence
+            .iter()
+            .map(|p| Passage {
+                source_id: p.source_id.clone(),
+                start: p.start_byte,
+                end: p.end_byte,
+                sha256: digest(&p.text),
+                kind: [CITED, RESEARCHED]
+                    .contains(&p.retrieval_kind.as_str())
+                    .then(|| p.retrieval_kind.clone()),
+            })
+            .collect(),
     }
 }
 
@@ -203,7 +229,6 @@ pub(super) async fn select(
     current: &[SourceBinding],
     executions: &[execution::Observation],
     retained: &ClaimChecks,
-    sharing: usize,
     citations: &Citations,
 ) -> Result<Vec<EvidencePassage>> {
     let selection_key = format!("claim-evidence-v2:{}", digest(&json!({
@@ -303,20 +328,18 @@ pub(super) async fn select(
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
             if !added.is_empty() && claim_is_research_target {
                 // Research was asked for because this evidence left the claim
-                // unresolved. Normal retrieval over the current collection
-                // locates the new sources' best passages; they lead the
-                // claim's share of a batch call, and the earlier passages,
-                // in their order, fill the room they leave.
-                let share = claim_share(llm, &claim.statement, sharing);
-                let is_new = |passage: &EvidencePassage| added.contains(passage.source_id.as_str());
-                let (found, _) = references
-                    .verification_page(&claim.statement, &[], |passages| {
-                        within_share(llm, share, passages.iter().filter(|p| is_new(p)))
+                // unresolved. Each added source's best passage on the claim's
+                // subject, above its ranking's cut, leads the page; the
+                // earlier page's passages follow. The window bounds the check,
+                // never this page.
+                let found = references
+                    .next_by_source(&claim.statement, &claim.statement, &[], |source| {
+                        added.contains(source)
                     })
                     .await?;
-                let mut researched: Vec<_> = found
+                let (above, _) = above_cut(found);
+                let mut researched: Vec<_> = best_per_source(above)
                     .into_iter()
-                    .filter(|passage| is_new(passage))
                     .map(|passage| EvidencePassage {
                         retrieval_kind: RESEARCHED.into(),
                         ..passage
@@ -324,15 +347,7 @@ pub(super) async fn select(
                     .collect();
                 if !researched.is_empty() {
                     canonicalize_evidence(&mut evidence);
-                    for passage in evidence {
-                        if within_share(
-                            llm,
-                            share,
-                            researched.iter().chain(std::iter::once(&passage)),
-                        ) {
-                            researched.push(passage);
-                        }
-                    }
+                    researched.extend(evidence);
                     evidence = researched;
                 }
             }
@@ -345,7 +360,6 @@ pub(super) async fn select(
                 unit,
                 references,
                 executions,
-                sharing,
                 citations,
             )
             .await?
@@ -364,21 +378,7 @@ pub(super) async fn select(
             && a.text == b.text
     });
     if changed || migrated {
-        let selection = Selection {
-            sources: current.to_vec(),
-            passages: evidence
-                .iter()
-                .map(|p| Passage {
-                    source_id: p.source_id.clone(),
-                    start: p.start_byte,
-                    end: p.end_byte,
-                    sha256: digest(&p.text),
-                    kind: [CITED, RESEARCHED]
-                        .contains(&p.retrieval_kind.as_str())
-                        .then(|| p.retrieval_kind.clone()),
-                })
-                .collect(),
-        };
+        let selection = selection_of(current, &evidence);
         // Save the plan before model work. An interrupted comparison will use
         // exactly this evidence again, but cannot inherit an older approval.
         crate::features::learning::lesson_drafts::record_checkpoint(
@@ -403,6 +403,8 @@ pub(super) async fn select(
                 end_byte: 0,
                 retrieval_kind: "execution".into(),
                 score: 0.0,
+                branch: None,
+                branch_score: 0.0,
             }),
     );
     canonicalize_evidence(&mut evidence);

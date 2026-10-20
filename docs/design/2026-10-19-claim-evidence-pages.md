@@ -188,3 +188,20 @@ No new decision is needed. The one place a decision could arise is a weak model 
 | `corpus_shape/labeling.rs:27` | document previews share the room equally, "a larger window sees more of each document" | same problem, low stakes; worth a follow-up |
 | `compare/use_case.rs:40` | table cells from `window / 4` | fine as is |
 | `crates/lattice-core/.../grounded_generation/mod.rs:299-325` | the room planner itself | fine as is (a mechanism; callers decide how much to put in it) |
+
+## 13. After the eval
+
+The page-recall eval on the owner's lesson (90 supported claims, a 150-source course), after two fixes (the gap cut always cuts at the largest gap; ring 1 reads the lesson's own sources in depth):
+
+- 86 of 90 claims reach their cited passage; median 6k tokens read to reach it;
+- pages are too small: median 3k tokens, and reaching support takes up to 15 pages.
+
+Every page costs the judge one more answer. The owner's log puts that at ~130 output tokens per claim at ~11.3 tokens/s, about 11.5 s per claim per page, while prefill runs ~850 tokens/s. Modelled time is therefore worse than the old rule: the rule saves reading and spends it many times over on answers.
+
+The budget rule (approved by the owner): a deeper page holds the reading that costs as long as one more answer would,
+
+    tokens per page = answer tokens per claim × (prompt tokens/s ÷ output tokens/s)
+
+which is ~9.8k tokens on the logged run. Both speeds are the backend's own pace, measured from the timing it reports on the app's requests (llama.cpp `timings`, Ollama's eval durations, a cloud stream's first delta), never probed; the answer size is the job's running mean of output tokens per claim, reported by every judge call. Until both are known there is no budget. Relevance still decides the order and which passages qualify, and the window stays the hard bound. Page 1 keeps D1: it is built before any answer is measured, is cheap, and settles ~45% of claims.
+
+As built: the pace, the answer size and the budget are measured, and each deepening round logs the budget; pages are not yet sized by it. The owner has since chosen to replace the ring page structure (a page becomes the next top results of ranked hybrid search over the whole course, then web search when they run out); the budget is meant to size those pages. The eval reports modelled time with `LATTICE_PAGE_RECALL_PACE` (see `evals/grounding/README.md`).

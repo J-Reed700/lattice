@@ -1,5 +1,7 @@
-//! Claim evidence is paged: a share of a batch call first, deeper pages only
-//! for a claim still unsupported, while a page shares a content term.
+//! Claim evidence is paged by relevance (claim evidence pages design): the
+//! section's citations and the lesson's sources first, rings outward for a
+//! claim still unsupported, each page ending where its rankings' scores drop,
+//! and never a passage off the claim's subject.
 use super::*;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -8,14 +10,22 @@ const CLAIM: &str = "Mineral alpha shows property beta under pressure.";
 /// Shares one content term with the claim, so it ranks below the others.
 const MARKER: &str = "Laboratory records confirm the beta behaviour of the sample.";
 
+/// The ring fixtures' claim: none of its words is a function word or in
+/// [`FILLER`].
+const QUARTZ: &str = "Quartz zeta resists acid etching.";
+/// Filler with none of the claims' terms, thirty characters a unit.
+const FILLER: &str = "Survey logs are kept on file. ";
+
 /// A small window, so a page holds a few passages. Supports a claim only
-/// when it is shown the marker passage, and records what each check saw.
+/// when it is shown the marker passage, contradicts it when shown its
+/// `contrary` text, and records what each check saw, in the order read.
 struct PagingModel {
     inner: Model,
     window: usize,
     checks: Mutex<Vec<Vec<String>>>,
     /// The claim each check was asked about.
     claims: Mutex<Vec<String>>,
+    contrary: Option<&'static str>,
 }
 
 impl PagingModel {
@@ -25,6 +35,7 @@ impl PagingModel {
             window,
             checks: Mutex::new(Vec::new()),
             claims: Mutex::new(Vec::new()),
+            contrary: None,
         }
     }
 
@@ -45,12 +56,20 @@ impl PagingModel {
                 })
                 .collect();
             let found = passages.iter().position(|text| text.contains(MARKER));
+            let contrary = self
+                .contrary
+                .and_then(|contrary| passages.iter().position(|text| text.contains(contrary)));
             self.checks.lock().unwrap().push(passages);
-            return Ok(match found {
-                Some(index) => format!(
+            return Ok(match (found, contrary) {
+                (Some(index), _) => format!(
                     "supported\nReason: The records state it.\nSource passage: passage-{index}"
                 ),
-                None => "unsupported\nReason: No passage states this.\nSource passage: none".into(),
+                (None, Some(index)) => format!(
+                    "contradicted\nReason: The trials state otherwise.\nSource passage: passage-{index}"
+                ),
+                (None, None) => {
+                    "unsupported\nReason: No passage states this.\nSource passage: none".into()
+                }
             });
         }
         self.inner.respond(prompt).await
@@ -101,6 +120,66 @@ fn related(index: usize) -> LearningSourceDto {
     )
 }
 
+/// A source whose `regions` each sit inside one keyword chunk of their own,
+/// far enough apart that each widens to a passage of its own: every region
+/// is a candidate, ranked by its own words alone.
+fn regions(id: &str, regions: &[String]) -> LearningSourceDto {
+    // A chunk is 1,200 characters, one every 900: a region of at most 600
+    // characters, 300 into a block of 7,200, lies in that block's first chunk
+    // alone, and its widened passage never reaches the next region's.
+    let pad = |text: &mut String, to: usize| {
+        while text.len() < to {
+            let missing = to - text.len();
+            text.push_str(&FILLER[..missing.min(FILLER.len())]);
+        }
+    };
+    let mut text = String::new();
+    for region in regions {
+        assert!(region.len() <= 600);
+        let block = text.len();
+        pad(&mut text, block + 300);
+        text.push_str(region);
+        pad(&mut text, block + 7_200);
+    }
+    reference(id.into(), text)
+}
+
+/// A region stating the ring claim's terms three times over: it outranks a
+/// [`weak`] one by a clear gap. Regions of one kind rank exactly alike.
+fn strong(note: usize) -> String {
+    format!("Note {note:03}: quartz zeta resists acid etching, quartz zeta resists acid etching, quartz zeta resists acid etching.")
+}
+
+fn weak(note: usize) -> String {
+    format!("Note {note:03}: quartz zeta resists acid etching.")
+}
+
+/// A weak region that also holds the marker the fixture supports.
+fn marked(note: usize) -> String {
+    format!("Note {note:03}: quartz zeta resists acid etching. {MARKER}")
+}
+
+/// A region with none of the claim's terms: what a section cites.
+fn cited(note: usize) -> String {
+    format!("Note {note:03}: the section cites this record.")
+}
+
+fn quartz_inventory() -> Inventory {
+    inventory(&[QUARTZ.into()])
+}
+
+fn identities(page: &[EvidencePassage]) -> Vec<(String, usize, usize)> {
+    page.iter()
+        .map(|passage| {
+            (
+                passage.source_id.clone(),
+                passage.start_byte,
+                passage.end_byte,
+            )
+        })
+        .collect()
+}
+
 fn inventory(statements: &[String]) -> Inventory {
     Inventory {
         units: vec![UnitClaims {
@@ -118,27 +197,128 @@ fn inventory(statements: &[String]) -> Inventory {
 }
 
 #[tokio::test]
-async fn a_claim_backed_only_past_its_first_page_is_found_by_deepening() -> Result<()> {
-    // The marker passage shares one term with the claim, so it ranks last.
-    let mut sources: Vec<_> = (0..8).map(related).collect();
-    sources.push(reference(
-        "marker".into(),
-        format!("{} {MARKER}", "Archive index entry. ".repeat(80)),
-    ));
+async fn a_page_does_not_grow_with_the_window() -> Result<()> {
+    let mut sources: Vec<_> = (0..2)
+        .map(|index| regions(&format!("strong-{index}"), &[strong(index)]))
+        .collect();
+    sources.extend((0..4).map(|index| regions(&format!("weak-{index}"), &[weak(10 + index)])));
     let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(6_000);
-    let first = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
-    assert!(!first.is_empty());
-    assert!(
-        first.iter().all(|passage| !passage.text.contains(MARKER)),
-        "the fixture must put the support past page 1"
-    );
+    let narrow = evidence_for(&PagingModel::new(32_000), QUARTZ, 0, &references, &[]).await?;
+    let wide = evidence_for(&PagingModel::new(128_000), QUARTZ, 0, &references, &[]).await?;
+    assert_eq!(identities(&narrow), identities(&wide));
+    // The page ends at the drop in relevance, not where the room runs out.
+    assert_eq!(narrow.len(), 2);
+    assert!(narrow
+        .iter()
+        .all(|passage| passage.source_id.starts_with("strong-")));
+    Ok(())
+}
 
+#[tokio::test]
+async fn no_page_holds_an_off_subject_passage_even_with_room() -> Result<()> {
+    // The other sources share only "quartz", which is commoner across the
+    // collection than the claim's other terms.
+    let mut sources = vec![regions("weak", &[weak(1)])];
+    sources.extend((0..5).map(|index| {
+        regions(
+            &format!("off-{index}"),
+            &[format!(
+                "Note {:03}: quartz crystals were catalogued.",
+                10 + index
+            )],
+        )
+    }));
+    let references = ReferenceCollection::lexical(&sources)?;
+    assert!(!references.mentions_subject_of(QUARTZ, "Note 010: quartz crystals were catalogued."));
+    let model = PagingModel::new(32_000);
+    let results = evidence_checks::check(
+        &model,
+        &references,
+        &quartz_inventory(),
+        &[],
+        &ClaimChecks::default(),
+    )
+    .await?;
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(
+        checks.len(),
+        1,
+        "nothing on the subject is left after page 1"
+    );
+    assert_eq!(checks[0].len(), 1);
+    assert!(checks
+        .iter()
+        .flatten()
+        .all(|text| !text.contains("catalogued")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn page_one_holds_the_section_citation_and_the_lesson_sources_above_the_cut() -> Result<()> {
+    // Source A holds the section's citation and a weak passage; source B,
+    // which another section cites, a strong one. Six more sources, uncited,
+    // are as strong as B.
+    let mut sources = vec![
+        regions("cited-a", &[cited(1), weak(2)]),
+        regions("cited-b", &[strong(3)]),
+    ];
+    sources.extend((0..6).map(|index| regions(&format!("other-{index}"), &[strong(100 + index)])));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let section = references.cited_passages(&["Note 001: the section cites this record."])?;
+    let elsewhere = references.cited_passages(&["Note 003: quartz zeta"])?;
+    let citations = Citations::new(
+        HashMap::from([(0, section), (1, elsewhere)]),
+        HashMap::new(),
+    );
+    let model = PagingModel::new(6_000);
+
+    let page = first_page(&model, QUARTZ, 0, &references, &[], &citations).await?;
+    assert_eq!(page.len(), 2, "{page:?}");
+    assert!(page
+        .iter()
+        .any(|p| p.retrieval_kind == CITED && p.text.contains("the section cites this record")));
+    assert!(page
+        .iter()
+        .any(|p| p.source_id == "cited-b" && p.text.contains("Note 003")));
+    // A's weak passage lies below the cut and waits; the uncited sources
+    // wait for ring 2.
+    assert!(page.iter().all(|p| !p.text.contains("Note 002")));
+    assert!(page.iter().all(|p| !p.source_id.starts_with("other-")));
+
+    evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &quartz_inventory(),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks[0].len(), 2);
+    assert!(checks[0][0].contains("the section cites this record"));
+    assert!(checks[0][1].contains("Note 003"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn rings_run_to_exhaustion_before_the_deeper_pages() -> Result<()> {
+    // Three strong sources; one weak source, below the cut on page 1; and a
+    // source whose strong passage is on page 1 and whose marked one, as weak
+    // as the weak source's, only a deeper page reaches.
+    let mut sources: Vec<_> = (0..3)
+        .map(|index| regions(&format!("strong-{index}"), &[strong(index)]))
+        .collect();
+    sources.push(regions("weak", &[weak(10)]));
+    sources.push(regions("deep", &[strong(20), marked(21)]));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(32_000);
     let (results, activity) =
         crate::features::learning::lesson_progress::observed(evidence_checks::check(
             &model,
             &references,
-            &inventory(&[CLAIM.into()]),
+            &quartz_inventory(),
             &[],
             &ClaimChecks::default(),
         ))
@@ -155,122 +335,124 @@ async fn a_claim_backed_only_past_its_first_page_is_found_by_deepening() -> Resu
         (1, 1, 0),
         "The deeper page's support resolves the claim without a second check"
     );
-    assert_eq!(activity.deeper_evidence, None);
-    assert!(results[0]
-        .2
-        .evidence
+    let checks = model.checks.lock().unwrap().clone();
+    assert_eq!(checks.len(), 3, "page 1, the rest of ring 2, a deeper page");
+    assert_eq!(checks[0].len(), 4);
+    assert!(checks[0]
         .iter()
-        .any(|p| p.text.contains(MARKER)));
-    let checks = model.checks.lock().unwrap();
-    assert!(checks.len() >= 2, "page 1, then at least one deeper page");
+        .all(|text| !text.contains("Note 010") && !text.contains(MARKER)));
+    assert_eq!(checks[1].len(), 1);
+    assert!(
+        checks[1][0].contains("Note 010"),
+        "ring 2 ends before the deeper pages"
+    );
+    assert_eq!(checks[2].len(), 1);
+    assert!(checks[2][0].contains(MARKER));
     // No page repeats a passage an earlier page showed.
     let shown: Vec<&String> = checks.iter().flatten().collect();
     let unique: HashSet<&String> = shown.iter().copied().collect();
     assert_eq!(shown.len(), unique.len());
-    Ok(())
-}
 
-#[tokio::test]
-async fn a_claim_with_no_content_term_past_its_first_page_stops_there() -> Result<()> {
-    // Three passages share content terms; the rest share only "under".
-    let mut sources: Vec<_> = (0..3).map(related).collect();
-    sources.extend((0..10).map(|index| {
-        reference(
-            format!("function-{index}"),
-            format!(
-                "Item {index} sits under the shelf. {}",
-                "Unrelated filler text. ".repeat(80)
-            ),
-        )
-    }));
+    // With nothing on the subject left after ring 2, the walk ends there.
+    sources.pop();
     let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(6_000);
-    let first = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
-    let share = claim_share(&model, CLAIM, 1);
-    let (next, _) = references
-        .verification_page(CLAIM, &first, |page| {
-            within_share(&model, share, page.iter())
-        })
-        .await?;
-    assert!(!next.is_empty(), "the fixture must leave a second page");
-    assert!(next
-        .iter()
-        .all(|p| !references.mentions_subject_of(CLAIM, &p.text)));
-
+    let model = PagingModel::new(32_000);
     let results = evidence_checks::check(
         &model,
         &references,
-        &inventory(&[CLAIM.into()]),
+        &quartz_inventory(),
         &[],
         &ClaimChecks::default(),
     )
     .await?;
-
     assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
-    assert_eq!(
-        model.checks.lock().unwrap().len(),
-        1,
-        "only page 1 was checked"
-    );
+    assert_eq!(model.checks.lock().unwrap().len(), 2);
     Ok(())
 }
 
 #[tokio::test]
-async fn each_claim_in_a_batch_call_stays_within_its_share() -> Result<()> {
-    let sources: Vec<_> = (0..40).map(related).collect();
+async fn the_group_stop_applies_only_on_the_deeper_pages() -> Result<()> {
+    // The lesson cites a strong and a weak source; the support is the best
+    // passage of a source it does not cite.
+    let sources = vec![
+        regions("cited-strong", &[strong(1)]),
+        regions("cited-weak", &[weak(2)]),
+        regions("uncited", &[marked(3)]),
+    ];
     let references = ReferenceCollection::lexical(&sources)?;
+    let elsewhere =
+        references.cited_passages(&["Note 001: quartz zeta", "Note 002: quartz zeta"])?;
+    assert_eq!(elsewhere.len(), 2);
+    let citations = Citations::new(HashMap::from([(1, elsewhere)]), HashMap::new());
     let model = PagingModel::new(32_000);
-    let statements: Vec<String> = (0..8)
-        .map(|index| format!("Mineral alpha shows property beta in sample {index}."))
-        .collect();
-    let alone = evidence_for(&model, &statements[0], 0, &references, &[], 1).await?;
-    for statement in &statements {
-        let share = claim_share(&model, statement, 8);
-        let evidence = evidence_for(&model, statement, 0, &references, &[], 8).await?;
-        assert!(!evidence.is_empty());
-        assert!(within_share(&model, share, evidence.iter()));
-        assert!(
-            evidence.len() < alone.len(),
-            "a shared call gives each claim less"
-        );
-    }
-    // Every batch request the check sends fits the window.
-    evidence_checks::check(
+    let results = evidence_checks::check_with_citations(
         &model,
         &references,
-        &inventory(&statements),
+        &quartz_inventory(),
         &[],
         &ClaimChecks::default(),
+        &citations,
     )
     .await?;
-    assert!(model.checks.lock().unwrap().len() >= statements.len());
+    let checks = model.checks.lock().unwrap();
+    // Page 1 is the strong cited source; the weak one, below the cut, is
+    // page 2, a round that settles nothing; ring 2 still runs.
+    assert_eq!(checks.len(), 3);
+    assert!(checks[0].iter().all(|text| text.contains("Note 001")));
+    assert!(checks[1].iter().all(|text| text.contains("Note 002")));
+    assert!(checks[2][0].contains(MARKER));
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
     Ok(())
 }
 
 #[tokio::test]
-async fn deepening_stops_after_a_round_that_settles_nothing() -> Result<()> {
-    // Plenty of deeper pages mention the claim's subject, but none settles it.
-    let sources: Vec<_> = (0..20).map(related).collect();
+async fn a_counter_page_finds_another_value_of_the_subject_from_ring_two_on() -> Result<()> {
+    const COUNTED: &str = "Quartz zeta resists acid etching for 40 hours.";
+    const CONTRARY: &str = "etching for 12 hours";
+    // The support query ranks the passage that repeats the claim's number
+    // first; the contrary passage lies in the same source, so ring 2 never
+    // takes it, and an uncited weak source is ring 2's second page.
+    let sources = vec![
+        regions(
+            "repeats",
+            &[
+                "Note 001: quartz zeta resists acid etching for 40 hours, quartz zeta resists acid etching for 40 hours.".into(),
+                format!("Note 002: quartz zeta resists acid {CONTRARY}."),
+            ],
+        ),
+        regions(
+            "other",
+            &["Note 003: quartz zeta resists acid etching for 40 hours.".into()],
+        ),
+    ];
     let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(6_000);
-    let (results, activity) =
-        crate::features::learning::lesson_progress::observed(evidence_checks::check(
-            &model,
-            &references,
-            &inventory(&[CLAIM.into()]),
-            &[],
-            &ClaimChecks::default(),
-        ))
-        .await;
-    let results = results?;
-    assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
-    // Page 1, then one deepening round that settled nothing, then stop.
-    assert_eq!(model.checks.lock().unwrap().len(), 2);
-    assert_eq!(
-        (activity.checks_completed, activity.checks_unresolved),
-        (1, 1),
-        "A claim unsupported on two pages needs attention once"
-    );
+    let page = evidence_for(&PagingModel::new(32_000), COUNTED, 0, &references, &[]).await?;
+    assert!(page
+        .iter()
+        .all(|p| p.retrieval_kind != citations::COUNTER && !p.text.contains(CONTRARY)));
+
+    let model = PagingModel {
+        contrary: Some(CONTRARY),
+        ..PagingModel::new(32_000)
+    };
+    let results = evidence_checks::check(
+        &model,
+        &references,
+        &inventory(&[COUNTED.into()]),
+        &[],
+        &ClaimChecks::default(),
+    )
+    .await?;
+    assert_eq!(results[0].2.verdict, ClaimVerdict::Contradicted);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks.len(), 2);
+    assert!(checks[0].iter().all(|text| !text.contains(CONTRARY)));
+    assert!(checks[1].iter().any(|text| text.contains(CONTRARY)));
+    assert!(results[0]
+        .2
+        .evidence
+        .iter()
+        .any(|p| p.retrieval_kind == citations::COUNTER && p.text.contains(CONTRARY)));
     Ok(())
 }
 
@@ -305,8 +487,9 @@ async fn a_claim_whose_section_cites_its_support_is_settled_on_page_one() -> Res
     let sources = marker_collection();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
-    // Retrieval alone ranks the support past page 1.
-    let retrieved = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    // Retrieval alone never shows the support: it shares no distinctive
+    // term with the claim.
+    let retrieved = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
     assert!(retrieved.iter().all(|p| !p.text.contains(MARKER)));
     let citations = Citations::new(
         HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
@@ -358,7 +541,7 @@ async fn another_sections_citations_are_not_added() -> Result<()> {
 }
 
 #[tokio::test]
-async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
+async fn cited_passages_keep_citation_order_within_the_window() -> Result<()> {
     let sources: Vec<_> = (0..12).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
@@ -369,17 +552,16 @@ async fn cited_passages_keep_citation_order_within_the_share() -> Result<()> {
     let quotes: Vec<&str> = quotes.iter().map(String::as_str).collect();
     let cited = references.cited_passages(&quotes)?;
     assert_eq!(cited.len(), 12);
-    let share = claim_share(&model, CLAIM, 1);
     assert!(
-        !within_share(&model, share, cited.iter()),
+        !fits_window(&model, CLAIM, &cited),
         "the fixture must overflow"
     );
 
     let citations = Citations::new(HashMap::from([(0, cited.clone())]), HashMap::new());
-    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    let page = first_page(&model, CLAIM, 0, &references, &[], &citations).await?;
 
-    assert!(within_share(&model, share, page.iter()));
     let taken: Vec<_> = page.iter().filter(|p| p.retrieval_kind == CITED).collect();
+    assert!(fits_window(&model, CLAIM, taken.iter().copied()));
     assert!(!taken.is_empty() && taken.len() < cited.len());
     // The first cited passages in citation order, the rest left for page 2.
     let expected: HashSet<_> = cited[..taken.len()].iter().map(|p| &p.source_id).collect();
@@ -464,41 +646,30 @@ async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_
 }
 
 #[tokio::test]
-async fn research_found_for_a_claim_leads_its_full_first_page_and_is_rechecked() -> Result<()> {
-    let sources: Vec<_> = (0..12).map(related).collect();
+async fn research_found_for_a_claim_above_the_cut_leads_its_page_and_is_rechecked() -> Result<()> {
+    let sources: Vec<_> = (0..3)
+        .map(|index| regions(&format!("strong-{index}"), &[strong(index)]))
+        .collect();
     let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(6_000);
-    let claims = inventory(&[CLAIM.into()]);
+    let model = PagingModel::new(32_000);
+    let claims = quartz_inventory();
     let mut retained = ClaimChecks::default();
     let first = evidence_checks::check(&model, &references, &claims, &[], &retained).await?;
     assert_eq!(first[0].2.verdict, ClaimVerdict::Unsupported);
-    let share = claim_share(&model, CLAIM, 1);
-    let first_page = first[0].2.evidence.clone();
     let findings: Vec<_> = first.iter().map(|result| result.2.clone()).collect();
     for (_, key, finding, _) in first {
         retained.record(key, &finding);
     }
     let checks_before = model.checks.lock().unwrap().len();
 
-    // Research saves a source that states the claim, in a passage longer
-    // than any room the first page leaves.
+    // Research saves a source with a strong passage that states the claim
+    // and a weak one, below the cut.
     let mut expanded_sources = sources.clone();
-    let archive = "Archive index entry. ".repeat(80);
-    expanded_sources.push(reference(
-        "marker".into(),
-        format!("{archive} {MARKER} {archive}"),
+    expanded_sources.push(regions(
+        "research",
+        &[format!("{} {MARKER}", strong(10)), weak(11)],
     ));
     let expanded = ReferenceCollection::lexical(&expanded_sources)?;
-    assert!(
-        !within_share(
-            &model,
-            share,
-            first_page
-                .iter()
-                .chain(&expanded.cited_passages(&[MARKER])?)
-        ),
-        "the fixture's first page has no room left for the new passage"
-    );
     evidence_selection::record_research_scope(&expanded, &findings, &retained).await?;
     let second = evidence_checks::check(&model, &expanded, &claims, &[], &retained).await?;
 
@@ -511,7 +682,9 @@ async fn research_found_for_a_claim_leads_its_full_first_page_and_is_rechecked()
         recheck[0].contains(MARKER),
         "what research found comes first"
     );
-    assert!(within_share(&model, share, second[0].2.evidence.iter()));
+    assert!(recheck.iter().all(|text| !text.contains("Note 011")));
+    // The earlier page follows.
+    assert_eq!(recheck.len(), 4);
     Ok(())
 }
 
@@ -529,11 +702,11 @@ async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Resu
         page.iter()
             .position(|passage| passage.source_id == "lesson-source")
     };
-    let course_wide = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    let course_wide = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
     assert_eq!(
         from_lesson(&course_wide),
         None,
-        "course-wide ranking puts the lesson's source past page 1"
+        "course-wide, the lesson's source ranks below the cut"
     );
     // Another section of the lesson cites that source.
     let citations = Citations::new(
@@ -543,17 +716,12 @@ async fn a_claim_sees_the_lesson_sources_before_the_rest_of_the_course() -> Resu
         )]),
         HashMap::new(),
     );
-    let page = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    let page = first_page(&model, CLAIM, 0, &references, &[], &citations).await?;
     assert!(
         from_lesson(&page).is_some(),
         "the lesson's source is retrieved before the course's"
     );
-    assert!(page.len() > 1, "the course fills the room left");
-    assert!(within_share(
-        &model,
-        claim_share(&model, CLAIM, 1),
-        page.iter()
-    ));
+    assert_eq!(page.len(), 1, "the rest of the course waits for ring 2");
     Ok(())
 }
 
@@ -619,7 +787,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
         HashMap::new(),
     );
     let claims = inventory(&[CLAIM.into()]);
-    let evidence = first_page(&model, CLAIM, 0, &references, &[], 1, &citations).await?;
+    let evidence = first_page(&model, CLAIM, 0, &references, &[], &citations).await?;
     // The same comparison, keyed as the evidence challenge keyed it, where
     // the challenge had overturned its approval.
     let comparison = ClaimChecks::key(0, &claims.units[0].claims[0], &evidence);
@@ -735,13 +903,14 @@ impl LLMPort for DenseModel {
 
 #[tokio::test]
 async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> Result<()> {
-    let sources: Vec<_> = (0..14).map(related).collect();
+    // Ten sources that rank alike: no gap ends page 1 before the window.
+    let sources: Vec<_> = (0..10).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = DenseModel {
         paging: PagingModel::new(6_000),
         refused: Default::default(),
     };
-    let first = evidence_for(&model, CLAIM, 0, &references, &[], 1).await?;
+    let first = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
     let results = evidence_checks::check(
         &model,
         &references,
@@ -790,6 +959,8 @@ fn ranked_passage(kind: &str, score: f64, text: &str) -> EvidencePassage {
         end_byte: text.len(),
         retrieval_kind: kind.into(),
         score,
+        branch: None,
+        branch_score: 0.0,
     }
 }
 
@@ -805,6 +976,108 @@ fn a_page_loses_its_least_needed_passages_not_its_last() {
         ranked_passage("lexical", 1.0 / 62.0, "second-ranked"),
     ];
     assert_eq!(ranking(&page), vec![1, 0, 3, 4, 2]);
+    // The judge reads the cited passage first, the researched one last, and
+    // the least needed retrieved passage at the centre.
+    assert_eq!(reading_order(&page), vec![1, 3, 2, 4, 0]);
+}
+
+#[test]
+fn the_judge_reads_cited_passages_at_the_edges_and_the_key_stays_canonical() {
+    let mut page = vec![
+        ranked_passage(CITED, 0.0, "first cited"),
+        ranked_passage("lexical", 0.3, "third retrieved"),
+        ranked_passage(CITED, 0.0, "second cited"),
+        ranked_passage("lexical", 0.5, "first retrieved"),
+        ranked_passage("lexical", 0.4, "second retrieved"),
+    ];
+    let reading = reading_order(&page);
+    assert_eq!(reading, vec![0, 3, 1, 4, 2]);
+    let read: Vec<&str> = reading.iter().map(|at| page[*at].text.as_str()).collect();
+    assert_eq!(
+        read,
+        [
+            "first cited",
+            "first retrieved",
+            "third retrieved",
+            "second retrieved",
+            "second cited"
+        ]
+    );
+    // The comparison is keyed on the canonical page, whatever order the
+    // judge read it in.
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: CLAIM.into(),
+    };
+    let mut read_page: Vec<_> = reading.iter().map(|at| page[*at].clone()).collect();
+    canonicalize_evidence(&mut page);
+    canonicalize_evidence(&mut read_page);
+    assert_eq!(
+        ClaimChecks::key(0, &claim, &read_page),
+        ClaimChecks::key(0, &claim, &page)
+    );
+}
+
+#[tokio::test]
+async fn the_judge_receives_the_page_in_reading_order() -> Result<()> {
+    let mut sources = vec![regions("cited", &[cited(1), cited(2)])];
+    sources.extend((0..3).map(|index| regions(&format!("strong-{index}"), &[strong(10 + index)])));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let section = references.cited_passages(&[
+        "Note 001: the section cites this record.",
+        "Note 002: the section cites this record.",
+    ])?;
+    assert_eq!(section.len(), 2);
+    let citations = Citations::new(HashMap::from([(0, section)]), HashMap::new());
+    let model = PagingModel::new(32_000);
+    evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &quartz_inventory(),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks[0].len(), 5);
+    assert!(checks[0][0].contains("Note 001"), "{:?}", checks[0]);
+    assert!(checks[0][4].contains("Note 002"), "{:?}", checks[0]);
+    Ok(())
+}
+
+#[test]
+fn branch_scores_are_no_part_of_a_comparison_or_its_selection() {
+    let passage = ranked_passage("lexical_fallback", 1.0 / 61.0, "a ranked passage");
+    let rescored = EvidencePassage {
+        branch: Some(crate::features::learning::reference_collection::Branch::Keyword),
+        branch_score: 7.5,
+        ..passage.clone()
+    };
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: CLAIM.into(),
+    };
+    let key = ClaimChecks::key(0, &claim, std::slice::from_ref(&passage));
+    assert_eq!(
+        ClaimChecks::key(0, &claim, std::slice::from_ref(&rescored)),
+        key
+    );
+    let model = PagingModel::new(6_000);
+    assert_eq!(
+        claim_receipt_key(&model, &key),
+        claim_receipt_key(
+            &model,
+            &ClaimChecks::key(0, &claim, std::slice::from_ref(&rescored))
+        )
+    );
+    let saved = |page: &[EvidencePassage]| {
+        serde_json::to_string(&evidence_selection::selection_of(&[], page)).unwrap()
+    };
+    assert_eq!(
+        saved(std::slice::from_ref(&passage)),
+        saved(std::slice::from_ref(&rescored))
+    );
 }
 
 #[test]

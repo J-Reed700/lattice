@@ -242,6 +242,8 @@ mod tests {
             end_byte: 11,
             retrieval_kind: "lexical".into(),
             score: 1.0,
+            branch: None,
+            branch_score: 0.0,
         });
         assert!(report.learner_view(&lesson, &[]).is_err());
         report.findings[0].evidence[0].retrieval_kind = "execution".into();

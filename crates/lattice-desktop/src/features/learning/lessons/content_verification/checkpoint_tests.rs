@@ -394,7 +394,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         }],
     };
     let claim = &inventory.units[0].claims[0];
-    let evidence = evidence_for(&model, GOOD, 0, &references, &[], 2).await?;
+    let evidence = evidence_for(&model, GOOD, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let candidate = candidate(GOOD);
     // The server cannot finish the group, so the claims are checked one at a
@@ -629,6 +629,8 @@ fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts()
         end_byte: GOOD.len(),
         retrieval_kind: "test".into(),
         score: 0.0,
+        branch: None,
+        branch_score: 0.0,
     }];
     for (verdict, policy, reusable) in [
         (ClaimVerdict::Supported, None, true),

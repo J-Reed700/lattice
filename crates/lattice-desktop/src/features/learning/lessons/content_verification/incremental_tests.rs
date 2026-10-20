@@ -168,7 +168,7 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         let collection = ReferenceCollection::lexical(&sources)?;
         let original = claims(1);
         let claim = &original.units[0].claims[0];
-        let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[], 1).await?;
+        let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[]).await?;
         let passages: Vec<_> = evidence.iter().map(|p|(&p.source_id,&p.text,p.start_byte,p.end_byte)).collect();
         let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
@@ -357,12 +357,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
 async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    // Long sources that rank equally: a claim's evidence fills the checker's
-    // window with some of them, so reordering the collection changes which.
     let mut sources = references(10);
-    for (index, source) in sources.iter_mut().enumerate() {
-        source.excerpt = format!("mineral0 property0 note{index} ").repeat(3000);
-    }
     let model = IncrementalModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
         let first = evidence_checks::check(
@@ -373,21 +368,39 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
             &ClaimChecks::default(),
         )
         .await?;
+        // The collection reorders and grows by a source researched for
+        // another claim, which ranks above the claim's own for its words.
         sources.reverse();
         sources.push(LearningSourceDto {
-            id: "unrelated".into(),
-            title: "Other topic".into(),
+            id: "researched-for-another".into(),
+            title: "Other research".into(),
             url: None,
-            excerpt: "galaxies nebulae".into(),
+            excerpt: "mineral0 property0 mineral0 property0".into(),
             acquired_at: 1,
         });
         let references = ReferenceCollection::lexical(&sources)?;
-        let fresh = evidence_for(&model, "mineral0 property0", 0, &references, &[], 1).await?;
+        evidence_selection::record_research_scope(
+            &references,
+            &[Finding {
+                unit: 5,
+                quote: "mineral5 property5".into(),
+                statement: "mineral5 property5".into(),
+                verdict: ClaimVerdict::Unsupported,
+                reason: "Targeted research for another claim.".into(),
+                evidence: Vec::new(),
+                supporting_quote: None,
+                resolution: None,
+                trust: None,
+            }],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        let fresh = evidence_for(&model, "mineral0 property0", 0, &references, &[]).await?;
         let claim = &claims(1).units[0].claims[0];
         assert_ne!(
             ClaimChecks::key(0, claim, &fresh),
             ClaimChecks::key(0, claim, &first[0].2.evidence),
-            "The fixture must actually change the old global retrieval results"
+            "The fixture must actually change the claim's fresh retrieval"
         );
         let resumed = evidence_checks::check(
             &model,
@@ -403,6 +416,66 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
             ClaimChecks::key(0, claim, &resumed[0].2.evidence),
             ClaimChecks::key(0, claim, &first[0].2.evidence)
         );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_selection_saved_under_another_ranking_is_rebuilt_once() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = references(3);
+    let model = IncrementalModel::default();
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let references = ReferenceCollection::lexical(&sources)?;
+        let claim = &claims(1).units[0].claims[0];
+        // A selection the former ranking saved for this claim, pointing at a
+        // passage the claim's words are not in: restored, the scripted
+        // checker would refuse it.
+        let stale = format!(
+            "claim-evidence-v2:{}",
+            digest(
+                &json!({
+                    "policy": POLICY, "model": model.model_name(),
+                    "context": model.max_context_tokens(), "unit": 0,
+                    "statement": claim.statement, "retrieval": references.mode(),
+                    "embedding": references.embedding_model(),
+                    "ranking": "lesson-sources-first",
+                })
+                .to_string()
+            )
+        );
+        lesson_drafts::record_checkpoint(
+            &stale,
+            serde_json::to_value(evidence_selection::selection_of(
+                &evidence_selection::sources(&references),
+                &evidence_for(&model, "mineral1 property1", 0, &references, &[]).await?,
+            ))?,
+        )
+        .await?;
+        let first = evidence_checks::check(
+            &model,
+            &references,
+            &claims(1),
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(first[0].2.verdict, ClaimVerdict::Supported);
+        assert!(first[0].2.evidence[0].text.contains("mineral0 property0"));
+        assert_eq!(model.calls.lock().unwrap().len(), 1);
+        // Rebuilt once: a second pass with unchanged sources makes no call.
+        let second = evidence_checks::check(
+            &model,
+            &references,
+            &claims(1),
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert!(second[0].3);
+        assert_eq!(model.calls.lock().unwrap().len(), 1);
         Ok(())
     })
     .await

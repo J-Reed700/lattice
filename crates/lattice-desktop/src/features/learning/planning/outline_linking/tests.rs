@@ -352,6 +352,8 @@ fn quotes_are_whole_sentences_within_the_limit_and_never_fragments() {
         end_byte: end,
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     };
     // Too long: trimmed to whole sentences under the limit.
     let quote = citable_span(
@@ -382,6 +384,8 @@ fn quotes_are_whole_sentences_within_the_limit_and_never_fragments() {
         end_byte: quoted.len(),
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     };
     assert_eq!(last_sentence_end(quoted), Some(quoted.len()));
     assert_eq!(
@@ -404,6 +408,8 @@ fn quotes_are_prose_and_never_headings_navigation_tables_or_link_lists() {
         end_byte: excerpt.len(),
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     };
     // The run sharing the item's terms wins; it keeps its inline link text.
     let quote = citable_span(

@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::learning::lessons::content_verification::{
-    bank_tokens, claim_share, evidence_policy, judge_for_publication, ranking, shown_of,
+    evidence_policy, fits_window, judge_for_publication, ranking, shown_of,
 };
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 
@@ -26,14 +26,9 @@ pub(super) async fn passages_from(
     source_version_id: &str,
     statement: &str,
 ) -> Result<Vec<ReferencePassage>> {
-    let room = claim_share(llm, statement, 1);
     let page = references
         .retrieve_from(source_version_id, statement, |passages| {
-            passages
-                .iter()
-                .map(|passage| bank_tokens(llm, &passage.text))
-                .sum::<usize>()
-                <= room
+            fits_window(llm, statement, passages)
         })
         .await?;
     Ok(page
@@ -67,6 +62,8 @@ pub(super) fn picked_passage(
         end_byte,
         retrieval_kind: "user_selected".into(),
         score: 0.0,
+        branch: None,
+        branch_score: 0.0,
     })
 }
 
@@ -84,11 +81,13 @@ pub(super) async fn judge(
         .iter()
         .map(|passage| passage.text.clone())
         .collect();
-    let (judgment, shown) = judge_for_publication(llm, statement, &texts, &ranking(passages)).await;
+    let page_order: Vec<usize> = (0..texts.len()).collect();
+    let judged =
+        judge_for_publication(llm, statement, &texts, &ranking(passages), &page_order).await;
     // A passage cut for the judge's window was never compared with the
     // claim: the check names only those it was shown.
-    let passages = &shown_of(passages, &shown);
-    let (result, reason) = match judgment {
+    let passages = &shown_of(passages, &judged.shown);
+    let (result, reason) = match judged.judgment {
         ClaimJudgment::Judged(outcome) => {
             let reason = outcome.reason.unwrap_or_default();
             let result = match outcome.verdict {

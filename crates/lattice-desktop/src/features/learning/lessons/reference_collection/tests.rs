@@ -32,6 +32,8 @@ fn verification_windows_restore_conditions_without_changing_source_bytes() -> Re
         end_byte: start + target.len(),
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     };
     let expanded = collection.verification_context(vec![hit.clone(), hit.clone()])?;
     assert_eq!(
@@ -77,6 +79,8 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
             end_byte: start + target.len(),
             retrieval_kind: "lexical_fallback".into(),
             score: 1.0,
+            branch: None,
+            branch_score: 0.0,
         }
     });
     let expanded = collection.verification_context(passages.into())?;
@@ -484,5 +488,167 @@ async fn retrieve_from_reads_one_source_version_only() -> Result<()> {
         .retrieve_from("not-in-the-course", "water boils", |_| true)
         .await?
         .is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn retrieved_passages_carry_their_branch_and_its_score() -> Result<()> {
+    let pool = tests::pool().await?;
+    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    let library = FakeLibrary::default()
+        .with_document("doc-ownership", &OWNERSHIP)
+        .with_document("doc-plants", &PLANTS);
+    let collection = ReferenceCollection::load(&pool, &id, &sources, Some(&library)).await?;
+    let library_hit = &collection.retrieve("borrowing", 1).await?[0];
+    assert_eq!(library_hit.branch, Some(Branch::Library));
+    assert_eq!(library_hit.branch_score, 1.0, "the library's own score");
+    let keyword_hit = &collection.retrieve("pastry crust", 1).await?[0];
+    assert_eq!(keyword_hit.branch, Some(Branch::Keyword));
+    assert!(keyword_hit.branch_score > 0.0, "its BM25 score");
+    // The position score is still the merged rank, whatever the branch.
+    assert_eq!(library_hit.score, 1.0 / 61.0);
+    assert_eq!(keyword_hit.score, 1.0 / 61.0);
+    Ok(())
+}
+
+#[test]
+fn a_merged_window_ranks_as_the_better_of_its_hits() -> Result<()> {
+    let text = format!(
+        "{}first matching fact\n{}second matching caveat\n{}",
+        "préfixe ".repeat(400),
+        "background ".repeat(250),
+        "suffix ".repeat(400)
+    );
+    let collection = ReferenceCollection::lexical(&[LearningSourceDto {
+        id: "reference".into(),
+        title: "Procedure".into(),
+        url: None,
+        excerpt: text.clone(),
+        acquired_at: 1,
+    }])?;
+    let hit = |target: &str, score: f64, branch_score: f64| {
+        let start = text.find(target).unwrap();
+        ReferencePassage {
+            source_id: "reference".into(),
+            text: target.into(),
+            start_byte: start,
+            end_byte: start + target.len(),
+            retrieval_kind: "lexical_fallback".into(),
+            score,
+            branch: Some(Branch::Keyword),
+            branch_score,
+        }
+    };
+    let merged = collection.verification_context(vec![
+        hit("first matching fact", 1.0 / 62.0, 3.0),
+        hit("second matching caveat", 1.0 / 61.0, 5.0),
+    ])?;
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].score, 1.0 / 61.0);
+    assert_eq!(merged[0].branch_score, 5.0);
+    Ok(())
+}
+
+#[test]
+fn a_page_ends_after_the_largest_gap_in_its_scores() {
+    // One drop larger than the rest of the descent together: a clear gap.
+    let plain = [10.0, 9.5, 9.0, 2.0, 1.5];
+    assert_eq!(pages::gap_cut(&plain), Some(3));
+    assert!(pages::gap_is_clear(&plain));
+    // A smooth descent still ends at its largest drop; the gap is not clear.
+    let smooth = [10.0, 7.0, 5.0, 2.0];
+    assert_eq!(pages::gap_cut(&smooth), Some(1));
+    assert!(!pages::gap_is_clear(&smooth));
+    // Equal drops and equal scores cut after the first.
+    assert_eq!(pages::gap_cut(&[10.0, 8.0, 6.0, 4.0]), Some(1));
+    assert_eq!(pages::gap_cut(&[3.0, 3.0, 3.0]), Some(1));
+    // One candidate passes; of two, the first only.
+    assert_eq!(pages::gap_cut(&[5.0]), None);
+    assert_eq!(pages::gap_cut(&[5.0, 3.0]), Some(1));
+    assert_eq!(pages::gap_cut(&[]), None);
+    // A drop deep in a list whose head is flat is the knee.
+    let knee = [5.0, 5.0, 5.0, 5.0, 5.0, 1.0, 0.9, 0.8];
+    assert_eq!(pages::gap_cut(&knee), Some(5));
+    assert!(pages::gap_is_clear(&knee));
+}
+
+#[test]
+fn each_branch_is_cut_on_its_own_scores() {
+    let candidate = |id: &str, branch: Branch, branch_score: f64| ReferencePassage {
+        source_id: id.into(),
+        text: id.into(),
+        start_byte: 0,
+        end_byte: id.len(),
+        retrieval_kind: "hybrid".into(),
+        score: 0.0,
+        branch: Some(branch),
+        branch_score,
+    };
+    let (above, gaps) = above_cut(vec![
+        candidate("library-1", Branch::Library, 0.033),
+        candidate("keyword-1", Branch::Keyword, 12.0),
+        candidate("library-2", Branch::Library, 0.032),
+        candidate("keyword-2", Branch::Keyword, 11.0),
+        candidate("library-3", Branch::Library, 0.016),
+        candidate("keyword-3", Branch::Keyword, 10.0),
+        candidate("keyword-4", Branch::Keyword, 9.0),
+    ]);
+    let kept: Vec<&str> = above.iter().map(|p| p.source_id.as_str()).collect();
+    assert_eq!(
+        kept,
+        [
+            "library-1",
+            "keyword-1",
+            "library-2",
+            "keyword-2",
+            "keyword-3",
+            "keyword-4"
+        ]
+    );
+    assert_eq!(
+        gaps,
+        Gaps {
+            library: Some(true),
+            keyword: Some(false),
+        }
+    );
+}
+
+#[test]
+fn a_counter_query_drops_the_claims_values_and_keeps_its_subject() -> Result<()> {
+    let collection = ReferenceCollection::lexical(&[LearningSourceDto {
+        id: "notes".into(),
+        title: "Notes".into(),
+        url: None,
+        excerpt: "Quartz zeta resists acid etching for 40 hours in March near Lisbon. \
+                  Quartz zeta does not resist acid etching."
+            .into(),
+        acquired_at: 1,
+    }])?;
+    let query = collection
+        .counter_query("Quartz zeta resists acid etching for 40 hours in March near Lisbon.")
+        .unwrap();
+    let words: Vec<&str> = query.split(' ').collect();
+    for value in ["40", "march", "lisbon"] {
+        assert!(!words.contains(&value), "{query}");
+    }
+    for subject in ["quartz", "zeta", "resists", "acid", "etching"] {
+        assert!(words.contains(&subject), "{query}");
+    }
+    // A negated claim asks for passages that assert the positive.
+    let positive = collection
+        .counter_query("Quartz zeta does not resist acid etching.")
+        .unwrap();
+    assert!(!positive.split(' ').any(|word| word == "not"), "{positive}");
+    assert!(
+        positive.split(' ').any(|word| word == "resist"),
+        "{positive}"
+    );
+    // A claim with no value terms has no counter query: it would be the
+    // support query.
+    assert_eq!(
+        collection.counter_query("Quartz zeta resists acid etching."),
+        None
+    );
     Ok(())
 }

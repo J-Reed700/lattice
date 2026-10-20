@@ -625,6 +625,8 @@ fn evidence_order_is_stable_without_discarding_conflicting_or_changed_passages()
         end_byte: text.len(),
         retrieval_kind: "lexical".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     };
     let claim = Claim {
         quote: GOOD.into(),
@@ -1100,7 +1102,6 @@ async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result
         0,
         &references,
         &[],
-        1,
     )
     .await?;
     assert_eq!(evidence.len(), 12, "not the former eight");

@@ -35,6 +35,8 @@ fn passage(source_id: &str, start: usize, text: &str) -> ReferencePassage {
         end_byte: start + text.len(),
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
+        branch: None,
+        branch_score: 0.0,
     }
 }
 

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 mod messages;
 mod streaming;
+mod timing;
 
 pub struct CloudLlm {
     provider: LLMProvider,
@@ -391,6 +392,8 @@ impl LLMPort for CloudLlm {
             .json()
             .await
             .map_err(|e| AppError::Network(format!("Invalid cloud response: {e}")))?;
+        // Without the server's own timings a whole answer at once has no
+        // edge between reading and writing, so it is not timed.
         parse_completion(self.provider, value)
     }
     async fn complete_with_progress(
@@ -413,6 +416,7 @@ impl LLMPort for CloudLlm {
             .map(|budget| Instant::now() + budget);
         request
             .within_time_budget(async {
+                let sent = Instant::now();
                 let response = self
                     .send(&self.body(request, true)?, deadline, false)
                     .await?;
@@ -420,6 +424,7 @@ impl LLMPort for CloudLlm {
                     self.provider,
                     response.bytes_stream(),
                     self.stall_timeout,
+                    sent,
                     on_text,
                     on_reasoning,
                 )
@@ -508,6 +513,7 @@ fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionRes
         response.replay = vec![CompletionInput::Native {
             value: message.clone(),
         }];
+        response.timing = timing::reported(&value);
         return Ok(response);
     }
     let mut response = CompletionResponse::default();
@@ -608,6 +614,7 @@ fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionRes
     if !reasoning_parts.is_empty() {
         response.reasoning = Some(reasoning_parts.join("\n\n"));
     }
+    response.timing = timing::reported(&value);
     // OpenAI replays its output items one by one; Anthropic replays the
     // content blocks as the assistant message they were, signed thinking
     // included.

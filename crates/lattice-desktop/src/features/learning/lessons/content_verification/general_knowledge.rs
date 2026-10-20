@@ -112,6 +112,8 @@ mod tests {
                     end_byte: text.len(),
                     retrieval_kind: "lexical_fallback".into(),
                     score: 1.0,
+                    branch: None,
+                    branch_score: 0.0,
                 })
                 .collect(),
             supporting_quote: None,

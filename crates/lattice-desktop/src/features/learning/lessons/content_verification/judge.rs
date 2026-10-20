@@ -8,9 +8,10 @@ use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
 /// section's cited passages, what research found for the claim, a passage the
 /// user picked, a passed example run. Their score is no rank. Retrieved
 /// passages follow by retrieval score, ties in page order. A page is sorted
-/// by source before the judge reads it (`canonicalize_evidence`), so its own
-/// order says nothing about which passage matters: a page too long for the
-/// judge's window loses passages from the end of this order instead.
+/// by source to key it (`canonicalize_evidence`), so its own order says
+/// nothing about which passage matters: a page too long for the judge's
+/// window loses passages from the end of this order instead, and the judge
+/// reads the passages in an order built on it (`reading_order`).
 pub(in crate::features::learning) fn ranking(page: &[EvidencePassage]) -> Vec<usize> {
     let placed = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
         CITED => 0,
@@ -38,16 +39,39 @@ pub(in crate::features::learning) fn shown_of<T: Clone>(page: &[T], shown: &[usi
         .collect()
 }
 
-/// The strict judgment of one claim against `passages`, and the positions
-/// of the passages the judge was shown, in page order. `ranking` orders the
-/// passages by how much the check needs them, most first (see [`ranking`]).
-/// A page too long for this judge's window loses passages from the end of
-/// that order: those the calibrated estimate says do not fit, then, when the
-/// backend counts the prompt past the window anyway, as many more as its
-/// refusal says, and the judge is asked again. The judge always reads the
-/// passages it is shown in their page order. A passage it was not shown is no
-/// part of the judgment, so the caller binds the finding to the shown ones
-/// alone. Only when not even the most needed passage fits is the claim left
+/// One claim's strict judgment, as [`judge_for_publication`] gives it.
+pub(in crate::features::learning) struct Judged {
+    pub(in crate::features::learning) judgment: ClaimJudgment,
+    /// The positions of the passages the judge was shown, in page order.
+    pub(in crate::features::learning) shown: Vec<usize>,
+    /// Output tokens the judge's replies took: what this claim's answer cost.
+    pub(in crate::features::learning) output_tokens: u64,
+}
+
+impl Judged {
+    /// A judgment no reply was written for.
+    fn unanswered(judgment: ClaimJudgment, shown: Vec<usize>) -> Self {
+        Self {
+            judgment,
+            shown,
+            output_tokens: 0,
+        }
+    }
+}
+
+/// The strict judgment of one claim against `passages`, the positions of
+/// the passages the judge was shown, in page order, and what its answer
+/// cost. `ranking` orders the
+/// passages by how much the check needs them, most first (see [`ranking`]);
+/// `reading` is the order the judge reads them in, as positions in the page
+/// (the page order itself, or a lesson check's `reading_order`). A page too
+/// long for this judge's window loses passages from the end of the ranking:
+/// those the calibrated estimate says do not fit, then, when the backend
+/// counts the prompt past the window anyway, as many more as its refusal
+/// says, and the judge is asked again. The judge reads the passages it is
+/// shown in `reading` order, and the positions it returns are the page's,
+/// whatever order it read. A passage it was not shown is no part of the
+/// judgment, so the caller binds the finding to the shown ones alone. Only when not even the most needed passage fits is the claim left
 /// unchecked. Whether a supported verdict's support is enough is the
 /// provenance gate's decision, never a second model call (source provenance
 /// §11).
@@ -56,7 +80,8 @@ pub(in crate::features::learning) async fn judge_for_publication(
     claim: &str,
     passages: &[String],
     ranking: &[usize],
-) -> (ClaimJudgment, Vec<usize>) {
+    reading: &[usize],
+) -> Judged {
     const TOO_LONG: &str =
         "The claim and its first passage do not fit the claim check in this model's context window.";
     let checker = ClaimChecker::new(
@@ -66,11 +91,15 @@ pub(in crate::features::learning) async fn judge_for_publication(
         CheckPolicy::Strict,
     );
     // The positions shown when the `kept` most needed passages are, in page
-    // order, and those passages' texts.
+    // order, and those passages' texts in reading order.
     let shown = |kept: usize| {
         let mut positions: Vec<usize> = ranking.iter().copied().take(kept).collect();
         positions.sort_unstable();
-        let texts = shown_of(passages, &positions);
+        let texts: Vec<String> = reading
+            .iter()
+            .filter(|position| positions.contains(position))
+            .filter_map(|position| passages.get(*position).cloned())
+            .collect();
         (positions, texts)
     };
     // A page is sized for this judge; one sized for a batch call is cut to
@@ -88,13 +117,19 @@ pub(in crate::features::learning) async fn judge_for_publication(
     }
     loop {
         if kept == 0 && !passages.is_empty() {
-            return (unchecked(TOO_LONG), Vec::new());
+            return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let (positions, texts) = shown(kept);
         let refusal = {
             let _model_call = crate::features::learning::lesson_progress::model_call();
             match checker.check_passages_or_size_refusal(claim, &texts).await {
-                Ok(judgment) => return (judgment, positions),
+                Ok(answered) => {
+                    return Judged {
+                        judgment: answered.judgments,
+                        shown: positions,
+                        output_tokens: answered.output_tokens,
+                    }
+                }
                 Err(refusal) => refusal,
             }
         };
@@ -104,10 +139,10 @@ pub(in crate::features::learning) async fn judge_for_publication(
             ..
         } = refusal
         else {
-            return (ClaimJudgment::from_request_error(refusal), positions);
+            return Judged::unanswered(ClaimJudgment::from_request_error(refusal), positions);
         };
         if kept == 0 {
-            return (unchecked(TOO_LONG), Vec::new());
+            return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let fewer = kept_after_refusal(
             llm,

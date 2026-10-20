@@ -35,7 +35,28 @@ pub struct ReferencePassage {
     pub start_byte: usize,
     pub end_byte: usize,
     pub retrieval_kind: String,
+    /// The passage's place in the merged ranking: what orders a page's
+    /// retrieved passages by need. Never a factual-correctness confidence.
     pub score: f64,
+    /// The ranking that found the passage; `None` for a passage the app
+    /// placed (a citation, a quote, an example run).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<Branch>,
+    /// The score `branch` gave the passage, comparable only with other
+    /// passages of the same branch: where a page's relevance drops is read
+    /// from it (`pages::gap_cut`).
+    #[serde(default)]
+    pub branch_score: f64,
+}
+
+/// The two rankings retrieval merges. They rank disjoint sources on
+/// incomparable scales: the library's fused rank score for snapshots it
+/// holds, BM25 for the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Branch {
+    Library,
+    Keyword,
 }
 
 /// A keyword-ranked passage of a snapshot the library cannot rank.
@@ -47,12 +68,15 @@ struct Chunk {
     length: usize,
 }
 
-/// Where one library chunk sits inside a captured snapshot.
+/// Where one ranked chunk sits inside a captured snapshot, with the branch
+/// that ranked it and that branch's score.
 #[derive(Clone, Copy)]
 struct Span {
     source: usize,
     start: usize,
     end: usize,
+    branch: Branch,
+    score: f64,
 }
 
 pub struct ReferenceCollection<'a> {
@@ -91,22 +115,6 @@ fn longest_fitting_prefix(
         }
     }
     low
-}
-
-/// Function words that match nearly every passage; never a content term.
-const FUNCTION_WORDS: &[&str] = &[
-    "a", "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "been",
-    "before", "but", "by", "can", "could", "did", "do", "does", "each", "for", "from", "had",
-    "has", "have", "how", "if", "in", "into", "is", "it", "its", "may", "more", "most", "must",
-    "no", "not", "of", "on", "only", "or", "other", "should", "so", "some", "such", "than", "that",
-    "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "under", "up",
-    "use", "used", "uses", "using", "was", "we", "were", "what", "when", "where", "which", "while",
-    "who", "will", "with", "without", "would", "you", "your",
-];
-
-/// The words of `text` a keyword match should rest on: not function words.
-fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
-    terms_iter(text).filter(|word| !FUNCTION_WORDS.contains(&word.as_str()))
 }
 
 fn terms_iter(text: &str) -> impl Iterator<Item = String> + '_ {
@@ -266,6 +274,8 @@ impl<'a> ReferenceCollection<'a> {
                         source: index,
                         start,
                         end,
+                        branch: Branch::Library,
+                        score: 0.0,
                     },
                 );
             }
@@ -324,10 +334,13 @@ impl<'a> ReferenceCollection<'a> {
                     .search(query, &self.library_documents, fetch)
                     .await?;
                 exhausted = hits.len() < fetch;
-                library_spans.extend(
-                    hits.iter()
-                        .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied()),
-                );
+                library_spans.extend(hits.iter().filter_map(|hit| {
+                    let span = self.library_spans.get(&hit.chunk_id)?;
+                    Some(Span {
+                        score: f64::from(hit.score),
+                        ..*span
+                    })
+                }));
             }
             let selected = self.merge(&library_spans, &keyword, limit)?;
             if selected.len() >= limit || exhausted {
@@ -356,6 +369,7 @@ impl<'a> ReferenceCollection<'a> {
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
         let mut selected: Vec<ReferencePassage> = Vec::new();
         for (chunk, score, retrieval_kind) in ranked {
+            let branch_score = chunk.score;
             let source = self
                 .sources
                 .get(chunk.source)
@@ -389,6 +403,8 @@ impl<'a> ReferenceCollection<'a> {
                 end_byte: end,
                 retrieval_kind: retrieval_kind.into(),
                 score,
+                branch: Some(chunk.branch),
+                branch_score,
             });
             if selected.len() >= limit {
                 break;
@@ -472,41 +488,6 @@ impl<'a> ReferenceCollection<'a> {
         Ok(page)
     }
 
-    /// Whether `text` mentions what `query` is about: one of the query's
-    /// distinctive content terms, those no more common across this
-    /// collection's passages than the median of the query's own content
-    /// terms. Words the whole subject shares (in a .NET collection, "net" or
-    /// "core") do not count, so a walk through deeper evidence ends once only
-    /// the subject's common vocabulary is left. Vector neighbours alone never
-    /// count. Before the median is taken, two kinds of query term are left
-    /// out because no page can tell anything by them: a term in no passage of
-    /// the collection, such as a name a lesson invented for its example (no
-    /// page can contain it, so it neither keeps a walk going nor lowers the
-    /// bar the real terms must meet), and a term in every passage.
-    pub(in crate::features::learning) fn mentions_subject_of(
-        &self,
-        query: &str,
-        text: &str,
-    ) -> bool {
-        let mut wanted: Vec<(usize, String)> = content_terms(query)
-            .filter_map(|term| {
-                let frequency = self.subject_frequencies.get(&term).copied().unwrap_or(0);
-                (frequency > 0 && frequency < self.subject_passages).then_some((frequency, term))
-            })
-            .collect();
-        wanted.sort();
-        wanted.dedup();
-        let Some(&(median, _)) = wanted.get(wanted.len().saturating_sub(1) / 2) else {
-            return false;
-        };
-        let distinctive: HashSet<&str> = wanted
-            .iter()
-            .filter(|(frequency, _)| *frequency <= median)
-            .map(|(_, term)| term.as_str())
-            .collect();
-        content_terms(text).any(|term| distinctive.contains(term.as_str()))
-    }
-
     async fn fill(
         &self,
         query: &str,
@@ -554,11 +535,13 @@ impl<'a> ReferenceCollection<'a> {
         scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         scored
             .into_iter()
-            .filter_map(|(index, _)| self.chunks.get(index))
-            .map(|chunk| Span {
+            .filter_map(|(index, score)| Some((self.chunks.get(index)?, score)))
+            .map(|(chunk, score)| Span {
                 source: chunk.source,
                 start: chunk.start,
                 end: chunk.end,
+                branch: Branch::Keyword,
+                score,
             })
             .collect()
     }
@@ -582,6 +565,8 @@ impl<'a> ReferenceCollection<'a> {
             end_byte: end,
             retrieval_kind: "cited".into(),
             score: 0.0,
+            branch: None,
+            branch_score: 0.0,
         };
         let mut found = Vec::new();
         for quote in quotes
@@ -630,6 +615,8 @@ impl<'a> ReferenceCollection<'a> {
                     end_byte: end,
                     retrieval_kind: "cited".into(),
                     score: 0.0,
+                    branch: None,
+                    branch_score: 0.0,
                 })
             })
             .collect();
@@ -689,6 +676,12 @@ impl<'a> ReferenceCollection<'a> {
             }) {
                 // Retain both original hits when their expanded windows only
                 // partly overlap; dropping the later hit could lose a caveat.
+                // The window ranks as the better of them.
+                if passage.score > previous.score {
+                    previous.score = passage.score;
+                    previous.branch = passage.branch;
+                    previous.branch_score = passage.branch_score;
+                }
                 previous.start_byte = previous.start_byte.min(start);
                 previous.end_byte = previous.end_byte.max(end);
                 previous.text = text[previous.start_byte..previous.end_byte].to_owned();
@@ -754,6 +747,8 @@ impl<'a> ReferenceCollection<'a> {
     }
 }
 
+mod pages;
+pub(in crate::features::learning) use pages::{above_cut, best_per_source, Gaps, ValueTerms};
 mod snapshots;
 pub(in crate::features::learning) use snapshots::{snapshot_passages, snapshot_room};
 
