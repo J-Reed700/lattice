@@ -69,8 +69,15 @@ fn under(column: &str) -> String {
     format!("(?1 = '' OR {column} = ?1 OR substr({column}, 1, length(?1) + 1) = ?1 || '/')")
 }
 
+/// A pool that timed out is a busy store, not a broken one: the index job
+/// waits and resumes from its checkpoints instead of ending as failed.
 pub(super) fn db_error(action: &str) -> impl Fn(sqlx::Error) -> AppError + '_ {
-    move |error| AppError::Database(format!("Passage index: failed to {action}: {error}"))
+    move |error| match error {
+        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(format!(
+            "Passage index: busy, could not {action}; saved work is retained"
+        )),
+        error => AppError::Database(format!("Passage index: failed to {action}: {error}")),
+    }
 }
 
 /// What the store holds for one document.
