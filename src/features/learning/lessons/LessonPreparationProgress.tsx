@@ -28,7 +28,9 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   const cancel = useCancelLearningGenerationJob();
   const retry = useRetryLearningGenerationJob();
   // Retrying or resuming reads the course's evidence; pausing never waits.
+  // The reason, with the time left, sits beside the held button.
   const waitsForIndex = useEvidenceWaitsForIndex(programId);
+  const indexWaitId = useId();
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(true);
   const detailsId = useId();
@@ -85,10 +87,11 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
         </div>
         {job && <div className="flex flex-wrap items-center gap-3">
           {active && <span className="rounded-full bg-background px-3 py-1.5 text-xs tabular-nums text-text-secondary" aria-live="off">{reconnecting ? 'Waiting to retry' : queued ? 'Queued' : `This run · ${preparationDuration(elapsed)}`}</span>}
-          <button type="button" disabled={cancel.isPending || retry.isPending || (!active && Boolean(waitsForIndex))} title={active ? undefined : waitsForIndex} onClick={() => {
+          <button type="button" disabled={cancel.isPending || retry.isPending || (!active && Boolean(waitsForIndex))} aria-describedby={!active && waitsForIndex ? indexWaitId : undefined} onClick={() => {
             cancel.reset(); retry.reset();
             if (active) cancel.mutate(request()); else retry.mutate(request());
           }} className="rounded-full border border-accent/40 bg-background px-4 py-2 text-sm font-medium text-text-primary disabled:opacity-50">{cancel.isPending ? 'Pausing…' : retry.isPending ? paused ? 'Resuming…' : 'Retrying…' : active ? 'Pause lesson preparation' : paused ? 'Resume lesson preparation' : 'Retry lesson preparation'}</button>
+          {!active && waitsForIndex && <p id={indexWaitId} className="text-xs tabular-nums text-text-secondary">{waitsForIndex}</p>}
         </div>}
       </div>
       {!active && !paused && job?.finishedAt != null && <p className="mt-2 text-xs text-text-muted">Last attempt stopped at {new Date(job.finishedAt).toLocaleString()}. This is the saved result of that attempt.</p>}

@@ -466,3 +466,43 @@ async fn without_an_embedding_model_startup_queues_nothing() -> Result<()> {
     assert!(builds(&pool, &program).await.is_empty());
     Ok(())
 }
+
+/// What a user's first search or attached evidence costs on a real course
+/// that has never been indexed: the text-only step from an empty index
+/// directory, then the same step again. It runs against a copy of the app's
+/// database, never the live one:
+/// `sqlite3 "$HOME/Library/Application Support/tech.lattice.app/lattice.db" ".backup '<dir>/lattice.db'"`,
+/// then `LATTICE_DB_COPY=<dir>/lattice.db LATTICE_COURSE=<program id>`.
+#[tokio::test]
+#[ignore = "requires LATTICE_DB_COPY (a copy of the app's database) and LATTICE_COURSE"]
+async fn a_first_command_on_a_real_unindexed_course_is_timed() -> Result<()> {
+    let path = std::env::var("LATTICE_DB_COPY").unwrap();
+    let program = std::env::var("LATTICE_COURSE").unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+        .await
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let courses = indexes(
+        &pool,
+        temp.path(),
+        FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
+    );
+    let sources = active(&pool, &program).await;
+    for run in ["first", "again"] {
+        let started = std::time::Instant::now();
+        let course_search = courses.search(&program, CancellationToken::new()).await?;
+        let references =
+            ReferenceCollection::searchable_now(Some(&course_search), &sources).await?;
+        let brought = started.elapsed();
+        let hits = references.retrieve("introduction overview", 8).await?;
+        eprintln!(
+            "{run}: {} references brought current in {brought:?}, searched in {:?}; {:?}",
+            sources.len(),
+            started.elapsed(),
+            references.mode(),
+        );
+        assert!(!hits.is_empty(), "the course's words are searched at once");
+    }
+    Ok(())
+}

@@ -66,7 +66,7 @@ describe('Lesson card review state', () => {
   });
 
   it.each([
-    ['waits while the course indexes', { state: 'indexing', embedded: 0, total: 0, referencesNew: 4, passagesPerSecond: null }, false],
+    ['waits while the course indexes', { state: 'indexing', embedded: 4_210, total: 13_457, referencesNew: 4, passagesPerSecond: 14, waitingTurn: false }, false],
     ['is open when the course is ready', { state: 'ready', mode: 'hybrid' }, true],
     ['is open when references are searched by words only', { state: 'noEmbeddingModel' }, true],
   ])('Prepare lesson %s', async (_, status, open) => {
@@ -79,10 +79,12 @@ describe('Lesson card review state', () => {
     await vi.waitFor(() => expect(api.index).toHaveBeenCalledWith('program-1'));
     if (open) {
       await vi.waitFor(() => expect(prepare).toBeEnabled());
-      expect(prepare).not.toHaveAttribute('title');
+      expect(screen.queryByText(/Waits for the course index/)).not.toBeInTheDocument();
     } else {
       await vi.waitFor(() => expect(prepare).toBeDisabled());
-      expect(prepare).toHaveAttribute('title', 'Available once this course’s references finish indexing');
+      // The reason sits under the button as text, with the time left.
+      expect(screen.getByText('Waits for the course index · about 11 min left')).toBeVisible();
+      expect(prepare).toHaveAccessibleDescription('Waits for the course index · about 11 min left');
     }
   });
 });

@@ -7,6 +7,8 @@ import VaultAPI from '@/lib/api';
 import type { CourseIndexStatusDto } from '@/lib/bindings';
 import { unwrapApiResult } from '@/types/api/result';
 
+import { describeIndexWait } from './courseIndexProgress';
+
 /** The job kind of a course index build; its subject is the course. */
 export const COURSE_INDEX_JOB = 'learning.course_index';
 
@@ -60,15 +62,16 @@ export function useCourseIndexOpen(programId: string | null | undefined): void {
   }, [programId]);
 }
 
-/** Why a course's evidence actions wait, shown on each held control. */
-export const EVIDENCE_WAITS_FOR_INDEX = 'Available once this course’s references finish indexing';
-
 /**
- * Whether the course's evidence actions wait for its index: only while it
- * is indexing. Searching by words alone (no model, or an index that cannot
- * be read) holds nothing back. Returns the reason to show, or `undefined`.
+ * Why lesson preparation (prepare, retry, resume) and resumed verification
+ * wait for the course's index, in words that follow it live: "Waits for the
+ * course index · about 11 min left". Only while it is indexing, since a
+ * lesson's run waits for the embedding anyway. Source search and attaching
+ * evidence never wait: each brings the index's words up to date itself and
+ * searches what is embedded by meaning, the rest by words. Searching by
+ * words alone (no model, or an index that cannot be read) holds nothing
+ * back. Returns the reason to show beside the held control, or `undefined`.
  */
 export function useEvidenceWaitsForIndex(programId: string | null | undefined): string | undefined {
-  const status = useCourseIndexStatus(programId);
-  return status?.state === 'indexing' ? EVIDENCE_WAITS_FOR_INDEX : undefined;
+  return describeIndexWait(useCourseIndexStatus(programId));
 }
