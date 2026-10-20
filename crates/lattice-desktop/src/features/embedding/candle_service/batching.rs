@@ -18,7 +18,7 @@ use super::{
 
 impl CandleEmbeddingService {
     /// The padded-token ceiling for one forward pass on this architecture.
-    fn padded_token_budget(&self) -> usize {
+    pub(super) fn padded_token_budget(&self) -> usize {
         match self.architecture {
             ModelArchitecture::Qwen3 => QWEN3_PADDED_TOKEN_BUDGET,
             _ => ENCODER_PADDED_TOKEN_BUDGET,

@@ -694,6 +694,31 @@ async courseIndexStatus(programId: string) : Promise<Result<CourseIndexStatusDto
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The course workspace opened: the course's index goes first, ahead of
+ * folder builds and other courses' builds, until it closes. Any course
+ * opened before is no longer first.
+ */
+async courseIndexOpen(programId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_index_open", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The course workspace closed: the course's index takes its turn with the
+ * others again, unless another course has been opened since.
+ */
+async courseIndexClose(programId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_index_close", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_claim_review", { programId, lessonId }) };

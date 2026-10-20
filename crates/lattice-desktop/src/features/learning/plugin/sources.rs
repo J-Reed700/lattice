@@ -401,3 +401,32 @@ pub async fn course_index_status(
     };
     Ok(courses.status(&program_id).await)
 }
+
+/// The course workspace opened: the course's index goes first, ahead of
+/// folder builds and other courses' builds, until it closes. Any course
+/// opened before is no longer first.
+#[tauri::command]
+#[specta::specta]
+pub async fn course_index_open(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    match container.course_indexes() {
+        Some(courses) => courses.open(&program_id).await.map_err(ApiError::from),
+        None => Ok(()),
+    }
+}
+
+/// The course workspace closed: the course's index takes its turn with the
+/// others again, unless another course has been opened since.
+#[tauri::command]
+#[specta::specta]
+pub async fn course_index_close(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    if let Some(courses) = container.course_indexes() {
+        courses.close(&program_id);
+    }
+    Ok(())
+}

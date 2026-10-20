@@ -27,6 +27,8 @@
 //! - `live` — `LiveIndexes`, `LiveIndex`, `Engine`, `EmbedderSource`
 //! - `text_search` — `PassageTextSearch`, `match_expression`, `WordMatch`
 //! - `job` — `build_job_config`, `ProgressSaver`
+//! - `turns` — `EmbedTurns`, `Priority`: which index embeds first, shared by
+//!   every kind of index
 //! - `testing` (tests only) — `FakeEmbedder`, the stand-in model every
 //!   feature's index tests share
 
@@ -37,16 +39,20 @@ pub mod live;
 pub mod registry;
 pub mod store;
 pub mod text_search;
+pub mod turns;
 pub mod vectors;
 
 #[cfg(test)]
 pub mod testing;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod turns_tests;
 
 pub use build::{embed_pending, EmbedText, Embedded, Embedding, Progress};
 pub use chunking::NewPassage;
 pub use live::{EmbedderSource, Engine, LiveIndex, LiveIndexes};
 pub use store::{Counts, Document, Passage, PassageStore};
 pub use text_search::{indexed_term, PassageTextSearch, WordMatch};
+pub use turns::{Claim, EmbedTurns, Priority};
 pub use vectors::Vectors;

@@ -135,6 +135,7 @@ impl Rig {
             searches,
             jobs,
             Arc::default(),
+            Arc::default(),
         );
         manager.register().await.unwrap();
         manager
@@ -532,6 +533,7 @@ mod incremental {
             status,
             cancel: CancellationToken::new(),
             limits: Limits::default(),
+            turns: Arc::default(),
         };
         // The store's own directory is inside this folder; ignore it the way
         // a real index (which lives outside the folder) never needs to.
@@ -642,6 +644,7 @@ mod progress {
                 batch_size: 4,
                 save_every: 8,
             },
+            turns: Arc::default(),
         };
         assert_eq!(indexer.run().await.unwrap(), Outcome::Done);
         let told = told.lock().clone();

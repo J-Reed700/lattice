@@ -5,8 +5,13 @@
 //! A document is marked embedded only after a save that holds all of its
 //! passages, so a crash costs at most the work since the last save and a
 //! resumed build picks up from the store.
+//!
+//! Every batch waits for its index's turn ([`super::turns`]): while an index
+//! ranked above this one embeds, the loop holds where it is and carries on
+//! once that run ends.
 
 use super::store::{Passage, PassageStore};
+use super::turns::EmbedTurns;
 use super::vectors::Vectors;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::{AppError, Result};
@@ -29,7 +34,8 @@ pub const BATCH_SIZE: usize = 16;
 /// crash can cost a build. Explorer's cadence, shared with a course's index.
 pub const SAVE_EVERY: usize = 500;
 
-/// How an index embeds: the model, and the owner's batch and save sizes.
+/// How an index embeds: the model, the owner's batch and save sizes, and
+/// the turn order every index's embedding follows.
 #[derive(Clone)]
 pub struct Embedding {
     pub embedder: Arc<dyn EmbeddingPort>,
@@ -38,6 +44,7 @@ pub struct Embedding {
     /// Passages embedded between saves of the vectors file.
     pub save_every: usize,
     pub embed_text: EmbedText,
+    pub turns: Arc<EmbedTurns>,
 }
 
 /// Embedding's progress, told to the owner as it moves. `embedded` comes
@@ -52,6 +59,11 @@ pub trait Progress {
     fn embedded(&mut self, count: usize);
     /// A save marked `documents` more documents embedded.
     fn saved(&mut self, documents: usize);
+    /// Embedding holds (`true`) while an index ranked above this one embeds,
+    /// or carries on (`false`).
+    fn paused(&mut self, paused: bool) {
+        let _ = paused;
+    }
 }
 
 /// What one round of embedding did.
@@ -71,9 +83,27 @@ fn embeddable(embedding: &Embedding, passage: &Passage) -> Result<String> {
     Ok(parts.into_iter().next().map_or(text, |part| part.text))
 }
 
+/// Waits for `store`'s turn before a batch, telling `progress` while it
+/// holds. `false` when `cancel` fired while it waited.
+async fn take_turn(
+    embedding: &Embedding,
+    store: &PassageStore,
+    cancel: &CancellationToken,
+    progress: &mut (dyn Progress + Send),
+) -> bool {
+    if !embedding.turns.behind(store.dir()) {
+        return true;
+    }
+    progress.paused(true);
+    let turned = embedding.turns.wait_turn(store.dir(), cancel).await;
+    progress.paused(false);
+    turned
+}
+
 /// Embeds the passages of every document under `prefix` not yet marked
 /// embedded, `batch_size` at a time, saving the vectors file every
-/// `save_every` passages and once at the end.
+/// `save_every` passages and once at the end. Each batch takes its turn
+/// first.
 pub async fn embed_pending(
     store: &PassageStore,
     vectors: &Vectors,
@@ -95,6 +125,9 @@ pub async fn embed_pending(
         return Ok(embedded);
     }
     progress.started(pending.len());
+    // Held while this run embeds, waiting included: an index ranked below
+    // this one waits for it.
+    let _running = embedding.turns.running(store.dir());
 
     let mut round = Round {
         embedding,
@@ -120,6 +153,10 @@ pub async fn embed_pending(
             if round.batch.len() < embedding.batch_size.max(1) {
                 continue;
             }
+            if !take_turn(embedding, store, cancel, progress).await {
+                embedded.cancelled = true;
+                break 'documents;
+            }
             let count = round.embed_batch().await?;
             embedded.passages += count;
             since_save += count;
@@ -136,6 +173,12 @@ pub async fn embed_pending(
                 break 'documents;
             }
         }
+    }
+    if !embedded.cancelled
+        && !round.batch.is_empty()
+        && !take_turn(embedding, store, cancel, progress).await
+    {
+        embedded.cancelled = true;
     }
     if !embedded.cancelled {
         let count = round.embed_batch().await?;

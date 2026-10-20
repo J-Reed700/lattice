@@ -649,6 +649,14 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.CourseIndexStatusDto>> =>
     learningCall<Wire.CourseIndexStatusDto>('course_index_status', { programId }),
 
+  /** The course workspace opened: its index embeds ahead of every other until it closes. */
+  courseIndexOpen: (programId: string): Promise<ApiResult<void>> =>
+    learningCall('course_index_open', { programId }),
+
+  /** The course workspace closed: its index takes turns with the others again. */
+  courseIndexClose: (programId: string): Promise<ApiResult<void>> =>
+    learningCall('course_index_close', { programId }),
+
   searchLearningSourcesSemantically: (
     request: Wire.SearchLearningSourcesSemanticallyRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceSemanticSearchResultDto[]>> =>

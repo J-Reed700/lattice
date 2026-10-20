@@ -501,6 +501,7 @@ mod embedding {
             batch_size: 2,
             save_every: 2,
             embed_text: Arc::new(|passage| format!("{}\n{}", passage.document, passage.text)),
+            turns: Arc::default(),
         }
     }
 
