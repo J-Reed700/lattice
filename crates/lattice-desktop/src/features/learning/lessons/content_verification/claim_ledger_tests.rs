@@ -830,6 +830,7 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
                         queries: vec![],
                         sources_added: vec![],
                         passages_found: 0,
+                        round_ms_per_claim: None,
                     },
                 )
                 .unwrap();

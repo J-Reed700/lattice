@@ -12,9 +12,27 @@
 //! course. A claim research has just found sources for reads only those.
 //!
 //! Every claim's first page is checked (D1), sized once the job has
-//! measured an answer ([`PageBudget`]); a claim still unsupported reads on,
-//! page by page, only while [`B_DEPTH`] says so. The judge's verdict on each page is the only stop: no count, no
-//! score and no round that settles nothing ends a walk.
+//! measured an answer ([`PageBudget`]). A claim still unsupported reads on,
+//! page by page, only while [`B_DEPTH`] says so: break-even (D5), "rent or
+//! buy". It reads the next page while what pass B has spent on it past its
+//! first page, with that page, costs no more than researching one claim on
+//! the web. A page costs its reading and one more answer at the backend's
+//! measured pace (`page_seconds`); researching costs what a claim research
+//! round last measured per claim, from the ledger's `Researched` events of
+//! any course, then from this job's own rounds as they finish. Until both
+//! are measured a claim reads its first page only, and the round it goes to
+//! is measured for next time. Besides that rule, the judge's verdict on each
+//! page is the only stop: no count, no score and no round that settles
+//! nothing ends a walk.
+//!
+//! The page-recall eval on the owner's lesson (hybrid retrieval; 850 prompt
+//! and 11.3 output tokens a second, 130 answer tokens a claim) chose it.
+//! Read to the list's end, 64 claims were found in the course and 7 went to
+//! the web, the worst claim spending 27 min in pass B and the lesson about
+//! 138–145 min with web research at 60–120 s a claim. Break-even at 60 s a
+//! claim found 50 and sent 21, worst 1.4 min, 70 min in all; at 120 s, 60
+//! and 11, worst 2.3 min, 87 min. The first page alone found 32 and sent 39,
+//! worst 0.4 min.
 use super::*;
 use crate::features::learning::reference_collection::{ClaimList, Scope};
 use std::collections::BTreeMap;
@@ -51,16 +69,44 @@ pub(in crate::features::learning) const ORDERS: [(&str, &[Reach]); 3] = [
 /// How far pass B reads a claim its first page leaves unsupported (D5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::features::learning) enum Depth {
-    /// The first page only; past it the claim goes to web research. Built
-    /// when the owner sets [`B_DEPTH`] to it.
+    /// The first page only; past it the claim goes to web research. The
+    /// page-recall eval's floor.
     #[cfg_attr(not(test), allow(dead_code))]
     FirstPage,
-    /// Page after page until the lists of every reach run out (§5.4).
+    /// Page after page while what pass B has spent on the claim past its
+    /// first page, with the next page, costs no more than researching one
+    /// claim on the web.
+    BreakEven,
+    /// Page after page until the lists of every reach run out (§5.4). The
+    /// page-recall eval's ceiling.
+    #[cfg_attr(not(test), allow(dead_code))]
     ListEnd,
 }
 
-/// Decision D5's switch: the list-end rule, until the eval decides.
-pub(in crate::features::learning) const B_DEPTH: Depth = Depth::ListEnd;
+impl Depth {
+    /// Whether a claim still unsupported reads its next page: `spent`, the
+    /// seconds pass B has spent on it past its first page; `next`, what the
+    /// next page costs ([`page_seconds`]); `research`, what researching one
+    /// claim on the web costs, in seconds. Break-even reads no further while
+    /// either cost is unmeasured: the bet's price cannot be compared yet.
+    pub(in crate::features::learning) fn reads_next(
+        self,
+        spent: f64,
+        next: Option<f64>,
+        research: Option<f64>,
+    ) -> bool {
+        match self {
+            Self::FirstPage => false,
+            Self::BreakEven => next
+                .zip(research)
+                .is_some_and(|(next, research)| spent + next <= research),
+            Self::ListEnd => true,
+        }
+    }
+}
+
+/// Decision D5's switch: the break-even rule, as the page-recall eval chose.
+pub(in crate::features::learning) const B_DEPTH: Depth = Depth::BreakEven;
 
 /// How pass B pages: its reaches in order and how deep it reads.
 #[derive(Clone, Copy, Debug)]
@@ -133,6 +179,16 @@ pub(in crate::features::learning::lessons::content_verification) enum Sizing {
     Sized(PageBudget),
 }
 
+/// The tokens `page` holds as a passage bank: what its budget counts.
+pub(in crate::features::learning::lessons::content_verification) fn page_tokens(
+    llm: &dyn LLMPort,
+    page: &[EvidencePassage],
+) -> usize {
+    page.iter()
+        .map(|passage| bank_tokens(llm, &passage.text))
+        .sum()
+}
+
 /// Whether `page` stays within `budget` tokens of a passage bank and a check
 /// of `claim` against it alone fits the window.
 pub(in crate::features::learning::lessons::content_verification) fn within_page(
@@ -141,10 +197,7 @@ pub(in crate::features::learning::lessons::content_verification) fn within_page(
     page: &[EvidencePassage],
     budget: Option<usize>,
 ) -> bool {
-    let tokens: usize = page
-        .iter()
-        .map(|passage| bank_tokens(llm, &passage.text))
-        .sum();
+    let tokens = page_tokens(llm, page);
     budget.is_none_or(|budget| tokens <= budget) && fits_window(llm, claim, page)
 }
 
@@ -243,6 +296,9 @@ pub(super) struct Walk {
     budget: PageBudget,
     /// The pass B pages read so far.
     pub(super) pages: usize,
+    /// The seconds pass B has spent on the claim past its first page, each
+    /// page at what it cost (`page_seconds`): what break-even weighs.
+    spent: f64,
 }
 
 impl Walk {
@@ -282,6 +338,7 @@ impl Walk {
             researched,
             budget,
             pages,
+            spent: 0.0,
         }
     }
 
@@ -493,14 +550,17 @@ pub(super) async fn walk_budget(first_page_receipt: &str, fresh: PageBudget) -> 
 /// it was read.
 type Decided = BTreeMap<usize, (Finding, Reach, usize)>;
 
-/// Reads every walker on, a page a round, until its page decides it or its
-/// reaches run out. A page's check has its own receipt; a page whose
-/// receipt is saved is not checked again. Returns each decided walker's
-/// deciding page's finding; a walker whose reaches ran out is not in it.
+/// Reads every walker on, a page a round, until its page decides it, its
+/// reaches run out or `depth` reads no further, weighing `research`, the
+/// seconds researching one claim on the web costs. A page's check has its
+/// own receipt; a page whose receipt is saved is not checked again. Returns
+/// each decided walker's deciding page's finding; a walker that stopped
+/// undecided is not in it.
 pub(super) async fn deepen(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
     walks: Vec<Walk>,
+    (depth, research): (Depth, Option<f64>),
     citations: &Citations,
     labels: &Labels,
     answers: &mut AnswerSize,
@@ -523,6 +583,19 @@ pub(super) async fn deepen(
                 );
                 continue;
             };
+            let cost = page_seconds(llm.pace(), page_tokens(llm, &page), answers.per_claim());
+            if !depth.reads_next(walk.spent, cost, research) {
+                tracing::info!(
+                    claim = ordinal,
+                    pages = walk.pages - 1,
+                    spent_seconds = walk.spent,
+                    next_seconds = ?cost,
+                    research_seconds = ?research,
+                    "Corroboration reads no further: the next page would cost more than researching the claim on the web; the claim goes to web research"
+                );
+                continue;
+            }
+            walk.spent += cost.unwrap_or_default();
             canonicalize_evidence(&mut page);
             at.insert(ordinal, (note.reach, note.page));
             let checked = Claim {

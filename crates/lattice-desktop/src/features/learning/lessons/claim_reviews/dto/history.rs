@@ -128,6 +128,7 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 queries,
                 sources_added,
                 passages_found,
+                ..
             } => Self::Researched {
                 queries: queries.clone(),
                 sources_added: sources_added.clone(),

@@ -561,6 +561,20 @@ pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
     }
 }
 
+/// What researching one claim on the web cost when a research round last
+/// measured it, from any lesson of any program: it describes the backend and
+/// the network, not the course (course evidence index D5). `None` outside a
+/// preparation job, and before any round was measured.
+pub(super) async fn research_cost() -> Result<Option<std::time::Duration>> {
+    let Some(scope) = crate::features::learning::lesson_drafts::scope() else {
+        return Ok(None);
+    };
+    Ok(ClaimReviewRepository::new(scope.pool)
+        .research_ms_per_claim()
+        .await?
+        .map(std::time::Duration::from_millis))
+}
+
 /// The error that unwinds a lesson's preparation when it waits for the user's
 /// review. It is not a failure: the job reads the review row and completes
 /// (§6.1, `generation_jobs`). Its text is the hold's own words, with no

@@ -187,6 +187,8 @@ Each finding is one JSON line per order in the results file:
 | `tokens_read_to_it` | estimated tokens of every pass B page up to and including `page` |
 | `modelled_seconds` | with a pace given, pass A's page and the pass B pages up to `page` read at the prompt rate, plus one answer each at the output rate |
 | `list` | the run-out cost: passages, tokens and pages of every list read to its end (§5.4) |
+| `research_seconds` | what researching one claim on the web costs, from `LATTICE_PAGE_RECALL_RESEARCH_SECONDS`; `null` without it |
+| `depths` | with a research cost given, for a finding pass A did not settle: under each depth rule (`first page`, `break-even`, `list end`), whether the course `found` its support and the `pass_b_seconds` spent on it |
 | `pages` | per page: its reach, passages, tokens, whether it reached its list's end and whether a counter query was fused |
 | `cited_mentions_subject` | whether the cited passage mentions the claim's subject; `false` is a passage past every list's end |
 | `skipped` | set when the cited passage's source changed after the run |
@@ -214,6 +216,27 @@ output rate` (`page_budget`), and each finding reached is modelled as
 
 Without the variable no time is modelled and pages are bounded by the
 window alone, as the app does before a backend has reported its pace.
+
+### How deep pass B reads (D5)
+
+Set `LATTICE_PAGE_RECALL_RESEARCH_SECONDS` to what researching one claim
+on the web costs, in seconds: a run's `Researched` claim events carry it as
+`round_ms_per_claim`, each claim research round's time from its start to
+its result divided by the claims it researched. Each finding pass A did
+not settle is then read under the three depth rules, by the app's own rule
+(`Depth::reads_next`) and page cost (`page_seconds`): the first page only;
+break-even, which reads the next page while what pass B has spent past the
+first page, with that page, stays within the research cost; and on to the
+list's end. A page costs
+
+    seconds = page tokens ÷ prompt rate + answer tokens ÷ output rate
+
+and a claim whose support no page read holds goes to web research. One
+line per order and rule sums it up: the claims found in the course, the
+claims sent to web research, the modelled minutes with the research cost
+counted for each claim sent, and the worst single claim's pass B minutes.
+Without a pace no time is modelled, and break-even reads the first page
+only, as the app does. Without the variable no rule is compared.
 
 ### Hybrid against text only
 
@@ -244,6 +267,7 @@ LATTICE_PAGE_RECALL_RESULTS=$PWD/../../evals/grounding/results/<date>-page-recal
 LATTICE_PAGE_RECALL_PROGRAM=<optional program id> \
 LATTICE_PAGE_RECALL_ORDER=<relevance|lesson-sources|tie-break|all, default all> \
 LATTICE_PAGE_RECALL_PACE="<optional prompt tok/s>,<output tok/s>,<answer tokens per claim>" \
+LATTICE_PAGE_RECALL_RESEARCH_SECONDS=<optional seconds to research one claim on the web> \
 LATTICE_PAGE_RECALL_EMBEDDING=<optional embedding model directory> \
 LATTICE_PAGE_RECALL_INDEXES=<optional copy of the app's course-index folder> \
   cargo test --lib live_page_recall_eval -- --ignored --nocapture

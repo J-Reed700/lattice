@@ -32,9 +32,11 @@ pub(in crate::features::learning) use evidence_checks::Reach;
 #[cfg(test)]
 pub(in crate::features::learning) use evidence_checks::ORDERS;
 #[cfg(test)]
-pub(in crate::features::learning) use evidence_checks::{page_budget, walk_pages, WalkedPage};
+pub(in crate::features::learning) use evidence_checks::{
+    page_budget, page_seconds, walk_pages, Depth, WalkedPage,
+};
 #[cfg(test)]
-use evidence_checks::{ContraryPassage, Depth, Pass, REACHES};
+use evidence_checks::{ContraryPassage, Pass, REACHES};
 use evidence_checks::{Paging, TwoPass, CHECKER_OUTPUT_TOKENS};
 mod evidence_selection;
 mod execution;
@@ -221,6 +223,10 @@ struct ClaimChecks {
     /// passes: the answer size a pass B page is budgeted by
     /// (`evidence_checks::page_budget`).
     answers: std::sync::Mutex<evidence_checks::AnswerSize>,
+    /// What researching one claim on the web cost when this job's last
+    /// research round measured it: pass B's break-even weighs it before the
+    /// ledger's latest (`evidence_checks::walk`, D5).
+    research_cost: Option<std::time::Duration>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 

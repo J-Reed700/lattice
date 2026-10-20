@@ -4,6 +4,8 @@
 //! the reading that costs the time of one more answer, from the backend's
 //! measured pace and this job's measured answers. Relevance still decides
 //! the order and which passages qualify; the window still bounds a request.
+//! What a page costs at the same pace is what pass B's break-even rule weighs
+//! against researching the claim on the web (D5, `walk`).
 use lattice_core::application::ports::llm_port::Pace;
 
 /// The judge's answers this job: the output tokens it spent and the claims
@@ -60,6 +62,24 @@ pub(in crate::features::learning) fn page_budget(
     let tokens =
         answer_tokens_per_claim? * pace.prompt_tokens_per_second / pace.output_tokens_per_second;
     (tokens.is_finite() && tokens > 0.0).then(|| tokens.round() as usize)
+}
+
+/// Seconds one more pass B page of `page_tokens` costs a claim: reading it
+/// at the backend's prompt speed and one more answer at its output speed.
+///
+/// seconds = page tokens ÷ prompt tokens/s + answer tokens per claim ÷ output tokens/s
+///
+/// The measurements [`page_budget`] sizes the page by. `None` while either
+/// is unknown.
+pub(in crate::features::learning) fn page_seconds(
+    pace: Option<Pace>,
+    page_tokens: usize,
+    answer_tokens_per_claim: Option<f64>,
+) -> Option<f64> {
+    let pace = pace?;
+    let seconds = page_tokens as f64 / pace.prompt_tokens_per_second
+        + answer_tokens_per_claim? / pace.output_tokens_per_second;
+    seconds.is_finite().then_some(seconds)
 }
 
 #[cfg(test)]

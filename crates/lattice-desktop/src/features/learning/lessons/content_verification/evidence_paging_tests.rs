@@ -169,6 +169,13 @@ pub(super) fn marker_collection() -> Vec<LearningSourceDto> {
     sources
 }
 
+/// Pass B read to its lists' end whatever the pages cost, as the
+/// page-recall eval's ceiling reads it: the walk these tests watch.
+pub(super) const LIST_END: Paging = Paging {
+    reaches: REACHES,
+    depth: Depth::ListEnd,
+};
+
 pub(super) fn inventory(statements: &[String]) -> Inventory {
     Inventory {
         units: vec![UnitClaims {
@@ -197,12 +204,13 @@ async fn a_claim_supported_only_past_its_first_page_is_found_on_a_later_one() ->
     );
 
     let (results, activity) =
-        crate::features::learning::lesson_progress::observed(evidence_checks::check(
+        crate::features::learning::lesson_progress::observed(evidence_checks::check_with_paging(
             &model,
             &references,
             &inventory(&[CLAIM.into()]),
             &[],
             &ClaimChecks::default(),
+            (&Citations::default(), LIST_END),
         ))
         .await;
     let results = results?;
@@ -279,12 +287,13 @@ async fn the_list_ends_at_its_last_passage_on_the_subject_and_the_claim_then_goe
         .all(|passage| passage.source_id.starts_with("related-")));
 
     let model = PagingModel::new(6_000);
-    let results = evidence_checks::check(
+    let results = evidence_checks::check_with_paging(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
         &ClaimChecks::default(),
+        (&Citations::default(), LIST_END),
     )
     .await?;
 
@@ -821,12 +830,13 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
         refused: Default::default(),
     };
     let first = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
-    let results = evidence_checks::check(
+    let results = evidence_checks::check_with_paging(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
         &ClaimChecks::default(),
+        (&Citations::default(), LIST_END),
     )
     .await?;
 

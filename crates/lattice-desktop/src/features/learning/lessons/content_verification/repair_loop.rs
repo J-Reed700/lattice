@@ -167,10 +167,15 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 break;
             }
             let active = expanded.as_ref().unwrap_or(references);
-            match research::expand(llm, active, &findings, &hints, &checks)
+            let expansion = research::expand(llm, active, &findings, &hints, &checks)
                 .boxed()
-                .await?
-            {
+                .await?;
+            // What the round cost per claim is what this job's later walks
+            // weigh against reading on (D5).
+            if let Some(per_claim) = expansion.per_claim() {
+                checks.research_cost = Some(per_claim);
+            }
+            match expansion {
                 research::Expansion::Saved(additional, searched) => {
                     expanded = Some(*additional);
                     let active = expanded.as_ref().ok_or_else(|| {
@@ -204,11 +209,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     ledger.record_research(&claims, &searched, &report).await?;
                     break;
                 }
-                research::Expansion::Exhausted(exhausted) => {
+                research::Expansion::Exhausted(exhausted, searched) => {
                     tracing::info!(%exhausted, "claim.state: research found nothing new for these claims");
-                    ledger
-                        .record_research(&claims, &research::Searched::default(), &report)
-                        .await?;
+                    ledger.record_research(&claims, &searched, &report).await?;
                     break;
                 }
             }

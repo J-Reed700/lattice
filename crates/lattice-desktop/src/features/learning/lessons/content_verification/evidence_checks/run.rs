@@ -131,7 +131,9 @@ impl Run {
 
     /// Every claim's finding: each compared claim's decision, with the walks
     /// of those still unsupported read on through pass B (`deepen`) as
-    /// `paging` says, each walk paged by the budget it was first given.
+    /// `paging` says, each walk paged by the budget it was first given and
+    /// weighing what researching a claim on the web costs (D5): this job's
+    /// last research round's, else the latest the ledger holds.
     pub(super) async fn finish(
         &mut self,
         context: &Context<'_, '_>,
@@ -139,6 +141,19 @@ impl Run {
         answers: &mut AnswerSize,
     ) -> Result<Vec<CheckedClaim>> {
         let llm = context.llm;
+        let research = match context.retained.research_cost {
+            Some(cost) => Some(cost),
+            None => claim_ledger::research_cost().await?,
+        }
+        .map(|cost| cost.as_secs_f64());
+        // A rule that would not read even the cheapest next page, one more
+        // answer, reads no claim past its first page: no walk starts.
+        let reads_on = context.paging.depth.reads_next(
+            0.0,
+            page_seconds(llm.pace(), 0, answers.per_claim()),
+            research,
+        );
+        let mut first_page_only = 0;
         let mut results = std::mem::take(&mut self.results);
         let mut walks = Vec::new();
         let mut attributions: HashMap<usize, (Option<Finding>, Vec<String>)> = HashMap::new();
@@ -148,9 +163,9 @@ impl Run {
                     "A claim check finished without its finding; no lesson was published.",
                 ));
             };
-            if context.paging.depth == Depth::ListEnd
-                && finding.verdict == ClaimVerdict::Unsupported
-            {
+            let unsupported = finding.verdict == ClaimVerdict::Unsupported;
+            first_page_only += usize::from(unsupported && !reads_on);
+            if unsupported && reads_on {
                 let shown: Vec<EvidencePassage> = claim
                     .attribution
                     .iter()
@@ -182,11 +197,21 @@ impl Run {
             }
             results.push((claim.ordinal, claim.key, finding, all_reused));
         }
+        if first_page_only > 0 {
+            tracing::info!(
+                claims = first_page_only,
+                depth = ?context.paging.depth,
+                research_seconds = ?research,
+                pace = ?llm.pace(),
+                "Corroboration reads no claim past its first page; they go to web research"
+            );
+        }
         if !walks.is_empty() {
             let found = deepen(
                 llm,
                 context.references,
                 walks,
+                (context.paging.depth, research),
                 context.citations,
                 labels,
                 answers,

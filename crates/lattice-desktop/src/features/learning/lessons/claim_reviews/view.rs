@@ -364,6 +364,7 @@ fn item(
                 queries,
                 sources_added,
                 passages_found,
+                ..
             } => research.push(ResearchAttemptDto {
                 queries: queries.clone(),
                 sources_added: sources_added.iter().filter_map(reference).collect(),

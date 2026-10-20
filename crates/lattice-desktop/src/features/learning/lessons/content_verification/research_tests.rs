@@ -492,7 +492,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
                 prompts: Mutex::new(vec![]),
             };
             let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
-            let Expansion::Exhausted(exhausted) = outcome else {
+            let Expansion::Exhausted(exhausted, _) = outcome else {
                 panic!("an empty plan means public search cannot help, not a failure");
             };
             assert_eq!(
@@ -814,7 +814,7 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
             assert!(exp2.saved().is_some());
             let exhausted =
                 expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
-            assert!(matches!(exhausted, Expansion::Exhausted(_)));
+            assert!(matches!(exhausted, Expansion::Exhausted(..)));
             Ok(())
         },
     )

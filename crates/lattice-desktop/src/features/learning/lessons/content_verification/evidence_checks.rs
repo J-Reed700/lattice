@@ -49,20 +49,20 @@ use claims::{Compared, Comparison, Context, Prepared};
 pub(in crate::features::learning) use outcome::ContraryPassage;
 use outcome::{combine, decision_key};
 pub(in crate::features::learning) use outcome::{Pass, TwoPass};
-pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
+pub(in crate::features::learning) use page_budget::{page_budget, page_seconds, AnswerSize};
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
 use requests::{finish, group, pack};
 use run::Run;
-#[cfg(test)]
-pub(super) use walk::first_page;
 use walk::{deepen, log_page, walk_budget, Walk};
+#[cfg(test)]
+pub(super) use walk::{first_page, page_tokens};
 pub(super) use walk::{page_of, page_one, within_page, PageBudget, PageNote, Sizing};
 #[cfg(test)]
 pub(in crate::features::learning) use walk::{walk_pages, WalkedPage};
-pub(in crate::features::learning) use walk::{Depth, Paging, Reach};
 #[cfg(test)]
-pub(in crate::features::learning) use walk::{ORDERS, REACHES};
+pub(in crate::features::learning) use walk::{Depth, ORDERS, REACHES};
+pub(in crate::features::learning) use walk::{Paging, Reach};
 
 /// The most output a claim check may write, which the checker is built
 /// with: the largest an answer can be.

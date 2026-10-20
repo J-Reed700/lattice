@@ -624,6 +624,7 @@ impl ClaimLedger {
 
     /// Records a research round for each claim it looked for (§3
     /// `Researched`): "found nothing new" is an attempt with no passages.
+    /// Each claim's event carries what the round cost per claim (D5).
     pub(in crate::features::learning::lessons::content_verification) async fn record_research(
         &mut self,
         claims: &[ClaimId],
@@ -649,6 +650,9 @@ impl ClaimLedger {
                     queries: searched.queries.clone(),
                     sources_added: searched.sources_added.clone(),
                     passages_found,
+                    round_ms_per_claim: searched
+                        .per_claim
+                        .map(|cost| u64::try_from(cost.as_millis()).unwrap_or(u64::MAX)),
                 },
             )
             .await?;

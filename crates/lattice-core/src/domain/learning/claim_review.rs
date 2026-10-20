@@ -553,6 +553,13 @@ pub enum ClaimEvent {
         /// Source version ids the research saved.
         sources_added: Vec<String>,
         passages_found: usize,
+        /// What the round cost per claim it researched, in milliseconds:
+        /// its time from start to result over its claims. Pass B weighs it
+        /// as the cost of researching one claim on the web (course evidence
+        /// index D5). `None` when no round ran, and on events written before
+        /// rounds were timed.
+        #[serde(default)]
+        round_ms_per_claim: Option<u64>,
     },
     RepairAttempted {
         attempt: u8,
