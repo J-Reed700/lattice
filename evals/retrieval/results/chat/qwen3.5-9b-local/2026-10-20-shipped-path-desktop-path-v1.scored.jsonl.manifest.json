@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "dataset_sha256": "36f7dece97647ee7319f0a30bad89582ca3010479cec36ce07312a238075e1a1",
+  "expectations_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "retrieval_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "settings": {
+    "harness": "shipped_desktop_path",
+    "model": "Qwen3.5-9B-Q4_K_M.gguf",
+    "model_revision": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+    "recipe_sha256": "c3aceb89b9412c4ec201c86b190cf04c9371484f619a2f40ee9cf481c0654366",
+    "corpus_sha256": "7b95adfe6baa0ab6924f8cdef88e2052c18ad2e5550090279a5ce4795af85486",
+    "thinking": "off",
+    "commit": "bfcfd6a860a3098fe2297b79b3cfcf3fa01f6712",
+    "judge": {
+      "model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "messages": null,
+      "stream": false,
+      "temperature": 0,
+      "top_p": 1,
+      "top_k": 1,
+      "seed": 2026,
+      "max_tokens": 300,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "verdict",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "reason"
+            ]
+          }
+        }
+      },
+      "rubric": "lattice-shipped-path-judge/1",
+      "identity": {
+        "requested_model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "served_models": [
+          {
+            "id": "/Users/josh/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+            "meta": {
+              "vocab_type": 2,
+              "n_vocab": 248320,
+              "n_ctx": 16384,
+              "n_ctx_train": 262144,
+              "n_embd": 4096,
+              "n_params": 8953803264,
+              "size": 5669554176,
+              "ftype": "Q4_K - Medium"
+            }
+          }
+        ],
+        "answer_model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "judges_own_answers": true
+      }
+    }
+  },
+  "harness_sha256": "3d05f057ac762dc1726130932d83d0308771e6ae1a6df70c8bd062aef845b8e5",
+  "run_id": "339207f34751c64bc5a87c42ffee815a95be3e1b9efaea9853ff38716204a995"
+}

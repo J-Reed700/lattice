@@ -1,0 +1,585 @@
+{
+  "items": 38,
+  "turns": 55,
+  "errors": [],
+  "overall": {
+    "items": 38,
+    "mechanical": {
+      "passed": 27,
+      "total": 38,
+      "rate": 0.7105263157894737,
+      "wilson95": [
+        0.5524286232424794,
+        0.8299672217151693
+      ]
+    },
+    "judge": {
+      "passed": 26,
+      "total": 38,
+      "rate": 0.6842105263157895,
+      "wilson95": [
+        0.5254424010939046,
+        0.8091539632440382
+      ]
+    },
+    "both": {
+      "passed": 26,
+      "total": 38,
+      "rate": 0.6842105263157895,
+      "wilson95": [
+        0.5254424010939046,
+        0.8091539632440382
+      ]
+    }
+  },
+  "by_tag": {
+    "multi-hop": {
+      "items": 4,
+      "mechanical": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      },
+      "judge": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      }
+    },
+    "planner-rewrite": {
+      "items": 5,
+      "mechanical": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      },
+      "judge": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      }
+    },
+    "corrective-retry": {
+      "items": 5,
+      "mechanical": {
+        "passed": 3,
+        "total": 5,
+        "rate": 0.6,
+        "wilson95": [
+          0.2307242812760128,
+          0.882379225767352
+        ]
+      },
+      "judge": {
+        "passed": 3,
+        "total": 5,
+        "rate": 0.6,
+        "wilson95": [
+          0.2307242812760128,
+          0.882379225767352
+        ]
+      },
+      "both": {
+        "passed": 3,
+        "total": 5,
+        "rate": 0.6,
+        "wilson95": [
+          0.2307242812760128,
+          0.882379225767352
+        ]
+      }
+    },
+    "opening-or-section": {
+      "items": 5,
+      "mechanical": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      },
+      "judge": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      }
+    },
+    "abstain": {
+      "items": 6,
+      "mechanical": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6096657120978346,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6096657120978346,
+          1
+        ]
+      },
+      "both": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6096657120978346,
+          1
+        ]
+      }
+    },
+    "conflict": {
+      "items": 8,
+      "mechanical": {
+        "passed": 7,
+        "total": 8,
+        "rate": 0.875,
+        "wilson95": [
+          0.5291118177871464,
+          0.9775825085499433
+        ]
+      },
+      "judge": {
+        "passed": 7,
+        "total": 8,
+        "rate": 0.875,
+        "wilson95": [
+          0.5291118177871464,
+          0.9775825085499433
+        ]
+      },
+      "both": {
+        "passed": 7,
+        "total": 8,
+        "rate": 0.875,
+        "wilson95": [
+          0.5291118177871464,
+          0.9775825085499433
+        ]
+      }
+    },
+    "numeric-precision": {
+      "items": 31,
+      "mechanical": {
+        "passed": 22,
+        "total": 31,
+        "rate": 0.7096774193548387,
+        "wilson95": [
+          0.5340767066925007,
+          0.8390419984369939
+        ]
+      },
+      "judge": {
+        "passed": 21,
+        "total": 31,
+        "rate": 0.6774193548387096,
+        "wilson95": [
+          0.5014100930808565,
+          0.8143057343364082
+        ]
+      },
+      "both": {
+        "passed": 21,
+        "total": 31,
+        "rate": 0.6774193548387096,
+        "wilson95": [
+          0.5014100930808565,
+          0.8143057343364082
+        ]
+      }
+    },
+    "follow-up-memory": {
+      "items": 12,
+      "mechanical": {
+        "passed": 9,
+        "total": 12,
+        "rate": 0.75,
+        "wilson95": [
+          0.46769466506643426,
+          0.9110583316059453
+        ]
+      },
+      "judge": {
+        "passed": 8,
+        "total": 12,
+        "rate": 0.6666666666666666,
+        "wilson95": [
+          0.39062208887279953,
+          0.8618799089087867
+        ]
+      },
+      "both": {
+        "passed": 8,
+        "total": 12,
+        "rate": 0.6666666666666666,
+        "wilson95": [
+          0.39062208887279953,
+          0.8618799089087867
+        ]
+      }
+    },
+    "table": {
+      "items": 3,
+      "mechanical": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "both": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      }
+    },
+    "ocr": {
+      "items": 1,
+      "mechanical": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      }
+    },
+    "multilingual": {
+      "items": 1,
+      "mechanical": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "judge": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "both": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      }
+    },
+    "entity-collision": {
+      "items": 1,
+      "mechanical": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      }
+    },
+    "fragment": {
+      "items": 1,
+      "mechanical": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      }
+    },
+    "pronoun-follow-up": {
+      "items": 8,
+      "mechanical": {
+        "passed": 6,
+        "total": 8,
+        "rate": 0.75,
+        "wilson95": [
+          0.40927543031016883,
+          0.9285207872478909
+        ]
+      },
+      "judge": {
+        "passed": 5,
+        "total": 8,
+        "rate": 0.625,
+        "wilson95": [
+          0.30574239460262737,
+          0.8631557141764026
+        ]
+      },
+      "both": {
+        "passed": 5,
+        "total": 8,
+        "rate": 0.625,
+        "wilson95": [
+          0.30574239460262737,
+          0.8631557141764026
+        ]
+      }
+    },
+    "ellipsis-follow-up": {
+      "items": 3,
+      "mechanical": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "both": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      }
+    },
+    "topic-shift": {
+      "items": 2,
+      "mechanical": {
+        "passed": 0,
+        "total": 2,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.6576197724933469
+        ]
+      },
+      "judge": {
+        "passed": 0,
+        "total": 2,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.6576197724933469
+        ]
+      },
+      "both": {
+        "passed": 0,
+        "total": 2,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.6576197724933469
+        ]
+      }
+    },
+    "cross-turn-evidence": {
+      "items": 2,
+      "mechanical": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0,
+        "wilson95": [
+          0.34238022750665303,
+          1
+        ]
+      },
+      "judge": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0,
+        "wilson95": [
+          0.34238022750665303,
+          1
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0,
+        "wilson95": [
+          0.34238022750665303,
+          1
+        ]
+      }
+    }
+  },
+  "timing_ms": {
+    "answered_ms": {
+      "median": 57317,
+      "p95": 84261
+    },
+    "retrieval_ms": {
+      "median": 34546,
+      "p95": 53533
+    },
+    "generation_ms": {
+      "median": 19377,
+      "p95": 32403
+    },
+    "verification_wait_ms": {
+      "median": 10856,
+      "p95": 30022
+    }
+  },
+  "prompt_tokens": {
+    "cached_prompt_tokens": 258612,
+    "evaluated_prompt_tokens": 1510333,
+    "completion_tokens": 43711
+  },
+  "observed": {
+    "turns_with_kb_search": 55,
+    "turns_with_corrective_retry": 2,
+    "turns_planner_skipped": 0,
+    "turns_insufficient": 2,
+    "turns_with_tool_calls": 0,
+    "model_calls_per_turn_median": 7
+  },
+  "disagreements": [
+    {
+      "query_id": "dp-mt-runbook-ticket",
+      "mechanical": true,
+      "judge": false
+    }
+  ]
+}

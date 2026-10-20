@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import shipped_path_eval as spe
@@ -168,6 +170,22 @@ class Judge(unittest.TestCase):
     def test_rows_for_unknown_items_are_rejected(self):
         with self.assertRaises(ValueError):
             spe.score(QUESTIONS, [row("three", [turn("x")])])
+
+
+class JudgeAuth(unittest.TestCase):
+    def test_no_key_sends_only_the_content_type(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(spe.judge_headers(), {"Content-Type": "application/json"})
+
+    def test_a_key_is_sent_under_its_own_header_name(self):
+        with mock.patch.dict(os.environ, {spe.JUDGE_AUTH_ENV: "Authorization: Bearer abc:def"}):
+            self.assertEqual(spe.judge_headers()["Authorization"], "Bearer abc:def")
+
+    def test_a_key_without_a_header_name_is_refused(self):
+        for value in ("Bearer abc", ": abc", "Authorization:"):
+            with mock.patch.dict(os.environ, {spe.JUDGE_AUTH_ENV: value}):
+                with self.assertRaises(SystemExit):
+                    spe.judge_headers()
 
 
 class LabelledDataset(unittest.TestCase):

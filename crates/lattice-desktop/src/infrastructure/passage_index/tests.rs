@@ -99,6 +99,15 @@ fn set(keys: &[&str]) -> HashSet<String> {
 
 mod store {
     use super::*;
+    use lattice_core::shared::runtime::jobs::JobFailure;
+
+    #[test]
+    fn a_busy_store_makes_its_job_wait_rather_than_fail() {
+        let busy = super::super::store::db_error("read documents")(sqlx::Error::PoolTimedOut);
+        assert!(JobFailure::is_transient(&busy));
+        let broken = super::super::store::db_error("read documents")(sqlx::Error::RowNotFound);
+        assert!(!JobFailure::is_transient(&broken));
+    }
 
     #[tokio::test]
     async fn a_rebuild_removes_only_the_index_files() {

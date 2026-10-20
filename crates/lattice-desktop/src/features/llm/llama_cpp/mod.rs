@@ -270,9 +270,11 @@ impl LlamaCppLlm {
 /// replays identically whichever of the two the model is reached through.
 pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
     let mut messages: Vec<Value> = Vec::with_capacity(input.len());
-    let mut previous_was_call = false;
+    // Whether the last message is a model turn that a call joins: its calls
+    // so far, or the text it wrote before them.
+    let mut calls_join_last = false;
     for item in input {
-        let is_call = matches!(item, CompletionInput::ToolCall { .. });
+        let mut joins = false;
         match item {
             CompletionInput::Native { value } => messages.push(value.clone()),
             // Chat templates know system, user, assistant and tool; a
@@ -281,7 +283,8 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
                 messages.push(json!({"role":"system","content":content}))
             }
             CompletionInput::Message { role, content } => {
-                messages.push(json!({"role":role,"content":content}))
+                messages.push(json!({"role":role,"content":content}));
+                joins = role == "assistant";
             }
             CompletionInput::Multimodal { role, parts } => {
                 messages.push(json!({"role":role,"content":openai_content_parts(role, parts)?}))
@@ -293,25 +296,30 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
             } => {
                 let call = json!({"id":id,"type":"function",
                     "function":{"name":name,"arguments":arguments.to_string()}});
-                // Calls made in one round are one assistant message. Replayed
-                // as one message each, they break the role alternation that
-                // strict chat templates enforce.
+                // Calls made in one round are one assistant message, with
+                // the text the model wrote before them. Replayed as messages
+                // of their own, they break the role alternation that strict
+                // chat templates enforce.
                 match messages
                     .last_mut()
-                    .filter(|_| previous_was_call)
-                    .and_then(|last| last.get_mut("tool_calls"))
-                    .and_then(Value::as_array_mut)
-                {
+                    .filter(|_| calls_join_last)
+                    .and_then(Value::as_object_mut)
+                    .and_then(|turn| {
+                        turn.entry("tool_calls")
+                            .or_insert_with(|| Value::Array(Vec::new()))
+                            .as_array_mut()
+                    }) {
                     Some(calls) => calls.push(call),
                     None => messages
                         .push(json!({"role":"assistant","content":null,"tool_calls":[call]})),
                 }
+                joins = true;
             }
             CompletionInput::ToolResult { id, output } => {
                 messages.push(json!({"role":"tool","tool_call_id":id,"content":output}))
             }
         }
-        previous_was_call = is_call;
+        calls_join_last = joins;
     }
     coalesce_system_messages(messages)
 }
