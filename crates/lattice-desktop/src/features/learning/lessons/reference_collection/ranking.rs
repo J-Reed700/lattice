@@ -14,6 +14,7 @@
 use super::*;
 use crate::features::learning::references::course_index::write_version;
 use crate::infrastructure::passage_index::text_search::{match_words, WordMatch};
+use lattice_core::application::contracts::search::Spread;
 use lattice_core::shared::constants::{
     DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_VECTOR_FUSION_WEIGHT,
 };
@@ -142,7 +143,7 @@ impl<'a> ReferenceCollection<'a> {
                     ));
                 }
                 hybrid
-                    .fuse(branches, fetch)
+                    .fuse(branches, fetch, Spread::ByRelevance)
                     .into_iter()
                     .filter_map(|result| {
                         Some((

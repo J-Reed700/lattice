@@ -8,7 +8,10 @@
 //! the program's saved source versions, the database opened read-only. It
 //! builds a temporary course index in a scratch directory from those
 //! versions, with the configured embedding model when it is given one
-//! (`LATTICE_PAGE_RECALL_EMBEDDING`) and by words alone otherwise, and
+//! (`LATTICE_PAGE_RECALL_EMBEDDING`) and by words alone otherwise. Given
+//! `LATTICE_PAGE_RECALL_INDEXES`, it keeps the indexes there instead: a copy
+//! of the app's `course-index` directory, built by the same model, is
+//! brought current rather than embedded again. It
 //! walks each claim's pass B pages to the end of its lists under each order
 //! of §5.2. No model is asked: the judge is assumed to read each page whole
 //! and settle nothing until the cited passage is on it.
@@ -254,10 +257,13 @@ async fn live_page_recall_eval() -> Result<()> {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     let scratch = tempfile::tempdir()?;
+    let index_dir = std::env::var_os("LATTICE_PAGE_RECALL_INDEXES")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| scratch.path().to_path_buf());
     let model = embedding_model().await?;
     let identity = model.as_ref().map(|model| model.model_identity());
     let indexes = CourseIndexes::new(
-        scratch.path().to_path_buf(),
+        index_dir,
         pool.clone(),
         Arc::new(GivenModel(model)),
         Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),

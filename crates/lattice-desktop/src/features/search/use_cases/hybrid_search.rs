@@ -63,7 +63,7 @@ use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
 use lattice_core::application::contracts::search::{
     BranchKind, QueryBranches, RankedBranch, ReciprocalRankFusion, SearchModeDto, SearchRequestDto,
-    SearchResponseDto, SearchResultDto, SearchResultRecord, WeightedRanking,
+    SearchResponseDto, SearchResultDto, SearchResultRecord, Spread, WeightedRanking,
 };
 use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::application::ports::{
@@ -348,7 +348,7 @@ impl HybridSearchUseCase {
                         "Document search failed in both vector and keyword retrieval".into(),
                     ));
                 }
-                let results = self.fuse(query.branches, limit);
+                let results = self.fuse(query.branches, limit, Spread::AcrossDocuments);
                 debug!(
                     fused_count = results.len(),
                     preview = summarize(&results, 8),
@@ -450,11 +450,16 @@ impl HybridSearchUseCase {
     ///
     /// Weighted reciprocal rank decides the order; branch scores are on
     /// incomparable scales and are never mixed. The first list to return a
-    /// passage supplies it, with the fused score. No document places more
-    /// than `PER_DOCUMENT_CAP` passages ahead of the documents behind it.
-    /// Each result reports its best rank, and the score at that rank, in the
-    /// vector and BM25 lists it appeared in.
-    pub fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+    /// passage supplies it, with the fused score. Spread across documents,
+    /// no document places more than `PER_DOCUMENT_CAP` passages ahead of the
+    /// documents behind it. Each result reports its best rank, and the score
+    /// at that rank, in the vector and BM25 lists it appeared in.
+    pub fn fuse(
+        &self,
+        branches: Vec<RankedBranch>,
+        limit: usize,
+        spread: Spread,
+    ) -> Vec<SearchResultDto> {
         let mut payloads: HashMap<String, SearchResultDto> = HashMap::new();
         let mut signals: HashMap<String, BranchSignals> = HashMap::new();
         let mut rankings = Vec::with_capacity(branches.len());
@@ -490,7 +495,7 @@ impl HybridSearchUseCase {
             let placed = per_document
                 .entry(result.document_id.clone().unwrap_or_default())
                 .or_default();
-            if *placed < PER_DOCUMENT_CAP {
+            if spread == Spread::ByRelevance || *placed < PER_DOCUMENT_CAP {
                 *placed += 1;
                 selected.push(result);
             } else {

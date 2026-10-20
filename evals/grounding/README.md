@@ -226,7 +226,15 @@ one), the reciprocal rank and the count never reached; the passages that
 share no distinctive term with their claim are the first thing to look for
 in the hybrid column.
 
-Run it on a copy of your database or the live one (it never writes):
+Embedding a whole course takes as long as the app's own build (about six
+passages a second on an Apple-silicon GPU). When the app has already built
+the course's index with the same model, copy its `course-index` folder and
+point `LATTICE_PAGE_RECALL_INDEXES` at the copy: the eval brings it current
+instead of embedding it again. Never point it at the app's own folder; the
+eval writes to the index it is given.
+
+Run it on a copy of your database or the live one (it never writes to the
+database):
 
 ```bash
 cd crates/lattice-desktop
@@ -237,6 +245,7 @@ LATTICE_PAGE_RECALL_PROGRAM=<optional program id> \
 LATTICE_PAGE_RECALL_ORDER=<relevance|lesson-sources|tie-break|all, default all> \
 LATTICE_PAGE_RECALL_PACE="<optional prompt tok/s>,<output tok/s>,<answer tokens per claim>" \
 LATTICE_PAGE_RECALL_EMBEDDING=<optional embedding model directory> \
+LATTICE_PAGE_RECALL_INDEXES=<optional copy of the app's course-index folder> \
   cargo test --lib live_page_recall_eval -- --ignored --nocapture
 ```
 

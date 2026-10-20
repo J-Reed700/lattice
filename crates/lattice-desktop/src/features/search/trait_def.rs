@@ -8,7 +8,7 @@ use crate::features::search::use_cases::HybridSearchUseCase;
 use async_trait::async_trait;
 use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-    SearchResultDto,
+    SearchResultDto, Spread,
 };
 use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
@@ -47,8 +47,13 @@ impl HybridSearchTrait for HybridSearchUseCase {
         .await
     }
 
-    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
-        HybridSearchUseCase::fuse(self, branches, limit)
+    fn fuse(
+        &self,
+        branches: Vec<RankedBranch>,
+        limit: usize,
+        spread: Spread,
+    ) -> Vec<SearchResultDto> {
+        HybridSearchUseCase::fuse(self, branches, limit, spread)
     }
 
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {

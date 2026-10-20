@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::features::conversation::chat::ports::ChatRecords;
+use lattice_core::application::contracts::search::Spread;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{
@@ -128,7 +129,7 @@ pub(in super::super) async fn retrieve(
     let opening_ids: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
     results.extend(
         hybrid
-            .fuse(branches, limit)
+            .fuse(branches, limit, Spread::AcrossDocuments)
             .into_iter()
             .filter(|r| !opening_ids.contains(&r.id)),
     );
@@ -252,5 +253,9 @@ pub(in super::super) fn fuse_passes(
         weight: 1.0,
         results,
     };
-    hybrid.fuse(vec![pass(first), pass(second)], limit)
+    hybrid.fuse(
+        vec![pass(first), pass(second)],
+        limit,
+        Spread::AcrossDocuments,
+    )
 }
