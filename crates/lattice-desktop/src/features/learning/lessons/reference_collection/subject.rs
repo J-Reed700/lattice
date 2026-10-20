@@ -1,12 +1,12 @@
 //! What a claim is about, read against the collection's own vocabulary.
 //!
-//! A deeper page of evidence is worth reading only while it mentions what
+//! A claim's corroboration list ends at its last passage that mentions what
 //! the claim is about: one of the claim's distinctive content terms, those no
 //! more common across the collection's passages than the median of the
 //! claim's own content terms. Words the whole subject shares (in a .NET
-//! collection, "net" or "core") do not count, so a walk through deeper
-//! evidence ends once only the subject's common vocabulary is left. Vector
-//! neighbours alone never count.
+//! collection, "net" or "core") do not count, so a list ends once only the
+//! subject's common vocabulary is left. Vector neighbours alone never count;
+//! they are read when they rank before the end.
 //!
 //! Each term's passage count comes from the store's full-text vocabulary, so
 //! the claim's terms are looked up as the store's tokenizer keeps words
@@ -30,7 +30,7 @@ const FUNCTION_WORDS: &[&str] = &[
 
 /// The words of `text` a keyword match should rest on, as the index keeps
 /// them: not function words.
-fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+pub(super) fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
@@ -68,6 +68,12 @@ impl Subject {
                 .map(|(_, term)| term)
                 .collect(),
         }
+    }
+
+    /// Whether `term`, as the index keeps words, is one of the distinctive
+    /// terms.
+    pub(super) fn has(&self, term: &str) -> bool {
+        self.distinctive.contains(term)
     }
 
     /// Whether `text` mentions what the query is about.

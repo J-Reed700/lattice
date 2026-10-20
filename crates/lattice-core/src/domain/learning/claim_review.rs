@@ -397,9 +397,39 @@ pub enum CheckResult {
         source_version_id: String,
         supporting_quote: String,
     },
+    /// The claim stands, but not on what its section cites: none of the
+    /// `cited` source versions supports it, and a passage of another
+    /// course source does (two-pass claim pages, course evidence index
+    /// §5.1). The claim is verified by the found passage; the lesson's
+    /// citation is repaired to it.
+    SupportedElsewhere {
+        cited: Vec<String>,
+        source_version_id: String,
+        supporting_quote: String,
+    },
     Failed {
         kind: VerdictKind,
     },
+}
+
+impl CheckResult {
+    /// The passage that entails the claim, as its source version and
+    /// quotation: wherever it was found, the claim stands on it. `None` for a
+    /// failed check.
+    pub fn support(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Supported {
+                source_version_id,
+                supporting_quote,
+            }
+            | Self::SupportedElsewhere {
+                source_version_id,
+                supporting_quote,
+                ..
+            } => Some((source_version_id, supporting_quote)),
+            Self::Failed { .. } => None,
+        }
+    }
 }
 
 /// A user's resolution of one claim (§5.1). Attaching evidence and undoing

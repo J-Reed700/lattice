@@ -200,17 +200,22 @@ impl ClaimLedger {
                     .trust
                     .as_ref()
                     .map(|trust| trust.assessment(&source, &quote));
+                // Support found in pass B when the section's citations gave
+                // none: the claim stands on the found passage, and the
+                // ledger says its citation was elsewhere.
+                let result = match &finding.two_pass.supported_by {
+                    Some(found) => CheckResult::SupportedElsewhere {
+                        cited: found.cited.clone(),
+                        source_version_id: source.clone(),
+                        supporting_quote: quote.clone(),
+                    },
+                    None => CheckResult::Supported {
+                        source_version_id: source.clone(),
+                        supporting_quote: quote.clone(),
+                    },
+                };
                 match self.gate.judge(&support) {
-                    Sufficiency::Sufficient => (
-                        (
-                            CheckResult::Supported {
-                                source_version_id: source,
-                                supporting_quote: quote,
-                            },
-                            finding.reason.clone(),
-                        ),
-                        trust,
-                    ),
+                    Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
                     // Only the bar's failure is the gate's; a quotation that
                     // is not in its passage is a plain unsupported claim.
                     Sufficiency::Insufficient { reason, kind } => (

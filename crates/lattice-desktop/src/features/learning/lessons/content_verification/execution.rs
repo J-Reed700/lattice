@@ -349,13 +349,22 @@ mod capacity_tests {
             observations.last().map(|o| o.id.as_str()),
             Some("block-0-example-15")
         );
-        let sources = vec![LearningSourceDto {
-            id: "example-reference".into(),
-            title: "Example reference".into(),
-            url: None,
-            acquired_at: 0,
-            excerpt: "Each example emits two thousand repeated characters.".into(),
-        }];
+        let sources = vec![
+            LearningSourceDto {
+                id: "example-reference".into(),
+                title: "Example reference".into(),
+                url: None,
+                acquired_at: 0,
+                excerpt: "Each example emits two thousand repeated characters.".into(),
+            },
+            LearningSourceDto {
+                id: "unrelated-reference".into(),
+                title: "Unrelated reference".into(),
+                url: None,
+                acquired_at: 0,
+                excerpt: "Kiln firing schedules are logged by hand.".into(),
+            },
+        ];
         let references = ReferenceCollection::lexical(&sources)?;
         let evidence = super::super::evidence_for(
             &crate::features::learning::lessons::course_generation_tests::Model(String::new()),
@@ -363,7 +372,6 @@ mod capacity_tests {
             0,
             &references,
             &observations,
-            1,
         )
         .await?;
         assert_eq!(
@@ -375,7 +383,7 @@ mod capacity_tests {
         );
         assert!(
             evidence.iter().any(|p| p.source_id == "example-reference"),
-            "Long execution output must not erase source evidence"
+            "Long execution output must not erase source evidence: the runs are pass A's, the source pass B's"
         );
         Ok(())
     }

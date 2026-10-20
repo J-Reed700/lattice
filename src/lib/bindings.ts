@@ -5109,7 +5109,12 @@ captured?: CapturedSourcesDto | null;
  */
 images?: ChatImageDto[] | null }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
-export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
+/**
+ * Supported by a passage of another course source than the ones its
+ * section cites; the lesson's citation is repaired to it.
+ */
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */

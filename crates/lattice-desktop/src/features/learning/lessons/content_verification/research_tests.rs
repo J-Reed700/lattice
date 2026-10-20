@@ -89,6 +89,7 @@ fn gap() -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        two_pass: Default::default(),
         trust: None,
     }
 }
@@ -693,6 +694,7 @@ fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        two_pass: Default::default(),
         trust: Some(Box::new(FindingTrust {
             profile: ClaimProfile {
                 kind: ClaimKind::Specification,

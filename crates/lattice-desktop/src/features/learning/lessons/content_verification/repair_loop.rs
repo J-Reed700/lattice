@@ -53,6 +53,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     let mut resume_repair = true;
     let mut checks = ClaimChecks::default();
     let mut verified: Option<String> = None;
+    // Citations this job repaired to where a claim's support was found.
+    let mut cited_where_supported = HashSet::new();
     loop {
         raw = normalize_example_fences(llm, raw).await?;
         let mut candidate: Value = crate::features::learning::generation::parse_json(&raw)?;
@@ -173,6 +175,26 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
         }
         ledger.propose_general_knowledge(&report).await?;
+        // A claim supported elsewhere in the course keeps its text; its
+        // section's citation moves to the passage found, and the next pass
+        // checks it as the section's own citation (§5.1).
+        let active = expanded.as_ref().unwrap_or(references);
+        let cited = section_citations(&candidate, active)?;
+        if repair::cite_where_supported(
+            &mut candidate,
+            &report.findings,
+            &cited,
+            active,
+            &mut cited_where_supported,
+        )? {
+            crate::features::learning::lesson_progress::phase(
+                crate::features::learning::lesson_progress::Phase::Repair,
+                "Citing the passages that support claims their sections cited elsewhere",
+            );
+            raw = candidate.to_string();
+            crate::features::learning::lesson_drafts::save(&raw).await?;
+            continue;
+        }
         match ledger.decide() {
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is

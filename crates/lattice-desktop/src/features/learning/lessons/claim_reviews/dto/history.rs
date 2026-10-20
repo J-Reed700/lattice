@@ -240,6 +240,15 @@ pub enum CheckResultDto {
         #[serde(rename = "supportingQuote")]
         supporting_quote: String,
     },
+    /// Supported by a passage of another course source than the ones its
+    /// section cites; the lesson's citation is repaired to it.
+    SupportedElsewhere {
+        cited: Vec<String>,
+        #[serde(rename = "sourceVersionId")]
+        source_version_id: String,
+        #[serde(rename = "supportingQuote")]
+        supporting_quote: String,
+    },
     Failed {
         kind: VerdictKindDto,
     },
@@ -252,6 +261,15 @@ impl From<&CheckResult> for CheckResultDto {
                 source_version_id,
                 supporting_quote,
             } => Self::Supported {
+                source_version_id: source_version_id.clone(),
+                supporting_quote: supporting_quote.clone(),
+            },
+            CheckResult::SupportedElsewhere {
+                cited,
+                source_version_id,
+                supporting_quote,
+            } => Self::SupportedElsewhere {
+                cited: cited.clone(),
                 source_version_id: source_version_id.clone(),
                 supporting_quote: supporting_quote.clone(),
             },

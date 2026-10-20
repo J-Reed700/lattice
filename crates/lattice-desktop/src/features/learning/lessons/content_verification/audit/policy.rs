@@ -87,7 +87,7 @@ impl Judged {
             CheckResult::Failed {
                 kind: VerdictKind::Contradicted,
             } => 0,
-            CheckResult::Supported { .. } => 1,
+            CheckResult::Supported { .. } | CheckResult::SupportedElsewhere { .. } => 1,
             CheckResult::Failed {
                 kind: VerdictKind::Unsupported,
             } => 2,

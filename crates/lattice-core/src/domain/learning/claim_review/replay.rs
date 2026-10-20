@@ -122,8 +122,8 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
     let previous_failure = std::mem::replace(
         &mut cursor.latest_failure,
         match &check.result {
-            CheckResult::Supported { .. } => None,
             CheckResult::Failed { kind } => Some(kind.clone()),
+            CheckResult::Supported { .. } | CheckResult::SupportedElsewhere { .. } => None,
         },
     );
     let model = match &check.checker {
@@ -162,6 +162,11 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
         CheckResult::Supported {
             source_version_id,
             supporting_quote,
+        }
+        | CheckResult::SupportedElsewhere {
+            source_version_id,
+            supporting_quote,
+            ..
         } => ClaimState::ResolvedByEvidence {
             source_version_id: source_version_id.clone(),
             supporting_quote: supporting_quote.clone(),

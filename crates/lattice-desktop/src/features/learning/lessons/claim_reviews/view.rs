@@ -317,14 +317,11 @@ fn checker_verdict(
     texts: &HashMap<PassageKey, PassageText>,
 ) -> Option<CheckerVerdictDto> {
     let (check, at) = latest_check(entry, verifier)?;
-    let quoted_source = match &check.result {
-        CheckResult::Supported {
-            source_version_id, ..
-        } => sources
+    let quoted_source = check.result.support().and_then(|(source_version_id, _)| {
+        sources
             .get(source_version_id)
-            .map(|facts| facts.reference(source_version_id)),
-        CheckResult::Failed { .. } => None,
-    };
+            .map(|facts| facts.reference(source_version_id))
+    });
     Some(CheckerVerdictDto {
         checker: (&check.checker).into(),
         result: CheckResultDto::from(&check.result),

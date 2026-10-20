@@ -426,6 +426,21 @@ pub async fn prepare_lesson_with_references<'a>(
         )
         .await?;
     let generated: GeneratedLesson = parse_json(&raw)?;
+    // Verification may repair a citation to the passage that supports its
+    // claim (course evidence index §5.1), anywhere in a source the lesson
+    // names: a quotation is checked against the whole saved text of the
+    // source it cites, not only the passages the writer was shown.
+    let sources: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            references
+                .sources
+                .iter()
+                .find(|saved| saved.id == source.id)
+                .cloned()
+                .unwrap_or_else(|| source.clone())
+        })
+        .collect();
     if !(8..=12).contains(&generated.blocks.len()) || generated.questions.len() != 6 {
         return Err(invalid(
             "The model returned an incomplete lesson. Try preparing it again.",
