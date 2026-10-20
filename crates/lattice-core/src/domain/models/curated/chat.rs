@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Every chat entry carries it. Qwen 3.5, 3.6 and 3.8 templates emit
 /// `<tool_call>` JSON; Gemma 4's emit `<|tool_call>call:name{…}<tool_call|>`,
-/// which the pinned llama-server (v0.6.0) parses with its own Gemma 4 chat
+/// which the pinned llama-server (v0.7.0) parses with its own Gemma 4 chat
 /// parser.
 pub const TOOL_CALLING_CAPABILITY: &str = "tool-calling";
 
@@ -334,7 +334,7 @@ const QWEN35_4B_9B_KV: KvFootprint = KvFootprint {
 /// tools. Older families were removed rather than hidden: a pre-release
 /// catalog has no installs to keep working.
 ///
-/// How the pinned llama-server (`v0.6.0`, `tools/mtmd/clip.cpp`) sizes a
+/// How the pinned llama-server (`v0.7.0`, `tools/mtmd/clip.cpp`) sizes a
 /// picture for the Qwen 3.5, 3.6 and 3.8 projectors. Their headers read
 /// `clip.projector_type = qwen3vl_merger`, `clip.vision.patch_size = 16` and
 /// `clip.vision.spatial_merge_size = 2`: one token per 32 px square. The
