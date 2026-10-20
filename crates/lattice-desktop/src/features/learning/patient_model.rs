@@ -163,6 +163,9 @@ impl LLMPort for PatientModel<'_> {
     fn chars_per_token(&self) -> f64 {
         self.inner.chars_per_token()
     }
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.inner.pace()
+    }
     fn count_tokens(&self, text: &str) -> usize {
         self.inner.count_tokens(text)
     }
