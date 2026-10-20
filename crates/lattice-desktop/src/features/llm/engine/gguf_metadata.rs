@@ -284,10 +284,11 @@ impl GgufModelInfo {
     /// linear-attention layers.
     ///
     /// Unlike the KV cache it does not grow with the window: each such layer
-    /// holds, for every server slot, a convolution state of `(conv_kernel - 1)
-    /// * (inner + 2 * groups * state)` values and a recurrent state of `state
-    /// * inner`, in f32. Qwen 3.5 9B's 24 such layers hold about 0.2 GB. 0 for
-    /// a model without them, or whose header does not describe them.
+    /// holds, for every server slot, a convolution state of
+    /// `(conv_kernel - 1) × (inner + 2 × groups × state)` values and a
+    /// recurrent state of `state × inner`, in f32. Qwen 3.5 9B's 24 such
+    /// layers hold about 0.2 GB. 0 for a model without them, or whose header
+    /// does not describe them.
     pub fn recurrent_state_bytes(&self) -> u64 {
         let (Some(blocks), Some(kernel), Some(state), Some(inner)) = (
             self.block_count,
