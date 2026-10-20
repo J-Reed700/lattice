@@ -296,7 +296,8 @@ pub(super) fn render(sources: &[SourceDto], left_out: usize) -> Option<String> {
     }
     let mut rendered = format!(
         "Evidence retained from earlier in this conversation. These are original source passages, \
-         citable with the numbers below. Combine them with new evidence; a new search does not \
+         citable with the numbers below. They were found for earlier questions: use them only where \
+         they bear on the latest one. Combine them with new evidence; a new search does not \
          by itself invalidate prior findings. Apply later corrections and reconcile conflicting evidence. Do not reuse citation numbers from earlier assistant messages.\n\n{}",
         sources.iter().map(render_source).collect::<Vec<_>>().join("\n\n")
     );

@@ -16,7 +16,7 @@ Two separate Mac packages are built: `aarch64-apple-darwin` and
 
 The Intel application target remains a **qualification candidate**, pending
 native CI evidence, physical-hardware acceptance, and signed/notarized installer
-validation. Its runtime dependency is published: the pinned `llama/v0.6.0-r1`
+validation. Its runtime dependency is published: the pinned `llama/v0.7.0-r1`
 sidecar release contains all six platform binaries, including
 `llama-server-x86_64-apple-darwin`. Fetch, install, and production-build checks
 require the checksum in `crates/lattice-desktop/scripts/llama-server.lock`.

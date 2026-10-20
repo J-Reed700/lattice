@@ -12,6 +12,7 @@ mod loop_tests;
 mod research_notes;
 mod scoped_document_tools;
 mod tool_sources;
+mod written_calls;
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
@@ -29,6 +30,7 @@ use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 use final_round::LastRound;
+use written_calls::WrittenCalls;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -373,6 +375,13 @@ pub(super) async fn run_agentic_tool_loop(
             "Starting LLM generation (tool iteration {})", iteration
         );
 
+        // A call written into the text instead of made is never shown: the
+        // last round cuts it, and a round that may call runs it.
+        let written_calls = match tools_ref.filter(|tools| !tools.is_empty()) {
+            None => WrittenCalls::Shown,
+            Some(_) if answer_only.is_some() => WrittenCalls::Cut,
+            Some(tools) => WrittenCalls::Run(tools),
+        };
         let llm_iteration_start = Instant::now();
         let mut round = generation::generate(
             llm.as_ref(),
@@ -382,7 +391,7 @@ pub(super) async fn run_agentic_tool_loop(
             &turn_cancel,
             &clock,
             generation::thinking_label(iteration),
-            answer_only.is_some(),
+            written_calls,
         )
         .await?;
         if let Some(last_round) =
@@ -414,7 +423,7 @@ pub(super) async fn run_agentic_tool_loop(
                 &turn_cancel,
                 &clock,
                 "Writing the answer",
-                true,
+                WrittenCalls::Cut,
             )
             .await?;
         }

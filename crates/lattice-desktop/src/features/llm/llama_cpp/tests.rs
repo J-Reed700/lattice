@@ -1302,6 +1302,39 @@ fn calls_made_in_one_round_replay_as_one_assistant_message() {
     assert_eq!(messages[4]["tool_calls"].as_array().unwrap().len(), 1);
 }
 
+/// A call the model wrote as text is replayed as its text and then its call,
+/// and the two are one assistant turn, as a call the server parsed would be.
+#[test]
+fn a_call_joins_the_text_written_before_it() {
+    let messages = chat_messages(&[
+        CompletionInput::Message {
+            role: "user".into(),
+            content: "q".into(),
+        },
+        CompletionInput::Message {
+            role: "assistant".into(),
+            content: "Let me look.".into(),
+        },
+        CompletionInput::ToolCall {
+            id: "a".into(),
+            name: "search".into(),
+            arguments: json!({"q": "a"}),
+        },
+        CompletionInput::ToolResult {
+            id: "a".into(),
+            output: "found".into(),
+        },
+    ])
+    .unwrap();
+    let roles: Vec<_> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "tool"]);
+    assert_eq!(messages[1]["content"], "Let me look.");
+    assert_eq!(messages[1]["tool_calls"][0]["id"], "a");
+}
+
 #[tokio::test]
 async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
     let server = MockServer::start().await;

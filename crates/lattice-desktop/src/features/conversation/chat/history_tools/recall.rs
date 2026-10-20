@@ -150,7 +150,10 @@ pub async fn recall_for_turn(
         });
     }
 
-    let mut already: Vec<&str> = Vec::new();
+    // The message being answered is saved before recall runs, so the search
+    // can find it. It is already the prompt's question; recalled as well, it
+    // reached the model as an "older passage" of itself.
+    let mut already: Vec<&str> = vec![request.user_input];
     already.extend(request.recent_turns.iter().map(String::as_str));
     already.extend(request.active_memory.iter().map(String::as_str));
 

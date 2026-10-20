@@ -6,6 +6,7 @@
 
 use super::clock::TurnClock;
 use super::final_round::LeakedCallFilter;
+use super::written_calls::{run_written_calls, WrittenCalls};
 use super::{answer_was_cut_short, StreamEmitter, CUT_SHORT_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
@@ -26,8 +27,9 @@ pub(super) struct Generation<'r> {
     pub(super) step: StepGuard<'r>,
 }
 
-/// Run one generation. `hold_back_calls` keeps calls written into the text
-/// out of the bubble: on a round that may not call tools they are never run.
+/// Run one generation. `written_calls` says what becomes of a tool call the
+/// model writes into its text instead of making it: never shown either way,
+/// it is cut on a round that may not call and run on one that may.
 pub(super) async fn generate<'r>(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -36,7 +38,7 @@ pub(super) async fn generate<'r>(
     cancel: &CancellationToken,
     clock: &TurnClock,
     label: &str,
-    hold_back_calls: bool,
+    written_calls: WrittenCalls<'_>,
 ) -> Result<Generation<'r>> {
     let started = Instant::now();
     // Begun before the call so a round that never produces a token is still a
@@ -44,7 +46,7 @@ pub(super) async fn generate<'r>(
     // budget and cancellation returns below.
     let step = recorder.begin_guarded(TurnStepKind::Generate, label, None);
     let reasoning_progress = Mutex::new(ReasoningProgress::new());
-    let filter = Mutex::new(LeakedCallFilter::new(hold_back_calls));
+    let filter = Mutex::new(LeakedCallFilter::new(written_calls));
     let remaining = clock.remaining()?;
     request.time_budget = Some(remaining);
     let mut response = {
@@ -102,12 +104,20 @@ pub(super) async fn generate<'r>(
             result = completion => result.map_err(|_| clock.exhausted())?,
         }
     }?;
-    let held = filter
+    let (held, call) = filter
         .lock()
         .map(|mut filter| filter.finish())
         .unwrap_or_default();
     if !held.is_empty() {
         emitter.content(&held)?;
+    }
+    // Before the output limit is judged: a reply whose written calls run is a
+    // tool round, not a cut-short answer. A call that does not read back as
+    // calls is the answer it always was, and is shown after all.
+    if let WrittenCalls::Run(tools) = written_calls {
+        if !run_written_calls(&mut response, tools) && !call.is_empty() {
+            emitter.content(&call)?;
+        }
     }
     if let Some(reasoning) = response
         .reasoning
