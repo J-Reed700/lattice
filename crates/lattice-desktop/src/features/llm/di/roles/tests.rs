@@ -492,3 +492,30 @@ async fn the_verifier_runs_on_its_own_model_and_refuses_unset_without_loading() 
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].pinned_by, vec!["verifier".to_owned()]);
 }
+
+#[tokio::test]
+async fn the_utility_model_runs_on_a_configured_llama_cpp_reference() {
+    let server = llama_cpp(&["qwen3.8-27b.gguf"]).await;
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Llamacpp,
+        llama_cpp: LlamaCppSettingsDto {
+            url: server.uri(),
+            model: "qwen3.8-27b.gguf".into(),
+            ..LlamaCppSettingsDto::default()
+        },
+        utility_model: Some(ModelRef::LlamaCpp {
+            model: "qwen3.8-27b.gguf".into(),
+        }),
+        ..LLMSettingsDto::default()
+    };
+    let models = role_models(settings, None).await;
+
+    let llm = models
+        .utility_llm()
+        .await
+        .unwrap()
+        .expect("llama.cpp utility model");
+
+    assert_eq!(llm.provider_name(), "llamacpp");
+    assert_eq!(llm.model_name(), "qwen3.8-27b.gguf");
+}

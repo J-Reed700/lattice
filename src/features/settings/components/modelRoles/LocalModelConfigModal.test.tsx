@@ -19,6 +19,16 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   }),
 }));
 
+// The dialog's role toggles read the roles context; the role logic itself
+// is covered by RoleButton's and ModelRolesContext's own tests.
+vi.mock('./ModelRolesContext', () => ({
+  useModelRoles: () => ({
+    assignRole: vi.fn(),
+    chatProvider: mockSettings.llm.provider,
+    llmSettings: mockSettings.llm,
+  }),
+}));
+
 function sampleModel(overrides: Partial<DownloadedModel> = {}): DownloadedModel {
   return {
     id: 'm1',

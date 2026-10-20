@@ -112,6 +112,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       },
       learningModel: null,
       verifierModel: null,
+      utilityModel: null,
       externalModelDirectories: [],
       customTools: [],
       boundedConversationMemory: true,
