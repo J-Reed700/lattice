@@ -328,7 +328,7 @@ async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_e
     assert!(!passages.is_empty());
     assert!(passages
         .iter()
-        .all(|passage| SOURCE.contains(&passage.text)));
+        .all(|passage| sources[0].excerpt.contains(&passage.text)));
     // The job reads the review row: held for review, not failed.
     let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
     assert_eq!(held.claims, 1);
@@ -830,6 +830,7 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
                         queries: vec![],
                         sources_added: vec![],
                         passages_found: 0,
+                        round_ms_per_claim: None,
                     },
                 )
                 .unwrap();

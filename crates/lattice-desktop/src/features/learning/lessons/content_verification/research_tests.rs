@@ -89,6 +89,7 @@ fn gap() -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        two_pass: Default::default(),
         trust: None,
     }
 }
@@ -491,7 +492,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
                 prompts: Mutex::new(vec![]),
             };
             let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
-            let Expansion::Exhausted(exhausted) = outcome else {
+            let Expansion::Exhausted(exhausted, _) = outcome else {
                 panic!("an empty plan means public search cannot help, not a failure");
             };
             assert_eq!(
@@ -645,7 +646,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             &json!({"type":"object"}),
             candidate.to_string(),
             &references,
-            3000,
+            (3000, &mut sources.clone()),
         ),
     )
     .await?;
@@ -693,6 +694,7 @@ fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        two_pass: Default::default(),
         trust: Some(Box::new(FindingTrust {
             profile: ClaimProfile {
                 kind: ClaimKind::Specification,
@@ -812,7 +814,7 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
             assert!(exp2.saved().is_some());
             let exhausted =
                 expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
-            assert!(matches!(exhausted, Expansion::Exhausted(_)));
+            assert!(matches!(exhausted, Expansion::Exhausted(..)));
             Ok(())
         },
     )

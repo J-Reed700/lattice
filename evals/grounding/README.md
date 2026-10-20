@@ -146,3 +146,133 @@ LATTICE_CLAIM_CHECKER=<checker> \
 
 These pairs are the user's own content: they are not synthetic and are not
 committed unless the user chooses to.
+
+## Page recall: where does the cited passage reach the judge?
+
+`live_page_recall_eval` (in
+`crates/lattice-desktop/src/features/learning/lessons/live_page_recall_eval.rs`)
+measures the two-pass claim pages of
+[`2026-10-19-course-evidence-index.md`](../../docs/design/2026-10-19-course-evidence-index.md)
+(§5, §7.1–7.2) on a stored run, with no model. It reads what
+`scripts/lesson_claim_pairs.py extract` reads: every
+`learning_lesson_verifications.report_json` in the database, and each
+program's saved source versions. The database is opened read-only. From
+those versions it builds a temporary course index in a scratch directory,
+the same index a lesson job reads, then for every `supported` finding:
+
+- asks whether **pass A** settles it: the passage the stored judge cited
+  lies in the passages its own section cites (what the stored report marks
+  `cited` for that unit);
+- walks the claim's **pass B** pages to the end of its lists, as if no page
+  settled it and the judge read each page whole, under each order of §5.2:
+  `relevance` (the whole course by relevance, the app's setting),
+  `lesson-sources` (the sources the lesson cites first, then the course)
+  and `tie-break` (the course, the lesson's sources first on equal scores);
+- finds the cited passage in pass B's fused list: a passage of its source
+  that contains it, or covers its middle byte (the stored quote is the whole
+  widened passage, and the index may draw its edges a little differently).
+
+Each finding is one JSON line per order in the results file:
+
+| field | meaning |
+| --- | --- |
+| `order` | `relevance`, `lesson-sources` or `tie-break` |
+| `retrieval`, `embedding` | `hybrid`, `partial` or `lexical`, and the embedding model's identity when one was loaded |
+| `page_budget` | the tokens a pass B page held, from the pace given; `null` when no pace was given and the window alone bounded each page |
+| `settled_by_a` | the cited passage lies in the section's own citations |
+| `rank` | the cited passage's position (1 = first) in pass B's fused list, every reach's list in turn; `null` when no list holds it |
+| `page` | the pass B page (1 = first) that holds it; `null` when none does (the claim would have gone to web research) |
+| `reach` | the reach that page was read from |
+| `attribution_tokens` | estimated tokens of pass A's page |
+| `tokens_read_to_it` | estimated tokens of every pass B page up to and including `page` |
+| `modelled_seconds` | with a pace given, pass A's page and the pass B pages up to `page` read at the prompt rate, plus one answer each at the output rate |
+| `list` | the run-out cost: passages, tokens and pages of every list read to its end (§5.4) |
+| `research_seconds` | what researching one claim on the web costs, from `LATTICE_PAGE_RECALL_RESEARCH_SECONDS`; `null` without it |
+| `depths` | with a research cost given, for a finding pass A did not settle: under each depth rule (`first page`, `break-even`, `list end`), whether the course `found` its support and the `pass_b_seconds` spent on it |
+| `pages` | per page: its reach, passages, tokens, whether it reached its list's end and whether a counter query was fused |
+| `cited_mentions_subject` | whether the cited passage mentions the claim's subject; `false` is a passage past every list's end |
+| `skipped` | set when the cited passage's source changed after the run |
+
+The last lines printed sum each order up: findings settled by pass A,
+reached in pass B on each page, never reached, the median, p90 and total
+tokens to the support, the modelled total minutes, the run-out lists'
+length and token distribution, and how many cited passages fail the
+subject test. The first line says which retrieval ran (hybrid with the
+model's identity, or text only) and the page budget.
+
+### Modelled time and the page budget
+
+Every page a claim needs costs one more answer, so tokens read alone do not
+say which order is faster. Set `LATTICE_PAGE_RECALL_PACE` to
+`"<prompt tokens/s>,<output tokens/s>,<answer tokens per claim>"`, read off
+a run's log: the prompt rate from llama.cpp's `prompt_ms` and evaluated
+prompt tokens, the output rate from its `tokens_per_second`, and the answer
+size as a check's output tokens divided by the claims it answered. The page
+budget is then the app's own, `answer tokens per claim × prompt rate ÷
+output rate` (`page_budget`), and each finding reached is modelled as
+
+    seconds = (pass A tokens + Σ pass B page tokens) ÷ prompt rate
+              + (pass A answer + pass B pages) × answer tokens ÷ output rate
+
+Without the variable no time is modelled and pages are bounded by the
+window alone, as the app does before a backend has reported its pace.
+
+### How deep pass B reads (D5)
+
+Set `LATTICE_PAGE_RECALL_RESEARCH_SECONDS` to what researching one claim
+on the web costs, in seconds: a run's `Researched` claim events carry it as
+`round_ms_per_claim`, each claim research round's time from its start to
+its result divided by the claims it researched. Each finding pass A did
+not settle is then read under the three depth rules, by the app's own rule
+(`Depth::reads_next`) and page cost (`page_seconds`): the first page only;
+break-even, which reads the next page while what pass B has spent past the
+first page, with that page, stays within the research cost; and on to the
+list's end. A page costs
+
+    seconds = page tokens ÷ prompt rate + answer tokens ÷ output rate
+
+and a claim whose support no page read holds goes to web research. One
+line per order and rule sums it up: the claims found in the course, the
+claims sent to web research, the modelled minutes with the research cost
+counted for each claim sent, and the worst single claim's pass B minutes.
+Without a pace no time is modelled, and break-even reads the first page
+only, as the app does. Without the variable no rule is compared.
+
+### Hybrid against text only
+
+`LATTICE_PAGE_RECALL_EMBEDDING=<model directory>` loads the configured
+embedding model through the app's own loader (the directory's artifact
+identity is computed, as for any unregistered model) and the index is
+searched by meaning and by words, fused. Without it the index is searched
+by words alone. Run both and compare `rank`, `page` at 1 (recall at page
+one), the reciprocal rank and the count never reached; the passages that
+share no distinctive term with their claim are the first thing to look for
+in the hybrid column.
+
+Embedding a whole course takes as long as the app's own build (about six
+passages a second on an Apple-silicon GPU). When the app has already built
+the course's index with the same model, copy its `course-index` folder and
+point `LATTICE_PAGE_RECALL_INDEXES` at the copy: the eval brings it current
+instead of embedding it again. Never point it at the app's own folder; the
+eval writes to the index it is given.
+
+Run it on a copy of your database or the live one (it never writes to the
+database):
+
+```bash
+cd crates/lattice-desktop
+LATTICE_PAGE_RECALL_DB="<the app data folder>/lattice.db" \
+LATTICE_PAGE_RECALL_WINDOW=<the run's configured context window> \
+LATTICE_PAGE_RECALL_RESULTS=$PWD/../../evals/grounding/results/<date>-page-recall-<order>-<retrieval>.jsonl \
+LATTICE_PAGE_RECALL_PROGRAM=<optional program id> \
+LATTICE_PAGE_RECALL_ORDER=<relevance|lesson-sources|tie-break|all, default all> \
+LATTICE_PAGE_RECALL_PACE="<optional prompt tok/s>,<output tok/s>,<answer tokens per claim>" \
+LATTICE_PAGE_RECALL_RESEARCH_SECONDS=<optional seconds to research one claim on the web> \
+LATTICE_PAGE_RECALL_EMBEDDING=<optional embedding model directory> \
+LATTICE_PAGE_RECALL_INDEXES=<optional copy of the app's course-index folder> \
+  cargo test --lib live_page_recall_eval -- --ignored --nocapture
+```
+
+Record each run's summary in [`results/README.md`](results/README.md). The
+per-finding results are the user's own content and, like
+`lesson-claims-<date>.jsonl`, are not committed unless the user chooses to.

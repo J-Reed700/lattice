@@ -5,6 +5,7 @@
 //! snapshot before output crosses into persistence.
 
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
+pub(in crate::features::learning) use crate::features::learning::lessons::structured_call::complete_checked;
 pub(crate) use crate::features::learning::lessons::structured_call::{
     complete_json, complete_json_with_progress,
 };

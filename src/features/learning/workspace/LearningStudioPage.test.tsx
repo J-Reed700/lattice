@@ -52,6 +52,8 @@ vi.mock('@/lib/api', () => ({ default: {
   listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
   getStudyDeck: mocks.deck,
   exportAllLearningPacks: mocks.exportAll,
+  courseIndexOpen: async () => ({ ok: true, data: undefined }),
+  courseIndexClose: async () => ({ ok: true, data: undefined }),
 } }));
 
 

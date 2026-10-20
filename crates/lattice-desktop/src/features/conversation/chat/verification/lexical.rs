@@ -19,7 +19,10 @@ use lattice_core::application::services::evidence_retrieval::{
 use lattice_core::shared::markdown_math::{
     formulas_as_words, inline_math_spans, map_prose, split_at_formulas,
 };
-use lattice_core::shared::text::normalize_whitespace;
+use lattice_core::shared::text::{
+    capitalised_words, has_digit, normalize_whitespace, padded_lowercase, MONTH_MARKERS,
+    NEGATION_MARKERS,
+};
 use std::collections::{HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;
@@ -183,41 +186,6 @@ pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
     !settled
 }
 
-/// Tokens that flip a sentence's meaning without changing its vocabulary.
-const NEGATION_MARKERS: &[&str] = &[
-    " not ",
-    "n't ",
-    " no ",
-    " never ",
-    " without ",
-    " cannot ",
-    " none ",
-    " neither ",
-    " nor ",
-    " unlike ",
-    " instead of ",
-    " rather than ",
-    " fails to ",
-    " failed to ",
-    " unable to ",
-    " only ",
-    " except ",
-];
-
-const MONTH_MARKERS: &[&str] = &[
-    " january ",
-    " february ",
-    " march ",
-    " april ",
-    " june ",
-    " july ",
-    " august ",
-    " september ",
-    " october ",
-    " november ",
-    " december ",
-];
-
 /// Checked only in the passage sentence a claim copies, never in the claim
 /// itself, so a claim naming the same weekday as its source still counts as a
 /// copy of it.
@@ -259,7 +227,7 @@ const NUMBER_WORDS: &[&str] = &[
 ];
 
 fn is_contradiction_prone(claim: &str) -> bool {
-    if claim.chars().any(|ch| ch.is_ascii_digit()) {
+    if has_digit(claim) {
         return true;
     }
 
@@ -268,22 +236,6 @@ fn is_contradiction_prone(claim: &str) -> bool {
         .iter()
         .chain(MONTH_MARKERS.iter())
         .any(|marker| padded.contains(marker))
-}
-
-/// `text` lowercased between single spaces, with punctuation flattened to
-/// spaces so " not " matches "did not." as well.
-fn padded_lowercase(text: &str) -> String {
-    let mut padded = String::with_capacity(text.len() + 2);
-    padded.push(' ');
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' {
-            padded.extend(ch.to_lowercase());
-        } else {
-            padded.push(' ');
-        }
-    }
-    padded.push(' ');
-    padded
 }
 
 /// A cited passage's wording, for the near-verbatim test.
@@ -390,22 +342,8 @@ fn drops_a_marker(claim: &str, sentence: &str) -> bool {
     let claim_words: HashSet<String> = lowercase_words(claim).into_iter().collect();
     let dropped_number = lowercase_words(sentence)
         .into_iter()
-        .any(|word| word.chars().any(|ch| ch.is_ascii_digit()) && !claim_words.contains(&word));
+        .any(|word| has_digit(&word) && !claim_words.contains(&word));
     dropped_number || capitalised_words(sentence).any(|word| !claim_words.contains(&word))
-}
-
-/// Words after the first that start with a capital letter: names of people,
-/// teams, places and days. The first is skipped because every sentence
-/// starts with one.
-fn capitalised_words(sentence: &str) -> impl Iterator<Item = String> + '_ {
-    sentence
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .skip(1)
-        .filter(|word| {
-            word.chars().count() > 1 && word.chars().next().is_some_and(char::is_uppercase)
-        })
-        .map(str::to_lowercase)
 }
 
 /// The words of `text`, lowercased, in order. Unlike the overlap tokens,

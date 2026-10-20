@@ -8,6 +8,11 @@
 //!   and resume after it. Closing or leaving a folder leaves its build
 //!   running, and a build stopped by a restart resumes at the next start,
 //!   while its folder still exists.
+//! - The open folder's index is claimed as open in the passage index's turn
+//!   order, shared with every course's index: while it embeds, builds of
+//!   other indexes nobody waits on hold at their next batch, and it holds in
+//!   turn while an index someone's work waits on (a course in its workspace,
+//!   a lesson about to read) embeds.
 //! - One folder is open at a time. It is watched: small changes update its
 //!   index in place, once any build over that index has finished, and a
 //!   change too large for that queues a build.
@@ -31,7 +36,9 @@ use super::build::{self, BuildRequest};
 use super::run::{Limits, StatusCell, StatusSink};
 use super::store::{self, IndexEntry, OpenStamps, TooLarge};
 use crate::infrastructure::passage_index::job::build_job_config;
-use crate::infrastructure::passage_index::{EmbedderSource, LiveIndex, LiveIndexes};
+use crate::infrastructure::passage_index::{
+    Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
+};
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::{
     runtime::{
@@ -90,6 +97,8 @@ struct OpenFolder {
     prefix: String,
     status: Arc<StatusCell>,
     index: Option<Arc<LiveIndex>>,
+    /// Its index's place in the turn order, given back when it closes.
+    _claim: Option<Claim>,
     /// Stops the watcher task.
     cancel: CancellationToken,
     watching: Option<JoinHandle<()>>,
@@ -109,6 +118,8 @@ pub struct FolderIndexManager {
     first: parking_lot::Mutex<Option<String>>,
     /// Index directories in use by the open folder and builds.
     live: LiveIndexes,
+    /// The turn order every index's embedding follows.
+    pub(super) turns: Arc<EmbedTurns>,
     /// Where the open folder's status goes when the watcher updates it.
     folder_changes: parking_lot::Mutex<Option<StatusSink>>,
     /// Stamps each opened folder, which the folders list orders by.
@@ -132,7 +143,7 @@ pub(super) fn root_string(path: &Path) -> String {
 }
 
 pub(super) fn remove_dir(dir: &Path) {
-    match std::fs::remove_dir_all(dir) {
+    match lattice_core::shared::fs::removal::remove_dir_all(dir) {
         Ok(()) => info!(dir = %dir.display(), "Removed a folder index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!(dir = %dir.display(), %error, "Could not remove a folder index"),
@@ -158,6 +169,7 @@ impl FolderIndexManager {
         searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
         background: Arc<BackgroundTasks>,
+        turns: Arc<EmbedTurns>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             config,
@@ -169,6 +181,7 @@ impl FolderIndexManager {
             view: Arc::default(),
             first: parking_lot::Mutex::new(None),
             live: LiveIndexes::default(),
+            turns,
             folder_changes: parking_lot::Mutex::new(None),
             open_stamps: OpenStamps::default(),
             me: me.clone(),

@@ -42,7 +42,8 @@
 //! ## Public surface
 //!
 //! - [`CourseIndexes`] — every course's index: `search`, `ensure_current`,
-//!   `refresh`, `delete`, `sweep`, `backfill`, `register`, and `status`, the
+//!   `refresh`, `delete`, `sweep`, `backfill`, `register`, `open` and
+//!   `close` (the course in its workspace goes first), and `status`, the
 //!   cheap read the course workspace shows ([`CourseIndexStatusDto`]): while a
 //!   course indexes, lesson preparation waits for it and says why
 //! - [`CourseSearch`] — one course's index held by a reader, and the
@@ -54,6 +55,8 @@ mod manager;
 mod search;
 mod sync;
 
+#[cfg(test)]
+mod first_tests;
 #[cfg(test)]
 mod status_tests;
 #[cfg(test)]

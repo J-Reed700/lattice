@@ -145,6 +145,7 @@ pub(super) async fn check_evidence(
         issues,
         retrieval_mode: references.mode().label().into(),
         embedding_model: references.embedding_model(),
+        page_budget: Some(evidence_checks::page_budget_note(llm, completed)),
         unexecuted_languages: execution::unexecuted_languages(candidate),
     })
 }

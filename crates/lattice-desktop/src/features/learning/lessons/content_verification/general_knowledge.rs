@@ -116,6 +116,7 @@ mod tests {
                 .collect(),
             supporting_quote: None,
             resolution: None,
+            two_pass: Default::default(),
             trust: None,
         }
     }

@@ -135,6 +135,7 @@ impl Rig {
             searches,
             jobs,
             Arc::default(),
+            Arc::default(),
         );
         manager.register().await.unwrap();
         manager
@@ -532,6 +533,7 @@ mod incremental {
             status,
             cancel: CancellationToken::new(),
             limits: Limits::default(),
+            turns: Arc::default(),
         };
         // The store's own directory is inside this folder; ignore it the way
         // a real index (which lives outside the folder) never needs to.
@@ -642,6 +644,7 @@ mod progress {
                 batch_size: 4,
                 save_every: 8,
             },
+            turns: Arc::default(),
         };
         assert_eq!(indexer.run().await.unwrap(), Outcome::Done);
         let told = told.lock().clone();
@@ -672,7 +675,7 @@ mod search {
     use super::*;
     use lattice_core::application::contracts::search::{
         QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-        SearchResultDto,
+        SearchResultDto, Spread,
     };
     use std::collections::HashSet;
 
@@ -744,8 +747,13 @@ mod search {
                 .await
         }
 
-        fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
-            self.inner.fuse(branches, limit)
+        fn fuse(
+            &self,
+            branches: Vec<RankedBranch>,
+            limit: usize,
+            spread: Spread,
+        ) -> Vec<SearchResultDto> {
+            self.inner.fuse(branches, limit, spread)
         }
 
         async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {

@@ -23,7 +23,7 @@ use crate::features::learning::source_library::{ActiveVersion, LearningSourceLib
 use crate::infrastructure::passage_index::build::{self, BATCH_SIZE, SAVE_EVERY};
 use crate::infrastructure::passage_index::chunking::spans::span_chunks;
 use crate::infrastructure::passage_index::{
-    embed_pending, Embedding, Engine, LiveIndex, Passage, PassageStore, Progress,
+    embed_pending, EmbedTurns, Embedding, Engine, LiveIndex, Passage, PassageStore, Progress,
 };
 use lattice_core::shared::Result;
 use std::collections::{HashMap, HashSet};
@@ -159,6 +159,7 @@ pub(super) async fn sync_rows(
 pub(super) async fn embed(
     store: &PassageStore,
     engine: &Engine,
+    turns: &Arc<EmbedTurns>,
     versions: &[ActiveVersion],
     program: &str,
     cancel: &CancellationToken,
@@ -179,6 +180,7 @@ pub(super) async fn embed(
                 _ => passage.text.clone(),
             },
         ),
+        turns: Arc::clone(turns),
     };
     let before = store.counts("").await?;
     let pending = before

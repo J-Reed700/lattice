@@ -53,9 +53,10 @@ const EXECUTION: &str = "execution";
 pub(in crate::features::learning) struct FindingTrust {
     pub(super) profile: ClaimProfile,
     pub(super) supports: Vec<Support>,
-    /// Contrary passages for the same claim, levelled the same way. The
-    /// checker gives one verdict per claim and evidence page, so a supported
-    /// finding has none today; the overturn rule weighs them when it does.
+    /// Contrary passages for the same claim, levelled the same way: what one
+    /// of the claim's two passes found saying otherwise when the other
+    /// supported it (course evidence index §5.1). The overturn rule weighs
+    /// them against the supports.
     #[serde(default)]
     pub(super) contrary: Vec<Contrary>,
     pub(super) decision: Decision,
@@ -327,11 +328,41 @@ pub(super) fn assess(
             }
         })
         .collect::<Vec<_>>();
-    let decision = decide(profile, &supports, &[], evidence.bars);
+    // What the other pass found saying otherwise, levelled the same way. A
+    // contrary version without facts is not counted, as a support is not.
+    let contrary: Vec<Contrary> = finding
+        .two_pass
+        .contrary
+        .iter()
+        .filter_map(|contrary| {
+            let facts = evidence.facts.get(&contrary.passage.source_id)?;
+            let mentions_version = match &profile.temporal {
+                TemporalScope::Since {
+                    version: Some(version),
+                    ..
+                } => facts.saved.text.contains(version.as_str()),
+                _ => false,
+            };
+            Some(Contrary {
+                source_version_id: contrary.passage.source_id.clone(),
+                origin_cluster: cluster_of(&contrary.passage.source_id),
+                trust: facts.trust.clone(),
+                dates: facts.dates.clone(),
+                temporal: lattice_core::domain::provenance::validity(
+                    &profile.temporal,
+                    &facts.dates,
+                    mentions_version,
+                    newest_primary,
+                ),
+                quote: contrary.quote.clone(),
+            })
+        })
+        .collect();
+    let decision = decide(profile, &supports, &contrary, evidence.bars);
     FindingTrust {
         profile: profile.clone(),
         supports,
-        contrary: Vec::new(),
+        contrary,
         decision,
     }
 }
@@ -460,10 +491,19 @@ async fn weighed(
     profile: &ClaimProfile,
     finding: &Finding,
 ) -> Result<FindingTrust> {
-    let versions: Vec<String> = supporting_passages(finding)
+    let mut versions: Vec<String> = supporting_passages(finding)
         .into_iter()
         .map(|passage| passage.source_id.clone())
+        .chain(
+            finding
+                .two_pass
+                .contrary
+                .iter()
+                .map(|contrary| contrary.passage.source_id.clone()),
+        )
         .collect();
+    versions.sort();
+    versions.dedup();
     let facts = judgements.facts(Some(llm), &versions, profile).await?;
     Ok(assess(
         profile,
@@ -499,6 +539,7 @@ pub(in crate::features::learning) async fn weigh_claim(
         evidence: page.to_vec(),
         supporting_quote: Some(supported.supporting_quote.clone()),
         resolution: None,
+        two_pass: Default::default(),
         trust: None,
     };
     if supporting_passages(&finding).is_empty() {

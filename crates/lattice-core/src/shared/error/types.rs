@@ -105,6 +105,11 @@ pub enum AppError {
     /// request's size against the configured context window.
     ModelRejected(String),
 
+    /// A model answered, but the answer could not be used even when it was
+    /// asked for once more: it did not parse, or broke a rule the caller
+    /// checks. The text says what was wrong with the answer.
+    ModelAnswerUnusable(String),
+
     /// A request whose prompt alone fills the configured context window, so
     /// it leaves no room for an answer and was never sent. The numbers let a
     /// caller send less and ask again: `prompt_tokens` is the prompt as the
@@ -266,6 +271,7 @@ impl AppError {
             AppError::Storage(_) => "STORAGE_ERROR",
             AppError::ServiceNotAvailable(_) => "SERVICE_UNAVAILABLE",
             AppError::ModelRejected(_) => "MODEL_REJECTED",
+            AppError::ModelAnswerUnusable(_) => "MODEL_ANSWER_UNUSABLE",
             AppError::PromptExceedsWindow { .. } => "PROMPT_EXCEEDS_WINDOW",
             AppError::Serialization(_) => "SERIALIZATION_ERROR",
             AppError::Security(_) => "SECURITY_ERROR",
@@ -299,7 +305,7 @@ impl AppError {
             | AppError::UnsupportedFileType { .. } => 400,
             AppError::RateLimitExceeded(_) => 429,
             AppError::ServiceNotAvailable(_) | AppError::AiModelsNotInstalled(_) => 503,
-            AppError::ModelRejected(_) => 502,
+            AppError::ModelRejected(_) | AppError::ModelAnswerUnusable(_) => 502,
             AppError::FileTooLarge { .. } => 413,
             AppError::ConcurrentModification { .. } => 409,
             AppError::Domain(err) if err.is_not_found() => 404,
@@ -576,6 +582,9 @@ impl fmt::Display for AppError {
             AppError::Storage(e) => write!(f, "Storage error: {}", e),
             AppError::ServiceNotAvailable(e) => write!(f, "Service not available: {}", e),
             AppError::ModelRejected(e) => write!(f, "{}", e),
+            AppError::ModelAnswerUnusable(e) => {
+                write!(f, "The model's answer could not be used: {}", e)
+            }
             AppError::PromptExceedsWindow { message, .. } => write!(f, "{}", message),
             AppError::Serialization(e) => write!(f, "Serialization error: {}", e),
             AppError::Security(e) => write!(f, "Security error: {}", e),

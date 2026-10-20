@@ -264,3 +264,17 @@ pub(crate) mod tests;
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod qwen3_live_tests;
+
+/// Passages a second through real weights, and where the time goes; see
+/// the module for how to run it.
+#[cfg(test)]
+#[cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )
+)]
+mod throughput_bench;

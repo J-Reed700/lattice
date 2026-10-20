@@ -9,7 +9,7 @@ use crate::features::explorer::index::search::FolderSearch;
 use crate::features::explorer::index::store;
 use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
 use crate::features::explorer::scope::Scope;
-use crate::infrastructure::passage_index::{LiveIndex, PassageTextSearch};
+use crate::infrastructure::passage_index::{EmbedTurns, LiveIndex, PassageTextSearch, Priority};
 use lattice_core::shared::{runtime::jobs::JobStatus, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,7 @@ impl FolderIndexManager {
                 prefix: String::new(),
                 status,
                 index: None,
+                _claim: None,
                 cancel: CancellationToken::new(),
                 watching: None,
             });
@@ -122,6 +123,7 @@ impl FolderIndexManager {
                     status: Arc::clone(&status),
                     cancel: cancel.clone(),
                     limits: self.config.limits,
+                    turns: Arc::clone(&self.turns),
                 };
                 self.background.spawn(task.run(watcher, changes))
             }
@@ -133,6 +135,7 @@ impl FolderIndexManager {
         let folder = OpenFolder {
             root: root.clone(),
             index_root: index_root.clone(),
+            _claim: Some(self.turns.claim(&dir, Priority::Open)),
             dir: Some(dir),
             prefix: prefix.clone(),
             status: Arc::clone(&status),
@@ -307,6 +310,7 @@ struct WatchTask {
     status: Arc<StatusCell>,
     cancel: CancellationToken,
     limits: Limits,
+    turns: Arc<EmbedTurns>,
 }
 
 impl WatchTask {
@@ -370,6 +374,7 @@ impl WatchTask {
                 status: Arc::clone(&self.status),
                 cancel: self.cancel.clone(),
                 limits: self.limits,
+                turns: Arc::clone(&self.turns),
             };
             let outcome = indexer.sync_paths(relative).await;
             drop(writing);

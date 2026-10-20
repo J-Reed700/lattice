@@ -141,24 +141,37 @@ pub async fn generate_with_references_and_progress(
         .as_ref()
         .map(super::outline_references::ReferencePlan::subtopic_titles)
         .unwrap_or_default();
-    let (raw, _, _) =
-        super::generation::draft_outline(llm, &request, &authoring_sources, &subtopics, progress)
-            .await?;
     // The author's citations are provisional. Restore typography and drop any
     // quote that does not match its source before the outline is decoded; a
     // bad quote costs the citation, never the draft. Evidence is linked in
     // `finish`, once the program row exists to hold the receipts.
-    let mut candidate: serde_json::Value = super::generation::parse_json(&raw)?;
-    super::outline_citations::restore_source_quotes(&mut candidate, &authoring_sources);
-    let removed = super::outline_linking::strip_unmatched(&mut candidate, &authoring_sources, None);
-    let modules =
-        super::generation::decode_outline(&candidate.to_string(), &request, &authoring_sources)?;
+    let settle = |raw: &str| -> Result<_> {
+        let mut candidate: serde_json::Value = super::generation::parse_json(raw)?;
+        super::outline_citations::restore_source_quotes(&mut candidate, &authoring_sources);
+        let removed =
+            super::outline_linking::strip_unmatched(&mut candidate, &authoring_sources, None);
+        let modules = super::generation::decode_outline(
+            &candidate.to_string(),
+            &request,
+            &authoring_sources,
+        )?;
+        validate_outline(&modules, &sources)?;
+        Ok((candidate, removed, modules))
+    };
+    let ((candidate, removed, modules), _, _) = super::generation::draft_outline(
+        llm,
+        &request,
+        &authoring_sources,
+        &subtopics,
+        progress,
+        settle,
+    )
+    .await?;
     let mut draft =
         super::outline_draft::OutlineDraft::new(request.clone(), candidate, &authoring_sources);
     draft.reference_plan = plan;
     draft.review.references_gathered = gathered;
     draft.review.citations_removed = removed;
-    validate_outline(&modules, &sources)?;
     let first = modules
         .first()
         .and_then(|m| m.lessons.first())

@@ -194,6 +194,7 @@ fn kinds_the_machine_cannot_repair_research_once_or_go_to_the_user() {
         queries: vec!["boiling point sea level".into()],
         sources_added: vec!["v2".into()],
         passages_found: found,
+        round_ms_per_claim: None,
     };
     entry.append(machine(3), research(1)).unwrap();
     assert!(!entry.may_research(), "once per fingerprint");
@@ -234,6 +235,7 @@ fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
         queries: vec!["boiling point sea level".into()],
         sources_added: vec!["v2".into()],
         passages_found: 1,
+        round_ms_per_claim: None,
     };
     let blog = || counted("v1", "v1", TrustLevel::Established);
     let started = |id: &str| {

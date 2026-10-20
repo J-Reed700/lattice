@@ -200,17 +200,22 @@ impl ClaimLedger {
                     .trust
                     .as_ref()
                     .map(|trust| trust.assessment(&source, &quote));
+                // Support found in pass B when the section's citations gave
+                // none: the claim stands on the found passage, and the
+                // ledger says its citation was elsewhere.
+                let result = match &finding.two_pass.supported_by {
+                    Some(found) => CheckResult::SupportedElsewhere {
+                        cited: found.cited.clone(),
+                        source_version_id: source.clone(),
+                        supporting_quote: quote.clone(),
+                    },
+                    None => CheckResult::Supported {
+                        source_version_id: source.clone(),
+                        supporting_quote: quote.clone(),
+                    },
+                };
                 match self.gate.judge(&support) {
-                    Sufficiency::Sufficient => (
-                        (
-                            CheckResult::Supported {
-                                source_version_id: source,
-                                supporting_quote: quote,
-                            },
-                            finding.reason.clone(),
-                        ),
-                        trust,
-                    ),
+                    Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
                     // Only the bar's failure is the gate's; a quotation that
                     // is not in its passage is a plain unsupported claim.
                     Sufficiency::Insufficient { reason, kind } => (
@@ -619,6 +624,7 @@ impl ClaimLedger {
 
     /// Records a research round for each claim it looked for (§3
     /// `Researched`): "found nothing new" is an attempt with no passages.
+    /// Each claim's event carries what the round cost per claim (D5).
     pub(in crate::features::learning::lessons::content_verification) async fn record_research(
         &mut self,
         claims: &[ClaimId],
@@ -644,6 +650,9 @@ impl ClaimLedger {
                     queries: searched.queries.clone(),
                     sources_added: searched.sources_added.clone(),
                     passages_found,
+                    round_ms_per_claim: searched
+                        .per_claim
+                        .map(|cost| u64::try_from(cost.as_millis()).unwrap_or(u64::MAX)),
                 },
             )
             .await?;

@@ -397,9 +397,39 @@ pub enum CheckResult {
         source_version_id: String,
         supporting_quote: String,
     },
+    /// The claim stands, but not on what its section cites: none of the
+    /// `cited` source versions supports it, and a passage of another
+    /// course source does (two-pass claim pages, course evidence index
+    /// §5.1). The claim is verified by the found passage; the lesson's
+    /// citation is repaired to it.
+    SupportedElsewhere {
+        cited: Vec<String>,
+        source_version_id: String,
+        supporting_quote: String,
+    },
     Failed {
         kind: VerdictKind,
     },
+}
+
+impl CheckResult {
+    /// The passage that entails the claim, as its source version and
+    /// quotation: wherever it was found, the claim stands on it. `None` for a
+    /// failed check.
+    pub fn support(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Supported {
+                source_version_id,
+                supporting_quote,
+            }
+            | Self::SupportedElsewhere {
+                source_version_id,
+                supporting_quote,
+                ..
+            } => Some((source_version_id, supporting_quote)),
+            Self::Failed { .. } => None,
+        }
+    }
 }
 
 /// A user's resolution of one claim (§5.1). Attaching evidence and undoing
@@ -523,6 +553,13 @@ pub enum ClaimEvent {
         /// Source version ids the research saved.
         sources_added: Vec<String>,
         passages_found: usize,
+        /// What the round cost per claim it researched, in milliseconds:
+        /// its time from start to result over its claims. Pass B weighs it
+        /// as the cost of researching one claim on the web (course evidence
+        /// index D5). `None` when no round ran, and on events written before
+        /// rounds were timed.
+        #[serde(default)]
+        round_ms_per_claim: Option<u64>,
     },
     RepairAttempted {
         attempt: u8,
@@ -535,6 +572,20 @@ pub enum ClaimEvent {
         observation_id: String,
         passed: bool,
         evidence: String,
+    },
+    /// The machine moved the claim's section citation to the passage that
+    /// supports the claim, found elsewhere in the course (course evidence
+    /// index §5.1). The claim's words are unchanged, so no repair attempt is
+    /// charged; the next check reads the new citation as the section's own.
+    CitationRepaired {
+        /// The source versions the section cited, none of which supported it.
+        cited: Vec<String>,
+        /// The source version it cites now, and the quotation it carries.
+        source_version_id: String,
+        quote: String,
+        /// The lesson did not number the source before: it was added to the
+        /// lesson's sources to be cited.
+        added_source: bool,
     },
     UserAction {
         action: UserAction,
@@ -579,6 +630,7 @@ impl ClaimEvent {
             Self::Researched { .. } => "researched",
             Self::RepairAttempted { .. } => "repair_attempted",
             Self::Executed { .. } => "executed",
+            Self::CitationRepaired { .. } => "citation_repaired",
             Self::UserAction { .. } => "user_action",
             Self::EvidenceAttached { .. } => "evidence_attached",
             Self::Superseded { .. } => "superseded",

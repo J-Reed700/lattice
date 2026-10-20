@@ -16,6 +16,8 @@ use lattice_core::application::ports::LLMPort;
 mod claim_pairs;
 #[path = "live_course_e2e.rs"]
 mod course_e2e;
+#[path = "live_page_recall_eval.rs"]
+mod page_recall;
 #[path = "live_small_lesson.rs"]
 mod small;
 

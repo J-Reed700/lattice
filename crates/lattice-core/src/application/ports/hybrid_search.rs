@@ -15,7 +15,7 @@ use async_trait::async_trait;
 
 use crate::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-    SearchResultDto,
+    SearchResultDto, Spread,
 };
 use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::shared::error::Result;
@@ -48,7 +48,12 @@ pub trait HybridSearchTrait: Send + Sync {
         bm25_weight: f32,
     ) -> QueryBranches;
 
-    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto>;
+    fn fuse(
+        &self,
+        branches: Vec<RankedBranch>,
+        limit: usize,
+        spread: Spread,
+    ) -> Vec<SearchResultDto>;
 
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked;
 }

@@ -91,6 +91,18 @@ describe('claim review presentation', () => {
     expect(describeEvent(event.event)).toBe('Verifier (claude): contradicted · The passage says 99.97 °C.');
   });
 
+  it('says a claim supported elsewhere had its citation repaired', () => {
+    const passage = claimItem().evidence[0];
+    const local: CheckerVerdictDto = { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported_elsewhere', cited: ['v0'], sourceVersionId: 'v1', supportingQuote: 'boils at 100' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 1 };
+    const verifier: CheckerVerdictDto = { checker: { role: 'verifier', model: 'claude' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'boils at 100' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 2 };
+    expect(checkerColumns(claimItem({ localCheck: local, verifierCheck: verifier }))?.local).toMatchObject({
+      verdict: 'Supported elsewhere, citation repaired', supportingQuote: 'boils at 100',
+    });
+    const event: ClaimEventDto = { ordinal: 2, actor: 'machine', at: 2, jobId: null, appVersion: 'test', checkerModel: null,
+      event: { kind: 'checked', check: { checker: local.checker, result: local.result, reason: local.reason, fingerprint: 'f', evidence: [], windowTokens: 8192 } } };
+    expect(describeEvent(event.event)).toBe('Checker (qwen): supported elsewhere, citation repaired · Entailed.');
+  });
+
   it('summarises the counts without hiding confirmations', () => {
     expect(countsLine(review([claimItem()], { counts: { verified: 12, confirmed: 3, generalKnowledge: 2, queued: 1, open: 0, removed: 0 } })))
       .toBe('12 verified · 3 confirmed by you · 2 general knowledge · 1 waiting for you');

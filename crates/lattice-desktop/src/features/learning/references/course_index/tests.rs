@@ -42,6 +42,7 @@ pub(in crate::features::learning) fn indexes(
         Arc::new(HybridSearchUseCaseFactory),
         JobRuntime::new(pool.clone()),
         Arc::new(BackgroundTasks::default()),
+        Arc::default(),
     )
 }
 

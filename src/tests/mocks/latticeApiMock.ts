@@ -417,6 +417,8 @@ export function createVaultAPIMock() {
     courseIndexStatus: vi
       .fn()
       .mockResolvedValue({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
+    courseIndexOpen: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    courseIndexClose: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
 
     // Learning Tangents
     createLearningTangent: vi

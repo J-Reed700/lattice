@@ -8,9 +8,10 @@ use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
 /// section's cited passages, what research found for the claim, a passage the
 /// user picked, a passed example run. Their score is no rank. Retrieved
 /// passages follow by retrieval score, ties in page order. A page is sorted
-/// by source before the judge reads it (`canonicalize_evidence`), so its own
-/// order says nothing about which passage matters: a page too long for the
-/// judge's window loses passages from the end of this order instead.
+/// by source to key it (`canonicalize_evidence`), so its own order says
+/// nothing about which passage matters: a page too long for the judge's
+/// window loses passages from the end of this order instead, and a pass B
+/// page is read in an order built on it (`reading_order`).
 pub(in crate::features::learning) fn ranking(page: &[EvidencePassage]) -> Vec<usize> {
     let placed = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
         CITED => 0,
@@ -78,20 +79,39 @@ pub(in crate::features::learning) async fn judge_for_publication(
     passages: &[String],
     ranking: &[usize],
 ) -> Judged {
+    let page_order: Vec<usize> = (0..passages.len()).collect();
+    judge_in_order(llm, claim, passages, ranking, &page_order).await
+}
+
+/// [`judge_for_publication`], the judge reading the passages it is shown in
+/// `reading` order (positions in the page; a pass B page's
+/// `reading_order`). The positions it returns are the page's, whatever order
+/// it read.
+pub(in crate::features::learning) async fn judge_in_order(
+    llm: &dyn LLMPort,
+    claim: &str,
+    passages: &[String],
+    ranking: &[usize],
+    reading: &[usize],
+) -> Judged {
     const TOO_LONG: &str =
         "The claim and its first passage do not fit the claim check in this model's context window.";
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
-        512,
+        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Strict,
     );
     // The positions shown when the `kept` most needed passages are, in page
-    // order, and those passages' texts.
+    // order, and those passages' texts in reading order.
     let shown = |kept: usize| {
         let mut positions: Vec<usize> = ranking.iter().copied().take(kept).collect();
         positions.sort_unstable();
-        let texts = shown_of(passages, &positions);
+        let texts: Vec<String> = reading
+            .iter()
+            .filter(|position| positions.contains(position))
+            .filter_map(|position| passages.get(*position).cloned())
+            .collect();
         (positions, texts)
     };
     // A page is sized for this judge; one sized for a batch call is cut to
