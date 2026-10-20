@@ -561,6 +561,44 @@ async fn a_group_with_nothing_new_to_add_is_dropped() {
     assert!(recalled.diagnostics.candidates_considered > 0);
 }
 
+#[tokio::test]
+async fn the_message_being_answered_is_not_recalled_as_an_older_passage() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    let earlier = [
+        "How much notice stops the Aldersgate Print agreement from renewing?".to_string(),
+        "Either party can stop it by giving 60 hours of written notice.".to_string(),
+    ];
+    seed_message(&pool, "conv-mine", "q1", "user", &earlier[0], "completed").await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "a1",
+        "assistant",
+        &earlier[1],
+        "completed",
+    )
+    .await;
+    let question =
+        "Unrelated question: after being paged in the small hours, how much paid rest am I owed?";
+    seed_message(&pool, "conv-mine", "q2", "user", question, "pending").await;
+
+    let recalled = recall_for_turn(
+        &port(&pool),
+        &scope("conv-mine"),
+        &RecallRequest {
+            user_input: question,
+            recent_turns: &earlier,
+            active_memory: &[],
+            max_bytes: 4096,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(recalled.passages().is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Three different kinds of nothing
 // ---------------------------------------------------------------------------
