@@ -175,6 +175,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub verifier_model: Option<ModelRef>,
 
+    /// The model that runs background utility tasks (query expansion, routing,
+    /// grounding checks, summaries) when assigned to a remote connection such
+    /// as llama.cpp instead of a downloaded model row.
+    #[serde(default)]
+    pub utility_model: Option<ModelRef>,
+
     /// Additional directories to scan for externally managed local models
     #[serde(default)]
     pub external_model_directories: Vec<String>,
@@ -543,6 +549,7 @@ impl Default for LLMSettingsDto {
             router: RouterSettingsDto::default(),
             learning_model: None,
             verifier_model: None,
+            utility_model: None,
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
             bounded_conversation_memory: true,

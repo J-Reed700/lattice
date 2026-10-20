@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
@@ -948,6 +948,30 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+/** A model row's role toggles live in its Configure dialog; the row shows
+ *  only the roles it holds. Opens that dialog for `row`. */
+async function openRoles(page: Page, row: Locator): Promise<Locator> {
+  await row.getByRole('button', { name: 'Configure model' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+/** Closes a row's Configure dialog. A role change re-renders the row, which
+ *  can close the dialog on its own; wait for the change to show on the row
+ *  before calling this. */
+async function closeRoles(dialog: Locator) {
+  if (await dialog.isVisible()) {
+    await dialog.getByRole('button', { name: 'Close' }).click();
+  }
+  await expect(dialog).toBeHidden();
+}
+
+/** Whether `row` says it holds `role`: its active-role badge. */
+function heldRole(row: Locator, role: string): Locator {
+  return row.locator(`[data-active-role="${role}"]`);
+}
+
 test('Downloaded switches chat between llama.cpp and local while keeping the utility assignment', async ({ page }, testInfo) => {
   await mockCommands(page, defaults => {
     let settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
@@ -991,13 +1015,16 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
   await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
   const local = page.getByText('Local model', { exact: true }).locator('../..');
   const remote = page.getByText('llama.cpp connection', { exact: true }).locator('../..');
-  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await expect(local.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(heldRole(remote, 'chat')).toHaveCount(1);
+  await expect(heldRole(local, 'chat')).toHaveCount(0);
+  await expect(heldRole(local, 'utility')).toHaveCount(1);
 
-  await local.getByRole('button', { name: 'Chat', exact: true }).click();
-  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  const localRoles = await openRoles(page, local);
+  await expect(localRoles.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await localRoles.getByRole('button', { name: 'Chat', exact: true }).click();
+  await expect(heldRole(local, 'chat')).toHaveCount(1);
+  await closeRoles(localRoles);
+  await expect(heldRole(remote, 'chat')).toHaveCount(0);
   await remote.getByRole('button', { name: 'Edit connection' }).click();
   await expect(page.getByLabel('Chat provider')).toHaveValue('local');
   await expect(page.getByLabel('llama.cpp URL')).toHaveValue('https://llama.example.com');
@@ -1006,10 +1033,12 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
   await expect(page.getByLabel('Chat provider')).toHaveValue('local');
 
   await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
-  await remote.getByRole('button', { name: 'Chat', exact: true }).click();
-  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await expect(local.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const remoteRoles = await openRoles(page, remote);
+  await remoteRoles.getByRole('button', { name: 'Chat', exact: true }).click();
+  await expect(heldRole(remote, 'chat')).toHaveCount(1);
+  await closeRoles(remoteRoles);
+  await expect(heldRole(local, 'chat')).toHaveCount(0);
+  await expect(heldRole(local, 'utility')).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test:settings')!).llm.provider)).toBe('llamacpp');
   await page.screenshot({ path: testInfo.outputPath('downloaded-models-chat.png'), animations: 'disabled' });
   expect(errors).toEqual([]);
@@ -1061,9 +1090,11 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
   await expect(page.getByText('Learning: not set — lessons, outlines and study decks will not run until you choose one')).toBeVisible();
 
   const local = page.getByText('Local model', { exact: true }).locator('../..');
-  await expect(local.getByRole('button', { name: 'Learning', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await local.getByRole('button', { name: 'Learning', exact: true }).click();
-  await expect(local.getByRole('button', { name: 'Learning', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const roles = await openRoles(page, local);
+  await expect(roles.getByRole('button', { name: 'Learning', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await roles.getByRole('button', { name: 'Learning', exact: true }).click();
+  await expect(heldRole(local, 'learning')).toHaveCount(1);
+  await closeRoles(roles);
   await expect(page.getByText(/Learning: not set/)).toHaveCount(0);
 
   // One write, to the Learning setting alone: no chat row flag, no provider.
@@ -1072,7 +1103,7 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
     command: 'update_settings',
     args: { settings: { category: 'llm', updates: { learningModel: { kind: 'local', model_id: 'local-model' } } } },
   }]);
-  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(heldRole(local, 'chat')).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
@@ -1130,7 +1161,7 @@ test('Downloaded only lists configured connections and remembers a saved localho
   await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
   const remote = page.getByText('Ollama connection', { exact: true }).locator('../..');
   await expect(remote).toBeVisible();
-  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(heldRole(remote, 'chat')).toHaveCount(0);
   await expect(page.getByText('llama.cpp connection', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('configured-connections.png'), animations: 'disabled' });
   expect(errors).toEqual([]);

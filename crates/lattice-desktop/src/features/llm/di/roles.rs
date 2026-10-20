@@ -337,19 +337,11 @@ impl RoleModels {
     }
 
     /// The utility model, or `None` when none is set, or when a remote one
-    /// cannot be reached — its callers then use the default chat model.
+    /// cannot be reached — its callers then use the default chat model. A
+    /// reference saved in Settings (a llama.cpp connection) comes first; the
+    /// row flag (a downloaded model or the Ollama connection) counts only
+    /// while none is saved. Every utility caller resolves through here.
     pub(crate) async fn utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
-        let active = match self.loader.active_utility_model().await {
-            Ok(Some(active)) => active,
-            Ok(None) => return Ok(None),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to query active utility model — falling back to the default chat model"
-                );
-                return Ok(None);
-            }
-        };
         let epoch = self.instances.epoch();
         let settings = self.llm_settings().await?;
         let requirements = ModelRequirements::default();
@@ -360,6 +352,31 @@ impl RoleModels {
             requirements: &requirements,
             tuning: Tuning::Utility,
             must_list_model,
+        };
+        if let Some(model) = &settings.utility_model {
+            return match self.pin(model, &settings, epoch, &want(false)).await {
+                Ok((_, acquired)) => Ok(Some(acquired.into_port())),
+                Err(error) if matches!(model, ModelRef::Local { .. }) => Err(error),
+                Err(e) => {
+                    tracing::warn!(
+                        utility_model = %model,
+                        error = %e,
+                        "Failed to reach the remote utility model — falling back to the default chat model"
+                    );
+                    Ok(None)
+                }
+            };
+        }
+        let active = match self.loader.active_utility_model().await {
+            Ok(Some(active)) => active,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to query active utility model — falling back to the default chat model"
+                );
+                return Ok(None);
+            }
         };
         if active.location().is_local() {
             let model = ModelRef::Local {
