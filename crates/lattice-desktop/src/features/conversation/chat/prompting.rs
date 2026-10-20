@@ -337,8 +337,14 @@ rather than describing this as a search that found nothing."
 }
 
 /// The standing instruction that opens every evidence-carrying message.
-const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the ongoing question using the user's established facts, \
-     conversation memory, and relevant original evidence from earlier turns together with new sources. \
+///
+/// It names the latest message as the one to answer. "The ongoing question"
+/// read, to a small model, as the earlier one: asked about something new, it
+/// answered the old question again from the evidence retained for it.
+const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the user's latest message, the question \
+     this prompt asks. When it continues an earlier topic, use the user's established facts, \
+     conversation memory, and relevant original evidence from earlier turns together with new sources; \
+     when it asks about something else, leave the earlier topic and its evidence out. \
      New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
      Before declaring information unavailable, consult retained evidence and available history/source \
      tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
