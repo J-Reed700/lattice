@@ -205,23 +205,16 @@ fn validate_answer_options(options: &[String], correct_index: usize) -> Result<(
 pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
     // Accept a plain JSON object or one fenced JSON block, but reject prefixes,
     // trailing commentary, multiple objects, and unclosed/truncated responses.
+    // A fence counts only around the whole answer: the material itself can hold
+    // fenced examples, such as a lesson on tool schemas.
     let trimmed = raw.trim();
-    let candidate = if let Some(fence_start) = trimmed.find("```json") {
-        let after = &trimmed[fence_start + 7..];
-        let after = after.strip_prefix('\n').unwrap_or(after);
-        let (json, tail) = after.split_once("```").ok_or_else(|| {
+    let candidate = match trimmed.strip_prefix("```json") {
+        Some(after) => after.strip_suffix("```").ok_or_else(|| {
             invalid("The model returned incomplete learning material. Try again.")
-        })?;
-        if !trimmed[..fence_start].trim().is_empty() || !tail.trim().is_empty() {
-            return Err(invalid(
-                "The model returned unexpected text around learning material. Try again.",
-            ));
-        }
-        json.trim()
-    } else {
-        trimmed
+        })?,
+        None => trimmed,
     };
-    serde_json::from_str(candidate).map_err(|_| {
+    serde_json::from_str(candidate.trim()).map_err(|_| {
         invalid("The model returned malformed or incomplete learning material. Try again.")
     })
 }
