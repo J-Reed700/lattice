@@ -5,8 +5,8 @@ use super::files::{candidate, prepare, walk, Candidate, Prepared, Walked};
 use super::{per_second, Indexer, Outcome};
 use crate::features::explorer::fs;
 use crate::features::explorer::index::dto::FolderIndexState;
-use crate::features::explorer::index::store::{self, FileRow, TooLarge};
-use lattice_core::application::ports::vector_search_port::VectorSearchPort;
+use crate::features::explorer::index::store::{self, file_stamp, TooLarge};
+use crate::infrastructure::passage_index::Document;
 use lattice_core::shared::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -15,10 +15,6 @@ use tracing::info;
 
 /// Files read and chunked per trip to the blocking pool.
 const PREPARE_GROUP: usize = 64;
-
-fn vector_ids(ids: &[i64]) -> Vec<String> {
-    ids.iter().map(i64::to_string).collect()
-}
 
 impl Indexer {
     /// Walks the folder, brings the rows in line with it, and embeds what is
@@ -34,7 +30,7 @@ impl Indexer {
         let status = Arc::clone(&self.status);
         // Read before the walk, so a folder past the bound keeps the files it
         // already indexed rather than whichever the disk lists first.
-        let existing = self.store.files_under(&self.prefix).await?;
+        let existing = self.store.documents(&self.prefix).await?;
         let indexed: HashSet<String> = existing.keys().cloned().collect();
         let walked = tokio::task::spawn_blocking(move || {
             walk(&scope, &prefix, max_files, &indexed, &cancel, Some(&status))
@@ -79,7 +75,7 @@ impl Indexer {
         let counts = self.refresh_counts().await?;
         info!(
             root = %self.folder().display(),
-            files = counts.files_total,
+            files = counts.documents_total,
             new_or_changed = changed,
             removed = gone.len(),
             passages_to_embed = counts.passages_total.saturating_sub(counts.passages_embedded),
@@ -148,8 +144,7 @@ impl Indexer {
             match kind {
                 _ if ignored => {
                     // It may have been indexed before the rule that hides it.
-                    let removed = self.store.remove_under(&relative).await?;
-                    self.drop_vectors(&removed)?;
+                    self.forget_under(&relative).await?;
                 }
                 Some(kind) if kind.is_dir() => {
                     if self.sync_tree(&relative).await? == Outcome::Cancelled {
@@ -165,16 +160,13 @@ impl Indexer {
                         })?;
                     match found {
                         Some(found) => {
-                            let existing = self.store.files_under(&relative).await?;
+                            let existing = self.store.documents(&relative).await?;
                             self.sync_candidates(vec![found], &existing).await?;
                         }
                         None => self.forget(std::slice::from_ref(&relative)).await?,
                     }
                 }
-                _ => {
-                    let removed = self.store.remove_under(&relative).await?;
-                    self.drop_vectors(&removed)?;
-                }
+                _ => self.forget_under(&relative).await?,
             }
         }
         self.refresh_counts().await?;
@@ -199,7 +191,7 @@ impl Indexer {
             // full run, which indexes up to the bound and counts the rest.
             Walked::Files { .. } => return Ok(Outcome::Done),
         };
-        let existing = self.store.files_under(relative).await?;
+        let existing = self.store.documents(relative).await?;
         let seen: HashSet<String> = candidates
             .iter()
             .map(|found| found.relative.clone())
@@ -220,12 +212,12 @@ impl Indexer {
     async fn sync_candidates(
         &self,
         candidates: Vec<Candidate>,
-        existing: &HashMap<String, FileRow>,
+        existing: &HashMap<String, Document>,
     ) -> Result<Option<usize>> {
         let changed: Vec<(Candidate, Option<String>)> = candidates
             .into_iter()
             .filter_map(|found| match existing.get(&found.relative) {
-                Some(row) if row.size == found.size && row.mtime == found.mtime => None,
+                Some(row) if row.stamp == file_stamp(found.size, found.mtime) => None,
                 Some(row) => Some((found, Some(row.content_hash.clone()))),
                 None => Some((found, None)),
             })
@@ -253,15 +245,20 @@ impl Indexer {
                 match decision {
                     Prepared::Touch => {
                         self.store
-                            .touch_file(&found.relative, found.size, found.mtime)
+                            .touch(&found.relative, &file_stamp(found.size, found.mtime))
                             .await?
                     }
                     Prepared::Replace { hash, chunks } => {
+                        let passages: Vec<_> = chunks
+                            .iter()
+                            .map(|chunk| chunk.passage(&found.relative))
+                            .collect();
+                        let stamp = file_stamp(found.size, found.mtime);
                         let replaced = self
                             .store
-                            .replace_file(&found.relative, found.size, found.mtime, &hash, &chunks)
+                            .replace(&found.relative, &stamp, &hash, &passages)
                             .await?;
-                        self.drop_vectors(&replaced)?;
+                        self.vectors.remove(&replaced)?;
                     }
                     Prepared::Gone => self.forget(std::slice::from_ref(&found.relative)).await?,
                 }
@@ -270,21 +267,21 @@ impl Indexer {
         Ok(Some(count))
     }
 
+    /// Forgets the files at `paths` and takes their vectors out of the
+    /// in-memory index. They reach the file with the next save; until then a
+    /// stale vector on disk is harmless, because a search keeps only hits
+    /// whose passage row still exists.
     async fn forget(&self, paths: &[String]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
-        let removed = self.store.remove_files(paths).await?;
-        self.drop_vectors(&removed)
+        let removed = self.store.remove(paths).await?;
+        self.vectors.remove(&removed)
     }
 
-    /// Takes vectors out of the in-memory index. They reach the file with the
-    /// next save; until then a stale vector on disk is harmless, because a
-    /// search keeps only hits whose chunk row still exists.
-    fn drop_vectors(&self, ids: &[i64]) -> Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        self.vectors.remove_embeddings(&vector_ids(ids))
+    /// Forgets `prefix` and everything under it (a removed directory).
+    async fn forget_under(&self, prefix: &str) -> Result<()> {
+        let paths = self.store.keys_under(prefix).await?;
+        self.forget(&paths).await
     }
 }

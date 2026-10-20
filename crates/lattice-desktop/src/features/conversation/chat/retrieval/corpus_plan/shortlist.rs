@@ -19,7 +19,7 @@ use lattice_core::application::contracts::search::CorpusDocument;
 use super::super::{select_informative_terms, tokenize_keyword_terms};
 use super::{
     fused_search, navigation_only, numbered_series_prefix, whole_document_intent,
-    LibrarySearchTrait, SearchResultDto,
+    HybridSearchTrait, SearchResultDto,
 };
 
 /// Passages the candidate search reads. Fusion keeps at most four passages a
@@ -37,7 +37,7 @@ const CONVERSATION_TERMS: usize = 12;
 /// are interleaved so neither crowds the other out. A failed search leaves an
 /// empty ranking, and the planner then sees the catalog in its own order.
 pub(in super::super) async fn candidate_documents(
-    hybrid: &dyn LibrarySearchTrait,
+    hybrid: &dyn HybridSearchTrait,
     question: &str,
     history: Option<&str>,
     document_ids: &HashSet<String>,

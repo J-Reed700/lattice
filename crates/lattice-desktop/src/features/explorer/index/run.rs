@@ -8,14 +8,15 @@
 //! in the saved vectors file is not embedded again.
 //!
 //! Progress is told in passages, after every batch, with a time left from a
-//! smoothed rate; files move when a save marks them. A full run logs one line
+//! smoothed rate; files move when a save marks them. The rows, the vectors
+//! file and the embedding loop are the shared passage index's; the walk, the
+//! file bound, the stamps and the status are the folder's own. A full run logs one line
 //! when its scan ends, one per tenth of the passages, and one when it is
 //! ready or paused.
 
 use super::dto::FolderIndexStatusDto;
-use super::store::{Counts, FolderStore};
 use crate::features::explorer::scope::Scope;
-use crate::infrastructure::vector_index::USearchVectorIndex;
+use crate::infrastructure::passage_index::{Counts, PassageStore, Vectors};
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
@@ -202,8 +203,8 @@ pub enum Outcome {
 }
 
 pub struct Indexer {
-    pub store: Arc<FolderStore>,
-    pub vectors: Arc<USearchVectorIndex>,
+    pub store: Arc<PassageStore>,
+    pub vectors: Vectors,
     pub embedder: Arc<dyn EmbeddingPort>,
     /// The index root, which the walk starts from so its ignore rules apply.
     pub scope: Scope,
@@ -244,8 +245,8 @@ impl Indexer {
     async fn refresh_counts(&self) -> Result<Counts> {
         let counts = self.store.counts(&self.prefix).await?;
         self.status.update(|status| {
-            status.files_total = counts.files_total;
-            status.files_indexed = counts.files_indexed;
+            status.files_total = counts.documents_total;
+            status.files_indexed = counts.documents_embedded;
             status.passages_total = counts.passages_total;
             status.passages_embedded = counts.passages_embedded;
         });

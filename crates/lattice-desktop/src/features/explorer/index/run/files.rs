@@ -3,8 +3,8 @@
 
 use super::StatusCell;
 use crate::features::explorer::fs;
-use crate::features::explorer::index::chunker::{self, Chunk};
 use crate::features::explorer::scope::Scope;
+use crate::infrastructure::passage_index::chunking::lines::{self as chunker, Chunk};
 use lattice_core::shared::Result;
 use sha2::{Digest, Sha256};
 use std::collections::{BinaryHeap, HashSet};

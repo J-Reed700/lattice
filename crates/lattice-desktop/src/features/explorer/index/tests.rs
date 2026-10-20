@@ -1,19 +1,26 @@
-use super::chunker::{self, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES};
 use super::dto::{FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryState};
-use super::manager::{EmbedderSource, FolderIndexManager, ManagerConfig};
+use super::manager::{FolderIndexManager, ManagerConfig};
 use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
-use super::search::{fuse, match_expression, FolderHit};
-use super::store::{self, FolderStore};
+use super::search::FolderHit;
+use super::store;
 use super::tool;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
+use crate::features::search::trait_def::HybridSearchUseCaseFactory;
+use crate::infrastructure::passage_index::chunking::lines::{
+    self as chunker, chunk_text, Chunk, MAX_CHUNK_CHARS, MAX_CHUNK_LINES,
+};
+use crate::infrastructure::passage_index::vectors::vectors_path;
+use crate::infrastructure::passage_index::{EmbedderSource, PassageStore, Vectors};
 use crate::infrastructure::vector_index::USearchVectorIndex;
 use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
 use lattice_core::application::contracts::tools::explorer as explorer_tools;
+use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::application::ports::TextSearchPort;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
@@ -197,6 +204,18 @@ impl Rig {
         embedder: Option<Arc<FakeEmbedder>>,
         pool: SqlitePool,
     ) -> Arc<FolderIndexManager> {
+        self.manager_searching(config, embedder, pool, Arc::new(HybridSearchUseCaseFactory))
+            .await
+    }
+
+    /// A manager whose folder searches `searches` builds.
+    async fn manager_searching(
+        &self,
+        config: ManagerConfig,
+        embedder: Option<Arc<FakeEmbedder>>,
+        pool: SqlitePool,
+        searches: Arc<dyn HybridSearchFactory>,
+    ) -> Arc<FolderIndexManager> {
         let jobs = JobRuntime::with_poll_interval(pool, Duration::from_millis(50));
         let events = Arc::clone(&self.events);
         jobs.observe(move |job| {
@@ -208,8 +227,13 @@ impl Rig {
                 events.lock().push(status);
             }
         });
-        let manager =
-            FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs, Arc::default());
+        let manager = FolderIndexManager::new(
+            config,
+            Arc::new(Source(embedder)),
+            searches,
+            jobs,
+            Arc::default(),
+        );
         manager.register().await.unwrap();
         manager
     }
@@ -268,9 +292,8 @@ async fn open_settled(manager: &FolderIndexManager, root: &Path) -> FolderIndexS
 }
 
 async fn chunk_paths(dir: &Path) -> Vec<String> {
-    let store = FolderStore::open(dir).await.unwrap();
-    let mut paths: Vec<String> = store.files_under("").await.unwrap().into_keys().collect();
-    paths.sort();
+    let store = PassageStore::open(dir).await.unwrap();
+    let paths = store.keys_under("").await.unwrap();
     store.close().await;
     paths
 }
@@ -571,9 +594,8 @@ mod incremental {
         let dir = store::index_dir(&rig.base, &root);
         let paths = chunk_paths(&dir).await;
         assert_eq!(paths, vec!["logo.png", "src/parser.rs", "src/retry.rs"]);
-        let index =
-            USearchVectorIndex::open_or_create(DIM, store::vectors_path(&dir, "model-a")).unwrap();
-        let store = FolderStore::open(&dir).await.unwrap();
+        let index = USearchVectorIndex::open_or_create(DIM, vectors_path(&dir, "model-a")).unwrap();
+        let store = PassageStore::open(&dir).await.unwrap();
         let counts = store.counts("").await.unwrap();
         store.close().await;
         assert_eq!(
@@ -591,13 +613,9 @@ mod incremental {
         write(&root, "src/retry.rs", RETRY_RS);
         write(&root, "src/parser.rs", PARSER_RS);
         let dir = root.join(".index-under-test");
-        let store = Arc::new(FolderStore::open(&dir).await.unwrap());
+        let store = Arc::new(PassageStore::open(&dir).await.unwrap());
         let embedder = FakeEmbedder::new("model-a");
-        let vectors = Arc::new(
-            USearchVectorIndex::open_or_create(DIM, store::vectors_path(&dir, "model-a"))
-                .unwrap()
-                .with_coalesced_saves(),
-        );
+        let vectors = Vectors::open(&store, "model-a", DIM).await.unwrap();
         let status = Arc::new(StatusCell::new(FolderIndexStatusDto::new(
             "",
             "",
@@ -605,7 +623,7 @@ mod incremental {
         )));
         let indexer = Indexer {
             store: Arc::clone(&store),
-            vectors: Arc::clone(&vectors),
+            vectors: vectors.clone(),
             embedder: embedder.clone(),
             scope: Scope::open(&text(&root)).unwrap(),
             prefix: String::new(),
@@ -635,8 +653,7 @@ mod incremental {
             .await
             .unwrap();
         assert_eq!(outcome, Outcome::Done);
-        let mut paths: Vec<String> = store.files_under("").await.unwrap().into_keys().collect();
-        paths.sort();
+        let paths = store.keys_under("").await.unwrap();
         assert_eq!(paths, vec![".gitignore", "src/new/mod.rs", "src/parser.rs"]);
         let embedded = embedder.embedded();
         assert_eq!(embedded.len(), 2, "{embedded:?}");
@@ -696,7 +713,7 @@ mod progress {
         }
         write(&root, ".gitignore", ".index-under-test/\n");
         let dir = root.join(".index-under-test");
-        let store = Arc::new(FolderStore::open(&dir).await.unwrap());
+        let store = Arc::new(PassageStore::open(&dir).await.unwrap());
         let embedder = FakeEmbedder::new("model-a");
         // Slower than the status throttle, so every batch is told.
         embedder.delay_ms.store(300, Ordering::SeqCst);
@@ -712,11 +729,7 @@ mod progress {
         }));
         let indexer = Indexer {
             store: Arc::clone(&store),
-            vectors: Arc::new(
-                USearchVectorIndex::open_or_create(DIM, store::vectors_path(&dir, "model-a"))
-                    .unwrap()
-                    .with_coalesced_saves(),
-            ),
+            vectors: Vectors::open(&store, "model-a", DIM).await.unwrap(),
             embedder: embedder.clone(),
             scope: Scope::open(&text(&root)).unwrap(),
             prefix: String::new(),
@@ -755,52 +768,173 @@ mod progress {
 
 mod search {
     use super::*;
+    use lattice_core::application::contracts::search::{
+        QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
+        SearchResultDto,
+    };
+    use std::collections::HashSet;
 
-    #[test]
-    fn reciprocal_rank_fusion_rewards_agreement() {
-        let fused = fuse(vec![1, 2, 3], vec![3, 4]);
-        let order: Vec<i64> = fused.iter().map(|entry| entry.id).collect();
-        assert_eq!(order, vec![3, 1, 2, 4]);
-        // Dense rank 3 at the vector weight plus full-text rank 1 at the
-        // keyword weight, at k = 10.
-        assert!((fused[0].score - (0.7 / 13.0 + 0.3 / 11.0)).abs() < 1e-6);
-        assert!(fuse(Vec::new(), Vec::new()).is_empty());
+    /// One query the folder's hybrid search answered.
+    #[derive(Debug, Clone)]
+    struct Call {
+        query: String,
+        /// The document keys it kept to, sorted; `None` for the whole index.
+        scope: Option<Vec<String>>,
+        /// The documents of the results it returned, in its order.
+        documents: Vec<String>,
     }
 
-    /// The shared constant and weights, not the old flat `k = 60`: a passage
-    /// only the dense half found, first, beats one both halves ranked
-    /// seventh (`0.7/11 > 1/17`). Flat at `k = 60` the agreement wins
-    /// (`1/61 < 2/67`), and so it does with the weights swapped.
-    #[test]
-    fn fusion_uses_the_library_constant_and_branch_weights() {
-        let mut dense = vec![100];
-        dense.extend(1..=5);
-        dense.push(7);
-        let mut lexical: Vec<i64> = (11..=16).collect();
-        lexical.push(7);
-        let fused = fuse(dense.clone(), lexical.clone());
-        assert_eq!(fused[0].id, 100, "{fused:?}");
-        assert_eq!(fused[0].branch_ranks, vec![Some(0), None]);
-        let agreed = fused.iter().find(|entry| entry.id == 7).unwrap();
-        assert_eq!(agreed.branch_ranks, vec![Some(6), Some(6)]);
-        // The dense half carries the vector weight, not the keyword weight:
-        // swapped, the sole first place weighs 0.3/11 and falls below 1/17.
-        let swapped = fuse(lexical, dense);
-        let position = |id: i64| swapped.iter().position(|entry| entry.id == id);
-        assert!(position(7) < position(100), "{swapped:?}");
+    /// The library's orchestrator, recording what it was asked and answered.
+    struct Recorded {
+        inner: Arc<dyn HybridSearchTrait>,
+        calls: Arc<Mutex<Vec<Call>>>,
     }
 
-    #[test]
-    fn full_text_queries_are_quoted_literals() {
-        assert_eq!(
-            match_expression("where is \"retry\" NEAR(x)?").as_deref(),
-            Some("\"where\"* OR \"is\" OR \"retry\"* OR \"near\"*")
+    #[async_trait]
+    impl HybridSearchTrait for Recorded {
+        async fn execute_scoped(
+            &self,
+            request: SearchRequestDto,
+            space_id: Option<&str>,
+            allowed_document_ids: Option<&HashSet<String>>,
+        ) -> Result<SearchResponseDto> {
+            let query = request.query.clone();
+            let response = self
+                .inner
+                .execute_scoped(request, space_id, allowed_document_ids)
+                .await?;
+            let scope = allowed_document_ids.map(|keys| {
+                let mut keys: Vec<String> = keys.iter().cloned().collect();
+                keys.sort();
+                keys
+            });
+            let documents = response
+                .results
+                .iter()
+                .map(|result| result.document_id.clone().unwrap_or_default())
+                .collect();
+            self.calls.lock().push(Call {
+                query,
+                scope,
+                documents,
+            });
+            Ok(response)
+        }
+
+        async fn search_branches(
+            &self,
+            query: &str,
+            space_id: Option<&str>,
+            allowed_document_ids: Option<&HashSet<String>>,
+            limit: usize,
+            vector_weight: f32,
+            bm25_weight: f32,
+        ) -> QueryBranches {
+            self.inner
+                .search_branches(
+                    query,
+                    space_id,
+                    allowed_document_ids,
+                    limit,
+                    vector_weight,
+                    bm25_weight,
+                )
+                .await
+        }
+
+        fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+            self.inner.fuse(branches, limit)
+        }
+
+        async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
+            self.inner.rerank(response, options).await
+        }
+    }
+
+    /// Builds the app's hybrid search, wrapped in a recorder.
+    struct Recording {
+        calls: Arc<Mutex<Vec<Call>>>,
+    }
+
+    impl HybridSearchFactory for Recording {
+        fn hybrid(
+            &self,
+            embedder: Arc<dyn EmbeddingPort>,
+            vectors: Arc<dyn VectorSearchPort>,
+            text: Arc<dyn TextSearchPort>,
+        ) -> Arc<dyn HybridSearchTrait> {
+            Arc::new(Recorded {
+                inner: HybridSearchUseCaseFactory.hybrid(embedder, vectors, text),
+                calls: Arc::clone(&self.calls),
+            })
+        }
+    }
+
+    /// The gate of the passage index refit: the folder has no fusion of its
+    /// own. `search_folder` asks the one hybrid search, scoped to the files
+    /// under the path it was given, and shows what that search returned, in
+    /// its order.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn search_folder_results_come_from_the_hybrid_search() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let manager = rig
+            .manager_searching(
+                rig.config(),
+                Some(Arc::clone(&embedder)),
+                jobs_database().await,
+                Arc::new(Recording {
+                    calls: Arc::clone(&calls),
+                }),
+            )
+            .await;
+        let root = rig.project(
+            "project",
+            &[
+                ("src/retry.rs", RETRY_RS),
+                ("src/parser.rs", PARSER_RS),
+                ("docs/notes.md", NOTES_MD),
+            ],
         );
-        assert_eq!(match_expression("a ! ?"), None);
+        open_settled(&manager, &root).await;
+        let search = manager.search_for(&root).await.unwrap();
+
+        let hits = search.search("parse tokens", Some("src"), 8).await.unwrap();
+        let recorded = calls.lock().clone();
         assert_eq!(
-            match_expression("handle_retry").as_deref(),
-            Some("\"handle_retry\"*")
+            recorded.len(),
+            1,
+            "one search, one hybrid query: {recorded:?}"
         );
+        let call = &recorded[0];
+        assert_eq!(call.query, "parse tokens");
+        assert_eq!(
+            call.scope,
+            Some(vec![
+                "src/parser.rs".to_string(),
+                "src/retry.rs".to_string()
+            ]),
+            "a path keeps the search to the files under it"
+        );
+        assert_eq!(
+            hits.iter().map(|hit| hit.path.clone()).collect::<Vec<_>>(),
+            call.documents,
+            "the hits are the hybrid search's results, in its order"
+        );
+        assert_eq!(
+            hits.first().map(|hit| hit.path.as_str()),
+            Some("src/parser.rs")
+        );
+
+        let out = tool::run(&search, &json!({"query": "parse tokens"}), 2_000)
+            .await
+            .unwrap();
+        assert!(out.contains("`src/parser.rs:1-"), "{out}");
+        let recorded = calls.lock().clone();
+        assert_eq!(recorded.len(), 2, "search_folder asked the hybrid search");
+        assert_eq!(recorded[1].scope, None, "no path searches the whole folder");
+        manager.close().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1045,7 +1179,7 @@ mod registry {
         manager.close().await;
         assert_eq!(first.embedded().len(), 2);
         let dir = store::index_dir(&rig.base, &root);
-        assert!(store::vectors_path(&dir, "model-a").exists());
+        assert!(vectors_path(&dir, "model-a").exists());
 
         let second = FakeEmbedder::new("model-b");
         let manager = rig.manager(&second).await;
@@ -1053,10 +1187,58 @@ mod registry {
         assert_eq!(status.state, FolderIndexState::Ready);
         assert_eq!(second.embedded().len(), 2, "every chunk embedded again");
         assert!(
-            !store::vectors_path(&dir, "model-a").exists(),
+            !vectors_path(&dir, "model-a").exists(),
             "old vectors dropped"
         );
-        assert!(store::vectors_path(&dir, "model-b").exists());
+        assert!(vectors_path(&dir, "model-b").exists());
+        manager.close().await;
+    }
+
+    /// An index directory from before the shared passage store (a
+    /// `chunks.db` and its vectors, no `passages.db`) is rebuilt once on the
+    /// folder's next open, reports as any finished index does, and is not
+    /// rebuilt again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_index_in_the_earlier_layout_rebuilds_once() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project(
+            "project",
+            &[("src/retry.rs", RETRY_RS), ("src/parser.rs", PARSER_RS)],
+        );
+        let dir = store::index_dir(&rig.base, &root);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("chunks.db"), b"an earlier layout").unwrap();
+        std::fs::write(vectors_path(&dir, "model-a"), b"vectors of other ids").unwrap();
+
+        let manager = rig.manager(&embedder).await;
+        let status = open_settled(&manager, &root).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+        assert_eq!(
+            (status.files_total, status.files_indexed),
+            (2, 2),
+            "{status:?}"
+        );
+        assert_eq!(
+            (status.passages_total, status.passages_embedded),
+            (2, 2),
+            "{status:?}"
+        );
+        assert_eq!(embedder.embedded().len(), 2, "every passage embedded once");
+        assert!(
+            !dir.join("chunks.db").exists(),
+            "nothing of the old layout is kept"
+        );
+        assert_eq!(
+            chunk_paths(&dir).await,
+            vec!["src/parser.rs", "src/retry.rs"]
+        );
+        manager.close().await;
+
+        embedder.forget_calls();
+        let status = open_settled(&manager, &root).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+        assert!(embedder.embedded().is_empty(), "rebuilt once, not again");
         manager.close().await;
     }
 

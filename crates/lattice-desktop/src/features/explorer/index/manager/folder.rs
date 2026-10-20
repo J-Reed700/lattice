@@ -2,13 +2,14 @@
 //! the watcher that keeps its index current, and search over it.
 
 use super::{relative_below, root_string, FolderIndexManager, OpenFolder, OpenView};
-use crate::features::explorer::index::build::{self, LiveIndex};
+use crate::features::explorer::index::build;
 use crate::features::explorer::index::dto::{FolderIndexState, FolderIndexStatusDto};
 use crate::features::explorer::index::run::{Indexer, Limits, Outcome, StatusCell};
 use crate::features::explorer::index::search::FolderSearch;
 use crate::features::explorer::index::store;
 use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
 use crate::features::explorer::scope::Scope;
+use crate::infrastructure::passage_index::{LiveIndex, PassageTextSearch};
 use lattice_core::shared::{runtime::jobs::JobStatus, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -246,10 +247,14 @@ impl FolderIndexManager {
             }
             let index = current.index.as_ref()?;
             let engine = index.engine()?;
+            let hybrid = self.searches().hybrid(
+                engine.embedder,
+                engine.vectors.port(),
+                Arc::new(PassageTextSearch::new(Arc::clone(&index.store))),
+            );
             FolderSearch::new(
                 Arc::clone(&index.store),
-                engine.vectors,
-                engine.embedder,
+                hybrid,
                 current.prefix.clone(),
                 Arc::clone(&current.status),
             )

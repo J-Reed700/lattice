@@ -1,6 +1,7 @@
 //! Service trait definitions
 //!
-//! This module defines trait interfaces for dependency injection.
+//! This module defines trait interfaces for dependency injection, and the
+//! search feature's implementations of the core hybrid search ports.
 
 use crate::features::search::enrichment_service::DocumentMetadata;
 use crate::features::search::use_cases::HybridSearchUseCase;
@@ -9,10 +10,13 @@ use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
+use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
+use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use lattice_core::shared::error::Result;
+use std::sync::Arc;
 
 #[async_trait]
-impl lattice_core::application::ports::library_search::LibrarySearchTrait for HybridSearchUseCase {
+impl HybridSearchTrait for HybridSearchUseCase {
     async fn execute_scoped(
         &self,
         request: SearchRequestDto,
@@ -49,6 +53,27 @@ impl lattice_core::application::ports::library_search::LibrarySearchTrait for Hy
 
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
         HybridSearchUseCase::rerank(self, response, options).await
+    }
+}
+
+/// The library's orchestrator over a passage index's own storage.
+///
+/// Only the three stores are given: the sparse branch, the reranker and the
+/// chunk repository are the library's and read `lattice.db`, and a passage
+/// index's rows are authoritative for its own passages. Fusion, branch
+/// depth, the vector floor and the per-document cap are the library's
+/// constants, so a folder or course is ranked the way the library is.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HybridSearchUseCaseFactory;
+
+impl HybridSearchFactory for HybridSearchUseCaseFactory {
+    fn hybrid(
+        &self,
+        embedder: Arc<dyn EmbeddingPort>,
+        vectors: Arc<dyn VectorSearchPort>,
+        text: Arc<dyn TextSearchPort>,
+    ) -> Arc<dyn HybridSearchTrait> {
+        Arc::new(HybridSearchUseCase::new(embedder, vectors, text))
     }
 }
 

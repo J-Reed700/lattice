@@ -3,6 +3,8 @@
 //! - `adapters`: implementations of shared application ports
 //! - `events`: in-process commands, broadcast notifications, and event bridges
 //! - `ml`: shared model caching and embedding exports
+//! - `passage_index`: per-directory passage indexes on disk (store, chunkers,
+//!   embedding loop, vectors file) that features build and search
 //! - `persistence`: SQLite setup, migrations, and cross-feature repositories
 //! - `setup`: directories, database, tracing and tokenizer setup steps, and the
 //!   renderer shutdown hook; the startup sequence is in `crate::bootstrap`
@@ -18,6 +20,7 @@ pub mod extraction;
 pub mod file_system;
 pub mod ml;
 pub mod observability;
+pub mod passage_index;
 pub mod persistence;
 pub mod security;
 pub mod services;

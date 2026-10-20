@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use lattice_core::application::contracts::search::{
     BranchKind, CorpusDocument, RankedBranch, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
-use lattice_core::application::ports::library_search::LibrarySearchTrait;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{select_informative_terms, tokenize_keyword_terms};

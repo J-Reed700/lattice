@@ -2,18 +2,14 @@
 //! a search may take its full two seconds and must not stall the runtime.
 
 use super::index::dto::FolderIndexStatusDto;
-use super::index::manager::{EmbedderSource, FolderIndexManager};
+use super::index::manager::FolderIndexManager;
 use super::{dto::*, folders, fs, scope::Scope};
 use crate::interfaces::di::Container;
-use async_trait::async_trait;
-use lattice_core::{
-    application::ports::EmbeddingPort,
-    shared::{ipc::ApiError, AppError},
-};
+use lattice_core::shared::{ipc::ApiError, AppError};
 use std::sync::Arc;
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    Manager, Runtime, State,
 };
 
 /// Carries the open folder's `FolderIndexStatusDto` when the watcher's
@@ -113,32 +109,6 @@ pub async fn set_conversation_explorer_root(
     folders::bind_thread(container.db_pool(), &conversation_id, canonical.as_deref())
         .await
         .map_err(ApiError::from)
-}
-
-/// The embedder the folder index uses: the container's, so the model is
-/// loaded once and shared with the chat path.
-pub(crate) struct AppEmbedders<R: Runtime> {
-    app: AppHandle<R>,
-}
-
-impl<R: Runtime> AppEmbedders<R> {
-    pub(crate) fn new(app: AppHandle<R>) -> Self {
-        Self { app }
-    }
-}
-
-#[async_trait]
-impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
-    async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>> {
-        let container = self.app.try_state::<Container>()?;
-        // No identity means no active embedding model: nothing to load.
-        container.search.embedding_identity()?;
-        container
-            .get_or_load_embedding()
-            .await
-            .map_err(|error| tracing::warn!(%error, "Folder index has no embedder"))
-            .ok()
-    }
 }
 
 /// The app's folder index manager, which the composition root owns.

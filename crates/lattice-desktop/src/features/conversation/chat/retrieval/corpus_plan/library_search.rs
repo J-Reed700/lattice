@@ -7,7 +7,7 @@ use crate::features::conversation::chat::ports::ChatRecords;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{
-    BranchKind, CorpusSearchPlan, LibrarySearchTrait, RankedBranch, SearchRequestDto,
+    BranchKind, CorpusSearchPlan, HybridSearchTrait, RankedBranch, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
 
@@ -21,7 +21,7 @@ use super::{
 /// differently from the search that opened the turn, and could miss passages
 /// the first pass would have found.
 pub(in crate::features::conversation::chat) async fn fused_search(
-    hybrid: &dyn LibrarySearchTrait,
+    hybrid: &dyn HybridSearchTrait,
     query: &str,
     document_ids: &HashSet<String>,
     limit: usize,
@@ -41,7 +41,7 @@ pub(in crate::features::conversation::chat) async fn fused_search(
 
 pub(in super::super) async fn retrieve(
     repository: &dyn ChatRecords,
-    hybrid: &dyn LibrarySearchTrait,
+    hybrid: &dyn HybridSearchTrait,
     question: &str,
     plan: &CorpusSearchPlan,
     scope: &super::super::SpaceDocumentScope,
@@ -242,7 +242,7 @@ pub(in super::super) async fn expand_evidence(
 /// passes found rises above one that only the retry did, which is the whole
 /// point of correcting rather than replacing.
 pub(in super::super) fn fuse_passes(
-    hybrid: &dyn LibrarySearchTrait,
+    hybrid: &dyn HybridSearchTrait,
     first: Vec<SearchResultDto>,
     second: Vec<SearchResultDto>,
     limit: usize,

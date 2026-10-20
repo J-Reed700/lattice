@@ -4,7 +4,7 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
-Status (2026-10-02): decision stands. Current details: `sqlx` 0.8, a pool of up to 5 connections (busy timeout 5 s, WAL, `synchronous=NORMAL`, 20 MB cache) in `crates/lattice-desktop/src/infrastructure/persistence/database/connection.rs`; migrations are applied at startup by `initialize_database` (`database/init.rs`), not by `sqlx-cli`; vectors live in USearch files beside `lattice.db`, not in SQLite (see ADR-001). Explorer's per-folder index uses its own SQLite file per folder (`<app data>/folder-index/<folder>/chunks.db`, `crates/lattice-desktop/src/features/explorer/index/store.rs`), outside `lattice.db`; the list of folders (`explorer_folders`) is in `lattice.db`.
+Status (2026-10-02): decision stands. Current details: `sqlx` 0.8, a pool of up to 5 connections (busy timeout 5 s, WAL, `synchronous=NORMAL`, 20 MB cache) in `crates/lattice-desktop/src/infrastructure/persistence/database/connection.rs`; migrations are applied at startup by `initialize_database` (`database/init.rs`), not by `sqlx-cli`; vectors live in USearch files beside `lattice.db`, not in SQLite (see ADR-001). Explorer's per-folder index uses its own SQLite file per folder (`<app data>/folder-index/<folder>/passages.db`, the shared passage store in `crates/lattice-desktop/src/infrastructure/passage_index/store.rs`), outside `lattice.db`; the list of folders (`explorer_folders`) is in `lattice.db`.
 
 ## Context
 

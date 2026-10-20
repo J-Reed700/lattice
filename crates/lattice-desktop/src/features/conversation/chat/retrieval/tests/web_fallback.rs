@@ -16,7 +16,7 @@ use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked,
 };
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
-use lattice_core::application::ports::library_search::LibrarySearchTrait;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;
 
@@ -90,7 +90,7 @@ struct FixedLibrary {
 }
 
 #[async_trait::async_trait]
-impl LibrarySearchTrait for FixedLibrary {
+impl HybridSearchTrait for FixedLibrary {
     async fn execute_scoped(
         &self,
         _request: SearchRequestDto,

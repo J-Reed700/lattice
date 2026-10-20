@@ -1,4 +1,5 @@
-//! Splits a text file into the passages the folder index embeds.
+//! The line chunker: splits a text file into the passages a folder's index
+//! embeds, numbered by line.
 //!
 //! Line-based and structure-aware without a parser: a chunk grows to about
 //! 1,500 characters (40 to 80 lines of ordinary code), and where it is cut
@@ -8,6 +9,9 @@
 //!
 //! Line numbers are 1-based and inclusive, the same grammar the answer uses
 //! to point at lines, so a passage's heading is already a line reference.
+//! A chunk becomes a [`NewPassage`] whose `start` and `end` are those lines.
+
+use super::NewPassage;
 
 /// A chunk past this many lines is cut wherever a boundary first allows.
 pub const SOFT_MAX_LINES: usize = 80;
@@ -36,6 +40,16 @@ impl Chunk {
     /// and the heading keeps it with the passage wherever the passage goes.
     pub fn indexed_text(&self, path: &str) -> String {
         indexed_text(path, self.start_line, self.end_line, &self.body)
+    }
+
+    /// The passage stored for this chunk of the file at `path`: its lines as
+    /// the span, and the headed text, which is what is full-text indexed.
+    pub fn passage(&self, path: &str) -> NewPassage {
+        NewPassage {
+            start: self.start_line as usize,
+            end: self.end_line as usize,
+            text: self.indexed_text(path),
+        }
     }
 }
 
