@@ -384,7 +384,7 @@ pub async fn search_learning_sources_semantically(
 }
 
 /// Where the course's evidence index stands: for the course workspace's
-/// notice, and the evidence actions it holds back while the course indexes.
+/// notice, and the lesson preparation it holds back while the course indexes.
 /// A cheap read that never opens or builds the index; it queues a build when
 /// the index is behind its course and none is queued.
 #[tauri::command]

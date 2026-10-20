@@ -41,6 +41,11 @@ pub trait CourseProgress: Send {
     fn indexing(&mut self, references: usize) {
         let _ = references;
     }
+    /// Embedding begins: `already` passages of the index are embedded (a
+    /// resumed run's earlier work) and this run embeds the `total` pending.
+    fn embedding(&mut self, already: usize, total: usize) {
+        let _ = (already, total);
+    }
     /// `done` of the `total` passages this run embeds are embedded.
     fn embedded(&mut self, done: usize, total: usize) {
         let _ = (done, total);
@@ -176,12 +181,14 @@ pub(super) async fn embed(
         ),
     };
     let before = store.counts("").await?;
+    let pending = before
+        .passages_total
+        .saturating_sub(before.passages_embedded) as usize;
+    progress.embedding(before.passages_embedded as usize, pending);
     let mut told = Told {
         progress,
         done: 0,
-        total: before
-            .passages_total
-            .saturating_sub(before.passages_embedded) as usize,
+        total: pending,
     };
     if let Err(error) =
         embed_pending(store, &engine.vectors, &embedding, "", cancel, &mut told).await
