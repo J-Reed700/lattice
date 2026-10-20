@@ -595,21 +595,22 @@ async fn rewrite_module(
     let passages =
         crate::features::learning::outline_evidence::select(llm, &references, &queries).await?;
     let sequence: Vec<_> = draft.candidate.get("modules").and_then(Value::as_array).into_iter().flatten().enumerate().map(|(i, m)| json!({"index":i,"title":m["title"],"outcomes":m["outcomes"],"project":m["project"]})).collect();
-    let raw = generation::complete_json_with_progress(
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Repair {
+        module: Value,
+    }
+    let mut repair: Repair = generation::complete_checked(
         llm,
         REPAIR_SYSTEM,
         json!({"goal":draft.request.goal,"priorKnowledge":draft.request.prior_knowledge,"minutesPerSession":draft.request.minutes_per_session,"moduleIndex":index,"moduleNumber":index+1,"moduleNumbering":module_numbering(&draft.candidate),"module":module,"courseSequence":sequence,"findings":findings,"sources":passages}).to_string(),
         repair_schema,
         6000,
         Some(progress),
+        None,
+        generation::parse_json,
     )
     .await?;
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Repair {
-        module: Value,
-    }
-    let mut repair: Repair = generation::parse_json(&raw)?;
     preserve_valid_citations(
         &module,
         &mut repair.module,

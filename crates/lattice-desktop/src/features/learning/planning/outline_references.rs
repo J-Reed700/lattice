@@ -141,7 +141,51 @@ pub(in crate::features::learning) async fn plan(
         }}}
     }});
     progress.detail("Planning the subtopics and reference searches");
-    let raw = crate::features::learning::generation::complete_json_with_progress(
+    let accept = |raw: &str| -> Result<(ReferencePlan, usize, usize)> {
+        let raw: RawPlan = crate::features::learning::generation::parse_json(raw)?;
+        if raw.subtopics.is_empty() || raw.subtopics.len() > max_modules {
+            return Err(malformed());
+        }
+        let private = [request.goal.as_str(), request.prior_knowledge.as_str()];
+        let mut planned = 0;
+        let mut dropped = 0;
+        let mut subtopics = Vec::with_capacity(raw.subtopics.len());
+        for subtopic in raw.subtopics {
+            let title = subtopic.title.trim();
+            if title.is_empty() || title.chars().count() > 120 {
+                return Err(malformed());
+            }
+            let mut needs: Vec<PlannedNeed> = Vec::new();
+            for need in subtopic.needs {
+                let need = need.checked().ok_or_else(malformed)?;
+                planned += 1;
+                if copies_private_text(&need.query, &private) {
+                    dropped += 1;
+                    tracing::warn!(
+                        subtopic = title,
+                        "Dropped a reference search that copied the learner's goal or prior knowledge"
+                    );
+                    continue;
+                }
+                if !needs.iter().any(|known| known.query == need.query) {
+                    needs.push(need);
+                }
+            }
+            subtopics.push(PlannedSubtopic {
+                title: title.to_owned(),
+                needs,
+            });
+        }
+        let plan = ReferencePlan { subtopics };
+        if plan.query_count() == 0 && (dropped > 0 || existing.is_empty()) {
+            return Err(AppError::InvalidInput(
+                "The reference plan contained no usable searches; the draft was not started."
+                    .into(),
+            ));
+        }
+        Ok((plan, planned, dropped))
+    };
+    let (plan, planned, dropped) = crate::features::learning::generation::complete_checked(
         llm,
         &format!("{PLAN_SYSTEM} {}", web_research::NEED_GUIDE),
         payload.to_string(),
@@ -150,48 +194,10 @@ pub(in crate::features::learning) async fn plan(
         // and subject beside the query.
         400 + 300 * max_modules,
         Some(progress),
+        None,
+        accept,
     )
     .await?;
-    let raw: RawPlan = crate::features::learning::generation::parse_json(&raw)?;
-    if raw.subtopics.is_empty() || raw.subtopics.len() > max_modules {
-        return Err(malformed());
-    }
-    let private = [request.goal.as_str(), request.prior_knowledge.as_str()];
-    let mut planned = 0;
-    let mut dropped = 0;
-    let mut subtopics = Vec::with_capacity(raw.subtopics.len());
-    for subtopic in raw.subtopics {
-        let title = subtopic.title.trim();
-        if title.is_empty() || title.chars().count() > 120 {
-            return Err(malformed());
-        }
-        let mut needs: Vec<PlannedNeed> = Vec::new();
-        for need in subtopic.needs {
-            let need = need.checked().ok_or_else(malformed)?;
-            planned += 1;
-            if copies_private_text(&need.query, &private) {
-                dropped += 1;
-                tracing::warn!(
-                    subtopic = title,
-                    "Dropped a reference search that copied the learner's goal or prior knowledge"
-                );
-                continue;
-            }
-            if !needs.iter().any(|known| known.query == need.query) {
-                needs.push(need);
-            }
-        }
-        subtopics.push(PlannedSubtopic {
-            title: title.to_owned(),
-            needs,
-        });
-    }
-    let plan = ReferencePlan { subtopics };
-    if plan.query_count() == 0 && (dropped > 0 || existing.is_empty()) {
-        return Err(AppError::InvalidInput(
-            "The reference plan contained no usable searches; the draft was not started.".into(),
-        ));
-    }
     tracing::info!(
         subtopics = plan.subtopics.len(),
         queries = plan.query_count(),

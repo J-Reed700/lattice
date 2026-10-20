@@ -14,7 +14,7 @@ use crate::features::learning::dto::{
 };
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
+    complete_checked, CallKind, ReasonFirst,
 };
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::ReferenceCollection;
@@ -370,18 +370,21 @@ pub async fn prepare_lesson_with_references<'a>(
                     CITATION_DRAFT_BRIEF
                 }
             );
-            let raw = complete_reasoned_json(
+            // Every later stage reads the draft as a lesson; the lesson's own
+            // rules run once review and verification have finished with it.
+            let raw = complete_checked(
                 llm,
                 &lesson_system(!sources.is_empty()),
                 prompt.clone(),
                 lesson_schema(sources.len()),
                 output_tokens,
                 None,
-                ReasonFirst {
+                Some(ReasonFirst {
                     kind: CallKind::Authoring,
                     subject: "the lesson",
                     brief: &brief,
-                },
+                }),
+                |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
             )
             .await?;
             crate::features::learning::lesson_drafts::save(&raw).await?;

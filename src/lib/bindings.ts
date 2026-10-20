@@ -4458,6 +4458,12 @@ export type AppError =
  */
 { ModelRejected: string } |
 /**
+ * A model answered, but the answer could not be used even when it was
+ * asked for once more: it did not parse, or broke a rule the caller
+ * checks. The text says what was wrong with the answer.
+ */
+{ ModelAnswerUnusable: string } |
+/**
  * A request whose prompt alone fills the configured context window, so
  * it leaves no room for an answer and was never sent. The numbers let a
  * caller send less and ask again: `prompt_tokens` is the prompt as the
