@@ -500,6 +500,65 @@ async fn a_call_written_as_json_in_the_last_round_is_asked_again() {
     assert!(model.requests()[2].tools.is_empty());
 }
 
+/// llama.cpp issue #30118: Qwen3.6 left out the `<tool_call>` opener, and
+/// the server returned the call as the reply's text with no calls. The call
+/// runs, it never reaches the bubble, and the turn goes on to its answer.
+#[tokio::test]
+async fn a_call_written_as_text_in_a_round_that_may_call_is_run() {
+    let written = "Let me check.\n<function=web_search>\n<parameter=query>\nBrooklyn Bridge opening year date\n</parameter>\n</function>\n</tool_call>";
+    let model = Model::new([
+        CompletionResponse::from_text(written),
+        CompletionResponse::from_text("It opened in 1883 [1]."),
+    ]);
+    let web = Web::with_delays(&[]);
+    let run = run(
+        &model,
+        &web,
+        &[tool("web_search")],
+        ROOMY,
+        3,
+        "written-call-runs",
+    )
+    .await;
+
+    assert_eq!(run.outcome.unwrap().response, "It opened in 1883 [1].");
+    assert_eq!(
+        web.log(),
+        [
+            "start Brooklyn Bridge opening year date",
+            "end Brooklyn Bridge opening year date"
+        ]
+    );
+    // The next round reads the call as a call, answered by its result, after
+    // the text the model wrote before it.
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let input = &requests[1].input;
+    let call_at = input
+        .iter()
+        .position(|item| {
+            matches!(item, CompletionInput::ToolCall { name, arguments, .. }
+                if name == "web_search"
+                    && *arguments == json!({"query": "Brooklyn Bridge opening year date"}))
+        })
+        .expect("the written call is replayed as a call");
+    assert!(matches!(
+        &input[call_at - 1],
+        CompletionInput::Message { role, content } if role == "assistant" && content == "Let me check."
+    ));
+    let CompletionInput::ToolCall { id, .. } = &input[call_at] else {
+        unreachable!()
+    };
+    assert_eq!(result_ids(&requests[1]), [id.as_str()]);
+    let streamed: String = run
+        .events
+        .iter()
+        .filter_map(|event| event.content.as_deref())
+        .collect();
+    assert!(!streamed.contains("<function="), "{streamed}");
+    assert!(streamed.contains("Let me check."), "{streamed}");
+}
+
 /// One retry, then the loop ends as it always has for a reply with no answer.
 #[tokio::test]
 async fn a_retry_that_calls_again_ends_as_an_empty_answer_always_has() {
