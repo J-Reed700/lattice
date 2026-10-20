@@ -2,9 +2,7 @@
 //! findings only at the paths this pass may touch, and nothing about
 //! citations, which code has already settled. Findings have stable ids so a
 //! verdict can close them and a repeat can be merged instead of re-raised.
-use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::features::learning::lessons::structured_call::{CallKind, ReasonFirst};
 use crate::features::learning::outline_review_scope::ReviewScope;
 use crate::features::learning::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
@@ -495,21 +493,21 @@ pub(in crate::features::learning) async fn review(
         verified_assertions = verified.len(),
         "Reviewing outline with completed checks retained where valid"
     );
-    let raw = complete_reasoned_json(
+    let review: Review = generation::complete_checked(
         llm,
         REVIEW_SYSTEM,
         payload.to_string(),
         review_schema(&open_ids, &allowed),
         6000 + 200 * open_ids.len(),
         Some(progress),
-        ReasonFirst {
+        Some(ReasonFirst {
             kind: CallKind::Authoring,
             subject: "the outline review",
             brief: REVIEW_DRAFT_BRIEF,
-        },
+        }),
+        generation::parse_json,
     )
     .await?;
-    let review: Review = generation::parse_json(&raw)?;
     apply(draft, review, &allowed, sources)?;
     draft.completed_review = Some(scope.receipt);
     Ok(())

@@ -18,6 +18,11 @@
 //! - The embedding model is the app's, shared with chat and Explorer through
 //!   the composition root's `EmbedderSource`; the search is the library's
 //!   orchestrator, built by the composition root's `HybridSearchFactory`.
+//! - The course open in its workspace, and any course a lesson is about to
+//!   read, goes first ([`first`]): its index is claimed as awaited in the
+//!   turn order every index shares, so folder builds and other courses'
+//!   builds hold at their next batch while it embeds, and its build takes
+//!   this kind's slot ahead of other courses'.
 
 use super::job::CourseIndexJob;
 use super::search::{CourseSearch, IndexView};
@@ -25,7 +30,9 @@ use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use crate::infrastructure::passage_index::job::build_job_config;
-use crate::infrastructure::passage_index::{registry, EmbedderSource, LiveIndex, LiveIndexes};
+use crate::infrastructure::passage_index::{
+    registry, Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
+};
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
@@ -37,6 +44,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+mod first;
 mod status;
 pub use status::CourseIndexStatusDto;
 
@@ -53,6 +61,10 @@ pub struct CourseIndexes {
     holders: parking_lot::Mutex<HashMap<String, usize>>,
     /// Where a reader's release of its index runs once the reader is gone.
     background: Arc<BackgroundTasks>,
+    /// The turn order every index's embedding follows.
+    turns: Arc<EmbedTurns>,
+    /// The course open in its workspace, and its claim in the turn order.
+    open: parking_lot::Mutex<Option<(String, Claim)>>,
 }
 
 impl CourseIndexes {
@@ -63,6 +75,7 @@ impl CourseIndexes {
         searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
         background: Arc<BackgroundTasks>,
+        turns: Arc<EmbedTurns>,
     ) -> Arc<Self> {
         Arc::new(Self {
             base_dir,
@@ -73,6 +86,8 @@ impl CourseIndexes {
             live: LiveIndexes::default(),
             holders: parking_lot::Mutex::new(HashMap::new()),
             background,
+            turns,
+            open: parking_lot::Mutex::new(None),
         })
     }
 
@@ -165,7 +180,16 @@ impl CourseIndexes {
             let versions = sync::sync_rows(&repo, program, index, Some(&engine), progress).await?;
             (engine, versions)
         };
-        sync::embed(&index.store, &engine, &versions, program, cancel, progress).await?;
+        sync::embed(
+            &index.store,
+            &engine,
+            &self.turns,
+            &versions,
+            program,
+            cancel,
+            progress,
+        )
+        .await?;
         let mode = sync::settle(&index.store, Some(&engine), program, &versions).await?;
         Ok(IndexView::of(
             &index.store,
@@ -301,6 +325,7 @@ impl CourseIndexes {
                 message: "Queued".into(),
             })
             .await?;
+        self.first_if_awaited(program).await;
         Ok(())
     }
 
@@ -461,7 +486,7 @@ async fn locked<'a>(
 
 /// Removes an index directory; one already gone is fine.
 fn remove_dir(dir: &Path) {
-    match std::fs::remove_dir_all(dir) {
+    match lattice_core::shared::fs::removal::remove_dir_all(dir) {
         Ok(()) => info!(dir = %dir.display(), "Removed a course index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!(dir = %dir.display(), %error, "Could not remove a course index"),

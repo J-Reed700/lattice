@@ -364,6 +364,8 @@
     "learning:allow-match-learning-source-selector",
     "learning:allow-search-learning-sources-semantically",
     "learning:allow-course-index-status",
+    "learning:allow-course-index-open",
+    "learning:allow-course-index-close",
     "learning:allow-get-learning-lesson-claim-review",
     "learning:allow-resolve-learning-claim",
     "learning:allow-resume-learning-lesson-review",

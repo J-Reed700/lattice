@@ -4881,6 +4881,18 @@
           "markdownDescription": "Enables the complete_learning_lesson command without any pre-configured scope."
         },
         {
+          "description": "Enables the course_index_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-course-index-close",
+          "markdownDescription": "Enables the course_index_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_index_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-course-index-open",
+          "markdownDescription": "Enables the course_index_open command without any pre-configured scope."
+        },
+        {
           "description": "Enables the course_index_status command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-course-index-status",
@@ -5599,6 +5611,18 @@
           "type": "string",
           "const": "learning:deny-complete-learning-lesson",
           "markdownDescription": "Denies the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_index_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-course-index-close",
+          "markdownDescription": "Denies the course_index_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_index_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-course-index-open",
+          "markdownDescription": "Denies the course_index_open command without any pre-configured scope."
         },
         {
           "description": "Denies the course_index_status command without any pre-configured scope.",

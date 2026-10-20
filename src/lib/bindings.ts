@@ -694,6 +694,31 @@ async courseIndexStatus(programId: string) : Promise<Result<CourseIndexStatusDto
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The course workspace opened: the course's index goes first, ahead of
+ * folder builds and other courses' builds, until it closes. Any course
+ * opened before is no longer first.
+ */
+async courseIndexOpen(programId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_index_open", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The course workspace closed: the course's index takes its turn with the
+ * others again, unless another course has been opened since.
+ */
+async courseIndexClose(programId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_index_close", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_claim_review", { programId, lessonId }) };
@@ -4458,6 +4483,12 @@ export type AppError =
  */
 { ModelRejected: string } |
 /**
+ * A model answered, but the answer could not be used even when it was
+ * asked for once more: it did not parse, or broke a rule the caller
+ * checks. The text says what was wrong with the answer.
+ */
+{ ModelAnswerUnusable: string } |
+/**
  * A request whose prompt alone fills the configured context window, so
  * it leaves no room for an answer and was never sent. The numbers let a
  * caller send less and ask again: `prompt_tokens` is the prompt as the
@@ -5123,7 +5154,12 @@ captured?: CapturedSourcesDto | null;
  */
 images?: ChatImageDto[] | null }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
-export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
+/**
+ * Supported by a passage of another course source than the ones its
+ * section cites; the lesson's citation is repaired to it.
+ */
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -5211,7 +5247,13 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
 lines: string[] }
 export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number }
 export type ClaimEventDto = { ordinal: number; actor: ActorDto; at: number; jobId: string | null; appVersion: string; checkerModel: string | null; event: ClaimEventPayloadDto }
-export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
+export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } |
+/**
+ * The section's citation moved to the passage that supports the claim,
+ * found elsewhere in the course; `addedSource` when the lesson had to
+ * number that source to cite it.
+ */
+{ kind: "citation_repaired"; cited: string[]; sourceVersionId: string; quote: string; addedSource: boolean } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */

@@ -16,7 +16,7 @@
 
 use super::dto::FolderIndexStatusDto;
 use crate::features::explorer::scope::Scope;
-use crate::infrastructure::passage_index::{self, Counts, PassageStore, Vectors};
+use crate::infrastructure::passage_index::{self, Counts, EmbedTurns, PassageStore, Vectors};
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
@@ -171,6 +171,12 @@ impl Pace {
         });
     }
 
+    /// Embedding carries on at `now` after a pause, which is not a batch's
+    /// time.
+    pub fn resume(&mut self, now: Instant) {
+        self.last = now;
+    }
+
     /// The smoothed rate, once the run is past its warm-up.
     pub fn rate(&self, now: Instant) -> Option<f64> {
         if now.duration_since(self.started) < Self::WARMUP {
@@ -214,6 +220,8 @@ pub struct Indexer {
     pub status: Arc<StatusCell>,
     pub cancel: CancellationToken,
     pub limits: Limits,
+    /// The turn order the folder's embedding takes its place in.
+    pub turns: Arc<EmbedTurns>,
 }
 
 /// What one round of embedding did.

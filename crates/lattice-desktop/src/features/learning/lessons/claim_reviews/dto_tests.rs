@@ -272,6 +272,7 @@ fn claim_events_mirror_the_domain() {
             queries: vec!["boiling point of water at sea level".into()],
             sources_added: vec!["v2".into()],
             passages_found: 2,
+            round_ms_per_claim: None,
         },
         ClaimEvent::RepairAttempted {
             attempt: 1,

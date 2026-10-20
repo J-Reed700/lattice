@@ -195,6 +195,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             match_learning_source_selector,
             search_learning_sources_semantically,
             course_index_status,
+            course_index_open,
+            course_index_close,
             get_learning_lesson_claim_review,
             resolve_learning_claim,
             resume_learning_lesson_review,

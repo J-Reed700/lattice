@@ -181,7 +181,10 @@ fn clear_directory(dir: &Path) {
     for entry in entries.filter_map(|entry| entry.ok()) {
         let owned = entry.file_name().to_str().is_some_and(index_file);
         if owned && entry.file_type().is_ok_and(|kind| kind.is_file()) {
-            let _ = std::fs::remove_file(entry.path());
+            let path = entry.path();
+            if let Err(error) = lattice_core::shared::fs::removal::remove_file(&path) {
+                tracing::warn!(path = %path.display(), %error, "Passage index: could not remove an index file");
+            }
         }
     }
 }

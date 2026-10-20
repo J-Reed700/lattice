@@ -227,6 +227,11 @@ impl From<AppError> for ApiError {
                 message: "The model rejected the request".to_string(),
                 details: Some(msg.clone()),
             },
+            AppError::ModelAnswerUnusable(ref msg) => ApiError {
+                code: ErrorCode::ProcessingError,
+                message: "The model's answer could not be used".to_string(),
+                details: Some(msg.clone()),
+            },
             AppError::AiModelsNotInstalled(ref msg) | AppError::ModelLoadFailed(ref msg) => {
                 ApiError {
                     code: ErrorCode::ModelNotLoaded,

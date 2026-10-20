@@ -252,6 +252,7 @@ impl Build<'_> {
             status: Arc::clone(status),
             cancel: context.cancellation().clone(),
             limits: self.manager.config().limits,
+            turns: Arc::clone(&self.manager.turns),
         };
         let run = indexer.run();
         tokio::pin!(run);

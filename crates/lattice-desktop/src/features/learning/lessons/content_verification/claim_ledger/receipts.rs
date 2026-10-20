@@ -11,7 +11,7 @@
 use super::super::*;
 use super::ClaimLedger;
 use lattice_core::domain::learning::claim_review::{
-    text_sha256, AttachOutcome, Check, CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState,
+    text_sha256, AttachOutcome, Check, ClaimEvent, ClaimLedgerEntry, ClaimState,
     EvidenceFingerprint, EvidenceSeen,
 };
 
@@ -80,6 +80,7 @@ impl ClaimLedger {
                         evidence,
                         supporting_quote: Some(supporting_quote.clone()),
                         resolution: None,
+                        two_pass: Default::default(),
                         trust: None,
                     },
                 ))
@@ -100,11 +101,11 @@ fn deciding_check<'e>(entry: &'e ClaimLedgerEntry, source_version_id: &str) -> O
             } => check,
             _ => return None,
         };
-        matches!(
-            &check.result,
-            CheckResult::Supported { source_version_id: supported, .. } if supported == source_version_id
-        )
-        .then_some(check)
+        check
+            .result
+            .support()
+            .is_some_and(|(supported, _)| supported == source_version_id)
+            .then_some(check)
     })
 }
 

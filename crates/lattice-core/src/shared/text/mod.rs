@@ -1,8 +1,12 @@
 mod line_refs;
 mod salience;
+mod value_terms;
 
 pub use line_refs::{contains_line_reference, is_line_reference};
 pub use salience::{is_stopword, select_informative_terms};
+pub use value_terms::{
+    capitalised_words, has_digit, padded_lowercase, MONTH_MARKERS, NEGATION_MARKERS,
+};
 
 pub fn safe_truncate(input: &str, max_chars: usize) -> String {
     if max_chars == 0 {

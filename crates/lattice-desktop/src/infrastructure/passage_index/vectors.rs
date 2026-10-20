@@ -33,7 +33,10 @@ fn remove_vector_files(dir: &Path) {
     };
     for entry in entries.filter_map(|entry| entry.ok()) {
         if entry.file_name().to_string_lossy().starts_with(PREFIX) {
-            let _ = std::fs::remove_file(entry.path());
+            let path = entry.path();
+            if let Err(error) = lattice_core::shared::fs::removal::remove_file(&path) {
+                tracing::warn!(path = %path.display(), %error, "Passage index: could not remove a vectors file");
+            }
         }
     }
 }

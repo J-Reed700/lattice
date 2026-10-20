@@ -488,6 +488,9 @@ impl Container {
         let searches: Arc<
             dyn lattice_core::application::ports::hybrid_search::HybridSearchFactory,
         > = Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory);
+        // One turn order for every index's embedding, so a course someone
+        // waits on goes ahead of folder builds as well as other courses'.
+        let turns: Arc<crate::infrastructure::passage_index::EmbedTurns> = Arc::default();
         self.folder_index = Some(
             crate::features::explorer::index::manager::FolderIndexManager::new(
                 crate::features::explorer::index::manager::ManagerConfig::for_data_dir(
@@ -497,6 +500,7 @@ impl Container {
                 Arc::clone(&searches),
                 Arc::clone(&self.jobs),
                 Arc::clone(self.core.background()),
+                Arc::clone(&turns),
             ),
         );
         self.course_indexes = Some(
@@ -507,6 +511,7 @@ impl Container {
                 searches,
                 Arc::clone(&self.jobs),
                 Arc::clone(self.core.background()),
+                turns,
             ),
         );
 

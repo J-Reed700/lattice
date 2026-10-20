@@ -14,7 +14,7 @@ use crate::features::learning::dto::{
 };
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
+    complete_checked, CallKind, ReasonFirst,
 };
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::ReferenceCollection;
@@ -370,18 +370,21 @@ pub async fn prepare_lesson_with_references<'a>(
                     CITATION_DRAFT_BRIEF
                 }
             );
-            let raw = complete_reasoned_json(
+            // Every later stage reads the draft as a lesson; the lesson's own
+            // rules run once review and verification have finished with it.
+            let raw = complete_checked(
                 llm,
                 &lesson_system(!sources.is_empty()),
                 prompt.clone(),
                 lesson_schema(sources.len()),
                 output_tokens,
                 None,
-                ReasonFirst {
+                Some(ReasonFirst {
                     kind: CallKind::Authoring,
                     subject: "the lesson",
                     brief: &brief,
-                },
+                }),
+                |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
             )
             .await?;
             crate::features::learning::lesson_drafts::save(&raw).await?;
@@ -414,6 +417,9 @@ pub async fn prepare_lesson_with_references<'a>(
         )
         .await?
     };
+    // Verification may number a course source the writer was not given, to
+    // cite the passage that supports a claim (course evidence index §5.1).
+    let mut numbered = sources.clone();
     let (raw, report) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
@@ -422,10 +428,24 @@ pub async fn prepare_lesson_with_references<'a>(
             &lesson_schema(sources.len()),
             raw,
             references,
-            output_tokens,
+            (output_tokens, &mut numbered),
         )
         .await?;
     let generated: GeneratedLesson = parse_json(&raw)?;
+    // A repaired citation may quote any part of the source it names, not
+    // only the passages the writer was shown: a quotation is checked against
+    // the whole saved text of the source it cites.
+    let sources: Vec<_> = numbered
+        .iter()
+        .map(|source| {
+            references
+                .sources
+                .iter()
+                .find(|saved| saved.id == source.id)
+                .cloned()
+                .unwrap_or_else(|| source.clone())
+        })
+        .collect();
     if !(8..=12).contains(&generated.blocks.len()) || generated.questions.len() != 6 {
         return Err(invalid(
             "The model returned an incomplete lesson. Try preparing it again.",

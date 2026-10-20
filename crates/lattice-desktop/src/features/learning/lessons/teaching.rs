@@ -511,13 +511,13 @@ async fn review_material(
             "Correcting the lesson from review findings",
         );
         candidate = if can_edit_spans {
-            let raw = crate::features::learning::generation::complete_json_with_progress(
+            crate::features::learning::generation::complete_checked(
                 llm,
                 &format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::INSTRUCTIONS),
                 json!({"originalRequirements":authoring_context,"candidate":candidate_value,"sourceQuoteChecks":quote_checks,"issuesToFix":original_issues}).to_string(),
-                super::text_edits::schema(&candidate_value), output_tokens, progress,
-            ).await?;
-            super::text_edits::apply(&candidate_value, &raw)?.to_string()
+                super::text_edits::schema(&candidate_value), output_tokens, progress, None,
+                |raw| super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string()),
+            ).await?
         } else {
             crate::features::learning::generation::complete_json_with_progress(
                 llm,

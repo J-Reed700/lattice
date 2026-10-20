@@ -113,8 +113,10 @@ impl CourseSearch {
 
     /// Brings the index in line with the course, embedding what is pending,
     /// and keeps the view it leaves. Waits for a background build that holds
-    /// the index, which is doing the same work.
+    /// the index, which is doing the same work. The course goes first while
+    /// it does: every other index's build holds at its next batch.
     pub async fn ensure_current(&self, progress: &mut dyn CourseProgress) -> Result<IndexMode> {
+        let _awaited = self.courses.awaited(&self.program)?;
         let view = self
             .courses
             .bring_current(&self.index, &self.program, &self.cancel, progress)
