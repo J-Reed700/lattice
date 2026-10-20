@@ -41,6 +41,10 @@ const DRAFT_CLOSE: &str = "Write out everything the final answer needs, in full.
 /// request and the server holds the answer to it.
 const ANSWER_STEP: &str = "Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.";
 
+/// Opens the request that asks again for an answer the caller could not use.
+/// Like [`ANSWER_STEP`] it names no format.
+const REASK: &str = "That answer could not be used:";
+
 /// Which knob in [`model_call`] decides whether a call reasons first.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::features::learning) enum CallKind {
@@ -107,12 +111,17 @@ pub(crate) async fn complete_json_with_progress(
     output_tokens: usize,
     progress: Option<&OutlineProgress>,
 ) -> Result<String> {
-    let request = |output_tokens| {
-        model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low")
-    };
-    let response = send_completing(llm, request, output_tokens, progress, Step::Direct).await?;
-    reject_incomplete_finish_reason(&response.finish_reason)?;
-    Ok(response.text)
+    complete_checked(
+        llm,
+        system,
+        prompt,
+        schema,
+        output_tokens,
+        progress,
+        None,
+        |text| Ok(text.to_owned()),
+    )
+    .await
 }
 
 /// Work through the task in prose, then answer it under `schema` from that
@@ -130,10 +139,49 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
     progress: Option<&OutlineProgress>,
     reasoning: ReasonFirst<'_>,
 ) -> Result<String> {
-    if !reasoning.kind.reasons_first() {
-        return complete_json_with_progress(llm, system, prompt, schema, output_tokens, progress)
-            .await;
-    }
+    complete_checked(
+        llm,
+        system,
+        prompt,
+        schema,
+        output_tokens,
+        progress,
+        Some(reasoning),
+        |text| Ok(text.to_owned()),
+    )
+    .await
+}
+
+/// Make a learning call, in one step or, with `reasoning`, in two as
+/// [`complete_reasoned_json`] describes, and turn its answer into data with
+/// `accept`. An answer `accept` refuses (see [`refusal`]) is asked for once
+/// more in the same conversation, saying what was wrong; only the answer step
+/// is asked again, so a two-step call keeps its draft. A second refusal fails
+/// the call with [`AppError::ModelAnswerUnusable`] and the second reason.
+pub(in crate::features::learning) async fn complete_checked<T>(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: String,
+    schema: Value,
+    output_tokens: usize,
+    progress: Option<&OutlineProgress>,
+    reasoning: Option<ReasonFirst<'_>>,
+    accept: impl Fn(&str) -> Result<T>,
+) -> Result<T> {
+    let one_step = |prompt: String, schema: Value| {
+        let accept = &accept;
+        async move {
+            let request = |output_tokens| {
+                model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low")
+            };
+            answer(llm, request, output_tokens, progress, Step::Direct, accept)
+                .await
+                .map(|(value, _)| value)
+        }
+    };
+    let Some(reasoning) = reasoning.filter(|reasoning| reasoning.kind.reasons_first()) else {
+        return one_step(prompt, schema).await;
+    };
     let subject = reasoning.subject;
     let two_step_system = format!("{system}\n\n{TWO_STEPS} {} {DRAFT_CLOSE}", reasoning.brief);
     // A draft cut to fit a small window helps less than it costs, so such a
@@ -150,8 +198,7 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
             output_tokens,
             "Window cannot hold a draft beside the answer; answering in one step"
         );
-        return complete_json_with_progress(llm, system, prompt, schema, output_tokens, progress)
-            .await;
+        return one_step(prompt, schema).await;
     }
 
     let key = format!(
@@ -194,15 +241,7 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
                     subject,
                     "Draft step returned no text; answering in one step"
                 );
-                return complete_json_with_progress(
-                    llm,
-                    system,
-                    prompt,
-                    schema,
-                    output_tokens,
-                    progress,
-                )
-                .await;
+                return one_step(prompt, schema).await;
             }
             lesson_drafts::record_checkpoint(&key, json!({ "draft": output.text })).await?;
             (
@@ -215,7 +254,7 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
     };
 
     let draft_tokens = llm.count_tokens(&draft);
-    let answer = |output_tokens: usize| {
+    let answer_step = |output_tokens: usize| {
         let mut request = model_call::structured(
             &two_step_system,
             ANSWER_STEP.to_owned(),
@@ -238,7 +277,7 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
         request.call.sampling = Some(SamplingOverride::deterministic());
         request
     };
-    if !model_call::fits(llm, &answer(output_tokens)) {
+    if !model_call::fits(llm, &answer_step(output_tokens)) {
         // The draft was capped in the model's own tokens, but the planner
         // counts it with an estimate that can come out larger. The one-step
         // call needs no room for a draft.
@@ -247,14 +286,20 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
             draft_tokens,
             "Draft does not fit beside the answer; answering in one step"
         );
-        return complete_json_with_progress(llm, system, prompt, schema, output_tokens, progress)
-            .await;
+        return one_step(prompt, schema).await;
     }
     lesson_progress::stage(format!(
         "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
     ));
-    let output = send_completing(llm, answer, output_tokens, progress, Step::Answer).await?;
-    reject_incomplete_finish_reason(&output.finish_reason)?;
+    let (value, output) = answer(
+        llm,
+        answer_step,
+        output_tokens,
+        progress,
+        Step::Answer,
+        &accept,
+    )
+    .await?;
     tracing::info!(
         subject,
         draft_reused,
@@ -267,7 +312,93 @@ pub(in crate::features::learning) async fn complete_reasoned_json(
         total_output_tokens = draft_output_tokens + output.output_tokens,
         "Learning two-step call completed"
     );
-    Ok(output.text)
+    Ok(value)
+}
+
+/// Send the answer step `request` builds and check what comes back with
+/// `accept`. A refused answer is asked for once more: the request continues
+/// with the refused answer and the reason, so the server reads the opening it
+/// has just read. A re-ask the window cannot hold fails with the first reason.
+/// Returns the accepted value and the response it came from.
+async fn answer<T>(
+    llm: &dyn LLMPort,
+    request: impl Fn(usize) -> GroundedRequest,
+    output_tokens: usize,
+    progress: Option<&OutlineProgress>,
+    step: Step,
+    accept: &impl Fn(&str) -> Result<T>,
+) -> Result<(T, GroundedOutput)> {
+    let output = send_completing(llm, &request, output_tokens, progress, step).await?;
+    reject_incomplete_finish_reason(&output.finish_reason)?;
+    let error = match accept(&output.text) {
+        Ok(value) => return Ok((value, output)),
+        Err(error) => error,
+    };
+    let Some(reason) = refusal(&error) else {
+        return Err(error);
+    };
+    let again = |output_tokens| reask(request(output_tokens), &output.text, reason);
+    if !model_call::fits(llm, &again(output_tokens)) {
+        tracing::warn!(
+            step = step.name(),
+            reason,
+            "A refused answer cannot be asked for again within the window"
+        );
+        return Err(AppError::ModelAnswerUnusable(reason.to_owned()));
+    }
+    tracing::warn!(
+        step = step.name(),
+        reason,
+        "The model's answer could not be used; asking once more"
+    );
+    lesson_progress::stage(format!(
+        "The model's answer could not be used; asking once more. {reason}"
+    ));
+    let second = send_completing(llm, again, output_tokens, progress, step).await?;
+    reject_incomplete_finish_reason(&second.finish_reason)?;
+    match accept(&second.text) {
+        Ok(value) => Ok((value, second)),
+        Err(error) => Err(refusal(&error)
+            .map(|reason| AppError::ModelAnswerUnusable(reason.to_owned()))
+            .unwrap_or(error)),
+    }
+}
+
+/// What an `accept` said was wrong with an answer, for the errors that refuse
+/// the answer itself: it did not parse, or it broke a rule the caller checks.
+/// Anything else (transport, configuration, cancellation, the window, a
+/// budget) says nothing about the answer and is never asked again.
+fn refusal(error: &AppError) -> Option<&str> {
+    match error {
+        AppError::InvalidInput(reason)
+        | AppError::InvalidData(reason)
+        | AppError::ValidationFailed(reason)
+        | AppError::Json {
+            message: reason, ..
+        } => Some(reason.as_str()),
+        _ => None,
+    }
+}
+
+/// `request` continued with the answer it drew and a request to answer again.
+/// Learning requests carry their whole user message in `task`, so moving it
+/// into the history keeps every message the first request sent.
+fn reask(mut request: GroundedRequest, rejected: &str, reason: &str) -> GroundedRequest {
+    let task = std::mem::replace(
+        &mut request.task,
+        format!("{REASK} {reason} Answer the same task again, fixing that."),
+    );
+    request.history.extend([
+        HistoryItem {
+            role: "user".into(),
+            content: task,
+        },
+        HistoryItem {
+            role: "assistant".into(),
+            content: rejected.to_owned(),
+        },
+    ]);
+    request
 }
 
 /// Send one learning request, streaming its text to whichever progress the
@@ -384,7 +515,8 @@ pub(crate) fn is_draft_request(
 }
 
 /// The system and user text of the task behind `request`: for either step of
-/// a two-step call, what the one-step call would have sent. Fixtures that
+/// a two-step call, or a request asking again, what the one-step call would
+/// have sent. Fixtures that
 /// answer a task by its prompt then answer both forms alike.
 #[cfg(test)]
 pub(crate) fn task_messages(
@@ -394,11 +526,8 @@ pub(crate) fn task_messages(
     let system = system
         .split_once(&format!("\n\n{TWO_STEPS}"))
         .map_or(system, |(task, _)| task);
-    let mut users = messages(request, "user");
-    let user = match users.next() {
-        Some(ANSWER_STEP) => users.next(),
-        last => last,
-    };
+    let user = messages(request, "user")
+        .find(|content| *content != ANSWER_STEP && !content.starts_with(REASK));
     (system, user.unwrap_or(""))
 }
 

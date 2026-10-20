@@ -209,33 +209,26 @@ fn fidelity_request(unit: &Value, passage: &Value) -> Value {
     request
 }
 
-/// A malformed answer is an operational failure. It gets one correction and
-/// otherwise preserves the draft; it is never read as a representation gap.
+/// A malformed answer is asked for once more and otherwise fails the check,
+/// preserving the draft; it is never read as a representation gap.
 async fn judge(llm: &dyn LLMPort, request: &Value) -> Result<FidelityFinding> {
-    let mut errors = Vec::<String>::new();
-    for attempt in 0..2 {
-        let mut prompt = request.clone();
-        if let (true, Some(object)) = (attempt > 0, prompt.as_object_mut()) {
-            object.insert("responseErrors".into(), json!(errors));
-        }
-        let raw = crate::features::learning::generation::complete_json(
-            llm,
-            FIDELITY_SYSTEM,
-            prompt.to_string(),
-            fidelity_schema(),
-            1500,
-        )
-        .await?;
-        match crate::features::learning::generation::parse_json::<FidelityFinding>(&raw) {
-            Ok(finding) if finding.valid() => return Ok(finding),
-            Ok(_) => errors.push("Each missing assertion needs a nonempty statement of at most 1000 characters, and reason at most 500 characters.".into()),
-            Err(error) => errors.push(error.to_string()),
-        }
-    }
-    Err(AppError::ServiceNotAvailable(format!(
-        "The claim-fidelity judge did not return a usable comparison: {}. The extracted claims and lesson draft are saved; no lesson was published.",
-        errors.join(" ")
-    )))
+    crate::features::learning::generation::complete_checked(
+        llm,
+        FIDELITY_SYSTEM,
+        request.to_string(),
+        fidelity_schema(),
+        1500,
+        None,
+        None,
+        |raw| {
+            let finding: FidelityFinding = crate::features::learning::generation::parse_json(raw)?;
+            if !finding.valid() {
+                return Err(invalid("Each missing assertion needs a nonempty statement of at most 1000 characters, and reason at most 500 characters."));
+            }
+            Ok(finding)
+        },
+    )
+    .await
 }
 
 /// The mapping review is not its own proof of faithful representation. Judge
@@ -508,7 +501,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_malformed_judge_answer_is_corrected_once_then_fails_as_unavailable() {
+    async fn a_malformed_judge_answer_is_asked_for_once_more_then_fails_as_unusable() {
         let units = vec![
             json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"A fact."}]}),
         ];
@@ -522,7 +515,6 @@ mod tests {
         assert!(coverage[0].complete);
         let prompts = corrected.prompts.lock().unwrap().clone();
         assert_eq!(prompts.len(), 2);
-        assert!(request(&prompts[1])["responseErrors"].is_array());
         let unusable = scripted(vec![
             json!({"missingAssertions":["   "],"reason":""}).to_string(),
             "still not json".into(),
@@ -531,7 +523,7 @@ mod tests {
             .await
             .err()
             .unwrap();
-        assert!(matches!(error, AppError::ServiceNotAvailable(_)));
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
     }
 
     #[tokio::test]

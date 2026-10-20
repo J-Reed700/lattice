@@ -11,7 +11,7 @@ use crate::features::learning::dto::{
     LearningPreparation, LearningSourceDto,
 };
 use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
+    complete_checked, CallKind, ReasonFirst,
 };
 use crate::features::learning::model_call;
 use lattice_core::application::ports::LLMPort;
@@ -107,7 +107,11 @@ pub async fn generate_outline_with_progress(
     sources: &[LearningSourceDto],
     progress: &crate::features::learning::outline_progress::OutlineProgress,
 ) -> Result<Vec<LearningModuleDto>> {
-    let (raw, context, output_tokens) = draft_outline(llm, request, sources, &[], progress).await?;
+    let (raw, context, output_tokens) =
+        draft_outline(llm, request, sources, &[], progress, |raw| {
+            decode_outline(raw, request, sources).map(|_| raw.to_owned())
+        })
+        .await?;
     let raw = crate::features::learning::teaching::review_and_repair_with_progress(
         llm,
         "Design a rigorous curriculum.",
@@ -124,14 +128,16 @@ pub async fn generate_outline_with_progress(
 /// Draft the outline. `subtopics` are the reference plan's subtopic titles;
 /// each becomes a retrieval query so its gathered passages reach the prompt.
 /// Without a plan the goal is the only local retrieval query (it never leaves
-/// the machine here).
-pub(in crate::features::learning) async fn draft_outline(
+/// the machine here). `accept` turns the drafted answer into the outline the
+/// caller keeps; an answer it refuses is asked for once more.
+pub(in crate::features::learning) async fn draft_outline<T>(
     llm: &dyn LLMPort,
     request: &GenerateLearningProgramRequestDto,
     sources: &[LearningSourceDto],
     subtopics: &[String],
     progress: &crate::features::learning::outline_progress::OutlineProgress,
-) -> Result<(String, serde_json::Value, usize)> {
+    accept: impl Fn(&str) -> Result<T>,
+) -> Result<(T, serde_json::Value, usize)> {
     validate_outline_request(request)?;
     let (min_modules, max_modules, min_lessons, max_lessons) =
         LearningCourseDepth::bounds(request.course_depth);
@@ -178,21 +184,22 @@ pub(in crate::features::learning) async fn draft_outline(
         ));
     }
     progress.stage(crate::features::learning::outline_progress::OutlineStage::Drafting);
-    let raw = complete_reasoned_json(
+    let outline = complete_checked(
         llm,
         &system,
         prompt.clone(),
         outline_schema(request.course_depth, sources.len()),
         output_tokens,
         Some(progress),
-        ReasonFirst {
+        Some(ReasonFirst {
             kind: CallKind::Authoring,
             subject: "the course outline",
             brief: OUTLINE_DRAFT_BRIEF,
-        },
+        }),
+        accept,
     )
     .await?;
-    Ok((raw, context, output_tokens))
+    Ok((outline, context, output_tokens))
 }
 
 fn reference_instructions(sources: &[LearningSourceDto]) -> &'static str {

@@ -14,11 +14,13 @@ const DRAFT: &str = "Sunlight scatters off air molecules, and shorter wavelength
 const ANSWER: &str = r#"{"answer":"Air scatters blue light more than red light."}"#;
 
 /// Answers the prose step with a draft and the schema step with an answer, or
-/// fails the schema step as a dropped connection would.
+/// fails the schema step as a dropped connection would. Schema steps answer
+/// with `first_answers`, in order, before `answer`.
 struct Recorder {
     window: usize,
     draft: CompletionResponse,
     answer: Option<&'static str>,
+    first_answers: Mutex<Vec<&'static str>>,
     sent: Mutex<Vec<CompletionRequest>>,
 }
 
@@ -28,8 +30,15 @@ impl Recorder {
             window,
             draft: CompletionResponse::from_text(DRAFT),
             answer: Some(ANSWER),
+            first_answers: Mutex::new(Vec::new()),
             sent: Mutex::new(Vec::new()),
         }
+    }
+
+    fn answering_first(window: usize, answers: &[&'static str]) -> Self {
+        let recorder = Self::new(window);
+        *recorder.first_answers.lock().unwrap() = answers.to_vec();
+        recorder
     }
 
     fn sent(&self) -> Vec<CompletionRequest> {
@@ -48,6 +57,15 @@ impl LLMPort for Recorder {
         }
         if request.json_schema.is_none() {
             return Ok(self.draft.clone());
+        }
+        if let Some(first) = self
+            .first_answers
+            .lock()
+            .ok()
+            .filter(|answers| !answers.is_empty())
+            .map(|mut answers| answers.remove(0))
+        {
+            return Ok(CompletionResponse::from_text(first));
         }
         self.answer
             .map(CompletionResponse::from_text)
@@ -408,5 +426,138 @@ async fn an_answer_cut_at_its_output_limit_is_asked_for_once_more_with_twice_the
     assert_eq!(sent.len(), 2);
     let first = sent[0].max_output_tokens.unwrap();
     assert_eq!(sent[1].max_output_tokens.unwrap(), 2 * first);
+    Ok(())
+}
+
+/// Accepts only [`ANSWER`]; refuses anything else, naming it.
+fn only_the_answer(raw: &str) -> Result<String> {
+    if raw == ANSWER {
+        return Ok(raw.to_owned());
+    }
+    Err(AppError::InvalidInput(format!(
+        "The answer {raw} explains nothing."
+    )))
+}
+
+async fn checked(llm: &Recorder, reasoning: Option<ReasonFirst<'_>>) -> Result<String> {
+    complete_checked(
+        llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        reasoning,
+        only_the_answer,
+    )
+    .await
+}
+
+fn reask(reason: &str) -> String {
+    format!("{REASK} {reason} Answer the same task again, fixing that.")
+}
+
+#[tokio::test]
+async fn a_refused_answer_is_asked_for_once_more_with_the_reason() -> Result<()> {
+    let llm = Recorder::answering_first(32_000, &["{\"answer\":\"Blue.\"}"]);
+    assert_eq!(checked(&llm, None).await?, ANSWER);
+
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2, "the first answer and one more");
+    let reason = reask("The answer {\"answer\":\"Blue.\"} explains nothing.");
+    assert_eq!(
+        messages(&sent[1]),
+        vec![
+            ("system", SYSTEM),
+            ("user", PROMPT),
+            ("assistant", "{\"answer\":\"Blue.\"}"),
+            ("user", reason.as_str()),
+        ]
+    );
+    // The request asking again opens with every message of the first, so the
+    // server reuses what it has just read.
+    assert_eq!(messages(&sent[0]), messages(&sent[1])[..2].to_vec());
+    assert_eq!(sent[1].json_schema, Some(schema()));
+    assert_eq!(task_messages(&sent[1]), (SYSTEM, PROMPT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_second_refusal_fails_with_its_own_reason_without_blaming_the_input() {
+    let llm = Recorder::answering_first(32_000, &["first", "second"]);
+    let error = checked(&llm, None).await.unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "The answer second explains nothing."),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "The model's answer could not be used: The answer second explains nothing."
+    );
+    assert_eq!(llm.sent().len(), 2, "asked once more, never twice");
+}
+
+#[tokio::test]
+async fn errors_that_say_nothing_about_the_answer_are_not_asked_again() {
+    let mut dropped = Recorder::new(32_000);
+    dropped.answer = None;
+    let error = checked(&dropped, None).await.unwrap_err();
+    assert!(matches!(error, AppError::Network(_)), "{error:?}");
+    assert_eq!(dropped.sent().len(), 1);
+
+    let llm = Recorder::new(32_000);
+    let error = complete_checked(
+        &llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        None,
+        |_| -> Result<()> { Err(AppError::InvalidState("not the answer's fault".into())) },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
+    assert_eq!(llm.sent().len(), 1);
+}
+
+#[tokio::test]
+async fn a_two_step_call_asks_again_for_its_answer_step_only() -> Result<()> {
+    let llm = Recorder::answering_first(32_000, &["{}"]);
+    let answer = checked(
+        &llm,
+        Some(ReasonFirst {
+            kind: CallKind::Authoring,
+            subject: "the explanation",
+            brief: BRIEF,
+        }),
+    )
+    .await?;
+    assert_eq!(answer, ANSWER);
+
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 3, "one draft, the answer, and one more answer");
+    assert_eq!(
+        sent.iter()
+            .filter(|request| is_draft_request(request))
+            .count(),
+        1
+    );
+    let system = two_step_system();
+    let reason = reask("The answer {} explains nothing.");
+    assert_eq!(
+        messages(&sent[2]),
+        vec![
+            ("system", system.as_str()),
+            ("user", PROMPT),
+            ("assistant", DRAFT),
+            ("user", ANSWER_STEP),
+            ("assistant", "{}"),
+            ("user", reason.as_str()),
+        ]
+    );
+    assert_eq!(messages(&sent[1]), messages(&sent[2])[..4].to_vec());
+    assert_eq!(task_messages(&sent[2]), (SYSTEM, PROMPT));
     Ok(())
 }

@@ -2,7 +2,7 @@
 //! snapshots its blocks cite.
 
 use super::{
-    complete_json, invalid, normalize, parse_json, validate_quote, validate_text, MAX_BODY,
+    complete_checked, invalid, normalize, parse_json, validate_quote, validate_text, MAX_BODY,
     MAX_EXPLANATION, MAX_QUESTION, MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, MIN_TEXT,
 };
 use crate::features::learning::dto::{
@@ -325,19 +325,21 @@ pub async fn generate_recall_drafts(
         .map(|source| json!({"id":source.id,"title":source.title,"excerpt":source.excerpt}))
         .collect();
     let prompt = recall_draft_prompt(lesson, count, &allowed_source_ids, source_data)?;
-    let raw = complete_json(
-        llm,
-        system,
-        prompt,
-        recall_draft_schema(count, &allowed_source_ids),
-        output_tokens,
-    )
-    .await?;
     let lesson_text = lesson
         .blocks
         .iter()
         .map(|block| block.body.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    parse_recall_drafts_with_lesson(&raw, count, &sources, &lesson_text)
+    complete_checked(
+        llm,
+        system,
+        prompt,
+        recall_draft_schema(count, &allowed_source_ids),
+        output_tokens,
+        None,
+        None,
+        |raw| parse_recall_drafts_with_lesson(raw, count, &sources, &lesson_text),
+    )
+    .await
 }

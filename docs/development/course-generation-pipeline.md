@@ -45,7 +45,7 @@ Learner request: goal, prior knowledge, minutes per session, course depth
  ├─ L3 Coverage judgement .... evidence::judge ............................... 1 call per group that fits
  ├─ L4 Research before writing content_verification/research::research_topics  plan, search, select, capture; rounds while coverage grows
  ├─ L5 Evidence pack ......... evidence::pack, evidence::assemble ............ code, round-robin across topics
- ├─ L6 Write lesson .......... structured_call::complete_reasoned_json ...... reason-first (2 calls)
+ ├─ L6 Write lesson .......... structured_call::complete_checked ............ reason-first (2 calls)
  ├─ L7 Teaching review ....... teaching::review_lesson ....................... quotes (code), answer keys, section review, <= 1 repair, final review
  │
  │ content_verification::verify_and_repair_with_references (repair_loop.rs)
@@ -61,6 +61,8 @@ Learner request: goal, prior knowledge, minutes per session, course depth
 ```
 
 All model calls go through `lessons/structured_call.rs` (`complete_json`, `complete_json_with_progress`, `complete_reasoned_json`) and `model_call::send`. A **reason-first** call (`CallKind::Authoring`, `model_call::REASON_FIRST_AUTHORING = true`) makes two requests: a prose draft, then a schema-constrained answer that continues the same conversation. If the window cannot hold the draft beside the answer, it answers in one step. A `CallKind::Classifier` call is one step (`REASON_FIRST_CLASSIFIERS = false`). Inside a lesson job the prose draft is checkpointed under `reason-first-draft-v1:<digest of model, system, prompt>`, so an interrupted job resumes at the answer step.
+
+A call that turns its answer into data goes through `complete_checked`, with its parse and validation as an `accept` closure. When `accept` refuses the answer itself (`InvalidInput`, `InvalidData`, `ValidationFailed` or `Json`: it did not parse, or broke a rule the caller checks), the answer step is asked for once more. The request repeats the first request's messages, adds the refused answer as the assistant turn, then a user turn naming the reason. A two-step call keeps its draft. A second refusal fails with `AppError::ModelAnswerUnusable` ("The model's answer could not be used: <reason>"). Transport, window, configuration and cancellation errors are never asked again. `complete_json`, `complete_json_with_progress` and `complete_reasoned_json` accept any text, for the callers that tolerate an unusable answer on purpose (evidence linking, the evidence plan and check) or correct it piece by piece (teaching review, answer-key check, claim inventory, coverage mapping).
 
 ## 3. Course outline
 
@@ -449,7 +451,7 @@ Change the string whenever the prompt, schema or meaning of the stored answer ch
 | L3 | `evidence::judge` | topics with candidate IDs, passages | `{topics:[{id, covering}]}` | `lesson-evidence-v1:coverage:<digest>` |
 | L4, L12 | `web_research::plan_queries` (from `research::research`) | topics or claims as gaps, catalog, already searched | `{queries}` | `research-v1:<digest>` (completed queries) |
 | L4, L12 | `research::select_references` | gaps, query, results | decisions | sources saved to the library |
-| L6 | `structured_call::complete_reasoned_json` (from `prepare_lesson_with_references`) | lesson prompt with sources and `evidenceByTopic` | `lesson_schema` | prose step: `reason-first-draft-v1:<digest>`; answer: staged draft (`lesson_draft_v1` input hash) |
+| L6 | `structured_call::complete_checked` (from `prepare_lesson_with_references`) | lesson prompt with sources and `evidenceByTopic` | `lesson_schema` | prose step: `reason-first-draft-v1:<digest>`; answer: staged draft (`lesson_draft_v1` input hash) |
 | L7 | `answer_review::check` (reason-first) | questions without keys | correct indices and reasons | teaching receipt |
 | L7 | `teaching_review::review` (reason-first), `review_evidence` | sections, questions, authoring context; passages per finding | section checks, findings with evidence IDs | teaching receipt, `teaching-sources-v1:<digest>` |
 | L7 | `teaching::review_material` repair (one step) | candidate, issues, quote checks | `lesson_schema` | staged draft |
