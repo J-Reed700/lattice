@@ -2,30 +2,42 @@
  * LlamaCppMetaRow
  *
  * The llama.cpp connection lives in LLM settings rather than the downloaded
- * models table. Selecting Chat must update the provider, not a model-row flag,
- * and selecting Learning saves the served model as the Learning model.
- * Connection details remain editable on the Chat settings page; whether the
- * served model sees pictures is declared here.
+ * models table. Selecting Chat updates the provider; selecting Utility,
+ * Learning, or Verifier saves the served model reference in Settings.
+ * Active roles are shown as compact badges on the row, while role assignment
+ * lives in the model configuration menu. Connection details remain editable
+ * on the Chat settings page; whether the served model sees pictures is
+ * declared here.
  */
 
-import { Check, Network } from 'lucide-react';
+import { useState } from 'react';
 
+import { Network, SlidersHorizontal } from 'lucide-react';
+
+import { IconButton } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { LLAMACPP_SERVER_MODEL_ID, modelRefForOption, sameModelRef } from '@/utils/chatModelSelection';
 
+import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
+import { useModelRoles } from './ModelRolesContext';
+import { ActiveRoleBadge, RoleToggle } from './RoleButton';
+import { roleDescriptor, type RoleId } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
-const TOGGLE_CLASS =
-  'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
-const ON_CLASS = 'border-accent/25 bg-accent-muted font-medium text-accent';
-const OFF_CLASS = 'border-border-default text-text-secondary hover:bg-surface-raised hover:text-text-primary';
+const NOT_CONFIGURED = 'Set a server URL and model in connection settings first';
+
+type ConnectionRole = Exclude<RoleId, 'embedding'>;
+const CONNECTION_ROLES: ReadonlyArray<ConnectionRole> = ['chat', 'utility', 'learning', 'verifier'];
 
 export function LlamaCppMetaRow() {
   const { data: settings } = useSettingsQuery();
-  const { mutateAsync: updateSettings, isPending } = useUpdateSettingsMutation();
+  const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
+  const { assignUtilityReference } = useModelRoles();
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [pendingRole, setPendingRole] = useState<RoleId | null>(null);
 
   const connection = settings?.llm.llamaCpp;
   const url = connection?.url.trim() ?? '';
@@ -35,31 +47,47 @@ export function LlamaCppMetaRow() {
   const servedRef = settings && isConfigured
     ? modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings.llm)
     : null;
-  const isLearning = sameModelRef(settings?.llm.learningModel, servedRef);
+  const held: Record<ConnectionRole, boolean> = {
+    chat: isActive && isConfigured,
+    utility: sameModelRef(settings?.llm.utilityModel, servedRef),
+    learning: sameModelRef(settings?.llm.learningModel, servedRef),
+    verifier: sameModelRef(settings?.llm.verifierModel, servedRef),
+  };
+  const activeRoles = CONNECTION_ROLES.filter((id) => held[id]).map(roleDescriptor);
 
-  const selectForChat = async () => {
-    if (!isConfigured || isActive || isPending) return;
+  const run = async (role: RoleId, action: () => Promise<void>) => {
+    if (pendingRole) return;
+    setPendingRole(role);
     try {
-      await updateSettings({ category: 'llm', updates: { provider: 'llamacpp' } });
+      await action();
     } catch (error) {
-      toast.error('Failed to set chat role', {
+      toast.error(`Failed to set ${role} role`, {
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      setPendingRole(null);
     }
   };
 
-  // Toggles both ways, like the other role buttons: on saves the served model
-  // as the Learning model, off leaves Learning unset.
-  const toggleLearning = async () => {
-    if (!servedRef || isPending) return;
-    try {
-      await updateSettings({ category: 'llm', updates: { learningModel: isLearning ? null : servedRef } });
-    } catch (error) {
-      toast.error('Failed to set learning role', {
-        message: error instanceof Error ? error.message : String(error),
-      });
+  // Chat switches the provider, so it turns off only by choosing another one.
+  // The others toggle both ways, like the role buttons on a downloaded model.
+  const toggle = (role: ConnectionRole) => run(role, async () => {
+    if (!servedRef) return;
+    const on = !held[role];
+    switch (role) {
+      case 'chat':
+        await updateSettings({ category: 'llm', updates: { provider: 'llamacpp' } });
+        return;
+      case 'utility':
+        await assignUtilityReference(on ? servedRef : null);
+        return;
+      case 'learning':
+        await updateSettings({ category: 'llm', updates: { learningModel: on ? servedRef : null } });
+        return;
+      case 'verifier':
+        await updateSettings({ category: 'llm', updates: { verifierModel: on ? servedRef : null } });
     }
-  };
+  });
 
   const goToChatSettings = () => {
     window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
@@ -80,57 +108,59 @@ export function LlamaCppMetaRow() {
               Auto tries local models first. Select Chat to always use this connection.
             </p>
           ) : null}
-          {isLearning ? <LearningWindowNotice model={servedRef} savedWindow={null} /> : null}
+          {held.learning ? <LearningWindowNotice model={servedRef} savedWindow={null} /> : null}
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => void selectForChat()}
-            disabled={!isConfigured || isActive || isPending}
-            aria-pressed={isActive && isConfigured}
-            title={!isConfigured ? 'Set a server URL and model in connection settings first'
-              : isActive ? 'Selected for chat' : 'Use this llama.cpp connection for chat'}
-            className={cn(
-              TOGGLE_CLASS,
-              isActive && isConfigured ? ON_CLASS : OFF_CLASS,
-              (!isConfigured || isPending) && 'cursor-not-allowed opacity-60',
-            )}
-          >
-            {isActive && isConfigured ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
-            {isPending ? 'Setting…' : 'Chat'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void toggleLearning()}
-            disabled={!servedRef || isPending}
-            aria-pressed={isLearning}
-            data-role="learning"
-            title={!isConfigured ? 'Set a server URL and model in connection settings first'
-              : isLearning ? 'Active learning model. Click to stop using it.'
-                : 'Prepares lessons, outlines, practice and study decks. Needs a large context window.'}
-            className={cn(
-              TOGGLE_CLASS,
-              isLearning ? ON_CLASS : OFF_CLASS,
-              (!servedRef || isPending) && 'cursor-not-allowed opacity-60',
-            )}
-          >
-            {isLearning ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
-            Learning
-          </button>
-          <button
-            type="button"
-            onClick={goToChatSettings}
-            className="shrink-0 text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
-          >
-            Edit connection
-          </button>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          {activeRoles.map((role) => (
+            <ActiveRoleBadge key={role.id} roleId={role.id} label={role.label} />
+          ))}
+
+          <div className={cn('flex items-center gap-1.5', activeRoles.length > 0 && 'ml-1 border-l border-border-subtle pl-1.5')}>
+            <IconButton
+              label="Configure model"
+              data-roles={CONNECTION_ROLES.join(' ')}
+              onClick={() => setShowConfigModal(true)}
+            >
+              <SlidersHorizontal />
+            </IconButton>
+            <button
+              type="button"
+              onClick={goToChatSettings}
+              className="shrink-0 text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary"
+            >
+              Edit connection
+            </button>
+          </div>
         </div>
       </div>
       {servedRef ? (
         <div className="mt-3 pl-12">
           <ModelVisionDeclaration modelRef={servedRef} />
         </div>
+      ) : null}
+
+      {showConfigModal ? (
+        <ConnectionRolesDialog
+          title="llama.cpp connection"
+          servedLabel="Connected model"
+          served={model || 'No model selected'}
+          detail={url || undefined}
+          hint="Choose which tasks this connection powers. Role changes take effect immediately."
+          onClose={() => setShowConfigModal(false)}
+        >
+          {CONNECTION_ROLES.map((id) => (
+            <RoleToggle
+              key={id}
+              role={roleDescriptor(id)}
+              active={held[id]}
+              disabled={!servedRef || (id === 'chat' && held.chat)}
+              pending={pendingRole !== null}
+              title={!isConfigured ? NOT_CONFIGURED : id === 'chat' && held.chat ? 'Selected for chat' : undefined}
+              onToggle={() => void toggle(id)}
+            />
+          ))}
+        </ConnectionRolesDialog>
       ) : null}
     </div>
   );

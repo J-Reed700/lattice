@@ -9,6 +9,8 @@ import type { JsonValue, LocalModelConfigDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
+import { RoleButton } from './RoleButton';
+import { ROLES } from './roleConfig';
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS, clamp, toFinite } from '../AITab/shared';
 
 function HelpTooltip({ content }: { content: string }) {
@@ -63,6 +65,7 @@ export function LocalModelConfigModal({
 }: LocalModelConfigModalProps) {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
+  const isEmbeddingModel = model.model_type === 'embedding' || model.model_type === 'text_embeddings';
 
   const maxSupportedTokens =
     model.trained_context_length && model.trained_context_length >= MIN_CONTEXT_LENGTH
@@ -204,7 +207,21 @@ export function LocalModelConfigModal({
               </div>
             </div>
 
+            {/* Roles */}
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-text-secondary">Roles</div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ROLES.map((role) => (
+                  <RoleButton key={role.id} model={model} role={role} />
+                ))}
+              </div>
+              <p className="mt-1.5 text-[11px] text-text-muted">
+                Choose which tasks this model powers. Role changes take effect immediately.
+              </p>
+            </div>
+
             {/* Context Length */}
+            {!isEmbeddingModel ? (
             <div>
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -275,9 +292,10 @@ export function LocalModelConfigModal({
                 ) : null}
               </div>
             </div>
+            ) : null}
 
             {/* Advanced settings */}
-            {showAdvanced ? (
+            {!isEmbeddingModel && showAdvanced ? (
               <div className="space-y-4 border-t border-border-subtle pt-4">
                 {/* Max Concurrent Predictions */}
                 <div className="flex items-center justify-between gap-3">
@@ -358,47 +376,61 @@ export function LocalModelConfigModal({
 
           {/* Footer */}
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-subtle px-6 py-4">
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={rememberSettings}
-                  onChange={(event) => setRememberSettings(event.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-border-subtle"
-                />
-                <span>Remember settings for</span>
-                <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text-primary">
-                  {model.model_id}
-                </code>
-              </label>
+            {!isEmbeddingModel ? (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={rememberSettings}
+                    onChange={(event) => setRememberSettings(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border-subtle"
+                  />
+                  <span>Remember settings for</span>
+                  <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text-primary">
+                    {model.model_id}
+                  </code>
+                </label>
 
-              <div className="flex items-center gap-2 text-xs text-text-secondary">
-                <Switch
-                  aria-label="Show advanced settings"
-                  checked={showAdvanced}
-                  onCheckedChange={setShowAdvanced}
-                  className={SWITCH_CLASS}
-                />
-                <span>Show advanced settings</span>
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  <Switch
+                    aria-label="Show advanced settings"
+                    checked={showAdvanced}
+                    onCheckedChange={setShowAdvanced}
+                    className={SWITCH_CLASS}
+                  />
+                  <span>Show advanced settings</span>
+                </div>
               </div>
-            </div>
+            ) : <div />}
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg border border-border-subtle bg-surface px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSaving}
-                onClick={() => void handleSaveAndLoad()}
-                className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white shadow-xs transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
-                {isSaving ? (onLoadModel ? 'Loading…' : 'Saving…') : (onLoadModel ? 'Load Model' : 'Save')}
-              </button>
+              {isEmbeddingModel ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white shadow-xs transition-opacity hover:opacity-90"
+                >
+                  Done
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg border border-border-subtle bg-surface px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => void handleSaveAndLoad()}
+                    className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white shadow-xs transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {isSaving ? (onLoadModel ? 'Loading…' : 'Saving…') : (onLoadModel ? 'Load Model' : 'Save')}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </Dialog.Content>

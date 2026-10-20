@@ -9,6 +9,9 @@ pub(super) struct PromptMessageBuilder<'a> {
     is_greeting: bool,
     force_kb_search: bool,
     force_web_search: bool,
+    /// The turn belongs to an Explorer conversation, so its context travels
+    /// in `EXPLORER_TEMPLATE` rather than the saved document-answer template.
+    explorer: bool,
     /// The folder an Explorer conversation reads: its top level, the open
     /// file and selection, and the rule for pointing at lines.
     explorer_context: Option<String>,
@@ -48,6 +51,7 @@ impl<'a> PromptMessageBuilder<'a> {
             is_greeting,
             force_kb_search: search_flags.force_kb_search,
             force_web_search: search_flags.force_web_search,
+            explorer: false,
             explorer_context: None,
             attachment_context: None,
             followup_context: None,
@@ -83,6 +87,13 @@ impl<'a> PromptMessageBuilder<'a> {
     /// user is looking at, and the library and the web are outside knowledge.
     pub(super) fn with_explorer_context(mut self, explorer_context: Option<String>) -> Self {
         self.explorer_context = explorer_context;
+        self
+    }
+
+    /// A turn in an Explorer conversation, whether or not its folder block
+    /// survived the cut for room.
+    pub(super) fn in_explorer(mut self, explorer: bool) -> Self {
+        self.explorer = explorer;
         self
     }
 
@@ -166,6 +177,7 @@ impl<'a> PromptMessageBuilder<'a> {
         // attachment leads and the earlier document is one section among
         // several, because "here it is" means the new file, not the old one.
         if self.attachment_context.is_none()
+            && !self.explorer
             && self.explorer_context.is_none()
             && self.prior_evidence_context.is_none()
             && self.web_context.is_none()
@@ -241,7 +253,7 @@ from general knowledge as though it came from the user's documents."
 
         if context_sections.len() > 1 {
             return render_prompt_template(
-                &self.prompt_settings.rag_prompt_template,
+                evidence_template(self.prompt_settings, self.explorer),
                 &context_sections.join("\n\n"),
                 self.question,
             );
@@ -345,13 +357,43 @@ question, use the document search and read tools before concluding the evidence 
 ///
 /// The turn's budget charges this as the message before it sizes the
 /// evidence, because it is what the evidence travels in.
-pub(super) fn evidence_frame(prompt_settings: &LLMPromptSettingsDto, question: &str) -> String {
+pub(super) fn evidence_frame(
+    prompt_settings: &LLMPromptSettingsDto,
+    question: &str,
+    explorer: bool,
+) -> String {
     render_prompt_template(
-        &prompt_settings.rag_prompt_template,
+        evidence_template(prompt_settings, explorer),
         CONTINUITY_NOTE,
         question,
     )
 }
+
+/// The template an evidence-carrying message renders in: the saved
+/// document-answer template, or in an Explorer conversation the folder's own.
+fn evidence_template(prompt_settings: &LLMPromptSettingsDto, explorer: bool) -> &str {
+    if explorer {
+        EXPLORER_TEMPLATE
+    } else {
+        &prompt_settings.rag_prompt_template
+    }
+}
+
+/// The template an Explorer turn's context travels in.
+///
+/// The document-answer template asks for the answer from the context alone
+/// and a citation on every statement. An Explorer turn is about the folder on
+/// screen, and explaining that code draws on what no passage holds; under that
+/// template the model put bracket numbers on the folder, on standing notes
+/// and on its own explanations. The folder block's rules say how to point at
+/// lines.
+const EXPLORER_TEMPLATE: &str = "Answer the user's question about the folder open beside this chat: \
+     what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
+     from what you know; teaching how the code works, or a concept it uses, needs no source and no \
+     citation. Point at the folder's code with line references, as the folder's rules below describe. \
+     Bracket numbers like [1] belong only to the numbered library or web passages in this message: put \
+     one after a claim such a passage supports, and never on the folder, on these instructions or on \
+     your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
 /// What a deep-research turn is asked to do with the rounds it has left. The
 /// first round searched wide before the model ran; this sends the model after
@@ -490,8 +532,12 @@ pub(super) fn render_prompt_template(template: &str, context: &str, question: &s
         .replace("{question}", question)
 }
 
+/// How to write a citation. Whether an unsourced claim belongs in the answer
+/// at all is the turn's template to say: the document-answer template asks
+/// for the context alone, while an Explorer turn may explain from general
+/// knowledge without flagging each sentence.
 pub(super) fn enforce_numeric_citation_format(template: &str) -> String {
-    format!("{template}\n\nCitation rule: Use only the supplied numeric passage labels, such as [1], [2]. Each number identifies one passage, not an entire document. Place the citation immediately after the claim it supports. The cited passage must directly support that claim; a shared keyword is not evidence. If no passage supports a claim, say so instead of inventing a citation. Do not output [#] or [^1].")
+    format!("{template}\n\nCitation rule: Use only the supplied numeric passage labels, such as [1], [2]. Each number identifies one passage, not an entire document. Place the citation immediately after the claim it supports. The cited passage must directly support that claim; a shared keyword is not evidence. If no passage supports a claim, give it no citation; never invent one. Do not output [#] or [^1].")
 }
 
 #[cfg(test)]
@@ -513,3 +559,7 @@ mod attachment_prompt_tests;
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod deep_research_prompt_tests;
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod explorer_prompt_tests;

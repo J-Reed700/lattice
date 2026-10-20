@@ -84,6 +84,7 @@ function AIModelsTabContent() {
         <span><strong className="font-semibold text-accent">Utility</strong> · Background tasks</span>
         <span><strong className="font-semibold text-accent">Embedding</strong> · Library search</span>
         <span><strong className="font-semibold text-accent">Learning</strong> · Lessons and study decks</span>
+        <span><strong className="font-semibold text-accent">Verifier</strong> · Lesson claim audits</span>
       </div>
       <LearningModelBanner />
       <SettingsSection title="On this computer" actions={<HardDrive className="h-4 w-4 text-text-muted" aria-hidden="true" />}>

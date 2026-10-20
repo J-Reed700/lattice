@@ -49,6 +49,15 @@ export function isChatModelSelected(
     : model.is_active_for_chat && (provider === 'local' || provider === 'auto');
 }
 
+/**
+ * The row is the utility model. A utility reference in Settings (the
+ * llama.cpp connection) wins over the row flag, so the flag counts only
+ * while no reference is saved.
+ */
+export function isUtilityModel(model: DownloadedModel, settings: LLMSettings | undefined): boolean {
+  return model.is_active_for_utility && !settings?.utilityModel;
+}
+
 /** The row names the model Settings saved as the Learning model. */
 export function isLearningModel(model: DownloadedModel, settings: LLMSettings | undefined): boolean {
   return sameModelRef(settings?.learningModel, modelRefForRow(model, settings));
@@ -81,7 +90,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     assignLabel: 'Set as Utility',
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Utility)',
-    isActive: (model) => model.is_active_for_utility,
+    isActive: isUtilityModel,
     allowedTypes: ['language_model', 'chat'],
     hint: 'Fast small model for query expansion and routing (HyDE).',
   },
@@ -116,6 +125,13 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     hint: 'Audits every claim of a lesson against its cited passages before it publishes. May be a cloud model.',
   },
 ];
+
+/** The descriptor for one role; every {@link RoleId} has one in {@link ROLES}. */
+export function roleDescriptor(id: RoleId): RoleDescriptor {
+  const descriptor = ROLES.find((role) => role.id === id);
+  if (!descriptor) throw new Error(`No role descriptor for ${id}`);
+  return descriptor;
+}
 
 export function canModelFulfillRole(
   model: Pick<DownloadedModel, 'model_type'>,

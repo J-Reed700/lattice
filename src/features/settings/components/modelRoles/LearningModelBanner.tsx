@@ -50,9 +50,13 @@ const ROW_CLASS =
 const ACTION_CLASS =
   'shrink-0 rounded-md border border-border-default bg-surface px-2.5 py-1 text-xs font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60';
 
-/** Puts keyboard focus on the first Learning button in the grid. */
-function focusLearningButtons() {
-  document.querySelector<HTMLButtonElement>('button[data-role="learning"]:not(:disabled)')?.focus();
+/**
+ * Opens the Configure menu of the first row that can take the Learning role,
+ * where the Learning toggle lives. Each row's Configure button lists the
+ * roles its menu offers in `data-roles`.
+ */
+function openLearningChoices() {
+  document.querySelector<HTMLButtonElement>('button[data-roles~="learning"]:not(:disabled)')?.click();
 }
 
 export function LearningModelBanner() {
@@ -70,7 +74,7 @@ export function LearningModelBanner() {
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {state.message}
         </span>
-        <button type="button" onClick={focusLearningButtons} className={ACTION_CLASS}>
+        <button type="button" onClick={openLearningChoices} className={ACTION_CLASS}>
           Choose another
         </button>
       </div>
@@ -100,7 +104,7 @@ export function LearningModelBanner() {
           Use {chatModel.label} (your chat model)
         </button>
       ) : (
-        <button type="button" onClick={focusLearningButtons} className={ACTION_CLASS}>
+        <button type="button" onClick={openLearningChoices} className={ACTION_CLASS}>
           Choose one
         </button>
       )}

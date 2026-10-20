@@ -35,6 +35,8 @@ pub(super) struct MessageFrame {
     pub(super) prompt_settings: LLMPromptSettingsDto,
     pub(super) question: String,
     pub(super) is_greeting: bool,
+    /// The turn belongs to an Explorer conversation.
+    pub(super) explorer: bool,
     pub(super) flags: SearchFlags,
     pub(super) deep_research_searches: Option<Vec<String>>,
     pub(super) web_search_error: Option<String>,
@@ -140,6 +142,7 @@ impl TurnMessage {
             frame.is_greeting,
             frame.flags,
         )
+        .in_explorer(frame.explorer)
         .with_explorer_context(section(Section::Folder))
         .with_deep_research_searches(frame.deep_research_searches.clone())
         .with_prior_evidence_context(section(Section::PriorEvidence))
@@ -193,6 +196,7 @@ mod tests {
             prompt_settings: normalize_prompt_settings(LLMPromptSettingsDto::default()),
             question: "When does the contract renew?".into(),
             is_greeting: false,
+            explorer: false,
             flags: SearchFlags::from_preferences(None),
             deep_research_searches: None,
             web_search_error: None,
