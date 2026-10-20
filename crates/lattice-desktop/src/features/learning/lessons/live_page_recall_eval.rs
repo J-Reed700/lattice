@@ -350,6 +350,7 @@ async fn live_page_recall_eval() -> Result<()> {
         Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
         lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+        Arc::default(),
     );
     let llm = Counter { window };
     let tokens = |page: &[ReferencePassage]| {
