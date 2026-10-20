@@ -254,6 +254,9 @@ pub(crate) struct Acquire<'a> {
     pub(crate) holder: Option<Holder>,
     /// The downloaded model behind a local key, which admission prices.
     pub(crate) local: Option<&'a LocalModel>,
+    /// What the model is loaded for, which the Activity drawer names while
+    /// it starts.
+    pub(crate) role: ModelRole,
 }
 
 /// A model handed out by [`LlmInstances::acquire`].
@@ -370,6 +373,7 @@ impl LlmInstances {
             epoch,
             holder,
             local,
+            role,
         } = request;
         let model = key.model.clone();
         let launch = key.launch;
