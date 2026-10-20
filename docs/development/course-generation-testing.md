@@ -74,7 +74,8 @@ All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features
 - **Model:** the llama.cpp server configured in the settings file named by `LATTICE_LLAMACPP_SETTINGS` (its `settings.llm` block). On Josh's machine this is his real remote Qwen3.8-27B llama-server with a 131k window. It is single-slot: while a run is going, the app's own chat queues behind it, and a run takes the server for hours.
 - **Web:** real searches (DuckDuckGo, Bing) and real page fetches through `WebService`, with its cache in `<run>/web/`.
 - **Disk:** every model call is recorded (`call-N.json`), so a run directory can reach hundreds of files.
-- **Outages:** the test calls the outline service directly, without the app's `PatientModel` wrapper, so a 503 while the server reloads fails the outline stage at once (accept1 failed this way after 81 seconds). The lesson job inside the test runs through the job runtime and does defer transient errors. Check the server is up and not reloading before a run.
+- **Window:** a lesson needs about 20k tokens of window to be written. The 9B at a saved context of 8,704 tokens could not write lessons (2026-10-16), so a settings file or recipe for a lesson run needs a larger window; the scored eval's 9B recipe serves and configures 32,768 (§7).
+- **Outages:** the test wraps the model in the app's `PatientModel`, so the outline waits while the server reloads instead of failing on the first 503 (accept1 failed that way after 81 seconds, before the wrapper was added). The lesson job inside the test runs through the job runtime, which defers transient errors and redelivers.
 
 Run one live course at a time, and only one local llama-server at a time.
 
@@ -138,16 +139,19 @@ scripts/live-course-e2e.sh artifacts/course-e2e-2026-10-15/bin/run1-abc1234 run1
 
 It runs every JSON in `<requests-dir>` one after another with one binary. Each request gets `<artifacts-root>/<label>-<request name>/` and a log beside it. `<artifacts-root>` defaults to `artifacts/course-e2e-<today>`. The script refuses to reuse an existing run directory. `<label>-summary.txt` records the binary's sha256, the commit, start and end times, exit code, minutes and the last result lines. Set `LATTICE_LLAMACPP_SETTINGS` to use another settings file and `LATTICE_COURSE_MANUAL_REPAIRS` to allow Repair presses.
 
-Requests live in `evals/courses/requests/`:
+Requests live in `evals/courses/requests/` and, for the scored eval's terse twins, `evals/courses/requests-terse/`:
 
 | File | Depth | Minutes per session | Status |
 |---|---|---|---|
-| `1-dotnet-interview.json` | deep dive | 60 | The acceptance request |
-| `2-postgres-performance.json` | course | 45 | Parked |
-| `3-music-theory-production.json` | focused | 30 | Parked |
-| `4-system-design-fundamentals.json` | deep dive | 60 | Parked |
+| `requests/1-dotnet-interview.json` | deep dive | 60 | The acceptance request; optional in the scored eval |
+| `requests/2-postgres-performance.json` | course | 45 | Scored eval (§7) |
+| `requests/3-music-theory-production.json` | focused | 30 | Scored eval |
+| `requests/4-system-design-fundamentals.json` | deep dive | 60 | Scored eval |
+| `requests-terse/2t-postgres-performance-terse.json` | course | 45 | Scored eval; terse twin of 2 |
+| `requests-terse/3t-music-theory-production-terse.json` | focused | 30 | Scored eval; terse twin of 3 |
+| `requests-terse/4t-system-design-fundamentals-terse.json` | deep dive | 60 | Scored eval; terse twin of 4 |
 
-To run only the acceptance request, point the script at a directory holding only `1-dotnet-interview.json` (on 2026-10-14 the other three were moved to `requests-later/` for this reason).
+A terse twin is the same learner's request typed the way people type: a short goal, prior knowledge in one clause, the same minutes and depth. The twins sit in their own directory so this script, pointed at `requests/`, runs the same four requests it always has. To run only the acceptance request, point it at a directory holding only `1-dotnet-interview.json` (on 2026-10-14 the other three were moved to `requests-later/` for this reason).
 
 `1-dotnet-interview.json` is Josh's own request and describes his background, so it is gitignored and exists only in local checkouts (and in `artifacts/course-e2e-2026-10-14/requests/`). The repository is public; keep personal requests out of it.
 
@@ -346,3 +350,18 @@ Most unsupported claims were true but unsourced, and a third described the lesso
 ## 6. Run history
 
 Every live run of 2026-10-14 (baseline-1, wp1-1, wp3-outline-2, final-1 to final-4, final2-1 to final2-4, lesson-fix-1), with commit, outcome, minutes, key numbers, cause and the change that followed, is in [course-generation-history.md](course-generation-history.md). Add each new run there.
+
+## 7. Scored course eval
+
+The live test of §2 says pass or fail for one request. The scored eval measures the pipeline across a fixed set and says whether a change made it better: it runs every request of `evals/courses/course-eval-v1.json` (the three committed requests, their terse twins and, where it exists, the .NET request), scores each outline and lesson with mechanical checks and a judge, and compares two runs with `scripts/shipped_path_stats.py`, as the chat eval does. The protocol, with the exact commands, the recipe fields and the file layout, is [evals/courses/README.md](../../evals/courses/README.md). The design is [docs/design/2026-10-20-course-eval.md](../design/2026-10-20-course-eval.md).
+
+The run procedure:
+
+1. Snapshot the test binary as in §2, into `artifacts/course-eval/bin/`.
+2. Pick a recipe in `evals/courses/recipes/` and start its server: the 9B recipe's `server.launch` line, or set `LATTICE_COURSE_SERVER_URL` (and `LATTICE_COURSE_SERVER_AUTH`) for the remote one. The recipe replaces `LATTICE_LLAMACPP_SETTINGS`.
+3. Run `scripts/course-eval.sh run <recipe> <label> --binary <binary>`. It runs one request at a time under one lock, so nothing else may use the model server, including the chat eval. It has no time limit; stop it with Ctrl-C and run the same command again to resume.
+4. Run `scripts/course_eval.py collect`, `score` and `summarize` on the run directory. Results go to `evals/courses/results/<results_model>/<date>-course-eval-v1-<label>/`.
+5. Compare against the previous run in the same model folder with `scripts/shipped_path_stats.py compare` at the slot level. Only the slot-level verdict is quoted.
+6. Commit the results directory and add a row to the scored eval table in [course-generation-history.md](course-generation-history.md).
+
+The web is replayed from a trace per request (`artifacts/course-eval/traces/`), so a baseline and a candidate read the same pages; new searches are filled live and counted as misses in the summary. On the remote 27B, the full set with one lesson per request takes 16 to 28 hours, and the outline-only tier (`"lessons": []`) 1.5 to 3.5 hours.

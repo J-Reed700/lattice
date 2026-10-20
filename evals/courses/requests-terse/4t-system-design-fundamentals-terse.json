@@ -1,0 +1,8 @@
+{
+  "goal": "system design interview prep: caching, sharding, queues, consistency, structuring answers",
+  "priorKnowledge": "9 years backend, used redis and a message broker, never designed a big system",
+  "minutesPerSession": 60,
+  "documentIds": [],
+  "sourceUrls": [],
+  "courseDepth": "deep_dive"
+}

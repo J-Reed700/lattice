@@ -1,0 +1,20 @@
+{
+  "schema": "course-eval-recipe/1",
+  "name": "course-eval-qwen3.8-27b-remote",
+  "results_model": "qwen3.8-27b-remote",
+  "requests": "evals/courses/course-eval-v1.json",
+  "lessons": ["m1.l1"],
+  "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+  "embedding_model_id": "qwen3-embedding-0.6b",
+  "server": {
+    "url_env": "LATTICE_COURSE_SERVER_URL",
+    "auth_env": "LATTICE_COURSE_SERVER_AUTH",
+    "model": "Qwen3.8-27B",
+    "model_revision": "operator-supplied: fill in the served weights' hash or tag",
+    "expected_ctx": 131072,
+    "expected_slots": 1,
+    "thinking": "off"
+  },
+  "settings": { "llm": { "contextWindow": 131072 } },
+  "web": { "mode": "replay", "traces": "artifacts/course-eval/traces" }
+}
