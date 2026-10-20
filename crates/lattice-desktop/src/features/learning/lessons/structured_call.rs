@@ -45,6 +45,10 @@ const ANSWER_STEP: &str = "Step 2: give the final answer from your draft. Keep i
 /// Like [`ANSWER_STEP`] it names no format.
 const REASK: &str = "That answer could not be used:";
 
+/// Closes a task sent again without the answer it refused, for a window too
+/// full to carry that answer. Like [`ANSWER_STEP`] it names no format.
+const RESTATE: &str = "An earlier answer to this task could not be used, so avoid this:";
+
 /// Which knob in [`model_call`] decides whether a call reasons first.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::features::learning) enum CallKind {
@@ -318,8 +322,9 @@ pub(in crate::features::learning) async fn complete_checked<T>(
 /// Send the answer step `request` builds and check what comes back with
 /// `accept`. A refused answer is asked for once more: the request continues
 /// with the refused answer and the reason, so the server reads the opening it
-/// has just read. A re-ask the window cannot hold fails with the first reason.
-/// Returns the accepted value and the response it came from.
+/// has just read. When the window cannot also hold the refused answer, the
+/// task is sent again with the reason added instead. Returns the accepted
+/// value and the response it came from.
 async fn answer<T>(
     llm: &dyn LLMPort,
     request: impl Fn(usize) -> GroundedRequest,
@@ -337,8 +342,18 @@ async fn answer<T>(
     let Some(reason) = refusal(&error) else {
         return Err(error);
     };
-    let again = |output_tokens| reask(request(output_tokens), &output.text, reason);
-    if !model_call::fits(llm, &again(output_tokens)) {
+    // A task that nearly fills the window has no room left for the refused
+    // answer, so it is sent again with the reason instead of continued.
+    let continues = model_call::fits(llm, &reask(request(output_tokens), &output.text, reason));
+    let again = |output_tokens| {
+        let request = request(output_tokens);
+        if continues {
+            reask(request, &output.text, reason)
+        } else {
+            restate(request, reason)
+        }
+    };
+    if !continues && !model_call::fits(llm, &again(output_tokens)) {
         tracing::warn!(
             step = step.name(),
             reason,
@@ -401,8 +416,13 @@ fn reask(mut request: GroundedRequest, rejected: &str, reason: &str) -> Grounded
     request
 }
 
-/// Send one learning request, streaming its text to whichever progress the
-/// call runs under.
+/// `request` sent again with `reason` added to its task, for a window too
+/// full to carry the refused answer as well.
+fn restate(mut request: GroundedRequest, reason: &str) -> GroundedRequest {
+    request.task = format!("{}\n\n{RESTATE} {reason}", request.task);
+    request
+}
+
 /// Send the request `request` builds for `output_tokens`. An answer cut off
 /// at its output reservation is asked for once more with the reservation
 /// doubled; a doubled request the window cannot hold keeps the first answer.
@@ -429,6 +449,8 @@ async fn send_completing(
     send(llm, larger, progress, step).await
 }
 
+/// Send one learning request, streaming its text to whichever progress the
+/// call runs under.
 async fn send(
     llm: &dyn LLMPort,
     mut request: GroundedRequest,

@@ -498,6 +498,40 @@ async fn a_second_refusal_fails_with_its_own_reason_without_blaming_the_input() 
 }
 
 #[tokio::test]
+async fn a_window_too_full_for_the_refused_answer_sends_the_task_again_with_the_reason(
+) -> Result<()> {
+    let refused: &'static str = Box::leak("blue ".repeat(4_000).into_boxed_str());
+    let llm = Recorder::answering_first(4_000, &[refused]);
+    let accept = |raw: &str| {
+        if raw == ANSWER {
+            return Ok(raw.to_owned());
+        }
+        Err(AppError::InvalidInput("It explains nothing.".into()))
+    };
+    let value = complete_checked(
+        &llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        None,
+        accept,
+    )
+    .await?;
+    assert_eq!(value, ANSWER);
+
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2, "the first answer and one more");
+    let task = format!("{PROMPT}\n\n{RESTATE} It explains nothing.");
+    assert_eq!(
+        messages(&sent[1]),
+        vec![("system", SYSTEM), ("user", task.as_str())]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn errors_that_say_nothing_about_the_answer_are_not_asked_again() {
     let mut dropped = Recorder::new(32_000);
     dropped.answer = None;
