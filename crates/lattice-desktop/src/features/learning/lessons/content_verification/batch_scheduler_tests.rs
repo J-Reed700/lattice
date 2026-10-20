@@ -161,7 +161,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await
     })
@@ -192,7 +192,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert!(report.issues.is_empty());
@@ -214,7 +214,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![4, 4]);
@@ -245,7 +245,7 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert!(report.issues.is_empty(), "{:?}", report.issues);
@@ -287,7 +287,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await;
         assert!(matches!(result, Err(AppError::Network(_))));
@@ -304,7 +304,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert_eq!(report.findings.len(), 8);
@@ -342,7 +342,7 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
                 inventory(8),
                 coverage(8),
                 vec![],
-                &mut ClaimChecks::default(),
+                &mut measured(),
             )
             .await
         })
@@ -438,7 +438,7 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
                 inventory(10),
                 coverage(10),
                 vec![],
-                &mut ClaimChecks::default(),
+                &mut measured(),
             )
             .await?;
             assert_eq!(report.findings.len(), 10);
@@ -503,7 +503,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
             &references,
             &saved,
             &[],
-            &ClaimChecks::default(),
+            &measured(),
         )
         .await?;
         Ok(())
@@ -516,7 +516,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     };
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
         let inventory = inventory(170);
-        let retained = ClaimChecks::default();
+        let retained = measured();
         let work = evidence_checks::check(&blocked, &references, &inventory, &[], &retained);
         tokio::select! {
             result = work => panic!("The unfinished checks should still be running: {result:?}"),
@@ -563,14 +563,9 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let results = evidence_checks::check(
-            &resumed,
-            &references,
-            &inventory(170),
-            &[],
-            &ClaimChecks::default(),
-        )
-        .await?;
+        let results =
+            evidence_checks::check(&resumed, &references, &inventory(170), &[], &measured())
+                .await?;
         assert_eq!(results.len(), 170);
         assert_eq!(results.iter().filter(|result| result.3).count(), 167);
         assert!(results
@@ -618,7 +613,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
-        let mut retained=ClaimChecks::default();let candidate=candidate(GOOD);
+        let mut retained=measured();let candidate=candidate(GOOD);
         let work=check_evidence(&model,&candidate,&references,input,coverage(8),vec![],&mut retained);
         tokio::select! {
             result=work=>panic!("The incomplete claim should be waiting: {result:?}"),
@@ -659,7 +654,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
             inventory(8),
             coverage(8),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert!(report.issues.is_empty());
@@ -686,7 +681,7 @@ async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
             sections(2, 3),
             coverage(2),
             vec![],
-            &mut ClaimChecks::default(),
+            &mut measured(),
         )
         .await?;
         assert_eq!(report.findings.len(), 6);

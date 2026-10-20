@@ -34,7 +34,7 @@ pub(in crate::features::learning) use evidence_checks::ORDERS;
 #[cfg(test)]
 pub(in crate::features::learning) use evidence_checks::{page_budget, walk_pages, WalkedPage};
 #[cfg(test)]
-use evidence_checks::{ContraryPassage, Depth, Pass, SupportedElsewhere, REACHES};
+use evidence_checks::{ContraryPassage, Depth, Pass, REACHES};
 use evidence_checks::{Paging, TwoPass, CHECKER_OUTPUT_TOKENS};
 mod evidence_selection;
 mod execution;

@@ -229,6 +229,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
       : 'Research had nothing to search';
     case 'repair_attempted': return `Repair ${payload.attempt}${payload.escalated ? ' (last try)' : ''}: ${repairOutcomeLabel(payload.outcome)}`;
     case 'executed': return payload.passed ? 'Example ran as shown' : 'Example did not run as shown';
+    case 'citation_repaired': return `Citation moved to the passage that supports it${payload.addedSource ? ', a source added to the lesson' : ''}: “${payload.quote}”`;
     case 'user_action': return describeUserAction(payload.action, payload.note);
     case 'evidence_attached': {
       const input = { saved_passage: 'a saved passage', link: 'a link', document: 'a file', pasted_text: 'pasted text' }[payload.provenance.input];

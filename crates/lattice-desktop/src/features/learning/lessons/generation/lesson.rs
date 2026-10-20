@@ -414,6 +414,9 @@ pub async fn prepare_lesson_with_references<'a>(
         )
         .await?
     };
+    // Verification may number a course source the writer was not given, to
+    // cite the passage that supports a claim (course evidence index §5.1).
+    let mut numbered = sources.clone();
     let (raw, report) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
@@ -422,15 +425,14 @@ pub async fn prepare_lesson_with_references<'a>(
             &lesson_schema(sources.len()),
             raw,
             references,
-            output_tokens,
+            (output_tokens, &mut numbered),
         )
         .await?;
     let generated: GeneratedLesson = parse_json(&raw)?;
-    // Verification may repair a citation to the passage that supports its
-    // claim (course evidence index §5.1), anywhere in a source the lesson
-    // names: a quotation is checked against the whole saved text of the
-    // source it cites, not only the passages the writer was shown.
-    let sources: Vec<_> = sources
+    // A repaired citation may quote any part of the source it names, not
+    // only the passages the writer was shown: a quotation is checked against
+    // the whole saved text of the source it cites.
+    let sources: Vec<_> = numbered
         .iter()
         .map(|source| {
             references

@@ -38,6 +38,18 @@ pub(super) fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(|word| indexed_term(&word))
 }
 
+/// How many of `query`'s content terms `text` holds, each counted once,
+/// read as the course index reads words (whole words, lower case, Latin
+/// diacritics removed): how well a stretch of a source matches a claim.
+pub(in crate::features::learning) fn shared_terms(query: &str, text: &str) -> usize {
+    let held: HashSet<String> = content_terms(text).collect();
+    content_terms(query)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|term| held.contains(term))
+        .count()
+}
+
 /// The terms that say what one query is about.
 #[derive(Debug, Clone, Default)]
 pub(in crate::features::learning) struct Subject {

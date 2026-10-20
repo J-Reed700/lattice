@@ -272,19 +272,25 @@ impl Selection {
 /// by what research added when the claim was a research target. Never a
 /// passage overlapping `attribution`, what pass A shows. Saved before any
 /// model work, so an interrupted check compares exactly this page again.
+/// A page that must be read now waits while `sizing` is unmeasured: `None`,
+/// and nothing is saved, until the job's first answers size it.
 pub(super) async fn select(
     llm: &dyn LLMPort,
     (claim, checked, unit): (&Claim, &str, usize),
     references: &ReferenceCollection<'_>,
     current: &[SourceBinding],
     retained: &ClaimChecks,
-    (citations, attribution, paging, budget): (
+    (citations, attribution, paging, sizing): (
         &Citations,
         &[EvidencePassage],
         Paging,
-        Option<usize>,
+        &evidence_checks::Sizing,
     ),
-) -> Result<Selected> {
+) -> Result<Option<Selected>> {
+    let budget = match sizing {
+        evidence_checks::Sizing::Sized(budget) => Some(budget),
+        evidence_checks::Sizing::Unmeasured => None,
+    };
     let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
     let memory = retained
         .selections
@@ -314,13 +320,16 @@ pub(super) async fn select(
                 .as_ref()
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
             let led = if !added.is_empty() && claim_is_research_target {
+                let Some(budget) = budget else {
+                    return Ok(None);
+                };
                 research_led(
                     llm,
                     (claim, checked),
                     references,
                     &added,
                     attribution,
-                    budget,
+                    budget.tokens,
                     evidence.clone(),
                 )
                 .await?
@@ -341,6 +350,9 @@ pub(super) async fn select(
                 ),
             }
         } else {
+            let Some(budget) = budget else {
+                return Ok(None);
+            };
             let (page, read) = evidence_checks::page_one(
                 llm,
                 references,
@@ -393,12 +405,12 @@ pub(super) async fn select(
             .insert(selection_key, selection);
     }
     canonicalize_evidence(&mut evidence);
-    Ok(Selected {
+    Ok(Some(Selected {
         evidence,
         reach,
         researched,
         note,
-    })
+    }))
 }
 
 /// The first page of a claim research was asked for, once research saved

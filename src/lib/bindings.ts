@@ -5216,7 +5216,13 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
 lines: string[] }
 export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number }
 export type ClaimEventDto = { ordinal: number; actor: ActorDto; at: number; jobId: string | null; appVersion: string; checkerModel: string | null; event: ClaimEventPayloadDto }
-export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
+export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } |
+/**
+ * The section's citation moved to the passage that supports the claim,
+ * found elsewhere in the course; `addedSource` when the lesson had to
+ * number that source to cite it.
+ */
+{ kind: "citation_repaired"; cited: string[]; sourceVersionId: string; quote: string; addedSource: boolean } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */

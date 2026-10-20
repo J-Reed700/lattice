@@ -17,7 +17,9 @@ use lattice_core::application::services::grounded_generation::GroundedRequest;
 use std::collections::{BTreeSet, VecDeque};
 
 mod citation;
-pub(super) use citation::cite_where_supported;
+#[cfg(test)]
+pub(super) use citation::quotation;
+pub(super) use citation::{cite_where_supported, number_sources};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
     let blocks = candidate

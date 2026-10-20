@@ -97,12 +97,13 @@ async fn a_claims_two_comparisons_share_one_request() -> Result<()> {
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(32_000);
     let citations = citing(&references, MARKER)?;
+    // A later pass of a job that has measured what an answer costs.
     evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
-        &ClaimChecks::default(),
+        &measured(),
         &citations,
     )
     .await?;
@@ -115,32 +116,45 @@ async fn a_claims_two_comparisons_share_one_request() -> Result<()> {
     Ok(())
 }
 
-/// Unit 0 cites a related passage that does not state the claim; the
-/// lesson numbers that source 0 and the marker's 1.
+/// Unit 0 cites a related passage that does not state the claim.
 fn citing_the_wrong_passage(references: &ReferenceCollection<'_>) -> Result<Citations> {
     let quote = "Mineral alpha notes 3: property beta was measured, pressure varied.";
     Ok(Citations::new(
         HashMap::from([(0, references.cited_passages(&[quote])?)]),
-        HashMap::from([(0, "related-3".to_owned()), (1, "marker".to_owned())]),
+        HashMap::from([(0, "related-3".to_owned())]),
     ))
+}
+
+/// A lesson section citing the related passage, as source 0.
+fn wrongly_cited() -> Value {
+    json!({"blocks":[{
+        "kind":"explanation","title":"Alpha","body":CLAIM,"rubric":[],
+        "quote":"Mineral alpha notes 3: property beta was measured, pressure varied.",
+        "sourceIndex":0
+    }],"questions":[]})
+}
+
+/// The claim's finding when pass A reads the wrong passage and pass B finds
+/// the marker's.
+async fn supported_elsewhere(references: &ReferenceCollection<'_>) -> Result<Finding> {
+    let model = PagingModel::new(32_000);
+    let results = evidence_checks::check_with_citations(
+        &model,
+        references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+        &citing_the_wrong_passage(references)?,
+    )
+    .await?;
+    Ok(results[0].2.clone())
 }
 
 #[tokio::test]
 async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
     let sources = marker_collection();
     let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(32_000);
-    let citations = citing_the_wrong_passage(&references)?;
-    let results = evidence_checks::check_with_citations(
-        &model,
-        &references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &ClaimChecks::default(),
-        &citations,
-    )
-    .await?;
-    let finding = results[0].2.clone();
+    let finding = supported_elsewhere(&references).await?;
     assert_eq!(finding.verdict, ClaimVerdict::Supported);
     assert_eq!(finding.two_pass.pass, Some(Pass::Corroboration));
     assert_eq!(finding.two_pass.page, Some(1));
@@ -148,24 +162,50 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
     assert_eq!(found.source_id, "marker");
     assert_eq!(found.cited, vec!["related-3".to_owned()]);
 
-    let mut candidate = json!({"blocks":[{
-        "kind":"explanation","title":"Alpha","body":CLAIM,"rubric":[],
-        "quote":"Mineral alpha notes 3: property beta was measured, pressure varied.",
-        "sourceIndex":0
-    }],"questions":[]});
+    // The lesson numbers both sources: related-3 as 0, the marker's as 1.
+    let source = |id: &str| {
+        sources
+            .iter()
+            .find(|source| source.id == id)
+            .unwrap()
+            .clone()
+    };
+    let mut numbered = vec![source("related-3"), source("marker")];
+    let mut candidate = wrongly_cited();
     let mut tried = HashSet::new();
-    assert!(repair::cite_where_supported(
+    let repairs = repair::cite_where_supported(
         &mut candidate,
         std::slice::from_ref(&finding),
-        &citations,
+        &mut numbered,
         &references,
         &mut tried,
-    )?);
+    )?;
+    assert_eq!(repairs.len(), 1);
     let block = &candidate["blocks"][0];
     assert_eq!(block["sourceIndex"], 1);
+    assert_eq!(
+        numbered.len(),
+        2,
+        "the marker's source was numbered already"
+    );
     let quote = block["quote"].as_str().unwrap();
-    let marker = sources.iter().find(|source| source.id == "marker").unwrap();
-    assert!(marker.excerpt.contains(quote));
+    assert!(source("marker").excerpt.contains(quote));
+    assert_eq!(
+        quote, "Mineral alpha notes 99: property was logged.",
+        "the run of the found passage that best matches the claim"
+    );
+    let lattice_core::domain::learning::claim_review::ClaimEvent::CitationRepaired {
+        cited,
+        source_version_id,
+        added_source,
+        ..
+    } = &repairs[0].1
+    else {
+        panic!("{:?}", repairs[0].1);
+    };
+    assert_eq!(cited, &vec!["related-3".to_owned()]);
+    assert_eq!(source_version_id, "marker");
+    assert!(!added_source);
     // The next pass reads it as the section's own citation: pass A's page
     // holds the passage pass B found.
     let next = section_citations(&candidate, &references)?;
@@ -175,50 +215,152 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
         .any(|passage| passage.source_id == "marker" && passage.text.contains(MARKER)));
     assert_eq!(next.source_at(1), Some("marker"));
     // Written once: the same citation is not written again.
-    assert!(!repair::cite_where_supported(
+    assert!(repair::cite_where_supported(
         &mut candidate,
         std::slice::from_ref(&finding),
-        &citations,
+        &mut numbered,
         &references,
         &mut tried,
-    )?);
+    )?
+    .is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = supported_elsewhere(&references).await?;
+    // The writer was given related-3 only.
+    let related = sources
+        .iter()
+        .find(|source| source.id == "related-3")
+        .unwrap();
+    let mut numbered = vec![related.clone()];
+    let mut candidate = wrongly_cited();
+    let repairs = repair::cite_where_supported(
+        &mut candidate,
+        &[finding],
+        &mut numbered,
+        &references,
+        &mut HashSet::new(),
+    )?;
+    // The marker's source joins the lesson's sources, with its title and
+    // URL as the writer's are, and the section cites it.
+    assert_eq!(numbered.len(), 2);
+    assert_eq!(numbered[1].id, "marker");
+    assert_eq!(numbered[1].title, "Reference marker");
+    assert_eq!(candidate["blocks"][0]["sourceIndex"], 1);
+    assert!(matches!(
+        repairs[0].1,
+        lattice_core::domain::learning::claim_review::ClaimEvent::CitationRepaired {
+            added_source: true,
+            ..
+        }
+    ));
+    // A lesson schema's source indices then allow the new source.
+    let mut schema = json!({"properties":{"blocks":{"items":{"properties":{
+        "sourceIndex":{"type":"integer","minimum":0,"maximum":0}}}}}});
+    repair::number_sources(&mut schema, numbered.len());
+    assert_eq!(
+        schema["properties"]["blocks"]["items"]["properties"]["sourceIndex"]["maximum"],
+        1
+    );
     Ok(())
 }
 
 #[test]
-fn a_source_the_lesson_does_not_number_keeps_its_citation() -> Result<()> {
-    let sources = marker_collection();
-    let references = ReferenceCollection::lexical(&sources)?;
-    let marker = sources.iter().find(|source| source.id == "marker").unwrap();
-    let mut finding = Finding {
-        unit: 0,
-        quote: CLAIM.into(),
-        statement: CLAIM.into(),
-        verdict: ClaimVerdict::Supported,
-        reason: "The records state it.".into(),
-        evidence: references.source_passages("marker", &[(0, marker.excerpt.len())])?,
-        supporting_quote: Some(marker.excerpt.clone()),
-        resolution: None,
-        trust: None,
-        two_pass: Default::default(),
+fn the_repaired_quote_is_the_run_of_sentences_that_best_matches_the_claim() {
+    let filler: String = (0..40)
+        .map(|line| format!("Archive line {line} is filed away. "))
+        .collect();
+    let stated = "Mineral alpha shows property beta under pressure in the lab.";
+    let passage = format!("{filler}{stated} A closing remark follows.");
+    let quote = repair::quotation(CLAIM, &passage, &passage).unwrap();
+    assert_eq!(quote, stated, "the matching sentence near the end, alone");
+    assert!(quote.chars().count() <= crate::features::learning::generation::MAX_QUOTE_CHARS);
+    // Two runs that match as well: the earliest.
+    let twice = format!("{stated} Then a pause comes here. {stated}");
+    let quote = repair::quotation(CLAIM, &twice, &twice).unwrap();
+    assert_eq!(twice.find(quote), Some(0));
+    // No run of whole sentences short enough to cite: none.
+    let endless = format!("{} pressure", "mineral alpha ".repeat(200));
+    assert_eq!(repair::quotation(CLAIM, &endless, &endless), None);
+}
+
+#[tokio::test]
+async fn the_first_request_carries_pass_a_only_and_its_answers_size_pass_b() -> Result<()> {
+    use lattice_core::application::ports::llm_port::Pace;
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    // 130 output tokens an answer, reading ten times faster than writing: a
+    // page reads 1,300 tokens, two related passages.
+    let pace = Pace {
+        prompt_tokens_per_second: 1_000.0,
+        output_tokens_per_second: 100.0,
     };
-    finding.two_pass.supported_by = Some(SupportedElsewhere {
-        source_id: "marker".into(),
-        start_byte: 0,
-        end_byte: marker.excerpt.len(),
-        cited: vec!["related-3".into()],
-    });
-    let citations = Citations::new(HashMap::new(), HashMap::from([(0, "related-3".to_owned())]));
-    let mut candidate = json!({"blocks":[{"kind":"explanation","title":"Alpha","body":CLAIM,"rubric":[],"quote":"x","sourceIndex":0}],"questions":[]});
-    let before = candidate.clone();
-    assert!(!repair::cite_where_supported(
-        &mut candidate,
-        &[finding],
-        &citations,
+    let model = PagingModel::paced(32_000, pace, 130);
+    let statements = [CLAIM.to_owned(), format!("{CLAIM} It holds in the lab.")];
+    evidence_checks::check_with_citations(
+        &model,
         &references,
-        &mut HashSet::new(),
-    )?);
-    assert_eq!(candidate, before);
+        &inventory(&statements),
+        &[],
+        &ClaimChecks::default(),
+        &citing(&references, MARKER)?,
+    )
+    .await?;
+    let sizes = model.request_sizes.lock().unwrap().clone();
+    let checks = model.checks.lock().unwrap().clone();
+    assert_eq!(sizes[0], 2, "both claims' pass A, together");
+    assert!(checks[..2].iter().all(|check| read_marker(check)));
+    // Every later request reads pass B pages sized by the measured answers,
+    // not by the most an answer could be.
+    let budget = page_budget(Some(pace), Some(130.0)).unwrap();
+    assert_eq!(budget, 1_300);
+    assert!(checks.len() > 2);
+    for check in &checks[2..] {
+        assert!(!read_marker(check));
+        let tokens: usize = check.iter().map(|text| bank_tokens(&model, text)).sum();
+        assert!(tokens <= budget, "{tokens} > {budget}");
+        assert!(!check.is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_pass_a_the_first_claim_reads_a_page_bounded_by_the_window_alone() -> Result<()> {
+    use lattice_core::application::ports::llm_port::Pace;
+    let sources: Vec<_> = (0..12).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let pace = Pace {
+        prompt_tokens_per_second: 1_000.0,
+        output_tokens_per_second: 100.0,
+    };
+    let model = PagingModel::paced(32_000, pace, 130);
+    let statements = [
+        CLAIM.to_owned(),
+        "Mineral alpha shows property beta under heat.".to_owned(),
+        "Mineral alpha shows property beta when cold.".to_owned(),
+    ];
+    // No section cites anything: there is no pass A to measure by.
+    evidence_checks::check(
+        &model,
+        &references,
+        &inventory(&statements),
+        &[],
+        &ClaimChecks::default(),
+    )
+    .await?;
+    let sizes = model.request_sizes.lock().unwrap().clone();
+    let checks = model.checks.lock().unwrap().clone();
+    assert_eq!(sizes[0], 1, "the first claim alone");
+    assert_eq!(checks[0].len(), 12, "its page bounded by the window alone");
+    let budget = page_budget(Some(pace), Some(130.0)).unwrap();
+    for check in &checks[1..] {
+        let tokens: usize = check.iter().map(|text| bank_tokens(&model, text)).sum();
+        assert!(tokens <= budget, "{tokens} > {budget}");
+    }
+    assert!(checks.len() > 1);
     Ok(())
 }
 

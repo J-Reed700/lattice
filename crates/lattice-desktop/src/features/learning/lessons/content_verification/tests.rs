@@ -416,6 +416,15 @@ fn candidate(statement: &str) -> Value {
 fn repair_body(prompt: &str, after: Value) -> String {
     json!({"edits":[{"path":"/blocks/0/body","before":context(prompt)["candidate"]["blocks"][0]["body"],"after":after}]}).to_string()
 }
+/// The checks of a job whose earlier pass measured what an answer costs:
+/// its first request is not set aside to measure one (course evidence index
+/// §5.3), so every claim's comparisons are packed from the start.
+fn measured() -> ClaimChecks {
+    let checks = ClaimChecks::default();
+    *checks.answers.lock().unwrap() = evidence_checks::AnswerSize::of(130, 1);
+    checks
+}
+
 /// The CSV reference, then an appendix on another subject. A collection
 /// whose every passage holds a claim's words gives the claim no subject to
 /// read the course by (course evidence index §5.4); the appendix is a

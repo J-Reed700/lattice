@@ -85,16 +85,6 @@ impl Citations {
     pub(super) fn sources(&self) -> &HashSet<String> {
         &self.sources
     }
-
-    /// The lesson's source index for `source_id`, when one of its citations
-    /// names that source: how a repaired citation names it.
-    pub(super) fn index_of(&self, source_id: &str) -> Option<u64> {
-        self.by_index
-            .iter()
-            .filter(|(_, id)| id.as_str() == source_id)
-            .map(|(index, _)| *index)
-            .min()
-    }
 }
 
 pub(super) fn section_citations(

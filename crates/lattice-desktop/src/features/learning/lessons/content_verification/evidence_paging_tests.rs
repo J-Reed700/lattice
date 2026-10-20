@@ -25,6 +25,12 @@ pub(super) struct PagingModel {
     pub(super) claims: Mutex<Vec<String>>,
     /// Requests carrying claim checks.
     pub(super) requests: AtomicUsize,
+    /// How many comparisons each of those requests carried, in order.
+    pub(super) request_sizes: Mutex<Vec<usize>>,
+    /// The pace the backend reports, if any.
+    pace: Option<lattice_core::application::ports::llm_port::Pace>,
+    /// Output tokens it reports per answer.
+    answer_tokens: u64,
 }
 
 impl PagingModel {
@@ -35,6 +41,23 @@ impl PagingModel {
             checks: Mutex::new(Vec::new()),
             claims: Mutex::new(Vec::new()),
             requests: AtomicUsize::new(0),
+            request_sizes: Mutex::new(Vec::new()),
+            pace: None,
+            answer_tokens: 0,
+        }
+    }
+
+    /// A backend that reports its pace and `answer_tokens` per answer, so a
+    /// job measures its page budget.
+    pub(super) fn paced(
+        window: usize,
+        pace: lattice_core::application::ports::llm_port::Pace,
+        answer_tokens: u64,
+    ) -> Self {
+        Self {
+            pace: Some(pace),
+            answer_tokens,
+            ..Self::new(window)
         }
     }
 
@@ -75,17 +98,24 @@ impl PagingModel {
 impl LLMPort for PagingModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompts = fixture_prompts(request);
-        if prompts
+        let comparisons = prompts
             .iter()
-            .any(|prompt| prompt.starts_with("Source passages:\n"))
-        {
+            .filter(|prompt| prompt.starts_with("Source passages:\n"))
+            .count();
+        if comparisons > 0 {
             self.requests.fetch_add(1, Ordering::SeqCst);
+            self.request_sizes.lock().unwrap().push(comparisons);
         }
         let mut replies = Vec::new();
         for prompt in prompts {
             replies.push(self.respond(&prompt).await?);
         }
-        Ok(fixture_completion(request, replies))
+        let mut response = fixture_completion(request, replies);
+        response.output_tokens = self.answer_tokens * comparisons as u64;
+        Ok(response)
+    }
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.pace
     }
     fn model_name(&self) -> &str {
         "paging-fixture"
@@ -129,7 +159,7 @@ pub(super) fn related(index: usize) -> LearningSourceDto {
 /// Its own lines are its alone, so any stretch of it names it.
 pub(super) fn marker_collection() -> Vec<LearningSourceDto> {
     let mut sources: Vec<_> = (0..12).map(related).collect();
-    let lines: String = (0..70)
+    let lines: String = (0..40)
         .map(|line| format!("Marker archive line {line} is filed. "))
         .collect();
     sources.push(reference(

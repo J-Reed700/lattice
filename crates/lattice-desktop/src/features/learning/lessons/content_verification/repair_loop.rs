@@ -21,9 +21,38 @@ pub(in crate::features::learning) async fn verify_and_repair(
         schema,
         raw,
         &references,
-        output_tokens,
+        (output_tokens, &mut sources.to_vec()),
     )
     .await
+}
+
+/// The checkpoint holding the sources this lesson's verification numbered to
+/// cite them, by version id, in the order it numbered them.
+const NUMBERED_KEY: &str = "lesson-numbered-sources-v1";
+
+/// `numbered` with the sources an earlier run of this preparation numbered
+/// to cite them appended, in their order, so the draft's source indices name
+/// the same sources after a restart. A source no longer in `references` is
+/// left out.
+async fn renumber(
+    numbered: &mut Vec<LearningSourceDto>,
+    references: &ReferenceCollection<'_>,
+) -> Result<()> {
+    let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(NUMBERED_KEY)
+        .await?
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+    else {
+        return Ok(());
+    };
+    for id in saved {
+        if numbered.iter().any(|known| known.id == id) {
+            continue;
+        }
+        if let Some(source) = references.sources.iter().find(|source| source.id == id) {
+            numbered.push(source.clone());
+        }
+    }
+    Ok(())
 }
 
 /// Verify, research and repair until nothing is left for the machine (§4).
@@ -38,15 +67,24 @@ pub(in crate::features::learning) async fn verify_and_repair(
 /// before each pass and each repair group pick up what the user did (§9).
 /// Operational extraction/audit errors propagate rather than asking the author
 /// to rewrite valid content because a checker is unavailable.
+///
+/// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
+/// name: the writer's, and any this verification adds to cite a claim's
+/// support (`repair::cite_where_supported`). The lesson is parsed against
+/// it, and `writer_schema`'s source indices are widened to it.
 pub(in crate::features::learning) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
     prompt: &str,
-    schema: &Value,
+    writer_schema: &Value,
     mut raw: String,
     references: &ReferenceCollection<'_>,
-    output_tokens: usize,
+    (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
 ) -> Result<(String, LessonVerificationReport)> {
+    let writers = numbered.len();
+    renumber(numbered, references).await?;
+    let mut numbered_schema = writer_schema.clone();
+    repair::number_sources(&mut numbered_schema, numbered.len());
     let mut ledger = ClaimLedger::open(llm, &raw).await?;
     let mut expanded = None;
     let mut repair_history = Vec::new();
@@ -56,6 +94,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     // Citations this job repaired to where a claim's support was found.
     let mut cited_where_supported = HashSet::new();
     loop {
+        let schema = &numbered_schema;
         raw = normalize_example_fences(llm, raw).await?;
         let mut candidate: Value = crate::features::learning::generation::parse_json(&raw)?;
         ledger.sync().await?;
@@ -179,18 +218,32 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         // section's citation moves to the passage found, and the next pass
         // checks it as the section's own citation (§5.1).
         let active = expanded.as_ref().unwrap_or(references);
-        let cited = section_citations(&candidate, active)?;
-        if repair::cite_where_supported(
+        let repaired = repair::cite_where_supported(
             &mut candidate,
             &report.findings,
-            &cited,
+            numbered,
             active,
             &mut cited_where_supported,
-        )? {
+        )?;
+        if !repaired.is_empty() {
             crate::features::learning::lesson_progress::phase(
                 crate::features::learning::lesson_progress::Phase::Repair,
                 "Citing the passages that support claims their sections cited elsewhere",
             );
+            // The added sources are saved before the draft that cites them.
+            let added: Vec<&str> = numbered
+                .iter()
+                .skip(writers)
+                .map(|source| source.id.as_str())
+                .collect();
+            crate::features::learning::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added))
+                .await?;
+            repair::number_sources(&mut numbered_schema, numbered.len());
+            for (finding, event) in repaired {
+                if let Some(claim) = ledger.finding_claims().get(finding).cloned() {
+                    ledger.append(&claim, event).await?;
+                }
+            }
             raw = candidate.to_string();
             crate::features::learning::lesson_drafts::save(&raw).await?;
             continue;

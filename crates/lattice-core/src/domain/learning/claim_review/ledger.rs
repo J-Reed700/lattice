@@ -446,7 +446,9 @@ impl ClaimLedgerEntry {
                 outcome,
                 ..
             } => self.apply_repair(&mut next, *attempt, *escalated, outcome, at, &record.event)?,
-            ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::Executed { .. }
+            | ClaimEvent::CitationRepaired { .. }
+            | ClaimEvent::Stopped { .. } => {}
             ClaimEvent::StandingAssessed {
                 trust,
                 reason,

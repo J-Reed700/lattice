@@ -566,6 +566,20 @@ pub enum ClaimEvent {
         passed: bool,
         evidence: String,
     },
+    /// The machine moved the claim's section citation to the passage that
+    /// supports the claim, found elsewhere in the course (course evidence
+    /// index §5.1). The claim's words are unchanged, so no repair attempt is
+    /// charged; the next check reads the new citation as the section's own.
+    CitationRepaired {
+        /// The source versions the section cited, none of which supported it.
+        cited: Vec<String>,
+        /// The source version it cites now, and the quotation it carries.
+        source_version_id: String,
+        quote: String,
+        /// The lesson did not number the source before: it was added to the
+        /// lesson's sources to be cited.
+        added_source: bool,
+    },
     UserAction {
         action: UserAction,
         note: Option<String>,
@@ -609,6 +623,7 @@ impl ClaimEvent {
             Self::Researched { .. } => "researched",
             Self::RepairAttempted { .. } => "repair_attempted",
             Self::Executed { .. } => "executed",
+            Self::CitationRepaired { .. } => "citation_repaired",
             Self::UserAction { .. } => "user_action",
             Self::EvidenceAttached { .. } => "evidence_attached",
             Self::Superseded { .. } => "superseded",

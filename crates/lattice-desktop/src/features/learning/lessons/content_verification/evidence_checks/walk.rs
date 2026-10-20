@@ -11,9 +11,9 @@
 //! web research of the pass that follows, with nothing more read from the
 //! course. A claim research has just found sources for reads only those.
 //!
-//! Every claim's first page is checked with its pass A comparison (D1); a
-//! claim still unsupported reads on, page by page, only while [`B_DEPTH`]
-//! says so. The judge's verdict on each page is the only stop: no count, no
+//! Every claim's first page is checked (D1), sized once the job has
+//! measured an answer ([`PageBudget`]); a claim still unsupported reads on,
+//! page by page, only while [`B_DEPTH`] says so. The judge's verdict on each page is the only stop: no count, no
 //! score and no round that settles nothing ends a walk.
 use super::*;
 use crate::features::learning::reference_collection::{ClaimList, Scope};
@@ -77,24 +77,60 @@ impl Paging {
     };
 }
 
-/// The tokens a pass B page holds (§5.3): the reading that costs as long as
-/// one more answer, at the backend's measured pace, for `answers` per claim.
-/// Before any answer is measured the answer is the checker's output cap,
-/// the largest one can be; the first measured answer replaces it. `None`
-/// without a measured pace: the window alone bounds the page.
-pub(super) fn budget(llm: &dyn LLMPort, answers: AnswerSize) -> Option<usize> {
-    let answer = answers
-        .per_claim()
-        .unwrap_or(f64::from(CHECKER_OUTPUT_TOKENS));
-    page_budget(llm.pace(), Some(answer))
+/// The tokens a pass B page holds (§5.3), or why it has no budget and the
+/// window alone bounds it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(in crate::features::learning::lessons::content_verification) struct PageBudget {
+    pub(in crate::features::learning::lessons::content_verification) tokens: Option<usize>,
+    pub(in crate::features::learning::lessons::content_verification) unavailable: Option<String>,
 }
 
-/// What a page's log line and the report say about its budget.
-pub(super) fn budget_text(budget: Option<usize>) -> String {
-    budget.map_or_else(
-        || "page budget unavailable: no measured pace".to_string(),
-        |tokens| format!("{tokens} tokens"),
-    )
+impl PageBudget {
+    /// The reading that costs as long as one more answer, at the backend's
+    /// measured pace, for `answers` per claim. Without a measured pace, or
+    /// before the job has measured an answer, there is none: the window
+    /// alone bounds the page, and the log and the report say why.
+    pub(in crate::features::learning::lessons::content_verification) fn of(
+        llm: &dyn LLMPort,
+        answers: AnswerSize,
+    ) -> Self {
+        let pace = llm.pace();
+        let answer = answers.per_claim();
+        let unavailable = |why: &str| Self {
+            tokens: None,
+            unavailable: Some(why.into()),
+        };
+        match (pace, answer) {
+            (None, _) => unavailable("no measured pace"),
+            (_, None) => unavailable("no answer measured yet"),
+            (pace, answer) => match page_budget(pace, answer) {
+                Some(tokens) => Self {
+                    tokens: Some(tokens),
+                    unavailable: None,
+                },
+                None => unavailable("no measured pace"),
+            },
+        }
+    }
+
+    /// What a page's log line and the report say about it.
+    pub(in crate::features::learning::lessons::content_verification) fn text(&self) -> String {
+        match (self.tokens, &self.unavailable) {
+            (Some(tokens), _) => format!("{tokens} tokens"),
+            (None, Some(why)) => format!("page budget unavailable: {why}"),
+            (None, None) => "page budget unavailable".into(),
+        }
+    }
+}
+
+/// How a first page that must be read now can be sized.
+#[derive(Clone, Debug)]
+pub(in crate::features::learning::lessons::content_verification) enum Sizing {
+    /// Before the job has measured an answer: a page that must be sized
+    /// waits for the answers of the job's first request.
+    Unmeasured,
+    /// Sized by this budget.
+    Sized(PageBudget),
 }
 
 /// Whether `page` stays within `budget` tokens of a passage bank and a check
@@ -183,7 +219,7 @@ async fn list_of(
 pub(in crate::features::learning::lessons::content_verification) struct PageNote {
     pub(in crate::features::learning::lessons::content_verification) reach: Reach,
     pub(in crate::features::learning::lessons::content_verification) page: usize,
-    pub(in crate::features::learning::lessons::content_verification) budget: Option<usize>,
+    pub(in crate::features::learning::lessons::content_verification) budget: PageBudget,
     /// The page's last passage is its list's last.
     pub(in crate::features::learning::lessons::content_verification) list_end: bool,
     pub(in crate::features::learning::lessons::content_verification) counter: bool,
@@ -204,7 +240,7 @@ pub(super) struct Walk {
     reaches: Vec<Reach>,
     list: Option<ClaimList>,
     researched: Vec<String>,
-    budget: Option<usize>,
+    budget: PageBudget,
     /// The pass B pages read so far.
     pub(super) pages: usize,
 }
@@ -221,7 +257,7 @@ impl Walk {
         shown: Vec<EvidencePassage>,
         (reaches, reach): (&[Reach], Option<Reach>),
         researched: Vec<String>,
-        budget: Option<usize>,
+        budget: PageBudget,
         pages: usize,
     ) -> Self {
         let reaches = if researched.is_empty() {
@@ -271,8 +307,13 @@ impl Walk {
                     .await?
                 }
             };
-            let (page, passed_over) =
-                page_of(llm, &self.checked, &list.passages, &self.shown, self.budget);
+            let (page, passed_over) = page_of(
+                llm,
+                &self.checked,
+                &list.passages,
+                &self.shown,
+                self.budget.tokens,
+            );
             if page.is_empty() {
                 tracing::info!(
                     claim = self.ordinal,
@@ -296,7 +337,7 @@ impl Walk {
             let note = PageNote {
                 reach,
                 page: self.pages,
-                budget: self.budget,
+                budget: self.budget.clone(),
                 list_end,
                 counter: list.counter,
                 passed_over,
@@ -353,7 +394,7 @@ pub(super) async fn log_page(
         passages = page.len(),
         tokens,
         exact,
-        budget = %note.map_or_else(|| "none needed".to_string(), |note| budget_text(note.budget)),
+        budget = %note.map_or_else(|| "none needed".to_string(), |note| note.budget.text()),
         first_fused = ?scores.first(),
         last_fused = ?scores.last(),
         list_end = note.map(|note| note.list_end),
@@ -376,7 +417,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
     citations: &Citations,
     shown: &[EvidencePassage],
     reaches: &[Reach],
-    budget: Option<usize>,
+    budget: &PageBudget,
 ) -> Result<(Vec<EvidencePassage>, Option<PageNote>)> {
     let claim = Claim {
         quote: statement.into(),
@@ -389,7 +430,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
         shown.to_vec(),
         (reaches, None),
         Vec::new(),
-        budget,
+        budget.clone(),
         0,
     );
     Ok(match walk.next_page(llm, references, citations).await? {
@@ -416,7 +457,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn first_
         citations,
         shown,
         REACHES,
-        budget(llm, AnswerSize::default()),
+        &PageBudget::of(llm, AnswerSize::default()),
     )
     .await?
     .0;
@@ -433,17 +474,18 @@ fn walk_key(first_page_receipt: &str) -> String {
 
 /// The budget the walk after `first_page_receipt` pages by: the one it was
 /// first given, or `fresh`, saved for next time.
-pub(super) async fn walk_budget(
-    first_page_receipt: &str,
-    fresh: Option<usize>,
-) -> Result<Option<usize>> {
+pub(super) async fn walk_budget(first_page_receipt: &str, fresh: PageBudget) -> Result<PageBudget> {
     let key = walk_key(first_page_receipt);
     if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key).await? {
-        if let Ok(budget) = serde_json::from_value::<Option<usize>>(saved) {
+        if let Ok(budget) = serde_json::from_value::<PageBudget>(saved) {
             return Ok(budget);
         }
     }
-    crate::features::learning::lesson_drafts::record_checkpoint(&key, json!(fresh)).await?;
+    crate::features::learning::lesson_drafts::record_checkpoint(
+        &key,
+        serde_json::to_value(&fresh)?,
+    )
+    .await?;
     Ok(fresh)
 }
 
@@ -612,7 +654,10 @@ pub(in crate::features::learning) async fn walk_pages(
         cited,
         (reaches, None),
         Vec::new(),
-        budget,
+        PageBudget {
+            tokens: budget,
+            unavailable: budget.is_none().then(|| "no pace given".into()),
+        },
         0,
     );
     let mut pages = Vec::new();

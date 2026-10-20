@@ -69,6 +69,17 @@ pub enum ClaimEventPayloadDto {
         passed: bool,
         evidence: String,
     },
+    /// The section's citation moved to the passage that supports the claim,
+    /// found elsewhere in the course; `addedSource` when the lesson had to
+    /// number that source to cite it.
+    CitationRepaired {
+        cited: Vec<String>,
+        #[serde(rename = "sourceVersionId")]
+        source_version_id: String,
+        quote: String,
+        #[serde(rename = "addedSource")]
+        added_source: bool,
+    },
     UserAction {
         action: UserActionDto,
         note: Option<String>,
@@ -143,6 +154,17 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 observation_id: observation_id.clone(),
                 passed: *passed,
                 evidence: evidence.clone(),
+            },
+            ClaimEvent::CitationRepaired {
+                cited,
+                source_version_id,
+                quote,
+                added_source,
+            } => Self::CitationRepaired {
+                cited: cited.clone(),
+                source_version_id: source_version_id.clone(),
+                quote: quote.clone(),
+                added_source: *added_source,
             },
             ClaimEvent::UserAction { action, note } => Self::UserAction {
                 action: action.into(),
