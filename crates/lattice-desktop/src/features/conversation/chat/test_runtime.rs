@@ -31,8 +31,7 @@ const UNUSED: &str = "not provided to the test";
 #[derive(Clone)]
 pub(super) struct TestVault {
     pub(super) records: Arc<dyn ChatRecords>,
-    pub(super) search:
-        Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait>,
+    pub(super) search: Arc<dyn lattice_core::application::ports::hybrid_search::HybridSearchTrait>,
 }
 
 /// The model `FakeRuntime::llm` stands for: the Settings default.
@@ -544,7 +543,7 @@ impl ChatRetrieval for FakeRuntime {
     }
     fn library_search(
         &self,
-    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait> {
+    ) -> Arc<dyn lattice_core::application::ports::hybrid_search::HybridSearchTrait> {
         Arc::clone(&self.vault.as_ref().expect(UNUSED).search)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {

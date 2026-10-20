@@ -22,9 +22,12 @@
 //!   consumed by qa, mentions, indexing, conversation chat retrieval
 //! - `crate::features::search::enrichment_service`
 //!
-//! The search DTOs, ranked branches and `LibrarySearchTrait` live in core:
+//! The search DTOs, ranked branches and `HybridSearchTrait` live in core:
 //! `lattice_core::application::contracts::search` and
-//! `lattice_core::application::ports::library_search`.
+//! `lattice_core::application::ports::hybrid_search`. That port's
+//! `HybridSearchFactory`, implemented by `trait_def::HybridSearchUseCaseFactory`,
+//! gives a passage index on disk (a folder's) this same orchestrator over its
+//! own stores.
 //!
 //! Domain types used by the application layer live in the domain layer:
 //! `lattice_core::domain::entities::SearchResult`,

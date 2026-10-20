@@ -1,15 +1,19 @@
 //! Embedding feature dependency injection.
 //!
 //! The `Container` owns the embedding runtime handle; the lifecycle calls that
-//! read it belong to this feature and are registered from here.
+//! read it belong to this feature and are registered from here, with
+//! [`AppEmbedders`], the embedder every passage index on disk builds with.
 
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::loading::EmbeddingLoader;
 use crate::features::embedding::runtime::ActiveEmbedding;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::{AppHandle, Manager, Runtime};
 
+use crate::infrastructure::passage_index::EmbedderSource;
 use crate::interfaces::di::Container;
+use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
@@ -56,5 +60,34 @@ impl Container {
                 strategy: self.search.embedding_strategy(),
             },
         )
+    }
+}
+
+/// The embedder a passage index builds and searches with: the container's,
+/// so the model is loaded once and shared with the chat path. It lives with
+/// the embedding feature so any feature that keeps an index takes the same
+/// `Arc<dyn EmbedderSource>` from the composition root, without depending on
+/// another feature.
+pub(crate) struct AppEmbedders<R: Runtime> {
+    app: AppHandle<R>,
+}
+
+impl<R: Runtime> AppEmbedders<R> {
+    pub(crate) fn new(app: AppHandle<R>) -> Self {
+        Self { app }
+    }
+}
+
+#[async_trait]
+impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
+    async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>> {
+        let container = self.app.try_state::<Container>()?;
+        // No identity means no active embedding model: nothing to load.
+        container.search.embedding_identity()?;
+        container
+            .get_or_load_embedding()
+            .await
+            .map_err(|error| tracing::warn!(%error, "A passage index has no embedder"))
+            .ok()
     }
 }

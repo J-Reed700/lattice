@@ -6,8 +6,11 @@ use crate::features::explorer::index::build::{self, BuildRequest};
 use crate::features::explorer::index::dto::{
     FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryDto, FolderIndexSummaryState,
 };
-use crate::features::explorer::index::store::{self, Counts, FolderStore, IndexEntry};
+use crate::features::explorer::index::store::{self, IndexEntry};
 use crate::features::explorer::scope::Scope;
+use crate::infrastructure::passage_index::registry::dir_bytes;
+use crate::infrastructure::passage_index::store::DB_FILE;
+use crate::infrastructure::passage_index::{Counts, PassageStore};
 use lattice_core::shared::{runtime::jobs::JobStatus, AppError, Result};
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -15,10 +18,11 @@ use tracing::warn;
 /// A closed index's state from its counts: work left is a pause; nothing at
 /// all is no index, unless a full run finished over an empty folder.
 fn settled_state(counts: &Counts, complete: bool) -> FolderIndexSummaryState {
-    if counts.files_indexed < counts.files_total || counts.passages_embedded < counts.passages_total
+    if counts.documents_embedded < counts.documents_total
+        || counts.passages_embedded < counts.passages_total
     {
         FolderIndexSummaryState::Partial
-    } else if counts.files_total == 0 && !complete {
+    } else if counts.documents_total == 0 && !complete {
         FolderIndexSummaryState::NotIndexed
     } else {
         FolderIndexSummaryState::Indexed
@@ -28,8 +32,8 @@ fn settled_state(counts: &Counts, complete: bool) -> FolderIndexSummaryState {
 /// The open folder's live status as the folders list shows it.
 fn live_summary(status: &FolderIndexStatusDto, own_dir: Option<&Path>) -> FolderIndexSummaryDto {
     let counts = Counts {
-        files_total: status.files_total,
-        files_indexed: status.files_indexed,
+        documents_total: status.files_total,
+        documents_embedded: status.files_indexed,
         passages_total: status.passages_total,
         passages_embedded: status.passages_embedded,
     };
@@ -46,11 +50,11 @@ fn live_summary(status: &FolderIndexStatusDto, own_dir: Option<&Path>) -> Folder
     };
     FolderIndexSummaryDto {
         state,
-        files_total: counts.files_total,
-        files_indexed: counts.files_indexed,
+        files_total: counts.documents_total,
+        files_indexed: counts.documents_embedded,
         passages_total: counts.passages_total,
         passages_embedded: counts.passages_embedded,
-        bytes: own_dir.map_or(0, store::dir_bytes),
+        bytes: own_dir.map_or(0, dir_bytes),
         index_root: (status.index_root != status.root).then(|| status.index_root.clone()),
         eta_seconds: status.eta_seconds,
         message: status.message.clone(),
@@ -91,14 +95,14 @@ impl FolderIndexManager {
         }
         let indexes = store::list_indexes(&self.config.base_dir).await;
         let (index_root, dir) = self.choose_index(&root, &indexes);
-        if !dir.join(store::DB_FILE).exists() {
+        if !dir.join(DB_FILE).exists() {
             return Err(AppError::NotFound(format!(
                 "{} has no folder index yet.",
                 root.display()
             )));
         }
         let prefix = relative_below(&index_root, &root).unwrap_or_default();
-        let store = FolderStore::open(&dir).await?;
+        let store = PassageStore::open(&dir).await?;
         let counts = store.counts(&prefix).await;
         store.close().await;
         Ok(build::initial_status(
@@ -166,7 +170,7 @@ impl FolderIndexManager {
         let (index_root, dir) = self.choose_index(root, indexes);
         let prefix = relative_below(&index_root, root).unwrap_or_default();
         if prefix.is_empty() {
-            summary.bytes = store::dir_bytes(&dir);
+            summary.bytes = dir_bytes(&dir);
         } else {
             summary.index_root = Some(root_string(&index_root));
         }
@@ -174,8 +178,8 @@ impl FolderIndexManager {
             Ok(None) => {}
             Ok(Some(snapshot)) => {
                 let counts = snapshot.counts;
-                summary.files_total = counts.files_total;
-                summary.files_indexed = counts.files_indexed;
+                summary.files_total = counts.documents_total;
+                summary.files_indexed = counts.documents_embedded;
                 summary.passages_total = counts.passages_total;
                 summary.passages_embedded = counts.passages_embedded;
                 match snapshot.too_large.filter(|_| prefix.is_empty()) {

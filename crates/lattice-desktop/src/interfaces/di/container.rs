@@ -478,9 +478,10 @@ impl Container {
                 crate::features::explorer::index::manager::ManagerConfig::for_data_dir(
                     self.core.data_dir(),
                 ),
-                Arc::new(crate::features::explorer::plugin::AppEmbedders::new(
+                Arc::new(crate::features::embedding::di::AppEmbedders::new(
                     handle.clone(),
                 )),
+                Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 Arc::clone(&self.jobs),
                 Arc::clone(self.core.background()),
             ),

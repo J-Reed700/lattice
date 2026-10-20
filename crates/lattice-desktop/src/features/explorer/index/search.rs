@@ -1,39 +1,26 @@
-//! Searching the open folder's index: dense and full-text, fused.
+//! Searching the open folder's index through the one hybrid search.
 //!
-//! The two halves miss different things. Dense retrieval finds "where do we
-//! handle retries?" in code that only says `backoff`; `bm25` finds the exact
-//! identifier a vector blurs. The shared weighted reciprocal rank fusion
-//! merges them on rank alone, so neither score scale has to be trusted against
-//! the other: dense carries the vector weight, `bm25` the keyword weight, at
-//! the library search's `DEFAULT_RRF_K`.
+//! The dense and `bm25` halves miss different things: dense retrieval finds
+//! "where do we handle retries?" in code that only says `backoff`; `bm25`
+//! finds the exact identifier a vector blurs. Neither is fused here. The
+//! search is the library's orchestrator (`HybridSearchTrait`), built over
+//! this folder's vectors file and full-text index by the composition root's
+//! `HybridSearchFactory`, so a folder is ranked exactly as the library is:
+//! its branch depth, vector floor, weights, reciprocal rank constant and
+//! per-document cap (here, per file).
 //!
-//! SQLite is authoritative: a vector whose chunk row is gone (a file deleted
-//! since the last save of the vectors file) is not a hit.
+//! SQLite is authoritative: a vector whose passage row is gone (a file
+//! deleted since the last save of the vectors file) is not a hit.
 
-use super::chunker;
 use super::dto::FolderIndexStatusDto;
 use super::run::StatusCell;
-use super::store::FolderStore;
-use crate::infrastructure::vector_index::USearchVectorIndex;
-use lattice_core::application::contracts::search::{
-    FusionResult, ReciprocalRankFusion, WeightedRanking,
-};
-use lattice_core::application::ports::vector_search_port::VectorSearchPort;
-use lattice_core::application::ports::EmbeddingPort;
-use lattice_core::shared::constants::{
-    DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_RRF_K, DEFAULT_VECTOR_FUSION_WEIGHT,
-};
+use crate::infrastructure::passage_index::chunking::lines as chunker;
+use crate::infrastructure::passage_index::{Passage, PassageStore};
+use lattice_core::application::contracts::search::SearchRequestDto;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::shared::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::warn;
-
-/// Candidates each half contributes before fusion, or the search's depth when
-/// that is deeper, so fusion never caps what a caller asked for.
-pub const DENSE_CANDIDATES: usize = 40;
-pub const LEXICAL_CANDIDATES: usize = 40;
-/// Terms a full-text query keeps.
-const MAX_TERMS: usize = 16;
 
 /// One passage found in the folder. `path` is relative to the folder the user
 /// picked, the same form line references use.
@@ -45,39 +32,6 @@ pub struct FolderHit {
     /// The passage's lines, without the line-reference heading.
     pub text: String,
     pub score: f32,
-}
-
-/// The dense and full-text halves fused by the app's one reciprocal rank
-/// fusion, at the library search's constant and branch weights, best first.
-/// Ties go to the lower id so the order is stable.
-pub(super) fn fuse(dense: Vec<i64>, lexical: Vec<i64>) -> Vec<FusionResult<i64>> {
-    ReciprocalRankFusion::new(DEFAULT_RRF_K).fuse_ranked(vec![
-        WeightedRanking::new(DEFAULT_VECTOR_FUSION_WEIGHT, dense),
-        WeightedRanking::new(DEFAULT_KEYWORD_FUSION_WEIGHT, lexical),
-    ])
-}
-
-/// An FTS5 `MATCH` expression for free text: every word as a quoted literal
-/// (so nothing in it can act as an operator), joined with `OR`. Words of four
-/// characters or more also match as a prefix, so `retry` finds `retry_policy`.
-pub fn match_expression(query: &str) -> Option<String> {
-    let mut seen = HashSet::new();
-    let terms: Vec<String> = query
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|term| term.chars().count() >= 2)
-        .map(str::to_lowercase)
-        .filter(|term| seen.insert(term.clone()))
-        .take(MAX_TERMS)
-        .map(|term| {
-            let quoted = format!("\"{}\"", term.replace('"', "\"\""));
-            if term.chars().count() >= 4 {
-                format!("{quoted}*")
-            } else {
-                quoted
-            }
-        })
-        .collect();
-    (!terms.is_empty()).then(|| terms.join(" OR "))
 }
 
 /// `a` and `b` as one relative path; either may be empty.
@@ -103,9 +57,8 @@ fn tidy_prefix(path: &str) -> String {
 }
 
 pub struct FolderSearch {
-    store: Arc<FolderStore>,
-    vectors: Arc<USearchVectorIndex>,
-    embedder: Arc<dyn EmbeddingPort>,
+    store: Arc<PassageStore>,
+    hybrid: Arc<dyn HybridSearchTrait>,
     /// Where the picked folder sits inside the index: `""`, or the sub-folder
     /// path when a parent's index is reused.
     offset: String,
@@ -114,16 +67,14 @@ pub struct FolderSearch {
 
 impl FolderSearch {
     pub fn new(
-        store: Arc<FolderStore>,
-        vectors: Arc<USearchVectorIndex>,
-        embedder: Arc<dyn EmbeddingPort>,
+        store: Arc<PassageStore>,
+        hybrid: Arc<dyn HybridSearchTrait>,
         offset: String,
         status: Arc<StatusCell>,
     ) -> Self {
         Self {
             store,
-            vectors,
-            embedder,
+            hybrid,
             offset,
             status,
         }
@@ -136,11 +87,12 @@ impl FolderSearch {
 
     /// Whether the folder has anything to search yet.
     pub async fn has_chunks(&self) -> bool {
-        self.store.has_chunks(&self.offset).await.unwrap_or(false)
+        self.store.has_passages(&self.offset).await.unwrap_or(false)
     }
 
     /// The best `top_k` passages for `query`, optionally only under
-    /// `path_prefix` (relative to the picked folder).
+    /// `path_prefix` (relative to the picked folder). Under a prefix, both
+    /// halves keep to the files under it, inside USearch and inside FTS5.
     pub async fn search(
         &self,
         query: &str,
@@ -151,47 +103,40 @@ impl FolderSearch {
             return Ok(Vec::new());
         }
         let prefix = join_relative(&self.offset, &tidy_prefix(path_prefix.unwrap_or("")));
-        // Either half can fail on its own (no embedder warmed up, an odd
-        // query); the other still answers.
-        let dense = self
-            .dense(query, &prefix, top_k)
-            .await
-            .unwrap_or_else(|error| {
-                warn!(%error, "Folder index: dense search failed; using full text only");
-                Vec::new()
-            });
-        let lexical = match match_expression(query) {
-            Some(expression) => self
-                .store
-                .full_text(&expression, &prefix, LEXICAL_CANDIDATES.max(top_k))
-                .await
-                .unwrap_or_else(|error| {
-                    warn!(%error, "Folder index: full-text search failed");
-                    Vec::new()
-                }),
-            None => Vec::new(),
+        let scope: Option<HashSet<String>> = if prefix.is_empty() {
+            None
+        } else {
+            Some(self.store.keys_under(&prefix).await?.into_iter().collect())
         };
-        let fused = fuse(dense, lexical);
-        let ids: Vec<i64> = fused.iter().map(|entry| entry.id).collect();
-        let rows: HashMap<i64, _> = self
+        let response = self
+            .hybrid
+            .execute_scoped(SearchRequestDto::hybrid(query, top_k), None, scope.as_ref())
+            .await?;
+        let ranked: Vec<(i64, f32)> = response
+            .results
+            .iter()
+            .filter_map(|result| Some((result.id.parse().ok()?, result.score)))
+            .collect();
+        let ids: Vec<i64> = ranked.iter().map(|(id, _)| *id).collect();
+        let rows: HashMap<i64, Passage> = self
             .store
-            .chunks_by_ids(&ids)
+            .by_ids(&ids)
             .await?
             .into_iter()
-            .map(|row| (row.id, row))
+            .map(|passage| (passage.id, passage))
             .collect();
         let mut hits = Vec::new();
-        for FusionResult { id, score, .. } in fused {
+        for (id, score) in ranked {
             let Some(row) = rows.get(&id) else {
                 continue;
             };
-            let Some(path) = self.picked_relative(&row.path) else {
+            let Some(path) = self.picked_relative(&row.document) else {
                 continue;
             };
             hits.push(FolderHit {
                 path,
-                start_line: row.start_line,
-                end_line: row.end_line,
+                start_line: u32::try_from(row.start).unwrap_or(u32::MAX),
+                end_line: u32::try_from(row.end).unwrap_or(u32::MAX),
                 text: chunker::body_of(&row.text).to_string(),
                 score,
             });
@@ -200,29 +145,6 @@ impl FolderSearch {
             }
         }
         Ok(hits)
-    }
-
-    /// Chunk ids nearest the query, confined to `prefix` inside USearch.
-    async fn dense(&self, query: &str, prefix: &str, top_k: usize) -> Result<Vec<i64>> {
-        if self.vectors.count() == 0 {
-            return Ok(Vec::new());
-        }
-        let embedding = self.embedder.embed_query(query).await?;
-        let scope: Option<HashSet<String>> = if prefix.is_empty() {
-            None
-        } else {
-            Some(self.store.paths_under(prefix).await?.into_iter().collect())
-        };
-        let results = self.vectors.search_scoped(
-            &embedding,
-            DENSE_CANDIDATES.max(top_k),
-            0.0,
-            scope.as_ref(),
-        )?;
-        Ok(results
-            .into_iter()
-            .filter_map(|result| result.chunk_id.parse().ok())
-            .collect())
     }
 
     /// An index path in the picked folder's terms, or `None` outside it.

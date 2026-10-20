@@ -21,13 +21,18 @@
 //! - Nothing deletes an index unless the user asks: "Delete index" and
 //!   "Remove" in the folders list, or a rebuild.
 //! - The vectors file is keyed by the embedding identity. A different model
-//!   drops the vectors and embeds again; chunks and hashes stay.
+//!   drops the vectors and embeds again; passages and hashes stay.
+//! - The store, the vectors file, the live directories and the registry are
+//!   the shared passage index (`crate::infrastructure::passage_index`); a
+//!   search answers through the one hybrid search, which the composition
+//!   root's `HybridSearchFactory` builds over the folder's own stores.
 
-use super::build::{self, BuildRequest, LiveIndex};
+use super::build::{self, BuildRequest};
 use super::run::{Limits, StatusCell, StatusSink};
-use super::store::{self, FolderStore, IndexEntry, OpenStamps, TooLarge};
-use async_trait::async_trait;
-use lattice_core::application::ports::EmbeddingPort;
+use super::store::{self, IndexEntry, OpenStamps, TooLarge};
+use crate::infrastructure::passage_index::job::build_job_config;
+use crate::infrastructure::passage_index::{EmbedderSource, LiveIndex, LiveIndexes};
+use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::{
     runtime::{
         background::BackgroundTasks,
@@ -35,7 +40,6 @@ use lattice_core::shared::{
     },
     Result,
 };
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -45,14 +49,6 @@ use tracing::{info, warn};
 
 mod folder;
 mod summary;
-
-/// Where the folder index gets its embedder. The app resolves it through the
-/// container, so loading happens once and the chat path shares the model.
-#[async_trait]
-pub trait EmbedderSource: Send + Sync {
-    /// The active embedding model, loaded; `None` when there is none.
-    async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>>;
-}
 
 #[derive(Debug, Clone)]
 pub struct ManagerConfig {
@@ -99,15 +95,11 @@ struct OpenFolder {
     watching: Option<JoinHandle<()>>,
 }
 
-/// An index directory in use, and by how many: the open folder and builds.
-struct LiveEntry {
-    index: Arc<LiveIndex>,
-    users: usize,
-}
-
 pub struct FolderIndexManager {
     config: ManagerConfig,
     pub(super) embedders: Arc<dyn EmbedderSource>,
+    /// Builds the one hybrid search over an open folder's index.
+    searches: Arc<dyn HybridSearchFactory>,
     pub(super) jobs: Arc<JobRuntime>,
     /// Where each open folder's watcher runs, so shutdown stops it.
     background: Arc<BackgroundTasks>,
@@ -115,7 +107,8 @@ pub struct FolderIndexManager {
     view: Arc<parking_lot::Mutex<Option<OpenView>>>,
     /// The open folder's build, which runs before any other.
     first: parking_lot::Mutex<Option<String>>,
-    live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
+    /// Index directories in use by the open folder and builds.
+    live: LiveIndexes,
     /// Where the open folder's status goes when the watcher updates it.
     folder_changes: parking_lot::Mutex<Option<StatusSink>>,
     /// Stamps each opened folder, which the folders list orders by.
@@ -162,18 +155,20 @@ impl FolderIndexManager {
     pub fn new(
         config: ManagerConfig,
         embedders: Arc<dyn EmbedderSource>,
+        searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
         background: Arc<BackgroundTasks>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             config,
             embedders,
+            searches,
             jobs,
             background,
             open: tokio::sync::Mutex::new(None),
             view: Arc::default(),
             first: parking_lot::Mutex::new(None),
-            live: tokio::sync::Mutex::new(HashMap::new()),
+            live: LiveIndexes::default(),
             folder_changes: parking_lot::Mutex::new(None),
             open_stamps: OpenStamps::default(),
             me: me.clone(),
@@ -194,7 +189,7 @@ impl FolderIndexManager {
             .register(
                 build::FOLDER_INDEX,
                 Arc::new(build::BuildJob::new(Arc::downgrade(self))),
-                build::build_job_config(),
+                build_job_config(),
             )
             .await
     }
@@ -269,46 +264,35 @@ impl FolderIndexManager {
     }
 
     /// Opens the index in `dir` for one more user, sharing it with the open
-    /// folder or a build that already has it.
+    /// folder or a build that already has it. A new index records its root,
+    /// which the folders list and sub-folder reuse read.
     pub(super) async fn acquire(&self, index_root: &Path, dir: &Path) -> Result<Arc<LiveIndex>> {
-        let mut live = self.live.lock().await;
-        if let Some(entry) = live.get_mut(dir) {
-            entry.users += 1;
-            return Ok(Arc::clone(&entry.index));
+        let index = self.live.acquire(dir).await?;
+        let rooted = async {
+            if index.store.meta(store::META_ROOT).await?.is_none() {
+                index
+                    .store
+                    .set_meta(store::META_ROOT, &root_string(index_root))
+                    .await?;
+            }
+            Ok(())
         }
-        let store = Arc::new(FolderStore::open(dir).await?);
-        if store.meta(store::META_ROOT).await?.is_none() {
-            store
-                .set_meta(store::META_ROOT, &root_string(index_root))
-                .await?;
+        .await;
+        if let Err(error) = rooted {
+            self.live.release(&index).await;
+            return Err(error);
         }
-        let index = Arc::new(LiveIndex::new(dir.to_path_buf(), store));
-        live.insert(
-            dir.to_path_buf(),
-            LiveEntry {
-                index: Arc::clone(&index),
-                users: 1,
-            },
-        );
         Ok(index)
     }
 
     /// Gives back one user's hold; the last closes the index's pool.
     pub(super) async fn release(&self, index: &LiveIndex) {
-        let closing = {
-            let mut live = self.live.lock().await;
-            match live.get_mut(&index.dir) {
-                Some(entry) if entry.users > 1 => {
-                    entry.users -= 1;
-                    None
-                }
-                Some(_) => live.remove(&index.dir),
-                None => None,
-            }
-        };
-        if let Some(entry) = closing {
-            entry.index.store.close().await;
-        }
+        self.live.release(index).await;
+    }
+
+    /// The hybrid search's factory, for the open folder's search.
+    pub(super) fn searches(&self) -> &Arc<dyn HybridSearchFactory> {
+        &self.searches
     }
 
     /// The live builds of the folder index, oldest first.

@@ -2,33 +2,31 @@
 //! with it, and embed what is new. The job's progress is the share of
 //! passages embedded; its activity is the whole status, rate and time left
 //! included, which is what the renderer shows.
+//!
+//! The job kind's configuration, the throttled progress saver and the live
+//! index a build writes are the passage index's
+//! (`crate::infrastructure::passage_index`); what a build is asked to do, the
+//! open folder going first and the folder's own states stay here.
 
 use super::dto::{FolderIndexState, FolderIndexStatusDto};
 use super::manager::{relative_below, root_string, too_large_message, FolderIndexManager};
 use super::run::{Indexer, Outcome, StatusCell};
-use super::store::{self, Counts, FolderStore, TooLarge};
+use super::store::TooLarge;
 use crate::features::explorer::scope::Scope;
-use crate::infrastructure::vector_index::USearchVectorIndex;
+use crate::infrastructure::passage_index::job::ProgressSaver;
+use crate::infrastructure::passage_index::{Counts, LiveIndex};
 use async_trait::async_trait;
-use lattice_core::application::ports::vector_search_port::VectorSearchPort;
-use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::{
-    runtime::jobs::{JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy},
+    runtime::jobs::{JobContext, JobHandler, JobOutcome, JobRecord},
     AppError, Result,
 };
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
 pub const FOLDER_INDEX: &str = "explorer.folder_index";
-
-/// The saved progress moves at most this often while counts move; a change of
-/// state is saved at once.
-const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What a build was asked to do.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,16 +49,6 @@ impl BuildRequest {
     }
 }
 
-/// Builds take turns, so the folder being looked at is embedded first rather
-/// than sharing the model with every other folder; two builds of one index
-/// never overlap. A build resumes after a restart: the index on disk is its
-/// checkpoint.
-pub(super) fn build_job_config() -> JobKindConfig {
-    JobKindConfig::new(RecoveryPolicy::Requeue)
-        .concurrency(1)
-        .exclusive_per_subject()
-}
-
 /// The status a build last saved.
 pub(super) fn activity_status(job: &JobRecord) -> Option<FolderIndexStatusDto> {
     serde_json::from_value(job.activity.clone()?).ok()
@@ -73,114 +61,11 @@ pub(super) fn initial_status(
     counts: Counts,
 ) -> FolderIndexStatusDto {
     let mut status = FolderIndexStatusDto::new(&root_string(root), &root_string(index_root), state);
-    status.files_total = counts.files_total;
-    status.files_indexed = counts.files_indexed;
+    status.files_total = counts.documents_total;
+    status.files_indexed = counts.documents_embedded;
     status.passages_total = counts.passages_total;
     status.passages_embedded = counts.passages_embedded;
     status
-}
-
-/// What a search or a build needs once the embedder has loaded.
-#[derive(Clone)]
-pub(super) struct Engine {
-    pub vectors: Arc<USearchVectorIndex>,
-    pub embedder: Arc<dyn EmbeddingPort>,
-}
-
-/// An index directory in use by the open folder, a build, or both. They share
-/// its pool and its vectors, and take turns writing.
-pub(super) struct LiveIndex {
-    pub dir: PathBuf,
-    pub store: Arc<FolderStore>,
-    engine: RwLock<Option<Engine>>,
-    /// Held by whatever writes: a build for its whole run, the open folder's
-    /// watcher for one update.
-    pub writing: tokio::sync::Mutex<()>,
-}
-
-impl LiveIndex {
-    pub fn new(dir: PathBuf, store: Arc<FolderStore>) -> Self {
-        Self {
-            dir,
-            store,
-            engine: RwLock::new(None),
-            writing: tokio::sync::Mutex::new(()),
-        }
-    }
-
-    pub fn engine(&self) -> Option<Engine> {
-        self.engine.read().clone()
-    }
-
-    /// The vectors for `embedder`, loaded once while the index is in use and
-    /// again when the model changes. Call while holding `writing`.
-    async fn prepare(&self, embedder: Arc<dyn EmbeddingPort>) -> Result<Engine> {
-        if let Some(engine) = self
-            .engine()
-            .filter(|engine| engine.embedder.model_identity() == embedder.model_identity())
-        {
-            return Ok(engine);
-        }
-        let vectors = prepare_vectors(&self.store, &self.dir, embedder.as_ref()).await?;
-        let engine = Engine { vectors, embedder };
-        *self.engine.write() = Some(engine.clone());
-        Ok(engine)
-    }
-}
-
-/// Removes every vectors file (and its key map and manifest) in `dir`.
-fn remove_vector_files(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.filter_map(|entry| entry.ok()) {
-        if entry.file_name().to_string_lossy().starts_with("vectors-") {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-/// The vectors file for this embedder. A different identity than the one
-/// recorded drops every vectors file and marks every file for embedding; so
-/// does a vectors file that is missing or will not load.
-async fn prepare_vectors(
-    store: &FolderStore,
-    dir: &Path,
-    embedder: &dyn EmbeddingPort,
-) -> Result<Arc<USearchVectorIndex>> {
-    let identity = embedder.model_identity();
-    let stored = store.meta(store::META_IDENTITY).await?;
-    let path = store::vectors_path(dir, &identity);
-    let keymap = path.with_extension("keymap.json");
-    if stored.as_deref() != Some(identity.as_str()) || !path.exists() || !keymap.exists() {
-        if stored.is_some() {
-            info!(
-                from = stored.as_deref().unwrap_or_default(),
-                to = %identity,
-                "Folder index: embedding model changed; embedding again"
-            );
-        }
-        remove_vector_files(dir);
-        store.reset_embedded().await?;
-        store.set_meta(store::META_IDENTITY, &identity).await?;
-    }
-    let dimension = embedder.dimension();
-    let load_path = path.clone();
-    let loaded = tokio::task::spawn_blocking(move || {
-        USearchVectorIndex::open_or_create(dimension, load_path)
-    })
-    .await
-    .map_err(|error| AppError::InternalError(format!("Loading folder vectors failed: {error}")))?;
-    let index = match loaded {
-        Ok(index) => index,
-        Err(error) => {
-            warn!(%error, "Folder index: vectors file unreadable; embedding again");
-            remove_vector_files(dir);
-            store.reset_embedded().await?;
-            USearchVectorIndex::open_or_create(dimension, path)?
-        }
-    };
-    Ok(Arc::new(index.with_coalesced_saves()))
 }
 
 /// The words a build's saved progress carries.
@@ -198,37 +83,27 @@ fn progress_message(state: FolderIndexState) -> &'static str {
 
 /// Saves a build's status as its job's progress and activity.
 struct Progress<'a> {
-    context: &'a JobContext,
-    /// Saved progress only moves forward; a scan that finds more passages
-    /// lowers the share until embedding catches up.
-    high: u32,
-    last: Option<(Instant, FolderIndexState)>,
+    saver: ProgressSaver<'a, FolderIndexState>,
 }
 
 impl<'a> Progress<'a> {
     fn new(context: &'a JobContext) -> Self {
         Self {
-            context,
-            high: context.job().progress_current,
-            last: None,
+            saver: ProgressSaver::new(context),
         }
     }
 
     async fn save(&mut self, status: &FolderIndexStatusDto, force: bool) -> Result<()> {
-        let due = force
-            || self.last.is_none_or(|(at, state)| {
-                state != status.state || at.elapsed() >= PROGRESS_INTERVAL
-            });
-        if !due {
-            return Ok(());
-        }
-        self.last = Some((Instant::now(), status.state));
-        self.high = self.high.max(status.percent()).min(100);
         let activity = serde_json::to_value(status)?;
-        self.context
-            .progress(self.high, progress_message(status.state), Some(&activity))
-            .await?;
-        Ok(())
+        self.saver
+            .save(
+                status.state,
+                status.percent(),
+                progress_message(status.state),
+                &activity,
+                force,
+            )
+            .await
     }
 }
 
@@ -357,10 +232,9 @@ impl Build<'_> {
         let prepared = async {
             let engine = self.index.prepare(embedder).await?;
             if self.request.wipe_prefix && !prefix.is_empty() {
-                let removed = self.index.store.remove_under(prefix).await?;
-                engine
-                    .vectors
-                    .remove_embeddings(&removed.iter().map(i64::to_string).collect::<Vec<_>>())?;
+                let keys = self.index.store.keys_under(prefix).await?;
+                let removed = self.index.store.remove(&keys).await?;
+                engine.vectors.remove(&removed)?;
             }
             Ok::<_, AppError>(engine)
         }

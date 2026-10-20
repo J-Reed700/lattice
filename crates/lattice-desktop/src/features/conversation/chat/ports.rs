@@ -350,7 +350,7 @@ pub trait ChatRetrieval: Send + Sync {
     fn tools(&self) -> Arc<dyn ChatTools>;
     fn library_search(
         &self,
-    ) -> Arc<dyn lattice_core::application::ports::library_search::LibrarySearchTrait>;
+    ) -> Arc<dyn lattice_core::application::ports::hybrid_search::HybridSearchTrait>;
     fn page_reader(&self) -> Arc<dyn PageReader>;
     async fn summary_search(
         &self,
