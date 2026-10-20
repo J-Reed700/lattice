@@ -45,6 +45,13 @@ pub fn match_expression(query: &str) -> Option<String> {
     (!terms.is_empty()).then(|| terms.join(" OR "))
 }
 
+/// A word as the store's tokenizer keeps it in the vocabulary: lower case,
+/// Latin diacritics removed (`unicode61`'s default). A term looked up in
+/// [`PassageStore::term_counts`] has to be in this form to be found.
+pub fn indexed_term(word: &str) -> String {
+    lattice_core::shared::text::fold_diacritics(&word.to_lowercase())
+}
+
 /// The store's FTS5 index as a text search.
 pub struct PassageTextSearch {
     store: Arc<PassageStore>,

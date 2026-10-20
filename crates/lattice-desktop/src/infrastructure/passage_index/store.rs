@@ -35,7 +35,7 @@ pub const META_IDENTITY: &str = "identity";
 /// owner's units; the store never reads them.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE IF NOT EXISTS index_documents (
     key TEXT PRIMARY KEY,
     stamp TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -109,7 +109,7 @@ pub(super) async fn read_counts(
     prefix: &str,
 ) -> std::result::Result<Counts, sqlx::Error> {
     let documents = sqlx::query(&format!(
-        "SELECT COUNT(*) AS total, COALESCE(SUM(embedded), 0) AS embedded FROM documents
+        "SELECT COUNT(*) AS total, COALESCE(SUM(embedded), 0) AS embedded FROM index_documents
          WHERE {}",
         under("key")
     ))
@@ -118,7 +118,7 @@ pub(super) async fn read_counts(
     .await?;
     let passages = sqlx::query(&format!(
         "SELECT COUNT(*) AS total, COALESCE(SUM(d.embedded), 0) AS embedded
-         FROM passages p JOIN documents d ON d.key = p.document WHERE {}",
+         FROM passages p JOIN index_documents d ON d.key = p.document WHERE {}",
         under("p.document")
     ))
     .bind(prefix)
@@ -257,6 +257,34 @@ impl PassageStore {
         Ok(store)
     }
 
+    /// A store that lives in memory for as long as it is open: no directory,
+    /// no vectors beside it, nothing on disk to clean up. For passages
+    /// searched by text for a moment, such as a collection built from sources
+    /// a caller already holds. One connection that never retires, because
+    /// each connection to an in-memory database is a database of its own.
+    pub async fn memory() -> Result<Self> {
+        let options = SqliteConnectOptions::new().in_memory(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_with(options)
+            .await
+            .map_err(db_error("open an in-memory store"))?;
+        sqlx::raw_sql(SCHEMA)
+            .execute(&pool)
+            .await
+            .map_err(db_error("create the schema"))?;
+        let store = Self {
+            dir: PathBuf::new(),
+            pool,
+        };
+        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
+        Ok(store)
+    }
+
+    /// The index directory; empty for a [`Self::memory`] store.
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -298,7 +326,7 @@ impl PassageStore {
     /// Every document under `prefix` (`""` for all), keyed by its key.
     pub async fn documents(&self, prefix: &str) -> Result<HashMap<String, Document>> {
         let rows = sqlx::query(&format!(
-            "SELECT key, stamp, content_hash, embedded FROM documents WHERE {}",
+            "SELECT key, stamp, content_hash, embedded FROM index_documents WHERE {}",
             under("key")
         ))
         .bind(prefix)
@@ -324,7 +352,7 @@ impl PassageStore {
     /// removed folder takes with it.
     pub async fn keys_under(&self, prefix: &str) -> Result<Vec<String>> {
         sqlx::query_scalar(&format!(
-            "SELECT key FROM documents WHERE {} ORDER BY key",
+            "SELECT key FROM index_documents WHERE {} ORDER BY key",
             under("key")
         ))
         .bind(prefix)
@@ -335,7 +363,7 @@ impl PassageStore {
 
     /// Same content under a new stamp: nothing to redo.
     pub async fn touch(&self, key: &str, stamp: &str) -> Result<()> {
-        sqlx::query("UPDATE documents SET stamp = ? WHERE key = ?")
+        sqlx::query("UPDATE index_documents SET stamp = ? WHERE key = ?")
             .bind(stamp)
             .bind(key)
             .execute(&self.pool)
@@ -378,7 +406,7 @@ impl PassageStore {
             .map_err(db_error("insert a passage"))?;
         }
         sqlx::query(
-            "INSERT INTO documents (key, stamp, content_hash, embedded) VALUES (?, ?, ?, ?)
+            "INSERT INTO index_documents (key, stamp, content_hash, embedded) VALUES (?, ?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET stamp = excluded.stamp,
                  content_hash = excluded.content_hash, embedded = excluded.embedded",
         )
@@ -409,7 +437,7 @@ impl PassageStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_error("delete passages"))?;
-            sqlx::query("DELETE FROM documents WHERE key = ?")
+            sqlx::query("DELETE FROM index_documents WHERE key = ?")
                 .bind(key)
                 .execute(&mut *tx)
                 .await
@@ -423,7 +451,7 @@ impl PassageStore {
     /// file yet, in key order.
     pub async fn pending(&self, prefix: &str) -> Result<Vec<String>> {
         sqlx::query_scalar(&format!(
-            "SELECT key FROM documents WHERE embedded = 0 AND {} ORDER BY key",
+            "SELECT key FROM index_documents WHERE embedded = 0 AND {} ORDER BY key",
             under("key")
         ))
         .bind(prefix)
@@ -466,7 +494,7 @@ impl PassageStore {
     pub async fn mark_embedded(&self, keys: &[String]) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
         for key in keys {
-            sqlx::query("UPDATE documents SET embedded = 1 WHERE key = ?")
+            sqlx::query("UPDATE index_documents SET embedded = 1 WHERE key = ?")
                 .bind(key)
                 .execute(&mut *tx)
                 .await
@@ -479,7 +507,7 @@ impl PassageStore {
     /// passages is embedded again. Passages and hashes stay.
     pub async fn reset_embedded(&self) -> Result<()> {
         sqlx::query(
-            "UPDATE documents SET embedded = 0
+            "UPDATE index_documents SET embedded = 0
              WHERE key IN (SELECT DISTINCT document FROM passages)",
         )
         .execute(&self.pool)

@@ -1,28 +1,38 @@
 //! Retrieval over a program's immutable source snapshots.
 //!
-//! A snapshot captured from a library document is ranked by the library
-//! itself: its chunks, vectors and hybrid fusion, confined to the program's
-//! documents. Web pages and pasted text have no library copy, so they are
-//! ranked by keyword alone. Every hit is mapped back onto the snapshot's
-//! bytes, so evidence is always an exact substring of what was captured.
+//! A course's collection reads the course's index
+//! (`references::course_index`): every active version of every source, web
+//! pages and library documents alike, cut into the same byte spans and
+//! ranked by the one hybrid search the library and Explorer use, dense and
+//! full-text fused. Without an embedding model, or while some passages are
+//! not embedded yet, the index is searched by its words, and
+//! [`ReferenceCollection::mode`] says so; so does the lesson's stage text and
+//! its verification report.
+//!
+//! A collection of sources a caller holds without a course index (outline
+//! planning, assessments, a course whose index cannot be brought up to date,
+//! tests) is ranked by an in-memory full-text store built from those sources
+//! on first use: FTS5's `bm25`, the same as a course's text branch,
+//! deterministic and needing no model.
+//!
+//! Every hit is mapped onto the snapshot's own bytes and widened to paragraph
+//! edges, so evidence is always an exact substring of what was captured.
 use crate::features::learning::dto::LearningSourceDto;
-use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use lattice_core::application::ports::{LibraryChunk, LibraryPassagesPort};
+use crate::features::learning::references::course_index::{
+    CourseProgress, CourseSearch, IndexMode, IndexView, CHUNK_CHARS,
+};
+use crate::infrastructure::passage_index::PassageStore;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::sync::Arc;
 
-const CHUNK_CHARS: usize = 1200;
-/// How far `retrieve` widens a ranked chunk on each side, toward paragraph
-/// edges.
+/// How far `retrieve` widens a ranked passage on each side, toward
+/// paragraph edges.
 const WIDEN_BYTES: usize = 300;
-/// About the longest passage `retrieve` returns: one chunk widened on both
-/// sides. Callers size retrieval to a token budget with it.
+/// About the longest passage `retrieve` returns: one indexed passage widened
+/// on both sides. Callers size retrieval to a token budget with it.
 pub(in crate::features::learning) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 * WIDEN_BYTES;
-const STEP_CHARS: usize = 900;
-/// Reciprocal-rank constant for merging library and keyword rankings.
-const RANK_K: usize = 60;
 /// How many passages a filled retrieval asks for first; it pages deeper,
 /// doubling, while everything found still fits.
 const FIRST_PAGE: usize = 16;
@@ -38,38 +48,44 @@ pub struct ReferencePassage {
     pub score: f64,
 }
 
-/// A keyword-ranked passage of a snapshot the library cannot rank.
-struct Chunk {
-    source: usize,
-    start: usize,
-    end: usize,
-    terms: HashMap<String, usize>,
-    length: usize,
+/// A ranked passage, with what the fusion recorded about where it came from.
+/// `passage.score` is the fused score (the `bm25` relevance when the search is
+/// by words alone). The branch ranks are diagnostics: no comparison key,
+/// selection digest or receipt reads them, as none reads a score.
+#[derive(Clone, Debug)]
+pub(in crate::features::learning) struct Ranked {
+    pub passage: ReferencePassage,
+    /// The passage's best rank in a dense list, and its similarity there.
+    pub dense: Option<(usize, f32)>,
+    /// The passage's best rank in a full-text list, and its score there.
+    pub lexical: Option<(usize, f32)>,
 }
 
-/// Where one library chunk sits inside a captured snapshot.
-#[derive(Clone, Copy)]
-struct Span {
-    source: usize,
-    start: usize,
-    end: usize,
+/// Which of the collection's sources a ranking reads.
+#[derive(Clone, Debug, Default)]
+pub(in crate::features::learning) enum Scope {
+    /// Every source of the collection.
+    #[default]
+    All,
+    /// Only these source versions: the ones a lesson cites, or a research
+    /// round added.
+    Keys(HashSet<String>),
+}
+
+/// What a collection searches.
+enum Index<'a> {
+    /// A course's index, as its reader's last `ensure_current` left it.
+    Course {
+        course: &'a CourseSearch,
+        view: IndexView,
+    },
+    /// The collection's own sources in memory, built on first use.
+    Memory(tokio::sync::OnceCell<Arc<PassageStore>>),
 }
 
 pub struct ReferenceCollection<'a> {
     pub sources: Vec<LearningSourceDto>,
-    chunks: Vec<Chunk>,
-    frequencies: HashMap<String, usize>,
-    /// How many passages of the whole collection, library-ranked snapshots
-    /// included, contain each term.
-    subject_frequencies: HashMap<String, usize>,
-    /// How many passages the whole collection has.
-    subject_passages: usize,
-    average_length: f64,
-    library: Option<&'a dyn LibraryPassagesPort>,
-    /// Library chunk ID to its bytes in a snapshot.
-    library_spans: HashMap<String, Span>,
-    /// The library documents behind the snapshots the library ranks.
-    library_documents: HashSet<String>,
+    index: Index<'a>,
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -93,308 +109,172 @@ fn longest_fitting_prefix(
     low
 }
 
-/// Function words that match nearly every passage; never a content term.
-const FUNCTION_WORDS: &[&str] = &[
-    "a", "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "been",
-    "before", "but", "by", "can", "could", "did", "do", "does", "each", "for", "from", "had",
-    "has", "have", "how", "if", "in", "into", "is", "it", "its", "may", "more", "most", "must",
-    "no", "not", "of", "on", "only", "or", "other", "should", "so", "some", "such", "than", "that",
-    "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "under", "up",
-    "use", "used", "uses", "using", "was", "we", "were", "what", "when", "where", "which", "while",
-    "who", "will", "with", "without", "would", "you", "your",
-];
-
-/// The words of `text` a keyword match should rest on: not function words.
-fn content_terms(text: &str) -> impl Iterator<Item = String> + '_ {
-    terms_iter(text).filter(|word| !FUNCTION_WORDS.contains(&word.as_str()))
+/// A lesson job's stage text while a course's index is brought up to date.
+/// Outside a lesson job the stage goes nowhere, so a command can use it too.
+#[derive(Default)]
+struct IndexingStages {
+    references: usize,
+    started: Option<std::time::Instant>,
+    /// The last whole percentage told, so the text moves once per percent.
+    told: Option<usize>,
 }
 
-fn terms_iter(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-}
-
-fn terms(text: &str) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
-    for word in text
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|w| !w.is_empty())
-    {
-        *counts.entry(word.to_lowercase()).or_default() += 1;
+impl CourseProgress for IndexingStages {
+    fn waiting(&mut self) {
+        crate::features::learning::lesson_progress::stage(
+            "Waiting for the course's reference index, which a background build is updating",
+        );
     }
-    counts
-}
-fn spans(text: &str) -> Vec<(usize, usize)> {
-    // Scan one passage at a time. Precomputing every character boundary would
-    // allocate one machine word per character across the entire source.
-    let mut result = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        let mut end = text.len();
-        let mut next = text.len();
-        for (ordinal, (offset, _)) in text[start..].char_indices().enumerate() {
-            if ordinal == STEP_CHARS {
-                next = start + offset;
-            }
-            if ordinal == CHUNK_CHARS {
-                end = start + offset;
-                break;
-            }
-        }
-        result.push((start, end));
-        if end == text.len() {
-            break;
-        }
-        start = next;
-    }
-    result
-}
 
-/// Locate each library chunk, in order, inside the snapshot captured from
-/// it. `None` when any chunk is missing: the library document changed after
-/// the capture, so the library can no longer rank this snapshot.
-fn locate_chunks(text: &str, chunks: &[LibraryChunk]) -> Option<Vec<(String, usize, usize)>> {
-    let mut cursor = 0;
-    let mut located = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        let needle = chunk.text.trim();
-        if needle.is_empty() {
-            continue;
-        }
-        let start = cursor + text.get(cursor..)?.find(needle)?;
-        let end = start + needle.len();
-        located.push((chunk.id.clone(), start, end));
-        cursor = end;
+    fn indexing(&mut self, references: usize) {
+        self.references = references;
+        crate::features::learning::lesson_progress::stage(format!(
+            "Indexing {references} new references"
+        ));
     }
-    (!located.is_empty()).then_some(located)
+
+    fn embedded(&mut self, done: usize, total: usize) {
+        let started = *self.started.get_or_insert_with(std::time::Instant::now);
+        let percent = done.saturating_mul(100) / total.max(1);
+        if self.told == Some(percent) {
+            return;
+        }
+        self.told = Some(percent);
+        let seconds = started.elapsed().as_secs_f64();
+        let pace = if seconds > 0.0 {
+            format!(" · {:.0} passages/s", done as f64 / seconds)
+        } else {
+            String::new()
+        };
+        let what = if self.references > 0 {
+            format!("Indexing {} new references", self.references)
+        } else {
+            "Embedding the course's references".to_string()
+        };
+        crate::features::learning::lesson_progress::stage(format!(
+            "{what} · {done} of {total} passages{pace}"
+        ));
+    }
 }
 
 impl<'a> ReferenceCollection<'a> {
-    /// Keyword ranking over every source, with no library.
+    /// The sources searched by their words, from an in-memory store built
+    /// on first use: for sources held without a course index.
     pub fn lexical(sources: &[LearningSourceDto]) -> Result<Self> {
-        Ok(Self::keyword(sources, &HashSet::new()))
+        Ok(Self {
+            sources: sources.to_vec(),
+            index: Index::Memory(tokio::sync::OnceCell::new()),
+        })
     }
 
-    /// Keyword passages for every source not in `ranked_by_library`.
-    fn keyword(sources: &[LearningSourceDto], ranked_by_library: &HashSet<usize>) -> Self {
-        let mut chunks = Vec::new();
-        let mut frequencies = HashMap::new();
-        let mut subject_frequencies: HashMap<String, usize> = HashMap::new();
-        let mut subject_passages = 0;
-        for (source, value) in sources.iter().enumerate() {
-            for (start, end) in spans(&value.excerpt) {
-                subject_passages += 1;
-                let counts = terms(&value.excerpt[start..end]);
-                for term in counts.keys() {
-                    *subject_frequencies.entry(term.clone()).or_default() += 1;
-                }
-                // The library ranks its own snapshots; only the rest are
-                // keyword passages.
-                if ranked_by_library.contains(&source) {
-                    continue;
-                }
-                for term in counts.keys() {
-                    *frequencies.entry(term.clone()).or_default() += 1;
-                }
-                chunks.push(Chunk {
-                    source,
-                    start,
-                    end,
-                    length: counts.values().sum(),
-                    terms: counts,
-                });
-            }
-        }
-        let average_length = (chunks.iter().map(|c| c.length).sum::<usize>() as f64
-            / chunks.len().max(1) as f64)
-            .max(1.0);
+    /// `sources` searched through the course's index, as `index` was last
+    /// brought up to date. Run `ensure_current` first, or use
+    /// [`Self::current`], which does.
+    pub fn open(index: &'a CourseSearch, sources: &[LearningSourceDto]) -> Self {
         Self {
             sources: sources.to_vec(),
-            chunks,
-            frequencies,
-            subject_frequencies,
-            subject_passages,
-            average_length,
-            library: None,
-            library_spans: HashMap::new(),
-            library_documents: HashSet::new(),
+            index: Index::Course {
+                course: index,
+                view: index.view(),
+            },
         }
     }
 
-    /// Rank snapshots captured from library documents through the library,
-    /// and the rest by keyword. A document the library no longer holds as it
-    /// was captured falls back to keywords for that snapshot only.
-    pub async fn load(
-        pool: &SqlitePool,
-        program_id: &str,
+    /// The course's collection, its index first brought up to date (and its
+    /// pending passages embedded), saying what it does in the lesson's stage
+    /// text. When there is no index, or it cannot be brought up to date, the
+    /// sources are searched by their words from memory, and the stage text
+    /// says why.
+    pub(in crate::features::learning) async fn current(
+        course: Option<&'a CourseSearch>,
         sources: &[LearningSourceDto],
-        library: Option<&'a dyn LibraryPassagesPort>,
     ) -> Result<Self> {
-        let Some(library) = library else {
+        use crate::features::learning::lesson_progress::stage;
+        let Some(course) = course else {
+            stage("The course's reference index is not available, so references are searched by their words only");
             return Self::lexical(sources);
         };
-        let documents = LearningSourceLibraryRepository::new(pool.clone())
-            .library_documents(program_id)
-            .await?;
-        let mut library_spans = HashMap::new();
-        let mut library_documents = HashSet::new();
-        let mut ranked_by_library = HashSet::new();
-        for (index, source) in sources.iter().enumerate() {
-            let Some(document_id) = documents.get(&source.id) else {
-                continue;
-            };
-            // The snapshot itself is always searchable, so a document the
-            // library cannot serve right now (mid-import, unreadable) is
-            // ranked by keyword instead of failing the whole collection.
-            let document = match library.document_text(document_id).await {
-                Ok(document) => document,
-                Err(error) => {
-                    tracing::warn!(%document_id, %error, "Library cannot serve a reference; ranking it by keyword");
-                    None
-                }
-            };
-            let Some(located) =
-                document.and_then(|document| locate_chunks(&source.excerpt, &document.chunks))
-            else {
-                continue;
-            };
-            for (chunk_id, start, end) in located {
-                library_spans.insert(
-                    chunk_id,
-                    Span {
-                        source: index,
-                        start,
-                        end,
-                    },
-                );
+        match course.ensure_current(&mut IndexingStages::default()).await {
+            Ok(IndexMode::Hybrid) => {}
+            Ok(IndexMode::Lexical) => stage(
+                "No embedding model is active, so the course's references are searched by their words only",
+            ),
+            Ok(mode @ IndexMode::Partial { .. }) => {
+                stage(format!("{} until the next indexing", mode.describe()));
             }
-            library_documents.insert(document_id.clone());
-            ranked_by_library.insert(index);
+            Err(error) => {
+                tracing::warn!(%error, program = course.program(), "Course index could not be brought up to date; searching references by their words");
+                stage(format!(
+                    "The course's reference index could not be brought up to date ({error}), so references are searched by their words only"
+                ));
+                return Self::lexical(sources);
+            }
         }
-        let mut collection = Self::keyword(sources, &ranked_by_library);
-        collection.library = Some(library);
-        collection.library_spans = library_spans;
-        collection.library_documents = library_documents;
-        Ok(collection)
+        Ok(Self::open(course, sources))
     }
 
-    /// `hybrid` once the library ranks at least one snapshot.
-    pub fn mode(&self) -> &'static str {
-        if self.ranks_through_library() {
-            "hybrid"
-        } else {
-            "lexical_fallback"
-        }
-    }
-    pub fn embedding_model(&self) -> Option<String> {
-        self.library
-            .filter(|_| self.ranks_through_library())
-            .map(LibraryPassagesPort::model_identity)
-    }
-    fn ranks_through_library(&self) -> bool {
-        self.library.is_some() && !self.library_documents.is_empty()
-    }
-
-    pub(in crate::features::learning) async fn reload(
-        &self,
-        pool: &SqlitePool,
-        program_id: &str,
+    /// The course's collection as it can be searched at once, for a user's
+    /// command: new versions are chunked in and retired ones dropped, but
+    /// nothing is embedded, so a command never waits for a course to embed.
+    /// What is embedded already is searched by meaning; the rest by words,
+    /// which the mode says (`partial`, or `lexical` without a model), while a
+    /// background build embeds it. Without an index, or when the rows cannot
+    /// be brought up to date, the sources are searched by words from memory.
+    pub(in crate::features::learning) async fn searchable_now(
+        course: Option<&'a CourseSearch>,
         sources: &[LearningSourceDto],
     ) -> Result<Self> {
-        Self::load(pool, program_id, sources, self.library).await
-    }
-
-    /// Library hits and keyword hits come from disjoint sources, so they are
-    /// merged by rank, each list contributing equally. Scores rank evidence
-    /// only; they are never a factual-correctness confidence. The library is
-    /// asked for more hits while overlaps keep `limit` from being reached.
-    pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit = limit.max(1);
-        let keyword = self.keyword_ranking(query);
-        let mut fetch = limit;
-        loop {
-            let mut library_spans = Vec::new();
-            let mut exhausted = true;
-            if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
-                let hits = library
-                    .search(query, &self.library_documents, fetch)
-                    .await?;
-                exhausted = hits.len() < fetch;
-                library_spans.extend(
-                    hits.iter()
-                        .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied()),
-                );
+        let Some(course) = course else {
+            return Self::lexical(sources);
+        };
+        match course.bring_text_current().await {
+            Ok(_) => Ok(Self::open(course, sources)),
+            Err(error) => {
+                tracing::warn!(%error, program = course.program(), "Course index rows could not be brought up to date; searching references by their words");
+                Self::lexical(sources)
             }
-            let selected = self.merge(&library_spans, &keyword, limit)?;
-            if selected.len() >= limit || exhausted {
-                return Ok(selected);
-            }
-            fetch = fetch.saturating_mul(2);
         }
     }
 
-    /// Merge library and keyword rankings by rank and widen each hit to
-    /// paragraph edges, each source byte at most once, up to `limit`.
-    fn merge(
+    /// This collection again over `sources`: a course's brought up to date
+    /// first (research may have saved references to it), any other rebuilt
+    /// from `sources`.
+    pub(in crate::features::learning) async fn reopen(
         &self,
-        library: &[Span],
-        keyword: &[Span],
-        limit: usize,
-    ) -> Result<Vec<ReferencePassage>> {
-        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
-        for (rank, span) in library.iter().enumerate() {
-            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
+        sources: &[LearningSourceDto],
+    ) -> Result<Self> {
+        match &self.index {
+            Index::Course { course, .. } => Self::current(Some(*course), sources).await,
+            Index::Memory(_) => Self::lexical(sources),
         }
-        for (rank, span) in keyword.iter().enumerate() {
-            ranked.push((*span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
+    }
+
+    /// How this collection searches; one mode for its whole life.
+    pub fn mode(&self) -> IndexMode {
+        match &self.index {
+            Index::Course { view, .. } => view.mode,
+            Index::Memory(_) => IndexMode::Lexical,
         }
-        // Equal ranks keep library hits ahead; the sort is stable.
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let mut selected: Vec<ReferencePassage> = Vec::new();
-        for (chunk, score, retrieval_kind) in ranked {
-            let source = self
-                .sources
-                .get(chunk.source)
-                .ok_or_else(|| invalid("Reference index contains an unknown source."))?;
-            // Expand to adjacent paragraph boundaries where practical. Evidence
-            // is always an exact substring, including significant whitespace.
-            let mut start = chunk.start.saturating_sub(WIDEN_BYTES);
-            while !source.excerpt.is_char_boundary(start) {
-                start += 1;
-            }
-            let mut end = (chunk.end + WIDEN_BYTES).min(source.excerpt.len());
-            while !source.excerpt.is_char_boundary(end) {
-                end -= 1;
-            }
-            if let Some(i) = source.excerpt[start..chunk.start].find('\n') {
-                start += i + 1;
-            }
-            if let Some(i) = source.excerpt[chunk.end..end].rfind('\n') {
-                end = chunk.end + i;
-            }
-            if selected
-                .iter()
-                .any(|p| p.source_id == source.id && p.start_byte < end && start < p.end_byte)
-            {
-                continue;
-            }
-            selected.push(ReferencePassage {
-                source_id: source.id.clone(),
-                text: source.excerpt[start..end].to_owned(),
-                start_byte: start,
-                end_byte: end,
-                retrieval_kind: retrieval_kind.into(),
-                score,
-            });
-            if selected.len() >= limit {
-                break;
-            }
+    }
+
+    /// The embedding model whose vectors this collection searches, if any.
+    pub fn embedding_model(&self) -> Option<String> {
+        match &self.index {
+            Index::Course { view, .. } => view.identity.clone(),
+            Index::Memory(_) => None,
         }
-        Ok(selected)
+    }
+
+    /// `query`'s best passages, at most `limit`, widened to paragraph edges
+    /// and never overlapping. Scores rank evidence only; they are never a
+    /// factual-correctness confidence.
+    pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
+        Ok(self
+            .rank(&[query], &Scope::All, limit.max(1))
+            .await?
+            .into_iter()
+            .map(|ranked| ranked.passage)
+            .collect())
     }
 
     /// Passages for `query`, best first, for as long as `fits` accepts them:
@@ -432,9 +312,27 @@ impl<'a> ReferenceCollection<'a> {
         within: impl Fn(&ReferencePassage) -> bool,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<(Vec<ReferencePassage>, Vec<ReferencePassage>)> {
+        self.verification_page_in(query, &Scope::All, shown, within, fits)
+            .await
+    }
+
+    /// [`Self::verification_page_within`] over the sources `scope` keeps.
+    async fn verification_page_in(
+        &self,
+        query: &str,
+        scope: &Scope,
+        shown: &[ReferencePassage],
+        within: impl Fn(&ReferencePassage) -> bool,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<(Vec<ReferencePassage>, Vec<ReferencePassage>)> {
         let mut depth = FIRST_PAGE;
         loop {
-            let hits = self.retrieve(query, depth).await?;
+            let hits: Vec<ReferencePassage> = self
+                .rank(&[query], scope, depth)
+                .await?
+                .into_iter()
+                .map(|ranked| ranked.passage)
+                .collect();
             let exhausted = hits.len() < depth;
             let mut page: Vec<_> = self
                 .verification_context(hits.iter().filter(|hit| within(hit)).cloned().collect())?
@@ -459,52 +357,18 @@ impl<'a> ReferenceCollection<'a> {
     /// [`Self::verification_page`] from one source version only: the
     /// passages of `source_version_id` for `query`, best first, while `fits`
     /// accepts them. A source the user attaches to a claim is checked this
-    /// way, ranked within the whole collection (claim review §5.4).
+    /// way (claim review §5.4).
     pub(in crate::features::learning) async fn retrieve_from(
         &self,
         source_version_id: &str,
         query: &str,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
+        let scope = Scope::Keys(HashSet::from([source_version_id.to_string()]));
         let (page, _) = self
-            .verification_page_within(query, &[], |hit| hit.source_id == source_version_id, fits)
+            .verification_page_in(query, &scope, &[], |_| true, fits)
             .await?;
         Ok(page)
-    }
-
-    /// Whether `text` mentions what `query` is about: one of the query's
-    /// distinctive content terms, those no more common across this
-    /// collection's passages than the median of the query's own content
-    /// terms. Words the whole subject shares (in a .NET collection, "net" or
-    /// "core") do not count, so a walk through deeper evidence ends once only
-    /// the subject's common vocabulary is left. Vector neighbours alone never
-    /// count. Before the median is taken, two kinds of query term are left
-    /// out because no page can tell anything by them: a term in no passage of
-    /// the collection, such as a name a lesson invented for its example (no
-    /// page can contain it, so it neither keeps a walk going nor lowers the
-    /// bar the real terms must meet), and a term in every passage.
-    pub(in crate::features::learning) fn mentions_subject_of(
-        &self,
-        query: &str,
-        text: &str,
-    ) -> bool {
-        let mut wanted: Vec<(usize, String)> = content_terms(query)
-            .filter_map(|term| {
-                let frequency = self.subject_frequencies.get(&term).copied().unwrap_or(0);
-                (frequency > 0 && frequency < self.subject_passages).then_some((frequency, term))
-            })
-            .collect();
-        wanted.sort();
-        wanted.dedup();
-        let Some(&(median, _)) = wanted.get(wanted.len().saturating_sub(1) / 2) else {
-            return false;
-        };
-        let distinctive: HashSet<&str> = wanted
-            .iter()
-            .filter(|(frequency, _)| *frequency <= median)
-            .map(|(_, term)| term.as_str())
-            .collect();
-        content_terms(text).any(|term| distinctive.contains(term.as_str()))
     }
 
     async fn fill(
@@ -524,43 +388,6 @@ impl<'a> ReferenceCollection<'a> {
             }
             depth = depth.saturating_mul(2);
         }
-    }
-
-    /// BM25 over the keyword passages, best first. Terms are summed in a
-    /// fixed order, so equal inputs always rank alike: a map's iteration
-    /// order would change the floating-point sums, and near-tied passages
-    /// would swap places between runs.
-    fn keyword_ranking(&self, query: &str) -> Vec<Span> {
-        let query_terms: std::collections::BTreeSet<String> = terms(query).into_keys().collect();
-        let count = self.chunks.len() as f64;
-        let mut scored: Vec<_> = self
-            .chunks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, chunk)| {
-                let score: f64 = query_terms
-                    .iter()
-                    .map(|term| {
-                        let tf = *chunk.terms.get(term).unwrap_or(&0) as f64;
-                        let df = *self.frequencies.get(term).unwrap_or(&0) as f64;
-                        let idf = (1.0 + (count - df + 0.5) / (df + 0.5)).ln();
-                        idf * tf * 2.2
-                            / (tf + 1.2 * (0.25 + 0.75 * chunk.length as f64 / self.average_length))
-                    })
-                    .sum();
-                (score > 0.0).then_some((index, score))
-            })
-            .collect();
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        scored
-            .into_iter()
-            .filter_map(|(index, _)| self.chunks.get(index))
-            .map(|chunk| Span {
-                source: chunk.source,
-                start: chunk.start,
-                end: chunk.end,
-            })
-            .collect()
     }
 
     /// The source passages `quotes` copy, in quote order: each quote's span
@@ -754,7 +581,9 @@ impl<'a> ReferenceCollection<'a> {
     }
 }
 
+mod ranking;
 mod snapshots;
+mod subject;
 pub(in crate::features::learning) use snapshots::{snapshot_passages, snapshot_room};
 
 #[cfg(test)]

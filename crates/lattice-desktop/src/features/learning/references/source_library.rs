@@ -16,6 +16,7 @@ use std::collections::HashMap;
 mod capture;
 mod lifecycle;
 mod reads;
+pub use reads::ActiveVersion;
 mod user_evidence;
 pub use user_evidence::SavedSource;
 

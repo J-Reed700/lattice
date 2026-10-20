@@ -160,12 +160,6 @@ pub async fn resolve_learning_claim(
     let web = container.web_service();
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
-    // Library documents are ranked by meaning once an embedding model is
-    // loaded, and by keyword otherwise.
-    let ranking = match container.get_or_load_embedding().await {
-        Ok(_) => Some(library.as_ref()),
-        Err(_) => None,
-    };
     let claim_id = ClaimId(request.claim_id.clone());
     let report = attach::attach(
         &AttachDeps {
@@ -174,7 +168,7 @@ pub async fn resolve_learning_claim(
             web: web.as_ref(),
             snapshots: snapshots.as_ref(),
             documents: library.as_ref(),
-            ranking,
+            courses: container.course_indexes(),
             llm: pin.llm.as_ref(),
             job_id,
         },

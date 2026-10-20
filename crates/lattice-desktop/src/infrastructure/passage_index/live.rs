@@ -39,6 +39,11 @@ pub struct LiveIndex {
     /// Held by whatever writes: a build for its whole run, a watcher for one
     /// update.
     pub writing: tokio::sync::Mutex<()>,
+    /// For an owner whose rows may change while it embeds (a course's): held
+    /// while pending passages are embedded, so two runs never embed the same
+    /// passages, while `writing` is held only for the row changes. An owner
+    /// that holds `writing` for a whole run needs neither apart.
+    pub embedding: tokio::sync::Mutex<()>,
 }
 
 impl LiveIndex {
@@ -48,6 +53,7 @@ impl LiveIndex {
             store,
             engine: RwLock::new(None),
             writing: tokio::sync::Mutex::new(()),
+            embedding: tokio::sync::Mutex::new(()),
         }
     }
 

@@ -304,6 +304,7 @@ async fn resolve_factual(
     };
     let mut shown: Vec<ReferencePassage> = Vec::new();
     let mut decision = None;
+    let subject = collection.subject_of(&claim).await?;
     loop {
         let (passages, base) = if sources.is_empty() {
             (vec![], vec![])
@@ -315,7 +316,7 @@ async fn resolve_factual(
         } else {
             passages
                 .iter()
-                .any(|passage| collection.mentions_subject_of(&claim, &passage.text))
+                .any(|passage| subject.mentioned_in(&passage.text))
         };
         if !more {
             break;

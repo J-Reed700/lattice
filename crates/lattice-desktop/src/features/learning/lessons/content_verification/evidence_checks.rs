@@ -624,10 +624,11 @@ async fn deepen(
             // A page that only shares the subject's common words, or only
             // vector neighbours, ends the walk; the section's own citations
             // never do.
+            let subject = references.subject_of(&walk.claim.statement).await?;
             if !cited_left
-                && !page.iter().any(|passage| {
-                    references.mentions_subject_of(&walk.claim.statement, &passage.text)
-                })
+                && !page
+                    .iter()
+                    .any(|passage| subject.mentioned_in(&passage.text))
             {
                 continue;
             }

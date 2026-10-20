@@ -125,6 +125,12 @@ pub struct Container {
     pub(crate) folder_index:
         Option<Arc<crate::features::explorer::index::manager::FolderIndexManager>>,
 
+    /// Every course's evidence index and its builds, which run as jobs.
+    /// Built with the app handle beside `folder_index`, sharing its embedder
+    /// source and search factory; `None` in test fixtures.
+    pub(crate) course_indexes:
+        Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
+
     /// The one registry of in-flight turn stop buttons for this process: a
     /// stop press and the turn it targets must meet in the same map.
     pub(crate) turn_cancellation:
@@ -419,6 +425,7 @@ impl Container {
             summary_tier,
             llm_runtime,
             folder_index: None,
+            course_indexes: None,
             app_handle: None,
         })
     }
@@ -473,15 +480,29 @@ impl Container {
             }
         });
 
+        let embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource> = Arc::new(
+            crate::features::embedding::di::AppEmbedders::new(handle.clone()),
+        );
+        let searches: Arc<
+            dyn lattice_core::application::ports::hybrid_search::HybridSearchFactory,
+        > = Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory);
         self.folder_index = Some(
             crate::features::explorer::index::manager::FolderIndexManager::new(
                 crate::features::explorer::index::manager::ManagerConfig::for_data_dir(
                     self.core.data_dir(),
                 ),
-                Arc::new(crate::features::embedding::di::AppEmbedders::new(
-                    handle.clone(),
-                )),
-                Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
+                Arc::clone(&embedders),
+                Arc::clone(&searches),
+                Arc::clone(&self.jobs),
+                Arc::clone(self.core.background()),
+            ),
+        );
+        self.course_indexes = Some(
+            crate::features::learning::references::course_index::CourseIndexes::new(
+                self.core.data_dir().join("course-index"),
+                self.core.db_pool().clone(),
+                embedders,
+                searches,
                 Arc::clone(&self.jobs),
                 Arc::clone(self.core.background()),
             ),

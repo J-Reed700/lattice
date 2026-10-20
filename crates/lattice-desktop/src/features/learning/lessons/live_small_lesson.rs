@@ -366,7 +366,7 @@ pub(super) async fn run_and_confirm(
             let llm: Arc<dyn LLMPort> = live.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
-        load_library: Arc::new(|| Box::pin(async { None })),
+        courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,

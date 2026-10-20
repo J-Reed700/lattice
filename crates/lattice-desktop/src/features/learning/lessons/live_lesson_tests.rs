@@ -313,16 +313,15 @@ async fn live_source_passage_judgments() -> Result<()> {
     } else {
         None
     };
-    // The library index lives in the app; these runners rank by keyword.
+    // The course index lives in the app; these runners rank by keyword.
     let references = if let Some((pool, program)) = &retrieval {
         let sources = LearningRepository::new(pool.clone())
             .verification_sources(program)
             .await?;
         Some(
-            crate::features::learning::reference_collection::ReferenceCollection::load(
-                pool, program, &sources, None,
-            )
-            .await?,
+            crate::features::learning::reference_collection::ReferenceCollection::lexical(
+                &sources,
+            )?,
         )
     } else {
         None
@@ -674,7 +673,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let sources = LearningRepository::new(pool.clone())
         .verification_sources(&program)
         .await?;
-    let references = ReferenceCollection::load(&pool, &program, &sources, None).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
     let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let accepted = review_evidence::check(
         &model,
@@ -858,7 +857,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
-        load_library: Arc::new(|| Box::pin(async { None })),
+        courses: None,
         refresh_sources: Arc::new(move |program_id| {
             let pool = source_pool.clone();
             Box::pin(async move {

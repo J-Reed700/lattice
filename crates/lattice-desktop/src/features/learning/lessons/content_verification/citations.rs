@@ -130,13 +130,13 @@ pub(super) async fn lesson_sources_first(
 ) -> Result<Vec<EvidencePassage>> {
     let mut page = Vec::new();
     if !citations.sources.is_empty() {
+        let subject = references.subject_of(claim).await?;
         (page, _) = references
             .verification_page_within(
                 claim,
                 shown,
                 |passage| {
-                    citations.cites(&passage.source_id)
-                        && references.mentions_subject_of(claim, &passage.text)
+                    citations.cites(&passage.source_id) && subject.mentioned_in(&passage.text)
                 },
                 |passages| within_share(llm, share, held.iter().chain(passages)),
             )
