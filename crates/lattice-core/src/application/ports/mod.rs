@@ -70,6 +70,7 @@
 //! ```
 
 pub mod active_models;
+pub mod activity;
 pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod chat_images;
@@ -132,6 +133,9 @@ pub mod vector_search_port;
 pub mod web_service;
 pub mod workspace_notes;
 
+pub use activity::{
+    ActivityItem, ActivityProgress, ActivityResource, ActivitySource, ActivityState, ActivityTarget,
+};
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
 pub use chat_images::{ChatImagesPort, CopiedMessage, ImageTurnScope};

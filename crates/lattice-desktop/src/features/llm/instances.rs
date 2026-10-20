@@ -15,7 +15,7 @@
 use std::sync::{Arc, Mutex};
 
 use lattice_core::application::contracts::settings::LLMSettingsDto;
-use lattice_core::application::ports::llm_port::{InvalidationCause, ModelRole};
+use lattice_core::application::ports::llm_port::{InvalidationCause, ModelRole, RequestLoad};
 use lattice_core::application::ports::{LLMPort, LoadedChatModelPort};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
@@ -118,15 +118,9 @@ impl LoadedLlm {
             (Some(_), _) => Some(0),
             (None, _) => None,
         };
-        let name = match (local, model) {
-            (Some(local), _) => local.name.clone(),
-            (None, ModelRef::Local { model_id }) => model_id.clone(),
-            (None, ModelRef::Ollama { model } | ModelRef::LlamaCpp { model }) => model.clone(),
-            (None, ModelRef::Cloud { model, .. }) => model.clone(),
-        };
         Self {
             llm: created.llm,
-            name,
+            name: display_name(model, local),
             server: created.server,
             gpu_bytes,
         }
@@ -142,6 +136,16 @@ impl LoadedLlm {
 impl Alive for LoadedLlm {
     fn is_alive(&self) -> bool {
         self.llm.is_alive()
+    }
+}
+
+/// The name the user knows `model` by. A local model is named by `local`.
+fn display_name(model: &ModelRef, local: Option<&LocalModel>) -> String {
+    match (local, model) {
+        (Some(local), _) => local.name.clone(),
+        (None, ModelRef::Local { model_id }) => model_id.clone(),
+        (None, ModelRef::Ollama { model } | ModelRef::LlamaCpp { model }) => model.clone(),
+        (None, ModelRef::Cloud { model, .. }) => model.clone(),
     }
 }
 
@@ -184,6 +188,43 @@ pub(crate) struct LoadedInstance {
     pub(crate) last_used_at: String,
     pub(crate) gpu_bytes: Option<u64>,
     pub(crate) degraded: Option<String>,
+    /// The name the user knows it by.
+    pub(crate) name: String,
+    /// What its backend's scheduler is running and holding now.
+    pub(crate) requests: Option<RequestLoad>,
+}
+
+/// A model being loaded now: its server starting, or its client connecting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadingModel {
+    pub(crate) name: String,
+    pub(crate) role: ModelRole,
+}
+
+/// The loads in progress, each until its guard drops.
+#[derive(Default)]
+struct Loads {
+    next: u64,
+    live: Vec<(u64, LoadingModel)>,
+}
+
+/// One load's place in [`Loads`]; dropping it, however the load ended,
+/// takes it out.
+struct LoadingGuard<'a> {
+    instances: &'a LlmInstances,
+    id: u64,
+}
+
+impl Drop for LoadingGuard<'_> {
+    fn drop(&mut self) {
+        self.instances
+            .loads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .live
+            .retain(|(id, _)| *id != self.id);
+        self.instances.moved();
+    }
 }
 
 /// Learning work refused because the Learning model's window was smaller
@@ -248,6 +289,10 @@ pub(crate) struct LlmInstances {
     /// The last learning work refused for a window too small, until the
     /// model it named covers that window.
     learning_shortfall: Mutex<Option<LearningShortfall>>,
+    /// Models being loaded now.
+    loads: Mutex<Loads>,
+    /// Moved when a load starts or ends.
+    changed: tokio::sync::watch::Sender<u64>,
 }
 
 impl LlmInstances {
@@ -257,6 +302,45 @@ impl LlmInstances {
             admission: tokio::sync::Mutex::new(()),
             last_default: Mutex::new(None),
             learning_shortfall: Mutex::new(None),
+            loads: Mutex::default(),
+            changed: tokio::sync::watch::channel(0).0,
+        }
+    }
+
+    /// The models being loaded now, oldest load first.
+    pub(crate) fn loading(&self) -> Vec<LoadingModel> {
+        self.loads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .live
+            .iter()
+            .map(|(_, loading)| loading.clone())
+            .collect()
+    }
+
+    /// Moves when a load starts or ends.
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn moved(&self) {
+        self.changed
+            .send_modify(|count| *count = count.wrapping_add(1));
+    }
+
+    /// Lists `loading` until the guard drops.
+    fn loading_guard(&self, loading: LoadingModel) -> LoadingGuard<'_> {
+        let id = {
+            let mut loads = self.loads.lock().unwrap_or_else(|p| p.into_inner());
+            let id = loads.next;
+            loads.next = loads.next.wrapping_add(1);
+            loads.live.push((id, loading));
+            id
+        };
+        self.moved();
+        LoadingGuard {
+            instances: self,
+            id,
         }
     }
 
@@ -298,6 +382,10 @@ impl LlmInstances {
         let loaded: Result<Loaded<LoadedLlm, Holder>> = self
             .pool
             .get_or_load(key, epoch, holder, || async {
+                let _loading = self.loading_guard(LoadingModel {
+                    name: display_name(&model, local),
+                    role,
+                });
                 if let (Some(local), Some(launch)) = (local, launch) {
                     let turn = self
                         .admit(&model, local, launch, floor, role, budget)
@@ -399,6 +487,8 @@ impl LlmInstances {
                 last_used_at: entry.stats.last_used_at.to_rfc3339(),
                 gpu_bytes: entry.value.gpu_bytes,
                 degraded: entry.value.degraded().map(str::to_owned),
+                name: entry.value.name.clone(),
+                requests: entry.value.llm.requests(),
             })
             .collect()
     }

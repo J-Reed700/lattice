@@ -36,6 +36,7 @@ export async function installExplorerFixture(page: Page) {
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: stamp, starters: [], documentCount: 0 }),
     'dialog|open': () => state.picker,
     list_downloads: () => [],
+    activity_snapshot: () => ({ items: [], running: 0 }),
     get_batch_history: () => ({ jobs: [] }),
     list_jobs: () => [],
     list_journal_syntheses: () => [],

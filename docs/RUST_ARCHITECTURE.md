@@ -171,6 +171,21 @@ round); and `journal.synthesis`. The renderer reads all of them through one
 jobs module (`src/features/jobs`: `list_jobs` plus one `jobs://status`
 listener).
 
+The renderer's Activity drawer (`features/activity`, command
+`activity_snapshot`) lists everything running, paused or waiting in one
+place: every job kind, each backend's model requests (the scheduler's
+running and queued counts, through `LLMPort::requests`), models and the
+embedding model loading, downloads, the library indexer, outline runs, and
+which index waits behind which in the embed turn order. Each feature
+describes its own items through the core `ActivitySource` port
+(`application/ports/activity.rs`), named by its course, folder or lesson,
+with a pace and time left only where it measured one; the composition root
+(`interfaces/di/container/activity.rs`) hands the feature every source, and
+`assemble.rs` only puts them into words. Changes with no event of their own
+(scheduler queues, loads, outline runs, the turn order) move watch channels
+that the plugin turns into `activity://changed`; the renderer also reads
+again on `jobs://status`, the download events and `indexing://progress`.
+
 `features/learning/lessons/generation_jobs.rs` is Learning's lesson-preparation
 handler; it receives a pool, model loader, and source refresh callback instead
 of the application container. `practical_runs.rs` owns

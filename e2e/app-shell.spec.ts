@@ -38,6 +38,7 @@ test('inline citations support keyboard passage navigation and clean reading', a
       list_passage_references: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -137,6 +138,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
         list_conversation_web_sources: () => [],
         list_downloaded_models: () => [],
         list_downloads: () => [],
+        activity_snapshot: () => ({ items: [], running: 0 }),
         get_indexed_folders: () => [],
       };
     }, { settings, entry });
@@ -288,6 +290,7 @@ for (const width of [1440, 620]) {
         list_passage_references: () => [],
         list_downloaded_models: () => [],
         list_downloads: () => [],
+        activity_snapshot: () => ({ items: [], running: 0 }),
         get_indexed_folders: () => [],
       };
     }, settings);
@@ -401,6 +404,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       },
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_conversation_spaces: () => [],
     };
@@ -453,6 +457,7 @@ test.describe('Library collections', () => {
         list_all_documents: () => documents,
         initialize_database: () => 'Database initialized',
         list_downloads: () => [],
+        activity_snapshot: () => ({ items: [], running: 0 }),
         get_indexed_folders: () => [],
         list_conversation_spaces: () => [],
         list_document_space_memberships: () => [],
@@ -646,6 +651,7 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
         : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>',
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_conversation_spaces: () => [],
     };
@@ -677,6 +683,7 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
 test('switches themes, remembers the choice on reload, and follows system changes', async ({ page }) => {
   await mockCommands(page, (defaults) => {
     return {
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_settings: () => {
         const saved = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
         return saved;
@@ -764,6 +771,7 @@ test('conversation outline navigates long virtualized replies and tracks the rea
       list_conversation_web_sources: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -844,6 +852,7 @@ test('chat sidebar renames a conversation and opens the spaces editor', async ({
     const conversation = { id: 'conversation-1', title: 'Reading notes', systemPrompt: null, createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isSaved: false, isBookmarked: false, isPinned: false, isArchived: false };
     const space = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
     return {
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_settings: () => settings,
       list_conversation_spaces: () => [space],
       list_journals: () => [],
@@ -909,6 +918,7 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
       list_journals: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -1005,6 +1015,7 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
       get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -1080,6 +1091,7 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -1134,6 +1146,7 @@ test('Downloaded only lists configured connections and remembers a saved localho
       get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, makeAppSettings());
@@ -1170,6 +1183,7 @@ test('Downloaded only lists configured connections and remembers a saved localho
 test('keeps Ollama and llama.cpp connections separate across provider changes', async ({ page }) => {
   await mockCommands(page, (defaults) => {
     return {
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_settings: () => {
         const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
         return settings;
@@ -1241,6 +1255,7 @@ test('catalog offers category previews, bounded pages, and honest search results
       get_huggingface_token_status: () => ({ isSet: false }),
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       is_model_already_downloaded: () => false,
       get_all_recommended_models: () => models,
       get_model_variants: (args) => {
@@ -1365,6 +1380,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
       }),
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_conversation_spaces: () => [],
     };
@@ -1412,6 +1428,7 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
       initialize_database: () => 'Database initialized',
       list_learning_programs: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
       list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
       read_file_content: (args) => {
@@ -1538,6 +1555,7 @@ test('keeps both remote connections in Auto settings after saving and reloading'
       },
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
     };
   }, makeAppSettings());
@@ -1603,6 +1621,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
       list_conversation_web_sources: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       chat_with_conversation: () => {
         throw { code: 'NETWORK_ERROR', message: 'Network error', details: 'llama.cpp request timed out' };
@@ -1695,6 +1714,7 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
       list_conversation_web_sources: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
     };
   }, settings);
@@ -1737,6 +1757,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
       },
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_conversation_spaces: () => [],
       list_document_space_memberships: () => [],
@@ -1821,6 +1842,7 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       get_settings: () => settings,
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],

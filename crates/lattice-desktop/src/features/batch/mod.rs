@@ -11,6 +11,7 @@
 //! - `imports::BatchImports` — start, read, cancel, retry and delete imports
 //! - `plugin::init()` — the Tauri plugin, which registers the import job kinds
 
+pub mod activity;
 pub mod dto;
 mod file_job;
 pub mod imports;

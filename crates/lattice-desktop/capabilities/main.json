@@ -282,6 +282,7 @@
     "batch:allow-delete-batch-job",
     "batch:allow-retry-failed-items",
     "jobs:allow-list-jobs",
+    "activity:allow-activity-snapshot",
     "backup:allow-plugin-create-backup",
     "backup:allow-plugin-restore-backup",
     "backup:allow-plugin-list-backups",

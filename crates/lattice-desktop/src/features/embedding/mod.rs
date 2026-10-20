@@ -24,6 +24,7 @@
 //! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
 //! stay in `application/ports/`.
 
+pub(crate) mod activity;
 pub mod candle_service;
 pub mod commands;
 pub mod di;

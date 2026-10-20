@@ -29,6 +29,7 @@
 //!   own-index preference and sub-folder reuse, identity switch, summaries
 //! - `tool` — the model's `search_folder`
 
+pub mod activity;
 mod build;
 pub mod dto;
 pub mod manager;
