@@ -1,0 +1,675 @@
+{
+  "schema": "lattice-judge-calibration/2",
+  "instructions": "For each item, read every turn's question, rubric and answer, then set human_verdict to \"pass\" when every turn meets its rubric and \"fail\" otherwise. Grade on the rubric alone. Rows carry no judge verdict and no stratum, and their order is random: label in file order, and stopping early leaves a smaller valid sample. Put anything worth recording in human_note.",
+  "alpha": 0.05,
+  "precision_target_half_width": 0.07853109439329081,
+  "planned_half_width": 0.07352941176470587,
+  "seed": 2026,
+  "frame": {
+    "judge pass": {
+      "population": 20,
+      "sample": 17
+    },
+    "judge fail": {
+      "population": 11,
+      "sample": 9
+    },
+    "unanswered": {
+      "population": 3,
+      "sample": 0
+    }
+  },
+  "estimated_minutes": 28,
+  "items": [
+    {
+      "query_id": "dp-table-calibration",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "In calibration record 03, what tolerance is listed against the Garnetline gauge?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"0.0397\"",
+            "- Must not claim: \"0.0999 mm against the Garnetline\"",
+            "- What a correct answer says: Quorvin Metrology calibration record 03 lists 0.0397 mm against the Garnetline gauge."
+          ],
+          "answer": [
+            "In calibration record 03, the tolerance listed against the Garnetline gauge is **0.0397 mm** [2]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-section-after-clause",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "In the Tessivar Cloud framework agreement, what does the paragraph right after clause 24.111 say, before Section 25 begins?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Reackgate\"",
+            "- Must state: \"31 weeks\"",
+            "- What a correct answer says: Right after clause 24.111 comes the Reackgate step: the parties must hold an escalation meeting within 31 weeks of a notified dispute before either may commence proceedings."
+          ],
+          "answer": [
+            "In the Tessivar Cloud framework agreement, clause 24.111 states: \"Each party shall appoint a contract manager and shall notify the other of any change of appointment. Intellectual property created specifically for the customer vests in the customer on payment. Invoices are payable within the period stated in the order schedule, without set-off.\" [7]",
+            "",
+            "The paragraph immediately following clause 24.111 is clause 24.112, which states: \"Intellectual property created specifically for the customer vests in the customer on payment. The supplier shall comply with the customer's site rules while present at a customer location. Any variation is effective only when signed by an authorised representative of each party.\" [7]",
+            "",
+            "This paragraph precedes Section 25 (Failure handling), which begins with clause 25.101 in this document version, though the numbering differs from other agreements."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-abstain-order",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "What was the unit price on purchase order PO-00001?",
+          "rubric": [
+            "- The documents do not contain this answer. A correct answer says so and does not invent one.",
+            "- What a correct answer says: There is no purchase order PO-00001 in the vault; a correct answer says so and gives no price."
+          ],
+          "answer": [
+            "The unit price on purchase order PO-00001 is not available in the provided documents. The search results contain details for other purchase orders (PO-19920, PO-42003, PO-54485, etc.), but none of them are for PO-00001 [1]-[16]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-multihop-dunlark-notice",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "How much notice would we have to give to end the contract of whoever does on-site work for the Dunlark pilot?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Quorvin Metrology\"",
+            "- Must state: \"70 hours\" (or) \"seventy hours\"",
+            "- What a correct answer says: On-site work for the Dunlark pilot runs through Quorvin Metrology, whose agreement can be stopped from renewing with 70 hours of written notice."
+          ],
+          "answer": [
+            "The answer is not available in the provided documents. While there are Master services agreements for other suppliers (Calderwick Freight and Renholm Staffing) that specify termination requires \"the notice period set out in the order schedule\" [10, 13], no document provides the specific notice period required to end the contract for the Dunlark pilot or its on-site workers."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-encryption-versions",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "What does the workstation encryption standard require today?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"45 calendar days\" (or) \"45 days\"",
+            "- Must not claim: \"73 calendar days\"",
+            "- What a correct answer says: Version 3.0 (in force): full-disk encryption on every issued laptop, recovery keys escrowed centrally, and a device without an escrowed key is refused on the network after 45 calendar days."
+          ],
+          "answer": [
+            "The current workstation encryption standard in force is version 3.0, which requires full-disk encryption on every issued laptop and escrows recovery keys centrally. Devices without an escrowed key are refused network access after 45 calendar days [3][5]."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "What did the version before that say?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"73 calendar days\" (or) \"73 days\"",
+            "- What a correct answer says: Version 2.0 (superseded) had the same rule but refused a device without an escrowed key after 73 calendar days."
+          ],
+          "answer": [
+            "The version before the current standard (version 3.0) was version 2.0. It required full-disk encryption on every issued laptop, escrowed recovery keys centrally, and refused network access to a device without an escrowed key after 73 calendar days [18][21]."
+          ]
+        },
+        {
+          "turn": 3,
+          "question": "Is there any way round it?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Gidgegate\"",
+            "- Must state: \"outage\"",
+            "- What a correct answer says: Only the Gidgegate exception, which suspends the rule for a site under a declared outage and only while that outage lasts; there is no other way round it."
+          ],
+          "answer": [
+            "Yes, there is one way round: **a local addendum cannot create one and a manager cannot grant one** [15]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-merridew-reversal",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Which proposal did the Merridew platform sync back out of, and in which week?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Grespley\"",
+            "- Must state: \"week 11\"",
+            "- What a correct answer says: In week 11 the Merridew platform sync reversed the Grespley proposal, agreed in an earlier session; it will not proceed."
+          ],
+          "answer": [
+            "The Merridew platform sync backed out of the Grespley proposal in week 11 [12]."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "Who owned the drift report action in that same week, and when was it due?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Ilse Brantgard\"",
+            "- Must state: \"2031-10-25\"",
+            "- What a correct answer says: In week 11 the drift report action was Ilse Brantgard's, due 2031-10-25."
+          ],
+          "answer": [
+            "In week 11, the drift report action was owned by Ilse Brantgard and was due on 2031-10-25 [16]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-buried-agreement-meeting",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Under the Tessivar Cloud framework agreement, is there a meeting the parties have to hold before anyone goes to court, and how soon?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"31 weeks\"",
+            "- What a correct answer says: Yes: the Reackgate step obliges the parties to hold an escalation meeting within 31 weeks of a notified dispute before either may start proceedings."
+          ],
+          "answer": [
+            "Under the Tessivar Cloud framework agreement, the parties are required to attempt to resolve a dispute at the contract-manager level before any escalation, but there is no specific requirement for a meeting to be held before going to court within a set timeframe. The agreement states: \"The parties shall attempt to resolve a dispute at contract-manager level before any escalation.\" [3]"
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-calderwick",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "When does the Calderwick Freight master agreement come up for renewal?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"2025-10-14\"",
+            "- What a correct answer says: The Calderwick Freight master services agreement renews on 2025-10-14 and annually thereafter."
+          ],
+          "answer": [
+            "The Calderwick Freight master agreement comes up for renewal on 2025-10-14 and thereafter annually [1]. Either party may prevent renewal by giving 12 working days of written notice [1]."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "And how much notice stops it?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"12 working days\" (or) \"twelve working days\"",
+            "- What a correct answer says: Either party prevents renewal of the Calderwick Freight agreement by giving 12 working days of written notice."
+          ],
+          "answer": [
+            "The Calderwick Freight master agreement comes up for renewal on 2025-10-14 and thereafter annually [21]. Either party may prevent renewal by giving 12 working days of written notice [21]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-conflict-snapshot-versions",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Our notes give different retention periods for workspace snapshots. What does each version say, and which one is in force?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"24 working days\"",
+            "- Must state: \"42 hours\"",
+            "- What a correct answer says: Version 3.0 (in force) keeps workspace snapshots for 24 working days; version 2.0 (superseded) said 42 hours and version 1.0 (superseded) said 80 working days. The answer must identify 24 working days as the one in force."
+          ],
+          "answer": [
+            "The documents provide three different retention periods for workspace snapshots:",
+            "",
+            "*   **Version 1.0:** Workspace snapshots are retained for **80 working days** [4]. This version is marked as \"superseded\" and was effective from 2025-12-23 [6].",
+            "*   **Version 2.0:** Workspace snapshots are retained for **42 hours** [1]. This version is also marked as \"superseded\" and was effective from 2027-04-23 [5].",
+            "*   **Version 3.0:** Workspace snapshots are retained for **24 working days** [2]. This version is the one currently in force, effective from 2026-03-26 [3]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-table-spend-csv",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "In site spend extract 02, what is the committed maintenance figure for Selkirk North?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"4,270.53\" (or) \"4270.53\"",
+            "- What a correct answer says: Site spend extract 02 shows £4,270.53 committed for Selkirk North maintenance."
+          ],
+          "answer": [
+            "The committed maintenance figure for Selkirk North in Site spend extract 02 is £4,270.53 [4]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-abstain-repair-cost",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "How much did the boiler repair at 14 Tanmoor Row cost?",
+          "rubric": [
+            "- The documents do not contain this answer. A correct answer says so and does not invent one.",
+            "- What a correct answer says: The vault has a note on resetting the boiler but no repair or its cost; a correct answer says the cost is not recorded and gives no figure."
+          ],
+          "answer": [
+            "The cost of the boiler repair at 14 Tanmoor Row is not available in the provided documents. The maintenance logs record that a boiler was checked and filters were replaced multiple times, but they do not mention any specific repair costs or service calls for repairs [1], [2], [3], [5]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-ocr-stock-reference",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "What reference is quoted when ordering against the local stock arrangement in scanned minutes 05?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"SIG-84122\"",
+            "- What a correct answer says: Scanned minutes 05 name the Voackford arrangement and the reference to quote is SIG-84122."
+          ],
+          "answer": [
+            "The provided context does not contain information about a \"reference quoted when ordering against the local stock arrangement\" specifically for **Scanned minutes 05**.",
+            "",
+            "While other documents reference similar arrangements (e.g., SIG-16479 for Seadgegate in Scanned notice 07 [2], SIG-25141 for Flispby in Scanned minutes 09 [4]), the specific document \"Scanned minutes 05\" only contains a placeholder header and no relevant content regarding stock arrangements or reference codes."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-garnetline-chain",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Which supplier handles logistics for the Garnetline migration?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Calderwick Freight\"",
+            "- What a correct answer says: Logistics and on-site handling for the Garnetline migration run through Calderwick Freight under the Krerkgate workstream."
+          ],
+          "answer": [
+            "The supplier handling logistics for the Garnetline migration is Calderwick Freight.",
+            "",
+            "According to the project brief for the Garnetline migration: \"Logistics and on-site handling run through Calderwick Freight under the Krerkgate workstream. No other supplier is engaged here.\" [2]"
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "When does that supplier's master agreement renew?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"2025-10-14\"",
+            "- What a correct answer says: Calderwick Freight's master services agreement renews on 2025-10-14 and annually thereafter."
+          ],
+          "answer": [
+            "The supplier handling logistics for the Garnetline migration is Calderwick Freight [22]. Calderwick Freight's master agreement renews on 2025-10-14 and thereafter annually [4]."
+          ]
+        },
+        {
+          "turn": 3,
+          "question": "And what is the undertaking in that agreement about withdrawing from a site called?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Broskstead\" (or) \"Floandgate\"",
+            "- What a correct answer says: The Calderwick Freight agreement's withdrawal undertaking is the Broskstead undertaking (serve the site through the notice period and bear interim costs); its standing provision also names a Floandgate undertaking (continue at the site for 83 calendar days after notice). Either name is acceptable."
+          ],
+          "answer": [
+            "The undertaking in the Calderwick Freight agreement about withdrawing from a site is called \"The Broskstead undertaking\" [14]. It obliges the supplier to continue serving that site for the notice period and bear the cost of any interim arrangement the customer reasonably makes if they withdraw [14]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-paraphrase-clock",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "What does the system do when the machines cannot agree on what time it is?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Reillmere\"",
+            "- Must state: \"64 weeks\"",
+            "- What a correct answer says: When the clock source disagrees with its peers, the Reillmere arbiter freezes ordering and holds writes for 64 weeks before failing them outright."
+          ],
+          "answer": [
+            "When machines cannot agree on what time it is, the system behavior described in your documents depends on the specific context:",
+            "",
+            "1. **In distributed clock discipline (the core rings):** When the clock source disagrees with its peers, the Reillmere arbiter freezes ordering and holds writes for 64 weeks before failing them outright [1]. This applies specifically to situations where clocks disagree significantly.",
+            "",
+            "2. **For slowly drifting but within-tolerance clocks:** If a clock drifts slowly but stays within tolerance, it is corrected gradually without pausing anything [4].",
+            "",
+            "3. **General NTP behavior (from external web sources):** The Network Time Protocol (NTP) makes disagreement measurable and gives clients a method for excluding implausible sources. It does not nominate a single more persuasive clock; instead, it left the final act of changing the local clock to the machine that would live with the consequences [18]. NTP uses an intersection algorithm to select accurate time servers and is designed to mitigate effects of variable network latency [19].",
+            "",
+            "4. **Web Results (Supplemental):**",
+            "   - The 1989 experiment found clocks wrong by minutes, hours, or even weeks across the Internet, demonstrating that connectivity doesn't automatically make clocks trustworthy witnesses [18]",
+            "   - NTP can usually maintain time to within tens of milliseconds over public Internet networks and achieve better than one millisecond accuracy in local area networks under ideal conditions, though asymmetric routes and network congestion can cause errors of 100 ms or more [19]",
+            "",
+            "The documents don't provide a complete answer for all scenarios, particularly for cases outside the specific contexts mentioned (core rings with significant disagreement vs. gradual drift). The system's response varies based on the severity of the disagreement and whether clocks are within acceptable tolerance ranges."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-opening-agreement",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "How does the Brackleton Facilities framework agreement open? What is its first section called?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Scope and application\"",
+            "- What a correct answer says: The Brackleton Facilities framework agreement (consolidated text) opens with Section 1, 'Scope and application'."
+          ],
+          "answer": [
+            "The Brackleton Facilities framework agreement opens with the heading \"Brackleton Facilities framework agreement, consolidated text\" [1], [8]. Its first section is called Section 19 (Change control) [3], [17]. However, the provided context does not explicitly state that this is the *first* section of the agreement; it only shows excerpts from various sections. Therefore, while the document title and a section heading are available, confirming the order of sections to definitively identify the first one is not possible with the given information."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-series-week-owner",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "In week 10 of the merridew platform sync, who owned the drift report action and when was it due?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Dagny Oreskel\"",
+            "- Must state: \"2026-06-17\"",
+            "- What a correct answer says: In week 10 of the Merridew platform sync the drift report action was Dagny Oreskel's, due 2026-06-17. Neighbouring weeks have different owners and dates."
+          ],
+          "answer": [
+            "In week 10 of the Merridew platform sync, Dagny Oreskel owned the action \"Close out the open drift report,\" which was due on 2026-06-17 [2]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-abstain-home-address",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "What is Marisol Quenby's home address?",
+          "rubric": [
+            "- The documents do not contain this answer. A correct answer says so and does not invent one.",
+            "- What a correct answer says: The vault names Marisol Quenby as a runbook owner but never records her home address; a correct answer says it is not recorded."
+          ],
+          "answer": [
+            "The answer is not available in the provided documents. None of the retrieved passages contain Marisol Quenby's home address; they only reference her role and attendance at various meetings."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-runbook-ticket",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Who owns the runbook for ERR-4070?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Marisol Quenby\"",
+            "- What a correct answer says: The ERR-4070 runbook (request quota exhaustion on ingest-fanout, core rings) is owned by Marisol Quenby."
+          ],
+          "answer": [
+            "The answer is not available in the provided documents. None of the retrieved runbooks mention error code ERR-4070; the closest match found is ERR-8747 (owner: Emeric Losk) [1], but there is no evidence for ERR-4070."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "What is its standing ticket, and if the problem hasn't cleared after the wait, should I open a new ticket?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"TCK-1836\"",
+            "- What a correct answer says: The standing ticket is TCK-1836. If the band is still broken when the hold expires, page Marisol Quenby and quote TCK-1836; never raise a second ticket."
+          ],
+          "answer": [
+            "The provided context does not contain information about a runbook for error code ERR-4070. Therefore, the standing ticket and instructions on whether to open a new ticket are not available in the provided documents."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-conflict-receipt-threshold",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Above what amount does a single expense need a receipt? I've seen two different figures.",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"4,295.80\" (or) \"4295.80\"",
+            "- What a correct answer says: The current (version 3.0) expense receipt threshold is £4,295.80; the superseded version 2.0 said £4,223.60. A correct answer gives £4,295.80 as current and may explain the older figure."
+          ],
+          "answer": [
+            "The provided documents do not contain information about expense receipt thresholds for IRS or general U.S. tax purposes. They focus on specific internal policies for an organization named \"Quillon Grid\" (with thresholds like £4,295.80 in version 3.0 [1], £4,223.60 in version 2.0 [2], and £5,253.31 in version 1.0 [3]) or a separate rule for bulk data exports (£7,743.62 in version 3.0 [9]).",
+            "",
+            "While the web results discuss IRS rules (e.g., a $75 threshold [18], [19]), these are external sources and not part of the user's provided context documents. Based strictly on the provided context, there is no answer to your question about the amount at which a single expense requires a receipt for U.S. tax purposes."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-table-order-line",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "On purchase order PO-71486, what part number is on line one and what is its unit price?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"QG-920-655\"",
+            "- Must state: \"2,205.31\" (or) \"2205.31\"",
+            "- What a correct answer says: Line one of PO-71486 is part QG-920-655 (replacement sensor head) at a unit price of £2,205.31."
+          ],
+          "answer": [
+            "On purchase order PO-71486, the part number on line one is QG-920-655 and its unit price is £2,205.31 [2]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-ring-thresholds",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "In the core rings, what's the wait before we mitigate tenant bucket contention?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"63 seconds\"",
+            "- Must not claim: \"21 minutes\"",
+            "- What a correct answer says: In the core rings, hold the mitigation until the quota broker has been above its band for 63 seconds."
+          ],
+          "answer": [
+            "In the core rings, hold mitigation for tenant bucket contention until the quota broker has been above its band for 63 seconds [2]."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "And on the Wendover Basin edge ring?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"21 minutes\"",
+            "- What a correct answer says: On the Wendover Basin edge ring the hold is 21 minutes."
+          ],
+          "answer": [
+            "For the Wendover Basin edge ring, hold mitigation for tenant bucket contention until the quota broker has been above its band for 21 minutes [18]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-conflict-ring-threshold",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "How long do we wait before mitigating cold shard promotion?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"14 seconds\"",
+            "- Must state: \"38 minutes\"",
+            "- What a correct answer says: It depends on the ring: 14 seconds in the core rings, but 38 minutes in the Wendover Basin edge ring. A correct answer gives both and says which ring each applies to, or asks which ring is meant while giving both."
+          ],
+          "answer": [
+            "The wait time before mitigating cold shard promotion depends on the ring:",
+            "",
+            "*   For the Wendover Basin edge ring, hold mitigation until the index compactor has been above its band for **38 minutes** [1].",
+            "*   For the core rings, hold mitigation until the index compactor has been above its band for **14 seconds** [2]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-paraphrase-sick-child",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "My kid was sick and I had to stay home. Is there a limit on that kind of time off?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"42 working days\"",
+            "- What a correct answer says: Absence for a dependant's illness counts against the Moullmere allowance, capped at 42 working days in any rolling year."
+          ],
+          "answer": [
+            "Based on the provided context, there is no specific limit mentioned for time off taken because a child (a dependent) was sick.",
+            "",
+            "However, the documents do mention limits for other types of leave:",
+            "*   Absence caused by a dependant's illness is recorded against an allowance capped at **42 working days** in any rolling year [6].",
+            "*   Federal employees are entitled to no more than a combined total of **12 weeks** of sick leave each leave year for all family care purposes [20]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-collision-ostrel-row",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Three different things in here are called Ostrel. Which milestone date belongs to Ostrel Row, the street the Aldersgate Print works stands on?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"2031-09-19\"",
+            "- Must not claim: \"2030-03-26\"",
+            "- Must not claim: \"2033-12-19\"",
+            "- What a correct answer says: Ostrel Row's milestone (the Foussworth milestone) falls on 2031-09-19; the Ostrel telemetry product and the Ostrel blue cheese have different dates."
+          ],
+          "answer": [
+            "The milestone date belonging to Ostrel Row (the street the Aldersgate Print works stands on) is 2031-09-19 [1]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-mt-abstain-followup",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Which runbook owns TCK-4246, and who gets paged when it fires?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Ilse Brantgard\"",
+            "- What a correct answer says: TCK-4246 is the standing ticket of the ERR-9212 runbook for the Wendover Basin edge ring; Ilse Brantgard owns it and is paged."
+          ],
+          "answer": [
+            "The runbook titled \"Runbook: probe registration drift on probe-registry (the Wendover Basin edge ring)\" owns standing ticket TCK-4246 [1]. The owner of this runbook is Ilse Brantgard [1]. When it fires, the person who gets paged is not explicitly stated in the provided context."
+          ]
+        },
+        {
+          "turn": 2,
+          "question": "What's her mobile number?",
+          "rubric": [
+            "- The documents do not contain this answer. A correct answer says so and does not invent one.",
+            "- What a correct answer says: The vault never records Ilse Brantgard's mobile number (pages go to the bench, not a personal phone); a correct answer says it is not recorded and gives no number."
+          ],
+          "answer": [
+            "The answer is not available in the provided documents. None of the retrieved passages contain a mobile number for any individual."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    },
+    {
+      "query_id": "dp-multihop-garnetline-renewal",
+      "turns": [
+        {
+          "turn": 1,
+          "question": "Whoever handles logistics for the Garnetline migration: when does their master agreement next renew, and how much notice stops it?",
+          "rubric": [
+            "- The documents contain the answer. Declining to answer fails.",
+            "- Must state: \"Calderwick Freight\"",
+            "- Must state: \"2025-10-14\"",
+            "- Must state: \"12 working days\" (or) \"twelve working days\"",
+            "- What a correct answer says: Logistics for the Garnetline migration run through Calderwick Freight; its master services agreement renews on 2025-10-14 (then annually) and renewal is prevented by 12 working days of written notice."
+          ],
+          "answer": [
+            "The logistics for the Garnetline migration are handled by Calderwick Freight under the Krerkgate workstream [5]. Their master agreement next renews on 2025-10-14 and thereafter annually [13]. Either party may prevent renewal by giving 12 working days of written notice [13]."
+          ]
+        }
+      ],
+      "human_verdict": null,
+      "human_note": ""
+    }
+  ],
+  "scored_run": "evals/retrieval/results/chat/qwen3.5-9b-local/2026-10-13-shipped-path-desktop-path-v1.scored.jsonl",
+  "scored_sha256": "a0f31cb296c9c90e2721660c49c0e9bcc6c1ed90cd86bebad140bdde096cb1da"
+}

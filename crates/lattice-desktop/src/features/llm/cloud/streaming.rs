@@ -1,19 +1,24 @@
 //! Typed cloud streams publish only displayable text through callbacks while
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
+use super::timing::{evaluated_prompt_tokens, StreamClock};
 use super::{field, parse_completion, set_field, CompletionResponse, LLMProvider};
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type Callback<'a> = &'a (dyn Fn(String) -> Result<()> + Send + Sync);
 
+/// Read a stream to its completion. The request went out at `sent`; unless
+/// the completion carries the server's own timings, the first streamed delta
+/// splits the time since into reading the prompt and writing the answer.
 pub(super) async fn drain<S, B, E>(
     provider: LLMProvider,
     mut bytes: S,
     stall_timeout: Duration,
+    sent: Instant,
     on_text: Callback<'_>,
     on_reasoning: Callback<'_>,
 ) -> Result<CompletionResponse>
@@ -22,6 +27,16 @@ where
     B: AsRef<[u8]>,
     E: std::fmt::Display,
 {
+    let clock = StreamClock::started(sent);
+    let timed_text = |text: String| {
+        clock.delta();
+        on_text(text)
+    };
+    let timed_reasoning = |text: String| {
+        clock.delta();
+        on_reasoning(text)
+    };
+    let (on_text, on_reasoning): (Callback<'_>, Callback<'_>) = (&timed_text, &timed_reasoning);
     let mut decoder = Decoder::new(provider);
     loop {
         let next = tokio::time::timeout(stall_timeout, bytes.next())
@@ -40,7 +55,13 @@ where
             break;
         }
     }
-    decoder.finish(on_text, on_reasoning)
+    let completed = decoder.into_completed(on_text, on_reasoning)?;
+    let prompt_tokens = evaluated_prompt_tokens(&completed);
+    let mut response = parse_completion(provider, completed)?;
+    if response.timing.is_none() {
+        response.timing = clock.timing(prompt_tokens, response.output_tokens);
+    }
+    Ok(response)
 }
 
 struct Decoder {
@@ -59,6 +80,9 @@ struct Decoder {
     google_reasoning: String,
     google_finish_reason: Option<String>,
     google_usage: Option<Value>,
+    /// A llama.cpp-style `timings` object, which an OpenAI-compatible
+    /// llama-server sends with its last chunk.
+    google_timings: Option<Value>,
 }
 
 #[derive(Default)]
@@ -93,6 +117,7 @@ impl Decoder {
             google_reasoning: String::new(),
             google_finish_reason: None,
             google_usage: None,
+            google_timings: None,
         }
     }
 
@@ -205,6 +230,9 @@ impl Decoder {
     ) -> Result<()> {
         if let Some(usage) = field(event, "usage").as_object() {
             self.google_usage = Some(Value::Object(usage.clone()));
+        }
+        if let Some(timings) = event.get("timings").filter(|timings| timings.is_object()) {
+            self.google_timings = Some(timings.clone());
         }
         let choices = match field(event, "choices").as_array() {
             Some(choices) => choices,
@@ -411,11 +439,23 @@ impl Decoder {
         Ok(())
     }
 
+    #[cfg(test)]
     fn finish(
-        mut self,
+        self,
         on_text: Callback<'_>,
         on_reasoning: Callback<'_>,
     ) -> Result<CompletionResponse> {
+        let provider = self.provider;
+        parse_completion(provider, self.into_completed(on_text, on_reasoning)?)
+    }
+
+    /// The completed response in the provider's own shape, once the stream
+    /// has ended.
+    fn into_completed(
+        mut self,
+        on_text: Callback<'_>,
+        on_reasoning: Callback<'_>,
+    ) -> Result<Value> {
         if self.completed.is_none() {
             let remaining = std::mem::take(&mut self.buffer);
             self.line(&remaining, on_text, on_reasoning)?;
@@ -459,7 +499,7 @@ impl Decoder {
                     "stop".to_string()
                 }
             });
-            let completed = json!({
+            let mut completed = json!({
                 "choices": [
                     {
                         "message": message,
@@ -471,12 +511,13 @@ impl Decoder {
                     "completion_tokens": 0,
                 }))
             });
+            if let Some(timings) = self.google_timings.take() {
+                set_field(&mut completed, "timings", timings)?;
+            }
             self.completed = Some(completed);
         }
-        let response = self
-            .completed
-            .ok_or_else(|| invalid("stream ended before completion"))?;
-        parse_completion(self.provider, response)
+        self.completed
+            .ok_or_else(|| invalid("stream ended before completion"))
     }
 }
 
@@ -640,6 +681,7 @@ mod tests {
             LLMProvider::Openai,
             tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
             Duration::from_secs(1),
+            Instant::now(),
             &on_text,
             &on_reasoning,
         );
@@ -677,6 +719,7 @@ mod tests {
             LLMProvider::Openai,
             pending,
             Duration::from_secs(2),
+            Instant::now(),
             &|_| Ok(()),
             &|_| Ok(()),
         )

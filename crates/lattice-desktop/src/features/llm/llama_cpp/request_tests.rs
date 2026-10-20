@@ -3,7 +3,7 @@ use super::*;
 use crate::features::llm::scheduler::rejection::RequestSize;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
-    SamplingOverride, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
+    SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
 };
 
 fn client() -> LlamaCppLlm {
@@ -274,6 +274,11 @@ fn the_final_frame_reports_cached_and_evaluated_prompt_tokens() {
     let response = decoder.into_response().unwrap();
     assert_eq!(response.text, "Hi");
     assert_eq!(response.input_tokens, 2060);
+    // The pace counts what the server read, not what its cache held.
+    let timing = response.timing.unwrap();
+    assert_eq!((timing.prompt_tokens, timing.output_tokens), (12, 7));
+    assert!((timing.prompt_seconds - 0.0405).abs() < 1e-9);
+    assert!((timing.output_seconds - 0.14).abs() < 1e-9);
 
     // A server that reports none leaves nothing to log.
     let mut quiet = streaming::Decoder::for_completion();
@@ -281,6 +286,31 @@ fn the_final_frame_reports_cached_and_evaluated_prompt_tokens() {
         .push(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n")
         .unwrap();
     assert_eq!(quiet.timings(), None);
+}
+
+/// A whole answer carries the same `timings` object as a stream's last
+/// frame; one without it is not timed.
+#[test]
+fn a_whole_answer_reports_its_timing_too() {
+    let message = json!([{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]);
+    let response = parse_completion(json!({"choices":message.clone(),
+        "usage":{"prompt_tokens":2060,"completion_tokens":226},
+        "timings":{"cache_n":360,"prompt_n":1700,"prompt_ms":2000.0,
+            "predicted_n":226,"predicted_ms":20000.0,"predicted_per_second":11.3}}))
+    .unwrap();
+    assert_eq!(
+        response
+            .timing
+            .map(|timing| (timing.prompt_tokens, timing.output_tokens)),
+        Some((1700, 226))
+    );
+    let timing: ServedTiming = response.timing.unwrap();
+    assert!((timing.prompt_seconds - 2.0).abs() < 1e-9);
+    assert!((timing.output_seconds - 20.0).abs() < 1e-6);
+    assert_eq!(
+        parse_completion(json!({"choices":message})).unwrap().timing,
+        None
+    );
 }
 
 /// Laguna XS 2.1 repeats one special token with thinking off, so it thinks on

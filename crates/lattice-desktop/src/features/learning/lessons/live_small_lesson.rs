@@ -50,6 +50,7 @@ async fn live_contract_fidelity_controls() -> Result<()> {
         )
         .check_batch_without_deadline(&targets, &|_| Ok(()), &|_| Ok(()))
         .await?
+        .judgments
         .into_iter()
         .collect::<std::collections::VecDeque<_>>()
     } else {

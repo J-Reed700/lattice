@@ -5,6 +5,7 @@ from pathlib import Path
 from rag_eval import validate_dataset
 from eval_integrity import validate_expectations
 from shipped_path_eval import validate_questions
+import terse_slice
 
 
 def main():
@@ -31,6 +32,13 @@ def main():
         if problems:
             raise ValueError(f'{path.name}: ' + '; '.join(problems))
         print(f'{path.name}: {len(questions["items"])} desktop-path items validated')
+    # Terse slices restate a source fixture's queries; each must cover every
+    # eligible source query once, in new words.
+    for path in sorted(root.glob('*-terse.json')):
+        report = terse_slice.check(*terse_slice.load(path))
+        if report['problems']:
+            raise ValueError(f'{path.name}: ' + '; '.join(report['problems']))
+        print(f'{path.name}: {report["queries"]} terse queries validated')
 
 
 if __name__ == '__main__':

@@ -10,8 +10,17 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 mod batch;
+mod prompt;
 mod rooms;
 pub use batch::{render_batch_evidence, LocatedClaim};
+
+/// Judgments and the output tokens the model spent writing them, across
+/// every request the check sent: what answering costs the caller's job.
+#[derive(Debug, Clone)]
+pub struct Answered<T> {
+    pub judgments: T,
+    pub output_tokens: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -229,19 +238,29 @@ impl<'a> ClaimChecker<'a> {
     /// [`AppError::PromptExceedsWindow`](crate::shared::error::AppError::PromptExceedsWindow)
     /// with its numbers, rather than as an unusable judgment: the caller can
     /// show fewer passages and ask again. Every other failure ends as it does
-    /// there.
+    /// there. The judgment comes with the output tokens its replies took.
     pub async fn check_passages_or_size_refusal(
         &self,
         claim: &str,
         passages: &[String],
-    ) -> Result<ClaimJudgment> {
+    ) -> Result<Answered<ClaimJudgment>> {
         use crate::shared::error::AppError;
+        let mut output_tokens = 0;
         match self
-            .judged(claim, &located(passages), Some(passages), None)
+            .judged(
+                claim,
+                &located(passages),
+                Some(passages),
+                None,
+                &mut output_tokens,
+            )
             .await
         {
             Err(refusal @ AppError::PromptExceedsWindow { .. }) => Err(refusal),
-            judged => Ok(judged.unwrap_or_else(unchecked_after)),
+            judged => Ok(Answered {
+                judgments: judged.unwrap_or_else(unchecked_after),
+                output_tokens,
+            }),
         }
     }
 
@@ -262,18 +281,20 @@ impl<'a> ClaimChecker<'a> {
         locations: Option<&[String]>,
         context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
-        self.judged(claim, evidence, locations, context)
+        self.judged(claim, evidence, locations, context, &mut 0)
             .await
             .unwrap_or_else(unchecked_after)
     }
 
-    /// The judgment of `claim`, or the error of a request that failed.
+    /// The judgment of `claim`, or the error of a request that failed. Every
+    /// reply's output tokens are added to `spent`, a corrected reply's too.
     async fn judged(
         &self,
         claim: &str,
         evidence: &ClaimEvidence,
         locations: Option<&[String]>,
         context: Option<FidelityContext<'_>>,
+        spent: &mut u64,
     ) -> Result<ClaimJudgment> {
         let reasoned = locations.is_some() && self.policy.strict();
         let verdict_of = |text: &str| {
@@ -288,7 +309,9 @@ impl<'a> ClaimChecker<'a> {
         let mut prompt = original_prompt.clone();
         let mut corrected_format = false;
         let (text, logprobs) = loop {
-            let (text, logprobs) = self.request(&prompt, locations.is_some()).await?;
+            let reply = self.request(&prompt, locations.is_some()).await?;
+            *spent = spent.saturating_add(reply.output_tokens);
+            let (text, logprobs) = (reply.text, reply.logprobs);
             let text = if reasoned {
                 normalize_reasoned_fields(&text).unwrap_or(text)
             } else {
@@ -413,115 +436,6 @@ impl<'a> ClaimChecker<'a> {
             reason: explanation.reason,
             confidence,
         }))
-    }
-
-    fn system_prompt(&self, located: bool, reasoned: bool) -> String {
-        let mut base = if located {
-            CLAIM_CHECK_SYSTEM.replace("Source quote: an exact contiguous quote from a passage that supports that comparison, or none.", "Source passage: the application-assigned passage-N identifier that supports that comparison, or none.")
-                .replace("do not invent a quote", "do not invent a passage identifier")
-        } else {
-            CLAIM_CHECK_SYSTEM.into()
-        };
-        if matches!(self.policy, CheckPolicy::Strict) {
-            // Chat's one-supporting-source rule conflicts with publication's
-            // requirement to resolve all supplied counter-evidence.
-            base = base.replace(
-                ", and one source supporting the claim is enough unless the claim says the sources agree",
-                "",
-            );
-        }
-        if reasoned {
-            base = base.replace(
-                "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:",
-                "Compare the evidence before classifying. Write two short labeled lines first:",
-            );
-            base.push_str(" End with a third line: Verdict: supported, contradicted, or unsupported. Choose this final label from the completed factual comparison, never before it. If the comparison identifies a missing fact or incompatible fact, the final label cannot be supported.");
-        }
-        let system = if self.policy.strict() {
-            let citation = if located {
-                "Select one supplied passage-N identifier after Source passage:; the application attaches its exact original text. A supported or contradicted verdict requires a valid identifier and explicit reason. Do not quote the passage yourself."
-            } else {
-                "A valid quotation and an explicit reason are required for any factual finding. Preserve whitespace inside code and data exactly."
-            };
-            format!("{base} For this strict check, inspect every supplied passage for conflicting evidence. If sources conflict on the scoped claim and the conflict cannot be resolved from their text, answer unsupported and explain the conflict. For words such as always, never, all, ensures and guarantees, actively check documented exceptions and missing conditions. Do not turn a recommendation into a universal requirement, or a guarantee about one input/property into a guarantee about the overall outcome. A guarantee about one property does not establish every claimed consequence. If the passages leave the scope or a required condition ambiguous, answer unsupported. Compare the precise relationship asserted, not just the named things: establishing that something exists does not establish every claimed property or observation about it. For a list, check every item and the conditions under which that list applies. A general statement about a subject does not establish each claimed detail. Missing definitions, unstated properties and support for only part of a claim are unsupported, never contradicted: absence is not an opposing fact. If your reason says the source does not state or confirm a required fact, your label must be unsupported. {citation}")
-        } else {
-            base
-        };
-        let system = if matches!(self.policy, CheckPolicy::Strict) {
-            format!("{system} Before relying on any conditional source statement, identify its prerequisite and determine whether the claim's stated scenario explicitly meets it. Preserve scope: a property of an item does not establish properties of its surroundings or dependencies. Use only premises in the supplied text; do not use your own definitions or domain knowledge to bridge different descriptions. If matching the claim's scenario to a source condition requires an unstated definition, mechanism, or intermediate fact, answer unsupported and name that missing premise. A plausible interpretation is not an explicit premise. This is semantic entailment, not verbatim matching: ordinary synonyms, faithful paraphrases and logically necessary consequences of the supplied statements do not need additional sources merely because the wording differs. A missing premise is an additional substantive assumption, not a routine lexical equivalence. Explicitly stipulated inputs in a hypothetical or worked example are premises for that example, not claims that those observations occurred in the world. You may apply an explicitly supplied rule to those inputs and check elementary arithmetic; do not treat the claimed result as a premise. Preserve the distinction between an instructional choice and an empirical guarantee, and between the role of a quantity and coincidental equality of its value. Do not add an unstated domain rule, mechanism, empirical observation, exception or causal bridge. State the exact deduction when supporting a derived result; if a claimed deduction is wrong, reject it.")
-        } else {
-            system
-        };
-        let system = if matches!(self.policy, CheckPolicy::Strict) {
-            format!("{system} A label assigned locally to an instructional example, case, sequence or specimen is a reference within that example, not a claim that the source uses the same label. When the claim itself fully specifies the example's inputs and steps, judge those steps and results against the source rules; do not reject solely because its local label is absent. This does not exempt real-world names, source attribution, scientific terminology, actual observations, or any substantive condition, property or result. If a local label is the only description and its referent is unspecified, do not guess what it means.")
-        } else {
-            system
-        };
-        if matches!(self.policy, CheckPolicy::Fidelity) {
-            format!("{system} This is an inventory-fidelity check. Source passages are extracted assertions, and Claim contains original lesson text. Judge whether the inventory entails every externally checkable assertion in the original text, not whether either text is true in the world. Faithfully repeating an incorrect fact is supported for this representation check only; a separate evidence check decides truth. Preserve every qualifier and independently asserted consequence. This is not a transcription-completeness check. Instructor choices, course scope, assumed prior learner skills, exercise deliverables, instructor-defined grading levels and stipulated example inputs are lesson requirements, not empirical claims requiring inventory support. A prerequisite states an assumed starting skill; a rubric states the instructor's chosen expectations. Do not require inventory assertions restating those expectations, grading levels or required submission details. Ignore those normative portions while still checking every factual premise, numerical result, mechanism, capability or guarantee embedded in them. A prerequisite or rubric heading does not exempt empirical claims. Do not turn an empirical guarantee into a mere course choice. Do not infer an unmentioned outcome from a statement about one input or property.")
-        } else {
-            system
-        }
-    }
-
-    /// The reply text and, when reported, the first token's alternatives.
-    async fn request(
-        &self,
-        prompt: &str,
-        located: bool,
-    ) -> Result<(String, Option<Vec<(String, f32)>>)> {
-        let reasoned = located && self.policy.strict();
-        let system = self.system_prompt(located, reasoned);
-        self.llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.clone(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt.to_string(),
-                    },
-                ],
-                // Keep the model's reasoning enabled. Durable publication
-                // checks ask for deliberation; chat uses the model default.
-                reasoning_effort: self.policy.strict().then(|| "low".into()),
-                sampling: Some(self.sampling),
-                // A durable lesson check must not fail merely because a
-                // reasoning provider needs more than the chat-sized reply
-                // allowance. Its configured provider/context limit still
-                // applies, and incomplete output can never approve a claim.
-                max_output_tokens: Some(if self.policy.strict() {
-                    self.llm
-                        .max_context_tokens()
-                        .saturating_sub(self.llm.count_tokens(&system))
-                        .saturating_sub(self.llm.count_tokens(prompt))
-                        .min(u32::MAX as usize) as u32
-                } else {
-                    self.max_output_tokens
-                }),
-                want_logprobs: !reasoned,
-                // A slow model is not a failed one: stall detection and the
-                // caller's cancellation end a call that will not finish.
-                no_time_limit: true,
-                // Checking what an answer or a lesson already says: behind
-                // whoever is waiting on the model, ahead of upkeep.
-                priority: InferencePriority::Verification,
-                ..Default::default()
-            })
-            .await
-            .map(|response| {
-                if self.policy.strict()
-                    && !matches!(
-                        response.finish_reason.as_str(),
-                        "stop" | "end_turn" | "completed"
-                    )
-                {
-                    return (String::new(), None);
-                }
-                (response.text, response.first_token_logprobs)
-            })
     }
 }
 
