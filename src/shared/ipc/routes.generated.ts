@@ -59,6 +59,8 @@ export const COMMAND_PLUGINS = {
   compare_documents: 'compare',
   complete_learning_lesson: 'learning',
   continue_in_new_conversation: 'conversation',
+  course_index_close: 'learning',
+  course_index_open: 'learning',
   course_index_status: 'learning',
   create_conversation: 'conversation',
   create_conversation_space: 'conversation',

@@ -11,6 +11,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
+/// What the folder's status says while another index embeds first.
+const PAUSED: &str = "Paused while another index embeds first";
+
 /// A folder's passages are embedded as they are stored: the line reference
 /// heading, then the lines.
 fn stored_text(passage: &Passage) -> String {
@@ -77,6 +80,20 @@ impl Progress for FolderProgress<'_> {
         }
     }
 
+    /// While another index goes first the status says so and has no rate;
+    /// the rate starts again from where embedding carries on, so the wait
+    /// does not count as slowness.
+    fn paused(&mut self, paused: bool) {
+        if !paused {
+            self.pace.resume(Instant::now());
+        }
+        self.indexer.status.update(|status| {
+            status.message = paused.then(|| PAUSED.to_string());
+            status.passages_per_second = None;
+            status.eta_seconds = None;
+        });
+    }
+
     /// Files move when a save marks them.
     fn saved(&mut self, documents: usize) {
         let added = u32::try_from(documents).unwrap_or(u32::MAX);
@@ -108,6 +125,7 @@ impl Indexer {
             batch_size: self.limits.batch_size,
             save_every: self.limits.save_every,
             embed_text: Arc::new(stored_text),
+            turns: Arc::clone(&self.turns),
         };
         let round = build::embed_pending(
             &self.store,

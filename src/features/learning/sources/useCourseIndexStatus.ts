@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -43,6 +43,21 @@ export function useCourseIndexStatusEvents(programId: string | null | undefined)
     [client, programId]
   );
   useJobStatus(refresh);
+}
+
+/**
+ * Tells the app the course's workspace is open, so its index goes first:
+ * folder builds and other courses' builds hold while it embeds. Leaving the
+ * workspace, or opening another course, gives the turn back.
+ */
+export function useCourseIndexOpen(programId: string | null | undefined): void {
+  useEffect(() => {
+    if (!programId) return undefined;
+    void VaultAPI.courseIndexOpen(programId);
+    return () => {
+      void VaultAPI.courseIndexClose(programId);
+    };
+  }, [programId]);
 }
 
 /** Why a course's evidence actions wait, shown on each held control. */

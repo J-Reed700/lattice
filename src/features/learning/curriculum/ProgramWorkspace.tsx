@@ -27,7 +27,7 @@ import { CourseIndexNotice } from '@/features/learning/sources/CourseIndexNotice
 import { SourceLine } from '@/features/learning/sources/SourceLine';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
-import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
+import { useCourseIndexOpen, useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
@@ -122,6 +122,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const preparationJob = preparationJobs.find((job) => job.status === 'running') ?? preparationJobs.find((job) => job.status === 'pending') ?? preparationJobs[0];
   const preparingLesson = preparePending || Boolean(preparationPlan.data?.jobs?.some((job) => ['pending', 'running'].includes(job.status)));
   // A course step that would prepare a lesson only opens it while the course's references index.
+  // While the workspace is open, the course's index embeds first.
+  useCourseIndexOpen(program.summary.id);
   const waitsForIndex = useEvidenceWaitsForIndex(program.summary.id);
   const memoryQuery = useLearningMemory(program.summary.id, activeProgram);
   const theme = useEffectiveTheme();
