@@ -8,7 +8,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { remote } from 'webdriverio';
-import { sampleProcessTree, scanNativeLeaks } from './resources.mjs';
+import { listProcesses, sameProcess, sampleProcessTree, scanNativeLeaks } from './resources.mjs';
 
 const output = path.resolve('e2e-results/desktop');
 const reports = path.join(output, 'reports', String(Date.now()));
@@ -142,8 +142,12 @@ async function closeNormally() {
   };
   const childDeadline = Date.now() + 3000;
   while (descendants.some(row => isAlive(row.pid)) && Date.now() < childDeadline) await delay(100);
-  assert.deepEqual(descendants.filter(row => isAlive(row.pid)).map(row => row.pid), [],
-    'Native child processes must exit with their owner');
+  // Windows soon gives a dead child's PID to an unrelated process, so a PID
+  // that still answers counts only if it is still the same process.
+  const running = descendants.some(row => isAlive(row.pid)) ? await listProcesses() : [];
+  const leftovers = descendants.filter(child => running.some(row => sameProcess(row, child)));
+  assert.deepEqual(leftovers, [], `Native child processes must exit with their owner; still running: ${
+    leftovers.map(row => `${row.name} (pid ${row.pid})`).join(', ')}`);
   app = undefined;
   browser = undefined;
 }
