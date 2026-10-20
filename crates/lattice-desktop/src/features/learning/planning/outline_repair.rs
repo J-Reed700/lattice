@@ -104,9 +104,9 @@ async fn judge(
     passages: &[String],
     ranking: &[usize],
 ) -> Result<(JudgeOutcome, Vec<usize>)> {
-    let (judgment, shown) = judge_for_publication(llm, claim, passages, ranking).await;
-    match judgment {
-        ClaimJudgment::Judged(outcome) => Ok((outcome, shown)),
+    let judged = judge_for_publication(llm, claim, passages, ranking).await;
+    match judged.judgment {
+        ClaimJudgment::Judged(outcome) => Ok((outcome, judged.shown)),
         ClaimJudgment::Failed(error) => Err(error),
         ClaimJudgment::Unusable => Err(AppError::Other(
             "The claim check returned no usable verdict. The finding is kept; Repair can try again."

@@ -38,8 +38,29 @@ pub(in crate::features::learning) fn shown_of<T: Clone>(page: &[T], shown: &[usi
         .collect()
 }
 
-/// The strict judgment of one claim against `passages`, and the positions
-/// of the passages the judge was shown, in page order. `ranking` orders the
+/// One claim's strict judgment, as [`judge_for_publication`] gives it.
+pub(in crate::features::learning) struct Judged {
+    pub(in crate::features::learning) judgment: ClaimJudgment,
+    /// The positions of the passages the judge was shown, in page order.
+    pub(in crate::features::learning) shown: Vec<usize>,
+    /// Output tokens the judge's replies took: what this claim's answer cost.
+    pub(in crate::features::learning) output_tokens: u64,
+}
+
+impl Judged {
+    /// A judgment no reply was written for.
+    fn unanswered(judgment: ClaimJudgment, shown: Vec<usize>) -> Self {
+        Self {
+            judgment,
+            shown,
+            output_tokens: 0,
+        }
+    }
+}
+
+/// The strict judgment of one claim against `passages`, the positions of
+/// the passages the judge was shown, in page order, and what its answer
+/// cost. `ranking` orders the
 /// passages by how much the check needs them, most first (see [`ranking`]).
 /// A page too long for this judge's window loses passages from the end of
 /// that order: those the calibrated estimate says do not fit, then, when the
@@ -56,7 +77,7 @@ pub(in crate::features::learning) async fn judge_for_publication(
     claim: &str,
     passages: &[String],
     ranking: &[usize],
-) -> (ClaimJudgment, Vec<usize>) {
+) -> Judged {
     const TOO_LONG: &str =
         "The claim and its first passage do not fit the claim check in this model's context window.";
     let checker = ClaimChecker::new(
@@ -88,13 +109,19 @@ pub(in crate::features::learning) async fn judge_for_publication(
     }
     loop {
         if kept == 0 && !passages.is_empty() {
-            return (unchecked(TOO_LONG), Vec::new());
+            return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let (positions, texts) = shown(kept);
         let refusal = {
             let _model_call = crate::features::learning::lesson_progress::model_call();
             match checker.check_passages_or_size_refusal(claim, &texts).await {
-                Ok(judgment) => return (judgment, positions),
+                Ok(answered) => {
+                    return Judged {
+                        judgment: answered.judgments,
+                        shown: positions,
+                        output_tokens: answered.output_tokens,
+                    }
+                }
                 Err(refusal) => refusal,
             }
         };
@@ -104,10 +131,10 @@ pub(in crate::features::learning) async fn judge_for_publication(
             ..
         } = refusal
         else {
-            return (ClaimJudgment::from_request_error(refusal), positions);
+            return Judged::unanswered(ClaimJudgment::from_request_error(refusal), positions);
         };
         if kept == 0 {
-            return (unchecked(TOO_LONG), Vec::new());
+            return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let fewer = kept_after_refusal(
             llm,

@@ -132,14 +132,18 @@ impl ClaimChecker<'_> {
         self.batch_request_parts(claims).3 >= ANSWER_ROOM_TOKENS * claims.len()
     }
 
+    /// Each claim's judgment, with the output tokens the one reply took.
     pub async fn check_batch_without_deadline(
         &self,
         claims: &[LocatedClaim],
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<Vec<ClaimJudgment>> {
+    ) -> Result<Answered<Vec<ClaimJudgment>>> {
         if claims.is_empty() {
-            return Ok(vec![]);
+            return Ok(Answered {
+                judgments: vec![],
+                output_tokens: 0,
+            });
         }
         if !matches!(self.policy, CheckPolicy::Strict) {
             return Err(AppError::InvalidInput(
@@ -163,14 +167,19 @@ impl ClaimChecker<'_> {
             priority: InferencePriority::Verification,
             ..Default::default()
         }, on_text, on_retry).await?;
-        if !matches!(
+        let judgments = if matches!(
             response.finish_reason.as_str(),
             "stop" | "end_turn" | "completed"
         ) {
-            return Ok(vec![ClaimJudgment::Unusable; claims.len()]);
-        }
-        Ok(resolve(&response.text, claims, &passages)
-            .unwrap_or_else(|| vec![ClaimJudgment::Unusable; claims.len()]))
+            resolve(&response.text, claims, &passages)
+                .unwrap_or_else(|| vec![ClaimJudgment::Unusable; claims.len()])
+        } else {
+            vec![ClaimJudgment::Unusable; claims.len()]
+        };
+        Ok(Answered {
+            judgments,
+            output_tokens: response.output_tokens,
+        })
     }
 }
 

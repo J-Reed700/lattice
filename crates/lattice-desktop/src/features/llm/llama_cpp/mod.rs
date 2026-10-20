@@ -695,5 +695,9 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
                 })
             })
             .and_then(lattice_core::application::ports::llm_port::first_token_logprobs),
+        timing: value
+            .get("timings")
+            .and_then(streaming::ServerTimings::from_value)
+            .map(|timings| timings.served()),
     })
 }

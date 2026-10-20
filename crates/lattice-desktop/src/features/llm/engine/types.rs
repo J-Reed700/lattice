@@ -226,6 +226,12 @@ pub struct OllamaChatStreamResponse {
     pub prompt_eval_count: Option<u32>,
     #[serde(default)]
     pub eval_count: Option<u32>,
+    /// Nanoseconds spent evaluating the prompt and generating the answer,
+    /// sent with the final chunk.
+    #[serde(default)]
+    pub prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    pub eval_duration: Option<u64>,
 }
 
 use lattice_core::shared::error::AppError;

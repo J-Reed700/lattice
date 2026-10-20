@@ -88,6 +88,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
             checker
                 .check_batch_without_deadline(&targets, &|_| Ok(()), &|_| Ok(()))
                 .await?
+                .judgments
         };
         let mut calls = 1;
         for (judgment, located) in judgments.iter_mut().zip(&targets) {

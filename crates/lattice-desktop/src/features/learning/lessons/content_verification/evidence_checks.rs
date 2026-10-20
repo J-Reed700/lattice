@@ -11,11 +11,19 @@
 //! at least one claim as supported or contradicted. Each page's check has its
 //! own receipt.
 //!
+//! Every check reports what its answer cost in output tokens; the job's
+//! mean, with the backend's measured pace, gives a page budget (see
+//! `page_budget`), which each deepening round logs. Pages are not sized by
+//! it yet.
+//!
 //! Progress counts each claim once. A deeper page's check adds no check; it
 //! moves its claim out of the unresolved count when the page supports it.
 use super::*;
 use lattice_core::application::services::claim_verification::{LocatedClaim, ANSWER_ROOM_TOKENS};
 use std::collections::BTreeMap;
+
+mod page_budget;
+use page_budget::{page_budget, AnswerSize};
 
 const BATCH_SIZE: usize = 8;
 
@@ -264,24 +272,30 @@ fn unlabelled(judgment: ClaimJudgment, pending: &PendingClaim, labels: &Labels) 
 /// One claim checked alone. A page too long for the judge's window loses
 /// its least needed passages (see [`ranking`]); the finding and its receipt
 /// name only the passages the judge was shown, so one cut for size is still
-/// unshown and a deeper page can carry it.
+/// unshown and a deeper page can carry it. The check comes with what its
+/// answer cost.
 async fn individual(
     llm: &dyn LLMPort,
     mut pending: PendingClaim,
     labels: &Labels,
-) -> Result<CheckedClaim> {
+) -> Result<(CheckedClaim, AnswerSize)> {
     let input = target(&pending, labels);
-    let (judgment, shown) = judge_for_publication(
+    let judged = judge_for_publication(
         llm,
         &input.claim,
         &input.passages,
         &ranking(&pending.evidence),
     )
     .await;
+    let shown = judged.shown;
     let cut = shown.len() < pending.evidence.len();
     pending.evidence = shown_of(&pending.evidence, &shown);
-    let judgment = unlabelled(judgment, &pending, labels);
-    finish(pending, judgment, cut.then_some(shown)).await
+    let judgment = unlabelled(judged.judgment, &pending, labels);
+    let answer = AnswerSize::of(judged.output_tokens, 1);
+    Ok((
+        finish(pending, judgment, cut.then_some(shown)).await?,
+        answer,
+    ))
 }
 
 fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check) {
@@ -295,13 +309,15 @@ fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim, check: Check
     results.push(result);
 }
 
+/// Check `pending`'s claims, with what the judge's answers to them cost.
 async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
     check: Check,
     labels: &Labels,
-) -> Result<Vec<CheckedClaim>> {
+) -> Result<(Vec<CheckedClaim>, AnswerSize)> {
     let mut results = Vec::new();
+    let mut answers = AnswerSize::default();
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
@@ -316,7 +332,9 @@ async fn group(
         let targets: Vec<_> = pending.iter().map(|item| target(item, labels)).collect();
         if pending.len() == 1 {
             for item in pending {
-                completed(&mut results, individual(llm, item, labels).await?, check);
+                let (result, answer) = individual(llm, item, labels).await?;
+                answers.add(answer);
+                completed(&mut results, result, check);
             }
             continue;
         }
@@ -351,7 +369,10 @@ async fn group(
         ));
         let _model_call = crate::features::learning::lesson_progress::model_call();
         let judgments = match judge_batch_for_publication(llm, &targets).await {
-            Ok(judgments) => judgments,
+            Ok(answered) => {
+                answers.add(AnswerSize::of(answered.output_tokens, targets.len()));
+                answered.judgments
+            }
             // A group the model could not finish, or one the backend counted
             // past the context window, is checked in halves on the same
             // evidence, so every receipt is unchanged.
@@ -398,10 +419,12 @@ async fn group(
             }
         }
         for item in unresolved {
-            completed(&mut results, individual(llm, item, labels).await?, check);
+            let (result, answer) = individual(llm, item, labels).await?;
+            answers.add(answer);
+            completed(&mut results, result, check);
         }
     }
-    Ok(results)
+    Ok((results, answers))
 }
 
 #[cfg(test)]
@@ -515,18 +538,30 @@ pub(super) async fn check_with_citations(
     ));
     // A group already carries several complete evidence sets. Run them one at
     // a time rather than compete large prompt prefills on the same model.
+    let mut answers = AnswerSize::default();
     let mut groups = futures::stream::iter(pending)
         .chunks(BATCH_SIZE)
         .map(|pending| group(llm, pending, Check::First, &labels))
         .buffer_unordered(1);
     while let Some(batch) = groups.next().await {
-        results.extend(batch?);
+        let (batch, answered) = batch?;
+        answers.add(answered);
+        results.extend(batch);
         crate::features::learning::lesson_progress::stage(format!(
             "Completed {} of {model_checks} model checks · {reused} saved checks reused · {total} lesson claims",
             results.len() - resolved
         ));
     }
-    deepen(llm, references, &mut results, &decided, citations, &labels).await?;
+    deepen(
+        llm,
+        references,
+        &mut results,
+        &decided,
+        citations,
+        &labels,
+        answers,
+    )
+    .await?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     // The gate call (§18.6): every supported verdict's support is weighed
     // before the claim ledger sees it; no further model check is made.
@@ -551,6 +586,8 @@ struct Walk {
 /// until a page decides it or no page with a matching content term is left.
 /// A deciding page's finding replaces the first page's; the first page's key
 /// still names the decision, so a later pass on the same evidence reuses it.
+/// `answers` is what the job's checks so far cost per claim; each round's
+/// checks add to it, and each round logs the page budget it gives.
 async fn deepen(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
@@ -558,6 +595,7 @@ async fn deepen(
     decided: &HashSet<usize>,
     citations: &Citations,
     labels: &Labels,
+    mut answers: AnswerSize,
 ) -> Result<()> {
     let mut walks: BTreeMap<usize, Walk> = results
         .iter()
@@ -586,6 +624,8 @@ async fn deepen(
     let mut round = 0;
     while !walks.is_empty() {
         round += 1;
+        // Measured, not yet applied: pages are still sized by their share.
+        let budget = page_budget(llm.pace(), answers.per_claim());
         let sharing = BATCH_SIZE.min(walks.len());
         let mut pending = Vec::new();
         let mut outcomes = Vec::new();
@@ -680,8 +720,10 @@ async fn deepen(
                 .map(|pending| group(llm, pending, Check::Deeper, labels))
                 .buffer_unordered(1);
             while let Some(batch) = batches.next().await {
+                let (batch, answered) = batch?;
+                answers.add(answered);
                 outcomes.extend(
-                    batch?
+                    batch
                         .into_iter()
                         .map(|(ordinal, _, finding, _)| (ordinal, finding)),
                 );
@@ -708,6 +750,7 @@ async fn deepen(
             round,
             settled,
             looking = walks.len(),
+            page_budget = ?budget,
             "Deepened the evidence of unsupported claims"
         );
         // Another round runs only while the last one settled a claim.

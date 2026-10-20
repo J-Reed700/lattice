@@ -4,11 +4,12 @@
 //! non-English text, so budgets built on it overran the window exactly where
 //! the content was densest. Every backend reports how many prompt tokens a
 //! request really took; this keeps a moving average of characters per token
-//! against those reports.
+//! against those reports. The same reports, where a backend times its work,
+//! give its pace: how fast it reads a prompt and how fast it writes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use lattice_core::application::ports::llm_port::{Pace, ServedTiming, DEFAULT_CHARS_PER_TOKEN};
 
 /// No tokenizer averages outside this range on real text; a measurement that
 /// does is a mis-attributed prompt (images, opaque provider state), not a
@@ -20,7 +21,9 @@ const MAX_CHARS_PER_TOKEN: f64 = 6.0;
 const SMOOTHING: f64 = 0.2;
 
 /// Prompts below this many reported tokens are mostly chat-template framing,
-/// which would drag the ratio down for every long prompt after them.
+/// which would drag the ratio down for every long prompt after them. A pace
+/// sample of fewer tokens is mostly fixed per-request overhead (a cache hit's
+/// last few tokens, an answer of a word) for the same reason.
 const MIN_OBSERVED_TOKENS: u64 = 64;
 
 /// Characters per token for one backend, calibrated as usage comes back.
@@ -58,4 +61,51 @@ impl TokenEstimator {
         self.chars_per_token
             .store(next.to_bits(), Ordering::Relaxed);
     }
+}
+
+/// One backend's pace, from the timing it reports: prompt tokens read per
+/// second and output tokens written per second, each a moving average with
+/// the same weight as the token estimate's. A rate is unknown until a request
+/// large enough to measure it has been timed.
+#[derive(Default)]
+pub(crate) struct PaceEstimator {
+    /// `f64` bits of each rate; zero while unmeasured.
+    prompt: AtomicU64,
+    output: AtomicU64,
+}
+
+impl PaceEstimator {
+    /// Both rates, once both have been measured.
+    pub fn pace(&self) -> Option<Pace> {
+        let rate = |bits: &AtomicU64| {
+            Some(f64::from_bits(bits.load(Ordering::Relaxed))).filter(|rate| *rate > 0.0)
+        };
+        Some(Pace {
+            prompt_tokens_per_second: rate(&self.prompt)?,
+            output_tokens_per_second: rate(&self.output)?,
+        })
+    }
+
+    /// Fold in one request's reported timing. Each side counts only when it
+    /// covered enough tokens to measure and took measurable time.
+    pub fn observe(&self, timing: &ServedTiming) {
+        fold(&self.prompt, timing.prompt_tokens, timing.prompt_seconds);
+        fold(&self.output, timing.output_tokens, timing.output_seconds);
+    }
+}
+
+fn fold(rate: &AtomicU64, tokens: u64, seconds: f64) {
+    if tokens < MIN_OBSERVED_TOKENS || !seconds.is_finite() || seconds <= 0.0 {
+        return;
+    }
+    let measured = tokens as f64 / seconds;
+    // Concurrent observations may overwrite each other; either result is a
+    // valid average, and reading the pace must not wait on a lock.
+    let current = f64::from_bits(rate.load(Ordering::Relaxed));
+    let next = if current > 0.0 {
+        current + SMOOTHING * (measured - current)
+    } else {
+        measured
+    };
+    rate.store(next.to_bits(), Ordering::Relaxed);
 }

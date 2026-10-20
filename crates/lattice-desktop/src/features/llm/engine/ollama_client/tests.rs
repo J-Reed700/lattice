@@ -628,3 +628,32 @@ fn a_model_nobody_declared_able_to_see_refuses_pictures() {
         .to_string()
         .contains("llava:7b is not set up to see images"));
 }
+
+/// Ollama's final chunk times the prompt and the answer in nanoseconds;
+/// counts without durations time nothing.
+#[test]
+fn the_final_chunk_times_the_prompt_and_the_answer() {
+    let chunk = |extra: serde_json::Value| {
+        let mut line = serde_json::json!({
+            "model":"utility","created_at":"2026-09-28T00:00:00Z",
+            "message":{"role":"assistant","content":"Hi"},"done":true,"done_reason":"stop",
+            "prompt_eval_count":1700,"eval_count":226
+        });
+        line.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let mut answer = Answer::default();
+        answer
+            .push_line(line.to_string().as_bytes(), &|_| Ok(()), &|_| Ok(()))
+            .unwrap();
+        answer.into_response().unwrap().timing
+    };
+    let timing = chunk(serde_json::json!({
+        "prompt_eval_duration": 2_000_000_000u64, "eval_duration": 20_000_000_000u64
+    }))
+    .unwrap();
+    assert_eq!((timing.prompt_tokens, timing.output_tokens), (1700, 226));
+    assert!((timing.prompt_seconds - 2.0).abs() < 1e-9);
+    assert!((timing.output_seconds - 20.0).abs() < 1e-9);
+    assert_eq!(chunk(serde_json::json!({})), None);
+}
