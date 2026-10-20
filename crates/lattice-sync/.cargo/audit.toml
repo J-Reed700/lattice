@@ -2,5 +2,11 @@
 # `sqlx-mysql`. This service enables PostgreSQL exclusively, and Cargo's
 # resolved dependency graph (`cargo tree --target all -i rsa`) is empty.
 # Keep the advisory visible here until SQLx removes the lock-only edge.
+#
+# RUSTSEC-2026-0381 (webpki-roots < 1.0.10 trusts distrusted emSign
+# intermediates) also flags webpki-roots 0.26.11, which SQLx 0.8 pulls in.
+# 0.26.11 holds no roots of its own: it re-exports webpki-roots 1.x, which is
+# 1.0.10 (fixed) here. No fixed 0.26 release exists. Drop it once SQLx
+# depends on webpki-roots 1.x.
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0381"]
