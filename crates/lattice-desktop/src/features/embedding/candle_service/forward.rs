@@ -40,12 +40,29 @@ where
 /// to its right, so the hidden state at each row's last real token — the one
 /// last-token pooling reads — is the state that row would have produced alone.
 /// The padded rows do compute values past their own end; nothing reads them.
+///
+/// On Metal each text gets its own pass instead: there a padded batch runs
+/// slower than its rows one by one (measured on Apple silicon, 2026-10-20:
+/// 1.6x for prose, 2.4x for code, whose lengths vary more), while the CPU
+/// runs a batch a little faster than its rows.
 pub(super) fn qwen3_embed(
     model: &Qwen3Encoder,
     tokenizer: &Tokenizer,
     device: &Device,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>> {
+    if device.is_metal() && texts.len() > 1 {
+        let mut embeddings = Vec::with_capacity(texts.len());
+        for text in texts {
+            embeddings.extend(qwen3_embed(
+                model,
+                tokenizer,
+                device,
+                std::slice::from_ref(text),
+            )?);
+        }
+        return Ok(embeddings);
+    }
     let encodings =
         tokenizer
             .encode_batch(texts.to_vec(), true)
