@@ -22,14 +22,13 @@ pub struct SidecarHandle {
     /// owner takes the child exactly once.
     pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
 
-    /// The `--ctx-size` this server was actually launched with.
+    /// The `--ctx-size` this server was actually launched with: the window
+    /// the user saved for the model, else the one it was trained for.
     ///
-    /// Not a constant: it is 8192 on GPU machines, 4096 CPU-only, and 2048
-    /// under the low-RAM threshold. Callers that budget a prompt must use
-    /// this value — reporting a fixed 8192 upstream meant every budget
-    /// overshot the real window by 2–4x on smaller machines, so llama-server
-    /// silently truncated the prompt server-side and the system prompt and
-    /// oldest history simply vanished.
+    /// Callers that budget a prompt must use this value. Reporting a fixed
+    /// 8192 upstream once meant every budget overshot the real window on
+    /// smaller machines, so llama-server silently truncated the prompt
+    /// server-side and the system prompt and oldest history simply vanished.
     pub(super) context_size: u32,
 
     /// The build that actually started, after any fallback.
@@ -45,8 +44,8 @@ pub struct SidecarHandle {
     pub(super) _port: PortReservation,
 
     /// Set when the server that finally ran is not the one that was asked
-    /// for — a GPU machine running CPU-only, or a halved context. Callers
-    /// log it; without it a degradation is invisible outside a warn line.
+    /// for: a GPU machine running CPU-only. Callers log it; without it a
+    /// degradation is invisible outside a warn line.
     pub(super) degraded: Option<String>,
 
     /// Admission for this server, shared by every role's client on it: the

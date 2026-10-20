@@ -7,6 +7,7 @@ import {
   buildChatModelOptions,
   cleanModelDisplayName,
   CLOUD_PROVIDER_MODEL_ID,
+  contextFitWarning,
   formatContextLabel,
   formatModelSize,
   formatServerEndpoint,
@@ -17,6 +18,7 @@ import {
   OLLAMA_SERVER_MODEL_ID,
   resolveDefaultChatOption,
   resolveEffectiveChatOption,
+  tokensThatFit,
 } from '../chatModelSelection';
 
 const makeModel = (overrides: Partial<DownloadedModel>): DownloadedModel => ({
@@ -207,10 +209,28 @@ describe('resolveEffectiveChatOption', () => {
 });
 
 describe('formatContextLabel', () => {
-  it('shows a saved window exactly and an Auto window rounded', () => {
+  it('shows a saved window exactly and the trained window it loads with otherwise rounded', () => {
     expect(formatContextLabel({ configured_context_length: 8704, trained_context_length: 32768 })).toBe('8,704 ctx · set by you');
     expect(formatContextLabel({ configured_context_length: null, trained_context_length: 32768 })).toBe('32K ctx');
     expect(formatContextLabel({ configured_context_length: null, trained_context_length: null })).toBeNull();
+  });
+});
+
+describe('contextFitWarning', () => {
+  const model = { fits_context_length: 192_512, fits_context_length_with_kv_quantization: 262_144 };
+
+  it('warns only past what fits, for the KV cache the model uses', () => {
+    expect(contextFitWarning(model, 262_144, false)).toBe(
+      "May not fit in this machine's memory — about 192,512 tokens fit",
+    );
+    expect(contextFitWarning(model, 192_512, false)).toBeNull();
+    expect(contextFitWarning(model, 262_144, true)).toBeNull();
+    expect(tokensThatFit(model, 262_144, false)).toBe(192_512);
+  });
+
+  it('says nothing when the machine does not report its memory', () => {
+    expect(contextFitWarning({ fits_context_length: null }, 262_144, false)).toBeNull();
+    expect(contextFitWarning({}, 262_144, false)).toBeNull();
   });
 });
 

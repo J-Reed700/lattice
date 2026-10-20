@@ -1,7 +1,9 @@
 //! LLM / model-management feature dependency injection.
 
 use crate::features::llm::engine::system::BackendDevices;
-use crate::features::llm::instances::{LearningShortfall, LoadedInstance, SidecarBudget};
+use crate::features::llm::instances::{
+    GpuBudget, LearningShortfall, LoadedInstance, SidecarBudget,
+};
 use crate::features::llm::loading::ModelLoader;
 use std::sync::Arc;
 
@@ -124,6 +126,16 @@ pub fn build(
     }
 }
 
+/// How much of a local model's window fits this machine's memory: `None`
+/// where the machine does not report its memory or the header cannot say.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ContextFit {
+    /// With the KV cache at f16, llama-server's default.
+    pub(crate) tokens: Option<u32>,
+    /// With the KV cache quantized to q8_0.
+    pub(crate) tokens_with_kv_quantization: Option<u32>,
+}
+
 /// LLM's registrar surface on `Container`.
 ///
 /// Which model each role runs on, the loaded instances and their
@@ -152,7 +164,7 @@ impl Container {
             loader: Arc::new(self.model_loader()),
             budget: Arc::new(SidecarBudget::new(
                 self.app_handle(),
-                Arc::clone(&self.llm_runtime.devices),
+                self.llm_runtime.clone(),
             )),
             settings: Arc::clone(self.system.settings_repo()),
         }
@@ -271,6 +283,17 @@ impl Container {
     /// was too small, while that model has not covered the window since.
     pub(crate) fn learning_shortfall(&self) -> Option<LearningShortfall> {
         self.llm_instances.learning_shortfall()
+    }
+
+    /// The largest window the local model at `path` fits this machine's
+    /// memory at now, beside the models loaded. A hint shown next to its
+    /// context setting; the window is never set from it.
+    pub(crate) async fn context_fit(&self, path: &std::path::Path) -> ContextFit {
+        let budget = SidecarBudget::new(self.app_handle(), self.llm_runtime.clone());
+        ContextFit {
+            tokens: budget.fits_window(path, false).await,
+            tokens_with_kv_quantization: budget.fits_window(path, true).await,
+        }
     }
 
     /// Load the Learning model ahead of the first learning job, reporting

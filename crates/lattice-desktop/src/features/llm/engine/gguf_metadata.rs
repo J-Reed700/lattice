@@ -1,5 +1,5 @@
 //! A minimal reader for the GGUF header, enough to learn what a model was
-//! trained for and what its KV cache costs.
+//! trained for and what a server of it costs in memory.
 //!
 //! Sizing a context window is guesswork without this. Ask for more than the
 //! model was trained on and llama.cpp silently rope-scales, degrading quality
@@ -52,6 +52,14 @@ impl PerLayer {
             Self::Layers(values) => values.get(layer).copied(),
         }
     }
+
+    /// The largest value of any layer.
+    fn widest(&self) -> Option<u32> {
+        match self {
+            Self::Uniform(value) => Some(*value),
+            Self::Layers(values) => values.iter().copied().max(),
+        }
+    }
 }
 
 impl From<u32> for PerLayer {
@@ -99,6 +107,18 @@ pub struct GgufModelInfo {
     /// Trailing layers that reuse an earlier layer's cache rather than keep
     /// their own (Gemma 4 E2B and E4B).
     pub shared_kv_layers: Option<u32>,
+    /// Width of the feed-forward layer; the widest, where it varies by layer.
+    pub feed_forward_length: Option<u32>,
+    /// Tokens in the vocabulary: `{architecture}.vocab_size`, else the length
+    /// of `tokenizer.ggml.tokens`.
+    pub vocab_size: Option<u32>,
+    /// A hybrid's linear-attention layers (`{architecture}.ssm.*`): the
+    /// convolution's width, the state each head keeps, the key groups and the
+    /// inner width.
+    pub ssm_conv_kernel: Option<u32>,
+    pub ssm_state_size: Option<u32>,
+    pub ssm_group_count: Option<u32>,
+    pub ssm_inner_size: Option<u32>,
     /// Whether `tokenizer.chat_template` in the GGUF header declares tool-calling
     /// markers (`tools`, `tool_call`, or `tool_calls`).
     pub chat_template_supports_tools: bool,
@@ -120,6 +140,14 @@ const MICRO_BATCH_TOKENS: u64 = 512;
 
 /// llama.cpp rounds a sliding-window cache up to a multiple of this many cells.
 const SLIDING_CACHE_ALIGNMENT: u64 = 256;
+
+/// llama.cpp keeps recurrent state, and computes activations and logits, in
+/// f32.
+const F32_BYTES: u64 = 4;
+
+/// One cell of the attention mask: the f32 mask plus the f16 copy flash
+/// attention reads.
+const MASK_BYTES_PER_CELL: u64 = 6;
 
 /// One layer that keeps a KV cache of its own.
 struct LayerCache {
@@ -252,6 +280,54 @@ impl GgufModelInfo {
             .collect()
     }
 
+    /// Bytes of recurrent state llama-server keeps for a hybrid's
+    /// linear-attention layers.
+    ///
+    /// Unlike the KV cache it does not grow with the window: each such layer
+    /// holds, for every server slot, a convolution state of `(conv_kernel - 1)
+    /// * (inner + 2 * groups * state)` values and a recurrent state of `state
+    /// * inner`, in f32. Qwen 3.5 9B's 24 such layers hold about 0.2 GB. 0 for
+    /// a model without them, or whose header does not describe them.
+    pub fn recurrent_state_bytes(&self) -> u64 {
+        let (Some(blocks), Some(kernel), Some(state), Some(inner)) = (
+            self.block_count,
+            self.ssm_conv_kernel,
+            self.ssm_state_size,
+            self.ssm_inner_size,
+        ) else {
+            return 0;
+        };
+        let trunk = blocks.saturating_sub(self.nextn_predict_layers.unwrap_or(0));
+        let layers = (0..blocks)
+            .filter(|&layer| self.is_recurrent(layer, trunk))
+            .count() as u64;
+        let (state, inner) = (u64::from(state), u64::from(inner));
+        let groups = u64::from(self.ssm_group_count.unwrap_or(0));
+        let convolution = u64::from(kernel.saturating_sub(1)) * (inner + 2 * groups * state);
+        layers * SERVER_SLOTS * (convolution + state * inner) * F32_BYTES
+    }
+
+    /// Bytes of compute buffer llama-server reserves for a window of
+    /// `context_tokens`.
+    ///
+    /// It is sized for one full micro-batch at whichever step of the graph
+    /// needs the most:
+    /// - the output, which holds logits over the vocabulary for every token of
+    ///   the batch;
+    /// - a layer, which holds the attention mask over the whole window beside
+    ///   the feed-forward activations (gate and up).
+    ///
+    /// Flash attention is assumed. llama.cpp's `-fa auto` turns it on wherever
+    /// the backend supports it; without it, attention scratch grows with the
+    /// window times the head count. A term the header does not give counts as
+    /// nothing.
+    pub fn compute_buffer_bytes(&self, context_tokens: u32) -> u64 {
+        let output = u64::from(self.vocab_size.unwrap_or(0)) * F32_BYTES;
+        let layer = u64::from(context_tokens) * MASK_BYTES_PER_CELL
+            + u64::from(self.feed_forward_length.unwrap_or(0)) * 2 * F32_BYTES;
+        MICRO_BATCH_TOKENS * output.max(layer)
+    }
+
     /// llama.cpp's rule for hybrids: counting from one, every
     /// `full_attention_interval`-th layer attends to the whole window and the
     /// rest are recurrent. Multi-token-prediction blocks past the trunk are
@@ -308,6 +384,8 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
 
     let mut architecture = None;
     let mut context_lengths: Vec<(String, u32)> = Vec::new();
+    let mut vocab_size = None;
+    let mut vocabulary_tokens = None;
     let mut info = GgufModelInfo::default();
 
     for _ in 0..kv_count {
@@ -330,6 +408,21 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             info.chat_template_supports_tools = template.contains("tools")
                 || template.contains("tool_call")
                 || template.contains("tool_calls");
+            continue;
+        }
+
+        // The vocabulary is counted, never read: its strings run to megabytes.
+        if key == "tokenizer.ggml.tokens" && kind == value_type::ARRAY {
+            let Some(element_type) = read_u32(&mut reader) else {
+                break;
+            };
+            let Some(count) = read_u64(&mut reader) else {
+                break;
+            };
+            if skip_elements(&mut reader, element_type, count).is_none() {
+                break;
+            }
+            vocabulary_tokens = u32::try_from(count).ok();
             continue;
         }
 
@@ -377,6 +470,14 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             ("attention.shared_kv_layers", Value::Number(count)) => {
                 info.shared_kv_layers = Some(count);
             }
+            ("feed_forward_length", value) => {
+                info.feed_forward_length = value.per_layer().and_then(|ff| ff.widest());
+            }
+            ("vocab_size", Value::Number(size)) => vocab_size = Some(size),
+            ("ssm.conv_kernel", Value::Number(width)) => info.ssm_conv_kernel = Some(width),
+            ("ssm.state_size", Value::Number(size)) => info.ssm_state_size = Some(size),
+            ("ssm.group_count", Value::Number(count)) => info.ssm_group_count = Some(count),
+            ("ssm.inner_size", Value::Number(size)) => info.ssm_inner_size = Some(size),
             _ => {}
         }
     }
@@ -400,6 +501,7 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
     Some(GgufModelInfo {
         architecture,
         trained_context_length,
+        vocab_size: vocab_size.or(vocabulary_tokens),
         ..info
     })
 }

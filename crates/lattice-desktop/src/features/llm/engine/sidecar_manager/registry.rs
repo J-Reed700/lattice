@@ -258,13 +258,10 @@ impl SidecarRegistry {
         killed
     }
 
-    /// GPU memory held by running, GPU-offloaded servers of other models.
-    ///
-    /// A new server's window is sized against this rather than
-    /// [`Self::resident_gpu_bytes`]: every role on one GGUF must size it the
-    /// same way to arrive at the same configuration and share the server.
-    /// Counting that server would shrink the window and give a different
-    /// configuration key — a second process of the same weights.
+    /// GPU memory held by running, GPU-offloaded servers of other models:
+    /// what the memory hint for `model_path` counts as already taken. A
+    /// server of the same GGUF is left out, because a role asking for it is
+    /// handed that server rather than a second one.
     pub fn other_models_gpu_bytes(&self, model_path: &std::path::Path) -> u64 {
         gpu_bytes_where(&self.running_servers(), |running| {
             running.model_path != model_path
@@ -278,15 +275,16 @@ impl SidecarRegistry {
         gpu_bytes_where(&self.running_servers(), |running| running != config)
     }
 
-    /// Whether a server for `config`, its cache priced at `window` tokens, fits
-    /// beside the servers running now. See [`admission`].
+    /// Whether a server for `config` fits beside the servers running now and
+    /// the `in_app_bytes` models inside the app hold on its device. See
+    /// [`admission`].
     pub fn admission(
         &self,
         config: &SidecarConfig,
-        window: u32,
         capabilities: &SystemCapabilities,
+        in_app_bytes: u64,
     ) -> Admission {
-        admission(&self.running_servers(), config, window, capabilities)
+        admission(&self.running_servers(), config, capabilities, in_app_bytes)
     }
 
     fn running_servers(&self) -> Vec<RunningServer> {
@@ -329,18 +327,29 @@ pub(super) fn gpu_bytes_where(
     servers
         .iter()
         .filter(|server| counted(&server.config) && server.n_gpu_layers > 0)
-        .map(|server| resident_bytes_of(&server.config.model_path, server.context_size))
+        .map(|server| {
+            resident_bytes_of(
+                &server.config.model_path,
+                server.context_size,
+                server.config.kv_cache_quantization,
+            )
+        })
         .fold(0, u64::saturating_add)
 }
 
-/// Whether a server for `config`, its cache priced at `window` tokens, fits
-/// beside `servers` by the auto-sizer's arithmetic: the usable share of the
-/// GPU's reported memory, less what every server but `config`'s own holds.
+/// Whether a server for `config` fits beside `servers` and the
+/// `in_app_bytes` models inside the app hold on its device, by the memory
+/// hint's arithmetic ([`memory_hint`]).
+///
+/// It only decides whether idle models are unloaded to make room. A server
+/// that does not fit still starts, at the window the user chose; if it will
+/// not allocate, the start fails with llama-server's own error and these
+/// numbers beside it.
 pub(super) fn admission(
     servers: &[RunningServer],
     config: &SidecarConfig,
-    window: u32,
     capabilities: &SystemCapabilities,
+    in_app_bytes: u64,
 ) -> Admission {
     if servers.iter().any(|server| server.config == *config) {
         return Admission::Shared;
@@ -348,20 +357,19 @@ pub(super) fn admission(
     if config.n_gpu_layers == 0 {
         return Admission::NoOffload;
     }
-    let Some(vram_gb) = capabilities.gpu_vram_gb() else {
+    let held = gpu_bytes_where(servers, |running| running != config).saturating_add(in_app_bytes);
+    let Some(hint) = memory_hint(config, capabilities, held) else {
         return Admission::Unmetered;
     };
-    let needed = footprint_of(&config.model_path, window);
-    let spare = usable_gpu_bytes(vram_gb)
-        .saturating_sub(gpu_bytes_where(servers, |running| running != config));
-    if needed.total() <= spare {
+    let (needed, spare) = (hint.needed, hint.room.spare());
+    if hint.fits() {
         Admission::Fits { needed, spare }
     } else {
         Admission::Short { needed, spare }
     }
 }
 
-/// What starting a server would ask of the GPU.
+/// What starting a server would ask of the GPU. Nothing here stops a start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Admission {
     /// A server for exactly this configuration is running and is shared;
@@ -373,7 +381,8 @@ pub enum Admission {
     Unmetered,
     /// It fits: `needed` of the `spare` bytes the running servers leave.
     Fits { needed: Footprint, spare: u64 },
-    /// It does not fit in the `spare` bytes the running servers leave.
+    /// It does not fit in the `spare` bytes the running servers leave. Idle
+    /// models are unloaded to make room, and it starts either way.
     Short { needed: Footprint, spare: u64 },
 }
 

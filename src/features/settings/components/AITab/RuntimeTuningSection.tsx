@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 import { SettingsRow, SettingsSection, Switch } from '@/components/ui';
@@ -15,9 +16,6 @@ const STALL_TIMEOUT_MAX = 180;
 // for, so a typo cannot ask for something no model supports.
 const LOCAL_CONTEXT_WINDOW_MIN = 512;
 const LOCAL_CONTEXT_WINDOW_MAX = 262144;
-// What switching off Auto starts from — the previous fixed default, so the
-// first thing a user sees is the behaviour they had before.
-const LOCAL_CONTEXT_WINDOW_FALLBACK = 8192;
 
 /** The model-runtime values a field may hold while it is being edited. */
 export type RuntimeDraft = {
@@ -44,6 +42,27 @@ export function RuntimeTuningSection({
   setRuntimeDraft: Dispatch<SetStateAction<RuntimeDraft>>;
   saveLlmUpdates: (updates: Partial<ApiLLMSettings>) => Promise<boolean>;
 }) {
+  // What the user is typing into the local window field, from when they
+  // untick "Model's max" until they leave it. It starts empty: the window is
+  // theirs to type, and leaving it empty keeps every model at its maximum.
+  const [localWindowEntry, setLocalWindowEntry] = useState<string | null>(null);
+  const usesModelMax = runtimeDraft.localContextWindow === null && localWindowEntry === null;
+
+  const commitLocalWindow = () => {
+    if (localWindowEntry === null) return;
+    setLocalWindowEntry(null);
+    const typed = localWindowEntry.trim();
+    const value = typed === '' ? null : Number(typed);
+    if (value !== null && !Number.isFinite(value)) return;
+    const next =
+      value === null
+        ? null
+        : Math.round(clamp(value, LOCAL_CONTEXT_WINDOW_MIN, LOCAL_CONTEXT_WINDOW_MAX));
+    if (next === runtimeDraft.localContextWindow) return;
+    setRuntimeDraft((previous) => ({ ...previous, localContextWindow: next }));
+    void saveLlmUpdates({ localContextWindow: next });
+  };
+
   return (
 
     <SettingsSection title="Model runtime">
@@ -207,21 +226,25 @@ export function RuntimeTuningSection({
 
       <SettingsRow
         label="Local model context window"
-        hint="Auto sizes the window from what the model was trained for and how much memory your GPU reports. Override it only if you know you want a different one — a window larger than the model was trained for is stretched by rope scaling, which costs quality, and one too large for the card falls back to CPU."
+        hint="Each local model loads with its own maximum, the window it was trained for, unless you set one here or for the model in Settings → Models. A larger window needs more memory; one too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
         htmlFor="tuning-local-context-window"
       >
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
             <input
               type="checkbox"
-              checked={runtimeDraft.localContextWindow === null}
+              checked={usesModelMax}
               onChange={(event) => {
-                const next = event.target.checked ? null : LOCAL_CONTEXT_WINDOW_FALLBACK;
-                setRuntimeDraft((previous) => ({ ...previous, localContextWindow: next }));
-                void saveLlmUpdates({ localContextWindow: next });
+                if (!event.target.checked) {
+                  setLocalWindowEntry('');
+                  return;
+                }
+                setLocalWindowEntry(null);
+                setRuntimeDraft((previous) => ({ ...previous, localContextWindow: null }));
+                void saveLlmUpdates({ localContextWindow: null });
               }}
             />
-            Auto
+            Model&apos;s max
           </label>
           <input
             id="tuning-local-context-window"
@@ -229,24 +252,11 @@ export function RuntimeTuningSection({
             min={LOCAL_CONTEXT_WINDOW_MIN}
             max={LOCAL_CONTEXT_WINDOW_MAX}
             step={1}
-            disabled={runtimeDraft.localContextWindow === null}
-            value={runtimeDraft.localContextWindow ?? ''}
-            onChange={(event) =>
-              setRuntimeDraft((previous) => ({
-                ...previous,
-                localContextWindow: Math.round(
-                  toFinite(event.target.value, previous.localContextWindow ?? LOCAL_CONTEXT_WINDOW_FALLBACK)
-                ),
-              }))
-            }
-            onBlur={() => {
-              if (runtimeDraft.localContextWindow === null) return;
-              const clamped = Math.round(
-                clamp(runtimeDraft.localContextWindow, LOCAL_CONTEXT_WINDOW_MIN, LOCAL_CONTEXT_WINDOW_MAX)
-              );
-              setRuntimeDraft((previous) => ({ ...previous, localContextWindow: clamped }));
-              void saveLlmUpdates({ localContextWindow: clamped });
-            }}
+            disabled={usesModelMax}
+            placeholder={usesModelMax ? undefined : 'Tokens'}
+            value={localWindowEntry ?? runtimeDraft.localContextWindow ?? ''}
+            onChange={(event) => setLocalWindowEntry(event.target.value)}
+            onBlur={commitLocalWindow}
             className={NUMBER_FIELD_CLASS}
           />
         </div>
