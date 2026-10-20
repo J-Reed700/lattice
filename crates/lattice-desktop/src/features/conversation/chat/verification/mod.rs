@@ -305,6 +305,8 @@ impl GroundingReport {
 /// Runs the grounding passes for one turn.
 pub struct GroundingVerifier {
     judge: Option<ClaimJudge>,
+    /// Only sentences that cite a passage are claims (`cited_only`).
+    cited_only: bool,
 }
 
 impl GroundingVerifier {
@@ -320,7 +322,10 @@ impl GroundingVerifier {
                     model = judge.model_name(),
                     "Grounding claim judge enabled for this turn"
                 );
-                Self { judge: Some(judge) }
+                Self {
+                    judge: Some(judge),
+                    cited_only: false,
+                }
             }
             None => {
                 info!(
@@ -328,7 +333,10 @@ impl GroundingVerifier {
                      lexical overlap only and cannot detect a contradiction that reuses the \
                      source's wording"
                 );
-                Self { judge: None }
+                Self {
+                    judge: None,
+                    cited_only: false,
+                }
             }
         }
     }
@@ -350,7 +358,20 @@ impl GroundingVerifier {
                  lexical overlap only"
             );
         }
-        Self { judge: None }
+        Self {
+            judge: None,
+            ..self
+        }
+    }
+
+    /// An Explorer answer may explain the folder from general knowledge
+    /// without a citation, as its template allows, so only cited sentences
+    /// (by their own marker or their paragraph's) are claims about the
+    /// sources. Judged too, every other sentence would be marked as having no
+    /// source.
+    pub(super) fn cited_only(mut self, cited_only: bool) -> Self {
+        self.cited_only = cited_only;
+        self
     }
 
     /// Apply the user's verification settings to the judge, if there is one.
@@ -364,7 +385,10 @@ impl GroundingVerifier {
     }
 
     pub async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
-        let claims = lexical::lexical_pass(response, sources);
+        let mut claims = lexical::lexical_pass(response, sources);
+        if self.cited_only {
+            claims.retain(|claim| !claim.citation_ids.is_empty());
+        }
         if claims.is_empty() {
             return GroundingReport::default();
         }
