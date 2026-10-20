@@ -1,7 +1,7 @@
 use super::*;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
+    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
 use parking_lot::Mutex as SyncMutex;
@@ -464,6 +464,103 @@ fn the_estimate_learns_the_backends_ratio_from_reported_usage() {
     let before = estimator.chars_per_token();
     estimator.observe(10, 5);
     assert_eq!(estimator.chars_per_token(), before);
+}
+
+/// The owner's logged run read ~8.5k prompt tokens in 10 s and wrote 1,130
+/// answer tokens in 100 s: 850 and 11.3 tokens a second.
+fn logged_run() -> ServedTiming {
+    ServedTiming {
+        prompt_tokens: 8_500,
+        prompt_seconds: 10.0,
+        output_tokens: 1_130,
+        output_seconds: 100.0,
+    }
+}
+
+#[test]
+fn the_pace_learns_each_rate_from_reported_timing() {
+    let pace = PaceEstimator::default();
+    assert_eq!(pace.pace(), None);
+
+    // An answer too short to measure leaves the output rate, and so the
+    // pace, unknown.
+    pace.observe(&ServedTiming {
+        output_tokens: 10,
+        output_seconds: 1.0,
+        ..logged_run()
+    });
+    assert_eq!(pace.pace(), None);
+    pace.observe(&logged_run());
+    let measured = pace.pace().unwrap();
+    assert!((measured.prompt_tokens_per_second - 850.0).abs() < 1e-9);
+    assert!((measured.output_tokens_per_second - 11.3).abs() < 1e-9);
+
+    // A new rate moves the average toward it.
+    for _ in 0..40 {
+        pace.observe(&ServedTiming {
+            prompt_tokens: 4_000,
+            prompt_seconds: 10.0,
+            output_tokens: 2_000,
+            output_seconds: 100.0,
+        });
+    }
+    let moved = pace.pace().unwrap();
+    assert!((moved.prompt_tokens_per_second - 400.0).abs() < 1.0);
+    assert!((moved.output_tokens_per_second - 20.0).abs() < 0.1);
+
+    // A cache hit's last few tokens, a one-word answer, or a side the
+    // backend did not time change nothing.
+    pace.observe(&ServedTiming {
+        prompt_tokens: 12,
+        prompt_seconds: 0.001,
+        output_tokens: 5,
+        output_seconds: 0.5,
+    });
+    pace.observe(&ServedTiming {
+        prompt_seconds: 0.0,
+        output_seconds: 0.0,
+        ..logged_run()
+    });
+    assert_eq!(pace.pace(), Some(moved));
+}
+
+/// A model whose every answer reports `timing`.
+struct TimedModel(ServedTiming);
+
+#[async_trait]
+impl LLMPort for TimedModel {
+    async fn complete(
+        &self,
+        _request: &CompletionRequest,
+    ) -> lattice_core::shared::error::Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            timing: Some(self.0),
+            ..CompletionResponse::from_text("ok")
+        })
+    }
+    fn model_name(&self) -> &str {
+        "timed"
+    }
+    fn max_context_tokens(&self) -> usize {
+        8_192
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_scheduled_backend_measures_its_pace_from_its_own_answers() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler, 512);
+    assert_eq!(llm.pace(), None, "nothing is asked of the server");
+    llm.complete(&request("hi", None)).await.unwrap();
+    let pace = llm.pace().unwrap();
+    assert!((pace.prompt_tokens_per_second - 850.0).abs() < 1e-9);
+    assert!((pace.output_tokens_per_second - 11.3).abs() < 1e-9);
 }
 
 #[test]

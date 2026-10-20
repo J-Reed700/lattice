@@ -580,7 +580,7 @@ async fn verify(
 pub(in crate::features::learning) async fn judge_batch_for_publication(
     llm: &dyn LLMPort,
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
-) -> Result<Vec<ClaimJudgment>> {
+) -> Result<lattice_core::application::services::claim_verification::Answered<Vec<ClaimJudgment>>> {
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),

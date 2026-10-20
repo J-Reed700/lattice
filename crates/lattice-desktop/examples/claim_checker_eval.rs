@@ -252,6 +252,10 @@ impl LLMPort for RecordingLlm {
         self.inner.chars_per_token()
     }
 
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.inner.pace()
+    }
+
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         self.inner.is_ready().await
     }

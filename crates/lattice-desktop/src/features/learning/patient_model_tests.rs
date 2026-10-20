@@ -185,3 +185,34 @@ async fn a_non_transient_error_still_fails_at_once() {
     assert_eq!(flaky.calls.load(Ordering::Relaxed), 1);
     assert!(recorder.waits.lock().unwrap().is_empty());
 }
+
+/// A model that reports a measured pace.
+struct Paced;
+
+#[async_trait::async_trait]
+impl LLMPort for Paced {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text("ok"))
+    }
+    fn model_name(&self) -> &str {
+        "paced"
+    }
+    fn max_context_tokens(&self) -> usize {
+        8_192
+    }
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        Some(lattice_core::application::ports::llm_port::Pace {
+            prompt_tokens_per_second: 850.0,
+            output_tokens_per_second: 11.3,
+        })
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[test]
+fn waiting_out_outages_keeps_the_pace_of_the_model_it_waits_on() {
+    let recorder = Recorder::default();
+    assert_eq!(PatientModel::new(&Paced, &recorder).pace(), Paced.pace());
+}

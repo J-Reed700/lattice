@@ -30,7 +30,7 @@ use crate::features::llm::engine::types::{
 use crate::features::llm::engine::vision::{not_set_up_to_see, pictures_outside_a_user_message};
 use crate::features::llm::engine::GenerationConfig;
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ThinkingMode,
+    CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ServedTiming, ThinkingMode,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -481,6 +481,8 @@ struct Answer {
     done_reason: Option<String>,
     prompt_eval_count: Option<u32>,
     eval_count: Option<u32>,
+    prompt_eval_duration: Option<u64>,
+    eval_duration: Option<u64>,
 }
 
 impl Answer {
@@ -525,8 +527,24 @@ impl Answer {
             self.done_reason = chunk.done_reason;
             self.prompt_eval_count = chunk.prompt_eval_count;
             self.eval_count = chunk.eval_count;
+            self.prompt_eval_duration = chunk.prompt_eval_duration;
+            self.eval_duration = chunk.eval_duration;
         }
         Ok(())
+    }
+
+    /// What Ollama reported the request cost: the prompt tokens it evaluated
+    /// (a prefix it reused from its cache is not counted) and the tokens it
+    /// generated, each with the nanoseconds it spent. `None` when the final
+    /// chunk left either out.
+    fn timing(&self) -> Option<ServedTiming> {
+        let seconds = |nanos: u64| nanos as f64 / 1e9;
+        Some(ServedTiming {
+            prompt_tokens: u64::from(self.prompt_eval_count?),
+            prompt_seconds: seconds(self.prompt_eval_duration?),
+            output_tokens: u64::from(self.eval_count?),
+            output_seconds: seconds(self.eval_duration?),
+        })
     }
 
     fn into_response(self) -> Result<CompletionResponse> {
@@ -535,6 +553,7 @@ impl Answer {
                 "Ollama typed stream ended before completion".into(),
             ));
         }
+        let timing = self.timing();
         let calls: Vec<OllamaToolCall> = self.tool_calls.into_values().collect();
         let tool_calls = calls
             .iter()
@@ -568,6 +587,7 @@ impl Answer {
                 })?,
             }],
             first_token_logprobs: None,
+            timing,
         })
     }
 }

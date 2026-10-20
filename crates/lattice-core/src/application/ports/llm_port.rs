@@ -27,9 +27,11 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 mod multimodal;
+mod pace;
 mod tools;
 
 pub use multimodal::{ContentPart, ImagePart};
+pub use pace::{Pace, ServedTiming};
 pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
 
 /// Lazily resolves an optional model without exposing the application's container.
@@ -248,6 +250,14 @@ pub trait LLMPort: Send + Sync {
     /// nothing of their own to die and stay `true`.
     fn is_alive(&self) -> bool {
         true
+    }
+
+    /// How fast this backend reads a prompt and writes an answer, measured
+    /// from the timing it reported on the app's own requests. `None` until
+    /// it has reported enough to measure, and for a backend that reports
+    /// none. A port that wraps another forwards it.
+    fn pace(&self) -> Option<Pace> {
+        None
     }
 }
 
@@ -587,6 +597,10 @@ pub struct CompletionResponse {
     /// provider reports them.
     #[serde(default)]
     pub first_token_logprobs: Option<Vec<(String, f32)>>,
+    /// What the backend reported this request cost it in time, when it
+    /// reports that. `None` otherwise: nothing here is guessed.
+    #[serde(default)]
+    pub timing: Option<ServedTiming>,
 }
 
 impl CompletionResponse {
