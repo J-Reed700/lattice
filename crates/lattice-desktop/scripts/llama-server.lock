@@ -20,3 +20,9 @@ macos_min 13.3
 # Newest glibc symbol version the Linux binaries may require
 # (ubuntu-22.04 build image).
 glibc_max 2.35
+sha256 4f587b1a3762867df10f3913739b0c3fedf7cc0e50a9b47f6694cb101a35868b llama-server-aarch64-apple-darwin
+sha256 c66975579a136bb00ea841733c14499da09872634434ac75410a87aa4b599784 llama-server-x86_64-apple-darwin
+sha256 39b9d719b5b69ed34fe51bf90a8638c2e16eff3d96bc23ef1e4a582b0a1a045f llama-server-x86_64-pc-windows-msvc.exe
+sha256 89e4a6692759115ae284b06018fb029be06f9deec97fa7e2c96998c87e09d052 llama-server-cpu-x86_64-pc-windows-msvc.exe
+sha256 4f949c7923bd890c3f7ec13415da93dc0f3e59d9d965e0e08f8c9f246c91d9c4 llama-server-x86_64-unknown-linux-gnu
+sha256 57c1083bfd746eb08d20754bb97f4cddd56265c6eff6a1a036b272bdf24da848 llama-server-cpu-x86_64-unknown-linux-gnu
