@@ -8,10 +8,10 @@
 # SHA256SUMS.txt.
 
 # Upstream llama.cpp tag compiled by .github/workflows/llama-build.yml.
-llama_cpp_tag v0.6.0
+llama_cpp_tag v0.7.0
 # GitHub release holding the binaries. Bump the -rN suffix to rebuild the
 # same llama.cpp tag; published releases are never overwritten.
-release llama/v0.6.0-r1
+release llama/v0.7.0-r1
 # Repository that owns the release (public, so anonymous download works).
 repo J-Reed700/lattice
 # Oldest macOS the binary may require. Keep equal to
@@ -20,9 +20,9 @@ macos_min 13.3
 # Newest glibc symbol version the Linux binaries may require
 # (ubuntu-22.04 build image).
 glibc_max 2.35
-sha256 d86ddf1d0af454309764d6104aac891be6cadbf5cf1bff9af4db369f56e90e75 llama-server-aarch64-apple-darwin
-sha256 c70bc482b031efc6ff65e2b1e9d44591cc50b0b752a34af2ecb2b3b9c588497a llama-server-cpu-x86_64-pc-windows-msvc.exe
-sha256 dd380a7209ca91481060703ac46a29372e16ad58ae20d64f7bd21178e7e7c44a llama-server-cpu-x86_64-unknown-linux-gnu
-sha256 99c353ccff2f2e153a4f348cf5c5b5ee736173401e8d82508530848f2025549a llama-server-x86_64-apple-darwin
-sha256 3b04c85cfb639e594c07a2c8b4d2b9bb21b6d10f37d2977947a26f9d08506dc4 llama-server-x86_64-pc-windows-msvc.exe
-sha256 dab3f2208c2768698678abeceacb1bf58416edde5691a16a71166d185b56a648 llama-server-x86_64-unknown-linux-gnu
+sha256 4f587b1a3762867df10f3913739b0c3fedf7cc0e50a9b47f6694cb101a35868b llama-server-aarch64-apple-darwin
+sha256 c66975579a136bb00ea841733c14499da09872634434ac75410a87aa4b599784 llama-server-x86_64-apple-darwin
+sha256 39b9d719b5b69ed34fe51bf90a8638c2e16eff3d96bc23ef1e4a582b0a1a045f llama-server-x86_64-pc-windows-msvc.exe
+sha256 89e4a6692759115ae284b06018fb029be06f9deec97fa7e2c96998c87e09d052 llama-server-cpu-x86_64-pc-windows-msvc.exe
+sha256 4f949c7923bd890c3f7ec13415da93dc0f3e59d9d965e0e08f8c9f246c91d9c4 llama-server-x86_64-unknown-linux-gnu
+sha256 57c1083bfd746eb08d20754bb97f4cddd56265c6eff6a1a036b272bdf24da848 llama-server-cpu-x86_64-unknown-linux-gnu

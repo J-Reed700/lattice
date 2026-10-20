@@ -568,6 +568,71 @@ async fn progress_between_failures_and_outages_keep_a_job_retrying_visibly() -> 
     Ok(())
 }
 
+/// Takes the store's only connection and keeps it for a while after the job
+/// ends, so the write that records the end finds the database busy.
+struct BusyAtTheEnd {
+    pool: sqlx::SqlitePool,
+    hold: Duration,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for BusyAtTheEnd {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        let connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let hold = self.hold;
+        tokio::spawn(async move {
+            tokio::time::sleep(hold).await;
+            drop(connection);
+        });
+        Ok(JobOutcome::Completed {
+            result_ref: "result".into(),
+            message: "Done".into(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Result<()> {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(100))
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect(":memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let runtime = JobRuntime::new(pool.clone());
+    let retry = Duration::from_millis(20);
+    runtime
+        .register(
+            KIND,
+            Arc::new(BusyAtTheEnd {
+                pool,
+                hold: Duration::from_millis(500),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: retry,
+                max: retry,
+            }),
+        )
+        .await?;
+    let job = runtime.submit(&new_job(KIND, "busy-end", None)).await?;
+    finished(&runtime, &job.id).await;
+    assert_eq!(
+        runtime.store().get(&job.id).await?.status,
+        JobStatus::Completed
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
     for (error, expected) in [

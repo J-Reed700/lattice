@@ -83,7 +83,10 @@ two questions better and two worse: `can't tell from noise`, as they should be.
 The judge's endpoint and model are independent of the answering model (`score
 --endpoint URL --model NAME`), and the scored manifest records its identity under
 `settings.judge.identity`: the model name requested, what the server lists at
-`/v1/models`, and whether it is the model that wrote the answers. A judge grading
+`/v1/models`, and whether it is the model that wrote the answers. A judge server
+that wants a key reads it from `LATTICE_JUDGE_AUTH` as `Header-Name: value`; it is
+sent only to the judge and never written to a result. No time limit cuts a grade
+off, since a shared remote may queue it behind other work. A judge grading
 its own answers is the weakest setup. Greedy grading gives one verdict per turn;
 repeating it gives the same verdict, so each turn is graded once. Whichever judge
 is used, calibrate it against human labels:

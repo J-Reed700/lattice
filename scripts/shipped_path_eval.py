@@ -32,6 +32,7 @@ Commands:
 """
 import argparse
 import json
+import os
 import re
 import statistics
 import unicodedata
@@ -274,14 +275,32 @@ def parse_verdict(payload):
     return verdict["verdict"] == "pass", str(verdict.get("reason", ""))
 
 
-def http_judge(endpoint, model, timeout=300):
+# A judge server that wants a key reads it from here as `Header-Name: value`.
+# It is only ever sent to the judge: never printed, logged or written to a result.
+JUDGE_AUTH_ENV = "LATTICE_JUDGE_AUTH"
+
+
+def judge_headers():
+    headers = {"Content-Type": "application/json"}
+    auth = os.environ.get(JUDGE_AUTH_ENV, "")
+    if auth:
+        name, separator, value = auth.partition(":")
+        if not separator or not name.strip() or not value.strip():
+            raise SystemExit(f"{JUDGE_AUTH_ENV} must read `Header-Name: value`")
+        headers[name.strip()] = value.strip()
+    return headers
+
+
+def http_judge(endpoint, model):
+    """Grades one turn. A grade takes as long as the judge's server takes: a
+    shared remote may queue it behind other work, so no time limit cuts it off."""
     url = endpoint.rstrip("/") + "/v1/chat/completions"
+    headers = judge_headers()
 
     def call(messages):
         body = json.dumps(judge_request(model, messages)).encode()
-        request = urllib.request.Request(url, data=body, method="POST",
-                                         headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        request = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        with urllib.request.urlopen(request) as response:
             return parse_verdict(json.load(response))
     return call
 
@@ -296,7 +315,9 @@ def judge_identity(endpoint, model, answer_model, timeout=30):
     """
     served = None
     try:
-        with urllib.request.urlopen(endpoint.rstrip("/") + "/v1/models", timeout=timeout) as response:
+        listing_request = urllib.request.Request(endpoint.rstrip("/") + "/v1/models",
+                                                 headers=judge_headers())
+        with urllib.request.urlopen(listing_request, timeout=timeout) as response:
             listing = json.load(response)
         served = [{"id": entry.get("id"), "meta": entry.get("meta")}
                   for entry in listing.get("data") or [] if isinstance(entry, dict)]

@@ -1,6 +1,6 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::{
-    Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
+    Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
     RecoveryPolicy,
 };
 use crate::shared::{
@@ -469,22 +469,25 @@ impl JobRuntime {
         if outcome.is_ok() || cancel.is_cancelled() {
             lock(&self.deferred).remove(id);
         }
+        let backoff = kind.config.backoff;
         let finalized = match outcome {
             Ok(JobOutcome::Completed {
                 result_ref,
                 message,
             }) => self
-                .store()
-                .complete(id, &result_ref, &message)
+                .settle(id, backoff, || {
+                    self.store().complete(id, &result_ref, &message)
+                })
                 .await
                 .map(drop),
             Ok(JobOutcome::Committed) => Ok(()),
-            Ok(JobOutcome::Failed { code, message }) => {
-                self.store().fail(id, &code, &message).await.map(drop)
-            }
-            Ok(JobOutcome::Stopped) => self.stop(id, kind.config.recovery).await,
+            Ok(JobOutcome::Failed { code, message }) => self
+                .settle(id, backoff, || self.store().fail(id, &code, &message))
+                .await
+                .map(drop),
+            Ok(JobOutcome::Stopped) => self.stop(id, kind.config).await,
             // An error raised while stopping is the stop, not a failure of the work.
-            Err(_) if cancel.is_cancelled() => self.stop(id, kind.config.recovery).await,
+            Err(_) if cancel.is_cancelled() => self.stop(id, kind.config).await,
             Err(error) => self.record_failure(id, &kind, &error).await,
         };
         if let Err(error) = finalized {
@@ -493,28 +496,60 @@ impl JobRuntime {
         self.events.publish(id).await;
     }
 
+    /// Retries a write that settles a job whose worker has finished, for as
+    /// long as the database is only busy. The worker is gone and the
+    /// dispatcher never claims a running row, so a dropped write left the job
+    /// running, with nothing behind it, until the app restarted. Shutdown
+    /// stops the retries; startup recovery then settles the row.
+    async fn settle<T, F, Fut>(&self, id: &str, backoff: Backoff, write: F) -> Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let shutdown = self.tasks.token();
+        let mut retries = 0;
+        loop {
+            match write().await {
+                Err(error) if JobFailure::is_transient(&error) => {
+                    tracing::warn!(job_id = id, retries, %error, "Could not record the end of a job; retrying");
+                    let wait = tokio::time::sleep(backoff.delay(retries));
+                    if until_cancelled(&shutdown, wait).await.is_none() {
+                        return Err(error);
+                    }
+                    retries = retries.saturating_add(1);
+                }
+                settled => return settled,
+            }
+        }
+    }
+
     /// Suspends or interrupts a stopped job. Both are conditional on it still
     /// running, so a committed user cancellation stays.
-    async fn stop(&self, id: &str, policy: RecoveryPolicy) -> Result<()> {
+    async fn stop(&self, id: &str, config: JobKindConfig) -> Result<()> {
         let requeued = lock(&self.requeued).contains(id);
-        match policy {
-            RecoveryPolicy::Requeue if requeued => self.store().requeue(id, WAITING_TURN).await,
-            RecoveryPolicy::Requeue => self.store().suspend(id).await,
-            RecoveryPolicy::Interrupt => self.store().interrupt(id).await,
-        }
+        self.settle(id, config.backoff, || async move {
+            match config.recovery {
+                RecoveryPolicy::Requeue if requeued => self.store().requeue(id, WAITING_TURN).await,
+                RecoveryPolicy::Requeue => self.store().suspend(id).await,
+                RecoveryPolicy::Interrupt => self.store().interrupt(id).await,
+            }
+        })
+        .await
         .map(drop)
     }
 
     async fn record_failure(&self, id: &str, kind: &Kind, error: &AppError) -> Result<()> {
-        let job = self.store().get(id).await?;
+        let backoff = kind.config.backoff;
+        let job = self.settle(id, backoff, || self.store().get(id)).await?;
         let failure = kind.handler.failure(&job, error);
         let repeated = matches!(failure, JobFailure::Defer(_))
-            && self.repeats_without_progress(&job, error).await?;
+            && self.repeats_without_progress(&job, error, backoff).await?;
         match failure {
             JobFailure::Fail { code, message } => {
                 lock(&self.deferred).remove(id);
                 tracing::warn!(job_id = id, %error, "Job failed; saved work requires attention");
-                self.store().fail(id, &code, &message).await
+                self.settle(id, backoff, || self.store().fail(id, &code, &message))
+                    .await
             }
             JobFailure::Defer(_) if repeated => {
                 lock(&self.deferred).remove(id);
@@ -528,7 +563,10 @@ impl JobRuntime {
                     "{error} The previous attempt failed the same way and nothing was saved \
                      in between, so another attempt would fail again."
                 );
-                self.store().fail(id, REPEATED_FAILURE, &message).await
+                self.settle(id, backoff, || {
+                    self.store().fail(id, REPEATED_FAILURE, &message)
+                })
+                .await
             }
             JobFailure::Defer(deferral) => {
                 let attempt = job.retry_count.saturating_add(1);
@@ -540,7 +578,8 @@ impl JobRuntime {
                     ),
                     ..deferral
                 };
-                self.store().defer(id, &deferral, kind.config.backoff).await
+                self.settle(id, backoff, || self.store().defer(id, &deferral, backoff))
+                    .await
             }
         }
         .map(drop)
@@ -549,13 +588,20 @@ impl JobRuntime {
     /// Whether `error` is what the job's previous attempt was deferred for,
     /// with nothing saved since. An outage never is: it says nothing about the
     /// work. Records this failure as the job's latest either way.
-    async fn repeats_without_progress(&self, job: &JobRecord, error: &AppError) -> Result<bool> {
+    async fn repeats_without_progress(
+        &self,
+        job: &JobRecord,
+        error: &AppError,
+        backoff: Backoff,
+    ) -> Result<bool> {
         if JobFailure::is_outage(error) {
             return Ok(false);
         }
         let latest = LastFailure {
             failure: error.error_code(),
-            saved_work: self.saved_work(job).await?,
+            saved_work: self
+                .settle(&job.id, backoff, || self.saved_work(job))
+                .await?,
         };
         let mut deferred = lock(&self.deferred);
         let repeated = deferred.get(&job.id) == Some(&latest);
