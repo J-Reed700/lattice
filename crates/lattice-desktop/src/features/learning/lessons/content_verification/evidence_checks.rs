@@ -85,11 +85,16 @@ pub(super) fn page_budget_note(llm: &dyn LLMPort, retained: &ClaimChecks) -> Str
 /// Each passage's label, by source version (`provenance_gate::passage_labels`).
 type Labels = HashMap<String, String>;
 
+/// Tells a pass's bookkeeping that one comparison finished.
+type Answered<'a> = dyn Fn(Pass, &CheckedClaim) + Sync + 'a;
+
 /// What a finished comparison reports to lesson progress.
 #[derive(Clone, Copy)]
-enum Check {
-    /// A claim's pass A comparison or its pass B first page.
-    First,
+enum Check<'a> {
+    /// A claim's pass A comparison or its pass B first page: each is told
+    /// as it finishes, so a claim is counted the moment its last comparison
+    /// is done, even while its request's other comparisons are pending.
+    First(&'a Answered<'a>),
     /// An unsupported claim's check against a deeper pass B page.
     Deeper,
 }
@@ -259,9 +264,18 @@ pub(super) async fn check_with_paging(
                 "Checking {} claims against their citations",
                 first.len()
             ));
-            let (batch, answered) = group(llm, first, Check::First, &labels).await?;
+            let shared = std::sync::Mutex::new(std::mem::take(&mut run));
+            let tell = |pass: Pass, result: &CheckedClaim| {
+                shared
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .answer(pass, result);
+            };
+            let (_, answered) = group(llm, first, Check::First(&tell), &labels).await?;
             answers.add(answered);
-            run.answered(batch);
+            run = shared
+                .into_inner()
+                .unwrap_or_else(|error| error.into_inner());
         }
         let sizing = Sizing::Sized(PageBudget::of(llm, answers));
         let waiting: Vec<usize> = run
@@ -303,18 +317,30 @@ pub(super) async fn check_with_paging(
     ));
     // A request already carries several complete evidence sets. Run them one
     // at a time rather than compete prompt prefills on the same model.
-    let mut groups = futures::stream::iter(pack(llm, pending, &labels))
-        .map(|request| group(llm, request, Check::First, &labels))
-        .buffer_unordered(1);
-    while let Some(batch) = groups.next().await {
-        let (batch, answered) = batch?;
-        answers.add(answered);
-        run.answered(batch);
-        crate::features::learning::lesson_progress::stage(format!(
-            "Completed {} of {model_checks} model checks · {} saved checks reused · {total} lesson claims",
-            run.done, run.reused
-        ));
+    let shared = std::sync::Mutex::new(std::mem::take(&mut run));
+    {
+        let tell = |pass: Pass, result: &CheckedClaim| {
+            shared
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .answer(pass, result);
+        };
+        let mut groups = futures::stream::iter(pack(llm, pending, &labels))
+            .map(|request| group(llm, request, Check::First(&tell), &labels))
+            .buffer_unordered(1);
+        while let Some(batch) = groups.next().await {
+            let (_, answered) = batch?;
+            answers.add(answered);
+            let run = shared.lock().unwrap_or_else(|error| error.into_inner());
+            crate::features::learning::lesson_progress::stage(format!(
+                "Completed {} of {model_checks} model checks · {} saved checks reused · {total} lesson claims",
+                run.done, run.reused
+            ));
+        }
     }
+    let mut run = shared
+        .into_inner()
+        .unwrap_or_else(|error| error.into_inner());
     let mut results = run.finish(&context, &labels, &mut answers).await?;
     *retained
         .answers

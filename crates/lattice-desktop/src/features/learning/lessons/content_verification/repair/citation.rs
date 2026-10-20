@@ -112,9 +112,9 @@ pub(in crate::features::learning::lessons::content_verification) fn number_sourc
 /// source in `numbered`, the sources the lesson numbers. A source not
 /// numbered yet is added, so a supported claim never keeps a citation to the
 /// wrong source; the next pass reads the new citation as the section's own
-/// (pass A). A section is rewritten only when the claim's support is not in
-/// doubt (the provenance gate asked for no scrutiny); a section's first such
-/// claim decides. `tried` holds the citations written before in this job,
+/// (pass A). A section is rewritten only when it carries a citation and
+/// the claim's support is not in doubt (the provenance gate asked for no
+/// scrutiny); a section's first such claim decides. `tried` holds the citations written before in this job,
 /// never written again, so two passages a judge weighs differently on
 /// successive passes cannot trade places. Returns, per rewritten section,
 /// the finding's position and the ledger event that records the repair.
@@ -160,11 +160,14 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
             continue;
         }
         let (field, item) = super::location(candidate, finding.unit)?;
+        // Only a section that carries a citation has one to repair: the
+        // lesson's own sections always do; one without any is not given one.
         let Some(section) = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
             .and_then(|items| items.get_mut(item))
             .and_then(Value::as_object_mut)
+            .filter(|section| section.contains_key("quote"))
         else {
             continue;
         };

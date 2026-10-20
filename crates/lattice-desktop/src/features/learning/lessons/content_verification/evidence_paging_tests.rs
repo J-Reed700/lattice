@@ -305,8 +305,9 @@ async fn the_list_ends_at_its_last_passage_on_the_subject_and_the_claim_then_goe
 }
 
 #[tokio::test]
-async fn a_claim_with_no_distinctive_term_has_an_empty_list() -> Result<()> {
-    // Every passage holds every word of the claim: none tells them apart.
+async fn a_course_that_cannot_tell_its_passages_apart_is_read_whole() -> Result<()> {
+    // Every passage holds every word of the claim: none is more on the
+    // subject than another, so the whole ranking is on it.
     let sources: Vec<_> = (0..3)
         .map(|index| {
             reference(
@@ -316,14 +317,16 @@ async fn a_claim_with_no_distinctive_term_has_an_empty_list() -> Result<()> {
         })
         .collect();
     let references = ReferenceCollection::lexical(&sources)?;
-    let list = references
-        .claim_list(
-            CLAIM,
-            &crate::features::learning::reference_collection::Scope::All,
-            &[],
-        )
-        .await?;
-    assert!(list.passages.is_empty());
+    let all = crate::features::learning::reference_collection::Scope::All;
+    let list = references.claim_list(CLAIM, &all, &[]).await?;
+    assert_eq!(list.passages.len(), 3);
+    // A claim none of whose words is in the course has nothing to read.
+    let invented = "OrderWidget CartFactory SkuHelper.";
+    assert!(references
+        .claim_list(invented, &all, &[])
+        .await?
+        .passages
+        .is_empty());
     Ok(())
 }
 

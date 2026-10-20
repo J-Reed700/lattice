@@ -10,7 +10,10 @@
 //! one order: the fused one.
 //!
 //! The list's end is set by content, never by a count or a score: the last
-//! passage that mentions the claim's subject. Retrieval fetches a depth and
+//! passage that mentions the claim's subject. A claim with no term in the
+//! collection has an empty list; one whose every term is in every passage
+//! (a course of one short source) cannot be told apart by them, so its list
+//! is the whole ranking. Retrieval fetches a depth and
 //! doubles it while the fetched tail still mentions the subject and the
 //! scope may hold more, so the depth is found, not chosen. Passages before
 //! the end stay in fused order whether or not they mention the subject, so
@@ -124,8 +127,10 @@ impl ReferenceCollection<'_> {
     /// `claim`'s corroboration list over `scope`: the claim and its counter
     /// query ranked together, each hit widened to its surrounding source
     /// text, minus passages overlapping `shown`, ending at the last passage
-    /// that mentions the claim's subject. A claim with no distinctive term
-    /// has an empty list. Branch and fused scores at the list's end are
+    /// that mentions the claim's subject. A claim with no term in the
+    /// collection has an empty list; one the collection cannot tell its
+    /// passages apart by is on every passage. Branch and fused scores at the
+    /// list's end are
     /// logged; none of them ends it.
     pub(in crate::features::learning) async fn claim_list(
         &self,
@@ -136,6 +141,9 @@ impl ReferenceCollection<'_> {
         let subject = self.subject_of(claim).await?;
         let counter = counter_query(claim, &subject);
         let queries: Vec<&str> = std::iter::once(claim).chain(counter.as_deref()).collect();
+        // A collection that cannot tell its passages apart by the claim's
+        // terms has every one of them on the subject: its whole ranking.
+        let on_subject = |text: &str| subject.undivided() || subject.mentioned_in(text);
         let mut depth = FIRST_PAGE;
         loop {
             let ranked = self.rank(&queries, scope, depth).await?;
@@ -150,7 +158,7 @@ impl ReferenceCollection<'_> {
             if deeper
                 && widened
                     .last()
-                    .is_some_and(|passage| subject.mentioned_in(&passage.text))
+                    .is_some_and(|passage| on_subject(&passage.text))
             {
                 depth = depth.saturating_mul(2);
                 continue;
@@ -161,7 +169,7 @@ impl ReferenceCollection<'_> {
                 .collect();
             let end = passages
                 .iter()
-                .rposition(|passage| subject.mentioned_in(&passage.text))
+                .rposition(|passage| on_subject(&passage.text))
                 .map_or(0, |last| last + 1);
             passages.truncate(end);
             tracing::debug!(

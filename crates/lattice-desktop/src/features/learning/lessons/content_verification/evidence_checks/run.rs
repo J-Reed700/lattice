@@ -36,10 +36,9 @@ impl Run {
         self.results.push(result);
     }
 
-    /// Tells lesson progress about each compared claim whose comparisons are
-    /// now all done, once; returns how many it told.
-    pub(super) fn report_decided(&mut self) -> usize {
-        let mut told = 0;
+    /// Tells lesson progress, once, about each compared claim whose
+    /// comparisons are now all done.
+    pub(super) fn report_decided(&mut self) {
         for claim in self.compared.values() {
             if self.reported.contains(&claim.ordinal) {
                 continue;
@@ -49,23 +48,33 @@ impl Run {
             };
             self.reported.insert(claim.ordinal);
             self.reused += usize::from(all_reused);
-            told += 1;
             crate::features::learning::lesson_progress::checked(
                 all_reused,
                 finding.verdict != ClaimVerdict::Supported,
             );
         }
-        told
     }
 
-    /// Records a request's findings on their claims.
-    pub(super) fn answered(&mut self, batch: Vec<(Pass, CheckedClaim)>) {
-        for (pass, (ordinal, _, finding, _)) in batch {
-            if let Some(claim) = self.compared.get_mut(&ordinal) {
-                claim.answered(pass, finding);
-            }
+    /// Records one finished comparison on its claim, and counts the claim
+    /// when that was its last.
+    pub(super) fn answer(&mut self, pass: Pass, (ordinal, _, finding, _): &CheckedClaim) {
+        let Some(claim) = self.compared.get_mut(ordinal) else {
+            return;
+        };
+        claim.answered(pass, finding.clone());
+        if self.reported.contains(ordinal) {
+            return;
         }
-        self.done += self.report_decided();
+        let Some((decided, all_reused)) = claim.decided() else {
+            return;
+        };
+        self.reported.insert(*ordinal);
+        self.reused += usize::from(all_reused);
+        self.done += 1;
+        crate::features::learning::lesson_progress::checked(
+            all_reused,
+            decided.verdict != ClaimVerdict::Supported,
+        );
     }
 
     /// The job's first request, which measures what an answer costs before

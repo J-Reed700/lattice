@@ -164,15 +164,18 @@ pub(super) async fn individual(
 pub(super) fn completed(
     results: &mut Vec<(Pass, CheckedClaim)>,
     done: (Pass, CheckedClaim),
-    check: Check,
+    check: Check<'_>,
 ) {
-    // A deeper page reports each finished comparison at once, even while its
-    // siblings are pending; a first check reports its claim when all of the
-    // claim's comparisons are done.
-    if let Check::Deeper = check {
-        crate::features::learning::lesson_progress::rechecked(
+    // Individual fallbacks and smaller groups can take minutes: each
+    // finished comparison is reported at once, even while its siblings are
+    // pending. A deeper page moves its claim out of the unresolved count when
+    // it supports it; a first check counts its claim once all of the claim's
+    // comparisons are done.
+    match check {
+        Check::Deeper => crate::features::learning::lesson_progress::rechecked(
             done.1 .2.verdict == ClaimVerdict::Supported,
-        );
+        ),
+        Check::First(tell) => tell(done.0, &done.1),
     }
     results.push(done);
 }
@@ -182,7 +185,7 @@ pub(super) fn completed(
 pub(super) async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
-    check: Check,
+    check: Check<'_>,
     labels: &Labels,
 ) -> Result<(Vec<(Pass, CheckedClaim)>, AnswerSize)> {
     let mut results = Vec::new();
