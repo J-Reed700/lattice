@@ -12,8 +12,9 @@ use crate::infrastructure::passage_index::job::ProgressSaver;
 use async_trait::async_trait;
 use lattice_core::shared::runtime::jobs::{JobContext, JobHandler, JobOutcome};
 use lattice_core::shared::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Weak;
+use std::time::Instant;
 use tokio::sync::watch;
 
 pub(super) struct CourseIndexJob {
@@ -27,9 +28,9 @@ impl CourseIndexJob {
 }
 
 /// What a build is doing, saved as the job's activity.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-enum Phase {
+pub(super) enum Phase {
     #[default]
     Starting,
     /// A reader is bringing the index current; the build waits for it.
@@ -39,13 +40,19 @@ enum Phase {
     Embedding,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+/// A build's progress, saved as its job's activity; the status read takes
+/// a running build's counts from it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Activity {
-    phase: Phase,
-    references: usize,
-    embedded: usize,
-    total: usize,
+pub(super) struct Activity {
+    pub phase: Phase,
+    /// Active versions new to the index this run.
+    pub references: usize,
+    /// Passages this run has embedded, of the `total` it found pending.
+    pub embedded: usize,
+    pub total: usize,
+    /// The pace since embedding started, measured; absent until then.
+    pub per_second: Option<f64>,
 }
 
 impl Activity {
@@ -69,24 +76,33 @@ impl Activity {
 }
 
 /// Sends each change to the job's progress loop.
-struct Told(watch::Sender<Activity>);
+struct Told {
+    sink: watch::Sender<Activity>,
+    /// When the first batch was told, which the pace is measured from.
+    started: Option<(Instant, usize)>,
+}
 
 impl CourseProgress for Told {
     fn waiting(&mut self) {
-        self.0
+        self.sink
             .send_modify(|activity| activity.phase = Phase::Waiting);
     }
     fn indexing(&mut self, references: usize) {
-        self.0.send_modify(|activity| {
+        self.sink.send_modify(|activity| {
             activity.phase = Phase::Indexing;
             activity.references = references;
         });
     }
     fn embedded(&mut self, done: usize, total: usize) {
-        self.0.send_modify(|activity| {
+        let (since, at_start) = *self.started.get_or_insert((Instant::now(), done));
+        let seconds = since.elapsed().as_secs_f64();
+        let per_second =
+            (seconds > 0.0 && done > at_start).then(|| (done - at_start) as f64 / seconds);
+        self.sink.send_modify(|activity| {
             activity.phase = Phase::Embedding;
             activity.embedded = done;
             activity.total = total;
+            activity.per_second = per_second;
         });
     }
 }
@@ -111,7 +127,10 @@ impl JobHandler for CourseIndexJob {
             });
         }
         let (sink, mut updates) = watch::channel(Activity::default());
-        let mut told = Told(sink);
+        let mut told = Told {
+            sink,
+            started: None,
+        };
         let mut saver = ProgressSaver::new(context);
         // The run borrows the course; it ends with this block.
         let outcome = {

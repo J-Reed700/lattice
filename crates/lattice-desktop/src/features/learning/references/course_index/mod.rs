@@ -42,7 +42,9 @@
 //! ## Public surface
 //!
 //! - [`CourseIndexes`] — every course's index: `search`, `ensure_current`,
-//!   `refresh`, `delete`, `sweep`, `backfill`, `register`
+//!   `refresh`, `delete`, `sweep`, `backfill`, `register`, and `status`, the
+//!   cheap read the course workspace shows ([`CourseIndexStatusDto`]): while a
+//!   course indexes, its evidence actions wait and say why
 //! - [`CourseSearch`] — one course's index held by a reader, and the
 //!   [`IndexView`] it last brought current
 //! - [`IndexMode`], [`CourseProgress`]
@@ -53,9 +55,11 @@ mod search;
 mod sync;
 
 #[cfg(test)]
+mod status_tests;
+#[cfg(test)]
 pub(in crate::features::learning) mod tests;
 
-pub use manager::CourseIndexes;
+pub use manager::{CourseIndexStatusDto, CourseIndexes};
 pub use search::{CourseSearch, IndexView};
 pub(in crate::features::learning) use sync::write_version;
 pub use sync::CourseProgress;

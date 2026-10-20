@@ -47,7 +47,7 @@ pub(in crate::features::learning) fn indexes(
 
 /// A course whose sources are `texts`, captured as web pages; its program id
 /// and the source ids, in order.
-async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<String>)> {
+pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<String>)> {
     let mut program = tests::fixture();
     program.sources = texts
         .iter()
@@ -94,7 +94,7 @@ async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<Stri
 }
 
 /// One short page per topic: each is one passage.
-fn pages(count: usize) -> Vec<String> {
+pub(super) fn pages(count: usize) -> Vec<String> {
     (0..count)
         .map(|i| format!("Topic {i} explains how widget{i} handles retries and backoff."))
         .collect()
@@ -368,7 +368,7 @@ async fn without_an_embedding_model_the_course_is_searched_by_words_and_says_so(
 }
 
 /// The builds queued for `program`.
-async fn builds(
+pub(super) async fn builds(
     pool: &SqlitePool,
     program: &str,
 ) -> Vec<lattice_core::shared::runtime::jobs::JobRecord> {
