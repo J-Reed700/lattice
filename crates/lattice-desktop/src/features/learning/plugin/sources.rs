@@ -382,3 +382,22 @@ pub async fn search_learning_sources_semantically(
     .await
     .map_err(ApiError::from)
 }
+
+/// Where the course's evidence index stands: for the course workspace's
+/// notice, and the evidence actions it holds back while the course indexes.
+/// A cheap read that never opens or builds the index; it queues a build when
+/// the index is behind its course and none is queued.
+#[tauri::command]
+#[specta::specta]
+pub async fn course_index_status(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<crate::features::learning::references::course_index::CourseIndexStatusDto, ApiError> {
+    use crate::features::learning::references::course_index::CourseIndexStatusDto;
+    let Some(courses) = container.course_indexes() else {
+        return Ok(CourseIndexStatusDto::Unavailable {
+            reason: "The course index is not available in this window.".into(),
+        });
+    };
+    Ok(courses.status(&program_id).await)
+}

@@ -643,6 +643,12 @@ export const learningApi = {
       request,
     }),
 
+  /** Where the course's evidence index stands; queues a build when it is behind. */
+  courseIndexStatus: (
+    programId: string,
+  ): Promise<ApiResult<Wire.CourseIndexStatusDto>> =>
+    learningCall<Wire.CourseIndexStatusDto>('course_index_status', { programId }),
+
   searchLearningSourcesSemantically: (
     request: Wire.SearchLearningSourcesSemanticallyRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceSemanticSearchResultDto[]>> =>

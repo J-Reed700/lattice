@@ -22,10 +22,30 @@ use std::sync::Arc;
 /// Terms a full-text query keeps.
 const MAX_TERMS: usize = 16;
 
+/// How a query's words match the words a store indexed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WordMatch {
+    /// Words of four characters or more also match as a prefix, so `retry`
+    /// finds `retry_policy`: for code, where one identifier is part of
+    /// another.
+    #[default]
+    Prefix,
+    /// A word matches only itself, as the library's full-text search matches
+    /// it: for prose, where `mineral1` is not `mineral169` and `test` is not
+    /// `testament`.
+    Whole,
+}
+
 /// An FTS5 `MATCH` expression for free text: every word as a quoted literal
 /// (so nothing in it can act as an operator), joined with `OR`. Words of four
 /// characters or more also match as a prefix, so `retry` finds `retry_policy`.
 pub fn match_expression(query: &str) -> Option<String> {
+    match_words(query, WordMatch::Prefix)
+}
+
+/// [`match_expression`], with `words` deciding whether a word also matches
+/// as a prefix.
+pub fn match_words(query: &str, words: WordMatch) -> Option<String> {
     let mut seen = HashSet::new();
     let terms: Vec<String> = query
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -35,7 +55,7 @@ pub fn match_expression(query: &str) -> Option<String> {
         .take(MAX_TERMS)
         .map(|term| {
             let quoted = format!("\"{}\"", term.replace('"', "\"\""));
-            if term.chars().count() >= 4 {
+            if words == WordMatch::Prefix && term.chars().count() >= 4 {
                 format!("{quoted}*")
             } else {
                 quoted
@@ -55,11 +75,22 @@ pub fn indexed_term(word: &str) -> String {
 /// The store's FTS5 index as a text search.
 pub struct PassageTextSearch {
     store: Arc<PassageStore>,
+    words: WordMatch,
 }
 
 impl PassageTextSearch {
+    /// Words of four characters or more also match as a prefix.
     pub fn new(store: Arc<PassageStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            words: WordMatch::Prefix,
+        }
+    }
+
+    /// The same search, matching a query's words as `words` says.
+    pub fn matching(mut self, words: WordMatch) -> Self {
+        self.words = words;
+        self
     }
 
     fn read_only(&self) -> AppError {
@@ -90,7 +121,7 @@ impl TextSearchPort for PassageTextSearch {
         if top_k == 0 || allowed_document_ids.is_some_and(HashSet::is_empty) {
             return Ok(Vec::new());
         }
-        let Some(expression) = match_expression(query) else {
+        let Some(expression) = match_words(query, self.words) else {
             return Ok(Vec::new());
         };
         let ranked = self

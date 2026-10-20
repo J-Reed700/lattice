@@ -121,7 +121,7 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
             // Shape only: whether the model still exists (or, for a cloud
             // Verifier, has a key) is answered when a job asks for it, with
             // the real state.
-            for key in ["learningModel", "verifierModel"] {
+            for key in ["learningModel", "verifierModel", "utilityModel"] {
                 if let Some(value) = request.updates.get(key).filter(|value| !value.is_null()) {
                     serde_json::from_value::<ModelRef>(value.clone()).map_err(|_| {
                         AppError::InvalidInput(format!("{key} is not a model reference"))
@@ -421,6 +421,35 @@ mod tests {
             .await
             .expect("null clears the Verifier model");
         assert_eq!(cleared.llm.verifier_model, None);
+    }
+
+    #[tokio::test]
+    async fn utility_model_must_be_a_model_reference_or_null() {
+        let use_case = UpdateSettingsUseCase::new(Arc::new(MockSettingsRepository::new()));
+        let update = |value: serde_json::Value| {
+            let updates = HashMap::from([("utilityModel".to_string(), value)]);
+            use_case.update_category(SettingsCategory::Llm, updates)
+        };
+
+        assert!(
+            matches!(update(json!("llama_cpp:remote.gguf")).await, Err(AppError::InvalidInput(message))
+                if message == "utilityModel is not a model reference"),
+            "a malformed reference is refused before anything is written"
+        );
+
+        let set = update(json!({"kind": "llama_cpp", "model": "remote.gguf"}))
+            .await
+            .expect("a llama.cpp reference is accepted for Utility");
+        assert_eq!(
+            set.llm.utility_model,
+            Some(ModelRef::LlamaCpp {
+                model: "remote.gguf".into()
+            })
+        );
+        let cleared = update(serde_json::Value::Null)
+            .await
+            .expect("null clears the Utility model");
+        assert_eq!(cleared.llm.utility_model, None);
     }
 
     #[tokio::test]

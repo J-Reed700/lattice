@@ -37,6 +37,9 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+mod status;
+pub use status::CourseIndexStatusDto;
+
 pub struct CourseIndexes {
     /// `<data_dir>/course-index`.
     base_dir: PathBuf,
@@ -255,21 +258,25 @@ impl CourseIndexes {
         }
     }
 
-    /// Queues a build of `program` at its current revision.
+    /// Queues a build of `program` at its current revision, for the active
+    /// model. Without one there is nothing to embed, and nothing is queued.
     async fn queue_build(&self, program: &str, rerun: Rerun) -> Result<()> {
         self.dir_of(program)?;
+        let Some(identity) = self.embedders.identity().await else {
+            return Ok(());
+        };
         let versions = self.repository().active_versions(program).await?;
-        self.queue_revision(program, sync::revision(&versions), rerun)
-            .await
+        let stamp = sync::stamp(&sync::revision(&versions), &identity);
+        self.queue_stamp(program, &stamp, rerun).await
     }
 
-    /// Queues a build of `program` named by `revision`, so asking again for
-    /// the same revision is the same job. Finished builds of other revisions
-    /// are forgotten, keeping one per course in the history; a finished build
-    /// of this revision is forgotten too when the caller knows the index is
-    /// still not current, so the build runs again.
-    async fn queue_revision(&self, program: &str, revision: String, rerun: Rerun) -> Result<()> {
-        let operation_id = format!("course-index:{program}:{revision}");
+    /// Queues a build of `program` named by `stamp`, so asking again for the
+    /// same revision and model is the same job. Finished builds under other
+    /// names are forgotten, keeping one per course in the history; a finished
+    /// build under this name is forgotten too when the caller knows the index
+    /// is still not current, so the build runs again.
+    pub(super) async fn queue_stamp(&self, program: &str, stamp: &str, rerun: Rerun) -> Result<()> {
+        let operation_id = build_name(program, stamp);
         for old in self
             .jobs
             .store()
@@ -288,7 +295,7 @@ impl CourseIndexes {
                 kind: COURSE_INDEX.into(),
                 subject_id: Some(program.to_string()),
                 operation_id,
-                payload_hash: revision,
+                payload_hash: stamp.to_string(),
                 requested: serde_json::json!({ "programId": program }),
                 progress_total: 100,
                 message: "Queued".into(),
@@ -303,6 +310,9 @@ impl CourseIndexes {
     /// is queued: a build would add nothing a reader's own step does not.
     /// Returns how many builds were queued; they run one at a time.
     pub async fn backfill(&self) -> Result<usize> {
+        let Some(identity) = self.embedders.identity().await else {
+            return Ok(0);
+        };
         let recorded: HashMap<String, String> = registry::list(&self.base_dir)
             .await
             .into_iter()
@@ -316,23 +326,17 @@ impl CourseIndexes {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let repo = self.repository();
-        let mut stale = Vec::new();
+        let mut queued = 0;
         for program in programs {
             let versions = repo.active_versions(&program).await?;
             if versions.is_empty() {
                 continue;
             }
-            let revision = sync::revision(&versions);
-            if recorded.get(&program) != Some(&revision) {
-                stale.push((program, revision));
+            let stamp = sync::stamp(&sync::revision(&versions), &identity);
+            if recorded.get(&program) == Some(&stamp) {
+                continue;
             }
-        }
-        if stale.is_empty() || self.embedders.embedder().await.is_none() {
-            return Ok(0);
-        }
-        let mut queued = 0;
-        for (program, revision) in stale {
-            match self.queue_revision(&program, revision, Rerun::Yes).await {
+            match self.queue_stamp(&program, &stamp, Rerun::Yes).await {
                 Ok(()) => queued += 1,
                 Err(error) => warn!(%error, program, "Could not queue a course index build"),
             }
@@ -428,9 +432,14 @@ impl CourseIndexes {
     }
 }
 
+/// The operation id a build of `program` at `stamp` is queued under.
+pub(super) fn build_name(program: &str, stamp: &str) -> String {
+    format!("course-index:{program}:{stamp}")
+}
+
 /// Whether a build may run again for a revision it already finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Rerun {
+pub(super) enum Rerun {
     /// No: the same revision is the same build (a capture asked again).
     No,
     /// Yes: the index is known not to be current at this revision.

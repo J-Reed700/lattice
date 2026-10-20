@@ -14,7 +14,9 @@
 use super::manager::CourseIndexes;
 use super::sync::CourseProgress;
 use super::IndexMode;
-use crate::infrastructure::passage_index::{Engine, LiveIndex, PassageStore, PassageTextSearch};
+use crate::infrastructure::passage_index::{
+    Engine, LiveIndex, PassageStore, PassageTextSearch, WordMatch,
+};
 use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
 use lattice_core::shared::Result;
 use parking_lot::RwLock;
@@ -50,7 +52,11 @@ impl IndexView {
             searches.hybrid(
                 engine.embedder,
                 engine.vectors.port(),
-                Arc::new(PassageTextSearch::new(Arc::clone(store))),
+                // Whole words, as the library and the claim checker's
+                // keyword ranking have always matched: a source must not
+                // enter a claim's evidence because one of its words begins
+                // with one of the claim's.
+                Arc::new(PassageTextSearch::new(Arc::clone(store)).matching(WordMatch::Whole)),
             )
         });
         Self {

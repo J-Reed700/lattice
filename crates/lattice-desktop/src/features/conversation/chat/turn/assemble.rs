@@ -262,6 +262,7 @@ pub(super) fn render_prompt(
         prompt_settings: turn.prompt_settings.clone(),
         question: turn.message.clone(),
         is_greeting: retrieval.interpretation.query_type == QueryType::Greeting,
+        explorer: turn.explorer.is_some(),
         flags,
         deep_research_searches: searches_again.then(|| retrieval.web_queries.clone()),
         web_search_error: retrieval.web_search_error.clone(),
@@ -596,9 +597,9 @@ pub(super) fn with_picture_guidance(system_prompt: &str, tools: &[ToolDefinition
 
 /// What the prompt carries, as far as the choice of tools goes.
 #[derive(Debug, Clone, Copy)]
-struct Grounding {
-    can_open_pages: bool,
-    has_grounded_context: bool,
+pub(super) struct Grounding {
+    pub(super) can_open_pages: bool,
+    pub(super) has_grounded_context: bool,
 }
 
 fn select_tools(
@@ -646,7 +647,7 @@ fn forces_tools(tool_preferences: Option<&ToolPreferences>) -> bool {
         .is_some_and(|mode| mode.eq_ignore_ascii_case("query"))
 }
 
-fn offered_tools(
+pub(super) fn offered_tools(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
@@ -690,6 +691,13 @@ fn offered_tools(
     // supplied is its own failure mode.
     let mut turn_tools =
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
+    // An Explorer turn searches the library only when the user turns it on
+    // (`classify_turn`). Offered the search tools anyway, the model searched
+    // it unasked and cited what it found in answers about the folder. Reading
+    // a document the message names stays open.
+    if explorer.is_some() && !flags.force_kb_search {
+        turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));
+    }
     // The folder tools ride on top of whichever branch was chosen above, the
     // way history access does: a turn grounded in library passages may still
     // need to open the file the question is about. A closed-book turn reads

@@ -680,6 +680,20 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Where the course's evidence index stands: for the course workspace's
+ * notice, and the evidence actions it holds back while the course indexes.
+ * A cheap read that never opens or builds the index; it queues a build when
+ * the index is behind its course and none is queued.
+ */
+async courseIndexStatus(programId: string) : Promise<Result<CourseIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_index_status", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningLessonClaimReview(programId: string, lessonId: string) : Promise<Result<LessonClaimReviewDto | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_claim_review", { programId, lessonId }) };
@@ -5700,6 +5714,28 @@ export type CorpusTypeCountDto = { type: string; count: number }
  * excluded (distrusted, ruled out by its date).
  */
 export type CountedSupportDto = { sourceVersionId: string; level: LearningTrustLevel | null }
+/**
+ * Where a course's evidence index stands.
+ */
+export type CourseIndexStatusDto =
+/**
+ * Every passage is embedded by the active model; `mode` is `hybrid`.
+ */
+{ state: "ready"; mode: string } |
+/**
+ * A build is queued or running, or the index is behind its course and
+ * one has just been queued. Evidence actions wait for it.
+ */
+{ state: "indexing"; embedded: number; total: number; referencesNew: number; passagesPerSecond: number | null } |
+/**
+ * No embedding model is active: the course is searched by its words.
+ */
+{ state: "noEmbeddingModel" } |
+/**
+ * The index cannot be read, or its last build could not finish; the
+ * course is searched by its words meanwhile.
+ */
+{ state: "unavailable"; reason: string }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
 export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
@@ -7160,6 +7196,12 @@ learningModel: ModelRef | null;
  * audit refuses until it is; it never borrows another role's model.
  */
 verifierModel: ModelRef | null;
+/**
+ * The model that runs background utility tasks (query expansion, routing,
+ * grounding checks, summaries) when assigned to a remote connection such
+ * as llama.cpp instead of a downloaded model row.
+ */
+utilityModel: ModelRef | null;
 /**
  * Additional directories to scan for externally managed local models
  */

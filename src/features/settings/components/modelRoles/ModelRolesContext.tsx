@@ -3,7 +3,13 @@
  *
  * Single source of truth for role assignment state in the AI Models tab.
  * Every card in the grid (local cards + the Ollama meta-card) reads from
- * this context and calls `assignRole()` to mutate.
+ * this context and calls `assignRole()` to mutate; the llama.cpp connection,
+ * which has no model row, calls `assignUtilityReference()`.
+ *
+ * The utility model is either a row flag (a downloaded model or the Ollama
+ * connection) or a reference in Settings (the llama.cpp connection). The
+ * reference wins on the Rust side, and each write here clears the other, so
+ * only one is ever set.
  *
  * Why a context: chat/utility/embedding/learning assignments are shared state that
  * multiple sibling cards need to read. Prop-drilling from the tab root gets
@@ -15,6 +21,7 @@ import type { ReactNode } from 'react';
 
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
+import type { ModelRef } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
@@ -36,6 +43,8 @@ interface ModelRolesContextValue {
   refresh: () => Promise<void>;
   /** Assign `modelId` to the given role, or clear the role if modelId is null. */
   assignRole: (modelId: string | null, role: RoleId) => Promise<void>;
+  /** Make a connection with no model row the utility model, or clear it with null. */
+  assignUtilityReference: (modelRef: ModelRef | null) => Promise<void>;
 }
 
 const ModelRolesContext = createContext<ModelRolesContextValue | null>(null);
@@ -127,6 +136,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           } else {
             await setActiveUtilityModel(modelId);
           }
+          if (llmSettings?.utilityModel) {
+            await updateSettings({ category: 'llm', updates: { utilityModel: null } });
+          }
         } else if (role === 'learning' || role === 'verifier') {
           // A reference in Settings, not a row flag: it can name an Ollama
           // tag as well as a file, and nothing else ever writes it.
@@ -165,6 +177,24 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     ],
   );
 
+  const assignUtilityReference = useCallback(
+    async (modelRef: ModelRef | null) => {
+      try {
+        // The reference first: it wins over a row flag, so the choice holds
+        // even if clearing the row's flag then fails.
+        await updateSettings({ category: 'llm', updates: { utilityModel: modelRef } });
+        if (modelRef) await clearActiveUtilityModel();
+      } catch (error) {
+        toast.error('Failed to set utility role', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        await refresh();
+      }
+    },
+    [clearActiveUtilityModel, refresh, updateSettings],
+  );
+
   const value = useMemo<ModelRolesContextValue>(() => {
     const localModels = models.filter((m) => (m.backend ?? 'local') === 'local');
     const ollamaModels = models.filter((m) => m.backend === 'ollama');
@@ -178,8 +208,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       error,
       refresh,
       assignRole,
+      assignUtilityReference,
     };
-  }, [models, chatProvider, llmSettings, isLoading, error, refresh, assignRole]);
+  }, [models, chatProvider, llmSettings, isLoading, error, refresh, assignRole, assignUtilityReference]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

@@ -161,6 +161,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::get_learning_source_selector,
             lattice::features::learning::plugin::match_learning_source_selector,
             lattice::features::learning::plugin::search_learning_sources_semantically,
+            lattice::features::learning::plugin::course_index_status,
             lattice::features::learning::plugin::get_learning_lesson_claim_review,
             lattice::features::learning::plugin::resolve_learning_claim,
             lattice::features::learning::plugin::resume_learning_lesson_review,

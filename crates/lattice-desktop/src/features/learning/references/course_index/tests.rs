@@ -4,7 +4,7 @@
 //! version, and a course searched without any model.
 
 use super::*;
-use crate::features::learning::dto::LearningSourceDto;
+use crate::features::learning::dto::{AcceptLearningProgramRequestDto, LearningSourceDto};
 use crate::features::learning::portability_dto::{
     DeleteLearningSourceRequestDto, ReimportLearningSourceRequestDto,
 };
@@ -47,7 +47,7 @@ pub(in crate::features::learning) fn indexes(
 
 /// A course whose sources are `texts`, captured as web pages; its program id
 /// and the source ids, in order.
-async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<String>)> {
+pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<String>)> {
     let mut program = tests::fixture();
     program.sources = texts
         .iter()
@@ -80,15 +80,21 @@ async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<Stri
             },
         })
         .collect();
-    LearningRepository::new(pool.clone())
-        .create_with_references(&program, &references)
-        .await?;
+    let repo = LearningRepository::new(pool.clone());
+    repo.create_with_references(&program, &references).await?;
+    // Accepted, so its sources can be deleted and reimported.
+    repo.accept(&AcceptLearningProgramRequestDto {
+        program_id: program.summary.id.clone(),
+        expected_revision: 0,
+        title: program.summary.title.clone(),
+    })
+    .await?;
     let sources = program.sources.iter().map(|s| s.id.clone()).collect();
     Ok((program.summary.id, sources))
 }
 
 /// One short page per topic: each is one passage.
-fn pages(count: usize) -> Vec<String> {
+pub(super) fn pages(count: usize) -> Vec<String> {
     (0..count)
         .map(|i| format!("Topic {i} explains how widget{i} handles retries and backoff."))
         .collect()
@@ -288,9 +294,17 @@ async fn a_replaced_version_leaves_the_index_and_its_replacement_is_searched() -
     );
     let (program, source_ids) = course(&pool, &pages(2)).await?;
     courses.ensure_current_quietly(&program).await?;
-    let old_version = active(&pool, &program).await[0].id.clone();
-
     let library = LearningSourceLibraryRepository::new(pool.clone());
+    // The version the replaced source has now; sources created together list
+    // in id order, so it is looked up by its source.
+    let old_version = library
+        .workspace(&program)
+        .await?
+        .sources
+        .into_iter()
+        .find(|source| source.id == source_ids[0])
+        .and_then(|source| source.active_version_id)
+        .unwrap();
     library
         .delete_source(&DeleteLearningSourceRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -354,7 +368,7 @@ async fn without_an_embedding_model_the_course_is_searched_by_words_and_says_so(
 }
 
 /// The builds queued for `program`.
-async fn builds(
+pub(super) async fn builds(
     pool: &SqlitePool,
     program: &str,
 ) -> Vec<lattice_core::shared::runtime::jobs::JobRecord> {

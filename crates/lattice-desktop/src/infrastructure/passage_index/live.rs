@@ -22,6 +22,15 @@ use std::sync::Arc;
 pub trait EmbedderSource: Send + Sync {
     /// The active embedding model, loaded; `None` when there is none.
     async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>>;
+
+    /// The active model's identity, without loading it where the source can
+    /// tell (a status read must not load a model); `None` when there is no
+    /// active model. A source that cannot tell answers from the loaded model.
+    async fn identity(&self) -> Option<String> {
+        self.embedder()
+            .await
+            .map(|embedder| embedder.model_identity())
+    }
 }
 
 /// What a search or a build needs once the embedder has loaded.

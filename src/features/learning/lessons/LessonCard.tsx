@@ -13,6 +13,7 @@ import { useLessonClaimReview } from '@/features/learning/lessons/review/useLess
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
+import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { SectionTangentBar, StudyTangentSelection } from '@/features/learning/tangents/StudyTangentSelection';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -38,6 +39,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
   const showCitations = useCitationDisplayStore((state) => state.visible);
+  // Preparing reads the course's evidence, so it waits while that indexes.
+  const waitsForIndex = useEvidenceWaitsForIndex(program.summary.id);
   const evidenceReport = useLearningLessonEvidence(
     program.summary.id,
     lesson.id,
@@ -114,7 +117,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           {lesson.preparation === 'outline' ? needsReview ? null : (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div><h4 className="font-medium text-text-primary">Ready when you are</h4><p className="mt-1 text-sm text-text-secondary">This prepares this lesson only. The accepted outline stays in place if preparation fails.</p></div>
-              <button type="button" disabled={pending || program.summary.status !== 'active'} onClick={onPrepare} className="rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending ? 'Preparing…' : 'Prepare lesson'}</button>
+              <button type="button" disabled={pending || program.summary.status !== 'active' || Boolean(waitsForIndex)} title={waitsForIndex} onClick={onPrepare} className="rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending ? 'Preparing…' : 'Prepare lesson'}</button>
             </div>
           ) : (
             <>

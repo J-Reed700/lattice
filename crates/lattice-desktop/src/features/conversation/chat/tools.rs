@@ -7,6 +7,9 @@ pub(super) const CORE_TOOL_NAMES: [&str; 4] = [
     "list_documents",
     "list_attachments",
 ];
+/// The core tools that search or list the library. An Explorer turn reads the
+/// library only when the user turns it on, so only then is it offered these.
+pub(super) const LIBRARY_TOOL_NAMES: [&str; 2] = ["semantic_search", "list_documents"];
 pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 7] = [
     "web_search",
     "fetch_url_content",

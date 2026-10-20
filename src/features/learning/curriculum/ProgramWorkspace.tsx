@@ -23,9 +23,11 @@ import { PortabilityPanel } from '@/features/learning/portability/PortabilityPan
 import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolutionPanel';
+import { CourseIndexNotice } from '@/features/learning/sources/CourseIndexNotice';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
+import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
@@ -119,6 +121,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const preparationJobs = preparationPlan.data?.jobs?.filter((job) => job.kind === 'lesson_preparation').sort((a, b) => b.createdAt - a.createdAt) ?? [];
   const preparationJob = preparationJobs.find((job) => job.status === 'running') ?? preparationJobs.find((job) => job.status === 'pending') ?? preparationJobs[0];
   const preparingLesson = preparePending || Boolean(preparationPlan.data?.jobs?.some((job) => ['pending', 'running'].includes(job.status)));
+  // A course step that would prepare a lesson only opens it while the course's references index.
+  const waitsForIndex = useEvidenceWaitsForIndex(program.summary.id);
   const memoryQuery = useLearningMemory(program.summary.id, activeProgram);
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
@@ -177,7 +181,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
       else if (step.kind === 'recall') activateTab('recall');
       else {
         activateTab('lessons');
-        if (target?.lesson.preparation === 'outline' && !preparingLesson) onPrepare(target.lesson);
+        if (target?.lesson.preparation === 'outline' && !preparingLesson && !waitsForIndex) onPrepare(target.lesson);
         if (step.kind === 'guided' && target) requestAnimationFrame(() => document.getElementById(`guided-${target.lesson.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
       }
     });
@@ -248,6 +252,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         {practiceTab && <><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><div className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{currentModule?.title}</span>{currentLesson && <> <span aria-hidden="true">›</span> {currentLesson.title}</>}</div><div role="tablist" aria-label="Practice activities" className="flex flex-wrap gap-1 rounded-xl bg-background p-1">{([{ id: 'workbench' as const, label: 'Written practice' }, { id: 'practical' as const, label: 'Code & simulations' }, { id: 'quick-checks' as const, label: 'Quick checks' }, { id: 'assess-evidence' as const, label: 'Assessments' }]).map((item) => <button key={item.id} id={`practice-tab-${item.id}`} aria-controls="practice-content" role="tab" aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} type="button" disabled={savingBeforeMove} onClick={() => selectTab(item.id)} onKeyDown={(event) => { if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []); const index = buttons.indexOf(event.currentTarget); const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length; buttons[next]?.focus(); }} className={`min-h-10 rounded-lg px-3 text-sm font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${tab === item.id ? 'bg-surface text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary'}`}>{item.label}</button>)}</div></div></>}
 
         {activeProgram && tab === 'starting_point' && <div className="mt-4"><StartingPointPanel programId={program.summary.id} onStudy={(lessonId) => goToStep({ kind: 'lesson', title: '', reason: '', lessonId })} onChallenge={(lessonId) => goToStep({ kind: 'assessment', title: '', reason: '', lessonId })} /></div>}
+        <CourseIndexNotice programId={program.summary.id} />
         {activeProgram && <LessonPreparationProgress job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError} />}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="mt-3 space-y-3">{!currentModule?.lessons.length ? <p className="rounded-xl bg-background p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson) => <div key={lesson.id} className="relative"><div className="absolute -left-0.5 top-11 hidden h-[calc(100%+12px)] w-px bg-border last:hidden sm:block" /><div className="absolute left-[-3px] top-8 hidden h-1.5 w-1.5 rounded-full bg-accent sm:block" /><div className="sm:pl-5"><LessonCard lesson={lesson} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparingLesson)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => void afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} /></div></div>)}</div>}

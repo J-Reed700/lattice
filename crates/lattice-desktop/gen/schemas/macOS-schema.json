@@ -4881,6 +4881,12 @@
           "markdownDescription": "Enables the complete_learning_lesson command without any pre-configured scope."
         },
         {
+          "description": "Enables the course_index_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-course-index-status",
+          "markdownDescription": "Enables the course_index_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_learning_assessment_blueprint command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-create-learning-assessment-blueprint",
@@ -5593,6 +5599,12 @@
           "type": "string",
           "const": "learning:deny-complete-learning-lesson",
           "markdownDescription": "Denies the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_index_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-course-index-status",
+          "markdownDescription": "Denies the course_index_status command without any pre-configured scope."
         },
         {
           "description": "Denies the create_learning_assessment_blueprint command without any pre-configured scope.",

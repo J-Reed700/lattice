@@ -143,6 +143,22 @@ describe('LocalModelRow load status', () => {
     });
   });
 
+  it('shows only active role badges on the row and moves role assignment into Configure model', async () => {
+    const user = userEvent.setup();
+    renderRow();
+
+    expect(screen.getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+    expect(screen.queryByRole('button', { name: 'Chat' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Learning' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Verifier' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Configure model' }));
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Utility' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Learning' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verifier' })).toBeInTheDocument();
+  });
+
   it('warms the Learning model when the row holds that role, and changes no setting on failure', async () => {
     const user = userEvent.setup();
     const settings = makeAppSettings().llm;
@@ -152,7 +168,7 @@ describe('LocalModelRow load status', () => {
     hooks.warmUpLearningModel.mockRejectedValue(new Error('Not enough memory'));
 
     renderRow();
-    expect(screen.getByRole('button', { name: 'Learning' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Learning')).toHaveAttribute('data-active-role', 'learning');
     await user.click(screen.getByRole('button', { name: 'Warm up' }));
 
     expect(hooks.warmUpLearningModel).toHaveBeenCalledTimes(1);

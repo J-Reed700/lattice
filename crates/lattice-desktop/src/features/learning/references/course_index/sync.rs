@@ -52,8 +52,8 @@ pub(super) struct Silent;
 
 impl CourseProgress for Silent {}
 
-/// The store's meta key for the revision of the course (its set of active
-/// versions) last left with every passage embedded.
+/// The store's meta key for the stamp (see [`stamp`]) of the last run that
+/// left every passage embedded.
 pub(super) const META_REVISION: &str = "revision";
 /// The store's meta key for the program the index belongs to.
 const META_PROGRAM: &str = "program";
@@ -63,6 +63,14 @@ const META_PROGRAM: &str = "program";
 pub(super) fn revision(versions: &[ActiveVersion]) -> String {
     let ids: Vec<&str> = versions.iter().map(|version| version.id.as_str()).collect();
     hash_text(&ids.join("\n"))
+}
+
+/// What an index holds when it is current: the course's `revision`,
+/// embedded by the model `identity`. A new model is a new stamp, so an index
+/// made by the old one is not current, and a build for the new one is a new
+/// build.
+pub(super) fn stamp(revision: &str, identity: &str) -> String {
+    hash_text(&format!("{revision}\n{identity}"))
 }
 
 /// Chunks a version's text into the store under its id. Shared with the
@@ -187,8 +195,8 @@ pub(super) async fn embed(
 }
 
 /// The mode `store` is searched in with `engine`. Once every passage is
-/// embedded, the course's revision is recorded, so the startup backfill
-/// queues nothing for it.
+/// embedded, the course's stamp is recorded, so the startup backfill and the
+/// status read know the index is current.
 pub(super) async fn settle(
     store: &PassageStore,
     engine: Option<&Engine>,
@@ -205,10 +213,12 @@ pub(super) async fn settle(
             total: counts.passages_total,
         });
     }
-    let revision = revision(versions);
-    if store.meta(META_REVISION).await?.as_deref() != Some(revision.as_str()) {
+    let stamp = engine.map_or_else(String::new, |engine| {
+        stamp(&revision(versions), &engine.embedder.model_identity())
+    });
+    if store.meta(META_REVISION).await?.as_deref() != Some(stamp.as_str()) {
         store.set_meta(META_PROGRAM, program).await?;
-        store.set_meta(META_REVISION, &revision).await?;
+        store.set_meta(META_REVISION, &stamp).await?;
     }
     Ok(IndexMode::Hybrid)
 }
