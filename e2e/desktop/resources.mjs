@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -7,18 +8,7 @@ const run = promisify(execFile);
 // macOS WebKit XPC processes can be outside this parent tree and require
 // Instruments; the report deliberately identifies the measured process IDs.
 export async function sampleProcessTree(rootPid) {
-  let rows;
-  if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,@{n="Created";e={if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { $null }}} | ConvertTo-Json -Compress'], { timeout: 10000 });
-    rows = JSON.parse(stdout).map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, bytes: Number(row.WorkingSetSize), created: row.Created ?? null }));
-  } else {
-    const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,rss='], { timeout: 10000 });
-    rows = stdout.trim().split('\n').map(line => {
-      const [pid, parent, kib] = line.trim().split(/\s+/).map(Number);
-      return { pid, parent, bytes: kib * 1024 };
-    });
-  }
+  const rows = await listProcesses();
   // Windows reuses a dead parent's PID, so an unrelated orphan (e.g. a
   // toolchain's vctip.exe) can name the app as its parent. A real child is
   // never created before its parent.
@@ -38,6 +28,27 @@ export async function sampleProcessTree(rootPid) {
   const processes = rows.filter(row => included.has(row.pid));
   if (!processes.some(row => row.pid === rootPid)) throw new Error('Candidate process exited during resource sampling');
   return { processes, residentBytes: processes.reduce((sum, row) => sum + row.bytes, 0) };
+}
+
+// Every running process. `created` is only known on Windows.
+export async function listProcesses() {
+  if (process.platform === 'win32') {
+    const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,Name,@{n="Created";e={if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { $null }}} | ConvertTo-Json -Compress'], { timeout: 10000 });
+    return JSON.parse(stdout).map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, bytes: Number(row.WorkingSetSize), name: row.Name, created: row.Created ?? null }));
+  }
+  // comm is last because a macOS executable path can contain spaces.
+  const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,rss=,comm='], { timeout: 10000 });
+  return stdout.trim().split('\n').map(line => {
+    const [, pid, parent, kib, name] = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s*(.*)$/);
+    return { pid: Number(pid), parent: Number(parent), bytes: Number(kib) * 1024, name: path.basename(name) };
+  });
+}
+
+// The same process, not a later one given the same PID.
+export function sameProcess(a, b) {
+  return a.pid === b.pid && a.name === b.name
+    && (a.created == null || b.created == null || a.created === b.created);
 }
 
 // Opt-in local diagnostic: Apple leaks examines the native allocator graph.

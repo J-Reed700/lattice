@@ -107,12 +107,7 @@ class RowShape(unittest.TestCase):
             spe.validate_row(other)
 
 
-class JudgeAndPassK(unittest.TestCase):
-    def test_pass_k_needs_every_grade(self):
-        self.assertTrue(spe.pass_k([(True, ""), (True, ""), (True, "")]))
-        self.assertFalse(spe.pass_k([(True, ""), (False, "no"), (True, "")]))
-        self.assertFalse(spe.pass_k([]))
-
+class Judge(unittest.TestCase):
     def test_request_is_greedy_with_thinking_off_and_no_reasoning_effort(self):
         body = spe.judge_request("m", [])
         self.assertEqual((body["temperature"], body["top_k"]), (0, 1))
@@ -133,23 +128,42 @@ class JudgeAndPassK(unittest.TestCase):
         self.assertIn("A1: Fourteen days.", user)
         self.assertIn("do not contain this answer", user)
 
-    def test_scoring_runs_the_judge_three_times_per_answered_turn(self):
+    def test_scoring_grades_each_answered_turn_once(self):
         calls = []
 
         def judge(messages):
             calls.append(messages)
-            return (len(calls) % 3 != 0, "graded")
+            return (len(calls) != 2, "graded")
 
         rows = [row("one", [turn("14 days [1].")]),
                 row("two", [turn("14 days [1]."), turn("Not recorded in the documents.", citation_map={})])]
         scored = spe.score(QUESTIONS, rows, judge)
-        self.assertEqual(len(calls), 9)
+        self.assertEqual(len(calls), 3)
         self.assertTrue(all(r["mechanical_checks_passed"] for r in scored))
-        self.assertFalse(scored[0]["judge_pass_k"])
+        self.assertTrue(scored[0]["judge_pass"])
+        self.assertFalse(scored[1]["judge_pass"])
+        self.assertEqual(scored[1]["turn_scores"][0]["judge"], {"pass": False, "reason": "graded", "graded": True})
         summary = spe.summarize(scored, QUESTIONS)
-        self.assertEqual(summary["overall"]["judge_pass3"]["passed"], 0)
+        self.assertEqual(summary["overall"]["judge"]["passed"], 1)
         self.assertEqual(summary["by_tag"]["u"]["items"], 1)
-        self.assertEqual(len(summary["disagreements"]), 2)
+        self.assertEqual(len(summary["disagreements"]), 1)
+
+    def test_an_unanswered_turn_fails_without_a_judge_call(self):
+        calls = []
+        scored = spe.score(QUESTIONS, [row("one", [turn(None)])], lambda m: calls.append(m) or (True, ""))
+        self.assertEqual(calls, [])
+        self.assertFalse(scored[0]["judge_pass"])
+
+    def test_identity_says_when_the_judge_cannot_be_listed(self):
+        identity = spe.judge_identity("http://127.0.0.1:9", "judge", "answerer.gguf", timeout=1)
+        self.assertIn("unavailable", identity["served_models"])
+        self.assertIsNone(identity["judges_own_answers"])
+        self.assertEqual(identity["answer_model"], "answerer.gguf")
+
+    def test_rubric_lines_are_what_the_judge_reads(self):
+        messages = spe.judge_messages(QUESTIONS["items"][0], 0, ["x"])
+        for line in spe.rubric_lines(QUESTIONS["items"][0]["turns"][0]["rubric"]):
+            self.assertIn(line, messages[1]["content"])
 
     def test_rows_for_unknown_items_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -190,7 +204,8 @@ class QuestionSet(unittest.TestCase):
         self.assertTrue(20 <= len(items) <= 50)
         self.assertGreaterEqual(sum(len(item["turns"]) > 1 for item in items), 5)
         for tag in ("multi-hop", "planner-rewrite", "corrective-retry", "opening-or-section",
-                    "abstain", "conflict", "numeric-precision", "follow-up-memory"):
+                    "abstain", "conflict", "numeric-precision", "follow-up-memory",
+                    "pronoun-follow-up", "ellipsis-follow-up", "topic-shift", "cross-turn-evidence"):
             self.assertTrue(any(tag in item["tags"] for item in items), tag)
 
 

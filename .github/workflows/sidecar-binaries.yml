@@ -1,0 +1,66 @@
+name: Sidecar binaries
+
+# The pinned llama-server release must exist, match the lock's checksums, be
+# self-contained, and start on every platform we ship, including the oldest
+# runner images. A release the lock names never changes, so this runs only when
+# the lock or the scripts that read it change. Every CI desktop compatibility
+# job still fetches and verifies the pinned binaries for its own platform.
+on:
+  pull_request:
+    paths:
+      - 'crates/lattice-desktop/scripts/*llama*'
+      - .github/workflows/sidecar-binaries.yml
+  push:
+    branches: [main]
+    paths:
+      - 'crates/lattice-desktop/scripts/*llama*'
+      - .github/workflows/sidecar-binaries.yml
+
+concurrency:
+  group: sidecar-binaries-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # ci.yml pins the same version.
+  VULKAN_RUNTIME_VERSION: 1.4.363.0
+
+jobs:
+  sidecar-binaries:
+    name: sidecar binaries (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Verifier unit tests
+        run: python -m unittest crates/lattice-desktop/scripts/test_verify_llama_binaries.py
+
+      # Users' GPU drivers provide the Vulkan loader system-wide; install it so
+      # the Vulkan builds are run rather than skipped.
+      - name: Install Vulkan loader (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1
+
+      - name: Download Vulkan loader (Windows)
+        if: runner.os == 'Windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        with:
+          vulkan_version: ${{ env.VULKAN_RUNTIME_VERSION }}
+          install_runtime_only: true
+          cache: true
+
+      - name: Install Vulkan loader (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
+
+      - name: Fetch, verify and run the pinned binaries
+        shell: bash
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict

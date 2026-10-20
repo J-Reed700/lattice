@@ -1,0 +1,695 @@
+{
+ "name": "synthetic-library-v3-terse",
+ "description": "A terse slice of synthetic-library-v3: 163 queries, one per answerable English v3 query, each asking the same thing and keeping that query's relevance judgements and answer spans. Lengths follow the short half (at or below the median) of the measured Lattice user messages in length_reference, by quantile mapping from the v3 lengths; wording keeps only the names and identifiers a person would type and avoids the answering document's other words. Built and checked by scripts/terse_slice.py; see evals/retrieval/README.md.",
+ "source": "evals/retrieval/synthetic-library-v3.json",
+ "length_reference": {
+  "measured_on": "2026-10-19",
+  "source": "user messages in Josh's Lattice database (app data dir tech.lattice.app/lattice.db) and its 2026-09-19 backup, opened read-only; distinct messages by content digest; word count = whitespace-separated tokens. Only counts were read.",
+  "word_counts": [
+   4,
+   4,
+   5,
+   7,
+   8,
+   9,
+   11,
+   12,
+   13,
+   16,
+   16,
+   17,
+   18,
+   18,
+   19,
+   21,
+   23,
+   25,
+   26,
+   36,
+   38,
+   43,
+   54,
+   59,
+   61,
+   67,
+   67,
+   109,
+   110,
+   135
+  ]
+ },
+ "queries": [
+  {
+   "source_id": "v3-id-runbook-bare-00",
+   "text": "seeing ERR-4070, what now"
+  },
+  {
+   "source_id": "v3-id-runbook-bare-01",
+   "text": "what does ERR-5070 mean"
+  },
+  {
+   "source_id": "v3-id-runbook-bare-02",
+   "text": "how to handle ERR-1658"
+  },
+  {
+   "source_id": "v3-id-runbook-bare-03",
+   "text": "got ERR-3773, help please"
+  },
+  {
+   "source_id": "v3-id-runbook-bare-04",
+   "text": "fixing the ERR-6228 code"
+  },
+  {
+   "source_id": "v3-id-runbook-sentence-05",
+   "text": "TCK-4246 playbook and on-call person?"
+  },
+  {
+   "source_id": "v3-id-runbook-sentence-06",
+   "text": "TCK-7442: which procedure, who's called?"
+  },
+  {
+   "source_id": "v3-id-runbook-sentence-07",
+   "text": "TCK-4395, whose playbook, who's woken?"
+  },
+  {
+   "source_id": "v3-scope-runbook-edge-14",
+   "text": "For the Wendover Basin edge ring, how long do we wait on cold shards before stepping in?"
+  },
+  {
+   "source_id": "v3-scope-runbook-core-14",
+   "text": "core rings, how long before handling cold shards?"
+  },
+  {
+   "source_id": "v3-scope-runbook-edge-15",
+   "text": "Wendover Basin edge ring: how long do we wait out tenant bucket fights before stepping in?"
+  },
+  {
+   "source_id": "v3-scope-runbook-core-15",
+   "text": "core rings, wait time on tenant bucket fights?"
+  },
+  {
+   "source_id": "v3-scope-runbook-edge-16",
+   "text": "Wendover Basin edge ring: how long do we let tablet sync problems run before stepping in?"
+  },
+  {
+   "source_id": "v3-scope-runbook-core-16",
+   "text": "core rings: how long before stepping in on tablet sync?"
+  },
+  {
+   "source_id": "v3-neg-runbook-00",
+   "text": "If the core-ring request quota problem still hasn't gone away after waiting, do I raise a fresh ticket?"
+  },
+  {
+   "source_id": "v3-neg-runbook-01",
+   "text": "Lease takeover storm in core rings still going after the hold, so do I log a new ticket?"
+  },
+  {
+   "source_id": "v3-policy-current-workstation-encryption",
+   "text": "laptop encryption rule today"
+  },
+  {
+   "source_id": "v3-policy-prior-workstation-encryption",
+   "text": "what did laptop encryption rules say previously"
+  },
+  {
+   "source_id": "v3-policy-exception-workstation-encryption",
+   "text": "Besides a whole site going dark, is there any case where our laptops can skip encryption?"
+  },
+  {
+   "source_id": "v3-policy-current-snapshot-retention",
+   "text": "workspace backup keep period"
+  },
+  {
+   "source_id": "v3-policy-prior-snapshot-retention",
+   "text": "how long were workspace backups kept before"
+  },
+  {
+   "source_id": "v3-policy-exception-snapshot-retention",
+   "text": "Besides a whole site going dark, is there any case where workspace backups are kept differently?"
+  },
+  {
+   "source_id": "v3-policy-current-expense-receipts",
+   "text": "receipt needed above what?"
+  },
+  {
+   "source_id": "v3-policy-prior-expense-receipts",
+   "text": "what was the receipt cutoff previously, pre-update?"
+  },
+  {
+   "source_id": "v3-policy-exception-expense-receipts",
+   "text": "Other than a site going dark, any way to skip receipts above the limit?"
+  },
+  {
+   "source_id": "v3-policy-current-contractor-access",
+   "text": "contractor wifi rules now"
+  },
+  {
+   "source_id": "v3-policy-prior-contractor-access",
+   "text": "earlier contractor wifi rule said?"
+  },
+  {
+   "source_id": "v3-policy-exception-contractor-access",
+   "text": "Besides a whole site going dark, can contractors ever bypass the wifi rules?"
+  },
+  {
+   "source_id": "v3-policy-current-incident-disclosure",
+   "text": "customer outage notice deadline"
+  },
+  {
+   "source_id": "v3-policy-prior-incident-disclosure",
+   "text": "previous deadline for telling customers about outages"
+  },
+  {
+   "source_id": "v3-policy-exception-incident-disclosure",
+   "text": "Except when a site is dark, can we ever delay telling affected customers?"
+  },
+  {
+   "source_id": "v3-policy-current-on-call-rest",
+   "text": "rest after overnight callout"
+  },
+  {
+   "source_id": "v3-policy-prior-on-call-rest",
+   "text": "what did overnight callout rest used to be"
+  },
+  {
+   "source_id": "v3-policy-exception-on-call-rest",
+   "text": "Apart from a site going dark, can post-callout rest ever be cut short?"
+  },
+  {
+   "source_id": "v3-policy-current-data-export",
+   "text": "big data download rules now"
+  },
+  {
+   "source_id": "v3-policy-exception-data-export",
+   "text": "Besides a whole site going dark, is there any other way to get bulk downloads allowed?"
+  },
+  {
+   "source_id": "v3-contract-renewal-00",
+   "text": "Calderwick Freight deal: next rollover date and how early to cancel?"
+  },
+  {
+   "source_id": "v3-contract-renewal-01",
+   "text": "Tessivar Cloud contract rolls over when, and how early to cancel?"
+  },
+  {
+   "source_id": "v3-contract-renewal-02",
+   "text": "Hobb and Marren Legal contract: when's the next rollover, and how early must we cancel it?"
+  },
+  {
+   "source_id": "v3-contract-renewal-03",
+   "text": "Brackleton Facilities contract: next rollover date, and how early to cancel?"
+  },
+  {
+   "source_id": "v3-contract-renewal-04",
+   "text": "When's Quorvin Metrology's contract rolling over, and how early to cancel?"
+  },
+  {
+   "source_id": "v3-order-line-00",
+   "text": "PO-14767 first item: which part, and what does each one cost?"
+  },
+  {
+   "source_id": "v3-order-line-01",
+   "text": "For PO-40711, what's the first item's part code and price each?"
+  },
+  {
+   "source_id": "v3-order-line-02",
+   "text": "What's the top item on PO-68956, and how much does one cost?"
+  },
+  {
+   "source_id": "v3-order-line-03",
+   "text": "PO-71486: which part is the first entry and what's the per-piece price?"
+  },
+  {
+   "source_id": "v3-order-line-04",
+   "text": "On PO-46122, which part comes first and what's each priced at?"
+  },
+  {
+   "source_id": "v3-series-owner-merridew-sync-02",
+   "text": "merridew sync, week 3: who got stuck with the drift write-up job?"
+  },
+  {
+   "source_id": "v3-series-owner-merridew-sync-09",
+   "text": "who owned the drift write-up in week 10 of the merridew sync?"
+  },
+  {
+   "source_id": "v3-series-latest-merridew-sync",
+   "text": "In the newest merridew sync notes, when is the drift write-up now due to be done?"
+  },
+  {
+   "source_id": "v3-series-reversal-merridew-sync",
+   "text": "what did merridew sync reverse on, and when?"
+  },
+  {
+   "source_id": "v3-series-owner-sepwick-standup-02",
+   "text": "sepwick field ops standup in week 3: who ended up being responsible for the drift write-up?"
+  },
+  {
+   "source_id": "v3-series-owner-sepwick-standup-07",
+   "text": "Looking at sepwick field ops standup notes for week 8, whose job was the drift write-up?"
+  },
+  {
+   "source_id": "v3-series-latest-sepwick-standup",
+   "text": "As of newest sepwick standup, what date is the drift write-up supposed to be finished by?"
+  },
+  {
+   "source_id": "v3-series-reversal-sepwick-standup",
+   "text": "what did sepwick standup walk back, and which week?"
+  },
+  {
+   "source_id": "v3-series-owner-nyelle-review-02",
+   "text": "nyelle security review week 3, whose name was on the drift write-up?"
+  },
+  {
+   "source_id": "v3-series-owner-nyelle-review-10",
+   "text": "In week 11 of nyelle review, who was given the drift write-up?"
+  },
+  {
+   "source_id": "v3-series-latest-nyelle-review",
+   "text": "What's the current due date for the drift write-up, going by the latest nyelle review meeting?"
+  },
+  {
+   "source_id": "v3-series-reversal-nyelle-review",
+   "text": "which idea did nyelle review drop, which week?"
+  },
+  {
+   "source_id": "v3-series-owner-tarrow-council-02",
+   "text": "tarrow data council, third week: who took on the drift write-up task?"
+  },
+  {
+   "source_id": "v3-series-owner-tarrow-council-06",
+   "text": "Who was handed the drift write-up at week 7 of tarrow council?"
+  },
+  {
+   "source_id": "v3-series-latest-tarrow-council",
+   "text": "By the last tarrow council meeting we have notes for, when was the drift write-up due?"
+  },
+  {
+   "source_id": "v3-series-reversal-tarrow-council",
+   "text": "tarrow council changed its mind on what, when?"
+  },
+  {
+   "source_id": "v3-buried-handbook-prose-0-2",
+   "text": "platform ops handbook: which code do its tickets need?"
+  },
+  {
+   "source_id": "v3-buried-handbook-prose-1-1",
+   "text": "field service handbook text version: a machine fails its checks twice running, how long is it then benched?"
+  },
+  {
+   "source_id": "v3-buried-handbook-prose-1-2",
+   "text": "field service handbook text version: what code do its tickets need?"
+  },
+  {
+   "source_id": "v3-buried-handbook-prose-2-2",
+   "text": "people handbook, plain text: which commitment to the employee council expires on a set date, and when?"
+  },
+  {
+   "source_id": "v3-buried-handbook-prose-3-0",
+   "text": "records and disclosure handbook, plain text: someone who transfers sites, whose bank holidays apply and for how long?"
+  },
+  {
+   "source_id": "v3-buried-handbook-tree-0-2",
+   "text": "platform ops handbook, sectioned one: which code goes on its tickets?"
+  },
+  {
+   "source_id": "v3-buried-handbook-tree-1-2",
+   "text": "security control handbook (sectioned version): code to put on its tickets?"
+  },
+  {
+   "source_id": "v3-buried-handbook-tree-2-2",
+   "text": "people handbook, sectioned version: what did we promise the employee council that runs out, and when?"
+  },
+  {
+   "source_id": "v3-buried-handbook-tree-3-0",
+   "text": "site facilities handbook, sectioned: when staff transfer between sites, whose bank holidays apply and for how long?"
+  },
+  {
+   "source_id": "v3-buried-handbook-tree-4-2",
+   "text": "In the sectioned change management handbook, which code do tickets need?"
+  },
+  {
+   "source_id": "v3-buried-agreement-long-0-1",
+   "text": "the long tessivar cloud contract: before anyone sues, must both sides sit down first, and how soon after?"
+  },
+  {
+   "source_id": "v3-buried-agreement-long-0-2",
+   "text": "long tessivar cloud contract: can we extend it, and by when do we have to say so?"
+  },
+  {
+   "source_id": "v3-buried-agreement-long-1-2",
+   "text": "the long calderwick freight contract: is there an option to carry it on, and what's the cut-off?"
+  },
+  {
+   "source_id": "v3-buried-agreement-long-2-0",
+   "text": "long brackleton facilities contract: what's the most they can owe us for knock-on losses in a year?"
+  },
+  {
+   "source_id": "v3-buried-transcript-long-0-2",
+   "text": "quarterly platform review recording: if it goes badly, what version to fall back to? just the last one?"
+  },
+  {
+   "source_id": "v3-buried-transcript-long-1-2",
+   "text": "incident long-tail review recording: which version is the fallback when things break? is it just the last release?"
+  },
+  {
+   "source_id": "v3-buried-transcript-long-2-2",
+   "text": "supplier negotiation recording: if it breaks, what do we revert to, and is that merely the prior release?"
+  },
+  {
+   "source_id": "v3-buried-transcript-long-3-0",
+   "text": "all-hands Q&A recording: which pledge expires on a set date, and what date exactly is that?"
+  },
+  {
+   "source_id": "v3-table-cell-00",
+   "text": "What's Ostrel-7 probe's allowed error, sheet 1?"
+  },
+  {
+   "source_id": "v3-table-cell-01",
+   "text": "allowed margin on Pellum-2 head, sheet 2?"
+  },
+  {
+   "source_id": "v3-table-cell-02",
+   "text": "what's the Garnetline gauge permitted variance, sheet 3"
+  },
+  {
+   "source_id": "v3-table-cell-03",
+   "text": "Sibbe manifold, sheet 4: how much leeway?"
+  },
+  {
+   "source_id": "v3-table-cell-04",
+   "text": "how much leeway on Wrackford coupler, sheet 5"
+  },
+  {
+   "source_id": "v3-table-cell-05",
+   "text": "Dunlark sleeve error margin allowed, per sheet 6?"
+  },
+  {
+   "source_id": "v3-table-csv-00",
+   "text": "Wendover Basin upkeep money promised, budget sheet 1?"
+  },
+  {
+   "source_id": "v3-table-csv-01",
+   "text": "Selkirk North upkeep amount set aside, sheet 2?"
+  },
+  {
+   "source_id": "v3-table-csv-02",
+   "text": "Port Ammerly repairs budget locked in, sheet 3?"
+  },
+  {
+   "source_id": "v3-chat-fact-00",
+   "text": "Somebody in the on-call chat said restarting wasn't actually what fixed things. What genuinely solved the problem then?"
+  },
+  {
+   "source_id": "v3-chat-fact-01",
+   "text": "A colleague on call mentioned the restart got credited wrongly for the fix. What actually made it work?"
+  },
+  {
+   "source_id": "v3-chat-fact-02",
+   "text": "on-call channel: someone said rebooting got praised for a repair it never did. What really fixed it?"
+  },
+  {
+   "source_id": "v3-chat-fact-03",
+   "text": "Somebody on call noted the restart was wrongly thanked for solving it. What was the real cause of recovery?"
+  },
+  {
+   "source_id": "v3-chat-fact-04",
+   "text": "The on-call folks said turning it off and on again didn't fix it. What was it that actually did?"
+  },
+  {
+   "source_id": "v3-chat-fact-05",
+   "text": "Someone on the on-call rota said the restart got glory it didn't earn. So what actually resolved the issue?"
+  },
+  {
+   "source_id": "v3-ocr-code-00",
+   "text": "scanned minutes 01: code to quote for site-held spares?"
+  },
+  {
+   "source_id": "v3-ocr-code-01",
+   "text": "scanned manual 02: what code goes on site spares orders?"
+  },
+  {
+   "source_id": "v3-ocr-code-02",
+   "text": "scanned notice 03: which code to use ordering site spares?"
+  },
+  {
+   "source_id": "v3-ocr-code-03",
+   "text": "scanned schedule 04: number to give when ordering site spares?"
+  },
+  {
+   "source_id": "v3-ocr-code-04",
+   "text": "scanned minutes 05: code for buying from on-site spares?"
+  },
+  {
+   "source_id": "v3-ocr-reason-00",
+   "text": "Why a site keeps its own spares, not the main warehouse: what does scanned manual 06 call that setup?"
+  },
+  {
+   "source_id": "v3-ocr-reason-01",
+   "text": "scanned notice 07 explains a site keeping spares locally instead of the main warehouse. What's that setup actually named?"
+  },
+  {
+   "source_id": "v3-ocr-reason-02",
+   "text": "scanned schedule 08 gives a reason a site keeps spares itself rather than the warehouse. What's that scheme called?"
+  },
+  {
+   "source_id": "v3-ocr-reason-03",
+   "text": "What do scanned minutes 09 call the setup where a site keeps its own spares and skips the warehouse?"
+  },
+  {
+   "source_id": "v3-ocr-reason-04",
+   "text": "scanned manual 10: what's the name for letting a site stock its own spares instead of the big warehouse?"
+  },
+  {
+   "source_id": "v3-collision-garnetline-0",
+   "text": "Not the other Garnetlines: for the Garnetline migration at Quillon Grid, what's the key target date?"
+  },
+  {
+   "source_id": "v3-collision-garnetline-1",
+   "text": "Of the things named Garnetline, I mean the reservoir path. When is its key date, exactly?"
+  },
+  {
+   "source_id": "v3-collision-garnetline-2",
+   "text": "Garnetline the building, the one Brackleton Facilities is doing up: when is its key date, then?"
+  },
+  {
+   "source_id": "v3-collision-ostrel-0",
+   "text": "key date for Ostrel the telemetry product, not the other ones?"
+  },
+  {
+   "source_id": "v3-collision-ostrel-1",
+   "text": "There's more than one Ostrel; I want the blue cheese we cook with. What's its key date, please?"
+  },
+  {
+   "source_id": "v3-collision-ostrel-2",
+   "text": "Not the product or cheese: Ostrel Row, where the print works is. What key date goes with it?"
+  },
+  {
+   "source_id": "v3-collision-sibbe-0",
+   "text": "Sibbe, meaning the service at Quillon Grid and not the neighbours: what's its key date then?"
+  },
+  {
+   "source_id": "v3-collision-sibbe-1",
+   "text": "The Sibbes next door, our neighbours, not the service or the paper. What key date belongs to them?"
+  },
+  {
+   "source_id": "v3-collision-sibbe-2",
+   "text": "Sibbe as in the co-author with Ollmarch of that failure paper. Which key date is attached to them?"
+  },
+  {
+   "source_id": "v3-collision-dunlark-0",
+   "text": "Dunlark the pilot at Quillon Grid, not the food or the wharf: when's its key date?"
+  },
+  {
+   "source_id": "v3-collision-dunlark-1",
+   "text": "Dunlark the stew I picked up from a market seller, not the pilot. What's the key date there?"
+  },
+  {
+   "source_id": "v3-collision-dunlark-2",
+   "text": "Dunlark Wharf, where the Port Ammerly depot is, not the pilot. What key date belongs to it?"
+  },
+  {
+   "source_id": "v3-fragment-00",
+   "text": "water off valve location?"
+  },
+  {
+   "source_id": "v3-fragment-01",
+   "text": "where's the power meter"
+  },
+  {
+   "source_id": "v3-fragment-02",
+   "text": "how to reach attic"
+  },
+  {
+   "source_id": "v3-fragment-03",
+   "text": "heating system reboot steps"
+  },
+  {
+   "source_id": "v3-fragment-04",
+   "text": "recycling collection day, which?"
+  },
+  {
+   "source_id": "v3-fragment-05",
+   "text": "last ferry Port Ammerly weekends different?"
+  },
+  {
+   "source_id": "v3-fragment-06",
+   "text": "bread gummy when cold"
+  },
+  {
+   "source_id": "v3-fragment-07",
+   "text": "why coffee changes halfway"
+  },
+  {
+   "source_id": "v3-fragment-08",
+   "text": "on-call uses my own mobile?"
+  },
+  {
+   "source_id": "v3-fragment-09",
+   "text": "damaged badge, which door?"
+  },
+  {
+   "source_id": "v3-fragment-10",
+   "text": "where's the spare PSU"
+  },
+  {
+   "source_id": "v3-fragment-11",
+   "text": "shed key, which one"
+  },
+  {
+   "source_id": "v3-intl-00-1",
+   "text": "Wendover machine room backup key, where is it?"
+  },
+  {
+   "source_id": "v3-intl-03-1",
+   "text": "late delivery fine for haulier?"
+  },
+  {
+   "source_id": "v3-intl-05-1",
+   "text": "where's Port Ammerly's backup pump kept?"
+  },
+  {
+   "source_id": "v3-intl-06-1",
+   "text": "pressure sensor calibration interval"
+  },
+  {
+   "source_id": "v3-intl-10-1",
+   "text": "which wiring schematic version applies"
+  },
+  {
+   "source_id": "v3-intl-13-1",
+   "text": "cold store spare pump location"
+  },
+  {
+   "source_id": "v3-multihop-renewal-00",
+   "text": "whoever moves stuff for the Garnetline migration, when does their contract roll over?"
+  },
+  {
+   "source_id": "v3-multihop-renewal-01",
+   "text": "shipping partner on the Pellum refresh: when does their contract next roll over?"
+  },
+  {
+   "source_id": "v3-multihop-renewal-02",
+   "text": "Sibbe rollout's delivery company: when's the next date their contract rolls over exactly?"
+  },
+  {
+   "source_id": "v3-multihop-renewal-03",
+   "text": "Who does deliveries on the Wrackford cutover? When does that firm's contract renew?"
+  },
+  {
+   "source_id": "v3-multihop-notice-04",
+   "text": "To drop the site crew for the Dunlark pilot, how far ahead must we warn the firm?"
+  },
+  {
+   "source_id": "v3-multihop-notice-05",
+   "text": "Ostrel expansion: the people doing hands-on site work, how much warning do we owe them to cancel?"
+  },
+  {
+   "source_id": "v3-multihop-notice-06",
+   "text": "How long a heads-up must we give to cut the site crew on the Harrowgate relocation project?"
+  },
+  {
+   "source_id": "v3-multihop-notice-07",
+   "text": "Drummel Flats build-out: if we let site crew go, how much warning are we contractually obliged to give?"
+  },
+  {
+   "source_id": "v3-multihop-part-00",
+   "text": "QG-178-545 order: whose contract covers it, and what's their pull-out clause called?"
+  },
+  {
+   "source_id": "v3-multihop-part-01",
+   "text": "Part QG-920-655 was ordered under whose contract, and what's their exit clause named?"
+  },
+  {
+   "source_id": "v3-multihop-part-02",
+   "text": "Which supplier deal is part QG-976-843 under, and what's the leaving-a-site clause called?"
+  },
+  {
+   "source_id": "v3-multihop-part-03",
+   "text": "the order with QG-277-236: whose contract applies, and what's its walk-away clause called?"
+  },
+  {
+   "source_id": "v3-paraphrase-00",
+   "text": "Bought a screen with my own cash, nobody okayed it. How long till I know if I'm paid back?"
+  },
+  {
+   "source_id": "v3-paraphrase-01",
+   "text": "new role, how long do I keep old pay?"
+  },
+  {
+   "source_id": "v3-paraphrase-02",
+   "text": "Home with my sick child: is there a cap on how many days I can take?"
+  },
+  {
+   "source_id": "v3-paraphrase-03",
+   "text": "server stops responding to pings: what happens, and when can it rejoin?"
+  },
+  {
+   "source_id": "v3-paraphrase-04",
+   "text": "What stops a replayed job paying someone twice, and how can I tell it blocked one?"
+  },
+  {
+   "source_id": "v3-paraphrase-05",
+   "text": "Supplier pulls out of one of our sites: do they have to keep serving it for some time?"
+  },
+  {
+   "source_id": "v3-paraphrase-06",
+   "text": "We refused a broken delivery. Whose problem is it meanwhile, and how quickly must they come and collect it?"
+  },
+  {
+   "source_id": "v3-paraphrase-07",
+   "text": "how old can sensor data be before it's dropped?"
+  },
+  {
+   "source_id": "v3-paraphrase-08",
+   "text": "I accidentally took client documents I shouldn't have off their site. How fast must I report it now?"
+  },
+  {
+   "source_id": "v3-paraphrase-09",
+   "text": "We're contesting one line on a bill. Do we pay the rest, and when does interest start on it?"
+  },
+  {
+   "source_id": "v3-paraphrase-10",
+   "text": "One client is eating all the shared capacity. How do we throttle them, gradually or all at once?"
+  },
+  {
+   "source_id": "v3-paraphrase-11",
+   "text": "client call recordings, how long until they're deleted?"
+  },
+  {
+   "source_id": "v3-paraphrase-12",
+   "text": "Technician arrives but can't finish due to their own error. Who covers a return visit? Is there a cap?"
+  },
+  {
+   "source_id": "v3-paraphrase-13",
+   "text": "what does our system do when server clocks disagree?"
+  },
+  {
+   "source_id": "v3-paraphrase-14",
+   "text": "Crashing at a mate's place, not a booked hotel: is there a fixed nightly sum to claim?"
+  },
+  {
+   "source_id": "v3-paraphrase-15",
+   "text": "Everything's down: how quickly must they jump in, and does the clock start at our ticket or before?"
+  }
+ ]
+}

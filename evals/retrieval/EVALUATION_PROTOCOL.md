@@ -41,6 +41,109 @@ intervals are exploratory, not simultaneous family-wise confidence guarantees.
 Unanswerable queries are excluded from ranking metrics; evaluate their behavior
 using retrieval abstention scoring and the answer review gate.
 
+This bootstrap suits retrieval runs over the 194-query v3 fixture. It does not
+suit the shipped-path answer set, which is far smaller; use the next section for it.
+
+## Shipped-path statistics: comparing runs and calibrating the judge
+
+`scripts/shipped_path_stats.py` (exact tests in `scripts/exact_stats.py`, tests in
+`scripts/test_shipped_path_stats_rag_eval.py`) answers two questions a single
+scored run cannot. Both are exact: on fewer than about 100 items, a bootstrap
+interval or a test on raw judge scores calls differences that are noise, worst
+of all when the judge looks nearly perfect (evalstats, arXiv 2609.35815).
+
+### Is the candidate better?
+
+```sh
+python3 scripts/shipped_path_stats.py compare \
+  --baseline evals/retrieval/results/chat/qwen3.5-9b-local/2026-10-13-shipped-path-desktop-path-v1.scored.jsonl \
+  --candidate evals/retrieval/results/chat/qwen3.5-9b-local/DATE-shipped-path-desktop-path-v1.scored.jsonl \
+  [--outcome judge|mechanical|both] [--json report.json]
+```
+
+The question is the unit. Each question is paired with itself across the two
+runs, and the report lists every paired outcome, the discordant counts (better,
+worse), each run's pass rate, and an exact two-sided McNemar p-value (the sign
+test on the discordant questions). Concordant questions carry no evidence about
+the difference. The verdict is `better` or `worse` only when p ≤ `ALPHA`
+(0.05, one comparison chosen before looking; see `exact_stats.py` for why no
+extra margin is added), and `can't tell from noise` otherwise. The report also
+says how many of the changed questions would have had to go one way for a call:
+fewer than six changed questions can never reach 0.05, because six all going
+one way is p = 2/64. Each arm accepts several runs of the same set; a question's
+outcome is then its pass share across them, and ties drop out of the test.
+Questions missing from a run, or whose turn count differs between runs, are
+listed and left out, never silently counted.
+
+The two 2026-10-13 arms (utility role and default roles) are 20/34 each, with
+two questions better and two worse: `can't tell from noise`, as they should be.
+
+### How good is the judge?
+
+The judge's endpoint and model are independent of the answering model (`score
+--endpoint URL --model NAME`), and the scored manifest records its identity under
+`settings.judge.identity`: the model name requested, what the server lists at
+`/v1/models`, and whether it is the model that wrote the answers. A judge grading
+its own answers is the weakest setup. Greedy grading gives one verdict per turn;
+repeating it gives the same verdict, so each turn is graded once. Whichever judge
+is used, calibrate it against human labels:
+
+```sh
+python3 scripts/shipped_path_stats.py calibration-sample \
+  evals/retrieval/desktop-path-v1.json RUN.jsonl RUN.scored.jsonl RUN.calibration-labels.json \
+  [--half-width H] [--seed N]
+# fill in human_verdict in RUN.calibration-labels.json, then:
+python3 scripts/shipped_path_stats.py calibration-score RUN.calibration-labels.json \
+  [--judge OTHER.scored.jsonl]   # another judge's scoring of the same answers
+```
+
+The sample is stratified by the judge's own verdict (judge pass, judge fail).
+Items with a turn that produced no answer were never shown to the judge and fail
+whoever grades them, so they form a known stratum that needs no labels. The size
+comes from a precision target on the corrected pass rate: by default half the
+run's own Wilson 95% half-width (`JUDGE_NOISE_SHARE`), because labels remove only
+the judge's error, not the question-sampling error, and at one half the judge's
+residual error widens the combined interval by about 12%. The plan assumes the
+widest case, a judge no better than a coin inside each stratum, so it assumes
+nothing about the judge being measured; a good judge gives a narrower interval
+than planned. Allocation is proportional to stratum size. Rows are in random
+order, so labelling a prefix and stopping still leaves a valid smaller sample.
+The file records the sampled scored file's path and SHA-256, and scoring
+refuses to run if that file has changed.
+
+Rows are blind, like the review packets below: each shows every turn's question,
+the rubric as the judge reads it, and the answer line by line, with no judge
+verdict, reason or stratum, in random order so the strata do not show through.
+Set `human_verdict` to `"pass"` when every turn meets its rubric and `"fail"`
+otherwise, grading on the rubric alone.
+
+Scoring looks the verdicts up instead. The sampled run's judge defines the
+sampling strata; the judge being measured is that run's by default, or any other
+scored run of the same answers given with `--judge` (the same 9B answers graded by
+the 9B and by a 27B, say), checked by each item's answer hash. Each sampling
+stratum is split by the measured judge's verdict into cells; inside a cell the
+labelled items are still a simple random sample, so one labelled file scores
+every judge of those answers with the same exact method.
+
+The score step reports, with exact 95% intervals for this run's items: the
+judge's accuracy on answered items, its false-pass rate (the share of judge
+passes a human fails), its false-fail rate (the share of judge fails a human
+passes), and the pass rate corrected for its errors by prediction-powered
+inference. Because the measured judge's verdict is constant inside each cell,
+the PPI estimate, mean(judge) + Σ_c (N_c/N) · mean_c(human − judge), reduces to
+Σ_c (N_c/N) · (human pass share in cell c). Its interval combines each
+cell's exact hypergeometric interval at α divided by the number of cells
+not labelled whole (Bonferroni), so it holds at any sample size and does not
+collapse to zero width when the judge agrees with every label. A cell
+labelled whole is known exactly. The CLT interval PPI papers use is not
+reported: at ten-odd labels per stratum it under-covers. These intervals are
+about this run's items; whether a change helped is the paired test's question.
+
+The 2026-10-13 utility-role run has a labelling file ready:
+`results/chat/qwen3.5-9b-local/2026-10-13-shipped-path-desktop-path-v1.calibration-labels.json`
+(17 of 20 judge passes, 9 of 11 judge fails; 3 unanswered need no label; about
+28 minutes to label).
+
 Choose budgets before inspecting candidate results. Compare identical corpora,
 cutoffs, hardware, warmup policies, and concurrency. Randomize execution order.
 The comparator hashes supplied artifacts but cannot establish how an old run was
