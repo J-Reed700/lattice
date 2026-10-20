@@ -135,15 +135,17 @@ mod readiness;
 mod registry;
 mod startup;
 
-pub(crate) use config::resident_bytes_of;
-pub use config::{Footprint, SidecarBinary, SidecarConfig, SpeculativeDecoding};
+pub(crate) use config::{memory_hint, resident_bytes_of};
+pub use config::{
+    Footprint, MemoryHint, MemoryRoom, MemorySource, SidecarBinary, SidecarConfig,
+    SpeculativeDecoding,
+};
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;
 pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, Admission, SidecarRegistry};
 pub use startup::SidecarManager;
 
-use config::*;
 use failure::*;
 use preflight::*;
 use readiness::*;

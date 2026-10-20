@@ -7,10 +7,11 @@
 //! and how its client generates; it never names a role, so two roles that
 //! resolve to the same key share one client and one server.
 //!
-//! Before a new bundled server starts, admission checks that it fits in the
-//! GPU memory the running servers leave, evicting idle models to make room
-//! and refusing — with the sizes and who holds the memory — when that is not
-//! enough. Nothing in use is ever unloaded.
+//! Before a new bundled server starts, admission prices it against the GPU
+//! memory the running servers leave and unloads idle models to make room.
+//! Nothing in use is ever unloaded, and nothing is refused on that estimate:
+//! a window the machine cannot hold fails in llama-server, and its error
+//! carries the numbers.
 
 use std::sync::{Arc, Mutex};
 
@@ -112,9 +113,11 @@ impl LoadedLlm {
     /// `created` for `model`. A local model is named and priced by `local`.
     pub(crate) fn new(created: CreatedLlm, model: &ModelRef, local: Option<&LocalModel>) -> Self {
         let gpu_bytes = match (&created.server, local) {
-            (Some(server), Some(local)) if server.n_gpu_layers > 0 => {
-                Some(resident_bytes_of(&local.path, server.context_size))
-            }
+            (Some(server), Some(local)) if server.n_gpu_layers > 0 => Some(resident_bytes_of(
+                &local.path,
+                server.context_size,
+                server.kv_cache_quantization,
+            )),
             (Some(_), _) => Some(0),
             (None, _) => None,
         };
@@ -238,7 +241,7 @@ pub(crate) struct LearningShortfall {
     /// The window the model had, in tokens.
     pub(crate) window: u32,
     /// Whether that window was the one saved for the model in Settings →
-    /// Models, rather than what Auto or the model's server gave it.
+    /// Models, rather than the one it was trained for or its server reports.
     pub(crate) window_is_saved: bool,
 }
 
@@ -247,13 +250,10 @@ pub(crate) struct Acquire<'a> {
     pub(crate) key: ModelKey,
     /// Read before the settings the key and its loader were built from.
     pub(crate) epoch: u64,
-    pub(crate) role: ModelRole,
     /// Who pins it for the work; `None` hands it out unpinned.
     pub(crate) holder: Option<Holder>,
     /// The downloaded model behind a local key, which admission prices.
     pub(crate) local: Option<&'a LocalModel>,
-    /// The smallest window the work can run in, in tokens.
-    pub(crate) floor: Option<u32>,
 }
 
 /// A model handed out by [`LlmInstances::acquire`].
@@ -350,11 +350,11 @@ impl LlmInstances {
     }
 
     /// The model `request.key` names, loading it with `load` when it is not
-    /// loaded. A new bundled server is admitted first: it must fit in the GPU
-    /// memory the others leave, after evicting idle models if that makes
-    /// room; otherwise the request is refused with the sizes and who holds
-    /// the memory. New servers are admitted one at a time, each priced after
-    /// the one before it has started. Requests for one key share one load.
+    /// loaded. A new bundled server is admitted first: when it does not fit
+    /// in the GPU memory the others leave, idle models are unloaded to make
+    /// room, and it starts either way. New servers are admitted one at a
+    /// time, each priced after the one before it has started. Requests for
+    /// one key share one load.
     pub(crate) async fn acquire<F, Fut>(
         &self,
         request: Acquire<'_>,
@@ -368,10 +368,8 @@ impl LlmInstances {
         let Acquire {
             key,
             epoch,
-            role,
             holder,
             local,
-            floor,
         } = request;
         let model = key.model.clone();
         let launch = key.launch;
@@ -387,9 +385,7 @@ impl LlmInstances {
                     role,
                 });
                 if let (Some(local), Some(launch)) = (local, launch) {
-                    let turn = self
-                        .admit(&model, local, launch, floor, role, budget)
-                        .await?;
+                    let turn = self.admit(local, launch, budget).await;
                     *starting
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) = turn;
@@ -493,24 +489,21 @@ impl LlmInstances {
             .collect()
     }
 
-    /// Admit a new server for `local`: launch when it fits; else evict idle
-    /// models and launch if that made room; else refuse. When a new server is
-    /// to take GPU memory, the admission turn comes back and must be held
-    /// until that server has started.
+    /// Admit a new server for `local`: when it does not fit beside the
+    /// others, unload idle models to make room, then start it either way.
+    /// When a new server is to take GPU memory, the admission turn comes back
+    /// and must be held until that server has started.
     async fn admit(
         &self,
-        model: &ModelRef,
         local: &LocalModel,
         launch: LocalServerOptions,
-        floor: Option<u32>,
-        role: ModelRole,
         budget: &dyn GpuBudget,
-    ) -> Result<Option<tokio::sync::MutexGuard<'_, ()>>> {
+    ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
         let turn = self.admission.lock().await;
-        let first = budget.admission(&local.path, launch, floor).await;
+        let first = budget.admission(&local.path, launch).await;
         let Admission::Short { needed, spare } = first else {
             admission::log(&local.name, first, &[]);
-            return Ok(starting(first, turn));
+            return starting(first, turn);
         };
         let evicted = self.pool.evict_idle(
             ModelKey::server,
@@ -536,53 +529,19 @@ impl LlmInstances {
         let outcome = if evicted.is_empty() {
             first
         } else {
-            budget.admission(&local.path, launch, floor).await
+            budget.admission(&local.path, launch).await
         };
         admission::log(&local.name, outcome, &evicted);
-        match outcome {
-            Admission::Short { needed, spare } => Err(refusal::refused(
-                role,
-                Some(model),
-                "no_memory",
-                refusal::no_memory(role, &local.name, needed, spare, &self.pinners()),
-            )),
-            _ => Ok(starting(outcome, turn)),
-        }
-    }
-
-    /// The servers held by running work, with their GPU memory and holders:
-    /// one per server, however many of its clients are in use.
-    fn pinners(&self) -> Vec<refusal::Pinner> {
-        let mut pinners: Vec<((ModelRef, LaunchProfile), refusal::Pinner)> = Vec::new();
-        for entry in self.pool.snapshot() {
-            let Some(gpu_bytes) = entry.value.gpu_bytes.filter(|bytes| *bytes > 0) else {
-                continue;
-            };
-            if entry.stats.in_flight == 0 {
-                continue;
-            }
-            let server = entry.key.server();
-            match pinners.iter_mut().find(|(known, _)| *known == server) {
-                Some((_, pinner)) => pinner.holders.extend(entry.stats.holders),
-                None => pinners.push((
-                    server,
-                    refusal::Pinner {
-                        name: entry.value.name.clone(),
-                        gpu_bytes,
-                        holders: entry.stats.holders,
-                    },
-                )),
-            }
-        }
-        pinners.into_iter().map(|(_, pinner)| pinner).collect()
+        starting(outcome, turn)
     }
 }
 
-/// The admission turn, kept only when `outcome` starts a server on the GPU.
-/// A shared server is already running, and one on the CPU or on a GPU that
-/// does not report its memory has nothing to be priced against.
+/// The admission turn, kept only when `outcome` starts a server on the GPU,
+/// whether or not it fits. A shared server is already running, and one on
+/// the CPU or on a GPU that does not report its memory has nothing to be
+/// priced against.
 fn starting<T>(outcome: Admission, turn: T) -> Option<T> {
-    matches!(outcome, Admission::Fits { .. }).then_some(turn)
+    matches!(outcome, Admission::Fits { .. } | Admission::Short { .. }).then_some(turn)
 }
 
 impl Default for LlmInstances {

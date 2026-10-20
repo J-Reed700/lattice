@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
 
 /// A bundled llama-server build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,10 +49,10 @@ pub struct SidecarConfig {
     /// `0` means CPU-only. Maps to llama-server's `-ngl` flag.
     pub n_gpu_layers: u32,
 
-    /// Context window in tokens. Maps to `--ctx-size`. `Auto` sizes it
-    /// from the model's trained length and the memory its KV cache can
-    /// have ([`auto_context_size`]); the flat defaults are the fallback when
-    /// either is unknown.
+    /// Context window in tokens. Maps to `--ctx-size`. The one the user
+    /// saved for the model, else the one it was trained for: never sized to
+    /// the machine. [`memory_hint`] says whether it fits, and nothing acts on
+    /// that but the user.
     pub context_size: u32,
 
     /// Whether the GGUF carries a multi-token-prediction head llama-server
@@ -87,252 +88,330 @@ pub enum SpeculativeDecoding {
     MtpDraft { n_max: u32 },
 }
 
-/// RAM threshold (GB) below which we reduce the context window to keep
-/// memory pressure manageable. 8 GB is the entry point for "comfortable
-/// 7B Q4_K_M with 8K context"; below that we squeeze ctx down.
-pub(super) const LOW_RAM_THRESHOLD_GB: f64 = 8.0;
+/// What llama.cpp keeps free on each device when it fits a model by itself:
+/// `--fit-target`, 1,024 MiB in the pinned build. The memory hint holds the
+/// same back from a GPU's reported free memory and from available RAM.
+/// Metal's working set needs nothing held back: Apple sizes it to leave the
+/// system its share.
+pub(crate) const FIT_TARGET_BYTES: u64 = 1024 * 1024 * 1024;
 
-/// Context size for low-RAM machines. 2048 tokens is enough for most
-/// chat turns and plays well with 4 GB systems running 3B/4B models.
-pub(super) const LOW_RAM_CONTEXT_SIZE: u32 = 2048;
+const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-/// Default context for accelerated configurations. Most modern open
-/// models (Llama 3, Qwen 2.5) train at >=8K natively; pushing past
-/// that on consumer hardware is risky.
-pub(super) const DEFAULT_GPU_CONTEXT_SIZE: u32 = 8192;
-
-/// Default context for CPU-only configurations. CPU prefill scales
-/// with context-squared, so 4K is a more honest UX target than 8K.
-pub(super) const DEFAULT_CPU_CONTEXT_SIZE: u32 = 4096;
-
-/// Share of reported accelerator memory the model and its KV cache may claim.
-/// llama.cpp also allocates compute buffers, and on unified memory (Apple
-/// Silicon) the same pool is the machine's RAM, so filling it would starve
-/// everything else.
-pub(super) const VRAM_USABLE_FRACTION: f64 = 0.7;
-
-/// The smallest window worth starting. A card that cannot even afford this is
-/// going to struggle, but a too-small window that loads still beats the larger
-/// flat default that does not — and if it genuinely will not allocate, the
-/// sidecar's own fallback reports a degraded start.
-pub(super) const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
-
-/// Memory the machine keeps free beyond a model and its cache, so loading one
-/// never tips it into swap: a tenth of RAM, and never under 2 GiB.
-pub(super) fn swap_headroom_bytes(total_ram_bytes: u64) -> u64 {
-    (total_ram_bytes / 10).max(2 * 1024 * 1024 * 1024)
-}
-
-/// The largest window the pre-growth sizing would choose: what it chose for
-/// every machine before the window could grow past it. Auto never picks less
-/// than that sizing did for the same machine and model.
-pub(super) const AUTO_FLOOR_CEILING: u32 = 32_768;
-
-/// System memory a new server may grow into, for a GPU that shares it.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct SharedMemory {
-    /// Available when the server is about to load, as the OS counts it.
-    pub available_bytes: u64,
-    /// Installed RAM, which sets the headroom kept back.
-    pub total_bytes: u64,
-}
-
-impl SharedMemory {
-    /// What is left for weights and cache once the headroom is kept back.
-    fn spare_bytes(self) -> u64 {
-        self.available_bytes
-            .saturating_sub(swap_headroom_bytes(self.total_bytes))
-    }
-}
-
-/// Size the context window from the model's own dimensions and the memory the
-/// machine has.
-///
-/// Returns `None` when anything needed is unknown — an unreadable GGUF, a
-/// header without its KV dimensions, a GPU that does not report its memory —
-/// so the caller keeps the conservative flat default rather than acting on a
-/// guess.
-pub(super) fn auto_context_size(
-    model_path: &std::path::Path,
-    capabilities: &SystemCapabilities,
-    resident_bytes: u64,
-) -> Option<u32> {
-    auto_context_size_with_quantization(model_path, capabilities, resident_bytes, false)
-}
-
-pub(super) fn auto_context_size_with_quantization(
-    model_path: &std::path::Path,
-    capabilities: &SystemCapabilities,
-    resident_bytes: u64,
-    quantized: bool,
-) -> Option<u32> {
-    use crate::features::llm::engine::gguf_metadata;
-
-    let vram_gb = capabilities.gpu_vram_gb()?;
-    let shared = capabilities
-        .gpu
-        .as_ref()
-        .filter(|gpu| gpu.vendor.shares_system_memory())
-        .and(capabilities.available_memory_bytes)
-        .map(|available_bytes| SharedMemory {
-            available_bytes,
-            total_bytes: (capabilities.total_ram_gb * 1024.0 * 1024.0 * 1024.0) as u64,
-        });
-    let info = gguf_metadata::read_model_info(model_path)?;
-    let weights_bytes = resident_weight_bytes(model_path)?;
-
-    context_size_for_quantized(
-        vram_gb,
-        weights_bytes,
-        resident_bytes,
-        &info,
-        shared,
-        quantized,
-    )
-}
-
-/// GPU memory a server of one model holds at one window: its weights and its
-/// KV cache.
+/// Memory a server of one model holds at one window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Footprint {
+    /// The GGUF, plus its catalog projector once that is downloaded.
     pub weights: u64,
+    /// The KV cache of the layers that keep one.
     pub cache: u64,
-    /// The window, in tokens, the cache is priced at.
+    /// A hybrid's recurrent state, which does not grow with the window.
+    pub state: u64,
+    /// Scratch for computing one micro-batch.
+    pub compute: u64,
+    /// The window, in tokens, it is priced at.
     pub window: u32,
 }
 
 impl Footprint {
     pub fn total(self) -> u64 {
-        self.weights.saturating_add(self.cache)
+        self.weights
+            .saturating_add(self.cache)
+            .saturating_add(self.state)
+            .saturating_add(self.compute)
     }
 }
 
 /// The weights a server of `model_path` holds: the GGUF, plus its catalog
 /// vision projector once that is downloaded. The projector is counted whether
-/// or not a start loads it, so switching Vision never changes the window a
-/// model is sized to. `None` when the model file cannot be read.
+/// or not a start loads it, so switching Vision never changes what a model is
+/// priced at. `None` when the model file cannot be read.
 fn resident_weight_bytes(model_path: &std::path::Path) -> Option<u64> {
     let weights = std::fs::metadata(model_path).ok()?.len();
     Some(weights + crate::features::llm::engine::vision::projector_bytes_on_disk(model_path))
 }
 
-/// What a server of `model_path` holds at a window of `context_size` tokens.
-/// A GGUF whose header cannot be read still counts its weights.
-pub(crate) fn footprint_of(model_path: &std::path::Path, context_size: u32) -> Footprint {
+/// What a server holds at a window of `window` tokens: its `weights`, and what
+/// its header, `info`, says the rest costs. Whatever the header cannot say
+/// counts as nothing.
+pub(super) fn footprint_from(
+    weights: u64,
+    info: Option<&GgufModelInfo>,
+    window: u32,
+    kv_cache_quantization: bool,
+) -> Footprint {
     Footprint {
-        weights: resident_weight_bytes(model_path).unwrap_or(0),
-        cache: crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
-            .and_then(|info| info.kv_cache_bytes(context_size))
+        weights,
+        cache: info
+            .and_then(|info| info.kv_cache_bytes_with_quantization(window, kv_cache_quantization))
             .unwrap_or(0),
-        window: context_size,
+        state: info.map_or(0, GgufModelInfo::recurrent_state_bytes),
+        compute: info.map_or(0, |info| info.compute_buffer_bytes(window)),
+        window,
     }
 }
 
-/// GPU memory a running server already holds: its weights plus the KV cache
-/// for the window it was launched with.
-pub(crate) fn resident_bytes_of(model_path: &std::path::Path, context_size: u32) -> u64 {
-    footprint_of(model_path, context_size).total()
+/// What a server of `model_path` holds at a window of `context_size` tokens.
+/// A GGUF whose header cannot be read still counts its weights.
+pub(crate) fn footprint_of(
+    model_path: &std::path::Path,
+    context_size: u32,
+    kv_cache_quantization: bool,
+) -> Footprint {
+    footprint_from(
+        resident_weight_bytes(model_path).unwrap_or(0),
+        read_model_info(model_path).as_ref(),
+        context_size,
+        kv_cache_quantization,
+    )
 }
 
-/// The share of a GPU's reported memory models and their caches may claim.
-pub(super) fn usable_gpu_bytes(vram_gb: f64) -> u64 {
-    (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64
+/// Memory a running server already holds, at the window it was launched with.
+pub(crate) fn resident_bytes_of(
+    model_path: &std::path::Path,
+    context_size: u32,
+    kv_cache_quantization: bool,
+) -> u64 {
+    footprint_of(model_path, context_size, kv_cache_quantization).total()
 }
 
-/// The largest whole thousand of tokens, up to `ceiling`, whose KV cache fits
-/// `spare_bytes`; 0 when none does. Each candidate is priced rather than
-/// divided out because the cache is not always proportional to the window:
-/// sliding layers stop growing at theirs.
+/// Where the memory a new server could have is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemorySource {
+    /// Metal's `recommendedMaxWorkingSetSize`, which `llama-server
+    /// --list-devices` reports as the device's total.
+    MetalWorkingSet,
+    /// The free memory a CUDA or Vulkan device reported to the same probe.
+    GpuFree,
+    /// The RAM the OS reports available, for a server on the CPU.
+    SystemRam,
+}
+
+/// The memory this machine reports a new bundled server could have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryRoom {
+    pub source: MemorySource,
+    /// What the platform reports, less [`FIT_TARGET_BYTES`] where llama.cpp
+    /// would keep that free.
+    pub reported: u64,
+    /// What other models hold of it: other servers, and models running inside
+    /// the app on the same device. Available RAM already leaves them out, so
+    /// it is 0 there.
+    pub held: u64,
+}
+
+impl MemoryRoom {
+    pub fn spare(self) -> u64 {
+        self.reported.saturating_sub(self.held)
+    }
+}
+
+/// The memory a server could have beside the `resident_bytes` other models
+/// hold on its device: the GPU's when it is `offloaded`, else the system's.
+/// `None` when the platform does not report it.
+pub(crate) fn memory_room(
+    capabilities: &SystemCapabilities,
+    offloaded: bool,
+    resident_bytes: u64,
+) -> Option<MemoryRoom> {
+    use crate::features::llm::engine::system::GPUVendor;
+
+    let gpu = capabilities
+        .gpu
+        .as_ref()
+        .filter(|gpu| offloaded && gpu.vendor.is_accelerated());
+    let room = match gpu {
+        Some(gpu) if gpu.vendor == GPUVendor::Apple => MemoryRoom {
+            source: MemorySource::MetalWorkingSet,
+            reported: gib_to_bytes(gpu.vram_gb?),
+            held: resident_bytes,
+        },
+        Some(gpu) => MemoryRoom {
+            source: MemorySource::GpuFree,
+            reported: gib_to_bytes(gpu.free_vram_gb?).saturating_sub(FIT_TARGET_BYTES),
+            held: resident_bytes,
+        },
+        None => MemoryRoom {
+            source: MemorySource::SystemRam,
+            reported: capabilities
+                .available_memory_bytes?
+                .saturating_sub(FIT_TARGET_BYTES),
+            held: 0,
+        },
+    };
+    Some(room)
+}
+
+fn gib_to_bytes(gib: f64) -> u64 {
+    (gib * BYTES_PER_GIB) as u64
+}
+
+/// The largest window at which a server of `weights` and `info` fits
+/// `spare_bytes`: the trained length when that fits, else the largest whole
+/// thousand of tokens below it that does; 0 when none does. `None` when the
+/// header says neither what the cache costs nor how long the model was
+/// trained for.
 fn largest_window_within(
-    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
-    ceiling: u32,
+    weights: u64,
+    info: &GgufModelInfo,
     spare_bytes: u64,
-    quantized: bool,
-) -> u32 {
-    (1..=ceiling / 1024)
-        .rev()
-        .map(|thousands| thousands * 1024)
-        .find(|&tokens| {
-            info.kv_cache_bytes_with_quantization(tokens, quantized)
-                .is_some_and(|bytes| bytes <= spare_bytes)
-        })
-        .unwrap_or(0)
+    kv_cache_quantization: bool,
+) -> Option<u32> {
+    let trained = info.trained_context_length?;
+    info.kv_cache_bytes_with_quantization(trained, kv_cache_quantization)?;
+    let fits = |window: u32| {
+        footprint_from(weights, Some(info), window, kv_cache_quantization).total() <= spare_bytes
+    };
+    if fits(trained) {
+        return Some(trained);
+    }
+    Some(
+        (1..=trained / 1024)
+            .rev()
+            .map(|thousands| thousands * 1024)
+            .find(|&window| fits(window))
+            .unwrap_or(0),
+    )
 }
 
-/// The arithmetic behind [`auto_context_size`], separated from reading the disk
-/// so the decision can be checked against known hardware and known models.
-///
-/// The window is a resource, not a content limit: what does not fit in it is
-/// paged, never dropped. It has two parts:
-///
-/// - **The floor** is what the sizing before growth chose: the largest window
-///   up to [`AUTO_FLOOR_CEILING`] (and the trained length) whose cache fits the
-///   accelerator's usable share less the weights and what other running
-///   servers hold (`resident_bytes`). Auto never picks less.
-/// - **Above it** the window grows while its cache fits the memory available
-///   now (`shared`, for a GPU that draws on system RAM) less headroom and the
-///   weights, still within the usable share and never past the trained length.
-///   llama.cpp allocates the whole cache at load, so growth sized to installed
-///   memory rather than available memory would push a busy machine into swap.
-#[cfg(test)]
-pub(super) fn context_size_for(
-    vram_gb: f64,
-    weights_bytes: u64,
-    resident_bytes: u64,
-    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
-    shared: Option<SharedMemory>,
-) -> Option<u32> {
-    context_size_for_quantized(vram_gb, weights_bytes, resident_bytes, info, shared, false)
+/// What a server would ask of this machine's memory. A hint for the user: it
+/// never changes a window, and never stops a server from starting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryHint {
+    /// What the server takes at the window it is launched with.
+    pub needed: Footprint,
+    /// What this machine reports it could have.
+    pub room: MemoryRoom,
+    /// The largest window that fits the room, up to the trained length;
+    /// `None` when the header cannot say.
+    pub fits_window: Option<u32>,
 }
 
-pub(super) fn context_size_for_quantized(
-    vram_gb: f64,
-    weights_bytes: u64,
+impl MemoryHint {
+    /// Whether the server fits the room this machine reports.
+    pub fn fits(self) -> bool {
+        self.needed.total() <= self.room.spare()
+    }
+
+    /// The numbers, for a server that failed to start or ran degraded, and
+    /// what the user can do about them.
+    pub fn describe(self) -> String {
+        let needed = self.needed;
+        let state = if needed.state > 0 {
+            format!(" + {} recurrent state", gigabytes(needed.state))
+        } else {
+            String::new()
+        };
+        let room = match self.room.source {
+            MemorySource::MetalWorkingSet => format!(
+                "this Mac's GPU working set is {}",
+                gigabytes(self.room.reported)
+            ),
+            MemorySource::GpuFree => format!(
+                "the GPU reports {} free, after the 1 GB llama.cpp keeps free",
+                gigabytes(self.room.reported)
+            ),
+            MemorySource::SystemRam => format!(
+                "the system reports {} of RAM available, after the 1 GB llama.cpp keeps free",
+                gigabytes(self.room.reported)
+            ),
+        };
+        let held = if self.room.held > 0 {
+            format!(
+                ", and other models hold {} of it",
+                gigabytes(self.room.held)
+            )
+        } else {
+            String::new()
+        };
+        let fit = match self.fits_window {
+            Some(0) => " Not even its weights fit.".to_owned(),
+            Some(window) if window < needed.window => {
+                format!(" About {} tokens fit.", tokens(window))
+            }
+            _ => String::new(),
+        };
+        format!(
+            "At {window} tokens this model needs about {total} ({weights} weights + {cache} \
+             context{state} + {compute} compute); {room}{held}.{fit} Lower its context length \
+             in Settings → Models.",
+            window = tokens(needed.window),
+            total = gigabytes(needed.total()),
+            weights = gigabytes(needed.weights),
+            cache = gigabytes(needed.cache),
+            compute = gigabytes(needed.compute),
+        )
+    }
+}
+
+/// The memory hint for a server started for `config`, beside the
+/// `resident_bytes` other models hold on its device. `None` when the
+/// platform does not report its memory.
+pub(crate) fn memory_hint(
+    config: &SidecarConfig,
+    capabilities: &SystemCapabilities,
     resident_bytes: u64,
-    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
-    shared: Option<SharedMemory>,
-    quantized: bool,
-) -> Option<u32> {
-    let floor_ceiling = info
-        .trained_context_length
-        .unwrap_or(AUTO_FLOOR_CEILING)
-        .min(AUTO_FLOOR_CEILING);
-    // A header without KV dimensions declines here, before memory is looked at.
-    info.kv_cache_bytes_with_quantization(floor_ceiling, quantized)?;
-    let minimum = AUTO_MIN_CONTEXT_SIZE.min(floor_ceiling);
+) -> Option<MemoryHint> {
+    let room = memory_room(capabilities, config.n_gpu_layers > 0, resident_bytes)?;
+    let weights = resident_weight_bytes(&config.model_path).unwrap_or(0);
+    let info = read_model_info(&config.model_path);
+    Some(hint_for(
+        weights,
+        info.as_ref(),
+        config.context_size,
+        config.kv_cache_quantization,
+        room,
+    ))
+}
 
-    let usable_bytes = usable_gpu_bytes(vram_gb);
-    // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
-    // all. That is the minimum's case, not "unknown": `None` would hand the
-    // caller the larger flat default, which is guaranteed not to fit.
-    let Some(share_spare) = usable_bytes
-        .checked_sub(resident_bytes)
-        .and_then(|free| free.checked_sub(weights_bytes))
-    else {
-        return Some(minimum);
-    };
-    let floor = largest_window_within(info, floor_ceiling, share_spare, quantized).max(minimum);
+/// The arithmetic behind [`memory_hint`], separated from reading the disk so
+/// it can be checked against known models.
+pub(super) fn hint_for(
+    weights: u64,
+    info: Option<&GgufModelInfo>,
+    window: u32,
+    kv_cache_quantization: bool,
+    room: MemoryRoom,
+) -> MemoryHint {
+    MemoryHint {
+        needed: footprint_from(weights, info, window, kv_cache_quantization),
+        room,
+        fits_window: info.and_then(|info| {
+            largest_window_within(weights, info, room.spare(), kv_cache_quantization)
+        }),
+    }
+}
 
-    // Growth needs a trained length to stop at.
-    let Some(trained) = info.trained_context_length else {
-        return Some(floor);
-    };
-    // Other servers are already counted in what is available now.
-    let growth_spare = shared.map_or(share_spare, |shared| {
-        share_spare.min(shared.spare_bytes().saturating_sub(weights_bytes))
-    });
-    Some(largest_window_within(info, trained, growth_spare, quantized).max(floor))
+/// Bytes in gigabytes to one decimal.
+fn gigabytes(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / BYTES_PER_GIB)
+}
+
+/// A token count with its thousands grouped: `60,416`.
+fn tokens(count: u32) -> String {
+    let digits = count.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
 }
 
 impl SidecarConfig {
-    /// A sensible default: GPU-offload everything, 8K context.
-    /// Use `from_capabilities()` instead in production code paths so
-    /// the config matches the user's hardware.
+    /// `model_path` with everything offloaded to the GPU, at the window its
+    /// header says it was trained for; 0, which llama-server reads as the
+    /// same, when the header does not say. Use `from_capabilities()` in
+    /// production code paths so the offload matches the user's hardware.
     pub fn for_model(model_path: PathBuf) -> Self {
+        let context_size = read_model_info(&model_path)
+            .and_then(|info| info.trained_context_length)
+            .unwrap_or(0);
         Self {
             model_path,
             n_gpu_layers: 99,
-            context_size: DEFAULT_GPU_CONTEXT_SIZE,
+            context_size,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
             parallel_slots: None,
@@ -351,29 +430,23 @@ impl SidecarConfig {
         }
     }
 
-    /// The same model with GPU offload disabled, for fallback attempts.
-    /// Caps the context at the CPU default but keeps a smaller low-RAM
-    /// window rather than growing it.
+    /// The same model with GPU offload disabled, for fallback attempts. The
+    /// window is the user's, so it stays.
     pub fn without_gpu_offload(&self) -> Self {
         Self {
-            model_path: self.model_path.clone(),
             n_gpu_layers: 0,
-            context_size: self.context_size.min(DEFAULT_CPU_CONTEXT_SIZE),
-            mtp_capable: self.mtp_capable,
-            speculative_decoding: self.speculative_decoding,
-            parallel_slots: self.parallel_slots,
-            seed: self.seed,
-            kv_cache_quantization: self.kv_cache_quantization,
-            projector_path: self.projector_path.clone(),
+            ..self.clone()
         }
     }
 
-    /// `resident_bytes` is the GPU memory other running servers already hold
-    /// (see [`SidecarRegistry::resident_gpu_bytes`]); 0 when none are up.
+    /// `model_path` at a window of `context_size` tokens, every layer
+    /// offloaded when the machine has an accelerator and none when it does
+    /// not. The window is never Lattice's choice: it is the one the user
+    /// saved, else the one the model was trained for.
     pub fn from_capabilities(
         model_path: PathBuf,
         capabilities: &SystemCapabilities,
-        resident_bytes: u64,
+        context_size: u32,
     ) -> Self {
         let has_accelerator = capabilities
             .gpu
@@ -381,39 +454,9 @@ impl SidecarConfig {
             .map(|gpu| gpu.vendor.is_accelerated())
             .unwrap_or(false);
 
-        let n_gpu_layers = if has_accelerator { 99 } else { 0 };
-
-        let base_context = if has_accelerator {
-            // Size from the model and the hardware when both can be read; the
-            // flat default is the fallback, not the plan. A 5 GB model on a
-            // 28 GB card ran an 8K window purely because nothing had looked.
-            auto_context_size(&model_path, capabilities, resident_bytes).unwrap_or_else(|| {
-                tracing::debug!(
-                    "Could not size the context window from the model and GPU; \
-                     using the default {DEFAULT_GPU_CONTEXT_SIZE}"
-                );
-                DEFAULT_GPU_CONTEXT_SIZE
-            })
-        } else {
-            // CPU prefill grows with context and there is no accelerator to
-            // absorb it, so a bigger window would buy latency, not capability.
-            DEFAULT_CPU_CONTEXT_SIZE
-        };
-
-        let context_size = if capabilities.total_ram_gb < LOW_RAM_THRESHOLD_GB {
-            tracing::info!(
-                total_ram_gb = capabilities.total_ram_gb,
-                "Low-RAM system detected; reducing sidecar context window to {}",
-                LOW_RAM_CONTEXT_SIZE
-            );
-            LOW_RAM_CONTEXT_SIZE
-        } else {
-            base_context
-        };
-
         Self {
             model_path,
-            n_gpu_layers,
+            n_gpu_layers: if has_accelerator { 99 } else { 0 },
             context_size,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
@@ -422,82 +465,5 @@ impl SidecarConfig {
             kv_cache_quantization: false,
             projector_path: None,
         }
-    }
-
-    /// Enable or disable `q8_0` KV cache quantization and resize the auto
-    /// context window accordingly when running on an accelerator.
-    pub fn with_kv_cache_quantization(
-        mut self,
-        enabled: bool,
-        capabilities: &SystemCapabilities,
-        resident_bytes: u64,
-    ) -> Self {
-        self.kv_cache_quantization = enabled;
-        if enabled && self.n_gpu_layers > 0 && capabilities.total_ram_gb >= LOW_RAM_THRESHOLD_GB {
-            if let Some(resized) = auto_context_size_with_quantization(
-                &self.model_path,
-                capabilities,
-                resident_bytes,
-                true,
-            ) {
-                self.context_size = resized;
-            }
-        }
-        self
-    }
-
-    /// Replace the automatic choice with the one the user asked for.
-    ///
-    /// The request is honoured as written. Silently clamping it is how the
-    /// existing `context_window` setting came to have no effect on the sidecar
-    /// at all, so an unreachable request is logged loudly and then attempted —
-    /// if it will not allocate, the sidecar's own fallback reports a degraded
-    /// start rather than this quietly deciding for the user.
-    pub fn with_context_override(
-        mut self,
-        requested: u32,
-        capabilities: &SystemCapabilities,
-        resident_bytes: u64,
-    ) -> Self {
-        if requested == 0 || requested == self.context_size {
-            return self;
-        }
-
-        if let Some(affordable) = auto_context_size_with_quantization(
-            &self.model_path,
-            capabilities,
-            resident_bytes,
-            self.kv_cache_quantization,
-        ) {
-            if requested > affordable {
-                tracing::warn!(
-                    requested,
-                    affordable,
-                    "Configured context window is larger than this GPU and model can \
-                     comfortably hold; starting anyway and falling back if it will not allocate"
-                );
-            }
-        }
-        if let Some(trained) =
-            crate::features::llm::engine::gguf_metadata::read_model_info(&self.model_path)
-                .and_then(|info| info.trained_context_length)
-        {
-            if requested > trained {
-                tracing::warn!(
-                    requested,
-                    trained,
-                    "Configured context window exceeds what this model was trained for; \
-                     llama.cpp will extend it by rope scaling, which costs quality"
-                );
-            }
-        }
-
-        tracing::info!(
-            from = self.context_size,
-            to = requested,
-            "Context window set from settings"
-        );
-        self.context_size = requested;
-        self
     }
 }

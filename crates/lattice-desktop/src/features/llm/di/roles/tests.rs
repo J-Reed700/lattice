@@ -34,7 +34,10 @@ async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>)
             None,
             LlmRuntime::default(),
         )),
-        budget: Arc::new(SidecarBudget::new(None, Arc::default())),
+        budget: Arc::new(SidecarBudget::new(
+            None,
+            crate::features::llm::loading::LlmRuntime::default(),
+        )),
         settings: Arc::new(MockSettingsRepository::with_settings(SettingsDto {
             llm: settings,
             ..SettingsDto::default()
@@ -366,10 +369,8 @@ async fn the_utility_model_uses_ollama_only_when_ollama_is_the_provider() {
     assert_eq!(llm.model_name(), "utility-model");
 }
 
-/// A machine on which Auto gives a local model `auto` tokens, and whose
-/// header says it was trained for `trained`.
+/// A machine whose local model's header says it was trained for `trained`.
 struct Windows {
-    auto: u32,
     trained: u32,
 }
 
@@ -379,16 +380,11 @@ impl GpuBudget for Windows {
         &self,
         _: &std::path::Path,
         _: crate::features::llm::engine::factory::LocalServerOptions,
-        _: Option<u32>,
     ) -> crate::features::llm::engine::sidecar_manager::Admission {
         crate::features::llm::engine::sidecar_manager::Admission::Unmetered
     }
-    async fn auto_window(
-        &self,
-        _: &std::path::Path,
-        _: crate::features::llm::engine::factory::LocalServerOptions,
-    ) -> Option<u32> {
-        Some(self.auto)
+    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
+        None
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
         Some(self.trained)
@@ -396,7 +392,7 @@ impl GpuBudget for Windows {
 }
 
 #[tokio::test]
-async fn a_floor_above_what_auto_can_reach_is_refused_before_loading() {
+async fn a_floor_above_the_trained_window_is_refused_before_loading() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("short.gguf");
     std::fs::write(&path, b"not a model").unwrap();
@@ -418,10 +414,7 @@ async fn a_floor_above_what_auto_can_reach_is_refused_before_loading() {
         ..LLMSettingsDto::default()
     };
     let mut models = role_models(settings, Some(row)).await;
-    models.budget = Arc::new(Windows {
-        auto: 8_192,
-        trained: 8_192,
-    });
+    models.budget = Arc::new(Windows { trained: 8_192 });
     let learning = ModelRequest {
         role: ModelRole::Learning,
         selection: ModelSelection::Learning,
@@ -441,9 +434,9 @@ async fn a_floor_above_what_auto_can_reach_is_refused_before_loading() {
     assert_eq!(
         message,
         "Learning work needs a context window of at least 20,000 tokens. Your Learning model, \
-         Short-8K, was trained for 8,192 tokens, and Auto never goes past that. Set its context \
-         window to 20,000 or more in Settings → Models (a stretched window costs some quality), \
-         or choose a larger Learning model."
+         Short-8K, was trained for 8,192 tokens. Set its context window to 20,000 or more in \
+         Settings → Models (a stretched window costs some quality), or choose a larger Learning \
+         model."
     );
     assert!(models.instances.snapshot().is_empty(), "nothing was loaded");
     assert_eq!(

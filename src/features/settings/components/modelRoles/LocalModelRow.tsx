@@ -23,7 +23,7 @@ import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelWarmupStore';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { modelRefForRow } from '@/utils/chatModelSelection';
+import { modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
 
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
@@ -163,8 +163,19 @@ export function LocalModelRow({ model }: Props) {
 
   const downloaded = formatDate(model.downloaded_at);
   const used = formatDate(model.last_used_at);
+  const maxTokens = model.trained_context_length ?? null;
+  // The window it loads with: the user's, else its maximum.
+  const window = model.configured_context_length ?? llmSettings?.localContextWindow ?? maxTokens;
+  const fits = window
+    ? tokensThatFit(
+        model,
+        window,
+        llmSettings?.localModelConfigs?.[model.model_id]?.kvCacheQuantization ?? false,
+      )
+    : null;
   const meta = [
     formatFileSize(model.file_size_bytes),
+    maxTokens ? `Max ${maxTokens.toLocaleString('en-US')} tokens` : null,
     downloaded ? `downloaded ${downloaded}` : null,
     used ? `used ${used}` : null,
   ]
@@ -181,6 +192,12 @@ export function LocalModelRow({ model }: Props) {
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
           <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
+          {window && fits != null ? (
+            <div role="status" className="mt-0.5 text-xs text-warning-fg">
+              Loads at {window.toLocaleString('en-US')} tokens, which may not fit in this
+              machine&apos;s memory — about {fits.toLocaleString('en-US')} tokens fit.
+            </div>
+          ) : null}
           {model.vision ? <LocalVisionControl model={model} vision={model.vision} /> : null}
           {loadError ? (
             <div

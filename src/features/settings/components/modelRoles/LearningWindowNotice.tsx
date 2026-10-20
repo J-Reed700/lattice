@@ -12,7 +12,7 @@ import type { ModelRef } from '@/lib/bindings';
 interface Props {
   /** The row's model, as the Learning role names it. */
   model: ModelRef | null;
-  /** The window saved for it in Settings → Models; null for Auto or a server's own. */
+  /** The window saved for it in Settings → Models; null for its trained length or a server's own. */
   savedWindow: number | null;
 }
 

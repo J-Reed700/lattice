@@ -224,4 +224,29 @@ describe('LocalModelRow load status', () => {
     );
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  it('shows the maximum and warns when the window it loads with may not fit', () => {
+    renderRow({
+      ...utilityModel(),
+      trained_context_length: 262_144,
+      fits_context_length: 192_512,
+      fits_context_length_with_kv_quantization: 262_144,
+    });
+
+    expect(screen.getByText(/Max 262,144 tokens/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "Loads at 262,144 tokens, which may not fit in this machine's memory — about 192,512 tokens fit."
+    );
+  });
+
+  it('says nothing about memory when the saved window fits', () => {
+    renderRow({
+      ...utilityModel(),
+      trained_context_length: 262_144,
+      configured_context_length: 60_416,
+      fits_context_length: 192_512,
+    });
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });

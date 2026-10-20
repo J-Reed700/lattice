@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,7 +56,7 @@ describe('LocalModelConfigModal', () => {
     mockUpdateSettings.mockReset().mockResolvedValue({ ok: true });
   });
 
-  it('renders model info and supported context badge', () => {
+  it('renders model info and the maximum context', () => {
     render(
       <TooltipProvider>
         <LocalModelConfigModal
@@ -70,8 +70,9 @@ describe('LocalModelConfigModal', () => {
     expect(
       screen.getByRole('heading', { name: 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Model supports up to')).toBeInTheDocument();
+    expect(screen.getByText('Max')).toBeInTheDocument();
     expect(screen.getByText((32768).toLocaleString())).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Auto' })).not.toBeInTheDocument();
     expect(screen.getByText('Q4_K_M')).toBeInTheDocument();
   });
 
@@ -107,28 +108,50 @@ describe('LocalModelConfigModal', () => {
     );
   });
 
-  it('toggles Auto context length', async () => {
+  it('starts at the model maximum and leaves an untouched window unsaved', async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <LocalModelConfigModal isOpen onClose={vi.fn()} model={sampleModel()} />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(mockUpdateSettings).toHaveBeenCalledWith({
+      category: 'llm',
+      updates: expect.objectContaining({
+        localModelConfigs: expect.objectContaining({
+          'qwen2.5-coder-7b': expect.objectContaining({ contextLength: null }),
+        }),
+      }),
+    });
+  });
+
+  it('warns when the window may not fit, and never changes it', async () => {
     const user = userEvent.setup();
     render(
       <TooltipProvider>
         <LocalModelConfigModal
           isOpen
           onClose={vi.fn()}
-          model={sampleModel()}
+          model={sampleModel({
+            fits_context_length: 20_480,
+            fits_context_length_with_kv_quantization: 40_960,
+          })}
         />
       </TooltipProvider>,
     );
 
-    const autoBtn = screen.getByRole('button', { name: 'Auto' });
-    expect(screen.getByText(/Auto is active/i)).toBeInTheDocument();
+    expect(
+      screen.getByText("May not fit in this machine's memory — about 20,480 tokens fit"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
 
-    // Toggle Auto OFF
-    await user.click(autoBtn);
-    expect(screen.queryByText(/Auto is active/i)).not.toBeInTheDocument();
-
-    // Toggle Auto back ON
-    await user.click(autoBtn);
-    expect(screen.getByText(/Auto is active/i)).toBeInTheDocument();
+    // A q8_0 cache fits the whole window.
+    await user.click(screen.getByRole('switch', { name: 'KV Cache Quantization' }));
+    expect(screen.queryByText(/May not fit/)).not.toBeInTheDocument();
   });
 
   it('saves settings with localModelConfigs payload when Save is clicked', async () => {
@@ -145,9 +168,10 @@ describe('LocalModelConfigModal', () => {
       </TooltipProvider>,
     );
 
-    // Turn off Auto to set a fixed context length
-    const autoBtn = screen.getByRole('button', { name: 'Auto' });
-    await user.click(autoBtn);
+    // Set a context length of the user's own
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Context Length' }), {
+      target: { value: '8192' },
+    });
 
     // Toggle KV cache quantization switch
     const kvSwitch = screen.getByRole('switch', { name: 'KV Cache Quantization' });
