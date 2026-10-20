@@ -6,16 +6,22 @@
 //! them fused once, at the library's weights and with its per-source cap. A
 //! course without an embedding model, and a collection built in memory, are
 //! ranked by FTS5's `bm25` over all the queries' words at once, which needs
-//! no fusion: one list. Either way a hit is a stored passage, a byte span of
+//! no fusion: one list. Either way a query's words match whole, as the
+//! library's text search matches them, so a source never enters a claim's
+//! evidence because one of its words merely begins with one of the claim's. Either way a hit is a stored passage, a byte span of
 //! a source's text, so it maps onto the source with no relocation.
 
 use super::*;
 use crate::features::learning::references::course_index::write_version;
-use crate::infrastructure::passage_index::text_search::match_expression;
+use crate::infrastructure::passage_index::text_search::{match_words, WordMatch};
 use lattice_core::shared::constants::{
     DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_VECTOR_FUSION_WEIGHT,
 };
 use std::collections::HashMap;
+
+/// One passage as a search ranked it: its id, its score, and its best rank
+/// and score in a dense and in a full-text list.
+type Scored = (i64, f64, Option<(usize, f32)>, Option<(usize, f32)>);
 
 /// One ranked span of a source, before widening.
 struct Hit {
@@ -112,8 +118,7 @@ impl<'a> ReferenceCollection<'a> {
             Index::Course { view, .. } => view.hybrid.clone(),
             Index::Memory(_) => None,
         };
-        // (passage id, score, dense, lexical) in ranked order.
-        let ranked: Vec<(i64, f64, Option<(usize, f32)>, Option<(usize, f32)>)> = match hybrid {
+        let ranked: Vec<Scored> = match hybrid {
             Some(hybrid) => {
                 let mut branches = Vec::new();
                 let mut answered = 0;
@@ -150,7 +155,7 @@ impl<'a> ReferenceCollection<'a> {
                     .collect()
             }
             None => {
-                let Some(expression) = match_expression(&queries.join(" ")) else {
+                let Some(expression) = match_words(&queries.join(" "), WordMatch::Whole) else {
                     return Ok((Vec::new(), 0));
                 };
                 store

@@ -88,6 +88,11 @@ pub(in crate::features::learning) fn outline(modules: usize, lessons: usize) -> 
         "lessons":(0..lessons).map(|l| json!({"title":format!("Experimental design {m}.{l}"),"objective":"Design a controlled experiment and explain its limitations.","estimatedMinutes":30,"sourceIndex":null,"quote":""})).collect::<Vec<_>>()
     })).collect::<Vec<_>>()} ).to_string())
 }
+/// The one reference a topic course's lesson is prepared from: it holds the
+/// lessons' quote, and shares words with what the lessons teach.
+const REFERENCE: &str =
+    "A randomized comparison isolates the intervention. A controlled experiment states its limitations.";
+
 fn task_rubric() -> serde_json::Value {
     json!([
         {"title":"Randomized comparison","description":"Define treatment and comparison groups, specify random allocation, and explain how it limits confounding.","dimension":"application"},
@@ -137,11 +142,14 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .current_lesson_id
         .clone()
         .ok_or_else(|| AppError::InvalidState("missing lesson".into()))?;
-    // Topic outlines need evidence before they can become ready lessons.
+    // Topic outlines need evidence before they can become ready lessons. The
+    // reference shares the lesson's own words ("controlled experiment"): a
+    // full-text match counts whole words of two letters or more, as the
+    // library's does, so a lone "a" is no match.
     crate::features::learning::content_verification::tests::install_source(
         &pool,
         &draft.summary.id,
-        "A randomized comparison isolates the intervention.",
+        REFERENCE,
     )
     .await?;
     let mut lesson_candidate = lesson_response();
@@ -379,7 +387,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     crate::features::learning::content_verification::tests::install_source(
         &pool,
         &draft.summary.id,
-        quote,
+        REFERENCE,
     )
     .await?;
     let mut program = repo.get(&draft.summary.id).await?;
