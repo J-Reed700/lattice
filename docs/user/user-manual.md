@@ -424,8 +424,10 @@ Open Settings with **⌘,**. The buttons at the bottom of the tab list
 - **Models**: the model catalog, which shows how well each model fits your
   computer and downloads it; external folders where you keep your own GGUF
   models; and a Hugging Face token for gated downloads.
-- **Downloaded**: installed models. **Set as Chat**, **Set as Embedding** or
-  **Set as Utility** to put one to work, or delete it.
+- **Downloaded**: installed models and your llama.cpp, Ollama and cloud
+  connections. Each row's **Configure model** menu assigns its roles (Chat,
+  Utility, Embedding, Learning, Verifier); from the row you can also delete a
+  downloaded model.
 - **Prompts**: prompt templates and answer verification.
 - **Tuning**: context window, maximum tokens, stall timeout, repeat penalty,
   follow-up routing and related options.

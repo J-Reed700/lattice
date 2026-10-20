@@ -9,7 +9,9 @@
  * button that only switched a role on left the last embedding model with no
  * way to be removed.
  *
- * Presentation only — the ModelRolesContext is the mutation layer.
+ * Presentation only — the ModelRolesContext is the mutation layer. Connection
+ * rows, which write Settings rather than a model row, use {@link RoleToggle}
+ * directly.
  */
 
 import { useState } from 'react';
@@ -28,6 +30,7 @@ interface RoleButtonProps {
   role: RoleDescriptor;
 }
 
+/** A role a row holds, shown on the row; the toggles live in its Configure menu. */
 export function ActiveRoleBadge({ label, roleId }: { label: string; roleId: RoleId }) {
   return (
     <span
@@ -37,6 +40,39 @@ export function ActiveRoleBadge({ label, roleId }: { label: string; roleId: Role
       <Check className="h-3 w-3" aria-hidden="true" />
       {label}
     </span>
+  );
+}
+
+interface RoleToggleProps {
+  role: RoleDescriptor;
+  active: boolean;
+  disabled?: boolean;
+  pending?: boolean;
+  /** Says why the toggle is disabled; otherwise the role's own hint shows. */
+  title?: string;
+  onToggle: () => void;
+}
+
+export function RoleToggle({ role, active, disabled = false, pending = false, title, onToggle }: RoleToggleProps) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled || pending}
+      aria-pressed={active}
+      data-role={role.id}
+      title={title ?? (active ? `Active ${role.label.toLowerCase()} model. Click to stop using it.` : role.hint)}
+      className={cn(
+        'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+        active
+          ? 'border-accent/25 bg-accent-muted font-medium text-accent'
+          : 'border-border-default text-text-secondary hover:bg-surface-raised hover:text-text-primary',
+        (disabled || pending) && 'cursor-not-allowed opacity-60',
+      )}
+    >
+      {active ? <Check className="h-3 w-3" aria-hidden="true" /> : <Plus className="h-3 w-3" aria-hidden="true" />}
+      {role.label}
+    </button>
   );
 }
 
@@ -65,23 +101,12 @@ export function RoleButton({ model, role }: RoleButtonProps) {
   };
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={pending || waitsForSettings}
-      aria-pressed={isActive}
-      data-role={role.id}
-      title={isActive ? `Active ${role.label.toLowerCase()} model. Click to stop using it.` : role.hint}
-      className={cn(
-        'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
-        isActive
-          ? 'border-accent/25 bg-accent-muted font-medium text-accent'
-          : 'border-border-default text-text-secondary hover:bg-surface-raised hover:text-text-primary',
-        pending && 'opacity-60',
-      )}
-    >
-      {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : <Plus className="h-3 w-3" aria-hidden="true" />}
-      {role.label}
-    </button>
+    <RoleToggle
+      role={role}
+      active={isActive}
+      disabled={waitsForSettings}
+      pending={pending}
+      onToggle={() => void handleClick()}
+    />
   );
 }

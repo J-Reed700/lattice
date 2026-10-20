@@ -30,7 +30,7 @@ import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge } from './RoleButton';
-import { canModelFulfillRole, isChatModelSelected, isLearningModel, ROLES } from './roleConfig';
+import { canModelFulfillRole, isChatModelSelected, isLearningModel, isUtilityModel, ROLES } from './roleConfig';
 
 function formatFileSize(bytes: number): string {
   const mb = bytes / (1024 * 1024);
@@ -54,11 +54,10 @@ interface Props {
 export function LocalModelRow({ model }: Props) {
   const { refresh, chatProvider, llmSettings } = useModelRoles();
   const chatActive = isChatModelSelected(model, chatProvider);
-  const utilityActive = model.is_active_for_utility && !llmSettings?.utilityModel;
+  const utilityActive = isUtilityModel(model, llmSettings);
   const learningActive = isLearningModel(model, llmSettings);
-  const activeRoles = ROLES.filter(
-    (role) => canModelFulfillRole(model, role) && role.isActive(model, llmSettings),
-  );
+  const roles = ROLES.filter((role) => canModelFulfillRole(model, role));
+  const activeRoles = roles.filter((role) => role.isActive(model, llmSettings));
   const { deleteDownloadedModel, warmUpActiveChatModel, warmUpActiveUtilityModel, warmUpLearningModel } =
     useDownloadedModels();
   const loadedModels = useLoadedModels();
@@ -213,6 +212,7 @@ export function LocalModelRow({ model }: Props) {
           <div className={activeRoles.length > 0 ? 'ml-1 flex items-center gap-0.5 border-l border-border-subtle pl-1.5' : 'flex items-center gap-0.5'}>
             <IconButton
               label="Configure model"
+              data-roles={roles.map((role) => role.id).join(' ')}
               onClick={() => setShowConfigModal(true)}
             >
               <SlidersHorizontal />

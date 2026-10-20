@@ -133,6 +133,26 @@ describe('Downloaded model chat selection', () => {
     expect(row('Local model').queryByText('Utility')).not.toBeInTheDocument();
   });
 
+  it('clears the llama.cpp Utility reference when a downloaded model takes Utility', async () => {
+    settings.llm.utilityModel = { kind: 'llama_cpp', model: 'remote-model.gguf' };
+    models[0] = { ...models[0], is_active_for_utility: false };
+    VaultAPI.setActiveUtilityModel = vi.fn(async (id) => {
+      models = models.map(model => ({ ...model, is_active_for_utility: model.model_id === id }));
+      return { ok: true as const, data: undefined };
+    });
+    const user = await renderModels();
+    expect(row('llama.cpp connection').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+
+    const localDialog = await openRowConfig(user, 'Local model');
+    await user.click(localDialog.getByRole('button', { name: 'Utility' }));
+    await waitFor(() => expect(settings.llm.utilityModel).toBeNull());
+    await closeRowConfig(user);
+
+    expect(VaultAPI.setActiveUtilityModel).toHaveBeenCalledWith('local-model');
+    expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+    expect(row('llama.cpp connection').queryByText('Utility')).not.toBeInTheDocument();
+  });
+
   it('keeps both configured remote connections accessible when Ollama is selected', async () => {
     settings.llm.provider = 'ollama';
     settings.llm.ollamaConfigured = true;

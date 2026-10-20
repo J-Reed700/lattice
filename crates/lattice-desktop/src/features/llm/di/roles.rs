@@ -337,7 +337,10 @@ impl RoleModels {
     }
 
     /// The utility model, or `None` when none is set, or when a remote one
-    /// cannot be reached — its callers then use the default chat model.
+    /// cannot be reached — its callers then use the default chat model. A
+    /// reference saved in Settings (a llama.cpp connection) comes first; the
+    /// row flag (a downloaded model or the Ollama connection) counts only
+    /// while none is saved. Every utility caller resolves through here.
     pub(crate) async fn utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
         let epoch = self.instances.epoch();
         let settings = self.llm_settings().await?;
