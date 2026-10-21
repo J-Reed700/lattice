@@ -1056,6 +1056,70 @@ fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
     }
 }
 
+fn object_keys(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(serde_json::Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// llama.cpp builds the grammar in the order the schema lists properties.
+/// Memory was measured with sorted keys, which ask for an item's evidence
+/// before its kind and label and for a reason before its verdict; the
+/// workspace's `preserve_order` must not turn that around.
+#[test]
+fn memory_grammars_ask_for_the_grounds_before_the_decision() {
+    let patch = super::prompts::patch_schema();
+    assert_eq!(
+        object_keys(patch.pointer("/properties")),
+        [
+            "add",
+            "processed_segment_ids",
+            "schema_version",
+            "transitions"
+        ]
+    );
+    assert_eq!(
+        object_keys(patch.pointer("/properties/add/items/properties")),
+        ["candidate_id", "evidence", "kind", "label"]
+    );
+    let verdict = super::prompts::verdict_schema();
+    assert_eq!(
+        object_keys(verdict.pointer("/properties/verdicts/items/properties")),
+        ["id", "reason", "verdict"]
+    );
+}
+
+/// The passages to extract are the last thing the extractor reads before it
+/// answers, after the coverage manifest and the rules, as they were when
+/// memory was measured.
+#[test]
+fn the_extraction_request_ends_with_the_passages_to_extract() {
+    let source = message(
+        "m1",
+        1,
+        SourceRole::User,
+        "Never deploy to production on a Friday.",
+    );
+    let segments = segment_message(&source, 512, 32);
+    let rendered = super::prompts::render_extractor_prompt(&segments, &[], &[]);
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("extraction payload JSON");
+
+    let keys = object_keys(Some(&payload));
+    let mut sorted = keys.clone();
+    sorted.sort_unstable();
+    assert_eq!(keys, sorted, "payload keys must stay in sorted order");
+    assert!(
+        keys.ends_with(&["segments".to_string(), "task".to_string()]),
+        "segments must come last before the task name: {keys:?}"
+    );
+    let segment_keys = object_keys(payload.pointer("/segments/0"));
+    let mut sorted_segment_keys = segment_keys.clone();
+    sorted_segment_keys.sort_unstable();
+    assert_eq!(segment_keys, sorted_segment_keys);
+}
+
 #[test]
 fn a_repair_request_resends_the_original_passages_instead_of_asking_the_model_to_remember_them() {
     let original = r#"{"segments":[{"message_id":"m1","text":"Use port 8443."}]}"#;
