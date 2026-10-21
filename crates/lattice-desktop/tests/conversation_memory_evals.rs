@@ -374,7 +374,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-09-26.1";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-10-21.1";
 
 impl EvalConfig {
     fn from_env() -> Self {
@@ -2036,6 +2036,22 @@ fn a_refusal_phrased_as_no_owner_has_been_named_counts_as_an_honest_abstention()
             "{refusal:?} is a correct abstention the missing_fact markers do not match"
         );
     }
+}
+
+/// Run 2 of the 2026-10-21 release baseline gave this answer and was scored a
+/// failed abstention, though it invents no date.
+#[test]
+fn a_refusal_phrased_as_the_context_does_not_establish_counts_as_an_honest_abstention() {
+    let fixture = Fixture::load("missing_fact");
+    let refusal = "The context does not establish a general-phase start date. Earlier I asked \
+                   you for it as one of the two missing items (along with a named rollout \
+                   owner), and neither has been provided since. So there is no start date on \
+                   record for the general phase.";
+    assert!(contains_marker(refusal, &fixture.expect.abstain_markers));
+    assert!(!contains_marker(
+        "The general-phase start date is 1 March.",
+        &fixture.expect.abstain_markers
+    ));
 }
 
 #[test]

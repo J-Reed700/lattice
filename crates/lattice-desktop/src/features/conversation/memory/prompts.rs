@@ -66,14 +66,14 @@ pub(crate) fn largest_repetition_bound(schema: &serde_json::Value) -> (u64, Stri
 }
 
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
-pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-13.13";
+pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-21.14";
 /// Identity of the semantic-review contract.
-pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-10-13.8";
+pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-10-21.9";
 /// Identity of the summariser contract.
-pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-13.1";
+pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-21.2";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-10-13.8";
+pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-10-21.9";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///
@@ -93,6 +93,8 @@ pub const SUMMARIZER_SYSTEM: &str = "You maintain a bounded working summary that
 /// `additionalProperties: false` everywhere mirrors the domain's
 /// `deny_unknown_fields`: a provider that can enforce the schema then fails the
 /// same responses the parser would have rejected, one round trip earlier.
+/// Keys are sorted, so the grammar asks for `add` first and for an item's
+/// `evidence` before its `kind` and `label` (see [`sorted_keys`]).
 pub fn patch_schema() -> serde_json::Value {
     let evidence = |purposes: &[&str]| {
         serde_json::json!({
@@ -117,7 +119,7 @@ pub fn patch_schema() -> serde_json::Value {
             }
         })
     };
-    serde_json::json!({
+    sorted_keys(&serde_json::json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -158,12 +160,13 @@ pub fn patch_schema() -> serde_json::Value {
             "processed_segment_ids": { "type": "array", "items": { "type": "string" } }
         },
         "required": ["schema_version", "add", "transitions", "processed_segment_ids"]
-    })
+    }))
 }
 
-/// JSON schema for the reviewer response.
+/// JSON schema for the reviewer response. Keys are sorted, so the grammar asks
+/// for each `reason` before its `verdict` (see [`sorted_keys`]).
 pub fn verdict_schema() -> serde_json::Value {
-    serde_json::json!({
+    sorted_keys(&serde_json::json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -182,7 +185,7 @@ pub fn verdict_schema() -> serde_json::Value {
             }
         },
         "required": ["verdicts"]
-    })
+    }))
 }
 
 /// One passage shown beside a batch to explain a short reply, never itself part
@@ -461,5 +464,35 @@ fn passages(items: &[ReviewPassage<'_>]) -> Vec<serde_json::Value> {
 /// where a serialisation failure would abort a compaction that has nothing wrong
 /// with it.
 fn to_payload(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| String::from("{}"))
+    serde_json::to_string(&sorted_keys(value)).unwrap_or_else(|_| String::from("{}"))
+}
+
+/// `value` with every object's keys in byte order, at every depth.
+///
+/// The workspace's `preserve_order` makes JSON keep the order a literal is
+/// written in. Memory's payloads and grammars were measured with sorted keys,
+/// and that order is part of the contract: the passages to extract (`segments`)
+/// come last, just before the answer; the extractor writes an item's `evidence`
+/// before its `kind` and `label`; the reviewer writes its `reason` before its
+/// `verdict`. Without this, `preserve_order` moved the passages ahead of the
+/// rules and put every decision before its grounds, and the 2026-10-21 release
+/// baseline then saw extraction batches holding explicit user constraints come
+/// back with nothing added.
+fn sorted_keys(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(&String, &serde_json::Value)> = map.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, child)| (key.clone(), sorted_keys(child)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(sorted_keys).collect())
+        }
+        other => other.clone(),
+    }
 }
