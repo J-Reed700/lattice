@@ -60,10 +60,6 @@ pub enum LLMConfig {
         app_handle: Option<tauri::AppHandle>,
         /// How the user asked the bundled server to run.
         server: LocalServerOptions,
-        /// Memory models running inside the app hold on the device the server
-        /// offloads to (the embedding model, on Metal). Only the memory hint
-        /// counts it.
-        in_app_model_bytes: u64,
     },
     /// Ollama HTTP API
     Ollama {
@@ -186,7 +182,6 @@ pub(crate) async fn create_llm(
             generation_config,
             app_handle,
             server,
-            in_app_model_bytes,
         } => {
             // The Tauri AppHandle is populated through
             // Container::with_app_handle.
@@ -203,7 +198,6 @@ pub(crate) async fn create_llm(
                 n_gpu_layers,
                 generation_config,
                 server,
-                in_app_model_bytes,
                 schedulers,
                 devices,
             )
@@ -269,7 +263,6 @@ async fn create_local_llm_sidecar(
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
     server: LocalServerOptions,
-    in_app_model_bytes: u64,
     schedulers: &SchedulerRegistry,
     devices: &BackendDevices,
 ) -> std::result::Result<CreatedLlm, LLMError> {
@@ -340,11 +333,7 @@ async fn create_local_llm_sidecar(
     );
 
     // Said, never acted on: the window is the user's to change.
-    let hint = memory_hint(
-        &config,
-        &capabilities,
-        other_models_bytes.saturating_add(in_app_model_bytes),
-    );
+    let hint = memory_hint(&config, &capabilities, other_models_bytes);
     if let Some(hint) = hint.filter(|hint| !hint.fits()) {
         warn!(
             window = config.context_size,

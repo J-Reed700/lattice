@@ -13,6 +13,12 @@ use tokenizers::Tokenizer;
 /// window-bound: the effective limit is the smaller of the two.
 pub const RETRIEVAL_CHUNK_TARGET_TOKENS: usize = 480;
 
+/// The longest text one embedding input may be, in tokens, whatever window a
+/// model was trained for: the retrieval decision above, as a ceiling. It is
+/// the longest passage the splitter ever produces, so it is also the window
+/// an embedding server gives each slot.
+pub const MAX_PASSAGE_TOKENS: usize = 2048;
+
 /// A final piece smaller than this percentage of the passage budget is merged
 /// back into the chunk before it, when the model window still has room.
 const TRAILING_FRAGMENT_PERCENT: usize = 15;

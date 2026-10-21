@@ -14,5 +14,5 @@ use crate::shared::error::Result;
 pub trait EmbeddingIndexBinding: Send + Sync {
     /// Bind the vector space of `model`, or fail when the index already holds
     /// a different one.
-    async fn bind_first(&self, model: &dyn EmbeddingPort, late_chunking: bool) -> Result<()>;
+    async fn bind_first(&self, model: &dyn EmbeddingPort) -> Result<()>;
 }

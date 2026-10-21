@@ -217,13 +217,6 @@ pub trait EmbeddingPort: Send + Sync {
         "unknown".to_owned()
     }
 
-    /// Bytes this model holds on an accelerator, which a local LLM server on
-    /// the same device has to share: its weights while it runs on a GPU, 0 on
-    /// the CPU or behind a remote API.
-    fn accelerator_bytes(&self) -> u64 {
-        0
-    }
-
     /// Get the dimensionality of embeddings produced by this embedder.
     ///
     /// This value is constant for a given model and used to:

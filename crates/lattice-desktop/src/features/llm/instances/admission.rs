@@ -14,6 +14,19 @@ use crate::features::llm::engine::system::{
 };
 use crate::features::llm::loading::LlmRuntime;
 
+/// A bundled server outside the pool of loaded LLMs that admission may stop
+/// to make room, while it is idle: the embedding server. It is started again
+/// by the next request that needs it.
+pub(crate) trait IdleServer: Send + Sync {
+    /// What the logs call it.
+    fn name(&self) -> String;
+    /// The GPU memory stopping it would free, while it runs on the GPU with
+    /// nothing in flight; `None` while it is busy, stopped, or on the CPU.
+    fn idle_gpu_bytes(&self) -> Option<u64>;
+    /// Stop it now.
+    fn stop(&self);
+}
+
 /// What starting a bundled server would ask of the machine's memory. Only a
 /// hint: no load is ever refused on it.
 #[async_trait]
@@ -21,6 +34,11 @@ pub(crate) trait GpuBudget: Send + Sync {
     /// Whether a server for `path` launched with `launch` fits now. It only
     /// decides whether idle models are unloaded to make room.
     async fn admission(&self, path: &Path, launch: LocalServerOptions) -> Admission;
+
+    /// Whether a server started for `config` fits now: what [`Self::admission`]
+    /// answers, for a server whose configuration is already decided, such as
+    /// the embedding server.
+    async fn server_admission(&self, config: &SidecarConfig) -> Admission;
 
     /// The largest window, up to the one it was trained for, at which `path`
     /// fits this machine's memory beside the models loaded now, its KV cache
@@ -81,7 +99,19 @@ impl GpuBudget for SidecarBudget {
         let Some((config, capabilities, registry)) = self.plan(path, launch).await else {
             return Admission::Unmetered;
         };
-        registry.admission(&config, &capabilities, self.runtime.in_app_model_bytes())
+        registry.admission(&config, &capabilities)
+    }
+
+    async fn server_admission(&self, config: &SidecarConfig) -> Admission {
+        use tauri::Manager;
+        let Some(app) = self.app.as_ref() else {
+            return Admission::Unmetered;
+        };
+        let Some(registry) = app.try_state::<SidecarRegistry>() else {
+            return Admission::Unmetered;
+        };
+        let capabilities = detect_capabilities_with_app(app, self.devices()).await;
+        registry.admission(config, &capabilities)
     }
 
     async fn fits_window(&self, path: &Path, kv_cache_quantization: bool) -> Option<u32> {
@@ -90,9 +120,7 @@ impl GpuBudget for SidecarBudget {
             ..LocalServerOptions::default()
         };
         let (config, capabilities, registry) = self.plan(path, launch).await?;
-        let held = registry
-            .other_models_gpu_bytes(path)
-            .saturating_add(self.runtime.in_app_model_bytes());
+        let held = registry.other_models_gpu_bytes(path);
         memory_hint(&config, &capabilities, held)?.fits_window
     }
 

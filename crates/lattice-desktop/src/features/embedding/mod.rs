@@ -31,6 +31,7 @@ pub mod dto;
 pub mod generator;
 pub mod input_policy;
 pub mod late_chunking;
+pub mod llama_cpp;
 pub(crate) mod loading;
 pub mod plugin;
 pub mod prefixes;

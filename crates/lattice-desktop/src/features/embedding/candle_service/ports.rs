@@ -150,10 +150,6 @@ impl EmbeddingPort for CandleEmbeddingService {
         self.dimension
     }
 
-    fn accelerator_bytes(&self) -> u64 {
-        self.accelerator_bytes
-    }
-
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }

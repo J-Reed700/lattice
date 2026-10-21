@@ -62,12 +62,6 @@ impl EmbeddingPort for DynamicEmbedding {
             .unwrap_or_else(|| "unavailable".into())
     }
 
-    fn accelerator_bytes(&self) -> u64 {
-        self.provider
-            .current_model()
-            .map_or(0, |m| m.accelerator_bytes())
-    }
-
     fn split_text(
         &self,
         text: &str,

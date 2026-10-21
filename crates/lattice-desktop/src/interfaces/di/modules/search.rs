@@ -15,8 +15,9 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use lattice_core::application::ports::{BM25SearchTrait, SearchServiceTrait};
 
 // The active embedding model, which names the index's vector space
-use crate::features::embedding::candle_service::{prefixes_for_model_dir, CandleEmbeddingService};
+use crate::features::embedding::candle_service::prefixes_for_model_dir;
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
+use crate::features::embedding::llama_cpp::{EmbeddingServerStarter, LlamaEmbeddingService};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::di::{BackfillModelLoader, VectorSpace};
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
@@ -53,6 +54,7 @@ impl SearchModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
+        embedding_starter: Arc<dyn EmbeddingServerStarter>,
     ) -> lattice_core::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
         let models_path = core.data_dir().join("models");
@@ -70,7 +72,7 @@ impl SearchModule {
             Arc::new(DynamicEmbedding::new(model_provider)),
             active_dim,
             compression,
-            vector_space(active.as_ref(), embedding_strategy),
+            vector_space(active.as_ref(), embedding_strategy, &embedding_starter),
             Arc::clone(core.background()),
         )
         .await?;
@@ -261,19 +263,26 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
 }
 
 /// The vector space the active embedding model writes under `strategy`, and
-/// how to open that model if the index needs its chunk-first backfill.
-fn vector_space(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy) -> VectorSpace {
+/// how to start that model's server if the index needs its chunk-first
+/// backfill.
+fn vector_space(
+    active: Option<&DownloadedModel>,
+    strategy: EmbeddingStrategy,
+    starter: &Arc<dyn EmbeddingServerStarter>,
+) -> VectorSpace {
     let backfill_model = active
         .and_then(|m| {
-            Some((
-                m.location().enclosing_dir()?,
-                m.embedding_artifact_identity()?.clone(),
-            ))
+            m.location().enclosing_dir()?;
+            Some((m.clone(), m.embedding_artifact_identity()?.clone()))
         })
-        .map(|(dir, artifact)| -> BackfillModelLoader {
+        .map(|(model, artifact)| -> BackfillModelLoader {
+            let starter = Arc::clone(starter);
             Box::new(move || {
-                CandleEmbeddingService::open(&dir, artifact)
-                    .map(|s| Box::new(s.with_strategy(strategy)) as Box<dyn EmbeddingPort>)
+                Box::pin(async move {
+                    LlamaEmbeddingService::start(starter, &model, artifact)
+                        .await
+                        .map(|s| Box::new(s) as Box<dyn EmbeddingPort>)
+                })
             })
         });
     VectorSpace {

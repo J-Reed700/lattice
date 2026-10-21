@@ -68,6 +68,9 @@ const CTX_CHECKPOINTS: u32 = 32;
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
 pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
+    if let Some(serving) = config.embedding {
+        return embedding_server_args(config, serving, port);
+    }
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
@@ -131,6 +134,44 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
             projector.to_string_lossy().to_string(),
         ]);
     }
+    args
+}
+
+/// An embedding server's flags, and nothing else: no chat template, prompt
+/// cache, speculative decoding, projector or quantized cache. The GGUF names
+/// its pooling, so `--pooling` is not passed, and `--embd-normalize` stays at
+/// its default (Euclidean), which is the L2 normalisation stored vectors have.
+/// `-fa auto` is the build's default, named so a change upstream shows here.
+fn embedding_server_args(
+    config: &SidecarConfig,
+    serving: EmbeddingServing,
+    port: u16,
+) -> Vec<String> {
+    let mut args = vec![
+        "-m".to_string(),
+        config.model_path.to_string_lossy().to_string(),
+        "--embedding".to_string(),
+        "-c".to_string(),
+        config.context_size.to_string(),
+    ];
+    if let Some(slots) = config.parallel_slots.filter(|&s| s > 0) {
+        args.extend(["-np".to_string(), slots.to_string()]);
+    }
+    args.extend([
+        "-b".to_string(),
+        serving.ubatch.to_string(),
+        "-ub".to_string(),
+        serving.ubatch.to_string(),
+        "-ngl".to_string(),
+        config.n_gpu_layers.to_string(),
+        "-fa".to_string(),
+        "auto".to_string(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--no-webui".to_string(),
+    ]);
     args
 }
 

@@ -164,7 +164,6 @@ impl CandleEmbeddingService {
             .with_truncation(None)
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
 
-        let accelerator_bytes = accelerator_weight_bytes(&weights_path, dtype, &device);
         let var_builder = if weights_path
             .file_name()
             .is_some_and(|name| name == WEIGHTS_PYTORCH_BIN)
@@ -288,7 +287,6 @@ impl CandleEmbeddingService {
             query_cache: std::sync::Mutex::new(LruCache::new(
                 NonZeroUsize::new(QUERY_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
             )),
-            accelerator_bytes,
         })
     }
 
@@ -301,57 +299,4 @@ impl CandleEmbeddingService {
         let identity = crate::infrastructure::ml::artifact_identity::compute(dir)?;
         Self::open(dir, identity)
     }
-}
-
-/// Bytes the weights at `weights_path` take once loaded as `dtype` on
-/// `device`, when that is an accelerator a local LLM server could share; 0 on
-/// the CPU. A safetensors header gives every tensor's shape without reading
-/// the weights; any other file counts as its size on disk.
-fn accelerator_weight_bytes(
-    weights_path: &Path,
-    dtype: DType,
-    device: &candle_core::Device,
-) -> u64 {
-    if device.is_cpu() {
-        return 0;
-    }
-    safetensors_elements(weights_path).map_or_else(
-        || std::fs::metadata(weights_path).map_or(0, |file| file.len()),
-        |elements| elements.saturating_mul(dtype.size_in_bytes() as u64),
-    )
-}
-
-/// The elements of every tensor a safetensors file declares in its header.
-/// `None` for a file that is not safetensors.
-fn safetensors_elements(path: &Path) -> Option<u64> {
-    use std::io::Read;
-
-    /// A header past this is not one; refusing it bounds the allocation.
-    const HEADER_MAX_BYTES: u64 = 100 * 1024 * 1024;
-
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut length = [0u8; 8];
-    file.read_exact(&mut length).ok()?;
-    let length = u64::from_le_bytes(length);
-    if length > HEADER_MAX_BYTES {
-        return None;
-    }
-    let mut header = vec![0u8; usize::try_from(length).ok()?];
-    file.read_exact(&mut header).ok()?;
-    let header: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_slice(&header).ok()?;
-    Some(
-        header
-            .iter()
-            .filter(|(name, _)| name.as_str() != "__metadata__")
-            .filter_map(|(_, tensor)| {
-                tensor
-                    .get("shape")?
-                    .as_array()?
-                    .iter()
-                    .map(serde_json::Value::as_u64)
-                    .product::<Option<u64>>()
-            })
-            .sum(),
-    )
 }

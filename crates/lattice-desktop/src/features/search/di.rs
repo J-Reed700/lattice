@@ -51,8 +51,12 @@ pub struct SearchDi {
 }
 
 /// Opens the active embedding model for the chunk-first backfill. It runs at
-/// most once, off the runtime thread, and only when the index is missing vectors.
-pub type BackfillModelLoader = Box<dyn FnOnce() -> Result<Box<dyn EmbeddingPort>> + Send>;
+/// most once, and only when the index is missing vectors.
+pub type BackfillModelLoader = Box<
+    dyn FnOnce() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Box<dyn EmbeddingPort>>> + Send>,
+        > + Send,
+>;
 
 /// The vector space the index opens for. The composition root resolves it
 /// from the active embedding model and the user's embedding strategy.
@@ -191,11 +195,7 @@ pub async fn build_with_compression(
             // `identity` is only set for a local model with a recorded
             // artifact identity, so the loader is always present here.
             if let Some(open_model) = backfill_model {
-                let model = tokio::task::spawn_blocking(open_model)
-                    .await
-                    .map_err(|e| {
-                        AppError::InternalError(format!("Embedding model load task failed: {e}"))
-                    })??;
+                let model = open_model().await?;
                 crate::infrastructure::persistence::repositories::embedding::generation::prepare(
                     &db_pool,
                     model.as_ref(),

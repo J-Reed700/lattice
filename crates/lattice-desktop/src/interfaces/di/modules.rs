@@ -21,6 +21,7 @@
 
 mod ai;
 mod core;
+pub(crate) mod embedding;
 mod file_ops;
 mod indexing;
 mod library;

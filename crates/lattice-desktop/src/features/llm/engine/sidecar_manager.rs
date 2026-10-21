@@ -137,8 +137,8 @@ mod startup;
 
 pub(crate) use config::{memory_hint, resident_bytes_of};
 pub use config::{
-    Footprint, MemoryHint, MemoryRoom, MemorySource, SidecarBinary, SidecarConfig,
-    SpeculativeDecoding,
+    EmbeddingServing, Footprint, MemoryHint, MemoryRoom, MemorySource, SidecarBinary,
+    SidecarConfig, SpeculativeDecoding,
 };
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;

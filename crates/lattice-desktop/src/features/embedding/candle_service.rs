@@ -215,9 +215,6 @@ pub struct CandleEmbeddingService {
     /// the old one is dropped with its entries. Documents are never cached —
     /// they are embedded once, and 256 of them would be a pointless megabyte.
     query_cache: std::sync::Mutex<LruCache<String, Arc<Vec<f32>>>>,
-    /// Bytes the weights hold on `device` when it is an accelerator; 0 on
-    /// the CPU. A local LLM server offloading to the same GPU shares it.
-    accelerator_bytes: u64,
 }
 
 impl CandleEmbeddingService {
