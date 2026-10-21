@@ -19,10 +19,12 @@ use std::collections::HashSet;
 
 mod evidence;
 mod lesson;
+mod lesson_rules;
 mod outline;
 mod recall;
 
 pub use lesson::{prepare_lesson, prepare_lesson_with_references};
+pub(in crate::features::learning) use lesson_rules::lesson_rules;
 pub(in crate::features::learning) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub(in crate::features::learning) use recall::recall_output_tokens;
@@ -183,24 +185,6 @@ fn validate_source_snapshot_ids(sources: &[LearningSourceDto]) -> Result<HashSet
         ));
     }
     Ok(ids)
-}
-
-fn validate_answer_options(options: &[String], correct_index: usize) -> Result<()> {
-    if options.len() != 4 || correct_index >= options.len() {
-        return Err(invalid(
-            "The model returned an invalid question or answer key. Try again.",
-        ));
-    }
-    let mut choices = HashSet::new();
-    if options
-        .iter()
-        .any(|option| !validate_text(option, MAX_OPTION) || !choices.insert(normalize(option)))
-    {
-        return Err(invalid(
-            "A question has empty or duplicate answer choices. Try again.",
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {

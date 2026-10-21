@@ -5211,6 +5211,12 @@
           "markdownDescription": "Enables the interrupt_learning_assessment_form command without any pre-configured scope."
         },
         {
+          "description": "Enables the keep_learning_teaching_finding command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-keep-learning-teaching-finding",
+          "markdownDescription": "Enables the keep_learning_teaching_finding command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_learning_programs command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-list-learning-programs",
@@ -5941,6 +5947,12 @@
           "type": "string",
           "const": "learning:deny-interrupt-learning-assessment-form",
           "markdownDescription": "Denies the interrupt_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the keep_learning_teaching_finding command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-keep-learning-teaching-finding",
+          "markdownDescription": "Denies the keep_learning_teaching_finding command without any pre-configured scope."
         },
         {
           "description": "Denies the list_learning_programs command without any pre-configured scope.",

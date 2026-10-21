@@ -3,13 +3,14 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { claimItem, review, STOPPED_AT, unsupportedItem, userActionAt } from '@/features/learning/lessons/review/claimReviewTestData';
+import { claimItem, review, STOPPED_AT, teachingFinding, unsupportedItem, userActionAt } from '@/features/learning/lessons/review/claimReviewTestData';
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import type { LessonClaimReviewDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn() }));
+const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), keep: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resumeLearningLessonReview: api.resume,
+  keepLearningTeachingFinding: api.keep,
   getLearningLessonAudit: api.audit,
   // Each card's support block reads its sources' standing; none is judged here.
   getLearningSourceTrust: async () => ({ ok: true, data: { sources: [], claim: null } }),
@@ -161,5 +162,42 @@ describe('Lesson claim review panel', () => {
     expect(screen.getByText(/Your earlier verdict · .* · “Rounded for beginners.”/)).toBeVisible();
     expect(screen.getByText('Reopened: the Verifier disputes it')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm anyway (note required)' })).toBeVisible();
+  });
+
+  it('lists a published lesson’s unsettled teaching findings with the note and passage, and keeps one as written', async () => {
+    const waiting = teachingFinding();
+    const ready = review([], { state: 'ready', counts: { verified: 40, confirmed: 0, generalKnowledge: 0, queued: 0, open: 0, removed: 0 }, teachingFindings: [waiting] });
+    show([ready, { ...ready, teachingFindings: [{ ...waiting, state: 'kept' }] }], { lessonAnchor: 'lesson-lesson-1-section-' });
+    expect(await screen.findByRole('heading', { name: 'Needs your review · 1 teaching note' })).toBeVisible();
+    expect(screen.getByText(/The lesson is published/)).toBeVisible();
+    const card = screen.getByRole('article', { name: 'Section 3: Returning results: Teaching review' });
+    expect(within(card).getByText(/shows "result": "4" where the code returns the number 4/)).toBeVisible();
+    expect(within(card).getByText(/\{"result": "4"\}/)).toBeVisible();
+    expect(within(card).getByRole('link', { name: 'Section 3: Returning results' })).toHaveAttribute('href', '#lesson-lesson-1-section-2');
+    expect(within(card).getByText('2 repairs tried and did not settle it.')).toBeVisible();
+    // Resume is for held lessons; a published one has nothing to resume.
+    expect(screen.queryByRole('button', { name: 'Resume verification' })).not.toBeInTheDocument();
+
+    api.keep.mockResolvedValue(ok(null));
+    await userEvent.click(within(card).getByRole('button', { name: 'Keep as written' }));
+    expect(api.keep).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1', findingKey: 'teaching:section-2' });
+    expect(await screen.findByText('Kept as written. 0 teaching notes waiting for you.')).toBeInTheDocument();
+    expect(await screen.findByText('Kept as written', { selector: 'span' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Keep as written' })).not.toBeInTheDocument();
+  });
+
+  it('shows a refused keep on its card', async () => {
+    show(review([], { state: 'ready', teachingFindings: [teachingFinding({ findingKey: 'structure:lesson', kind: 'structure', site: 'lesson', unitIndex: null, unitTitle: 'Whole lesson', passage: null, repairs: 0 })] }));
+    api.keep.mockResolvedValue({ ok: false, error: 'This teaching finding is no longer waiting for you. Reload the lesson.' });
+    const card = await screen.findByRole('article', { name: 'Whole lesson: Lesson shape' });
+    expect(within(card).getByText('The repairs stopped before reaching it.')).toBeVisible();
+    await userEvent.click(within(card).getByRole('button', { name: 'Keep as written' }));
+    expect(await within(card).findByRole('alert')).toHaveTextContent('no longer waiting for you');
+  });
+
+  it('lists teaching findings beside claims that hold the lesson, without changing the claims header', async () => {
+    show(review([claimItem()], { teachingFindings: [teachingFinding()] }));
+    expect(await screen.findByRole('heading', { name: /Needs your review · 1 claim needs your review/ })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Teaching review' })).toHaveTextContent('1 waiting for you');
   });
 });

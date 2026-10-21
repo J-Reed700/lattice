@@ -2,6 +2,7 @@
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
+use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -25,16 +26,18 @@ struct AnswerCheck {
     reason: String,
 }
 
+/// One finding per question whose authored key an independent solution
+/// disputes, placed at that question.
 pub(in crate::features::learning) async fn check(
     llm: &dyn LLMPort,
     candidate: &Value,
-) -> Result<Vec<String>> {
-    let key = format!("answer-review-v1:{}", crate::features::learning::content_verification::digest(
+) -> Result<Vec<ReviewFinding>> {
+    let key = format!("answer-review-v2:{}", crate::features::learning::content_verification::digest(
         &json!({"model":llm.model_name(),"context":llm.max_context_tokens(),"questions":candidate.get("questions")}).to_string()
     ));
     if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key)
         .await?
-        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+        .and_then(|v| serde_json::from_value::<Vec<ReviewFinding>>(v).ok())
     {
         crate::features::learning::lesson_progress::stage(
             "Reusing completed answer-key review for unchanged questions",
@@ -46,7 +49,7 @@ pub(in crate::features::learning) async fn check(
     Ok(issues)
 }
 
-async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<String>> {
+async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<ReviewFinding>> {
     let Some(questions) = candidate.get("questions").and_then(Value::as_array) else {
         return Ok(vec![]);
     };
@@ -150,11 +153,16 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Strin
             .collect();
         if missing.is_empty() && problems.is_empty() {
             return Ok(accepted.into_values().filter_map(|answer| {
-                let authored = questions.get(answer.index)?.get("correctIndex")?.as_u64()? as usize;
-                (answer.correct_indices != vec![authored]).then(|| format!(
-                    "Question {} has a disputed or ambiguous answer key: its authored index is {authored}, but an independent solution found indices {:?}. {} Rewrite the question and choices so exactly one answer follows from the literal prompt; verify its key and explanation.",
-                    answer.index + 1, answer.correct_indices, answer.reason
-                ).chars().take(700).collect())
+                let question = questions.get(answer.index)?;
+                let authored = question.get("correctIndex")?.as_u64()? as usize;
+                (answer.correct_indices != vec![authored]).then(|| {
+                    let mut finding = ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(answer.index)), format!(
+                        "Question {} has a disputed or ambiguous answer key: its authored index is {authored}, but an independent solution found indices {:?}. {} Rewrite the question and choices so exactly one answer follows from the literal prompt; verify its key and explanation.",
+                        answer.index + 1, answer.correct_indices, answer.reason
+                    ).chars().take(700).collect::<String>());
+                    finding.passage = question.get("prompt").and_then(Value::as_str).map(str::to_owned);
+                    finding
+                })
             }).collect());
         }
         problems.push(format!("Questions {missing:?} still need valid checks."));
@@ -194,7 +202,9 @@ mod tests {
         ]);
         let issues = check(&model, &candidate()).await?;
         assert_eq!(issues.len(), 1);
-        assert!(issues[0].starts_with("Question 1 has a disputed"));
+        assert!(issues[0].note.starts_with("Question 1 has a disputed"));
+        assert_eq!(issues[0].site, Some(FindingSite::Question(0)));
+        assert_eq!(issues[0].passage.as_deref(), Some("Question 0"));
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 2);
         assert!(!prompts

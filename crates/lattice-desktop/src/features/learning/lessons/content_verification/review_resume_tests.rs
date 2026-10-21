@@ -1,5 +1,6 @@
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+use crate::features::learning::teaching_review::LengthRule;
 use crate::features::learning::{answer_review, lesson_drafts, teaching_review};
 
 #[tokio::test]
@@ -31,9 +32,16 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
         lesson_drafts::run(&repo, &job, &lesson, async {
             assert_eq!(answer_review::check(&model, &candidate).await?.len(), 1);
             assert_eq!(
-                teaching_review::review(&model, "Review", json!({}), &candidate, None)
-                    .await?
-                    .len(),
+                teaching_review::review(
+                    &model,
+                    "Review",
+                    json!({}),
+                    &candidate,
+                    None,
+                    LengthRule::Fail
+                )
+                .await?
+                .len(),
                 1
             );
             Ok(())
@@ -44,7 +52,15 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     candidate["blocks"][0]["body"] = json!("A changed teaching passage to inspect.");
     lesson_drafts::run(&repo, &job, &lesson, async {
         assert_eq!(answer_review::check(&model, &candidate).await?.len(), 1);
-        teaching_review::review(&model, "Review", json!({}), &candidate, None).await?;
+        teaching_review::review(
+            &model,
+            "Review",
+            json!({}),
+            &candidate,
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
         assert_eq!(
             model.prompts.lock().unwrap().len(),
             3,
@@ -52,7 +68,15 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
         );
         candidate["questions"][0]["correctIndex"] = json!(1);
         assert!(answer_review::check(&model, &candidate).await?.is_empty());
-        teaching_review::review(&model, "Review", json!({}), &candidate, None).await?;
+        teaching_review::review(
+            &model,
+            "Review",
+            json!({}),
+            &candidate,
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
         assert_eq!(model.prompts.lock().unwrap().len(), 5);
         Ok(())
     })
@@ -73,11 +97,16 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
     for _ in 0..2 {
         lesson_drafts::run(&repo, &job, &lesson, async {
             assert!(answer_review::check(&model, &candidate).await.is_err());
-            assert!(
-                teaching_review::review(&model, "Review", json!({}), &candidate, None)
-                    .await
-                    .is_err()
-            );
+            assert!(teaching_review::review(
+                &model,
+                "Review",
+                json!({}),
+                &candidate,
+                None,
+                LengthRule::Fail
+            )
+            .await
+            .is_err());
             Ok(())
         })
         .await?;

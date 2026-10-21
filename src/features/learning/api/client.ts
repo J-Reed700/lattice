@@ -105,6 +105,12 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
     learningCall('resolve_learning_claim', { request }),
 
+  /** "Keep as written" on a teaching finding the repairs did not settle. */
+  keepLearningTeachingFinding: (
+    request: Wire.KeepLearningTeachingFindingRequestDto,
+  ): Promise<ApiResult<void>> =>
+    learningCall('keep_learning_teaching_finding', { request }),
+
   resumeLearningLessonReview: (
     request: Wire.ResumeLearningLessonReviewRequestDto,
   ): Promise<ApiResult<Wire.LearningGenerationJob>> =>

@@ -889,50 +889,29 @@ async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_c
     Ok(())
 }
 
+/// A lesson off its shape, or with a citation that does not match, now
+/// publishes with findings waiting for the user (`generation/lesson_tests.rs`,
+/// `teaching/loop_tests.rs`). What cannot be saved at all is still refused
+/// before persistence, as the model's answer, never as the user's input.
 #[tokio::test]
-async fn thin_lessons_and_fabricated_topic_citations_are_rejected_before_persistence() -> Result<()>
-{
+async fn a_lesson_that_cannot_be_saved_is_refused_before_persistence() -> Result<()> {
     let mut program = crate::features::learning::tests::fixture();
     program.sources.clear();
-    let lesson = program
-        .modules
-        .first()
-        .and_then(|module| module.lessons.first())
-        .ok_or_else(|| AppError::InvalidState("missing fixture lesson".into()))?;
-    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
-    let mut thin = lesson_response();
-    thin["blocks"] = json!([]);
+    let empty = crate::features::learning::dto::PreparedLearningLesson {
+        blocks: vec![],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let error = service::validate_generated(&empty, &program).err();
     assert!(
-        generation::prepare_lesson(&Model(thin.to_string()), &runtimes, &program, lesson)
-            .await
-            .is_err()
+        matches!(&error, Some(AppError::ModelAnswerUnusable(_))),
+        "{error:?}"
     );
-    let mut shallow = lesson_response();
-    shallow["blocks"][4]["body"] = json!("Try this.");
-    assert!(
-        generation::prepare_lesson(&Model(shallow.to_string()), &runtimes, &program, lesson)
-            .await
-            .is_err()
-    );
-    let mut ambiguous = lesson_response();
-    let mut duplicate_assignment = ambiguous["blocks"][5].clone();
-    duplicate_assignment["title"] = json!("A second independent assignment");
-    if let Some(blocks) = ambiguous["blocks"].as_array_mut() {
-        blocks.push(duplicate_assignment);
-    }
-    assert!(
-        generation::prepare_lesson(&Model(ambiguous.to_string()), &runtimes, &program, lesson)
-            .await
-            .is_err()
-    );
-    let mut invented = lesson_response();
-    invented["blocks"][0]["sourceIndex"] = json!(0);
-    invented["blocks"][0]["quote"] = json!("An imaginary textbook says this is true.");
-    assert!(
-        generation::prepare_lesson(&Model(invented.to_string()), &runtimes, &program, lesson)
-            .await
-            .is_err()
-    );
+    assert!(!error
+        .map(|error| error.to_string())
+        .unwrap_or_default()
+        .contains("check your input"));
     Ok(())
 }
 

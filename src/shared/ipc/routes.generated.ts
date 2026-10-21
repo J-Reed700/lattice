@@ -227,6 +227,7 @@ export const COMMAND_PLUGINS = {
   interrupt_learning_assessment_form: 'learning',
   is_favorite: 'favorites',
   is_model_already_downloaded: 'model',
+  keep_learning_teaching_finding: 'learning',
   last_learning_window_shortfall: 'model',
   list_all_documents: 'file',
   list_available_functions: 'functions',

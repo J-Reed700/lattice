@@ -306,6 +306,42 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.prepare).not.toHaveBeenCalled();
   });
 
+  it('shows preparation as one line on other tabs, with View returning to the full panel on Lessons', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    const running: LearningGenerationJob = {
+      id: 'running-job', programId: active.summary.id, operationId: 'preparation', kind: 'lesson_preparation',
+      payloadSha256: 'fixture', baseRevisionNumber: 1, status: 'running', progressCompleted: 0,
+      activity: {
+        phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now() - 1_000,
+        lastCheckpointAt: null, lessonTitle: 'Reading field notes', modelName: 'Test model',
+        modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
+        checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null,
+        recentSteps: [],
+      },
+      progressTotal: 1, progressMessage: 'Checking saved evidence',
+      resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000, finishedAt: null,
+    };
+    mocks.plan.mockResolvedValue(ok({ jobs: [running] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    expect(await screen.findByRole('region', { name: 'Lesson preparation progress' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Plan' }));
+    expect(await screen.findByTestId('plan-panel')).toBeVisible();
+    const line = screen.getByRole('region', { name: 'Lesson preparation' });
+    expect(within(line).getByRole('status')).toHaveTextContent('Preparing lesson: Reading field notes · Verifying factual claims');
+    expect(screen.queryByRole('region', { name: 'Lesson preparation progress' })).not.toBeInTheDocument();
+
+    await user.click(within(line).getByRole('button', { name: 'View' }));
+    expect(await screen.findByRole('region', { name: 'Lesson preparation progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Lesson preparation' })).not.toBeInTheDocument();
+  });
+
   it('validates a quiz, preserves answers through a failed submit, and retries with the same attempt id', async () => {
     const user = userEvent.setup();
     const active = program('active', true);

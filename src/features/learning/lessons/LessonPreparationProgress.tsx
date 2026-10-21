@@ -4,9 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, CirclePause, LoaderCircle, Save } from 'lucide-react';
 
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
-import { PREPARATION_PHASES, preparationDuration } from '@/features/learning/lessons/lessonPreparationActivity';
+import { PREPARATION_PHASES, preparationDuration, preparationState } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
-import { heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { claimTallyLine, HeldLessonsReview } from '@/features/learning/lessons/review/HeldLessonsReview';
 import { PASS_BOUND } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
@@ -21,10 +20,19 @@ function recheckLine(references: number, claims: number | null): string {
   return `Re-checking ${what} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
 }
 
+/** A finished job's lessons are new course content: reload the course. */
+export function useReloadWhenPrepared(job: LearningGenerationJob | undefined, programId: string) {
+  const client = useQueryClient();
+  useEffect(() => {
+    if (job?.status !== 'completed') return;
+    void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
+    void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
+  }, [client, job?.id, job?.status, programId]);
+}
+
 export function LessonPreparationProgress({ job, pending, programId, revision, error }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
 }) {
-  const client = useQueryClient();
   const cancel = useCancelLearningGenerationJob();
   const retry = useRetryLearningGenerationJob();
   // Retrying or resuming reads the course's evidence; pausing never waits.
@@ -34,25 +42,16 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(true);
   const detailsId = useId();
-  const active = job ? ['pending', 'running'].includes(job.status) : pending;
   // Cancelling a lesson attempt preserves its draft/checkpoints and prevents
-  // automatic dispatch. Retrying it resumes that saved work in a new attempt.
-  const paused = job?.status === 'cancelled';
+  // automatic dispatch (`paused`). Retrying it resumes that saved work in a new attempt.
+  const { active, paused, queued, reconnecting, phase, held } = preparationState(job, pending);
   const activity = job?.activity;
-  const phase = activity ? PREPARATION_PHASES[activity.phase] : undefined;
-  const queued = job?.status === 'pending';
-  const reconnecting = queued && Boolean(job.error);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [active]);
-  useEffect(() => {
-    if (job?.status !== 'completed') return;
-    void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
-    void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
-  }, [client, job?.id, job?.status, programId]);
-  const held = heldLessonIds(job);
+  useReloadWhenPrepared(job, programId);
   // Lessons held for review are not a failure: the claim lists take over (§6.1).
   if (job && held.length > 0) return <HeldLessonsReview lessonIds={held} programId={programId} revision={revision} />;
   if (!active && (!job || job.status === 'completed')) return null;
@@ -110,7 +109,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-base font-semibold text-text-primary">{paused ? phase ? `Paused at: ${phase.title}` : 'Saved work is available' : reconnecting ? 'Preparation interrupted' : queued ? 'Waiting for a preparation slot' : phase?.title ?? (active ? 'Starting lesson preparation' : 'Saved work is available')}</h4>
         </div>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? job.error : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? job?.error : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
         {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}

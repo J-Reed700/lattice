@@ -149,20 +149,6 @@ fn rejects_duplicate_or_empty_program_source_ids() {
     assert!(validate_source_snapshot_ids(&[empty]).is_err());
 }
 
-#[test]
-fn rejects_invalid_correct_indexes_and_duplicate_options() {
-    assert!(validate_answer_options(
-        &["one".into(), "two".into(), "three".into(), "four".into()],
-        4,
-    )
-    .is_err());
-    assert!(validate_answer_options(
-        &["one".into(), "two".into(), "Two ".into(), "four".into()],
-        0,
-    )
-    .is_err());
-}
-
 fn recall_response(cards: serde_json::Value) -> String {
     json!({"cards":cards}).to_string()
 }

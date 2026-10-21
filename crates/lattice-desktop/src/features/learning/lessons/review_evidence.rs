@@ -3,6 +3,7 @@
 use crate::features::learning::lessons::structured_call::{
     complete_checked, CallKind, ReasonFirst,
 };
+use crate::features::learning::review_findings::{FindingSite, ReviewFinding};
 use crate::features::learning::{generation, reference_collection::ReferenceCollection};
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::{
@@ -70,9 +71,9 @@ fn invalid_finding(index: usize, detail: &str) -> AppError {
 
 fn accepted(
     raw: &str,
-    issues: &[String],
+    issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ReviewFinding>> {
     let decisions: HashMap<String, Finding> = generation::parse_json(raw)?;
     if decisions.len() != issues.len() {
         return Err(invalid());
@@ -127,7 +128,18 @@ fn accepted(
                 };
                 return Err(invalid_finding(index, rule));
             }
-            actionable.push(issue.clone());
+            let mut finding = issue.clone();
+            // A reviewer's issue is about the part its evidence names; one
+            // the evidence cannot place is about the whole lesson.
+            if finding.site.is_none() {
+                finding.site = Some(
+                    ids.iter()
+                        .filter_map(|id| FindingSite::of_part(id))
+                        .min()
+                        .unwrap_or(FindingSite::Lesson),
+                );
+            }
+            actionable.push(finding);
         } else if finding.requirement_id.is_some() {
             return Err(invalid_finding(
                 index,
@@ -140,12 +152,12 @@ fn accepted(
 
 pub(in crate::features::learning) async fn check(
     llm: &dyn LLMPort,
-    issues: &[String],
+    issues: &[ReviewFinding],
     authoring: &Value,
     candidate: &Value,
     references: &ReferenceCollection<'_>,
     progress: Option<&crate::features::learning::outline_progress::OutlineProgress>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ReviewFinding>> {
     if issues.is_empty() {
         return Ok(Vec::new());
     }
@@ -174,7 +186,8 @@ pub(in crate::features::learning) async fn check(
     }
     // Each finding gets an equal share of the room the request leaves for
     // reference passages; a correction carries the rejected answer as well.
-    let skeleton = json!({"proposals":issues,"requirements":requirements,"candidateParts":candidate_parts,"referencePassages":[]}).to_string();
+    let notes: Vec<&str> = issues.iter().map(|issue| issue.note.as_str()).collect();
+    let skeleton = json!({"proposals":notes,"requirements":requirements,"candidateParts":candidate_parts,"referencePassages":[]}).to_string();
     let mut request = GroundedRequest::new(SYSTEM, skeleton);
     request.output_tokens = 2 * OUTPUT_TOKENS;
     let share = crate::features::learning::model_call::source_room(llm, &request, usize::MAX)
@@ -189,7 +202,7 @@ pub(in crate::features::learning) async fn check(
         };
     let mut reference_parts = Vec::new();
     let mut seen = HashSet::new();
-    for issue in issues {
+    for issue in &notes {
         let found = references
             .retrieve_within(issue, |passages| {
                 passages.iter().map(part_tokens).sum::<usize>() <= share
@@ -232,7 +245,7 @@ pub(in crate::features::learning) async fn check(
         .map(|id| (id.clone(), decision.clone()))
         .collect();
     let schema = json!({"type":"object","additionalProperties":false,"required":keys,"properties":properties});
-    let proposals: Vec<_> = issues
+    let proposals: Vec<_> = notes
         .iter()
         .enumerate()
         .map(|(i, issue)| json!({"id":format!("issue-{i}"),"proposal":issue}))
@@ -266,6 +279,15 @@ pub(in crate::features::learning) async fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::learning::review_findings::FindingKind;
+
+    fn proposal(text: &str) -> Vec<ReviewFinding> {
+        vec![ReviewFinding::new(FindingKind::Teaching, None, text)]
+    }
+
+    fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
+        findings.into_iter().map(|f| (f.note, f.site)).collect()
+    }
 
     #[tokio::test]
     async fn every_matching_reference_is_offered_while_the_window_has_room() -> Result<()> {
@@ -285,7 +307,7 @@ mod tests {
             outputs: std::sync::Mutex::new(vec![json!({"issue-0":{"verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}}).to_string()].into()),
             prompts: Default::default(),
         };
-        let issues = vec!["Aggregate roots do not enforce invariants.".to_owned()];
+        let issues = proposal("Aggregate roots do not enforce invariants.");
         check(
             &model,
             &issues,
@@ -316,19 +338,21 @@ mod tests {
             ),
             prompts: Default::default(),
         };
-        let issues = vec!["The exercise omitted its required deliverable.".into()];
+        let issues = proposal("The exercise omitted its required deliverable.");
         let sources = ReferenceCollection::lexical(&[])?;
         assert_eq!(
-            check(
-                &model,
-                &issues,
-                &json!({"deliverable":"Record the resulting state."}),
-                &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
-                &sources,
-                None
-            )
-            .await?,
-            issues
+            placed(
+                check(
+                    &model,
+                    &issues,
+                    &json!({"deliverable":"Record the resulting state."}),
+                    &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
+                    &sources,
+                    None
+                )
+                .await?
+            ),
+            vec![(issues[0].note.clone(), Some(FindingSite::Section(0)))]
         );
         // The refused decision is asked for once more, with its reason.
         assert_eq!(model.prompts.lock().unwrap().len(), 2);
@@ -337,7 +361,7 @@ mod tests {
 
     #[test]
     fn flat_responses_still_require_the_right_evidence_for_internal_conflicts() -> Result<()> {
-        let issues = vec!["The two statements in the candidate are incompatible.".into()];
+        let issues = proposal("The two statements in the candidate are incompatible.");
         let evidence = HashMap::from([
             ("questions-0".into(), EvidenceKind::Candidate),
             ("reference-0".into(), EvidenceKind::Reference),
@@ -368,12 +392,12 @@ mod tests {
         )
         .is_err());
         assert_eq!(
-            accepted(
+            placed(accepted(
                 &response(json!(["questions-0"]), Value::Null, "actionable"),
                 &issues,
                 &evidence
-            )?,
-            issues
+            )?),
+            vec![(issues[0].note.clone(), Some(FindingSite::Question(0)))]
         );
         // Free-text reasons never silently promote a negative model verdict.
         assert!(accepted(
@@ -387,7 +411,7 @@ mod tests {
 
     #[test]
     fn external_factual_corrections_require_reference_evidence() -> Result<()> {
-        let issues = vec!["A proposed factual correction.".to_owned()];
+        let issues = proposal("A proposed factual correction.");
         let evidence = HashMap::from([
             ("blocks-0".into(), EvidenceKind::Candidate),
             ("reference-0".into(), EvidenceKind::Reference),
@@ -407,13 +431,28 @@ mod tests {
             &evidence
         )
         .is_err());
+        // Reference evidence names no part of the lesson: the whole lesson.
         assert_eq!(
-            accepted(
+            placed(accepted(
                 &decision(json!(["reference-0"]), "actionable"),
                 &issues,
                 &evidence
+            )?),
+            vec![(issues[0].note.clone(), Some(FindingSite::Lesson))]
+        );
+        // A finding the section review already placed keeps its section.
+        let section = vec![ReviewFinding::new(
+            FindingKind::Teaching,
+            Some(FindingSite::Section(4)),
+            "Section 5 (candidate blocks-4): a proposed factual correction.",
+        )];
+        assert_eq!(
+            accepted(
+                &decision(json!(["reference-0"]), "actionable"),
+                &section,
+                &evidence
             )?,
-            issues
+            section
         );
         assert!(accepted(&decision(json!([]), "not_established"), &issues, &evidence)?.is_empty());
         assert!(accepted("{}", &issues, &evidence).is_err());
@@ -422,7 +461,7 @@ mod tests {
 
     #[test]
     fn instructional_corrections_need_both_the_contract_and_candidate() -> Result<()> {
-        let issues = vec!["The exercise omits a required deliverable.".to_owned()];
+        let issues = proposal("The exercise omits a required deliverable.");
         let evidence = HashMap::from([
             ("blocks-0".into(), EvidenceKind::Candidate),
             ("requirements".into(), EvidenceKind::Requirements),
@@ -437,12 +476,12 @@ mod tests {
         )
         .is_err());
         assert_eq!(
-            accepted(
+            placed(accepted(
                 &decision(json!(["blocks-0"]), json!("requirements")),
                 &issues,
                 &evidence
-            )?,
-            issues
+            )?),
+            vec![(issues[0].note.clone(), Some(FindingSite::Section(0)))]
         );
         Ok(())
     }

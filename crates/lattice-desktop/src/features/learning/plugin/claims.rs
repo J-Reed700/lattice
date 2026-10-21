@@ -1,6 +1,6 @@
 //! Lesson claim review commands (§7.4): read a lesson's review, act on a
-//! claim, resume the review, and capture an attached page's frozen copy
-//! again. Attaching evidence runs here, in the command's own task, through
+//! claim, keep a teaching finding as written, resume the review, and
+//! capture an attached page's frozen copy again. Attaching evidence runs here, in the command's own task, through
 //! the scheduler like any model call (§9).
 
 use super::*;
@@ -20,6 +20,7 @@ use crate::features::learning::lessons::claim_reviews::dto::{
 };
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
+use crate::features::learning::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
 use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::{ClaimReviewStore, ReferenceSnapshot};
 use lattice_core::domain::learning::claim_review::{ClaimId, Ledger, Revision};
@@ -49,6 +50,15 @@ pub struct ResolveLearningClaimResultDto {
     pub revision: i64,
     /// What attaching evidence found; null for the other actions.
     pub attach: Option<ClaimAttachReportDto>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepLearningTeachingFindingRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// The finding's `findingKey` from the review.
+    pub finding_key: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -185,6 +195,24 @@ pub async fn resolve_learning_claim(
         revision: report.revision,
         attach: Some(report),
     })
+}
+
+/// "Keep as written": the user settles a teaching finding the repairs did
+/// not, without changing the lesson. It stays settled while the part it is
+/// about keeps its text.
+#[tauri::command]
+#[specta::specta]
+pub async fn keep_learning_teaching_finding(
+    request: KeepLearningTeachingFindingRequestDto,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    Ok(TeachingFindingsRepository::new(container.db_pool().clone())
+        .keep(
+            &request.program_id,
+            &request.lesson_id,
+            &request.finding_key,
+        )
+        .await?)
 }
 
 /// Resume verification (§6.2): a lesson waiting for review continues its

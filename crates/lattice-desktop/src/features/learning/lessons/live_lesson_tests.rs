@@ -8,6 +8,7 @@
     clippy::panic
 )]
 use super::*;
+use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
@@ -523,6 +524,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         prompt,
         &candidate,
         Some(&progress),
+        crate::features::learning::teaching_review::LengthRule::Fail,
     )
     .await?;
     std::fs::write(
@@ -533,7 +535,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
     // remain reportable. This replay only targets the original false objection
     // that RUSTUP_AUTO_INSTALL is absent from the authoring excerpts.
     let stale_excerpt_objection = issues.iter().any(|issue| {
-        let issue = issue.to_lowercase();
+        let issue = issue.note.to_lowercase();
         issue.contains("rustup_auto_install")
             && [
                 "not present",
@@ -549,7 +551,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress)).await?;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::features::learning::teaching_review::LengthRule::Fail).await?;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -666,7 +668,11 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         std::env::var("LATTICE_TEACHING_REVIEW_CALL").unwrap(),
     )?)?;
     let review: serde_json::Value = serde_json::from_str(recorded["answer"].as_str().unwrap())?;
-    let issues: Vec<String> = serde_json::from_value(review["issues"].clone())?;
+    let issues: Vec<ReviewFinding> =
+        serde_json::from_value::<Vec<String>>(review["issues"].clone())?
+            .into_iter()
+            .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+            .collect();
     let authoring = serde_json::from_str(&draft.authoring.unwrap().prompt)?;
     let candidate = serde_json::from_str(&draft.candidate)?;
     let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -709,7 +715,11 @@ async fn live_review_findings_require_evidence() -> Result<()> {
             Vec<crate::features::learning::dto::LearningSourceDto>,
         >(case["sources"].clone())?;
         let references = ReferenceCollection::lexical(&sources)?;
-        let issues: Vec<String> = serde_json::from_value(case["issues"].clone())?;
+        let issues: Vec<ReviewFinding> =
+            serde_json::from_value::<Vec<String>>(case["issues"].clone())?
+                .into_iter()
+                .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+                .collect();
         let accepted = review_evidence::check(
             &model,
             &issues,
@@ -724,7 +734,10 @@ async fn live_review_findings_require_evidence() -> Result<()> {
             serde_json::to_vec_pretty(&accepted)?,
         )?;
         let expected: Vec<String> = serde_json::from_value(case["expected"].clone())?;
-        assert_eq!(accepted, expected);
+        assert_eq!(
+            accepted.into_iter().map(|f| f.note).collect::<Vec<_>>(),
+            expected
+        );
     }
     Ok(())
 }
