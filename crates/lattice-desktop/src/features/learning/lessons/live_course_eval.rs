@@ -637,11 +637,7 @@ async fn live_course_eval() -> Result<()> {
         })
         .max()
         .map_or(0, |n| n + 1);
-    let model = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&settings)?,
-        directory: dir.clone(),
-        call: std::sync::atomic::AtomicUsize::new(next_call),
-    });
+    let model = Arc::new(ObservedModel::new(&settings, dir.clone(), next_call).await?);
     let web_cache = dir.join("web");
     std::fs::create_dir_all(&web_cache)?;
     let web = Arc::new(TracedWeb::new(

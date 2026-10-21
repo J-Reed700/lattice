@@ -871,6 +871,154 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
     Ok(())
 }
 
+/// [`DenseModel`] with its tokenizer reachable, as llama-server's is: it
+/// counts every text half again denser than the calibrated estimate, and
+/// counts what it is sent the same way before it refuses a prompt that
+/// fills the window.
+struct CountingDenseModel {
+    paging: PagingModel,
+    refused: AtomicUsize,
+    /// The backend's count of each request it served.
+    sent: Mutex<Vec<usize>>,
+}
+
+impl CountingDenseModel {
+    fn new(window: usize) -> Self {
+        Self {
+            paging: PagingModel::new(window),
+            refused: AtomicUsize::new(0),
+            sent: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn exact(&self, text: &str) -> usize {
+        self.paging.count_tokens(text) * 3 / 2
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for CountingDenseModel {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        use lattice_core::application::ports::llm_port::CompletionInput;
+        let text = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Message { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let counted = self.exact(&text);
+        let window = self.max_context_tokens();
+        if counted >= window {
+            self.refused.fetch_add(1, Ordering::SeqCst);
+            return Err(crate::features::llm::scheduler::rejection::window_refusal(
+                self.model_name(),
+                crate::features::llm::scheduler::rejection::RequestSize {
+                    prompt_tokens: counted,
+                    counted_exactly: true,
+                    ..Default::default()
+                },
+                window,
+            ));
+        }
+        self.sent.lock().unwrap().push(counted);
+        self.paging.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "counting-dense-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.paging.count_tokens(text)
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok(self.exact(text))
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.paging.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The single-claim judge's checker.
+fn strict_checker(
+    model: &dyn LLMPort,
+) -> lattice_core::application::services::claim_verification::ClaimChecker<'_> {
+    lattice_core::application::services::claim_verification::ClaimChecker::new(
+        model,
+        lattice_core::application::ports::llm_port::SamplingOverride::deterministic(),
+        512,
+        lattice_core::application::services::claim_verification::CheckPolicy::Strict,
+    )
+}
+
+/// The course eval of 2026-10-21 sized its claim checks by the estimate,
+/// which its pages ran past by thousands of tokens: nearly every check was
+/// refused and asked again. A check sized by the count of what it sends is
+/// never refused, and keeps its answer's room.
+#[tokio::test]
+async fn a_claim_check_is_sized_by_the_count_of_what_it_sends() -> Result<()> {
+    use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
+    // A window that holds the check's instructions, the answer's room and
+    // a few passages, by the exact count.
+    let probe = CountingDenseModel::new(1_000_000);
+    let instructions = strict_checker(&probe)
+        .located_prompt_tokens_measured(CLAIM, &[])
+        .await;
+    let model = CountingDenseModel::new(instructions + ANSWER_ROOM_TOKENS + 2_000);
+    let window = model.max_context_tokens();
+    // As many passages as the estimate says fit.
+    let mut passages: Vec<String> = Vec::new();
+    loop {
+        let mut grown = passages.clone();
+        grown.push(format!("{} {}", grown.len(), "y".repeat(1_200)));
+        if !strict_checker(&model).located_fits(CLAIM, &grown) {
+            break;
+        }
+        passages = grown;
+    }
+    assert!(passages.len() > 1);
+    assert!(
+        strict_checker(&model)
+            .located_prompt_tokens_measured(CLAIM, &passages)
+            .await
+            + ANSWER_ROOM_TOKENS
+            > window,
+        "the estimate undercounts the page"
+    );
+
+    let ranking: Vec<usize> = (0..passages.len()).collect();
+    let judged = judge_for_publication(&model, CLAIM, &passages, &ranking).await;
+
+    assert_eq!(
+        model.refused.load(Ordering::SeqCst),
+        0,
+        "no check was refused for its size"
+    );
+    let shown = shown_of(&passages, &judged.shown);
+    assert!(!shown.is_empty() && shown.len() < passages.len());
+    let sent = model.sent.lock().unwrap().clone();
+    let first = *sent.first().expect("the check was sent");
+    assert_eq!(
+        first,
+        strict_checker(&model)
+            .located_prompt_tokens_measured(CLAIM, &shown)
+            .await,
+        "the count before sending is the backend's count of what was sent"
+    );
+    assert!(
+        first + ANSWER_ROOM_TOKENS <= window,
+        "the answer keeps its room"
+    );
+    Ok(())
+}
+
 fn ranked_passage(kind: &str, score: f64, text: &str) -> EvidencePassage {
     EvidencePassage {
         source_id: format!("source-{text}"),
