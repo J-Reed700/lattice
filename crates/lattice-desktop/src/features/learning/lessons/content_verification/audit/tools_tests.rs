@@ -18,7 +18,7 @@ struct Recording {
 
 #[async_trait]
 impl VerifierWeb for Recording {
-    async fn search(&self, need: &PlannedNeed) -> Result<Vec<SearchHit>> {
+    async fn search(&self, need: &PlannedNeed, _room: Room<'_>) -> Result<Vec<SearchHit>> {
         self.needs.lock().unwrap().push(need.clone());
         Ok(Vec::new())
     }
@@ -54,16 +54,16 @@ async fn a_search_call_carries_its_rewordings_and_dates_or_is_refused() {
         "asOf": "2019-03-01",
         "alternatives": ["Python download page 2019"]
     });
-    run(SEARCH, &call, &web, &mut answer).await;
+    run(SEARCH, &call, &web, Room::for_all(), &mut answer).await;
     let references = json!({
         "query": "10.48550/arXiv.1706.03762",
         "kind": "leads",
         "identifier": "10.48550/arXiv.1706.03762"
     });
-    run(SEARCH, &references, &web, &mut answer).await;
+    run(SEARCH, &references, &web, Room::for_all(), &mut answer).await;
     let undated =
         json!({"query": "python.org downloads page", "kind": "web", "asOf": "2019-03-01"});
-    let refused = run(SEARCH, &undated, &web, &mut answer).await;
+    let refused = run(SEARCH, &undated, &web, Room::for_all(), &mut answer).await;
     assert!(refused.starts_with("Search not run"));
 
     let needs = web.needs.lock().unwrap();

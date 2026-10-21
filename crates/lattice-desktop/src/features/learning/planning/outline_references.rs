@@ -6,7 +6,7 @@
 //! selector, captured in full, deduplicated by resolved URL and content hash,
 //! and persisted with the program like user-supplied references.
 use crate::features::learning::{
-    content_verification::research::select_references,
+    content_verification::research::{select_references, selection_cost, selection_room},
     dto::*,
     outline_progress::{OutlineProgress, OutlineStage},
     persistence::hash_text,
@@ -265,6 +265,32 @@ pub(in crate::features::learning) async fn gather_for(
             continue;
         }
         let number = position + 1;
+        let (topic, gaps) = match purpose {
+            GatherPurpose::Course => (
+                subtopic.title.as_str(),
+                [
+                    json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"}),
+                ],
+            ),
+            GatherPurpose::Finding { topic, reason, .. } => (
+                topic,
+                [json!({"claim":subtopic.title,"missingEvidence":reason})],
+            ),
+        };
+        let hint = subtopic
+            .needs
+            .iter()
+            .map(|need| need.query.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        // One selection reads every need's results together, so each
+        // search fills an equal share of its room.
+        let cost = selection_cost(llm, &gaps);
+        let room = web_research::Room {
+            tokens: selection_room(llm, topic, &hint, &gaps),
+            cost: &cost,
+        }
+        .share(subtopic.needs.len());
         let mut merged: Vec<(web_research::Candidate, String)> = Vec::new();
         let mut seen = HashSet::new();
         for need in &subtopic.needs {
@@ -275,7 +301,7 @@ pub(in crate::features::learning) async fn gather_for(
                 subtopic.title
             ));
             gathered.searches += 1;
-            match web_research::search_need(web, need).await {
+            match web_research::search_need(web, need, room).await {
                 Ok(candidates) => {
                     for candidate in candidates {
                         if !urls.contains(&candidate.result.url)
@@ -300,24 +326,6 @@ pub(in crate::features::learning) async fn gather_for(
             label(number, total),
             merged.len()
         ));
-        let (topic, gaps) = match purpose {
-            GatherPurpose::Course => (
-                subtopic.title.as_str(),
-                [
-                    json!({"claim":subtopic.title,"missingEvidence":"reference material a lesson on this subtopic can cite"}),
-                ],
-            ),
-            GatherPurpose::Finding { topic, reason, .. } => (
-                topic,
-                [json!({"claim":subtopic.title,"missingEvidence":reason})],
-            ),
-        };
-        let hint = subtopic
-            .needs
-            .iter()
-            .map(|need| need.query.as_str())
-            .collect::<Vec<_>>()
-            .join(" | ");
         let selected = select_references(
             llm,
             topic,

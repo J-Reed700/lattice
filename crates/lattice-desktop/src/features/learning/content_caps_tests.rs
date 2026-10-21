@@ -143,8 +143,12 @@ async fn web_search_pages_while_new_results_appear() -> Result<()> {
     );
     let need =
         crate::features::learning::references::web_research::PlannedNeed::web("query".into());
-    let results =
-        crate::features::learning::references::web_research::search_need(&web, &need).await?;
+    let results = crate::features::learning::references::web_research::search_need(
+        &web,
+        &need,
+        crate::features::learning::references::web_research::Room::for_all(),
+    )
+    .await?;
     assert_eq!(results.len(), 30, "not the former 12");
     Ok(())
 }

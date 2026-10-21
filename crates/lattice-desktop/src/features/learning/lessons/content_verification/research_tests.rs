@@ -151,6 +151,41 @@ async fn reference_selection_accepts_all_valid_selected_results_past_four() -> R
 }
 
 #[tokio::test]
+async fn reference_selection_reads_the_results_its_window_holds_in_order() -> Result<()> {
+    // Far more than a 128k window holds, as a paged catalog search brings.
+    let results: Vec<_> = (0..3000)
+        .map(|i| WebSearchResult {
+            title: format!("Tonal centres in electronic dance music, part {i}"),
+            url: format!("https://doi.org/10.1000/paper.{i}"),
+            snippet: "A study of key and tonal centre in four-on-the-floor production.".into(),
+            published_date: None,
+            source: Some("crossref".into()),
+        })
+        .collect();
+    let llm = ScriptedModel {
+        outputs: Mutex::new([selection(&[0])].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let candidates = found(results);
+    let room = selection_room(&llm, "Tonality", "tonal centre", &[]);
+    let cost = selection_cost(&llm, &[]);
+    let selected =
+        select_references(&llm, "Tonality", "tonal centre", &[], candidates.clone()).await?;
+    assert_eq!(selected[0].url, "https://doi.org/10.1000/paper.0");
+
+    let prompts = llm.prompts.lock().unwrap();
+    let sent = prompts[0].matches("\"id\":\"result-").count();
+    assert!(sent > 0 && sent < candidates.len(), "sent {sent}");
+    assert!(prompts[0].contains("\"id\":\"result-0\""));
+    assert!(!prompts[0].contains("paper.2999"));
+    // The ones left out are the ones the room could not hold.
+    let held: usize = candidates[..sent].iter().map(|c| cost(c)).sum();
+    assert!(held <= room);
+    assert!(held + cost(&candidates[sent]) > room - room / 100);
+    Ok(())
+}
+
+#[tokio::test]
 async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages() -> Result<()> {
     let results = [
         ("Cargo definition", "https://dictionary.example/cargo"),
