@@ -19,6 +19,7 @@ mod export_all;
 mod r#move;
 mod provenance;
 mod replace;
+mod reviews;
 mod source_trust;
 
 pub(super) fn id() -> String {
@@ -115,6 +116,24 @@ pub(super) fn repack(
     };
     change(&mut input);
     encode_learning_pack(input)
+}
+
+/// A frozen copy of a page, ready on this computer.
+async fn frozen_page(pool: &sqlx::SqlitePool, sha256: &str) -> Result<()> {
+    let conversation = id();
+    sqlx::query("INSERT INTO conversations (id,title) VALUES (?,'Library')")
+        .bind(&conversation)
+        .execute(pool)
+        .await?;
+    sqlx::query("INSERT INTO web_page_snapshots(id,conversation_id,normalized_url,requested_url,status,sha256,created_at) VALUES(?,?,?,?,'ready',?,'2026-10-21T00:00:00Z')")
+        .bind(id())
+        .bind(&conversation)
+        .bind(format!("https://example.org/{sha256}"))
+        .bind(format!("https://example.org/{sha256}"))
+        .bind(sha256)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 fn captured(text: &str) -> CapturedLearningSource {
@@ -216,6 +235,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
     sources
         .link_snapshot(&program.summary.id, &first_version_id, "frozen-page-sha")
         .await?;
+    frozen_page(&pool, "frozen-page-sha").await?;
     let quote_start = "First immutable passage. A quoted rule appears here."
         .find("quoted rule")
         .expect("test quote offset");
@@ -259,7 +279,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
-    let (copy_id, _) = export_copy(&packs, &program.summary.id).await?;
+    let (copy_id, preview_id) = export_copy(&packs, &program.summary.id).await?;
 
     let imported_lesson: (String, Option<String>) = sqlx::query_as(
         "SELECT curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? AND title=?",
@@ -342,6 +362,27 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         )
         .await?;
     assert!(body.full_text.contains("quoted rule"));
+
+    // On a computer without the frozen page, the source is captured again.
+    let pack_path: String =
+        sqlx::query_scalar("SELECT source_path FROM learning_pack_import_previews WHERE id=?")
+            .bind(&preview_id)
+            .fetch_one(&pool)
+            .await?;
+    let elsewhere = self::pool().await?;
+    let elsewhere_dir = tempfile::tempdir()?;
+    r#move::import(
+        &self::packs(&elsewhere, elsewhere_dir.path()),
+        &pack_path,
+        LearningPackConflictPolicy::MergeSafe,
+    )
+    .await?;
+    let elsewhere_hash: Option<String> =
+        sqlx::query_scalar("SELECT snapshot_hash FROM learning_source_versions WHERE id=?")
+            .bind(&first_version_id)
+            .fetch_one(&elsewhere)
+            .await?;
+    assert_eq!(elsewhere_hash, None);
     Ok(())
 }
 

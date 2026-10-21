@@ -177,6 +177,12 @@ pub enum LearningPackStaysBehindKind {
     NotebookNotes,
     /// Unsaved lab drafts.
     PracticalDrafts,
+    /// Unfinished lesson reviews, whose drafts live in job checkpoints.
+    UnfinishedLessonReviews,
+    /// Tangent chats, which stay with the rest of the user's chats.
+    TangentChats,
+    /// The Verifier audit consent, given on this computer only.
+    VerifierConsent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

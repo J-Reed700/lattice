@@ -491,7 +491,11 @@ pub(super) async fn insert_source_workspace(
                 "pack_excerpt".into()
             };
             let truncated = body.is_none() || version.truncated;
-            sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            // A frozen page is a file on the computer that captured it, not in
+            // the pack: keep its hash only where this computer has the page,
+            // so elsewhere the source is captured again rather than shown as
+            // frozen with nothing behind it.
+            sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT sha256 FROM web_page_snapshots WHERE status='ready' AND sha256=? LIMIT 1))")
                 .bind(&version_id).bind(program_id).bind(&source_id).bind(version.version_number).bind(&version.title).bind(&version.publisher).bind(&source.requested_url).bind(&version.resolved_url).bind(&full_text).bind(&version.excerpt).bind(if body.is_some(){version.content_sha256.clone()}else{content_digest}).bind(restored_word_count).bind(truncated as i64).bind(extraction).bind(version.acquired_at).bind(&version.snapshot_hash).execute(&mut *tx).await.map_err(db)?;
         }
         let active = source.active_version_id.as_deref().map(|id| remap(map, id));

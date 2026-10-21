@@ -17,6 +17,7 @@ mod provenance;
 mod records;
 mod remap;
 mod replacement;
+mod review_entries;
 mod source_entries;
 mod validation;
 
@@ -255,7 +256,8 @@ impl LearningPackRepository {
 
     /// Re-read and re-check the previewed pack, then write it in one
     /// transaction: a replacement is backed up and removed first, and the
-    /// notebook links of the course it replaces are carried over.
+    /// notebook links, tangent chats and Verifier consent of the course it
+    /// replaces are carried over.
     pub async fn apply(
         &self,
         req: &ApplyLearningPackImportRequestDto,
@@ -296,9 +298,10 @@ impl LearningPackRepository {
             replaces,
         )
         .await?;
-        let mut note_links = None;
+        let mut local_links = None;
         if replaces {
-            note_links = Some(replacement::snapshot_note_links(&mut tx, &preview.target_id).await?);
+            local_links =
+                Some(replacement::snapshot_local_links(&mut tx, &preview.target_id).await?);
             sqlx::query("DELETE FROM study_decks WHERE id=(SELECT deck_id FROM learning_memory WHERE program_id=? AND deck_id IS NOT NULL)")
                 .bind(&preview.target_id).execute(&mut *tx).await.map_err(db)?;
             sqlx::query("DELETE FROM learning_programs WHERE id=?")
@@ -315,9 +318,9 @@ impl LearningPackRepository {
             policy: preview.policy,
         };
         importers::run(&mut tx, &scope).await?;
-        if let Some(saved) = note_links {
+        if let Some(saved) = local_links {
             // After the pack's memory record, so the notebook link is restored onto it.
-            replacement::restore_note_links(&mut tx, &program.summary.id, saved).await?;
+            replacement::restore_local_links(&mut tx, &program.summary.id, saved).await?;
         }
         records::record_import(
             &mut tx,

@@ -7932,7 +7932,19 @@ export type LearningPackStaysBehindKind =
 /**
  * Unsaved lab drafts.
  */
-"practical_drafts"
+"practical_drafts" |
+/**
+ * Unfinished lesson reviews, whose drafts live in job checkpoints.
+ */
+"unfinished_lesson_reviews" |
+/**
+ * Tangent chats, which stay with the rest of the user's chats.
+ */
+"tangent_chats" |
+/**
+ * The Verifier audit consent, given on this computer only.
+ */
+"verifier_consent"
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.

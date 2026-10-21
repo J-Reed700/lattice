@@ -90,17 +90,58 @@ pub(super) async fn unrecoverable_reason(
     Ok(None)
 }
 
-/// Lesson notes live in this computer's notebook, outside any pack. Taken
-/// before the replaced course is deleted, which cascades its links away.
-pub(super) struct NoteLinks {
-    journal_id: Option<String>,
-    links: Vec<(String, String, i64)>,
-}
-
-pub(super) async fn snapshot_note_links(
+/// Unfinished lesson reviews on this computer, which a replace discards: a
+/// review that is not finished keeps its draft in its job's checkpoints, and
+/// neither the pack nor the backup carries those. Said, not refused, so a
+/// course with a failed lesson can still come back.
+pub(super) async fn replace_warnings(
     connection: &mut SqliteConnection,
     program_id: &str,
-) -> Result<NoteLinks> {
+) -> Result<Vec<String>> {
+    let unfinished: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM learning_lesson_reviews WHERE program_id=? AND state<>'ready'",
+    )
+    .bind(program_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(match unfinished {
+        0 => Vec::new(),
+        1 => vec!["Replacing discards 1 unfinished lesson review on this computer; that lesson will need preparing again.".into()],
+        count => vec![format!("Replacing discards {count} unfinished lesson reviews on this computer; those lessons will need preparing again.")],
+    })
+}
+
+/// A tangent chat's place in a lesson: conversation, lesson, section index
+/// and title, the selected passage, its context size and when it began.
+type TangentLink = (
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    String,
+    i64,
+    i64,
+);
+
+/// The course's Verifier audit switch, web search and the consent given on
+/// this computer, with its provider.
+type VerifierConsent = (String, i64, Option<i64>, Option<String>);
+
+/// What lives on this computer outside any pack: lesson notes in the
+/// notebook, tangent chats, and the Verifier audit consent given here.
+/// Taken before the replaced course is deleted, which cascades it away.
+pub(super) struct LocalLinks {
+    journal_id: Option<String>,
+    notes: Vec<(String, String, i64)>,
+    tangents: Vec<TangentLink>,
+    verifier: Option<VerifierConsent>,
+}
+
+pub(super) async fn snapshot_local_links(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<LocalLinks> {
     let journal_id = sqlx::query_scalar::<_, Option<String>>(
         "SELECT journal_id FROM learning_memory WHERE program_id=?",
     )
@@ -109,7 +150,7 @@ pub(super) async fn snapshot_note_links(
     .await
     .map_err(db)?
     .flatten();
-    let links = sqlx::query(
+    let notes = sqlx::query(
         "SELECT lesson_id,note_id,created_at FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid",
     )
     .bind(program_id)
@@ -119,25 +160,44 @@ pub(super) async fn snapshot_note_links(
     .into_iter()
     .map(|row| (row.get("lesson_id"), row.get("note_id"), row.get("created_at")))
     .collect();
-    Ok(NoteLinks { journal_id, links })
+    let tangents = sqlx::query_as(
+        "SELECT conversation_id,lesson_id,section_index,section_title,selected_text,context_message_count,created_at FROM learning_tangents WHERE program_id=? ORDER BY created_at,conversation_id",
+    )
+    .bind(program_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    let verifier = sqlx::query_as(
+        "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
+    )
+    .bind(program_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(LocalLinks {
+        journal_id,
+        notes,
+        tangents,
+        verifier,
+    })
 }
 
-/// Re-attach notes to every lesson the imported course still has, and give the
-/// course back its notebook when the pack's memory record has none.
-pub(super) async fn restore_note_links(
+/// Put back onto the imported course what this computer held for the one it
+/// replaced: notes and tangent chats on every lesson it still has, its
+/// notebook when the pack's memory record has none, and the Verifier consent.
+pub(super) async fn restore_local_links(
     connection: &mut SqliteConnection,
     program_id: &str,
-    saved: NoteLinks,
+    saved: LocalLinks,
 ) -> Result<()> {
-    if saved.journal_id.is_none() && saved.links.is_empty() {
-        return Ok(());
+    if saved.journal_id.is_some() || !saved.notes.is_empty() {
+        sqlx::query("INSERT OR IGNORE INTO learning_memory(program_id,journal_id,deck_id,created_at) VALUES(?,NULL,NULL,?)")
+            .bind(program_id)
+            .bind(now())
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
     }
-    sqlx::query("INSERT OR IGNORE INTO learning_memory(program_id,journal_id,deck_id,created_at) VALUES(?,NULL,NULL,?)")
-        .bind(program_id)
-        .bind(now())
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
     if let Some(journal_id) = &saved.journal_id {
         sqlx::query("UPDATE learning_memory SET journal_id=? WHERE program_id=? AND journal_id IS NULL AND EXISTS(SELECT 1 FROM journals WHERE id=?)")
             .bind(journal_id)
@@ -147,7 +207,7 @@ pub(super) async fn restore_note_links(
             .await
             .map_err(db)?;
     }
-    for (lesson_id, note_id, created_at) in saved.links {
+    for (lesson_id, note_id, created_at) in saved.notes {
         sqlx::query("INSERT OR IGNORE INTO learning_lesson_note_links(program_id,lesson_id,note_id,created_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=? AND id=?) AND EXISTS(SELECT 1 FROM daily_notes_workspace WHERE id=?)")
             .bind(program_id)
             .bind(&lesson_id)
@@ -156,6 +216,42 @@ pub(super) async fn restore_note_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&note_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
+    }
+    // The lesson's module comes from the imported course, where it may have moved.
+    for (
+        conversation_id,
+        lesson_id,
+        section_index,
+        section_title,
+        selected_text,
+        context,
+        created_at,
+    ) in saved.tangents
+    {
+        sqlx::query("INSERT OR IGNORE INTO learning_tangents(conversation_id,program_id,module_id,lesson_id,section_index,section_title,selected_text,context_message_count,created_at) SELECT ?,l.program_id,l.module_id,l.id,?,?,?,?,? FROM learning_lessons l WHERE l.program_id=? AND l.id=? AND EXISTS(SELECT 1 FROM conversations WHERE id=?)")
+            .bind(&conversation_id)
+            .bind(section_index)
+            .bind(&section_title)
+            .bind(&selected_text)
+            .bind(context)
+            .bind(created_at)
+            .bind(program_id)
+            .bind(&lesson_id)
+            .bind(&conversation_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
+    }
+    if let Some((audit, web_search, consent_at, provider)) = saved.verifier {
+        sqlx::query("UPDATE learning_programs SET verifier_audit=?,verifier_web_search=?,verifier_consent_at=?,verifier_consent_provider=? WHERE id=?")
+            .bind(audit)
+            .bind(web_search)
+            .bind(consent_at)
+            .bind(provider)
+            .bind(program_id)
             .execute(&mut *connection)
             .await
             .map_err(db)?;

@@ -114,6 +114,12 @@ describe('Learning Studio portable packs', () => {
     expect(screen.getByText(/2 lesson notes and 1 lab draft stay on this computer\./)).toBeVisible();
   });
 
+  it('names unfinished lesson reviews, tangent chats and the Verifier consent as staying behind', async () => {
+    mocks.workspace.mockResolvedValue(ok(workspace({ exportNotice: notice({ staysBehind: [{ kind: 'unfinished_lesson_reviews', count: 1 }, { kind: 'tangent_chats', count: 2 }, { kind: 'verifier_consent', count: 1 }] }) })));
+    renderPanel();
+    expect(await screen.findByText('1 unfinished lesson review, 2 tangent chats and 1 Verifier audit consent stay on this computer.')).toBeVisible();
+  });
+
   it('checks again while the course is being prepared and lifts the lock when it is ready', async () => {
     vi.useFakeTimers();
     try {

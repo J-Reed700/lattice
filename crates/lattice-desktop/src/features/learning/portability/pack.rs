@@ -17,9 +17,10 @@ use sections::{SectionPath, KEYS_ENTRY, PRACTICAL_ENTRY, SECTIONS, SOURCE_BODY_P
 
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
 // v4 stores learner evidence one table per entry and canvases one per entry,
-// and records the database schema that wrote it. Only this version imports:
+// and records the database schema that wrote it; v5 adds the lesson claim
+// reviews, one table per entry. Only this version imports:
 // both computers run the same build, which `schema_version` proves.
-pub const LEARNING_PACK_VERSION: u32 = 4;
+pub const LEARNING_PACK_VERSION: u32 = 5;
 const MAX_ENTRIES: usize = 4_096;
 const MIB: usize = 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 32 * MIB;
