@@ -393,6 +393,18 @@
           "markdownDescription": "Allow IPC gateway command for routing all requests"
         },
         {
+          "description": "Enables the activity_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "activity:allow-activity-snapshot",
+          "markdownDescription": "Enables the activity_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the activity_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "activity:deny-activity-snapshot",
+          "markdownDescription": "Denies the activity_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the plugin_begin_archive_setup command without any pre-configured scope.",
           "type": "string",
           "const": "backup:allow-plugin-begin-archive-setup",

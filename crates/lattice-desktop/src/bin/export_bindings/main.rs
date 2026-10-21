@@ -420,6 +420,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::batch::plugin::delete_batch_job,
             lattice::features::batch::plugin::retry_failed_items,
             lattice::features::jobs::plugin::list_jobs,
+            lattice::features::activity::plugin::activity_snapshot,
             // Backup Plugin (7 commands)
             lattice::features::backup::plugin::plugin_create_backup,
             lattice::features::backup::plugin::plugin_restore_backup,

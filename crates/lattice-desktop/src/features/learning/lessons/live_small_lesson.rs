@@ -356,54 +356,19 @@ pub(super) async fn run_and_confirm(
     job_id: &str,
     directory: &std::path::Path,
 ) -> Result<()> {
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    let job = repo.job(job_id).await?;
-    let live = model.clone();
     let web_dir = tempfile::tempdir()?;
-    let worker = LessonGenerationWorker {
-        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
-        load_llm: Arc::new(move || {
-            let llm: Arc<dyn LLMPort> = live.clone();
-            Box::pin(async move { Ok(pinned_for_test(llm)) })
-        }),
-        courses: None,
-        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
-        research_web: Some(Arc::new(
-            crate::features::web::services::web::WebService::new(web_dir.path())?,
-        )),
-        verifier: None,
-    };
-    // Run through the native job runtime: transient network/model failures
-    // stay queued, and the runtime redelivers them when their retry is due.
+    let web: Arc<dyn lattice_core::application::ports::WebServiceTrait> = Arc::new(
+        crate::features::web::services::web::WebService::new(web_dir.path())?,
+    );
     let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
-    runtime
-        .register(
-            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
-            Arc::new(worker),
-            crate::features::learning::curriculum_repository::lesson_job_config(),
-        )
-        .await?;
-    runtime.dispatch(&job.id);
-    while matches!(
-        repo.job(&job.id).await?.status,
-        LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
-    ) {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-    runtime.close();
-    runtime.drain().await;
-    let result = repo.job(&job.id).await?;
-    std::fs::write(
-        directory.join("result.json"),
-        serde_json::to_vec_pretty(&result)?,
-    )?;
+    let worker = worker(&pool, model, web, None);
+    let result = run_job(runtime, worker, job_id, directory, &|_| Ok(())).await?;
+    let job = &result;
     assert_eq!(
         result.status,
         LearningGenerationJobStatus::Completed,
         "Production worker did not publish; see result.json"
     );
-    drop(repo);
     pool.close().await;
     // Read readiness from a new connection after closing the worker's pool.
     let reopened = sqlx::sqlite::SqlitePoolOptions::new()
@@ -447,6 +412,72 @@ pub(super) async fn run_and_confirm(
     println!("LIVE PUBLICATION CONFIRMED: {summary}");
     reopened.close().await;
     Ok(())
+}
+
+/// The production lesson worker on `model`, reading the web through
+/// `research_web` and searching evidence through `courses`.
+pub(super) fn worker(
+    pool: &sqlx::SqlitePool,
+    model: Arc<ObservedModel>,
+    research_web: Arc<dyn lattice_core::application::ports::WebServiceTrait>,
+    courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
+) -> LessonGenerationWorker {
+    LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        pool: pool.clone(),
+        load_llm: Arc::new(move || {
+            let llm: Arc<dyn LLMPort> = model.clone();
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
+        }),
+        courses,
+        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+        research_web: Some(research_web),
+        verifier: None,
+    }
+}
+
+/// Run one saved job through `worker` on `runtime`, the native job runtime,
+/// until it settles, showing `observe` the job at every poll; then close the
+/// runtime and write the job's final record to `result.json` in `directory`.
+pub(super) async fn run_job(
+    runtime: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
+    worker: LessonGenerationWorker,
+    job_id: &str,
+    directory: &std::path::Path,
+    observe: &dyn Fn(&crate::features::learning::curriculum::LearningGenerationJob) -> Result<()>,
+) -> Result<crate::features::learning::curriculum::LearningGenerationJob> {
+    let repo = LearningCurriculumRepository::new(worker.pool.clone());
+    let job = repo.job(job_id).await?;
+    // Transient network/model failures stay queued, and the runtime
+    // redelivers them when their retry is due.
+    runtime
+        .register(
+            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
+            Arc::new(worker),
+            crate::features::learning::curriculum_repository::lesson_job_config(),
+        )
+        .await?;
+    runtime.dispatch(&job.id);
+    loop {
+        let current = repo.job(&job.id).await?;
+        observe(&current)?;
+        if !matches!(
+            current.status,
+            LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
+        ) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    runtime.close();
+    runtime.drain().await;
+    let result = repo.job(&job.id).await?;
+    observe(&result)?;
+    std::fs::write(
+        directory.join("result.json"),
+        serde_json::to_vec_pretty(&result)?,
+    )?;
+    Ok(result)
 }
 
 #[tokio::test]

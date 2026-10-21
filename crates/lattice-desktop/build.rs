@@ -364,6 +364,10 @@ fn main() {
                 tauri_build::InlinedPlugin::new().commands(&["list_jobs"]),
             )
             .plugin(
+                "activity",
+                tauri_build::InlinedPlugin::new().commands(&["activity_snapshot"]),
+            )
+            .plugin(
                 "batch",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "batch_import_files",

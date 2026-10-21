@@ -62,6 +62,8 @@ pub struct OutlineProgress {
     state: Mutex<State>,
     cancellation: CancellationToken,
     publish: Option<Box<dyn Fn(LearningOutlineProgressDto) + Send + Sync>>,
+    /// The registry's change counter, moved with every published change.
+    changed: Option<Arc<tokio::sync::watch::Sender<u64>>>,
 }
 
 impl Default for OutlineProgress {
@@ -80,6 +82,7 @@ impl Default for OutlineProgress {
             }),
             cancellation: CancellationToken::new(),
             publish: None,
+            changed: None,
         }
     }
 }
@@ -140,6 +143,9 @@ impl OutlineProgress {
     fn emit(&self) {
         if let Some(publish) = &self.publish {
             publish(self.snapshot());
+        }
+        if let Some(changed) = &self.changed {
+            moved(changed);
         }
     }
 
@@ -227,9 +233,24 @@ impl OutlineProgress {
 /// composition root and handed to the commands that start or stop a run, so a
 /// duplicate request id is rejected against the same map the stop button
 /// consults — and a test never sees a run another test registered.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutlineRunRegistry {
     active: Arc<Mutex<HashMap<String, Arc<OutlineProgress>>>>,
+    /// Moved when a run starts, moves on, or ends.
+    changed: Arc<tokio::sync::watch::Sender<u64>>,
+}
+
+impl Default for OutlineRunRegistry {
+    fn default() -> Self {
+        Self {
+            active: Arc::default(),
+            changed: Arc::new(tokio::sync::watch::channel(0).0),
+        }
+    }
+}
+
+fn moved(changed: &tokio::sync::watch::Sender<u64>) {
+    changed.send_modify(|count| *count = count.wrapping_add(1));
 }
 
 impl OutlineRunRegistry {
@@ -258,13 +279,31 @@ impl OutlineRunRegistry {
         let progress = Arc::new(OutlineProgress {
             id: id.clone(),
             publish: Some(Box::new(publish)),
+            changed: Some(Arc::clone(&self.changed)),
             ..Default::default()
         });
         active.insert(id, progress.clone());
+        moved(&self.changed);
         Ok(OutlineRun {
             progress,
             registry: self.clone(),
         })
+    }
+
+    /// Every run in flight by its request id, oldest first.
+    pub fn running(&self) -> Vec<(String, LearningOutlineProgressDto)> {
+        let mut runs: Vec<(Instant, String, LearningOutlineProgressDto)> = self
+            .lock()
+            .values()
+            .map(|progress| (progress.started, progress.id.clone(), progress.snapshot()))
+            .collect();
+        runs.sort_by_key(|(started, _, _)| *started);
+        runs.into_iter().map(|(_, id, run)| (id, run)).collect()
+    }
+
+    /// Moves when a run starts, moves on, or ends.
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     pub fn cancel(&self, id: &str) -> bool {
@@ -286,6 +325,7 @@ pub struct OutlineRun {
 impl Drop for OutlineRun {
     fn drop(&mut self) {
         self.registry.lock().remove(&self.progress.id);
+        moved(&self.registry.changed);
     }
 }
 

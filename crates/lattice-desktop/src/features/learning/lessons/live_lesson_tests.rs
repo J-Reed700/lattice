@@ -16,10 +16,14 @@ use lattice_core::application::ports::LLMPort;
 mod claim_pairs;
 #[path = "live_course_e2e.rs"]
 mod course_e2e;
+#[path = "live_course_eval.rs"]
+mod course_eval;
 #[path = "live_page_recall_eval.rs"]
 mod page_recall;
 #[path = "live_small_lesson.rs"]
 mod small;
+#[path = "live_web_trace.rs"]
+mod web_trace;
 
 struct ObservedModel {
     inner: LlamaCppLlm,

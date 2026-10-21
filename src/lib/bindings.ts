@@ -3625,6 +3625,20 @@ async listJobs(kinds: string[]) : Promise<Result<JobDto[], ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Everything running, paused or waiting now. A part whose read fails is
+ * left out and logged, so one broken read never empties the list. Each
+ * later change arrives on `jobs://status`, the download and indexing
+ * events, or `activity://changed`.
+ */
+async activitySnapshot() : Promise<Result<ActivitySnapshotDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:activity|activity_snapshot") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pluginCreateBackup(request: CreateBackupRequestDto) : Promise<Result<CreateBackupResultDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_create_backup", { request }) };
@@ -4334,6 +4348,72 @@ async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
 export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+/**
+ * One live item, with why it waits and what it holds put into words.
+ */
+export type ActivityEntryDto = { id: string;
+/**
+ * The sort of work: a job kind, or `model.requests`, `model.loading`,
+ * `embedding.loading`, `download`, `library.indexing`.
+ */
+kind: string; title: string; state: ActivityState;
+/**
+ * What it is doing, or plainly why it waits or holds.
+ */
+detail: string | null; progress: ActivityProgress | null;
+/**
+ * Units of `progress` per second, measured.
+ */
+perSecond: number | null;
+/**
+ * Seconds left at the measured pace; absent without one.
+ */
+secondsLeft: number | null;
+/**
+ * What it holds or uses: "Using the embedding model".
+ */
+holding: string | null; target: ActivityTarget | null;
+/**
+ * When it started, or was asked for while it waits (Unix ms).
+ */
+since: number | null;
+/**
+ * When a job put off by an outage tries again (Unix ms).
+ */
+retryAt: number | null }
+/**
+ * How far an item has come, in its own unit ("passages", "files").
+ */
+export type ActivityProgress = { done: number; total: number; unit: string }
+/**
+ * Everything running, paused or waiting now: running first, then paused,
+ * then waiting, each oldest first.
+ */
+export type ActivitySnapshotDto = { items: ActivityEntryDto[];
+/**
+ * How many of `items` are running.
+ */
+running: number }
+/**
+ * Where an item stands.
+ */
+export type ActivityState = "running" |
+/**
+ * Not started yet, or between attempts.
+ */
+"waiting" |
+/**
+ * Started, and holding while something else goes first.
+ */
+"paused"
+/**
+ * Where in the app an item can be opened.
+ */
+export type ActivityTarget = { type: "course"; course: string } | { type: "lesson"; course: string; lesson: string } |
+/**
+ * An Explorer folder, by its root as the folder list names it.
+ */
+{ type: "folder"; root: string; name: string } | { type: "conversation"; conversation: string }
 export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }

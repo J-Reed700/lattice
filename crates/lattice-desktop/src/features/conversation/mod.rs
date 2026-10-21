@@ -26,6 +26,7 @@
 //! `lattice_core::domain::conversation` because the application layer depends on them.
 
 mod branching;
+pub mod activity;
 pub mod branching_dto;
 pub mod chat;
 pub mod commands;

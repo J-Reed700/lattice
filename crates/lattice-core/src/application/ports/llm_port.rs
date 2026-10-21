@@ -28,10 +28,12 @@ use tokio_util::sync::CancellationToken;
 
 mod multimodal;
 mod pace;
+mod requests;
 mod tools;
 
 pub use multimodal::{ContentPart, ImagePart};
 pub use pace::{Pace, ServedTiming};
+pub use requests::RequestLoad;
 pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
 
 /// Lazily resolves an optional model without exposing the application's container.
@@ -257,6 +259,13 @@ pub trait LLMPort: Send + Sync {
     /// it has reported enough to measure, and for a backend that reports
     /// none. A port that wraps another forwards it.
     fn pace(&self) -> Option<Pace> {
+        None
+    }
+
+    /// The requests its backend is running and holding now, as the app's
+    /// scheduler in front of it counts them. `None` for a port with no
+    /// scheduler of its own. A port that wraps another forwards it.
+    fn requests(&self) -> Option<RequestLoad> {
         None
     }
 }

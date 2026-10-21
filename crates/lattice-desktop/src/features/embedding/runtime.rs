@@ -25,6 +25,16 @@ impl EmbeddingRuntime {
         }
     }
 
+    /// Whether the embedding model is being loaded now.
+    pub(crate) fn is_loading(&self) -> bool {
+        self.cache.is_loading()
+    }
+
+    /// Moves when a load of the embedding model starts and when it ends.
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.cache.changes()
+    }
+
     pub(crate) fn invalidate(&self) {
         let mut cooldown = self.cooldown.lock();
         self.cache.invalidate();

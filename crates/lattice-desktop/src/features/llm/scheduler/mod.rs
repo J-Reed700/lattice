@@ -50,8 +50,9 @@ use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use lattice_core::application::ports::llm_port::InferencePriority;
+use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
+use tokio::sync::watch;
 
 /// A wait longer than this is worth a line in the log: it is the contention
 /// this scheduler exists to arbitrate, and otherwise invisible.
@@ -104,6 +105,10 @@ pub(crate) struct InferenceScheduler {
     label: String,
     capacity: BackendCapacity,
     state: Mutex<State>,
+    /// Moved whenever a request joins, leaves or is admitted, so whoever
+    /// shows what the backends are doing looks again. Shared by every
+    /// scheduler one registry made.
+    changes: Option<Arc<watch::Sender<u64>>>,
 }
 
 struct State {
@@ -189,11 +194,50 @@ impl InferenceScheduler {
                 slots,
                 reserved: 0,
             }),
+            changes: None,
+        }
+    }
+
+    /// A scheduler that moves `changes` on every change to its queue.
+    pub fn observed(
+        label: impl Into<String>,
+        capacity: BackendCapacity,
+        changes: Arc<watch::Sender<u64>>,
+    ) -> Self {
+        Self {
+            changes: Some(changes),
+            ..Self::new(label, capacity)
         }
     }
 
     pub fn capacity(&self) -> BackendCapacity {
         self.capacity
+    }
+
+    /// The requests running and waiting now.
+    pub fn load(&self) -> RequestLoad {
+        let state = self.state.lock();
+        RequestLoad {
+            backend: self.label.clone(),
+            slots: state.slots.len(),
+            running: state
+                .slots
+                .iter()
+                .filter(|slot| slot.running.is_some())
+                .count(),
+            queued: state.queue.len(),
+            queued_interactive: state
+                .queue
+                .values()
+                .filter(|waiter| waiter.priority == InferencePriority::Interactive)
+                .count(),
+        }
+    }
+
+    fn moved(&self) {
+        if let Some(changes) = &self.changes {
+            changes.send_modify(|count| *count = count.wrapping_add(1));
+        }
     }
 
     /// Wait for a slot. Fails only when `cancel` fires first.
@@ -226,6 +270,7 @@ impl InferenceScheduler {
             self.dispatch(&mut state);
             (ticket, woken)
         };
+        self.moved();
         let mut waiting = Waiting {
             scheduler: self,
             ticket,
@@ -335,6 +380,7 @@ impl InferenceScheduler {
         }
         state.reserved = state.reserved.saturating_sub(grant.tokens);
         self.dispatch(state);
+        self.moved();
     }
 
     #[cfg(test)]
@@ -410,6 +456,7 @@ impl Waiting<'_> {
             }
             None => {
                 state.queue.remove(&(Reverse(self.priority), self.ticket));
+                self.scheduler.moved();
                 None
             }
         }

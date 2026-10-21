@@ -67,8 +67,9 @@ impl LLMPort for Counter {
     }
 }
 
-/// The embedding model the eval was given, loaded once, or none.
-struct GivenModel(Option<Arc<dyn EmbeddingPort>>);
+/// The embedding model the eval was given, loaded once, or none. The course
+/// eval hands its recipe's model to the course indexes through it too.
+pub(super) struct GivenModel(pub(super) Option<Arc<dyn EmbeddingPort>>);
 
 #[async_trait::async_trait]
 impl EmbedderSource for GivenModel {

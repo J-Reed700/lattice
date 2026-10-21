@@ -213,6 +213,8 @@ def mechanical(rubric, turn):
 
 def rubric_lines(rubric):
     """The rubric as the judge reads it, one requirement per line."""
+    if "lines" in rubric:
+        return list(rubric["lines"])
     lines = []
     if rubric.get("abstain"):
         lines.append("- The documents do not contain this answer. A correct answer says so and "

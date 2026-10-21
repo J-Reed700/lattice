@@ -22,6 +22,24 @@ All times are local (UTC-5); dates are 2026-10-14 unless stated. "Request" is th
 | accept2 | 10-15 02:52-06:14 | `bin/accept-f90f440c` (f90f440c) | .NET | Passed, 0 findings, 46 references, 39/64 linked | Stopped by the lead in evidence deepening (page 8, 22 claims) | 202 | Stopped, superseded |
 | accept3 | 10-15 from 06:14 | `bin/accept-09d5a552` (09d5a552) | .NET | running | running | running | Running |
 
+## Scored eval runs
+
+Every run of the scored course eval ([evals/courses/README.md](../../evals/courses/README.md)) gets one row here, added when its results directory is committed under `evals/courses/results/`. A run that was stopped or not scored still gets a row, with the reason in the verdict column. The columns:
+
+- **label**: the run's label and date, as in its results directory name.
+- **commit / binary**: the commit and the snapshotted binary's name.
+- **model**: the recipe's `results_model`, and the judge.
+- **requests**: how many of the set ran, and which optional ones were absent.
+- **slots passed**: outline slots and lesson slots that passed, as `n/N`.
+- **lessons Ready**: lesson slots that reached Ready, as `n/N`.
+- **claims**: supported / general knowledge / contradicted, summed over prepared lessons.
+- **minutes**: median and maximum per outline and per lesson.
+- **web**: hits, misses filled, misses failed.
+- **verdict**: the slot-level `compare` result against the previous run in the same model folder, or "baseline".
+
+| label | commit / binary | model | requests | slots passed | lessons Ready | claims | minutes | web | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+
 ## Runs
 
 ### baseline-1
@@ -116,5 +134,5 @@ All times are local (UTC-5); dates are 2026-10-14 unless stated. "Request" is th
 - A writer given thin evidence invents specifics, and repair that sends everything overflows the context. final2-1 failed on both after 132 minutes. Fixed in 4f4a2ef6 (evidence by topic before writing; repair split by token budget).
 - A single live run is slow and a long batch breaks on state changes. final2-1 took 132 minutes, and final2-2 to -4 failed because their request files moved mid-batch. Hence one acceptance request, and `requests-later/` for the rest.
 - A lesson retry can reuse the saved draft and saved claim checks, so a fix to the later stages can be tested without rerunning the outline (lesson-fix-1, `live_small_lesson_resumes_to_ready`).
-- A model server can disappear for a minute while it reloads. A run that fails on the first 503 measures the server, not the pipeline (accept1). Fixed for the app in 04021807; the live test still fails fast.
+- A model server can disappear for a minute while it reloads. A run that fails on the first 503 measures the server, not the pipeline (accept1). Fixed for the app in 04021807; the live test now wraps its model in `PatientModel` too.
 - Paging through evidence must stop when it stops paying. accept2 spent three hours deepening rounds that settled 0 to 7 claims each, and invented example names made some claims unsupportable by any page. Fixed in 09d5a552.

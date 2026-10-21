@@ -24,6 +24,7 @@
 //!
 //! No port or plugin — indexing flows through other plugins.
 
+pub mod activity;
 pub mod commands;
 pub mod content_extraction_adapter;
 pub mod di;

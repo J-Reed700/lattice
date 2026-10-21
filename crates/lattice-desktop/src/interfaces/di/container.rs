@@ -35,6 +35,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod accessors;
+mod activity;
 mod port_bindings;
 
 /// Composition root for the application's dependency graph.
@@ -133,6 +134,10 @@ pub struct Container {
     /// source and search factory; `None` in test fixtures.
     pub(crate) course_indexes:
         Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
+
+    /// The turn order the folder and course indexes embed in. Built with
+    /// them; `None` in test fixtures.
+    pub(crate) index_turns: Option<Arc<crate::infrastructure::passage_index::EmbedTurns>>,
 
     /// The one registry of in-flight turn stop buttons for this process: a
     /// stop press and the turn it targets must meet in the same map.
@@ -445,6 +450,7 @@ impl Container {
             llm_runtime,
             folder_index: None,
             course_indexes: None,
+            index_turns: None,
             app_handle: None,
         })
     }
@@ -541,9 +547,10 @@ impl Container {
                 searches,
                 Arc::clone(&self.jobs),
                 Arc::clone(self.core.background()),
-                turns,
+                Arc::clone(&turns),
             ),
         );
+        self.index_turns = Some(turns);
 
         self.app_handle = Some(handle);
         self

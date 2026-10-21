@@ -12,6 +12,7 @@ vi.mock('@/features/model/components/Downloads/HeaderDownloadsIndicator', () => 
   HeaderDownloadsIndicator: () => null,
 }));
 vi.mock('@/features/files/components/IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
+vi.mock('@/features/activity/components/ActivityIndicator', () => ({ ActivityIndicator: () => null }));
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
 // this list is still the complete set of buttons Layout puts in the nav.

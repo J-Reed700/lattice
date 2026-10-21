@@ -29,6 +29,7 @@
 //! No use cases here — download is orchestrated *through* the LLM and
 //! model-management features, which own the model-download use cases.
 
+pub mod activity;
 pub mod commands;
 pub mod download_repository;
 pub mod engine;
