@@ -666,7 +666,7 @@ async fn live_course_eval() -> Result<()> {
         "web": {"mode": mode, "trace_dir": trace_dir.display().to_string(), "trace_index_sha256": web.index_sha256(),
                 "entries_at_start": previous.as_ref().map_or(json!(web.report().entries_at_start), |p| p["web"]["entries_at_start"].clone())},
         "started_at": previous.as_ref().map_or(json!(chrono::Utc::now().to_rfc3339()), |p| p["started_at"].clone()),
-        "finished_at": null, "resumed": resumed, "stages": {},
+        "finished_at": null, "resumed": resumed, "lessons": selectors, "stages": {},
     });
     merge(&mut manifest["server"], &weights);
     write_json(&dir.join("run.json"), &manifest)?;
