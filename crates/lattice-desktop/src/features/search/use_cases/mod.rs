@@ -1,8 +1,8 @@
 //! # Search Use Cases
 //!
 //! - **Semantic Search**: vector-based similarity
-//! - **Hybrid Search**: the library search orchestrator — vector, BM25 and
-//!   optional sparse branches, rank fusion and the cross-encoder stage
+//! - **Hybrid Search**: the library search orchestrator — vector and BM25
+//!   branches, rank fusion and the cross-encoder stage
 //!
 //! `file_search` and `recency_search` were removed — file lookup is
 //! served by the file feature directly, and recency-aware search boosts the

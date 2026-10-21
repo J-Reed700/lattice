@@ -220,6 +220,30 @@ fn the_trained_context_length_is_read_for_its_own_architecture() {
     assert_eq!(info.trained_context_length, Some(32768));
 }
 
+/// The keys and values of the pinned `Qwen3-Embedding-0.6B-f16.gguf`
+/// header (`general.file_type` 1 = F16, `qwen3.pooling_type` 3 = last),
+/// confirmed against the file itself.
+#[test]
+fn an_embedding_header_names_its_pooling_and_precision() {
+    let info = GgufBuilder::new(3)
+        .string("general.architecture", "qwen3")
+        .u32_value("qwen3.context_length", 32768)
+        .u32_value("qwen3.embedding_length", 1024)
+        .u32_value("general.file_type", 1)
+        .u32_value("qwen3.pooling_type", 3)
+        .read();
+
+    assert_eq!(info.pooling_type, Some(3));
+    assert_eq!(info.file_type, Some(1));
+    assert_eq!(info.embedding_length, Some(1024));
+}
+
+#[test]
+fn a_chat_header_has_no_pooling_type() {
+    let info = qwen35_9b_header().read();
+    assert_eq!(info.pooling_type, None);
+}
+
 /// Keys arrive in whatever order the converter wrote them, so the
 /// architecture cannot be assumed to come first.
 #[test]
@@ -664,4 +688,58 @@ fn a_header_without_vocabulary_or_feed_forward_still_prices_the_mask() {
     let info = GgufModelInfo::default();
 
     assert_eq!(info.compute_buffer_bytes(1_024), 512 * 1_024 * 6);
+}
+
+/// Counts the reads that reach the file beneath a `BufReader`.
+struct CountingReader<R> {
+    inner: R,
+    reads: usize,
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reads += 1;
+        self.inner.read(buf)
+    }
+}
+
+fn vocabulary(tokens: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&value_type::STRING.to_le_bytes());
+    bytes.extend_from_slice(&(tokens as u64).to_le_bytes());
+    for index in 0..tokens {
+        let token = format!("tok{index}");
+        bytes.extend_from_slice(&(token.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(token.as_bytes());
+    }
+    bytes
+}
+
+/// Seeking past each string threw the buffer away, a read per token: a
+/// million system calls for a Qwen 3.5 header, and seconds every time
+/// Settings listed a model. Reading through takes a buffer at a time.
+#[test]
+fn a_vocabulary_is_skipped_a_buffer_at_a_time_not_a_read_per_token() {
+    let mut bytes = vocabulary(100_000);
+    bytes.extend_from_slice(&7u32.to_le_bytes());
+    let mut reader = BufReader::new(CountingReader {
+        inner: std::io::Cursor::new(bytes),
+        reads: 0,
+    });
+
+    assert_eq!(skip_value(&mut reader, value_type::ARRAY), Some(()));
+    assert_eq!(read_u32(&mut reader), Some(7));
+    // About 1.6 MB: some 200 reads of 8 KiB, against 100,000 before.
+    assert!(reader.get_ref().reads < 1_000, "{}", reader.get_ref().reads);
+}
+
+#[test]
+fn a_value_longer_than_the_bytes_left_cannot_be_skipped() {
+    let mut bytes = vocabulary(10);
+    bytes.truncate(bytes.len() - 2);
+
+    assert_eq!(
+        skip_value(&mut std::io::Cursor::new(bytes), value_type::ARRAY),
+        None
+    );
 }

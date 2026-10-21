@@ -738,7 +738,7 @@ test('acknowledges native quit and prevents further editing while closing', asyn
   await page.goto('/');
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
   await page.evaluate(() => window.__LATTICE_IPC__.emit('lattice:shutdown-requested', 42));
-  await expect(page.getByRole('status')).toContainText('Saving your work before quitting…');
+  await expect(page.getByRole('status').filter({ hasText: 'Saving your work before quitting…' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__LATTICE_IPC__.emitted.filter(({ event }) => event === 'lattice:shutdown-response').map(({ payload }) => payload)))
     .toEqual([{ requestId: 42, saved: true }]);
   await expect(page.locator('[inert]')).toHaveCount(1);

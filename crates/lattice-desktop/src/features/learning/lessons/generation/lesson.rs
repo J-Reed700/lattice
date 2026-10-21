@@ -3,14 +3,13 @@
 
 use super::evidence;
 use super::{
-    fits, generated_source_ids, grounding_instructions, invalid, normalize, parse_json,
-    source_index_schema, validate_answer_options, validate_source_snapshot_ids, validate_text,
-    CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE, MAX_BODY, MAX_EXPLANATION, MAX_QUESTION,
+    fits, generated_source_ids, grounding_instructions, invalid, parse_json, source_index_schema,
+    validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
 };
 use crate::features::learning::dto::{
     LearningAnswerKey, LearningAssessmentKind, LearningBlockDto, LearningBlockKind,
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
-    PreparedLearningLesson,
+    LearningSourceDto, PreparedLearningLesson,
 };
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
@@ -18,6 +17,7 @@ use crate::features::learning::lessons::structured_call::{
 };
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::ReferenceCollection;
+use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
@@ -84,7 +84,7 @@ pub(super) fn course_context(program: &LearningProgramDto, lesson_id: &str) -> s
 
 fn lesson_schema(source_count: usize) -> serde_json::Value {
     // A block body has no `maxLength`: llama.cpp drops the whole grammar for
-    // any repetition bound above 2000, and `MAX_BODY` is enforced on decode.
+    // any repetition bound above 2000; `MAX_BODY` is a lesson rule (`lesson_rules`).
     json!({
         "type":"object","additionalProperties":false,"required":["blocks","questions"],
         "properties":{
@@ -431,7 +431,9 @@ pub async fn prepare_lesson_with_references<'a>(
             (output_tokens, &mut numbered),
         )
         .await?;
-    let generated: GeneratedLesson = parse_json(&raw)?;
+    let value: serde_json::Value = parse_json(&raw).map_err(unusable)?;
+    let generated: GeneratedLesson = serde_json::from_value(value.clone())
+        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
     // A repaired citation may quote any part of the source it names, not
     // only the passages the writer was shown: a quotation is checked against
     // the whole saved text of the source it cites.
@@ -446,37 +448,55 @@ pub async fn prepare_lesson_with_references<'a>(
                 .unwrap_or_else(|| source.clone())
         })
         .collect();
-    if !(8..=12).contains(&generated.blocks.len()) || generated.questions.len() != 6 {
-        return Err(invalid(
-            "The model returned an incomplete lesson. Try preparing it again.",
-        ));
+    // The lesson's own rules no longer stop it here. The teaching review
+    // repaired what it could; what is left, and any citation that does not
+    // match its source, waits for the user while the lesson publishes.
+    let mut findings = crate::features::learning::teaching::structural_findings(
+        &lesson_schema(sources.len()),
+        &raw,
+    )?;
+    let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
+    findings.extend(citations);
+    crate::features::learning::teaching::record_waiting(&value, findings).await?;
+    report.cite_user_evidence(&mut prepared);
+    prepared.verification = Some(report.bind(&lesson.id, &prepared)?);
+    Ok(prepared)
+}
+
+/// The model's lesson could not be used as a lesson; never "check your
+/// input": the input is the model's, not the user's.
+fn unusable(error: AppError) -> AppError {
+    match error {
+        AppError::InvalidInput(message) => AppError::ModelAnswerUnusable(message),
+        other => other,
     }
-    let mut block_kinds = Vec::new();
+}
+
+/// The lesson as it is saved. What the lesson's rules ask of its shape is a
+/// finding (`teaching::structural_findings`), not a refusal; publication
+/// (`service::validate_generated`) refuses only what cannot be saved. A
+/// citation whose quotation does not match its source keeps the source it
+/// names and comes back as a finding; a fabricated citation in a course
+/// without sources is dropped and comes back as a finding.
+fn assemble(
+    generated: GeneratedLesson,
+    sources: &[LearningSourceDto],
+    owned_ids: &HashSet<&str>,
+) -> Result<(PreparedLearningLesson, Vec<ReviewFinding>)> {
+    let mut findings = Vec::new();
     let mut blocks = Vec::with_capacity(generated.blocks.len());
-    let mut block_titles = HashSet::new();
-    for block in generated.blocks {
-        if !block_titles.insert(normalize(&block.title))
-            || !validate_text(&block.title, 160)
-            || !validate_text(&block.body, MAX_BODY)
-            || block.body.trim().chars().count()
-                < match block.kind {
-                    LearningBlockKind::Reflection | LearningBlockKind::Recap => 150,
-                    _ => 600,
-                }
-        {
-            return Err(invalid(
-                "The model returned an invalid or duplicate lesson block. Try again.",
-            ));
-        }
-        block_kinds.push(block.kind.clone());
-        let source_ids = generated_source_ids(&sources, block.source_index, &block.quote)?;
-        let rubric = crate::features::learning::teaching::rubric(
-            block.rubric,
-            matches!(
-                block.kind,
-                LearningBlockKind::GuidedPractice | LearningBlockKind::IndependentPractice
-            ),
+    for (index, block) in generated.blocks.into_iter().enumerate() {
+        let source_ids = citation(
+            sources,
+            block.source_index,
+            &block.quote,
+            FindingSite::Section(index),
+            &mut findings,
         )?;
+        // Practice with fewer than two criteria is a structural finding;
+        // the criteria it has are saved.
+        let rubric =
+            crate::features::learning::teaching::rubric(block.rubric, false).map_err(unusable)?;
         blocks.push(LearningBlockDto {
             rubric,
             kind: block.kind,
@@ -485,52 +505,21 @@ pub async fn prepare_lesson_with_references<'a>(
             source_ids,
         });
     }
-    if [
-        (LearningBlockKind::Explanation, 2),
-        (LearningBlockKind::WorkedExample, 2),
-        (LearningBlockKind::GuidedPractice, 1),
-        (LearningBlockKind::IndependentPractice, 1),
-        (LearningBlockKind::Reflection, 1),
-        (LearningBlockKind::Recap, 1),
-    ]
-    .iter()
-    .any(|(kind, minimum)| {
-        let count = block_kinds.iter().filter(|entry| *entry == kind).count();
-        count < *minimum || (*minimum == 1 && count != 1)
-    }) {
-        return Err(invalid(
-            "The lesson needs explanations, worked examples, guided and independent practice, reflection, and a recap.",
-        ));
-    }
-    let mut kind_counts: Vec<(LearningAssessmentKind, usize)> = Vec::new();
-    let mut seen_prompts = HashSet::new();
-    let mut questions = Vec::with_capacity(6);
-    let mut keys = Vec::with_capacity(6);
-    for question in generated.questions {
-        if let Some((_, count)) = kind_counts
-            .iter_mut()
-            .find(|(kind, _)| kind == &question.kind)
-        {
-            *count += 1;
-        } else {
-            kind_counts.push((question.kind.clone(), 1));
-        }
-        let prompt_key = normalize(&question.prompt);
-        if !validate_text(&question.prompt, MAX_QUESTION)
-            || !seen_prompts.insert(prompt_key)
-            || !validate_text(&question.explanation, MAX_EXPLANATION)
-        {
-            return Err(invalid(
-                "The model returned an invalid question or answer key. Try again.",
-            ));
-        }
-        validate_answer_options(&question.options, question.correct_index)?;
-        let source_ids = generated_source_ids(&sources, question.source_index, &question.quote)?;
+    let mut questions = Vec::with_capacity(generated.questions.len());
+    let mut keys = Vec::with_capacity(generated.questions.len());
+    for (index, question) in generated.questions.into_iter().enumerate() {
+        let source_ids = citation(
+            sources,
+            question.source_index,
+            &question.quote,
+            FindingSite::Question(index),
+            &mut findings,
+        )?;
         // This assertion ties the generated ref back to one of the immutable
         // program source snapshots and prevents cross-program identifier use.
         if source_ids.iter().any(|id| !owned_ids.contains(id.as_str())) {
-            return Err(invalid(
-                "A question referred to a source outside this program. Try again.",
+            return Err(AppError::ModelAnswerUnusable(
+                "A question referred to a source outside this program.".into(),
             ));
         }
         let question_id = uuid::Uuid::new_v4().to_string();
@@ -551,28 +540,54 @@ pub async fn prepare_lesson_with_references<'a>(
             explanation: question.explanation.trim().to_owned(),
         });
     }
-    for kind in [
-        LearningAssessmentKind::Practice,
-        LearningAssessmentKind::Quiz,
-        LearningAssessmentKind::Test,
-    ] {
-        if kind_counts
-            .iter()
-            .find(|(candidate, _)| candidate == &kind)
-            .map(|(_, count)| *count)
-            .unwrap_or_default()
-            < 2
-        {
-            return Err(invalid("The lesson must include at least two distinct questions for practice, quiz, and test."));
-        }
-    }
-    let mut prepared = PreparedLearningLesson {
-        blocks,
-        questions,
-        keys,
-        verification: None,
-    };
-    report.cite_user_evidence(&mut prepared);
-    prepared.verification = Some(report.bind(&lesson.id, &prepared)?);
-    Ok(prepared)
+    Ok((
+        PreparedLearningLesson {
+            blocks,
+            questions,
+            keys,
+            verification: None,
+        },
+        findings,
+    ))
 }
+
+/// The sources a part is saved with. Only a part of a sourced course that
+/// names no supplied source cannot be saved.
+fn citation(
+    sources: &[LearningSourceDto],
+    index: Option<usize>,
+    quote: &str,
+    site: FindingSite,
+    findings: &mut Vec<ReviewFinding>,
+) -> Result<Vec<String>> {
+    let error = match generated_source_ids(sources, index, quote) {
+        Ok(ids) => return Ok(ids),
+        Err(AppError::InvalidInput(message)) => message,
+        Err(other) => return Err(other),
+    };
+    let part = match site {
+        FindingSite::Question(index) => format!("questions[{index}]"),
+        FindingSite::Section(index) => format!("blocks[{index}]"),
+        FindingSite::Lesson => "the lesson".to_owned(),
+    };
+    findings.push(ReviewFinding::new(
+        FindingKind::Quotation,
+        Some(site),
+        format!("The source citation at {part} could not be confirmed: {error}"),
+    ));
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    index
+        .and_then(|index| sources.get(index))
+        .map(|source| vec![source.id.clone()])
+        .ok_or_else(|| {
+            AppError::ModelAnswerUnusable(format!(
+                "The citation at {part} names no source this lesson was given."
+            ))
+        })
+}
+
+#[cfg(test)]
+#[path = "lesson_tests.rs"]
+mod tests;

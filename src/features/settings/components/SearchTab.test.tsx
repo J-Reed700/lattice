@@ -164,22 +164,6 @@ describe('SearchTab', () => {
     });
   });
 
-  it('persists the embedding strategy', async () => {
-    renderSearchTab();
-
-    const strategy = (await screen.findByLabelText(/Embedding strategy/i)) as HTMLSelectElement;
-    expect(strategy.value).toBe('chunk_first');
-
-    fireEvent.change(strategy, { target: { value: 'late_chunking' } });
-
-    await waitFor(() => {
-      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
-        category: 'search',
-        updates: { embeddingStrategy: 'late_chunking' },
-      });
-    });
-  });
-
   it('normalizes paired bounds before persisting tuning', async () => {
     renderSearchTab();
 

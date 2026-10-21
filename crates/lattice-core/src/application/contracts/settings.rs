@@ -33,10 +33,9 @@ pub use preferences::{
     VaultSettingsDto,
 };
 pub use retrieval::{
-    EmbeddingStrategySettingDto, IndexingSettingsDto, RetrievalTuningSettingsDto,
-    SearchSettingsDto, VectorIndexCompressionModeDto, VectorIndexCompressionSettingsDto,
-    VectorQuantizationDto, DEFAULT_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS,
-    MIN_VECTOR_COMPRESSION_DIMS,
+    IndexingSettingsDto, RetrievalTuningSettingsDto, SearchSettingsDto,
+    VectorIndexCompressionModeDto, VectorIndexCompressionSettingsDto, VectorQuantizationDto,
+    DEFAULT_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS, MIN_VECTOR_COMPRESSION_DIMS,
 };
 pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
 pub use sourcing_status::{

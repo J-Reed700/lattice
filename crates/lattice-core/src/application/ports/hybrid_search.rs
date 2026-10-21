@@ -1,6 +1,5 @@
-//! The one hybrid search: dense, BM25 and (for the library) sparse branches
-//! fused by weighted reciprocal rank, with the per-document cap and the
-//! vector floor.
+//! The one hybrid search: dense and BM25 branches fused by weighted
+//! reciprocal rank, with the per-document cap and the vector floor.
 //!
 //! The library's instance is what chat, the agents and the search page call.
 //! A passage index on disk (a folder's, a course's) gets an instance of the
@@ -62,7 +61,7 @@ pub trait HybridSearchTrait: Send + Sync {
 /// vectors and its full-text store.
 ///
 /// The search feature implements it with the library's orchestrator and none
-/// of the library's own stages (sparse branch, reranker, chunk repository),
+/// of the library's own stages (reranker, chunk repository),
 /// which read `lattice.db`. A feature that keeps a passage index takes this
 /// port from the composition root, so it searches through the shared fusion
 /// without depending on the search feature.

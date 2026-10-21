@@ -27,6 +27,7 @@ import { configuredConnections } from '@/utils/configuredConnections';
 import { useSettingsQuery } from '../hooks/useSettingsQuery';
 import { CloudMetaRow } from './modelRoles/CloudMetaRow';
 import { LearningModelBanner } from './modelRoles/LearningModelBanner';
+import { LeftoverEmbeddingFilesRow } from './modelRoles/LeftoverEmbeddingFilesRow';
 import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';
@@ -106,6 +107,7 @@ function AIModelsTabContent() {
             {filteredLocal.map((model) => (
               <LocalModelRow key={model.id} model={model} />
             ))}
+            <LeftoverEmbeddingFilesRow />
             {searchQuery && filteredLocal.length === 0 ? (
               <div className="border-b border-border-subtle py-3 text-sm text-text-muted">
                 No models match &ldquo;{searchQuery}&rdquo;.

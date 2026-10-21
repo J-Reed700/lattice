@@ -282,8 +282,7 @@ impl RerankerService {
                 //   3. The download flow uses atomic temp+rename
                 //      (model_manager.rs), so any future re-download
                 //      replaces the inode, not its contents.
-                // Standard candle pattern; same shape used by the
-                // embedding loader at features/embedding/candle_service.rs.
+                // Standard candle pattern.
                 #[allow(unsafe_code)]
                 let vb = unsafe {
                     VarBuilder::from_mmaped_safetensors(&[&safetensors_owned], DType::F32, &device)

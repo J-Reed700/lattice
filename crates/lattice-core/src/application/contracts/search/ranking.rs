@@ -10,8 +10,6 @@ pub enum BranchKind {
     Vector,
     /// BM25 over the chunk text.
     Lexical,
-    /// Learned sparse term weights.
-    Sparse,
     /// An earlier fused list, unioned with another: chat's corrective retry
     /// fuses its pass with the first. Its results keep the branch
     /// diagnostics they already carry.

@@ -166,36 +166,11 @@ impl WebIngestionServiceTrait for WebIngestionService {
         let chunks = self.chunk_text(&article.text_content)?;
 
         // 4. Generate embeddings
-        //
-        // Span-grouped, like the file importer: with late chunking the article
-        // is embedded once and pooled per chunk, and otherwise this is the same
-        // per-chunk batch as before. Embedding chunk-first here while files are
-        // late-chunked would put two vector spaces in one generation. The
-        // stored chunk content and its offsets are identical either way — only
-        // which forward pass produced the numbers differs.
-        let embeddings = match Self::span_for_chunks(&article.text_content, &chunks) {
-            Some(span) if self.embedding_service.uses_late_chunking() => {
-                let vectors = self
-                    .embedding_service
-                    .embed_span_chunks(&span.span_text, &span.chunk_ranges)
-                    .await?;
-                if vectors.len() != chunks.len() {
-                    return Err(AppError::InvalidState(format!(
-                        "Late chunking returned {} vectors for {} chunks",
-                        vectors.len(),
-                        chunks.len()
-                    )));
-                }
-                vectors
-            }
-            _ => {
-                let chunk_texts: Vec<String> = chunks
-                    .iter()
-                    .map(|c| c.contextualized_content.clone())
-                    .collect();
-                self.embedding_service.embed_batch(&chunk_texts).await?
-            }
-        };
+        let chunk_texts: Vec<String> = chunks
+            .iter()
+            .map(|c| c.contextualized_content.clone())
+            .collect();
+        let embeddings = self.embedding_service.embed_batch(&chunk_texts).await?;
 
         if self.embedding_service.model_identity() != model_identity {
             return Err(AppError::InvalidState(

@@ -325,7 +325,7 @@ pub async fn prepare(
         ));
     }
     let prepared = super::generation::prepare_lesson(llm, runtimes, &program, lesson).await?;
-    validate_prepared(&prepared, &program)?;
+    validate_generated(&prepared, &program)?;
     repo.prepare(
         &request.program_id,
         &request.lesson_id,
@@ -334,6 +334,18 @@ pub async fn prepare(
     )
     .await?;
     repo.get(&request.program_id).await
+}
+
+/// [`validate_prepared`] for a lesson the model wrote: what cannot be saved
+/// is the model's answer, never the user's input.
+pub(super) fn validate_generated(
+    p: &PreparedLearningLesson,
+    program: &LearningProgramDto,
+) -> Result<()> {
+    validate_prepared(p, program).map_err(|error| match error {
+        AppError::InvalidInput(message) => AppError::ModelAnswerUnusable(message),
+        other => other,
+    })
 }
 
 pub(super) fn validate_prepared(

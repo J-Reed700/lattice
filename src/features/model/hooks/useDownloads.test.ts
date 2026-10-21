@@ -157,8 +157,8 @@ describe('fileNameWithinModel', () => {
 
   it('reads a Windows path the same way', () => {
     expect(fileNameWithinModel({
-      destination: 'C:\\models\\minilm\\1_Pooling\\config.json',
-      model_id: 'minilm',
+      destination: 'C:\\models\\qwen3-embedding-0.6b\\1_Pooling\\config.json',
+      model_id: 'qwen3-embedding-0.6b',
     })).toBe('1_Pooling/config.json');
   });
 

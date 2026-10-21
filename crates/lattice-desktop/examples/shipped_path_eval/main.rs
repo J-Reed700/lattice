@@ -8,7 +8,9 @@
 //!
 //! What runs is what the desktop runs for a chat turn: `Container::new` on a
 //! fresh database and settings file, the embedding model activated through
-//! the Settings command, the corpus imported through the import use case, and
+//! the Settings command and served by a llama-server the run starts itself
+//! with the app's flags (`LATTICE_LLAMA_SERVER` names the binary, else the
+//! bundled build in `binaries/`), the corpus imported through the import use case, and
 //! each question sent through `chat::headless::run_headless_turn` — the same
 //! `run_turn` the window command calls — so intent, routing, the corpus
 //! planner, HyDE, hybrid search, the corrective retry, openings and sections,
@@ -179,7 +181,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let recipe = recipe::Recipe::load(&args.recipe)?;
     let corpus_path = recipe::resolve(&recipe.corpus, &root, real_home);
     let questions_path = recipe::resolve(&recipe.questions, &root, real_home);
-    let embedding_dir = recipe::resolve(&recipe.embedding_model_dir, &root, real_home);
+    let embedding_gguf = recipe::resolve(&recipe.embedding_gguf, &root, real_home);
     let gguf = recipe::resolve(&recipe.server.gguf, &root, real_home);
     let mut items = recipe::load_items(&questions_path)?;
     if let Some(only) = &args.only {
@@ -209,9 +211,9 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let data_dir = workdir.join("app-data");
     std::fs::create_dir_all(&data_dir)?;
     let container = app::open(&data_dir, &settings).await?;
-    eprintln!("activating {}", embedding_dir.display());
+    eprintln!("activating {}", embedding_gguf.display());
     let embedding =
-        app::activate_embedding(&container, &embedding_dir, &recipe.embedding_model_id).await?;
+        app::activate_embedding(&container, &embedding_gguf, &recipe.embedding_model_id).await?;
     let utility = match &recipe.utility_role {
         Some(role) => Some(app::assign_utility(&container, &role.model_id, &role.served_as).await?),
         None => None,

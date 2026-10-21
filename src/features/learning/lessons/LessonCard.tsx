@@ -9,6 +9,7 @@ import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
+import { isTeachingWaiting, teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
@@ -75,6 +76,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   useEffect(() => { if (liveTally && expanded) void refetchReview(); }, [liveTally, expanded, refetchReview]);
   const reviewState = review.data?.state ?? (holdingJob ? 'needs_review' : null);
   const waiting = review.data?.claims.filter(isWaitingForYou).length ?? null;
+  // A published lesson can still have teaching notes waiting for the user.
+  const teachingWaiting = review.data?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
   const needsReview = reviewState === 'needs_review' || reviewState === 'stopped';
   // Never "0 claims": a lesson with none waiting is held by the audit or ready to resume.
   const hold = review.data && waiting != null ? reviewHold(review.data, waiting) : 'claims';
@@ -83,14 +86,15 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     audit_stop: 'Waiting for the Verifier audit', audit: 'Waiting for the Verifier audit', resolved: 'Ready to resume',
   };
   const statusLabel = reviewState === 'needs_review' ? holdLabel[hold]
-    : reviewState === 'stopped' ? 'Stopped · see why' : lesson.preparation === 'ready' ? 'Ready' : 'Outline';
+    : reviewState === 'stopped' ? 'Stopped · see why'
+    : lesson.preparation === 'ready' ? teachingWaiting > 0 ? `Ready · ${teachingNotesNoun(teachingWaiting)} for you` : 'Ready' : 'Outline';
   const holdHint: Record<ReviewHold, string> = {
     claims: 'Some claims could not be verified. Open the lesson to see each one with what was compared, and resolve it.',
     audit_stop: 'No claim needs you; the Verifier audit could not finish. Open the lesson to see why and resume.',
     audit: 'No claim needs you; the Verifier audit has not finished. Open the lesson to resume it.',
     resolved: 'Every claim is resolved. Open the lesson and choose Resume verification.',
   };
-  const showReview = needsReview || (Boolean(review.data) && lesson.preparation === 'outline' && Boolean(activeJob));
+  const showReview = needsReview || teachingWaiting > 0 || (Boolean(review.data) && lesson.preparation === 'outline' && Boolean(activeJob));
   const reviewPanel = showReview && <LessonClaimReviewPanel programId={program.summary.id} lessonId={lesson.id} courseRevision={program.summary.revision}
     jobActive={Boolean(activeJob)} lessonAnchor={lesson.preparation === 'ready' ? `lesson-${lesson.id}-section-` : null} />;
 

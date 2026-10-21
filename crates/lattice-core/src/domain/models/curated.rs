@@ -90,7 +90,7 @@ pub fn get_curated_models_by_category(category: ModelCategory) -> Vec<ModelMetad
 /// ```
 /// use crate::domain::models::curated::{get_model_category_by_id, ModelCategory};
 ///
-/// let category = get_model_category_by_id("all-minilm-l6-v2");
+/// let category = get_model_category_by_id("qwen3-embedding-0.6b");
 /// assert_eq!(category, Some(ModelCategory::Embedding));
 /// ```
 pub fn get_model_category_by_id(model_id: &str) -> Option<ModelCategory> {

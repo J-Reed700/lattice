@@ -50,3 +50,11 @@ Record each run in `results/`.
 - a sweep of the server's slot count.
 
 Its results go in `results/` too.
+
+## Results
+
+| Date | What | File |
+|---|---|---|
+| 2026-10-20 | Parity, Qwen3 F16 GGUF on Metal vs Candle: lowest cosine 0.999992, top-1 40/40, token counts 200/200 | `results/2026-10-20-parity-qwen3-embedding-0.6b-m3max.md` |
+| 2026-10-20 | Throughput on Metal: index loop 24.6 passages/s on prose (Candle 13.9), 13.4/s on code (Candle 6.5); 1, 2 and 4 slots run at the same pace | `results/2026-10-20-throughput-qwen3-embedding-0.6b-m3max.md` |
+| 2026-10-20 | Retrieval, v3 production mode, Candle vs llama.cpp on the same code: Recall@5 0.7726 both, nDCG@5 0.6871 → 0.6883; no query's top-5 relevant set changed | `../retrieval/results/2026-10-20-v3-LLAMA-EMBED-metrics.json` |

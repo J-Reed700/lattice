@@ -275,5 +275,29 @@
       },
       "sufficiency": null
     }
+  ],
+  "teachingFindings": [
+    {
+      "findingKey": "teaching:section-0",
+      "kind": "teaching",
+      "site": "section",
+      "unitIndex": 0,
+      "unitTitle": "Section 1: Phase changes",
+      "note": "Section 1 (candidate blocks-0): the example shows \"result\": \"4\" where the code returns the number 4.",
+      "passage": "The function returns the number 4.",
+      "repairs": 2,
+      "state": "waiting"
+    },
+    {
+      "findingKey": "structure:lesson",
+      "kind": "structure",
+      "site": "lesson",
+      "unitIndex": null,
+      "unitTitle": "Whole lesson",
+      "note": "The lesson needs exactly one recap; it has none.",
+      "passage": null,
+      "repairs": 0,
+      "state": "kept"
+    }
   ]
 }

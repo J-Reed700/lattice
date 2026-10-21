@@ -1,5 +1,6 @@
+use super::rewrite::{preserve_valid_citations, strip_new_citations};
 use super::*;
-use crate::features::learning::outline_linking::receipt_key;
+use crate::features::learning::outline_linking::{receipt_key, CitationReceipts};
 
 #[test]
 fn citation_regressions_are_reverted_only_for_unchanged_claims_with_receipted_evidence() {

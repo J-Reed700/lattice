@@ -1,10 +1,9 @@
-//! The three retrieval engines library search fuses: dense vectors, BM25
-//! keywords and learned sparse terms.
+//! The two retrieval engines library search fuses: dense vectors and BM25
+//! keywords.
 
 use async_trait::async_trait;
 
 use crate::application::contracts::search::engine::{BM25Result, SearchResult};
-use crate::application::contracts::search::SearchResultRecord;
 use crate::shared::error::Result;
 
 #[async_trait]
@@ -175,36 +174,4 @@ pub trait BM25SearchTrait: Send + Sync {
     /// service.rebuild_index().await?;
     /// ```
     async fn rebuild_index(&self) -> Result<()>;
-}
-
-/// Learned sparse retrieval — the third fusion branch beside dense vectors and
-/// BM25.
-///
-/// Implementations embed the query with the loaded model's sparse head and
-/// score stored per-chunk term postings by dot product. When the loaded model
-/// has no sparse head, [`SparseSearchTrait::is_available`] is `false` and the
-/// branch is never started; calling `search_scoped` anyway returns the port's
-/// "not supported" error, which callers must treat as a missing capability
-/// rather than a failed search.
-#[async_trait]
-pub trait SparseSearchTrait: Send + Sync {
-    /// True when the loaded embedding model can produce sparse term weights.
-    ///
-    /// This is the flag every caller checks before spending a branch on it, so
-    /// switching from BGE-M3 to a dense-only model silently drops back to
-    /// two-way fusion instead of erroring on every query.
-    fn is_available(&self) -> bool;
-
-    /// Sparse search under the same hard scope the BM25 branch uses.
-    ///
-    /// `space_id` restricts to a space's document memberships and
-    /// `allowed_document_ids` to an explicit set; an empty set allows nothing.
-    /// Both are applied before the limit.
-    async fn search_scoped(
-        &self,
-        query: &str,
-        top_k: usize,
-        space_id: Option<&str>,
-        allowed_document_ids: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<SearchResultRecord>>;
 }

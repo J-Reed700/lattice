@@ -205,7 +205,7 @@ pub async fn set_active_embedding_model_impl(
         .find_by_model_id(&validated_model_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Embedding model not found".to_owned()))?;
-    let dir = candidate
+    candidate
         .location()
         .enclosing_dir()
         .ok_or_else(|| AppError::InvalidInput("Select a downloaded embedding model".to_owned()))?;
@@ -220,7 +220,7 @@ pub async fn set_active_embedding_model_impl(
     };
     let load_identity = identity.clone();
     let model = container
-        .open_embedding_for_activation(dir, load_identity)
+        .open_embedding_for_activation(&candidate, load_identity)
         .await?;
     crate::infrastructure::persistence::repositories::embedding::generation::prepare(
         container.db_pool(),

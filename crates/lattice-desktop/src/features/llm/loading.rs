@@ -14,7 +14,7 @@ use crate::features::llm::instances::LaunchProfile;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use lattice_core::application::ports::active_models::ActiveModels;
-use lattice_core::application::ports::{LLMPort, LoadedEmbeddingModelPort};
+use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
@@ -50,42 +50,25 @@ pub(crate) struct UnloadableArtifacts {
 }
 
 /// What every model load in one app shares: the per-backend schedulers, the
-/// artifacts known not to start, the probe of the devices a local server can
-/// offload to, and the embedding model that shares one with it. The container
-/// owns one and hands it to each loader, so two containers never share any
-/// of it.
+/// artifacts known not to start, and the probe of the devices a local server
+/// can offload to. The container owns one and hands it to each loader, so two
+/// containers never share any of it.
 #[derive(Clone, Default)]
 pub(crate) struct LlmRuntime {
     pub(crate) schedulers: Arc<SchedulerRegistry>,
     pub(crate) unloadable: Arc<UnloadableArtifacts>,
     pub(crate) devices: Arc<BackendDevices>,
-    /// The loaded embedding model, which runs inside the app; `None` where
-    /// nothing loads one.
-    pub(crate) embedding: Option<Arc<dyn LoadedEmbeddingModelPort>>,
 }
 
 impl LlmRuntime {
-    /// The runtime for an app whose device probe is `devices` and whose
-    /// embedding model is loaded through `embedding`.
-    pub(crate) fn new(
-        devices: Arc<BackendDevices>,
-        embedding: Arc<dyn LoadedEmbeddingModelPort>,
-    ) -> Self {
+    /// The runtime for an app whose device probe is `devices`. The embedding
+    /// model runs on a bundled server like any other, so the sidecar registry
+    /// already counts what it holds.
+    pub(crate) fn new(devices: Arc<BackendDevices>) -> Self {
         Self {
             devices,
-            embedding: Some(embedding),
             ..Self::default()
         }
-    }
-
-    /// Memory models running inside the app hold on the accelerator a local
-    /// server offloads to: the embedding model's weights while it is loaded
-    /// on one.
-    pub(crate) fn in_app_model_bytes(&self) -> u64 {
-        self.embedding
-            .as_ref()
-            .and_then(|embedding| embedding.current_model())
-            .map_or(0, |model| model.accelerator_bytes())
     }
 }
 
@@ -305,7 +288,6 @@ impl ModelLoader {
             // None in tests / sidecar-feature-off builds (where it's unused).
             app_handle: self.app_handle.clone(),
             server,
-            in_app_model_bytes: self.runtime.in_app_model_bytes(),
         };
         crate::features::llm::engine::factory::create_llm(
             config,

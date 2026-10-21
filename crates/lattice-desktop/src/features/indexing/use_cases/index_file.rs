@@ -36,16 +36,15 @@ use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
-    BlobLease, ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort,
-    DocumentIndexObserver, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
-    FileStoragePort, SearchResultCachePort, SparseTermStorePort, VectorSearchPort,
+    BlobLease, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
+    DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
+    SearchResultCachePort, VectorSearchPort,
 };
 use lattice_core::application::services::live_index::{
     publish_chunks_to_live_index, PublishedChunk,
 };
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
-use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use tracing::instrument;
 
@@ -67,11 +66,6 @@ pub struct PreparedDocument {
     /// True when this import copied the blob into the library for the first
     /// time, which is what makes a failure from here on leave an orphan.
     pub imported_new: bool,
-    /// One [`SparseEmbedding`] per chunk, in chunk order, and empty whenever
-    /// the loaded model has no learned sparse head or no sparse term store is
-    /// wired. It travels with the dense vectors because both come out of the
-    /// same forward pass and must be committed for the same chunk ids.
-    pub sparse_terms: Vec<SparseEmbedding>,
     /// Held from the copy until the document row commits. Dropping it any
     /// earlier lets a concurrent delete or sweep remove the blob this
     /// document is about to point at.
@@ -110,9 +104,6 @@ pub struct IndexFileUseCase {
     /// When new embeddings are persisted, they are also added here
     /// so that newly indexed documents are immediately searchable.
     vector_search: Option<Arc<dyn VectorSearchPort>>,
-    /// Learned sparse term postings, written alongside the dense vectors.
-    /// `None` leaves indexing byte-for-byte as it was.
-    sparse_term_store: Option<Arc<dyn SparseTermStorePort>>,
     /// Search results cached against the corpus, dropped once a document
     /// lands so a repeated query sees it.
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
@@ -149,7 +140,6 @@ impl IndexFileUseCase {
             embedding_repo,
             uow_factory,
             vector_search: None,
-            sparse_term_store: None,
             query_cache: None,
             index_observer: None,
         }
@@ -161,18 +151,6 @@ impl IndexFileUseCase {
     /// so they become immediately searchable without requiring an app restart.
     pub fn with_vector_search(mut self, vs: Arc<dyn VectorSearchPort>) -> Self {
         self.vector_search = Some(vs);
-        self
-    }
-
-    /// Persist learned sparse term weights beside the dense vectors.
-    ///
-    /// Wiring the store is not the same as producing rows: the sparse head is
-    /// only read when the loaded embedding model actually has one
-    /// (`EmbeddingPort::supports_sparse`), so this can be wired
-    /// unconditionally and simply does nothing for a dense-only model.
-    #[must_use]
-    pub fn with_sparse_term_store(mut self, store: Arc<dyn SparseTermStorePort>) -> Self {
-        self.sparse_term_store = Some(store);
         self
     }
 
@@ -194,11 +172,6 @@ impl IndexFileUseCase {
         if let Some(cache) = &self.query_cache {
             cache.invalidate_corpus();
         }
-    }
-
-    /// True when this indexing run should also produce sparse postings.
-    fn sparse_indexing_enabled(&self) -> bool {
-        self.sparse_term_store.is_some() && self.embedding_service.supports_sparse()
     }
 
     /// Execute file indexing.
@@ -332,7 +305,6 @@ impl IndexFileUseCase {
             embeddings,
             library_path: _,
             imported_new,
-            sparse_terms,
             lease,
         } = prepared;
         let library_hash = lease.hash().to_string();
@@ -370,12 +342,6 @@ impl IndexFileUseCase {
         // The row is durable, so the document itself now protects the blob and
         // this import's lease has done its job.
         drop(lease);
-        // After the commit, never inside it: the postings reference
-        // `text_chunks(id)`, so the chunk rows have to exist first. A failure
-        // here costs this document its sparse branch and nothing else — the
-        // dense vectors are already durable and the other two branches still
-        // find it.
-        self.store_sparse_terms(&document, &sparse_terms).await;
         if let Some(search) = self.vector_search.clone() {
             let stale_keys: Vec<_> = stale_chunk_ids
                 .iter()
@@ -393,35 +359,6 @@ impl IndexFileUseCase {
             observer.document_indexed(&document_id).await;
         }
         Ok(document_id)
-    }
-
-    /// Write this document's learned sparse postings, replacing whatever the
-    /// previous indexing run left behind for the same chunks.
-    ///
-    /// Deliberately infallible. Sparse retrieval is one of three branches; a
-    /// store that is unavailable must degrade the ranking, not fail an import
-    /// whose document, chunks and vectors have already been committed.
-    async fn store_sparse_terms(&self, document: &Document, sparse_terms: &[SparseEmbedding]) {
-        let Some(store) = self.sparse_term_store.as_ref() else {
-            return;
-        };
-        if sparse_terms.is_empty() {
-            return;
-        }
-        let entries: Vec<ChunkSparseTerms> = document
-            .chunks()
-            .iter()
-            .zip(sparse_terms.iter())
-            .map(|(chunk, sparse)| (chunk.id().to_string(), sparse.clone()))
-            .collect();
-        let model_identity = self.embedding_service.model_identity();
-        if let Err(error) = store.replace_chunk_terms(&model_identity, &entries).await {
-            tracing::warn!(
-                document_id = %document.id(),
-                %error,
-                "Could not persist learned sparse terms; this document will be found by the dense and BM25 branches only"
-            );
-        }
     }
 
     async fn publish_stored_document(&self, document_id: &str) -> Result<()> {

@@ -139,7 +139,7 @@ async fn test_embedding_dimensions_correct() -> Result<()> {
     let doc_id = index_test_file(&ctx.pool, &test_file).await?;
 
     // Get embedding dimensions
-    // Standard model is all-MiniLM-L6-v2 with 384 dimensions
+    // The fixture writes 384-dimensional vectors
     let expected_dims = 384;
     let expected_bytes = expected_dims * 4; // f32 = 4 bytes
 

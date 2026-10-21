@@ -34,7 +34,7 @@ TABLES=$(sqlite3 "$TEST_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='tabl
 echo "✓ Created $TABLES tables"
 
 # Verify critical tables exist
-CRITICAL_TABLES="documents text_chunks text_embeddings tags watch_folders passage_references embedding_generation_vectors vector_index_state chunks_fts documents_fts conversations conversation_search_fts favorites recent_documents batch_jobs batch_job_items web_assets download_sessions models model_files chunk_sparse_terms document_summaries schema_version"
+CRITICAL_TABLES="documents text_chunks text_embeddings tags watch_folders passage_references embedding_generation_vectors vector_index_state chunks_fts documents_fts conversations conversation_search_fts favorites recent_documents batch_jobs batch_job_items web_assets download_sessions models model_files document_summaries schema_version"
 
 for TABLE in $CRITICAL_TABLES; do
     EXISTS=$(sqlite3 "$TEST_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='$TABLE'")

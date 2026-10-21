@@ -1,6 +1,9 @@
 //! Computing and establishing an embedding model's artifact identity.
 //!
-//! The identity is a SHA-256 over the model's preprocessing and weights. It is
+//! The identity is the SHA-256 of the model's one GGUF file: the weights, the
+//! quantisation and the pooling mode are all bytes of it, and llama-server's
+//! normalisation is pinned. `tokenizer.json` is left out on purpose: it
+//! decides where chunks are cut, not what a stored chunk's vector is. It is
 //! computed when a model is activated for embedding and stored on its row;
 //! launch and model load read the stored value and never hash model files.
 //! It lives with the downloaded-model records because it describes the files
@@ -10,54 +13,26 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
-use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Stream the artifacts under `dir` through SHA-256. The input is the
-/// content-addressed model plus its preprocessing, not merely its output
-/// dimension. Blocking; call through `compute_in_background` from async code.
-pub fn compute(dir: &Path) -> Result<ArtifactIdentity> {
+/// Stream the GGUF at `file` through SHA-256. The result is the same digest
+/// `shasum -a 256` prints and Hugging Face shows for the file. Blocking; call
+/// through `compute_in_background` from async code.
+pub fn compute(file: &Path) -> Result<ArtifactIdentity> {
     let mut hash = Sha256::new();
-    hash.update(b"lattice-embedding-input-v2");
-    for name in [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "sentence_bert_config.json",
-        "1_Pooling/config.json",
-        WEIGHTS_SAFETENSORS,
-    ] {
-        hash.update(name.as_bytes());
-        let path = dir.join(name);
-        if !path.exists() {
-            hash.update(b"absent");
-            continue;
-        }
-        fold_file_contents(&mut hash, &path)?;
-    }
-    // The pickle is folded in only when it is actually on disk. Appending it
-    // to the list above would have hashed an `absent` marker for every
-    // safetensors model and changed every identity already written into a
-    // vault's index filenames; contributing nothing when the file is missing
-    // keeps those byte-for-byte while still covering the weights of a
-    // checkpoint that ships only `pytorch_model.bin`.
-    let pickle = dir.join(WEIGHTS_PYTORCH_BIN);
-    if pickle.exists() {
-        hash.update(WEIGHTS_PYTORCH_BIN.as_bytes());
-        fold_file_contents(&mut hash, &pickle)?;
-    }
+    fold_file_contents(&mut hash, file)?;
     Ok(ArtifactIdentity::from_digest(&hash.finalize().into()))
 }
 
 /// `spawn_blocking` wrapper around `compute`.
-pub async fn compute_in_background(dir: PathBuf) -> Result<ArtifactIdentity> {
+pub async fn compute_in_background(file: PathBuf) -> Result<ArtifactIdentity> {
     tokio::task::spawn_blocking(move || {
         let started = std::time::Instant::now();
-        let identity = compute(&dir)?;
+        let identity = compute(&file)?;
         tracing::info!(
-            dir = %dir.display(),
+            file = %file.display(),
             identity = %identity,
             elapsed_ms = started.elapsed().as_millis() as u64,
             "Computed embedding artifact identity"
@@ -69,16 +44,25 @@ pub async fn compute_in_background(dir: PathBuf) -> Result<ArtifactIdentity> {
 }
 
 /// The identity a model must carry to be activated for embedding.
-/// Remote models carry none. Local models reuse a stored identity or compute
-/// one now, off the runtime thread.
+/// Remote models carry none. Local models reuse a stored identity or hash
+/// their GGUF now, off the runtime thread. A model stored as a directory is
+/// not a GGUF and cannot be served.
 pub async fn establish(model: &DownloadedModel) -> Result<Option<ArtifactIdentity>> {
-    let Some(dir) = model.location().enclosing_dir() else {
-        return Ok(None);
+    let file = match model.location() {
+        ModelLocation::LocalFile { path } => path.clone(),
+        ModelLocation::LocalDirectory { path } => {
+            return Err(AppError::InvalidConfig(format!(
+                "Embedding model {} is a directory ({}); embeddings are served from one GGUF file",
+                model.model_id(),
+                path.display()
+            )))
+        }
+        ModelLocation::RemoteOllama => return Ok(None),
     };
     if let Some(identity) = model.embedding_artifact_identity() {
         return Ok(Some(identity.clone()));
     }
-    compute_in_background(dir).await.map(Some)
+    compute_in_background(file).await.map(Some)
 }
 
 /// Stream a file's bytes into `hash` so a multi-gigabyte weights file never
@@ -110,35 +94,26 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn compute_for_safetensors_models_is_unchanged() {
+    fn the_identity_is_the_files_own_sha256() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
+        let file = dir.path().join("model-f16.gguf");
+        std::fs::write(&file, b"weights").unwrap();
+        // `printf weights | shasum -a 256`
         assert_eq!(
-            compute(dir.path()).unwrap().as_str(),
-            "sha256:ca19a491bee769f6c8e7a8a9bc8d1e3a6846116a4e1915e5e999a999cdc7d3e3"
+            compute(&file).unwrap().as_str(),
+            "sha256:9a129038d9a00aed0cf6a7ea059ca50a813449061ab87848cf1a13eafdf33b2c"
         );
     }
 
     #[test]
-    fn compute_covers_the_pickle_when_it_is_the_only_weights_file() {
-        let safetensors_dir = TempDir::new().unwrap();
-        std::fs::write(safetensors_dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(safetensors_dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
-
-        let pickle_dir = TempDir::new().unwrap();
-        std::fs::write(pickle_dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"weights").unwrap();
-
-        let pickle_identity = compute(pickle_dir.path()).unwrap();
-        assert_ne!(
-            pickle_identity,
-            compute(safetensors_dir.path()).unwrap(),
-            "a pickle checkpoint is a different artifact set than a safetensors one"
-        );
-
-        // And the pickle's bytes are actually hashed, not just its name.
-        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"other").unwrap();
-        assert_ne!(pickle_identity, compute(pickle_dir.path()).unwrap());
+    fn a_sibling_tokenizer_is_not_part_of_the_identity() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("model-f16.gguf");
+        std::fs::write(&file, b"weights").unwrap();
+        let before = compute(&file).unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), b"{}").unwrap();
+        assert_eq!(before, compute(&file).unwrap());
+        std::fs::write(&file, b"other weights").unwrap();
+        assert_ne!(before, compute(&file).unwrap());
     }
 }

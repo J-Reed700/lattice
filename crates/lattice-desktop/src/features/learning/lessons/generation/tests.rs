@@ -118,6 +118,42 @@ fn decode_outline_accepts_null_citations_with_sources_and_rejects_quotes_without
 }
 
 #[test]
+fn decode_outline_names_the_modules_and_lessons_whose_titles_repeat() {
+    let request = GenerateLearningProgramRequestDto {
+        goal: "Record observations".into(),
+        prior_knowledge: String::new(),
+        minutes_per_session: 30,
+        document_ids: vec![],
+        source_urls: vec![],
+        course_depth: None,
+    };
+    let raw = crate::features::learning::lessons::course_generation_tests::outline(2, 2).0;
+    let outline: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let reason =
+        |outline: &serde_json::Value| match decode_outline(&outline.to_string(), &request, &[]) {
+            Err(AppError::InvalidInput(reason)) => reason,
+            Err(other) => panic!("expected a refusal, got {other}"),
+            Ok(_) => panic!("expected a refusal"),
+        };
+    // Titles that differ only in case and spacing are the same title.
+    let mut modules = outline.clone();
+    modules["modules"][0]["title"] = json!("experimental  DESIGN module 1");
+    let refused = reason(&modules);
+    assert!(
+        refused.starts_with("Modules 1 and 2 share the title \"Experimental design module 1\""),
+        "{refused}"
+    );
+    assert!(!refused.contains("Try again"), "{refused}");
+    let mut lessons = outline;
+    lessons["modules"][1]["lessons"][1]["title"] = json!("Experimental design 0.0");
+    let refused = reason(&lessons);
+    assert!(
+        refused.starts_with("Lessons 1.1 and 2.2 share the title"),
+        "{refused}"
+    );
+}
+
+#[test]
 fn generated_ids_are_not_accepted_from_model_schema() {
     let schema = outline_schema(None, 1);
     assert!(schema.to_string().contains("additionalProperties"));
@@ -147,20 +183,6 @@ fn rejects_duplicate_or_empty_program_source_ids() {
     let mut empty = source();
     empty.id.clear();
     assert!(validate_source_snapshot_ids(&[empty]).is_err());
-}
-
-#[test]
-fn rejects_invalid_correct_indexes_and_duplicate_options() {
-    assert!(validate_answer_options(
-        &["one".into(), "two".into(), "three".into(), "four".into()],
-        4,
-    )
-    .is_err());
-    assert!(validate_answer_options(
-        &["one".into(), "two".into(), "Two ".into(), "four".into()],
-        0,
-    )
-    .is_err());
 }
 
 fn recall_response(cards: serde_json::Value) -> String {

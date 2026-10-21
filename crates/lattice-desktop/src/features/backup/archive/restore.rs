@@ -517,7 +517,7 @@ impl ArchiveRestorer {
         }
     }
 
-    /// Embeddings, clusters and sparse terms were stripped from the snapshot;
+    /// Embeddings and clusters were stripped from the snapshot;
     /// the app has to rebuild them. The marker survives the restart that the
     /// database swap requires, which an in-memory flag would not.
     async fn mark_reembed_required(&self) {

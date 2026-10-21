@@ -1678,11 +1678,11 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
     let config = |path: &PathBuf| SidecarConfig::for_model(path.clone());
 
     assert_eq!(
-        admission(&servers, &servers[0].config, &gpu, 0),
+        admission(&servers, &servers[0].config, &gpu),
         Admission::Shared
     );
     assert_eq!(
-        admission(&servers, &config(&small), &gpu, 0),
+        admission(&servers, &config(&small), &gpu),
         Admission::Fits {
             needed: Footprint {
                 weights: 2 * GIB,
@@ -1695,18 +1695,11 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
         }
     );
     assert!(matches!(
-        admission(&servers, &config(&large), &gpu, 0),
+        admission(&servers, &config(&large), &gpu),
         Admission::Short { needed, spare } if needed.total() == 7 * GIB && spare == 6 * GIB
     ));
-    assert!(
-        matches!(
-            admission(&servers, &config(&small), &gpu, 5 * GIB),
-            Admission::Short { spare, .. } if spare == GIB
-        ),
-        "the app's own models on the same GPU count too"
-    );
     assert_eq!(
-        admission(&servers, &config(&large).without_gpu_offload(), &gpu, 0),
+        admission(&servers, &config(&large).without_gpu_offload(), &gpu),
         Admission::NoOffload
     );
     assert_eq!(
@@ -1716,8 +1709,7 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
             &make_caps(
                 Some(crate::features::llm::engine::system::GPUVendor::Apple),
                 36.0
-            ),
-            0
+            )
         ),
         Admission::Unmetered,
         "a GPU that does not report its memory cannot be checked"
@@ -1750,6 +1742,75 @@ fn a_seeing_server_loads_its_projector_and_keeps_drafting() {
         seeing.without_gpu_offload().projector_path,
         seeing.projector_path
     );
+}
+
+/// An embedding server is launched with the flags of the design's §5.1 and
+/// none of the chat server's.
+#[test]
+fn an_embedding_server_gets_exactly_its_own_flags() {
+    let config = SidecarConfig {
+        n_gpu_layers: 99,
+        context_size: 8192,
+        parallel_slots: Some(4),
+        embedding: Some(EmbeddingServing { ubatch: 2048 }),
+        ..SidecarConfig::for_model(PathBuf::from("/models/Qwen3-Embedding-0.6B-f16.gguf"))
+    };
+    let expected: Vec<String> = [
+        "-m",
+        "/models/Qwen3-Embedding-0.6B-f16.gguf",
+        "--embedding",
+        "-c",
+        "8192",
+        "-np",
+        "4",
+        "-b",
+        "2048",
+        "-ub",
+        "2048",
+        "-ngl",
+        "99",
+        "-fa",
+        "auto",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "12345",
+        "--no-webui",
+    ]
+    .iter()
+    .map(|arg| arg.to_string())
+    .collect();
+    assert_eq!(build_server_args(&config, 12345), expected);
+
+    let on_cpu = build_server_args(&config.without_gpu_offload(), 12345);
+    assert_eq!(flag_value(&on_cpu, "-ngl"), Some("0"));
+    for chat_only in [
+        "--jinja",
+        "--ctx-checkpoints",
+        "--cache-reuse",
+        "--mmproj",
+        "-ctk",
+        "--spec-type",
+        "--pooling",
+    ] {
+        assert!(!on_cpu.iter().any(|arg| arg == chat_only), "{chat_only}");
+    }
+}
+
+/// The embedding field is part of a server's identity, so the pool never
+/// hands a chat role an embedding server of the same file or the reverse.
+#[test]
+fn an_embedding_server_is_keyed_apart_from_a_chat_server_of_one_file() {
+    use std::hash::{BuildHasher, RandomState};
+
+    let chat = SidecarConfig::for_model(PathBuf::from("/models/model.gguf"));
+    let embedding = SidecarConfig {
+        embedding: Some(EmbeddingServing { ubatch: 2048 }),
+        ..chat.clone()
+    };
+    let hasher = RandomState::new();
+    assert_ne!(chat, embedding);
+    assert_ne!(hasher.hash_one(&chat), hasher.hash_one(&embedding));
 }
 
 /// An older server that cannot draft and see at once is told as the two

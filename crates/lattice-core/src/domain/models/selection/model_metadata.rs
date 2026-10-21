@@ -94,8 +94,8 @@ pub struct ModelMetadata {
     /// Used to filter catalog models to those compatible with the app's vector index.
     #[serde(default)]
     pub embedding_dimensions: Option<usize>,
-    /// For embedding models: whether the local Candle inference path can load
-    /// this architecture. `None` for non-embedding models. Threaded through
+    /// For embedding models: whether the bundled llama-server can serve this
+    /// architecture. `None` for non-embedding models. Threaded through
     /// from `ExternalModelMetadata` so the catalog UI can badge incompatible
     /// rows.
     #[serde(default)]

@@ -60,14 +60,6 @@ pub struct SearchSettingsDto {
     #[serde(default)]
     pub vector_index_compression: VectorIndexCompressionSettingsDto,
 
-    /// How chunk vectors are produced at index time.
-    ///
-    /// Also a property of the vector space rather than of one document — the
-    /// two strategies are not interchangeable, so flipping it changes the
-    /// embedding generation and re-embeds the corpus.
-    #[serde(default)]
-    pub embedding_strategy: EmbeddingStrategySettingDto,
-
     /// Generate and search document/section summaries as a collection-level
     /// retrieval tier. Summaries are produced off the indexing critical path
     /// by the utility model, so this is off until a utility model is set up.
@@ -115,18 +107,6 @@ pub struct VectorIndexCompressionSettingsDto {
     /// active model's real dimension where the index is opened.
     pub dims: u32,
     pub quantization: VectorQuantizationDto,
-}
-
-/// How chunk vectors are produced at index time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum EmbeddingStrategySettingDto {
-    /// Embed each chunk separately with its context prefix prepended.
-    #[default]
-    ChunkFirst,
-    /// Embed the whole structure span once and mean-pool each chunk's token
-    /// states, so every chunk is conditioned on the rest of its span.
-    LateChunking,
 }
 
 /// Retrieval pipeline tuning settings.
@@ -266,7 +246,6 @@ impl Default for SearchSettingsDto {
             hybrid_search_alpha: 0.5,
             retrieval_tuning: RetrievalTuningSettingsDto::default(),
             vector_index_compression: VectorIndexCompressionSettingsDto::default(),
-            embedding_strategy: EmbeddingStrategySettingDto::default(),
             summary_index_enabled: false,
         }
     }

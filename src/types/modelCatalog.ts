@@ -99,7 +99,7 @@ export interface ModelMetadata {
 export type ModelFormat = 'gguf' | 'safetensors';
 
 /**
- * Whether the local CandleEmbeddingService can actually load a given
+ * Whether the bundled llama-server can actually serve a given
  * embedding model. Threaded through from the backend so the catalog UI
  * can disable + badge incompatible rows before users start a multi-GB
  * download that would fail at model-load time.

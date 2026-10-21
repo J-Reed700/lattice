@@ -21,11 +21,7 @@ async fn live_contract_fidelity_controls() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let cases: Vec<serde_json::Value> = match std::env::var("LATTICE_FIDELITY_CASES") {
         Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
         Err(_) => serde_json::from_str(include_str!("live_fixtures/verification_controls.json"))?,
@@ -121,11 +117,7 @@ async fn live_inventory_slots_keep_every_section() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let content: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_INVENTORY_SECTIONS").unwrap(),
     )?)?;
@@ -154,11 +146,7 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_REVIEW_CASES").unwrap(),
     )?)?;
@@ -169,7 +157,17 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             crate::features::learning::reference_collection::ReferenceCollection::lexical(
                 &sources,
             )?;
-        let issues: Vec<String> = serde_json::from_value(case["issues"].clone())?;
+        let issues: Vec<crate::features::learning::review_findings::ReviewFinding> =
+            serde_json::from_value::<Vec<String>>(case["issues"].clone())?
+                .into_iter()
+                .map(|issue| {
+                    crate::features::learning::review_findings::ReviewFinding::new(
+                        crate::features::learning::review_findings::FindingKind::Teaching,
+                        None,
+                        issue,
+                    )
+                })
+                .collect();
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
@@ -183,6 +181,7 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,
         )?;
+        let accepted: Vec<_> = accepted.into_iter().map(|f| f.note).collect();
         assert_eq!(
             serde_json::to_value(&accepted)?,
             case["expected"],
@@ -206,11 +205,7 @@ async fn live_saved_inventory_revision_finishes() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let basis = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_INVENTORY_BASIS").unwrap(),
     )?)?;
@@ -260,11 +255,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let model = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    });
+    let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
     )?)?;
@@ -551,11 +542,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         })
         .max()
         .map_or(0, |n| n + 1);
-    let model = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: std::sync::atomic::AtomicUsize::new(next_call),
-    });
+    let model = Arc::new(ObservedModel::new(&config, directory.clone(), next_call).await?);
     // Exercise the same recovery the job runtime runs at native startup.
     lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
         .recover(

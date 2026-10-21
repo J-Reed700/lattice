@@ -42,7 +42,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::time::Duration;
 
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
-use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use lattice_core::domain::models::selection::EmbeddingCompatibility;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::reqwest_client_builder;
@@ -323,98 +322,35 @@ impl HuggingFaceModel {
         Some((chosen.filename.clone(), chosen.size))
     }
 
-    /// Choose a preferred ONNX file for embedding models.
-    ///
-    /// Embedding models require ONNX format with tokenizer.json. This method
-    /// finds ONNX files in the repo siblings, preferring `model.onnx` or
-    /// files in `onnx/` subdirectories.
-    fn select_preferred_onnx_file(&self) -> Option<(String, Option<u64>)> {
-        let mut candidates: Vec<&HuggingFaceSibling> = self
-            .siblings
-            .iter()
-            .filter(|s| {
-                let lower = s.filename.to_lowercase();
-                lower.ends_with(".onnx") && !lower.ends_with(".onnx_data")
-            })
-            .collect();
-
-        if candidates.is_empty() {
-            return None;
+    /// Whether the bundled llama.cpp can run this embedding repository: it
+    /// needs a single-file GGUF, of an architecture the pinned engine lists.
+    /// When Hugging Face has not indexed the GGUF header, the download's own
+    /// header check decides.
+    fn embedding_compatibility(&self, has_gguf: bool) -> EmbeddingCompatibility {
+        let architecture = self
+            .gguf_architecture()
+            .or_else(|| self.config_model_type())
+            .unwrap_or("unknown")
+            .to_ascii_lowercase();
+        if !has_gguf {
+            return EmbeddingCompatibility::Incompatible {
+                architecture,
+                reason: "The repository ships no single-file GGUF. Lattice runs embedding models from GGUF files in its bundled llama.cpp; look for a GGUF conversion of this model.".to_string(),
+            };
         }
-
-        // Also verify tokenizer.json exists — required for ONNX embeddings
-        let has_tokenizer = self
-            .siblings
-            .iter()
-            .any(|s| s.filename == "tokenizer.json" || s.filename.ends_with("/tokenizer.json"));
-
-        if !has_tokenizer {
-            return None;
-        }
-
-        // Prefer "model.onnx" or "onnx/model.onnx" over other ONNX files
-        candidates.sort_by(|a, b| {
-            let a_is_model = a.filename.ends_with("model.onnx");
-            let b_is_model = b.filename.ends_with("model.onnx");
-            b_is_model
-                .cmp(&a_is_model)
-                .then(a.filename.len().cmp(&b.filename.len()))
-        });
-
-        let chosen = candidates.first().copied()?;
-        Some((chosen.filename.clone(), chosen.size))
-    }
-
-    /// Choose the weights file Candle would load for an embedding repo.
-    ///
-    /// `model.safetensors` first; `pytorch_model.bin` when the repo never
-    /// published a safetensors conversion (BAAI/bge-m3), which the loader
-    /// reads through `candle_core::pickle`. Requires `tokenizer.json` and
-    /// `config.json` at repo root. Returns `None` if the repo is missing any
-    /// of these.
-    fn select_preferred_weights_file(&self) -> Option<(String, Option<u64>)> {
-        let root_level: Vec<&HuggingFaceSibling> = self
-            .siblings
-            .iter()
-            .filter(|s| {
-                let lower = s.filename.to_lowercase();
-                (lower.ends_with(".safetensors") || s.filename == WEIGHTS_PYTORCH_BIN)
-                    && !lower.ends_with(".safetensors.index.json")
-                    && !s.filename.contains('/') // single-file only for now
-            })
-            .collect();
-
-        let chosen = root_level
-            .iter()
-            .find(|s| s.filename == WEIGHTS_SAFETENSORS)
-            .or_else(|| {
-                root_level
-                    .iter()
-                    .find(|s| s.filename == WEIGHTS_PYTORCH_BIN)
-            })
-            .copied()?;
-
-        let has_tokenizer = self.siblings.iter().any(|s| s.filename == "tokenizer.json");
-        let has_config = self.siblings.iter().any(|s| s.filename == "config.json");
-        if !has_tokenizer || !has_config {
-            return None;
-        }
-
-        Some((chosen.filename.clone(), chosen.size))
-    }
-
-    /// Choose a preferred downloadable file from the repository.
-    ///
-    /// For embedding models, prefers safetensors (the Candle runtime loads
-    /// these directly), falling back to ONNX only for legacy models that
-    /// lack safetensors. For all other models, prefers GGUF files.
-    fn select_preferred_file(&self) -> Option<(String, Option<u64>)> {
-        if self.is_embedding_model() {
-            self.select_preferred_weights_file()
-                .or_else(|| self.select_preferred_onnx_file())
-                .or_else(|| self.select_preferred_gguf_file())
-        } else {
-            self.select_preferred_gguf_file()
+        match self.gguf_architecture() {
+            Some(arch)
+                if !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(
+                    arch,
+                ) =>
+            {
+                EmbeddingCompatibility::Incompatible {
+                    architecture,
+                    reason: "Lattice's bundled llama.cpp does not support this architecture."
+                        .to_string(),
+                }
+            }
+            _ => EmbeddingCompatibility::Compatible { architecture },
         }
     }
 
@@ -525,7 +461,7 @@ impl HuggingFaceModel {
         let id = self.resolve_repo_id();
 
         let name = self.name.clone().unwrap_or_else(|| id.clone());
-        let preferred_file = self.select_preferred_file();
+        let preferred_file = self.select_preferred_gguf_file();
 
         let mut tags = self.tags.clone();
         if let Some(pipeline) = &self.pipeline_tag {
@@ -546,32 +482,9 @@ impl HuggingFaceModel {
         }
         let description = self.build_description(&id, preferred_is_gguf);
 
-        // Detect Candle compatibility from architecture tags AND from
-        // whether the repo actually ships weights the loader can read
-        // (safetensors, or a root `pytorch_model.bin`). Both gates exist
-        // because a repo can have a Compatible architecture tag (e.g.
-        // bert) but only publish .onnx weights — in which case the
-        // download path falls back to ONNX, the loader rejects it, and
-        // the user has wasted bandwidth on a multi-GB transfer. The
-        // catalog must promise only what the runtime can actually deliver.
-        let embedding_compatibility = if self.is_embedding_model() {
-            let arch_compat = EmbeddingCompatibility::from_tags(&tags);
-            let has_weights = self.select_preferred_weights_file().is_some();
-            let final_compat = match arch_compat {
-                EmbeddingCompatibility::Compatible {
-                    architecture,
-                } if !has_weights => {
-                    EmbeddingCompatibility::Incompatible {
-                        architecture,
-                        reason: "Repo doesn't ship a single model.safetensors or pytorch_model.bin at its root. The local Candle runtime cannot load sharded weights yet — look for a single-file upstream or conversion of this model.".to_string(),
-                    }
-                }
-                other => other,
-            };
-            Some(final_compat)
-        } else {
-            None
-        };
+        let embedding_compatibility = self
+            .is_embedding_model()
+            .then(|| self.embedding_compatibility(preferred_is_gguf));
 
         ExternalModelMetadata {
             id: id.clone(),

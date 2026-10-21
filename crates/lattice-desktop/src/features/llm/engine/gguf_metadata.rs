@@ -12,7 +12,7 @@
 //! caller falls back to sizing from hardware alone.
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 pub(super) const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF", little-endian
@@ -122,6 +122,13 @@ pub struct GgufModelInfo {
     /// Whether `tokenizer.chat_template` in the GGUF header declares tool-calling
     /// markers (`tools`, `tool_call`, or `tool_calls`).
     pub chat_template_supports_tools: bool,
+    /// `{architecture}.pooling_type` (llama.cpp's `LLM_KV_POOLING_TYPE`): how
+    /// an embedding model pools its token states. 0 none, 1 mean, 2 CLS,
+    /// 3 last, 4 rank. Absent in a chat model.
+    pub pooling_type: Option<u32>,
+    /// `general.file_type` (`LLM_KV_GENERAL_FILE_TYPE`): the weights'
+    /// precision as llama.cpp's `llama_ftype`, 1 for F16.
+    pub file_type: Option<u32>,
 }
 
 /// llama.cpp stores keys and values as f16 by default: two bytes an element.
@@ -437,6 +444,13 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
         // Sizing keys are `{architecture}.{name}`. A longer prefix, such as a
         // vision tower's `{architecture}.vision.block_count`, is not the
         // language model's.
+        if key == "general.file_type" {
+            if let Value::Number(file_type) = value {
+                info.file_type = Some(file_type);
+            }
+            continue;
+        }
+
         let Some((_, name)) = key.split_once('.') else {
             continue;
         };
@@ -479,6 +493,7 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             ("ssm.state_size", Value::Number(size)) => info.ssm_state_size = Some(size),
             ("ssm.group_count", Value::Number(count)) => info.ssm_group_count = Some(count),
             ("ssm.inner_size", Value::Number(size)) => info.ssm_inner_size = Some(size),
+            ("pooling_type", Value::Number(pooling)) => info.pooling_type = Some(pooling),
             _ => {}
         }
     }
@@ -558,7 +573,7 @@ const MAX_PER_LAYER_VALUES: u64 = 4096;
 
 /// Read a value of the given type. `None` only when the header itself cannot
 /// be read past, which ends the scan.
-fn read_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<Value> {
+fn read_value(reader: &mut impl Read, kind: u32) -> Option<Value> {
     if kind == value_type::ARRAY {
         let element_type = read_u32(reader)?;
         let count = read_u64(reader)?;
@@ -631,20 +646,14 @@ fn fixed_value_width(kind: u32) -> Option<u64> {
 }
 
 /// Advance past a value the caller does not need.
-pub(super) fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
+pub(super) fn skip_value(reader: &mut impl Read, kind: u32) -> Option<()> {
     if let Some(width) = fixed_value_width(kind) {
-        reader
-            .seek(SeekFrom::Current(i64::try_from(width).ok()?))
-            .ok()?;
-        return Some(());
+        return skip_bytes(reader, width);
     }
     match kind {
         value_type::STRING => {
             let length = read_u64(reader)?;
-            reader
-                .seek(SeekFrom::Current(i64::try_from(length).ok()?))
-                .ok()?;
-            Some(())
+            skip_bytes(reader, length)
         }
         value_type::ARRAY => {
             let element_type = read_u32(reader)?;
@@ -656,23 +665,28 @@ pub(super) fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<(
 }
 
 /// Advance past the elements of an array whose type and count are read.
-fn skip_elements(reader: &mut (impl Read + Seek), element_type: u32, count: u64) -> Option<()> {
+fn skip_elements(reader: &mut impl Read, element_type: u32, count: u64) -> Option<()> {
     // GGUF arrays are flat. Reject corrupt recursion/lengths before
     // inspecting an untrusted remote header or local model file.
     if element_type == value_type::ARRAY || count > 1_000_000 {
         return None;
     }
     if let Some(width) = fixed_value_width(element_type) {
-        let total = count.checked_mul(width)?;
-        reader
-            .seek(SeekFrom::Current(i64::try_from(total).ok()?))
-            .ok()?;
-        return Some(());
+        return skip_bytes(reader, count.checked_mul(width)?);
     }
     for _ in 0..count {
         skip_value(reader, element_type)?;
     }
     Some(())
+}
+
+/// Read past `length` bytes. A seek would be shorter to write, but seeking a
+/// `BufReader` throws its buffer away: a vocabulary of 250,000 strings then
+/// costs a million system calls, seconds for every header read. `None` when
+/// the header ends first.
+fn skip_bytes(reader: &mut impl Read, length: u64) -> Option<()> {
+    let skipped = std::io::copy(&mut reader.by_ref().take(length), &mut std::io::sink()).ok()?;
+    (skipped == length).then_some(())
 }
 
 /// [`ModelFileInspector`] that reads the GGUF key/value header.

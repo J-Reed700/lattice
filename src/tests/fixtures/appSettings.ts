@@ -55,7 +55,6 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         docSupportSingleHitRatioMax: 0.55,
       },
       vectorIndexCompression: { mode: 'none', dims: 512, quantization: 'i8' },
-      embeddingStrategy: 'chunk_first',
       summaryIndexEnabled: false,
     },
     llm: {

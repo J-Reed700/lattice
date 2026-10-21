@@ -1,6 +1,6 @@
 //! Shared machine-learning infrastructure.
 //!
-//! The embedding engine lives in `features/embedding/`.
+//! The embedding engine lives in `features/embedding/llama_cpp/`.
 
 pub mod artifact_identity;
 pub mod compute_device;

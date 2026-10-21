@@ -5,7 +5,7 @@
 //! This use case orchestrates:
 //! 1. Text validation (non-empty, length limit)
 //! 2. Text normalization
-//! 3. Embedding generation via ONNX model
+//! 3. Embedding generation by the loaded model
 //! 4. Dimension validation
 //!
 //! ## Example
@@ -46,7 +46,7 @@ const MAX_TEXT_LENGTH: usize = 10_000;
 ///
 /// ## Dependencies
 ///
-/// - `EmbeddingPort`: Handles embedding generation (ONNX, OpenAI, etc.)
+/// - `EmbeddingPort`: Handles embedding generation
 pub struct GenerateSingleEmbeddingUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
 }

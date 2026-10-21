@@ -4,10 +4,9 @@
 //! read it belong to this feature and are registered from here, with
 //! [`AppEmbedders`], the embedder every passage index on disk builds with.
 
-use crate::features::embedding::candle_service::CandleEmbeddingService;
+use crate::features::embedding::llama_cpp::LlamaEmbeddingService;
 use crate::features::embedding::loading::EmbeddingLoader;
 use crate::features::embedding::runtime::ActiveEmbedding;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -15,8 +14,9 @@ use crate::infrastructure::passage_index::EmbedderSource;
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::domain::value_objects::ArtifactIdentity;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 
 /// Embedding's registrar surface on `Container`.
 impl Container {
@@ -30,21 +30,17 @@ impl Container {
         self.embedding_runtime.invalidate();
     }
 
-    /// Open the embedding model in `dir` under `identity`, off the async
-    /// runtime, so activation can prepare the vector store against it before
-    /// the model becomes active.
+    /// Start a server for `model` under `identity`, so activation can
+    /// prepare the vector store against it before the model becomes active.
     pub(crate) async fn open_embedding_for_activation(
         &self,
-        dir: PathBuf,
+        model: &DownloadedModel,
         identity: ArtifactIdentity,
     ) -> Result<Box<dyn EmbeddingPort>> {
-        let model =
-            tokio::task::spawn_blocking(move || CandleEmbeddingService::open(&dir, identity))
-                .await
-                .map_err(|e| {
-                    AppError::InternalError(format!("Embedding model load task failed: {}", e))
-                })??;
-        Ok(Box::new(model))
+        let service =
+            LlamaEmbeddingService::start(Arc::clone(&self.embedding_starter), model, identity)
+                .await?;
+        Ok(Box::new(service))
     }
 
     /// The shared embedding runtime and the loader it falls back to, as one
@@ -57,7 +53,7 @@ impl Container {
                 active_models: self.ai.active_models(),
                 security: self.core.security_context().clone(),
                 index: self.search.runtime_index(),
-                strategy: self.search.embedding_strategy(),
+                starter: Arc::clone(&self.embedding_starter),
             },
         )
     }

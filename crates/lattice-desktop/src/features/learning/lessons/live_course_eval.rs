@@ -41,10 +41,10 @@ pub(super) struct CourseRecipe {
     #[serde(default)]
     settings: Value,
     web: RecipeWeb,
-    /// The embedding model lessons search each course's evidence index with,
-    /// as the chat recipe names it. Required: without one a run would not be
-    /// the shipped path.
-    embedding_model_dir: Option<String>,
+    /// The embedding model's GGUF (with its `tokenizer.json` beside it) that
+    /// lessons search each course's evidence index with. Required: without
+    /// one a run would not be the shipped path.
+    embedding_gguf: Option<String>,
     embedding_model_id: Option<String>,
 }
 
@@ -108,7 +108,7 @@ impl CourseRecipe {
         thinking_off(&server.thinking)?;
         TraceMode::parse(&recipe.web.mode)?;
         for (field, value) in [
-            ("embedding_model_dir", &recipe.embedding_model_dir),
+            ("embedding_gguf", &recipe.embedding_gguf),
             ("embedding_model_id", &recipe.embedding_model_id),
         ] {
             if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
@@ -523,17 +523,13 @@ fn recorded_settings(settings: &LLMSettingsDto) -> Result<Value> {
     Ok(value)
 }
 
-/// The recipe's embedding model, loaded through the app's own loader, which
-/// names it by its artifact identity.
+/// The recipe's embedding model, served by a llama-server this run starts
+/// the way the app's loader does, which names it by its artifact identity.
 async fn load_embedder(
     recipe: &CourseRecipe,
 ) -> Result<Arc<dyn lattice_core::application::ports::EmbeddingPort>> {
-    let dir = resolve(recipe.embedding_model_dir.as_deref().unwrap_or_default());
-    let model = tokio::task::spawn_blocking(move || {
-        crate::features::embedding::candle_service::CandleEmbeddingService::open_unregistered(&dir)
-    })
-    .await
-    .map_err(|error| AppError::InternalError(format!("Embedding model load failed: {error}")))??;
+    let gguf = resolve(recipe.embedding_gguf.as_deref().unwrap_or_default());
+    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(&gguf).await?;
     Ok(Arc::new(model))
 }
 
@@ -641,11 +637,7 @@ async fn live_course_eval() -> Result<()> {
         })
         .max()
         .map_or(0, |n| n + 1);
-    let model = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&settings)?,
-        directory: dir.clone(),
-        call: std::sync::atomic::AtomicUsize::new(next_call),
-    });
+    let model = Arc::new(ObservedModel::new(&settings, dir.clone(), next_call).await?);
     let web_cache = dir.join("web");
     std::fs::create_dir_all(&web_cache)?;
     let web = Arc::new(TracedWeb::new(

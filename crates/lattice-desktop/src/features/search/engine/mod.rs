@@ -114,7 +114,6 @@ pub mod reranker;
 pub mod snippet;
 
 // Directory-backed sub-modules.
-pub mod sparse_search;
 pub mod text_search;
 pub mod vector_search;
 
@@ -126,4 +125,3 @@ pub use reranker::{
     blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
     Reranker, RerankerService,
 };
-pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};

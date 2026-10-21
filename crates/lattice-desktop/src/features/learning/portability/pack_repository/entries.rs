@@ -12,6 +12,7 @@ use super::{
     export, importers, parse,
     program_entry::{ATTEMPTS, PROGRAM},
     provenance,
+    review_entries::REVIEW_TABLE_ROWS,
     source_entries::{SourceBodies, SourceHistory, SourceLibrary, SourceSelectors, SourceTrust},
     validation::validate_answer_keys,
     value_str,
@@ -122,6 +123,7 @@ pub(super) const SECTION_ROWS: &[&dyn SectionRows] = &[
     &AnswerKeys,
     &Provenance,
     &SourceBodies,
+    &REVIEW_TABLE_ROWS,
 ];
 
 /// What the preview needs from a pack that passed every section's checks.

@@ -76,6 +76,19 @@ pub struct SidecarConfig {
     /// The vision projector to load beside the model (`--mmproj`), when the
     /// model may see and its catalog projector is downloaded.
     pub projector_path: Option<PathBuf>,
+
+    /// `Some` for an embedding server of this GGUF rather than a chat one.
+    /// Part of the key, so a chat and an embedding server of one file would
+    /// be two processes (no GGUF is both).
+    pub embedding: Option<EmbeddingServing>,
+}
+
+/// How an embedding server is launched beyond its window and slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EmbeddingServing {
+    /// `-b` and `-ub`: the per-slot window, so a non-causal model sees each
+    /// input in one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens`).
+    pub ubatch: u32,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -344,19 +357,20 @@ impl MemoryHint {
 }
 
 /// The memory hint for a server started for `config`, beside the
-/// `resident_bytes` other models hold on its device. `None` when the
-/// platform does not report its memory.
+/// `resident_bytes` other models hold on its device, from `info`, its
+/// model's header as the caller read it. `None` when the platform does not
+/// report its memory.
 pub(crate) fn memory_hint(
     config: &SidecarConfig,
     capabilities: &SystemCapabilities,
     resident_bytes: u64,
+    info: Option<&GgufModelInfo>,
 ) -> Option<MemoryHint> {
     let room = memory_room(capabilities, config.n_gpu_layers > 0, resident_bytes)?;
     let weights = resident_weight_bytes(&config.model_path).unwrap_or(0);
-    let info = read_model_info(&config.model_path);
     Some(hint_for(
         weights,
-        info.as_ref(),
+        info,
         config.context_size,
         config.kv_cache_quantization,
         room,
@@ -418,6 +432,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
+            embedding: None,
         }
     }
 
@@ -464,6 +479,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
+            embedding: None,
         }
     }
 }

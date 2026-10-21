@@ -736,6 +736,19 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 }
 },
 /**
+ * "Keep as written": the user settles a teaching finding the repairs did
+ * not, without changing the lesson. It stays settled while the part it is
+ * about keeps its text.
+ */
+async keepLearningTeachingFinding(request: KeepLearningTeachingFindingRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|keep_learning_teaching_finding", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Resume verification (§6.2): a lesson waiting for review continues its
  * job once something changed; a stopped one retries it.
  */
@@ -1270,6 +1283,30 @@ async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
 async downloadDefaultEmbeddingModel() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|download_default_embedding_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * List the files left from the safetensors era in curated embedding model
+ * folders, with their total size. Never removes anything.
+ */
+async listLeftoverEmbeddingFiles() : Promise<Result<LeftoverEmbeddingFilesDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_leftover_embedding_files") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove exactly the files `list_leftover_embedding_files` reports, found
+ * again now, and return what was removed.
+ */
+async removeLeftoverEmbeddingFiles() : Promise<Result<LeftoverEmbeddingFilesDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|remove_leftover_embedding_files") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6197,19 +6234,6 @@ export type EmbeddingCompatibilityDto =
  */
 { kind: "unknown" }
 /**
- * How chunk vectors are produced at index time.
- */
-export type EmbeddingStrategySettingDto =
-/**
- * Embed each chunk separately with its context prefix prepended.
- */
-"chunk_first" |
-/**
- * Embed the whole structure span once and mean-pool each chunk's token
- * states, so every chunk is conditioned on the rest of its span.
- */
-"late_chunking"
-/**
  * Enhanced search response with caching metadata.
  *
  * Includes cache statistics and execution metrics.
@@ -7095,6 +7119,11 @@ export type JournalSynthesisDto = { job: JobDto; title: string; heading: string;
  */
 activity: SynthesisActivityDto | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
+export type KeepLearningTeachingFindingRequestDto = { programId: string; lessonId: string;
+/**
+ * The finding's `findingKey` from the review.
+ */
+findingKey: string }
 /**
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
@@ -7921,7 +7950,19 @@ export type LearningPackStaysBehindKind =
 /**
  * Unsaved lab drafts.
  */
-"practical_drafts"
+"practical_drafts" |
+/**
+ * Unfinished lesson reviews, whose drafts live in job checkpoints.
+ */
+"unfinished_lesson_reviews" |
+/**
+ * Tangent chats, which stay with the rest of the user's chats.
+ */
+"tangent_chats" |
+/**
+ * The Verifier audit consent, given on this computer only.
+ */
+"verifier_consent"
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.
@@ -8303,6 +8344,19 @@ window_tokens: number;
  */
 window_is_saved: boolean }
 /**
+ * Files a safetensors-era embedding download left in a curated embedding
+ * model folder, which the llama.cpp runtime never reads.
+ */
+export type LeftoverEmbeddingFilesDto = {
+/**
+ * The leftover files and folders, absolute.
+ */
+paths: string[];
+/**
+ * Their size on disk, in bytes.
+ */
+total_bytes: number }
+/**
  * Everything the review panel shows for one lesson.
  */
 export type LessonClaimReviewDto = { lessonId: string; programId: string; state: LessonReviewStateDto;
@@ -8318,7 +8372,12 @@ pass: number; stopReason: StopReasonDto | null;
  * The user acted on a claim since the job last stopped (§6.2): a lesson
  * held by claims waiting for the user resumes only then.
  */
-changedSinceStop: boolean; claims: ClaimReviewItemDto[] }
+changedSinceStop: boolean; claims: ClaimReviewItemDto[];
+/**
+ * Teaching-review findings the repairs did not settle: the lesson
+ * publishes with these waiting for the user.
+ */
+teachingFindings: TeachingFindingDto[] }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
@@ -8533,7 +8592,11 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
-export type ModelInfo = { model_name: string; dimensions: number; is_loaded: boolean }
+export type ModelInfo = {
+/**
+ * The loaded model's vector-space identity; empty when none is loaded.
+ */
+model_name: string; dimensions: number; is_loaded: boolean }
 /**
  * Model metadata DTO for frontend.
  */
@@ -9457,14 +9520,6 @@ retrievalTuning: RetrievalTuningSettingsDto;
  */
 vectorIndexCompression: VectorIndexCompressionSettingsDto;
 /**
- * How chunk vectors are produced at index time.
- *
- * Also a property of the vector space rather than of one document — the
- * two strategies are not interchangeable, so flipping it changes the
- * embedding generation and re-embeds the corpus.
- */
-embeddingStrategy: EmbeddingStrategySettingDto;
-/**
  * Generate and search document/section summaries as a collection-level
  * retrieval tier. Summaries are produced off the indexing critical path
  * by the utility model, so this is off until a utility model is set up.
@@ -9969,6 +10024,68 @@ created_at: string;
  * Number of documents with this tag
  */
 document_count: number }
+/**
+ * A teaching-review finding the repairs did not settle.
+ */
+export type TeachingFindingDto = {
+/**
+ * Names the finding in `keep_learning_teaching_finding`.
+ */
+findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
+/**
+ * Zero-based section or question index; null for the whole lesson.
+ */
+unitIndex: number | null;
+/**
+ * "Section 3: Loops", "Question 2" or "Whole lesson".
+ */
+unitTitle: string;
+/**
+ * The reviewer's note.
+ */
+note: string;
+/**
+ * The passage the finding is about, when one was chosen.
+ */
+passage: string | null;
+/**
+ * Repairs that tried to settle it.
+ */
+repairs: number; state: TeachingFindingStateDto }
+/**
+ * What raised a teaching finding.
+ */
+export type TeachingFindingKindDto =
+/**
+ * The teaching review of a section or of the lesson.
+ */
+"teaching" |
+/**
+ * An independent solution disagreed with the answer key.
+ */
+"answer_key" |
+/**
+ * The lesson's shape: its schema, a section's length or rubric, its mix
+ * of sections and questions.
+ */
+"structure" |
+/**
+ * A source quotation that matches no saved reference.
+ */
+"quotation"
+/**
+ * The part of the lesson a teaching finding is about.
+ */
+export type TeachingFindingSiteDto = "lesson" | "section" | "question"
+export type TeachingFindingStateDto =
+/**
+ * Waiting for the user.
+ */
+"waiting" |
+/**
+ * The user kept the text as written.
+ */
+"kept"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }

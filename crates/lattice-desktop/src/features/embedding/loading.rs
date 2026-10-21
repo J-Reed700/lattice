@@ -1,7 +1,6 @@
 //! Loads embedding artifacts and validates compatibility before publication.
 
-use crate::features::embedding::candle_service::CandleEmbeddingService;
-use crate::features::embedding::late_chunking::EmbeddingStrategy;
+use crate::features::embedding::llama_cpp::{EmbeddingServerStarter, LlamaEmbeddingService};
 use crate::infrastructure::security::SecurityContext;
 use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::{EmbeddingIndexBinding, EmbeddingPort};
@@ -12,13 +11,8 @@ pub(crate) struct EmbeddingLoader {
     pub active_models: Arc<dyn ActiveModels>,
     pub security: Arc<SecurityContext>,
     pub index: Arc<dyn EmbeddingIndexBinding>,
-    /// How chunk vectors are produced, straight from the user's settings.
-    ///
-    /// The strategy is part of the vector space, not a detail of inference:
-    /// the service reports a different `model_identity()` for each, and the
-    /// identity check below is what stops a model loaded under one strategy
-    /// from writing into an index keyed on the other.
-    pub strategy: EmbeddingStrategy,
+    /// Starts the llama-server the model runs on.
+    pub starter: Arc<dyn EmbeddingServerStarter>,
 }
 
 impl EmbeddingLoader {
@@ -106,39 +100,26 @@ impl EmbeddingLoader {
         };
 
         tracing::info!(
-            "Loading Candle embedding model from validated dir: {}",
-            model_dir.display()
+            "Starting the embedding server for validated model: {}",
+            model_path.display()
         );
 
-        // mmap and Metal initialization block; keep them off the runtime thread.
-        let strategy = self.strategy;
-        let load_dir = model_dir.clone();
-        let loaded = tokio::task::spawn_blocking(move || {
-            CandleEmbeddingService::open(&load_dir, identity).map(|s| s.with_strategy(strategy))
-        })
-        .await
-        .unwrap_or_else(|e| {
-            Err(AppError::InternalError(format!(
-                "Embedding model load task failed: {e}"
-            )))
-        });
+        let loaded =
+            LlamaEmbeddingService::start(Arc::clone(&self.starter), &active_model, identity).await;
 
         match loaded {
             Ok(service) => {
-                self.index
-                    .bind_first(&service, self.strategy.is_late_chunking())
-                    .await
-                    .map_err(|e| {
-                        tracing::error!(error = %e, "Failed to initialize embedding search index");
-                        AppError::ModelLoadFailed(e.to_string())
-                    })?;
+                self.index.bind_first(&service).await.map_err(|e| {
+                    tracing::error!(error = %e, "Failed to initialize embedding search index");
+                    AppError::ModelLoadFailed(e.to_string())
+                })?;
                 let actual_dim = service.dimension();
 
                 tracing::info!(
-                    "Successfully loaded active embedding model: {} ({}-dim, {:?})",
+                    "Successfully loaded active embedding model: {} ({}-dim, {})",
                     active_model.model_name(),
                     actual_dim,
-                    service.architecture()
+                    service.facts().architecture
                 );
                 Ok(Some(Arc::new(service) as Arc<dyn EmbeddingPort>))
             }

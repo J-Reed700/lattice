@@ -22,6 +22,8 @@ pub const SOURCE_HISTORY_ENTRY: &str = "sources/history.json";
 pub const SOURCE_TRUST_ENTRY: &str = "sources/trust.json";
 /// One `<table>.json` entry per program-scoped evidence table.
 pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
+/// One `<table>.json` entry per lesson claim review table.
+pub const REVIEW_TABLE_PREFIX: &str = "curriculum/reviews/";
 /// One `<canvas-id>.json` entry per canvas, with its snapshots.
 pub const CANVAS_PREFIX: &str = "program/canvases/";
 /// One `<sha256(version id)>.txt` entry per full source body.
@@ -46,6 +48,7 @@ pub enum PackSection {
     EvidenceTables,
     Canvases,
     SourceBodies,
+    ReviewTables,
 }
 
 /// A fixed entry, or a folder of entries named `<stem><suffix>` directly
@@ -126,6 +129,12 @@ pub const SECTIONS: &[SectionDescriptor] = &[
         SOURCE_BODY_PREFIX,
         ".txt",
         Kind::SourceBody,
+    ),
+    folder(
+        S::ReviewTables,
+        REVIEW_TABLE_PREFIX,
+        ".json",
+        Kind::Curriculum,
     ),
 ];
 

@@ -2,14 +2,19 @@
 //!
 //! Run:
 //! ```text
+//! LATTICE_EMBED_GGUF=/path/to/Qwen3-Embedding-0.6B-f16.gguf \
 //! cargo run --example retrieval_eval -- \
 //!     [--mode embedding|production] [--top-k N] \
-//!     [--strategy chunk-first|late-chunking] \
-//!     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] [--sparse on|off|auto] \
+//!     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] \
 //!     [--rrf-k K] [--weights VECTOR,KEYWORD] \
 //!     [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
-//!     EMBEDDING_DIR DATASET_JSON [RERANKER_DIR]
+//!     DATASET_JSON [RERANKER_DIR]
 //! ```
+//!
+//! The embedding model runs as the app runs it: a llama-server this process
+//! starts for `LATTICE_EMBED_GGUF` (with its `tokenizer.json` beside it), with
+//! the flags the app's sidecar gets. `LATTICE_LLAMA_SERVER` names the binary;
+//! without it, the bundled build in `binaries/` is used.
 //!
 //! `--mode embedding` (the default) keeps the historical behaviour: rank documents by the
 //! maximum passage cosine of the raw embedding model, optionally reranking the top-48 pool.
@@ -25,23 +30,21 @@
 //! its own column. `--rerank-depth` sets how many fused candidates the cross-encoder scores and
 //! widens the pool to at least that many.
 //!
-//! `--strategy`, `--compression` and `--sparse` select the retrieval features under
-//! measurement. `--strategy` applies to both modes; the other two are production-only,
-//! because they describe the index and the fusion, neither of which exists in embedding
-//! mode. Every default reproduces the historical behaviour exactly.
+//! `--compression` selects the stored vector layout under measurement. It is
+//! production-only, because it describes the index, which embedding mode does not build.
+//! Every default reproduces the historical behaviour exactly.
 
 mod production;
 
-use lattice::features::embedding::candle_service::CandleEmbeddingService;
-use lattice::features::embedding::late_chunking::EmbeddingStrategy;
+use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
 use lattice::features::search::engine::reranker::{blend_rerank_scores, load_reranker, Reranker};
 use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
+use lattice::interfaces::di::modules::embedding::standalone::open_gguf;
 use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
-    ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -109,37 +112,24 @@ impl CompressionSpec {
     }
 }
 
-/// Whether the learned sparse branch joins the fusion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SparseSetting {
-    On,
-    Off,
-    /// On exactly when the loaded checkpoint has a sparse head. A model without
-    /// one is not an error here — the branch simply never starts.
-    Auto,
-}
-
 #[derive(Debug, PartialEq)]
 pub struct Args {
     pub mode: Mode,
     pub top_k: usize,
-    pub strategy: EmbeddingStrategy,
     pub compression: CompressionSpec,
-    pub sparse: SparseSetting,
     pub fusion: FusionSpec,
     pub fts_header: production::FtsHeader,
     pub rerank_depth: Option<usize>,
-    pub embedding_dir: PathBuf,
     pub dataset: PathBuf,
     pub reranker: Option<PathBuf>,
 }
 
-const USAGE: &str = "usage: retrieval_eval [--mode embedding|production] [--top-k N] \
-                     [--strategy chunk-first|late-chunking] \
-                     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] [--sparse on|off|auto] \
+const USAGE: &str = "usage: LATTICE_EMBED_GGUF=MODEL_GGUF retrieval_eval \
+                     [--mode embedding|production] [--top-k N] \
+                     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] \
                      [--rrf-k K] [--weights VECTOR,KEYWORD] \
                      [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
-                     EMBEDDING_DIR DATASET_JSON [RERANKER_DIR]";
+                     DATASET_JSON [RERANKER_DIR]";
 
 /// How the production hybrid path fuses its vector and BM25 branches.
 ///
@@ -185,14 +175,6 @@ const DEFAULT_TOP_K: usize = 50;
 /// Extra room the chat retrieval path leaves for neighbouring-section evidence.
 const NEIGHBOR_HEADROOM: usize = 8;
 
-/// Row label for an embedding strategy. Snake case, like every other run field.
-pub fn strategy_label(strategy: EmbeddingStrategy) -> &'static str {
-    match strategy {
-        EmbeddingStrategy::ChunkFirst => "chunk_first",
-        EmbeddingStrategy::LateChunking => "late_chunking",
-    }
-}
-
 /// Parse a `--compression` token. `i8` alone quantizes at the model's own
 /// dimension; `mrl<DIMS>` truncates and keeps `f32`; `mrl<DIMS>-i8` does both.
 pub fn parse_compression(value: &str) -> Result<CompressionSpec, String> {
@@ -231,11 +213,9 @@ pub fn parse_compression(value: &str) -> Result<CompressionSpec, String> {
 pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
     let mut mode = Mode::Embedding;
     let mut top_k = DEFAULT_TOP_K;
-    let mut strategy = EmbeddingStrategy::ChunkFirst;
     // Left unset until the whole line is read: `--mode` may follow the flag it
     // constrains, so "production only" cannot be decided inside the loop.
     let mut compression: Option<CompressionSpec> = None;
-    let mut sparse: Option<SparseSetting> = None;
     let mut rrf_k: Option<f32> = None;
     let mut weights: Option<(f32, f32)> = None;
     let mut fts_concat: Option<bool> = None;
@@ -275,20 +255,6 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
                 if top_k == 0 {
                     return Err("--top-k must be greater than zero".to_owned());
                 }
-            }
-            "--strategy" => {
-                let value = inline
-                    .or_else(|| remaining.next())
-                    .ok_or_else(|| "--strategy requires a value".to_owned())?;
-                strategy = match value.as_str() {
-                    "chunk-first" => EmbeddingStrategy::ChunkFirst,
-                    "late-chunking" => EmbeddingStrategy::LateChunking,
-                    other => {
-                        return Err(format!(
-                            "unknown strategy '{other}'; expected 'chunk-first' or 'late-chunking'"
-                        ))
-                    }
-                };
             }
             "--compression" => {
                 let value = inline
@@ -352,39 +318,21 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
                 }
                 rerank_depth = Some(parsed);
             }
-            "--sparse" => {
-                let value = inline
-                    .or_else(|| remaining.next())
-                    .ok_or_else(|| "--sparse requires a value".to_owned())?;
-                sparse = Some(match value.as_str() {
-                    "on" => SparseSetting::On,
-                    "off" => SparseSetting::Off,
-                    "auto" => SparseSetting::Auto,
-                    other => {
-                        return Err(format!(
-                            "unknown sparse setting '{other}'; expected 'on', 'off', or 'auto'"
-                        ))
-                    }
-                });
-            }
             other if other.starts_with("--") => {
                 return Err(format!("unknown flag '{other}'\n{USAGE}"))
             }
             _ => positional.push(argument),
         }
     }
-    if !(2..=3).contains(&positional.len()) {
+    if !(1..=2).contains(&positional.len()) {
         return Err(USAGE.to_owned());
     }
-    // Both describe the index and the fusion, and embedding mode builds
+    // These describe the index and the fusion, and embedding mode builds
     // neither. Silently ignoring them would report a run the flags did not ask
     // for under a row that claims they were set.
     if mode == Mode::Embedding {
         if compression.is_some() {
             return Err("--compression is only available in --mode production".to_owned());
-        }
-        if sparse.is_some() {
-            return Err("--sparse is only available in --mode production".to_owned());
         }
         if rrf_k.is_some() || weights.is_some() {
             return Err("--rrf-k and --weights are only available in --mode production".to_owned());
@@ -402,7 +350,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
     if fts_concat == Some(true) && header_weight.is_some() {
         return Err("--fts-header-weight has no effect with --fts-header concat".to_owned());
     }
-    if rerank_depth.is_some() && positional.len() < 3 {
+    if rerank_depth.is_some() && positional.len() < 2 {
         return Err("--rerank-depth needs a RERANKER_DIR".to_owned());
     }
     let fts_header = if fts_concat == Some(true) {
@@ -416,14 +364,11 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
     let default_fusion = FusionSpec::default();
     let (vector_weight, keyword_weight) =
         weights.unwrap_or((default_fusion.vector_weight, default_fusion.keyword_weight));
-    let embedding_dir = positional.first().ok_or_else(|| USAGE.to_owned())?.clone();
-    let dataset = positional.get(1).ok_or_else(|| USAGE.to_owned())?.clone();
+    let dataset = positional.first().ok_or_else(|| USAGE.to_owned())?.clone();
     Ok(Args {
         mode,
         top_k,
-        strategy,
         compression: compression.unwrap_or(CompressionSpec::None),
-        sparse: sparse.unwrap_or(SparseSetting::Auto),
         fusion: FusionSpec {
             rrf_k: rrf_k.unwrap_or(default_fusion.rrf_k),
             vector_weight,
@@ -431,9 +376,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
         },
         fts_header,
         rerank_depth,
-        embedding_dir: PathBuf::from(embedding_dir),
         dataset: PathBuf::from(dataset),
-        reranker: positional.get(2).map(PathBuf::from),
+        reranker: positional.get(1).map(PathBuf::from),
     })
 }
 
@@ -470,45 +414,34 @@ pub fn documents_in_order<'a, I: IntoIterator<Item = (&'a str, f32)>>(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args(std::env::args().skip(1))?;
     let dataset: Dataset = serde_json::from_slice(&std::fs::read(&args.dataset)?)?;
-    // `with_strategy(ChunkFirst)` is the constructor's own default, so the
-    // chunk-first path is untouched; late chunking also changes
-    // `model_identity()`, which is what keeps the two vector spaces apart.
-    let model = Arc::new(
-        CandleEmbeddingService::open_unregistered(&args.embedding_dir)?
-            .with_strategy(args.strategy),
-    );
+    let gguf = std::env::var_os("LATTICE_EMBED_GGUF")
+        .ok_or_else(|| format!("set LATTICE_EMBED_GGUF to the embedding GGUF\n{USAGE}"))?;
+    let gguf = Path::new(&gguf);
+    let model = Arc::new(open_gguf(gguf).await?);
     let reranker: Option<Arc<dyn Reranker>> = match &args.reranker {
         Some(path) => Some(load_reranker(path).await?),
         None => None,
     };
     match args.mode {
-        Mode::Embedding => run_embedding(&model, &dataset, reranker.as_ref(), args.strategy).await,
-        Mode::Production => run_production(model, &dataset, &args, reranker).await,
+        Mode::Embedding => run_embedding(&model, &dataset, reranker.as_ref()).await,
+        Mode::Production => {
+            // The splitter's tokenizer, which sits beside the GGUF.
+            let tokenizer = gguf.with_file_name("tokenizer.json");
+            run_production(model, &tokenizer, &dataset, &args, reranker).await
+        }
     }
 }
 
 async fn run_embedding(
-    model: &CandleEmbeddingService,
+    model: &LlamaEmbeddingService,
     dataset: &Dataset,
     reranker: Option<&Arc<dyn Reranker>>,
-    strategy: EmbeddingStrategy,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let late_chunking = EmbeddingPort::uses_late_chunking(model);
     let mut passages = Vec::new();
     for doc in &dataset.documents {
         let parts = model.split_text(&doc.text, "")?;
         let inputs: Vec<String> = parts.iter().map(|part| part.text.clone()).collect();
-        let embeddings = if late_chunking {
-            // The passages are byte ranges of the document itself and there is
-            // no context prefix in this mode, so the whole document is the
-            // span: one forward pass, pooled per passage. `embed_span_chunks`
-            // drops back to per-chunk embedding when the span does not fit the
-            // model window, which is the documented behaviour, not a failure.
-            let ranges: Vec<Range<usize>> = parts.iter().map(|part| part.start..part.end).collect();
-            EmbeddingPort::embed_span_chunks(model, &doc.text, &ranges).await?
-        } else {
-            model.embed_batch(&inputs).await?
-        };
+        let embeddings = model.embed_batch(&inputs).await?;
         for (text, vector) in inputs.into_iter().zip(embeddings) {
             passages.push((doc.id.clone(), text, vector));
         }
@@ -593,7 +526,6 @@ async fn run_embedding(
             "latency_ms": start.elapsed().as_secs_f64()*1000.0,
             "model_identity": model.model_identity(),
             "reranked": reranker.is_some(),
-            "embedding_strategy": strategy_label(strategy),
         });
         println!("{}", serde_json::to_string(&row)?);
     }
@@ -601,38 +533,21 @@ async fn run_embedding(
 }
 
 async fn run_production(
-    model: Arc<CandleEmbeddingService>,
+    model: Arc<LlamaEmbeddingService>,
+    tokenizer: &Path,
     dataset: &Dataset,
     args: &Args,
     reranker: Option<Arc<dyn Reranker>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let compression = args.compression.resolve(EmbeddingPort::dimension(&*model));
-    // `auto` is the honest default: a checkpoint without a sparse head simply
-    // keeps two-way fusion. `on` is a claim about the model, so it fails loudly
-    // rather than reporting a run whose sparse row field would be a lie.
-    let sparse_enabled = match args.sparse {
-        SparseSetting::On => {
-            if !EmbeddingPort::supports_sparse(&*model) {
-                return Err(format!(
-                    "--sparse on needs an embedding model with a sparse head; {} has none",
-                    model.model_identity()
-                )
-                .into());
-            }
-            true
-        }
-        SparseSetting::Off => false,
-        SparseSetting::Auto => EmbeddingPort::supports_sparse(&*model),
-    };
     let index = production::ProductionIndex::build(
         Arc::clone(&model),
-        &args.embedding_dir,
+        tokenizer,
         &dataset.documents,
         reranker,
         args.top_k,
         production::IndexOptions {
             compression: compression.clone(),
-            sparse_enabled,
             rrf_k: args.fusion.rrf_k,
             vector_weight: args.fusion.vector_weight,
             keyword_weight: args.fusion.keyword_weight,
@@ -680,9 +595,7 @@ async fn run_production(
             "latency_ms": latency_ms,
             "model_identity": model.model_identity(),
             "reranked": reranked,
-            "embedding_strategy": strategy_label(args.strategy),
             "compression": compression_token,
-            "sparse": sparse_enabled,
             "rrf_k": args.fusion.rrf_k,
             "fusion_weights": [args.fusion.vector_weight, args.fusion.keyword_weight],
             "fts_header": args.fts_header.label(),
@@ -707,16 +620,13 @@ mod tests {
 
     #[test]
     fn existing_positional_invocations_keep_working() {
-        let parsed = args(&["/models/minilm", "starter.json"]).expect("positional args parse");
+        let parsed = args(&["starter.json"]).expect("positional args parse");
         assert_eq!(parsed.mode, Mode::Embedding);
-        assert_eq!(parsed.embedding_dir, PathBuf::from("/models/minilm"));
         assert_eq!(parsed.dataset, PathBuf::from("starter.json"));
         assert_eq!(parsed.reranker, None);
         assert_eq!(parsed.top_k, DEFAULT_TOP_K);
         // Every new knob defaults to the behaviour that existed before it.
-        assert_eq!(parsed.strategy, EmbeddingStrategy::ChunkFirst);
         assert_eq!(parsed.compression, CompressionSpec::None);
-        assert_eq!(parsed.sparse, SparseSetting::Auto);
         assert_eq!(parsed.fusion, FusionSpec::default());
         assert_eq!(
             parsed.fts_header,
@@ -726,78 +636,47 @@ mod tests {
         );
         assert_eq!(parsed.rerank_depth, None);
 
-        let with_reranker =
-            args(&["/models/minilm", "starter.json", "/models/rr"]).expect("reranker arg parses");
+        let with_reranker = args(&["starter.json", "/models/rr"]).expect("reranker arg parses");
         assert_eq!(with_reranker.reranker, Some(PathBuf::from("/models/rr")));
     }
 
     #[test]
     fn mode_and_top_k_accept_both_spellings() {
         for raw in [
-            vec!["--mode", "production", "--top-k", "12", "/m", "d.json"],
-            vec!["--mode=production", "--top-k=12", "/m", "d.json"],
+            vec!["--mode", "production", "--top-k", "12", "d.json"],
+            vec!["--mode=production", "--top-k=12", "d.json"],
         ] {
             let parsed = args(&raw).expect("flag spelling parses");
             assert_eq!(parsed.mode, Mode::Production);
             assert_eq!(parsed.top_k, 12);
-            assert_eq!(parsed.embedding_dir, PathBuf::from("/m"));
         }
     }
 
     #[test]
     fn bad_flags_and_arities_are_rejected() {
         for raw in [
-            vec!["--mode", "hybrid", "/m", "d.json"],
-            vec!["--top-k", "0", "/m", "d.json"],
-            vec!["--top-k", "many", "/m", "d.json"],
-            vec!["--unknown", "/m", "d.json"],
-            vec!["/m"],
-            vec!["/m", "d.json", "/rr", "extra"],
-            vec!["--strategy", "late", "/m", "d.json"],
-            vec![
-                "--mode",
-                "production",
-                "--compression",
-                "mrl",
-                "/m",
-                "d.json",
-            ],
-            vec![
-                "--mode",
-                "production",
-                "--compression",
-                "mrl0",
-                "/m",
-                "d.json",
-            ],
-            vec![
-                "--mode",
-                "production",
-                "--compression",
-                "int8",
-                "/m",
-                "d.json",
-            ],
-            vec!["--mode", "production", "--sparse", "yes", "/m", "d.json"],
+            vec!["--mode", "hybrid", "d.json"],
+            vec!["--top-k", "0", "d.json"],
+            vec!["--top-k", "many", "d.json"],
+            vec!["--unknown", "d.json"],
+            vec![],
+            vec!["d.json", "/rr", "extra"],
+            vec!["--strategy", "late-chunking", "d.json"],
+            vec!["--mode", "production", "--sparse", "off", "d.json"],
+            vec!["--mode", "production", "--compression", "mrl", "d.json"],
+            vec!["--mode", "production", "--compression", "mrl0", "d.json"],
+            vec!["--mode", "production", "--compression", "int8", "d.json"],
             // The index and the fusion are production-only, so silently ignoring
             // these in embedding mode would report a run nobody asked for.
-            vec!["--compression", "i8", "/m", "d.json"],
-            vec!["--sparse", "off", "/m", "d.json"],
-            vec!["--rrf-k", "10", "/m", "d.json"],
-            vec!["--weights", "1,1", "/m", "d.json"],
-            vec!["--mode", "production", "--rrf-k", "0", "/m", "d.json"],
-            vec!["--mode", "production", "--weights", "0,0", "/m", "d.json"],
-            vec!["--mode", "production", "--weights", "0.7", "/m", "d.json"],
-            vec!["--fts-header", "concat", "/m", "d.json"],
-            vec!["--rerank-depth", "48", "/m", "d.json", "/rr"],
-            vec![
-                "--mode",
-                "production",
-                "--fts-header",
-                "both",
-                "/m",
-                "d.json",
-            ],
+            vec!["--compression", "i8", "d.json"],
+            vec!["--rrf-k", "10", "d.json"],
+            vec!["--weights", "1,1", "d.json"],
+            vec!["--mode", "production", "--rrf-k", "0", "d.json"],
+            vec!["--mode", "production", "--weights", "0,0", "d.json"],
+            vec!["--mode", "production", "--weights", "0.7", "d.json"],
+            vec!["--fts-header", "concat", "d.json"],
+            vec!["--rerank-depth", "48", "d.json", "/rr"],
+            vec!["--mode", "production", "--fts-header", "both", "d.json"],
             vec![
                 "--mode",
                 "production",
@@ -805,7 +684,6 @@ mod tests {
                 "concat",
                 "--fts-header-weight",
                 "0.5",
-                "/m",
                 "d.json",
             ],
             vec![
@@ -813,7 +691,6 @@ mod tests {
                 "production",
                 "--fts-header-weight",
                 "-1",
-                "/m",
                 "d.json",
             ],
             vec![
@@ -821,42 +698,28 @@ mod tests {
                 "production",
                 "--rerank-depth",
                 "0",
-                "/m",
                 "d.json",
                 "/rr",
             ],
             // A depth with nothing to rerank with would describe a run that did not happen.
-            vec![
-                "--mode",
-                "production",
-                "--rerank-depth",
-                "48",
-                "/m",
-                "d.json",
-            ],
+            vec!["--mode", "production", "--rerank-depth", "48", "d.json"],
             // Order must not matter: `--mode` may follow the flag it constrains.
-            vec!["--sparse", "off", "--mode", "embedding", "/m", "d.json"],
+            vec!["--compression", "i8", "--mode", "embedding", "d.json"],
         ] {
             assert!(args(&raw).is_err(), "expected {raw:?} to be rejected");
         }
     }
 
     #[test]
-    fn strategy_and_production_only_flags_parse() {
+    fn production_only_flags_parse() {
         let parsed = args(&[
             "--mode",
             "production",
-            "--strategy",
-            "late-chunking",
             "--compression",
             "mrl256-i8",
-            "--sparse",
-            "on",
-            "/m",
             "d.json",
         ])
         .expect("production flags parse");
-        assert_eq!(parsed.strategy, EmbeddingStrategy::LateChunking);
         assert_eq!(
             parsed.compression,
             CompressionSpec::Truncated {
@@ -864,13 +727,6 @@ mod tests {
                 quantization: VectorQuantization::I8,
             }
         );
-        assert_eq!(parsed.sparse, SparseSetting::On);
-
-        // `--strategy` is the one new flag embedding mode also honours.
-        let embedding = args(&["--strategy=late-chunking", "/m", "d.json"])
-            .expect("strategy parses in embedding mode");
-        assert_eq!(embedding.strategy, EmbeddingStrategy::LateChunking);
-        assert_eq!(embedding.mode, Mode::Embedding);
     }
 
     #[test]
@@ -907,21 +763,11 @@ mod tests {
     }
 
     #[test]
-    fn strategy_labels_are_the_row_spellings() {
-        assert_eq!(strategy_label(EmbeddingStrategy::ChunkFirst), "chunk_first");
-        assert_eq!(
-            strategy_label(EmbeddingStrategy::LateChunking),
-            "late_chunking"
-        );
-    }
-
-    #[test]
     fn fusion_flags_parse_in_production_mode() {
         let parsed = args(&[
             "--mode=production",
             "--rrf-k=10",
             "--weights=1, 1",
-            "/m",
             "d.json",
         ])
         .expect("fusion flags parse");
@@ -941,7 +787,6 @@ mod tests {
             "--mode=production",
             "--fts-header-weight=0.5",
             "--rerank-depth=100",
-            "/m",
             "d.json",
             "/rr",
         ])
@@ -952,8 +797,8 @@ mod tests {
         );
         assert_eq!(parsed.rerank_depth, Some(100));
 
-        let concat = args(&["--mode=production", "--fts-header=concat", "/m", "d.json"])
-            .expect("concat parses");
+        let concat =
+            args(&["--mode=production", "--fts-header=concat", "d.json"]).expect("concat parses");
         assert_eq!(concat.fts_header, production::FtsHeader::Concat);
     }
 

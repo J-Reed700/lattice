@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::llm::engine::gguf_metadata::read_model_info;
 
 /// Process-wide registry of live sidecars.
 ///
@@ -275,16 +276,14 @@ impl SidecarRegistry {
         gpu_bytes_where(&self.running_servers(), |running| running != config)
     }
 
-    /// Whether a server for `config` fits beside the servers running now and
-    /// the `in_app_bytes` models inside the app hold on its device. See
+    /// Whether a server for `config` fits beside the servers running now. See
     /// [`admission`].
     pub fn admission(
         &self,
         config: &SidecarConfig,
         capabilities: &SystemCapabilities,
-        in_app_bytes: u64,
     ) -> Admission {
-        admission(&self.running_servers(), config, capabilities, in_app_bytes)
+        admission(&self.running_servers(), config, capabilities)
     }
 
     fn running_servers(&self) -> Vec<RunningServer> {
@@ -337,9 +336,8 @@ pub(super) fn gpu_bytes_where(
         .fold(0, u64::saturating_add)
 }
 
-/// Whether a server for `config` fits beside `servers` and the
-/// `in_app_bytes` models inside the app hold on its device, by the memory
-/// hint's arithmetic ([`memory_hint`]).
+/// Whether a server for `config` fits beside `servers`, by the memory hint's
+/// arithmetic ([`memory_hint`]). The embedding model is one of `servers`.
 ///
 /// It only decides whether idle models are unloaded to make room. A server
 /// that does not fit still starts, at the window the user chose; if it will
@@ -349,7 +347,6 @@ pub(super) fn admission(
     servers: &[RunningServer],
     config: &SidecarConfig,
     capabilities: &SystemCapabilities,
-    in_app_bytes: u64,
 ) -> Admission {
     if servers.iter().any(|server| server.config == *config) {
         return Admission::Shared;
@@ -357,8 +354,9 @@ pub(super) fn admission(
     if config.n_gpu_layers == 0 {
         return Admission::NoOffload;
     }
-    let held = gpu_bytes_where(servers, |running| running != config).saturating_add(in_app_bytes);
-    let Some(hint) = memory_hint(config, capabilities, held) else {
+    let held = gpu_bytes_where(servers, |running| running != config);
+    let info = read_model_info(&config.model_path);
+    let Some(hint) = memory_hint(config, capabilities, held, info.as_ref()) else {
         return Admission::Unmetered;
     };
     let (needed, spare) = (hint.needed, hint.room.spare());

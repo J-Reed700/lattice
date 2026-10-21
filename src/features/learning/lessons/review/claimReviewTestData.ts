@@ -1,4 +1,4 @@
-import type { ClaimEventDto, ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
+import type { ClaimEventDto, ClaimReviewItemDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
 
 /** Shared by the claim review tests: one card per verdict, overridable. */
 export const STOPPED_AT = 1_760_000_010_000;
@@ -53,6 +53,23 @@ export function review(claims: ClaimReviewItemDto[], overrides: Partial<LessonCl
     lessonId: 'lesson-1', programId: 'program-1', state: 'needs_review', revision: 7, pass: 3, stopReason: null, changedSinceStop: false,
     counts: { verified: 12, confirmed: 0, generalKnowledge: 0, queued: claims.length, open: 0, removed: 0 },
     claims,
+    teachingFindings: [],
+    ...overrides,
+  };
+}
+
+/** The finding that used to fail a two-hour lesson job, set aside instead. */
+export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): TeachingFindingDto {
+  return {
+    findingKey: 'teaching:section-2',
+    kind: 'teaching',
+    site: 'section',
+    unitIndex: 2,
+    unitTitle: 'Section 3: Returning results',
+    note: 'Section 3 (candidate blocks-2): the example shows "result": "4" where the code returns the number 4.',
+    passage: 'The function returns the sum, so the response reads {"result": "4"}.',
+    repairs: 2,
+    state: 'waiting',
     ...overrides,
   };
 }
