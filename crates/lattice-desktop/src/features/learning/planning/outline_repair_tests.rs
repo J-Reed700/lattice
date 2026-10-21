@@ -595,3 +595,152 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
     assert_eq!(llm.prompts.lock().unwrap().len(), 5);
     Ok(())
 }
+
+/// Module 1's correction with module 2's title: the outline refuses it.
+fn clashing_correction(initial: &Value) -> Value {
+    let mut clashing = module_with_objective(initial, 0, "Measure the first comparison.");
+    clashing["title"] = initial["modules"][1]["title"].clone();
+    json!({"module":clashing})
+}
+
+#[tokio::test]
+async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_saved() -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        clashing_correction(&initial),
+        // Asked again with the clash named, the model keeps its own title.
+        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    assert_eq!(review.repair_passes, 1);
+    assert_eq!(program.modules[0].title, initial["modules"][0]["title"]);
+    assert_eq!(
+        program.modules[0].lessons[0].objective,
+        "Measure the first comparison."
+    );
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 5);
+    // The second answer was asked for on the same module task.
+    assert_eq!(payload(&prompts[3])["moduleIndex"], 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    let initial = candidate();
+    let mut second = initial["modules"][1].clone();
+    second["lessons"][0]["objective"] = json!("Measure the second comparison.");
+    let reason = "The project brief does not say how the comparison is measured.";
+    let llm = model(vec![
+        initial.clone(),
+        findings(vec![
+            plan_finding("/modules/0", "The comparison needs evidence.", reason),
+            plan_finding("/modules/1", "The comparison needs evidence.", reason),
+        ]),
+        // Module 1's correction repeats module 2's title, and again when told.
+        clashing_correction(&initial),
+        clashing_correction(&initial),
+        // Module 2 is still repaired in the same pass.
+        json!({"module":second}),
+        verdicts(
+            &[("finding-1", "unresolved"), ("finding-2", "resolved")],
+            vec![],
+        ),
+        // The next pass takes module 1 up again, and its correction is saved.
+        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    assert_eq!(review.repair_passes, 2);
+    assert_eq!(program.modules[0].title, initial["modules"][0]["title"]);
+    assert_eq!(
+        program.modules[0].lessons[0].objective,
+        "Measure the first comparison."
+    );
+    assert_eq!(
+        program.modules[1].lessons[0].objective,
+        "Measure the second comparison."
+    );
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 8);
+    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
+    assert_eq!(
+        payload(&prompts[6])["findings"][0]["instruction"],
+        PLAN_SMALLEST
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pass_whose_only_correction_is_unusable_says_why_and_keeps_the_findings() -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        clashing_correction(&initial),
+        clashing_correction(&initial),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::NeedsRepair,
+        "{}",
+        review.note
+    );
+    assert!(!review.note.contains("stopped"), "{}", review.note);
+    assert!(!review.note.contains("Try again"), "{}", review.note);
+    assert!(
+        review
+            .note
+            .contains("no usable correction. Module 1: Modules 1 and 2 share the title"),
+        "{}",
+        review.note
+    );
+    assert_eq!(review.issues.len(), 1);
+    assert!(!review.issues[0].exhausted, "the finding waits for Repair");
+    assert_eq!(program.modules[0].title, initial["modules"][0]["title"]);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 4);
+    Ok(())
+}
