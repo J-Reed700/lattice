@@ -1,5 +1,6 @@
 //! Durable, subject-neutral Learning Studio program workflow.
 
+pub mod activity;
 pub mod assessment;
 pub mod canvas;
 pub mod dto;

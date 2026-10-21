@@ -44,6 +44,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+mod activity;
 mod first;
 mod status;
 pub use status::CourseIndexStatusDto;

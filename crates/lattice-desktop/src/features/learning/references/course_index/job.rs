@@ -76,7 +76,7 @@ impl Activity {
         u32::try_from(self.index_embedded().saturating_mul(100) / self.index_total()).unwrap_or(100)
     }
 
-    fn message(&self) -> String {
+    pub(super) fn message(&self) -> String {
         match self.phase {
             Phase::Starting => "Checking the course's references".into(),
             Phase::Waiting => "Waiting for a lesson that is indexing this course".into(),

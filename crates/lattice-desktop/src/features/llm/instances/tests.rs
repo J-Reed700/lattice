@@ -142,6 +142,7 @@ async fn acquire_local(
                 epoch: instances.epoch(),
                 holder,
                 local: Some(local),
+                role: ModelRole::Chat,
             },
             budget,
             || async { Ok(on_gpu(&local.name, unloaded)) },
@@ -269,6 +270,7 @@ async fn no_room_beside_running_work_still_starts_and_unloads_nothing() {
                 epoch: instances.epoch(),
                 holder: Some(chat_holder("Other chat")),
                 local: Some(&wanted),
+                role: ModelRole::Chat,
             },
             &FakeBudget::always(short()),
             || async {
@@ -318,6 +320,7 @@ async fn admission_is_skipped_when_the_gpu_reports_no_memory_and_for_remote_mode
                 epoch: instances.epoch(),
                 holder: None,
                 local: None,
+                role: ModelRole::Chat,
             },
             &never,
             || async {
@@ -406,6 +409,7 @@ async fn a_degraded_start_is_carried_with_the_model() {
                 epoch: instances.epoch(),
                 holder: None,
                 local: Some(&local),
+                role: ModelRole::Chat,
             },
             &FakeBudget::always(fits()),
             || async {
@@ -821,6 +825,7 @@ async fn start_metered(
                 epoch: instances.epoch(),
                 holder: Some(chat_holder(title)),
                 local: Some(local),
+                role: ModelRole::Chat,
             },
             budget,
             || async {

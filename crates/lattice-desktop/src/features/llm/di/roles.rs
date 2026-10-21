@@ -522,6 +522,7 @@ impl RoleModels {
                     epoch,
                     holder: want.holder.clone(),
                     local: local.as_ref(),
+                    role,
                 },
                 self.budget.as_ref(),
                 || async {

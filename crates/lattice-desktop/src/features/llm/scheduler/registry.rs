@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use serde_json::Value;
+use tokio::sync::watch;
 
 use super::{BackendCapacity, InferenceScheduler};
 
@@ -36,12 +37,38 @@ enum BackendKey {
 ///
 /// The container owns one and every model load is handed it, so two roles on
 /// one backend queue in one place however they were loaded.
-#[derive(Default)]
 pub(crate) struct SchedulerRegistry {
     shared: Mutex<HashMap<BackendKey, Weak<InferenceScheduler>>>,
+    /// Moved by every scheduler this registry made, local ones included,
+    /// whenever its queue changes.
+    changed: Arc<watch::Sender<u64>>,
+}
+
+impl Default for SchedulerRegistry {
+    fn default() -> Self {
+        Self {
+            shared: Mutex::default(),
+            changed: Arc::new(watch::channel(0).0),
+        }
+    }
 }
 
 impl SchedulerRegistry {
+    /// Moves whenever a request joins, leaves or is admitted on any backend.
+    pub(crate) fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    /// A scheduler that tells this registry's watchers of its changes: one
+    /// shared here, or one a local server's process carries.
+    pub(crate) fn scheduler(
+        &self,
+        label: impl Into<String>,
+        capacity: BackendCapacity,
+    ) -> InferenceScheduler {
+        InferenceScheduler::observed(label, capacity, Arc::clone(&self.changed))
+    }
+
     fn live(&self, key: &BackendKey) -> Option<Arc<InferenceScheduler>> {
         self.shared.lock().get(key).and_then(Weak::upgrade)
     }
@@ -65,7 +92,7 @@ impl SchedulerRegistry {
     /// up to its own `OLLAMA_NUM_PARALLEL`; `concurrency` mirrors what we allow it.
     pub(crate) fn ollama(&self, endpoint: &str, concurrency: usize) -> Arc<InferenceScheduler> {
         self.shared(BackendKey::Ollama(endpoint.to_owned()), || {
-            InferenceScheduler::new(
+            self.scheduler(
                 format!("ollama {endpoint}"),
                 BackendCapacity::concurrent(concurrency),
             )
@@ -75,7 +102,7 @@ impl SchedulerRegistry {
     /// The scheduler for one cloud provider.
     pub(crate) fn cloud(&self, provider: &str) -> Arc<InferenceScheduler> {
         self.shared(BackendKey::Cloud(provider.to_owned()), || {
-            InferenceScheduler::new(provider, BackendCapacity::concurrent(CLOUD_CONCURRENCY))
+            self.scheduler(provider, BackendCapacity::concurrent(CLOUD_CONCURRENCY))
         })
     }
 
@@ -113,7 +140,7 @@ impl SchedulerRegistry {
             "Remote llama.cpp scheduler sized"
         );
         let scheduler = self.shared(key, || {
-            InferenceScheduler::new(format!("llama.cpp {server_root}"), capacity)
+            self.scheduler(format!("llama.cpp {server_root}"), capacity)
         });
         let is_llama_server = scheduler.capacity().pins_slots;
         (scheduler, is_llama_server)

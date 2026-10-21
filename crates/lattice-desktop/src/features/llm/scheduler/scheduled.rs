@@ -21,7 +21,7 @@ use super::{
     TokenEstimator,
 };
 use lattice_core::application::ports::llm_port::{
-    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse, Pace,
+    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse, Pace, RequestLoad,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -317,6 +317,10 @@ impl LLMPort for ScheduledLlm {
 
     fn pace(&self) -> Option<Pace> {
         self.pace.pace()
+    }
+
+    fn requests(&self) -> Option<RequestLoad> {
+        Some(self.scheduler.load())
     }
 
     async fn count_tokens_exact(&self, text: &str) -> Result<usize> {

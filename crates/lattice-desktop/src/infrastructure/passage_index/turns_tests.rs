@@ -6,7 +6,7 @@ use super::build::{self, Embedding, Progress};
 use super::chunking::NewPassage;
 use super::store::PassageStore;
 use super::testing::{FakeEmbedder, DIM};
-use super::turns::{Claim, EmbedTurns, Priority, Running};
+use super::turns::{Claim, EmbedTurns, Priority, Running, Standing};
 use super::vectors::Vectors;
 use lattice_core::application::ports::EmbeddingPort;
 use parking_lot::Mutex;
@@ -55,6 +55,39 @@ fn an_index_waits_only_while_one_ranked_above_it_embeds() {
     assert!(turns.behind(&other));
     assert!(turns.behind(&course));
     assert!(!turns.behind(&open));
+}
+
+#[test]
+fn standing_names_the_indexes_each_run_waits_for() {
+    let turns = Arc::new(EmbedTurns::default());
+    let (course, open, other) = (dir("course"), dir("open-folder"), dir("other"));
+    let mut changes = turns.changes();
+    let _awaited = turns.claim(&course, Priority::Awaited);
+    let _opened = turns.claim(&open, Priority::Open);
+    assert!(changes.has_changed().unwrap());
+    changes.mark_unchanged();
+    let _course = turns.running(&course);
+    let _folder = turns.running(&open);
+    let _other = turns.running(&other);
+    assert!(changes.has_changed().unwrap());
+
+    assert_eq!(
+        turns.standing(),
+        vec![
+            Standing {
+                dir: course.clone(),
+                ahead: vec![],
+            },
+            Standing {
+                dir: open.clone(),
+                ahead: vec![course.clone()],
+            },
+            Standing {
+                dir: other,
+                ahead: vec![course, open],
+            },
+        ]
+    );
 }
 
 #[tokio::test]

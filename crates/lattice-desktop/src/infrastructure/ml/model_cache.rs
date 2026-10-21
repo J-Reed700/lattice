@@ -23,6 +23,22 @@ impl CachedModel for std::sync::Arc<dyn lattice_core::application::ports::Embedd
 pub(crate) struct ModelCache<K, V> {
     state: RwLock<State<K, V>>,
     load_lock: tokio::sync::Mutex<()>,
+    /// Moved when a load starts and when it ends, however it ends.
+    changed: tokio::sync::watch::Sender<u64>,
+}
+
+/// Moves the cache's change counter when it drops, so a load that was
+/// cancelled part-way still tells that it ended.
+struct Moved<'a>(&'a tokio::sync::watch::Sender<u64>);
+
+impl Drop for Moved<'_> {
+    fn drop(&mut self) {
+        moved(self.0);
+    }
+}
+
+fn moved(changed: &tokio::sync::watch::Sender<u64>) {
+    changed.send_modify(|count| *count = count.wrapping_add(1));
 }
 
 impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
@@ -33,7 +49,18 @@ impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
                 entry: None,
             }),
             load_lock: tokio::sync::Mutex::new(()),
+            changed: tokio::sync::watch::channel(0).0,
         }
+    }
+
+    /// Whether a load is running now.
+    pub(crate) fn is_loading(&self) -> bool {
+        self.load_lock.try_lock().is_err()
+    }
+
+    /// Moves when a load starts and when it ends.
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     /// Capture before reading configuration so an intervening invalidation
@@ -98,6 +125,8 @@ impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
             return Ok(Some(value));
         }
         self.evict_dead();
+        moved(&self.changed);
+        let _ended = Moved(&self.changed);
         let (value, cacheable) = load().await?;
         if let Some(value) = value.as_ref().filter(|_| cacheable) {
             let mut state = self.state.write().unwrap_or_else(|p| p.into_inner());

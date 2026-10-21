@@ -219,8 +219,7 @@ impl LlamaCppLlm {
     /// alone; one that does not answer it gets one slot and no pinning.
     pub(crate) async fn schedule(self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
-            llama_server_capacity, BackendCapacity, InferenceScheduler, ScheduledLlm,
-            ServerTokenizer,
+            llama_server_capacity, BackendCapacity, ScheduledLlm, ServerTokenizer,
         };
         let (scheduler, is_llama_server) = match &self.process {
             Some(process) => {
@@ -239,7 +238,7 @@ impl LlamaCppLlm {
                             }
                         };
                         tracing::info!(slots, window, "Local llama-server scheduler sized");
-                        InferenceScheduler::new(
+                        schedulers.scheduler(
                             format!("llama-server {}", self.server_root()),
                             BackendCapacity::llama_server(slots, window),
                         )

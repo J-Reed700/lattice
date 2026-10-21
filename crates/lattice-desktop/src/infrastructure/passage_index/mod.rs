@@ -54,5 +54,5 @@ pub use chunking::NewPassage;
 pub use live::{EmbedderSource, Engine, LiveIndex, LiveIndexes};
 pub use store::{Counts, Document, Passage, PassageStore};
 pub use text_search::{indexed_term, PassageTextSearch, WordMatch};
-pub use turns::{Claim, EmbedTurns, Priority};
+pub use turns::{Claim, EmbedTurns, Priority, Standing};
 pub use vectors::Vectors;

@@ -65,6 +65,14 @@ impl State {
     }
 }
 
+/// One index embedding now, and the indexes it waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Standing {
+    pub dir: PathBuf,
+    /// Indexes ranked above it that are embedding; empty when it goes on.
+    pub ahead: Vec<PathBuf>,
+}
+
 /// The turn order every index's embedding follows.
 pub struct EmbedTurns {
     state: Mutex<State>,
@@ -117,6 +125,37 @@ impl EmbedTurns {
     /// Whether a run over `dir` must wait before its next batch.
     pub fn behind(&self, dir: &Path) -> bool {
         self.state.lock().behind(dir)
+    }
+
+    /// Every index embedding now, each with the indexes ranked above it
+    /// that are embedding too: those it waits for at its next batch.
+    pub fn standing(&self) -> Vec<Standing> {
+        let state = self.state.lock();
+        let mut standing: Vec<Standing> = state
+            .running
+            .keys()
+            .map(|dir| {
+                let own = state.rank(dir);
+                let mut ahead: Vec<PathBuf> = state
+                    .running
+                    .keys()
+                    .filter(|other| *other != dir && state.rank(other) > own)
+                    .cloned()
+                    .collect();
+                ahead.sort();
+                Standing {
+                    dir: dir.clone(),
+                    ahead,
+                }
+            })
+            .collect();
+        standing.sort_by(|a, b| a.dir.cmp(&b.dir));
+        standing
+    }
+
+    /// Moves on every claim and ticket taken or given back.
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     /// Waits until no index ranked above `dir` is embedding. `false` when

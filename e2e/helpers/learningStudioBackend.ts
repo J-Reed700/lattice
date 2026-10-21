@@ -1111,6 +1111,7 @@ export async function installLearningStudioBackend(page: Page) {
       list_conversations: () => ({ conversations: [], total: 0 }),
       get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: "idle", paused: false, failures: [] }),
       list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
       get_indexed_folders: () => [],
       list_custom_collections: () => [],
       list_clusters: () => [],

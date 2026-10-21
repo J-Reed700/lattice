@@ -10,6 +10,7 @@ export const COMMAND_PLUGINS = {
   accept_learning_follow_up: 'learning',
   accept_learning_practice_proposal: 'learning',
   accept_learning_program: 'learning',
+  activity_snapshot: 'activity',
   add_conversation_to_journal: 'conversation',
   add_conversation_web_source: 'conversation',
   add_documents_to_custom_collection: 'file',

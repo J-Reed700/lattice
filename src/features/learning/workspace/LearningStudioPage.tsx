@@ -51,6 +51,25 @@ export function LearningStudioPage() {
       setDestination({ ...next });
     } catch (error) { setNavigationError(message(error)); }
   };
+  // `?course=` (with `&lesson=`), as the activity view links, opens that
+  // course or lesson like a task does.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCourse = searchParams.get('course');
+  const requestedLesson = searchParams.get('lesson');
+  const latestOpenTask = useRef(openTask);
+  latestOpenTask.current = openTask;
+  useEffect(() => {
+    if (!requestedCourse) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('course');
+      next.delete('lesson');
+      return next;
+    }, { replace: true });
+    void latestOpenTask.current(requestedLesson
+      ? { programId: requestedCourse, lessonId: requestedLesson, tab: 'lessons' }
+      : { programId: requestedCourse });
+  }, [requestedCourse, requestedLesson, setSearchParams]);
   return <div className="flex h-full min-h-0 flex-col">
     <StudyActivityPanel onOpen={next => void openTask(next)} />
     {navigationError && <p role="alert" className="px-6 py-3 text-sm text-danger-fg">Could not save before opening this task: {navigationError}</p>}

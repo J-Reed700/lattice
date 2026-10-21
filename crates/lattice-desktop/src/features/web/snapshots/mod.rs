@@ -6,6 +6,7 @@
 //! scheme, the commands, and the sweep. Design:
 //! `docs/design/2026-10-13-frozen-web-snapshots.md` §7, §8, §10, §11.
 
+mod activity;
 pub mod commands;
 pub mod dto;
 pub mod gc;

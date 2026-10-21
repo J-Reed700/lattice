@@ -25,6 +25,7 @@
 //!
 //! No port (`LLMPort` stays in `application/ports/`). No plugin.
 
+pub(crate) mod activity;
 pub mod commands;
 pub mod di;
 pub mod dto;
