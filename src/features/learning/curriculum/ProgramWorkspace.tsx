@@ -61,6 +61,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const [lessonId, setLessonId] = useState(program.summary.currentLessonId ?? program.modules[0]?.lessons[0]?.id ?? '');
   const [tab, setTab] = useState<Tab>('lessons');
   const [lastPracticeTab, setLastPracticeTab] = useState<Tab>('workbench');
+  const [preparationExpanded, setPreparationExpanded] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -258,7 +259,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         <CourseIndexNotice programId={program.summary.id} />
         {/* The full panel belongs to Lessons; elsewhere one line keeps the tab's own content in view. */}
         {activeProgram && (tab === 'lessons'
-          ? <LessonPreparationProgress job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError} />
+          ? <LessonPreparationProgress job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} />
           : <LessonPreparationLine job={preparationJob} pending={preparePending} programId={program.summary.id} error={prepareError} onView={() => selectTab('lessons')} />)}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="mt-3 space-y-3">{!currentModule?.lessons.length ? <p className="rounded-xl bg-background p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson) => <div key={lesson.id} className="relative"><div className="absolute -left-0.5 top-11 hidden h-[calc(100%+12px)] w-px bg-border last:hidden sm:block" /><div className="absolute left-[-3px] top-8 hidden h-1.5 w-1.5 rounded-full bg-accent sm:block" /><div className="sm:pl-5"><LessonCard lesson={lesson} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparingLesson)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => void afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} /></div></div>)}</div>}

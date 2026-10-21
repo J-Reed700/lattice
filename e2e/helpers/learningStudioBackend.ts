@@ -1105,6 +1105,8 @@ export async function installLearningStudioBackend(page: Page) {
       last_learning_window_shortfall: () => null,
       // Every course in the fixture is indexed, so no evidence action waits.
       course_index_status: () => ({ state: "ready", mode: "hybrid" }),
+      course_index_open: () => null,
+      course_index_close: () => null,
       list_journal_syntheses: () => [],
       detect_system_capabilities: () => ({ total_ram_gb: 8, cpu_cores: 8, cpu_architecture: "e2e", gpu_type: "none", gpu_acceleration: "none", vram_gb: null, available_disk_gb: 10 }),
       list_conversations_explorer: () => ({ conversations: [], total: 0 }),

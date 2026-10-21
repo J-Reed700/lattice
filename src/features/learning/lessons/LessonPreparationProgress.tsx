@@ -30,8 +30,10 @@ export function useReloadWhenPrepared(job: LearningGenerationJob | undefined, pr
   }, [client, job?.id, job?.status, programId]);
 }
 
-export function LessonPreparationProgress({ job, pending, programId, revision, error }: {
+export function LessonPreparationProgress({ job, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
+  // A parent that unmounts the panel (the course tabs) holds this, so "Hide details" survives a tab switch.
+  expanded?: boolean; onExpandedChange?: (expanded: boolean) => void;
 }) {
   const cancel = useCancelLearningGenerationJob();
   const retry = useRetryLearningGenerationJob();
@@ -40,7 +42,9 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   const waitsForIndex = useEvidenceWaitsForIndex(programId);
   const indexWaitId = useId();
   const [now, setNow] = useState(Date.now());
-  const [expanded, setExpanded] = useState(true);
+  const [ownExpanded, setOwnExpanded] = useState(true);
+  const expanded = heldExpanded ?? ownExpanded;
+  const setExpanded = onExpandedChange ?? setOwnExpanded;
   const detailsId = useId();
   // Cancelling a lesson attempt preserves its draft/checkpoints and prevents
   // automatic dispatch (`paused`). Retrying it resumes that saved work in a new attempt.
