@@ -1,91 +1,61 @@
 //! Curated embedding models, and which of them support Matryoshka truncation.
 
+use crate::domain::models::checkpoint::TOKENIZER_JSON;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
 
-/// Get curated list of embedding models for semantic search.
+/// The curated embedding models for semantic search.
 ///
-/// Returns models optimized for:
-/// - **Qwen3 Embedding 0.6B**: multilingual instruction-aware retrieval (1024 dim).
-///   The first-run default wherever a GPU backend is available.
-/// - **all-MiniLM-L6-v2**: Compact, fast general-purpose embeddings (384 dim).
-///   The first-run default on CPU-only machines, where 0.6B parameters would
-///   make bulk indexing impractical.
+/// One entry: **Qwen3 Embedding 0.6B**, multilingual instruction-aware
+/// retrieval at 1024 dimensions, the first-run default on every machine. It
+/// runs in the bundled `llama-server` from an F16 GGUF, the only precision that
+/// keeps the vectors Candle produced. `tokenizer.json` comes from the base
+/// repository and cuts passages with the model's own tokenizer.
 ///
-/// These models generate vector representations for semantic similarity.
-/// All entries use safetensors files compatible with the Candle runtime.
+/// Both files are pinned to a commit and carry their SHA-256, so the download
+/// engine verifies them and the GGUF's digest is the model's identity.
 pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
-    vec![
-        ModelMetadata {
-            id: "qwen3-embedding-0.6b".into(),
-            name: "Qwen3 Embedding 0.6B".into(),
-            category: ModelCategory::Embedding,
-            description: "Instruction-aware multilingual retrieval, and the default wherever a GPU can run it. Local runtime uses up to 2048 tokens per passage and half precision on Metal.".into(),
-            size_gb: 1.2,
-            minimum_ram_gb: 6.0,
-            recommended_ram_gb: 8.0,
-            context_length: 2048,
-            performance_tier: PerformanceTier::Balanced,
-            supported_quantizations: vec!["F16".into(), "F32".into()],
-            capabilities: vec!["embedding".into(), "retrieval".into(), "multilingual".into()],
-            download_url: Some("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B".into()),
-            license: "Apache-2.0".into(),
-            requires_auth: false,
-            model_id: Some("Qwen/Qwen3-Embedding-0.6B".into()),
-            default_filename: None,
-            files: ["model.safetensors", "tokenizer.json", "config.json", "tokenizer_config.json", "1_Pooling/config.json"].into_iter().map(|name| {
-                ModelFileMetadata::new(name.into(), format!("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/{name}"), if name == "model.safetensors" { 1_200_000_000 } else { 1_000 })
-            }).collect(),
-            total_size_bytes: 1_210_000_000,
-            embedding_dimensions: Some(1024),
-            embedding_compatibility: None,
-            format: ModelFormat::Safetensors,
-        },
-        ModelMetadata {
-            id: "all-minilm-l6-v2".into(),
-            name: "all-MiniLM-L6-v2".into(),
-            category: ModelCategory::Embedding,
-            description: "Compact embedding model (384 dimensions). Very fast inference, good quality for most use cases.".into(),
-            size_gb: 0.09,
-            minimum_ram_gb: 1.0,
-            recommended_ram_gb: 2.0,
-            context_length: 512,
-            performance_tier: PerformanceTier::Fast,
-            supported_quantizations: vec!["F16".into(), "F32".into()],
-            capabilities: vec!["embedding".into(), "retrieval".into(), "fast".into()],
-            download_url: Some("https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2".into()),
-            license: "Apache-2.0".into(),
-            requires_auth: false,
-            model_id: Some("sentence-transformers/all-MiniLM-L6-v2".into()),
-            default_filename: None, // Multi-file model bundle (ONNX + tokenizer metadata)
-            files: vec![
-                ModelFileMetadata::new(
-                    "model.safetensors".to_string(),
-                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.safetensors".to_string(),
-                    90_900_000,
-                ),
-                ModelFileMetadata::new(
-                    "tokenizer.json".to_string(),
-                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json".to_string(),
-                    700_000,
-                ),
-                ModelFileMetadata::new(
-                    "config.json".to_string(),
-                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json".to_string(),
-                    1_000,
-                ),
-                ModelFileMetadata::new("tokenizer_config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json".into(), 1000),
-                ModelFileMetadata::new("sentence_bert_config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json".into(), 1000),
-                ModelFileMetadata::new("1_Pooling/config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json".into(), 1000),
-            ],
-            total_size_bytes: 91_700_000,
-            embedding_dimensions: Some(384),
-            embedding_compatibility: None,
-            format: ModelFormat::Safetensors,
-        },
-    ]
+    vec![ModelMetadata {
+        id: "qwen3-embedding-0.6b".into(),
+        name: "Qwen3 Embedding 0.6B".into(),
+        category: ModelCategory::Embedding,
+        description: "Instruction-aware multilingual retrieval, the default on every machine. Runs in the bundled llama.cpp server (F16) and embeds up to 2048 tokens per passage.".into(),
+        size_gb: 1.2,
+        minimum_ram_gb: 6.0,
+        recommended_ram_gb: 8.0,
+        context_length: 2048,
+        performance_tier: PerformanceTier::Balanced,
+        supported_quantizations: vec!["F16".into()],
+        capabilities: vec!["embedding".into(), "retrieval".into(), "multilingual".into()],
+        download_url: Some("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF".into()),
+        license: "Apache-2.0".into(),
+        requires_auth: false,
+        model_id: Some("Qwen/Qwen3-Embedding-0.6B".into()),
+        default_filename: None,
+        files: vec![
+            ModelFileMetadata::with_checksum(
+                "Qwen3-Embedding-0.6B-f16.gguf".into(),
+                "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-f16.gguf".into(),
+                QWEN3_EMBEDDING_GGUF_BYTES,
+                "421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340".into(),
+            ),
+            ModelFileMetadata::with_checksum(
+                TOKENIZER_JSON.into(),
+                "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/tokenizer.json".into(),
+                QWEN3_EMBEDDING_TOKENIZER_BYTES,
+                "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a".into(),
+            ),
+        ],
+        total_size_bytes: QWEN3_EMBEDDING_GGUF_BYTES + QWEN3_EMBEDDING_TOKENIZER_BYTES,
+        embedding_dimensions: Some(1024),
+        embedding_compatibility: None,
+        format: ModelFormat::Gguf,
+    }]
 }
+
+const QWEN3_EMBEDDING_GGUF_BYTES: u64 = 1_197_629_632;
+const QWEN3_EMBEDDING_TOKENIZER_BYTES: u64 = 11_423_705;
 
 /// Curated embedding entries whose training documents Matryoshka Representation
 /// Learning, i.e. whose leading coordinates are individually usable as a
@@ -95,7 +65,6 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
 /// trained this way silently destroys its geometry, and the failure looks like
 /// "search got worse" rather than like an error. Qwen3-Embedding ships MRL as a
 /// documented feature (its card advertises user-defined output dimensions).
-/// all-MiniLM-L6-v2 predates the technique entirely.
 ///
 /// Matched against the *catalog* id, and also against the HuggingFace
 /// `model_id`, because a downloaded model records whichever the download path

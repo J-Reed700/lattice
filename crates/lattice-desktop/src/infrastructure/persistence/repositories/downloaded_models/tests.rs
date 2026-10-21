@@ -546,7 +546,7 @@ async fn downloaded_inventory_tracks_files_on_disk_without_deleting_records() {
     std::fs::write(&weights, b"weights").expect("write weights");
     let model = DownloadedModel::new(
         uuid::Uuid::new_v4().to_string(),
-        "MiniLM".into(),
+        "Qwen3 Embedding".into(),
         "inventory-embedding".into(),
         ModelLocation::LocalDirectory {
             path: directory.path().to_path_buf(),

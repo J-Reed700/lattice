@@ -16,9 +16,40 @@ pub const WEIGHTS_SAFETENSORS: &str = "model.safetensors";
 pub const WEIGHTS_PYTORCH_BIN: &str = "pytorch_model.bin";
 
 /// The PyTorch pickle of the sparse lexical head the BGE-M3 repository
-/// publishes. Downloading fetches it when the repository has one, and the
-/// Candle runtime loads it.
+/// publishes. Older downloads fetched it beside the weights.
 pub const SPARSE_HEAD_PT: &str = "sparse_linear.pt";
+
+/// The tokenizer a GGUF embedding model cuts passages with. It sits beside
+/// the GGUF in the model's directory; the GGUF alone cannot be chunked.
+pub const TOKENIZER_JSON: &str = "tokenizer.json";
+
+/// Whether `model_dir` holds the tokenizer an embedding GGUF in it is
+/// chunked with.
+pub fn has_tokenizer(model_dir: &Path) -> bool {
+    model_dir.join(TOKENIZER_JSON).is_file()
+}
+
+/// What a safetensors-era (Candle) embedding download left in its model
+/// directory, files and folders alike. The llama.cpp runtime reads none of
+/// them; Settings offers to remove them and never does so on its own.
+/// `tokenizer.json` is deliberately absent: the GGUF runtime chunks with it.
+pub const SAFETENSORS_ERA_EMBEDDING_FILES: &[&str] = &[
+    WEIGHTS_SAFETENSORS,
+    WEIGHTS_PYTORCH_BIN,
+    "config.json",
+    "tokenizer_config.json",
+    "sentence_bert_config.json",
+    "special_tokens_map.json",
+    "vocab.txt",
+    "1_Pooling",
+    SPARSE_HEAD_PT,
+    "onnx",
+];
+
+/// Curated catalog ids whose model directories received safetensors-era
+/// embedding downloads: today's Qwen3 entry, and all-MiniLM-L6-v2, which left
+/// the catalog but may still have a folder on disk.
+pub const SAFETENSORS_ERA_EMBEDDING_DIRS: &[&str] = &["qwen3-embedding-0.6b", "all-minilm-l6-v2"];
 
 /// The weights file to load out of `model_dir`, or `None` when it holds
 /// neither candidate.
