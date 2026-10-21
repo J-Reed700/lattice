@@ -90,6 +90,9 @@ pub struct Container {
     /// Starts the llama-server the embedding model runs on.
     pub(crate) embedding_starter:
         Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    /// The embedding servers `embedding_starter` has started, for the
+    /// activity view.
+    pub(crate) embedding_servers: Arc<crate::features::embedding::activity::StartedServers>,
 
     /// All vault writes flow through a single mpsc-fed worker; see
     /// `features::vault::writeback`.
@@ -228,13 +231,18 @@ impl Container {
             crate::features::llm::loading::LlmRuntime::new(Arc::clone(&backend_devices));
         // Needs the app before the search module opens: its backfill starts
         // the embedding server.
+        let embedding_servers =
+            Arc::new(crate::features::embedding::activity::StartedServers::default());
         let embedding_starter: Arc<
             dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
-        > = Arc::new(super::modules::embedding::SidecarEmbeddingStarter::new(
-            app_handle,
-            llm_instances.clone(),
-            llm_runtime.clone(),
-            current_embedding,
+        > = Arc::new(crate::features::embedding::activity::WatchedStarter::new(
+            Arc::new(super::modules::embedding::SidecarEmbeddingStarter::new(
+                app_handle,
+                llm_instances.clone(),
+                llm_runtime.clone(),
+                current_embedding,
+            )),
+            Arc::clone(&embedding_servers),
         ));
 
         // CoreModule builds shared singletons (security, runtime, credentials)
@@ -432,6 +440,7 @@ impl Container {
             llm_instances,
             embedding_runtime,
             embedding_starter,
+            embedding_servers,
             vault_writer,
             vault_write_suppression,
             vault_rescan_lock: Default::default(),
@@ -464,7 +473,11 @@ impl Container {
         mut self,
         starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
     ) -> Self {
-        self.embedding_starter = starter;
+        self.embedding_starter =
+            Arc::new(crate::features::embedding::activity::WatchedStarter::new(
+                starter,
+                Arc::clone(&self.embedding_servers),
+            ));
         self
     }
 

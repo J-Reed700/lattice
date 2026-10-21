@@ -36,9 +36,10 @@ impl Container {
                 Arc::clone(&self.llm_instances),
             )),
             Arc::new(
-                crate::features::embedding::activity::EmbeddingActivity::new(Arc::clone(
-                    &self.embedding_runtime,
-                )),
+                crate::features::embedding::activity::EmbeddingActivity::new(
+                    Arc::clone(&self.embedding_runtime),
+                    Arc::clone(&self.embedding_servers),
+                ),
             ),
             Arc::new(crate::features::download::activity::DownloadActivity::new(
                 Arc::clone(self.ai.download_manager()),
@@ -71,6 +72,7 @@ impl Container {
             self.llm_runtime.schedulers.changes(),
             self.llm_instances.changes(),
             self.embedding_runtime.changes(),
+            self.embedding_servers.changes(),
             self.outline_run_registry.changes(),
         ];
         if let Some(turns) = &self.index_turns {

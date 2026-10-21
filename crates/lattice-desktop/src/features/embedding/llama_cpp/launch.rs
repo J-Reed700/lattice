@@ -21,6 +21,8 @@ pub const SERVER_SLOTS: u32 = 4;
 pub struct EmbeddingLaunch {
     /// The model's GGUF file.
     pub gguf: PathBuf,
+    /// The model's name as the user knows it.
+    pub name: String,
     /// Offload every layer to the accelerator; none when this machine has
     /// none.
     pub gpu: bool,
@@ -35,6 +37,7 @@ impl EmbeddingLaunch {
     pub fn new(gguf: PathBuf, facts: &EmbeddingModelFacts, gpu: bool) -> Self {
         Self {
             gguf,
+            name: facts.display_name.clone(),
             gpu,
             window_tokens: facts.window_tokens(),
             slots: SERVER_SLOTS,
