@@ -4,7 +4,7 @@
 use super::{
     fits, grounding_instructions, invalid, normalize, optional_citation,
     optional_source_index_schema, parse_json, validate_outline_request, validate_text, MAX_BODY,
-    MAX_EXPLANATION, OUTLINE_OUTPUT_RESERVE, OUTLINE_REFERENCE_INSTRUCTIONS,
+    MAX_EXPLANATION, MIN_TEXT, OUTLINE_OUTPUT_RESERVE, OUTLINE_REFERENCE_INSTRUCTIONS,
 };
 use crate::features::learning::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
@@ -18,7 +18,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// What the prose step of an outline works through before the outline is
 /// written to its schema.
@@ -212,7 +212,8 @@ fn reference_instructions(sources: &[LearningSourceDto]) -> &'static str {
 
 // Drafts must be structurally usable. Citations are optional; a present one
 // must match its source exactly, which is the same rule the author, the
-// repairer and the citation check all apply.
+// repairer and the citation check all apply. A refusal names the module or
+// lesson and the rule it broke, so the model asked again can fix exactly that.
 pub(in crate::features::learning) fn decode_outline(
     raw: &str,
     request: &GenerateLearningProgramRequestDto,
@@ -222,12 +223,15 @@ pub(in crate::features::learning) fn decode_outline(
         LearningCourseDepth::bounds(request.course_depth);
     let generated: GeneratedOutline = parse_json(raw)?;
     if !(min_modules..=max_modules).contains(&generated.modules.len()) {
-        return Err(invalid(
-            "The model returned an outline outside the supported module range. Try again.",
-        ));
+        return Err(invalid(format!(
+            "The outline needs {min_modules} to {max_modules} modules; this answer has {}.",
+            generated.modules.len()
+        )));
     }
-    let mut module_titles = HashSet::new();
-    let mut lesson_titles = HashSet::new();
+    // Normalized title -> the module number, or module and lesson numbers,
+    // that first used it.
+    let mut module_titles: HashMap<String, usize> = HashMap::new();
+    let mut lesson_titles: HashMap<String, (usize, usize)> = HashMap::new();
     let mut modules = Vec::with_capacity(generated.modules.len());
     let module_ids: Vec<_> = generated
         .modules
@@ -235,6 +239,7 @@ pub(in crate::features::learning) fn decode_outline(
         .map(|_| uuid::Uuid::new_v4().to_string())
         .collect();
     for (module_index, module) in generated.modules.into_iter().enumerate() {
+        let number = module_index + 1;
         crate::features::learning::teaching::validate_project(&module.project)?;
         let unique_prerequisites: HashSet<_> = module.prerequisite_indices.iter().collect();
         if unique_prerequisites.len() != module.prerequisite_indices.len()
@@ -243,41 +248,80 @@ pub(in crate::features::learning) fn decode_outline(
                 .iter()
                 .any(|i| *i >= module_index)
         {
-            return Err(invalid(
-                "Module prerequisites must be distinct earlier modules.",
-            ));
+            return Err(invalid(match module_index {
+                0 => "Module 1 comes first, so its prerequisiteIndices must be empty.".to_owned(),
+                _ => format!(
+                    "Module {number}'s prerequisiteIndices must be distinct zero-based positions of earlier modules, 0 to {}.",
+                    module_index - 1
+                ),
+            }));
         }
-        if !validate_text(&module.title, 120)
-            || !validate_text(&module.summary.text, MAX_EXPLANATION)
-            || !(2..=6).contains(&module.outcomes.len())
-            || !(min_lessons..=max_lessons).contains(&module.lessons.len())
-            || !module_titles.insert(normalize(&module.title))
-        {
-            return Err(invalid(
-                "The model returned an invalid or duplicate module. Try again.",
-            ));
+        if !validate_text(&module.title, 120) {
+            return Err(invalid(format!(
+                "Module {number} needs a title of {MIN_TEXT} to 120 characters."
+            )));
+        }
+        if !validate_text(&module.summary.text, MAX_EXPLANATION) {
+            return Err(invalid(format!(
+                "Module {number} needs a summary of {MIN_TEXT} to {MAX_EXPLANATION} characters."
+            )));
+        }
+        if !(2..=6).contains(&module.outcomes.len()) {
+            return Err(invalid(format!(
+                "Module {number} needs 2 to 6 outcomes; it has {}.",
+                module.outcomes.len()
+            )));
+        }
+        if !(min_lessons..=max_lessons).contains(&module.lessons.len()) {
+            return Err(invalid(format!(
+                "Module {number} needs {min_lessons} to {max_lessons} lessons; it has {}.",
+                module.lessons.len()
+            )));
+        }
+        if let Some(earlier) = module_titles.insert(normalize(&module.title), number) {
+            return Err(invalid(format!(
+                "Modules {earlier} and {number} share the title \"{}\"; give each module its own title.",
+                module.title.trim()
+            )));
         }
         optional_citation(sources, module.summary.source_index, &module.summary.quote)?;
         let mut outcomes = Vec::with_capacity(module.outcomes.len());
-        for outcome in module.outcomes {
+        for (outcome_index, outcome) in module.outcomes.into_iter().enumerate() {
             if !validate_text(&outcome.text, MAX_BODY) {
-                return Err(invalid(
-                    "The model returned an empty or oversized outcome. Try again.",
-                ));
+                return Err(invalid(format!(
+                    "Outcome {} of module {number} must be {MIN_TEXT} to {MAX_BODY} characters.",
+                    outcome_index + 1
+                )));
             }
             optional_citation(sources, outcome.source_index, &outcome.quote)?;
             outcomes.push(outcome.text.trim().to_owned());
         }
         let mut lessons = Vec::with_capacity(module.lessons.len());
-        for lesson in module.lessons {
-            if !validate_text(&lesson.title, 160)
-                || !validate_text(&lesson.objective, 1200)
-                || !(5..=180).contains(&lesson.estimated_minutes)
-                || !lesson_titles.insert(normalize(&lesson.title))
-            {
-                return Err(invalid(
-                    "The model returned an invalid or duplicate lesson. Try again.",
-                ));
+        for (lesson_index, lesson) in module.lessons.into_iter().enumerate() {
+            let place = (number, lesson_index + 1);
+            let at = format!("Lesson {}.{}", place.0, place.1);
+            if !validate_text(&lesson.title, 160) {
+                return Err(invalid(format!(
+                    "{at} needs a title of {MIN_TEXT} to 160 characters."
+                )));
+            }
+            if !validate_text(&lesson.objective, 1200) {
+                return Err(invalid(format!(
+                    "{at} needs an objective of {MIN_TEXT} to 1200 characters."
+                )));
+            }
+            if !(5..=180).contains(&lesson.estimated_minutes) {
+                return Err(invalid(format!(
+                    "{at} needs an estimate of 5 to 180 minutes."
+                )));
+            }
+            if let Some((m, l)) = lesson_titles.insert(normalize(&lesson.title), place) {
+                return Err(invalid(format!(
+                    "Lessons {m}.{l} and {}.{} share the title \"{}\"; give each lesson its own title.",
+                    place.0,
+                    place.1,
+                    lesson.title.trim()
+                )));
             }
             optional_citation(sources, lesson.source_index, &lesson.quote)?;
             lessons.push(LearningLessonDto {

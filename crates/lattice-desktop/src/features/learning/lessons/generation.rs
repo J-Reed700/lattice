@@ -43,8 +43,8 @@ pub(in crate::features::learning) const LESSON_OUTPUT_RESERVE: usize = 10000;
 /// Added to a draft brief when the material cites saved sources.
 const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt.";
 
-fn invalid(message: &'static str) -> AppError {
-    AppError::InvalidInput(message.to_owned())
+fn invalid(message: impl Into<String>) -> AppError {
+    AppError::InvalidInput(message.into())
 }
 
 fn normalize(text: &str) -> String {
