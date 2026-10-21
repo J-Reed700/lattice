@@ -389,8 +389,11 @@ impl GpuBudget for Windows {
     ) -> crate::features::llm::engine::sidecar_manager::Admission {
         crate::features::llm::engine::sidecar_manager::Admission::Unmetered
     }
-    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
-        None
+    async fn context_fit(
+        &self,
+        _: &std::path::Path,
+    ) -> crate::features::llm::instances::ContextFit {
+        crate::features::llm::instances::ContextFit::default()
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
         Some(self.trained)

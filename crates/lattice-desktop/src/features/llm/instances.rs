@@ -32,7 +32,7 @@ mod invalidation;
 mod pinned;
 pub(crate) mod refusal;
 
-pub(crate) use admission::{GpuBudget, IdleServer, SidecarBudget};
+pub(crate) use admission::{ContextFit, GpuBudget, IdleServer, SidecarBudget};
 pub(crate) use pinned::PinnedLlm;
 
 /// How the bundled server for a model is launched: the server options its

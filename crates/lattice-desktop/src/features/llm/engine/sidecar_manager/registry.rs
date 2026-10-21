@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::llm::engine::gguf_metadata::read_model_info;
 
 /// Process-wide registry of live sidecars.
 ///
@@ -354,7 +355,8 @@ pub(super) fn admission(
         return Admission::NoOffload;
     }
     let held = gpu_bytes_where(servers, |running| running != config);
-    let Some(hint) = memory_hint(config, capabilities, held) else {
+    let info = read_model_info(&config.model_path);
+    let Some(hint) = memory_hint(config, capabilities, held, info.as_ref()) else {
         return Admission::Unmetered;
     };
     let (needed, spare) = (hint.needed, hint.room.spare());

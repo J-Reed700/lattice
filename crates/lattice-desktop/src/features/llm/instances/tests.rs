@@ -82,8 +82,11 @@ impl GpuBudget for FakeBudget {
         self.asked.fetch_add(1, Ordering::SeqCst);
         (self.answer)(self.watched.load(Ordering::SeqCst))
     }
-    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
-        None
+    async fn context_fit(
+        &self,
+        _: &std::path::Path,
+    ) -> crate::features::llm::instances::ContextFit {
+        crate::features::llm::instances::ContextFit::default()
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
         None
@@ -926,8 +929,11 @@ impl GpuBudget for MeteredBudget {
         self.admission(&config.model_path, LocalServerOptions::default())
             .await
     }
-    async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
-        None
+    async fn context_fit(
+        &self,
+        _: &std::path::Path,
+    ) -> crate::features::llm::instances::ContextFit {
+        crate::features::llm::instances::ContextFit::default()
     }
     fn trained_window(&self, _: &std::path::Path) -> Option<u32> {
         None
