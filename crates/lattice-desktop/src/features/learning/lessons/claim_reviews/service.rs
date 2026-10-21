@@ -433,9 +433,11 @@ fn provenance(review: &LessonReview) -> EventProvenance {
     }
 }
 
-/// Whether the user acted on any claim at or after `at` (§6.2), or a trust
+/// Whether the user acted on any claim at or after `at` (§6.2), a trust
 /// change re-decided one (source provenance §18.7: an override or a moved
-/// bar is the user's doing too).
+/// bar is the user's doing too), or a claim was checked outside the
+/// preparation job (against a source the user added or attached, or by an
+/// audit the user ran).
 pub fn changed_since(ledger: &Ledger, at: i64) -> bool {
     ledger.claims.iter().any(|entry| {
         entry.events().iter().any(|record| {
@@ -443,7 +445,9 @@ pub fn changed_since(ledger: &Ledger, at: i64) -> bool {
                 || matches!(
                     record.event,
                     ClaimEvent::StandingAssessed { cause: Some(_), .. }
-                );
+                )
+                || (matches!(record.event, ClaimEvent::Checked(_))
+                    && record.provenance.job_id.is_none());
             changed && record.provenance.at >= at
         })
     })

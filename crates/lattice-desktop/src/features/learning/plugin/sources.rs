@@ -1,4 +1,9 @@
 use super::*;
+use crate::features::learning::lessons::claim_reviews::attach::report::ClaimAttachProgressDto;
+use crate::features::learning::lessons::claim_reviews::attach::AttachDeps;
+use crate::features::learning::lessons::claim_reviews::recheck;
+use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
+use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::ReferenceSnapshot;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 
@@ -8,6 +13,76 @@ async fn sources_changed(container: &Container, program_id: &str) {
     if let Some(courses) = container.course_indexes() {
         courses.refresh(program_id).await;
     }
+}
+
+/// After the user adds a source: when they asked (`check_waiting`), the
+/// course's waiting claims are checked against it (UI design §5.3) and the
+/// workspace carries what was found. A check that cannot run or stops says
+/// why in `stopped`; the source stays saved either way.
+async fn check_waiting_claims(
+    container: &Container,
+    program_id: &str,
+    version_id: &str,
+    check_waiting: bool,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
+    mut workspace: LearningSourceWorkspaceDto,
+) -> LearningSourceWorkspaceDto {
+    let saved = workspace
+        .sources
+        .iter()
+        .flat_map(|source| &source.versions)
+        .any(|version| version.id == version_id);
+    if check_waiting && saved {
+        let stopped = |reason: String| WaitingClaimsRecheckDto {
+            stopped: Some(reason),
+            ..WaitingClaimsRecheckDto::default()
+        };
+        workspace.recheck =
+            match recheck_waiting(container, program_id, version_id, on_progress).await {
+                Ok(found) => found,
+                Err(error) => Some(stopped(error.message)),
+            };
+    }
+    workspace
+}
+
+async fn recheck_waiting(
+    container: &Container,
+    program_id: &str,
+    version_id: &str,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
+) -> Result<Option<WaitingClaimsRecheckDto>, ApiError> {
+    let pool = container.db_pool();
+    let store = ClaimReviewRepository::new(pool.clone());
+    let lessons = recheck::waiting_lessons(&store, pool, program_id).await?;
+    if lessons.is_empty() {
+        return Ok(None);
+    }
+    let pin = learning_model(
+        container,
+        ModelRequirements::default(),
+        "Checking the waiting claims against the source you added",
+    )
+    .await?;
+    let web = container.web_service();
+    let snapshots = container.reference_snapshots();
+    let library = container.library_passages();
+    let progress = move |stage: ClaimAttachProgressDto| {
+        let _ = on_progress.send(stage);
+    };
+    let deps = AttachDeps {
+        pool,
+        store: &store,
+        web: web.as_ref(),
+        snapshots: snapshots.as_ref(),
+        documents: library.as_ref(),
+        courses: container.course_indexes(),
+        llm: pin.llm.as_ref(),
+        job_id: None,
+    };
+    Ok(Some(
+        recheck::waiting_claims(&deps, program_id, version_id, &lessons, &progress).await?,
+    ))
 }
 
 #[tauri::command]
@@ -66,10 +141,13 @@ pub async fn search_learning_sources(
 #[specta::specta]
 pub async fn add_learning_web_source(
     request: AddLearningWebSourceRequestDto,
+    check_waiting: bool,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     let web = container.web_service();
     let program_id = request.program_id.clone();
+    let version_id = request.version_id.clone();
     let workspace = crate::features::learning::source_workflows::add_web_source(
         &source_library(&container),
         request,
@@ -78,13 +156,23 @@ pub async fn add_learning_web_source(
     .await
     .map_err(ApiError::from)?;
     sources_changed(&container, &program_id).await;
-    Ok(workspace)
+    Ok(check_waiting_claims(
+        &container,
+        &program_id,
+        &version_id,
+        check_waiting,
+        on_progress,
+        workspace,
+    )
+    .await)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn add_learning_document_source(
     request: AddLearningDocumentSourceRequestDto,
+    check_waiting: bool,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     validate_source_ids(
@@ -145,15 +233,27 @@ pub async fn add_learning_document_source(
     .await
     .map_err(ApiError::from)?;
     sources_changed(&container, &request.program_id).await;
-    repo.workspace(&request.program_id)
+    let workspace = repo
+        .workspace(&request.program_id)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(check_waiting_claims(
+        &container,
+        &request.program_id,
+        &request.version_id,
+        check_waiting,
+        on_progress,
+        workspace,
+    )
+    .await)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn add_learning_text_source(
     request: AddLearningTextSourceRequestDto,
+    check_waiting: bool,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
     validate_source_ids(
@@ -198,10 +298,19 @@ pub async fn add_learning_text_source(
         .await
         .map_err(ApiError::from)?;
     sources_changed(&container, &request.program_id).await;
-    source_library(&container)
+    let workspace = source_library(&container)
         .workspace(&request.program_id)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(check_waiting_claims(
+        &container,
+        &request.program_id,
+        &request.version_id,
+        check_waiting,
+        on_progress,
+        workspace,
+    )
+    .await)
 }
 
 #[tauri::command]
