@@ -302,4 +302,19 @@ export const modelApi = {
    */
   downloadDefaultEmbeddingModel: async (): Promise<ApiResult<string>> =>
     apiCall<string>('download_default_embedding_model'),
+
+  /**
+   * Lists the files a safetensors-era embedding download left in its model
+   * folder, which the llama.cpp runtime never reads, with their size.
+   */
+  listLeftoverEmbeddingFiles: async (): Promise<ApiResult<Wire.LeftoverEmbeddingFilesDto>> =>
+    apiCall<Wire.LeftoverEmbeddingFilesDto>('list_leftover_embedding_files'),
+
+  /**
+   * Removes exactly the files `listLeftoverEmbeddingFiles` reports.
+   *
+   * @returns What was removed
+   */
+  removeLeftoverEmbeddingFiles: async (): Promise<ApiResult<Wire.LeftoverEmbeddingFilesDto>> =>
+    apiCall<Wire.LeftoverEmbeddingFilesDto>('remove_leftover_embedding_files'),
 };

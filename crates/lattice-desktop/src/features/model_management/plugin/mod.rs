@@ -63,6 +63,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::download_model,
             commands::check_first_run_status,
             commands::download_default_embedding_model,
+            commands::list_leftover_embedding_files,
+            commands::remove_leftover_embedding_files,
             commands::delete_model,
             commands::list_downloaded_models,
             commands::is_model_already_downloaded,
