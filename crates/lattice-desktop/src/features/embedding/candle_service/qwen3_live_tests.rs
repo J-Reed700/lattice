@@ -177,3 +177,101 @@ async fn qwen3_live_f16_matches_f32() {
         texts.len()
     );
 }
+
+/// Where `qwen3_live_write_parity_reference` writes, and the file name of the
+/// vectors it records (`candle-metal-f16.f32` or `candle-cpu-f32.f32`).
+const REFERENCE_DIR_ENV: &str = "LATTICE_EMBED_REFERENCE_DIR";
+const REFERENCE_NAME_ENV: &str = "LATTICE_EMBED_REFERENCE_NAME";
+const REFERENCE_PASSAGES: usize = 200;
+const REFERENCE_QUERIES: usize = 40;
+
+/// Records the vectors today's Candle path gives a fixed set of v3 fixture
+/// passages and queries, so the llama.cpp adapter can be held to them after
+/// this engine is gone (`evals/embedding/README.md`). Passages are every
+/// n-th chunk `split_text` cuts from the fixture's documents; queries are
+/// every n-th fixture query, embedded through `embed_query` so the
+/// `Instruct:` prefix is applied as in production. Vectors are written as
+/// little-endian f32 rows, passages first, then queries.
+#[tokio::test]
+#[ignore = "writes the llama.cpp parity reference; needs LATTICE_QWEN3_EMBEDDING_DIR, \
+            LATTICE_EMBED_REFERENCE_DIR and LATTICE_EMBED_REFERENCE_NAME"]
+async fn qwen3_live_write_parity_reference() {
+    let out = PathBuf::from(std::env::var(REFERENCE_DIR_ENV).expect(REFERENCE_DIR_ENV));
+    let name = std::env::var(REFERENCE_NAME_ENV).expect(REFERENCE_NAME_ENV);
+    let service =
+        CandleEmbeddingService::open(model_dir(), ArtifactIdentity::from_digest(&[0; 32]))
+            .expect("open Qwen3 weights");
+
+    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evals/retrieval/synthetic-library-v3.json");
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture_path).expect("read v3 fixture"))
+            .expect("parse v3 fixture");
+    let text_of = |item: &serde_json::Value| {
+        item.get("text")
+            .and_then(|text| text.as_str())
+            .map(str::to_owned)
+    };
+
+    let mut chunks = Vec::new();
+    for document in fixture["documents"].as_array().expect("documents") {
+        let text = text_of(document).expect("document text");
+        chunks.extend(EmbeddingPort::split_text(&service, &text, "").expect("split"));
+    }
+    let stride = (chunks.len() / REFERENCE_PASSAGES).max(1);
+    let passages: Vec<_> = chunks
+        .into_iter()
+        .step_by(stride)
+        .take(REFERENCE_PASSAGES)
+        .collect();
+
+    let queries: Vec<String> = fixture["queries"]
+        .as_array()
+        .expect("queries")
+        .iter()
+        .filter_map(text_of)
+        .collect();
+    let stride = (queries.len() / REFERENCE_QUERIES).max(1);
+    let queries: Vec<String> = queries
+        .into_iter()
+        .step_by(stride)
+        .take(REFERENCE_QUERIES)
+        .collect();
+
+    let texts: Vec<String> = passages.iter().map(|chunk| chunk.text.clone()).collect();
+    let started = Instant::now();
+    let mut vectors = EmbeddingPort::embed_batch(&service, &texts).await.unwrap();
+    for query in &queries {
+        vectors.push(EmbeddingPort::embed_query(&service, query).await.unwrap());
+    }
+    assert_finite(&vectors, "reference");
+    println!(
+        "{name}: {} passages + {} queries in {:.1}s, dimension {}",
+        passages.len(),
+        queries.len(),
+        started.elapsed().as_secs_f64(),
+        vectors[0].len()
+    );
+
+    std::fs::create_dir_all(&out).unwrap();
+    let passage_rows: Vec<_> = passages
+        .iter()
+        .map(|chunk| serde_json::json!({ "text": chunk.text, "tokens": chunk.token_count }))
+        .collect();
+    std::fs::write(
+        out.join("passages.json"),
+        serde_json::to_vec_pretty(&passage_rows).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        out.join("queries.json"),
+        serde_json::to_vec_pretty(&queries).unwrap(),
+    )
+    .unwrap();
+    let bytes: Vec<u8> = vectors
+        .iter()
+        .flatten()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    std::fs::write(out.join(format!("{name}.f32")), bytes).unwrap();
+}
