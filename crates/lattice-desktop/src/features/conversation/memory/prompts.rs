@@ -482,7 +482,7 @@ fn sorted_keys(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut entries: Vec<(&String, &serde_json::Value)> = map.iter().collect();
-            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_unstable_by_key(|(key, _)| *key);
             serde_json::Value::Object(
                 entries
                     .into_iter()
