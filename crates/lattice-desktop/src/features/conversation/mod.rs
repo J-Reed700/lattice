@@ -25,8 +25,8 @@
 //! Domain types (Conversation, ConversationMessage, MessageRole, ...) live in
 //! `lattice_core::domain::conversation` because the application layer depends on them.
 
-mod branching;
 pub mod activity;
+mod branching;
 pub mod branching_dto;
 pub mod chat;
 pub mod commands;
