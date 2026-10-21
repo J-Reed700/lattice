@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import VaultAPI from '@/lib/api';
+import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,
@@ -72,9 +73,12 @@ function useSourceMutation<TRequest>(
   });
 }
 
-export const useAddLearningWebSource = () => useSourceMutation<AddLearningWebSourceRequestDto>(VaultAPI.addLearningWebSource);
-export const useAddLearningDocumentSource = () => useSourceMutation<AddLearningDocumentSourceRequestDto>(VaultAPI.addLearningDocumentSource);
-export const useAddLearningTextSource = () => useSourceMutation<AddLearningTextSourceRequestDto>(VaultAPI.addLearningTextSource);
+export const useAddLearningWebSource = (recheck?: WaitingClaimsCheck) =>
+  useSourceMutation<AddLearningWebSourceRequestDto>((request) => VaultAPI.addLearningWebSource(request, recheck));
+export const useAddLearningDocumentSource = (recheck?: WaitingClaimsCheck) =>
+  useSourceMutation<AddLearningDocumentSourceRequestDto>((request) => VaultAPI.addLearningDocumentSource(request, recheck));
+export const useAddLearningTextSource = (recheck?: WaitingClaimsCheck) =>
+  useSourceMutation<AddLearningTextSourceRequestDto>((request) => VaultAPI.addLearningTextSource(request, recheck));
 export const useRefreshLearningSource = () => useSourceMutation<RefreshLearningSourceRequestDto>(VaultAPI.refreshLearningSource);
 export const useAdoptLearningSourceVersion = () => useSourceMutation<AdoptLearningSourceVersionRequestDto>(VaultAPI.adoptLearningSourceVersion);
 export const useUpdateLearningSourcePolicy = () => useSourceMutation<UpdateLearningSourcePolicyRequestDto>(VaultAPI.updateLearningSourcePolicy);

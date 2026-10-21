@@ -584,25 +584,25 @@ async searchLearningSources(request: SearchLearningSourcesRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
-async addLearningWebSource(request: AddLearningWebSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+async addLearningWebSource(request: AddLearningWebSourceRequestDto, checkWaiting: boolean, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_web_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_web_source", { request, checkWaiting, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async addLearningDocumentSource(request: AddLearningDocumentSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+async addLearningDocumentSource(request: AddLearningDocumentSourceRequestDto, checkWaiting: boolean, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_document_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_document_source", { request, checkWaiting, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async addLearningTextSource(request: AddLearningTextSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+async addLearningTextSource(request: AddLearningTextSourceRequestDto, checkWaiting: boolean, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_text_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_text_source", { request, checkWaiting, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -737,7 +737,8 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 },
 /**
  * Attach the user's evidence to a claim (§5.4): save it as a course
- * source, check the claim against it, then the lesson's other open claims.
+ * source, check the claim against it, then the other open claims in scope,
+ * reporting each stage on `on_progress`.
  */
 async attachLearningClaimEvidence(request: AttachLearningClaimEvidenceRequestDto, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<ClaimAttachReportDto, ApiError>> {
     try {

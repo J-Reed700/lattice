@@ -4,7 +4,7 @@ import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
+import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
@@ -30,6 +30,7 @@ import type {
   AddLearningTextSourceRequestDto,
   AddLearningWebSourceRequestDto,
   AdoptLearningSourceVersionRequestDto,
+  ClaimAttachProgressDto,
   LearningSourceLibraryItemDto,
   LearningSourcePolicy,
   LearningTrustLevel,
@@ -90,12 +91,16 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   onOpenReview?: () => void;
 }) {
   const workspace = useLearningSourceWorkspace(programId);
-  const addWeb = useAddLearningWebSource();
-  const addDocument = useAddLearningDocumentSource();
-  const addText = useAddLearningTextSource();
+  // Whether a source added here is checked against the course's waiting claims; on unless the user unticks it.
+  const [checkWaiting, setCheckWaiting] = useState(true);
+  const [recheckProgress, setRecheckProgress] = useState<ClaimAttachProgressDto | null>(null);
+  const waitingCheck = { checkWaiting, onProgress: setRecheckProgress };
+  const addWeb = useAddLearningWebSource(waitingCheck);
+  const addDocument = useAddLearningDocumentSource(waitingCheck);
+  const addText = useAddLearningTextSource(waitingCheck);
   // What checking the course's waiting claims against the source just added found (§3.6).
   const [recheck, setRecheck] = useState<WaitingClaimsRecheckDto | null>(null);
-  const rechecked = <T extends { recheck: WaitingClaimsRecheckDto | null }>(data: T) => { setRecheck(data.recheck); return data; };
+  const rechecked = <T extends { recheck: WaitingClaimsRecheckDto | null }>(data: T) => { setRecheck(data.recheck); setRecheckProgress(null); return data; };
   const refresh = useRefreshLearningSource();
   const adopt = useAdoptLearningSourceVersion();
   const updatePolicy = useUpdateLearningSourcePolicy();
@@ -363,6 +368,8 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       {addKind === 'document' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Choose an indexed document from a Space. Studio saves a snapshot for this course; later changes to the document do not rewrite it.</p><LearningDocumentPicker selected={selectedDocuments} onChange={setSelectedDocuments} limit={1} /></div>}
       {addKind === 'paste' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Paste notes, excerpts, or other material you have permission to use. The complete text is saved as a fixed snapshot and searched in passages when preparing lessons.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-title">Title<input id="paste-source-title" data-add-focus value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-publisher">Publisher or origin <span className="font-normal text-text-muted">(optional)</span><input id="paste-source-publisher" value={pastePublisher} onChange={(event) => setPastePublisher(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-text">Saved text<textarea id="paste-source-text" value={pasteText} onChange={(event) => setPasteText(event.target.value)} rows={8} className="mt-1.5 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6" /></label><div className="text-right text-[10px] tabular-nums text-text-muted">{Array.from(pasteText).length.toLocaleString()} characters</div></div>}
       {formError && <p role="alert" className="mt-4 rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700">{formError}</p>}{operationMessage && retryOperation?.kind.startsWith('add-') && <p role="alert" className="mt-3 text-xs text-rose-700">{operationMessage} You can retry the same submission without creating a duplicate.</p>}
+      <label className="mt-4 flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={checkWaiting} disabled={mutationBusy} onChange={(event) => setCheckWaiting(event.target.checked)} className="h-3.5 w-3.5 accent-accent" />Check the waiting claims against it</label>
+      {mutationBusy && recheckProgress && <p role="status" className="mt-3 text-xs text-text-secondary">{progressLine(recheckProgress)}</p>}
       <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full border border-border px-4 py-2.5 text-xs text-text-secondary disabled:opacity-50">Cancel</button><button type="button" disabled={mutationBusy} onClick={() => void submitAdd()} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-50"><Upload size={14} />{mutationBusy ? 'Saving…' : retryOperation?.kind.startsWith('add-') ? 'Retry save source' : 'Save source'}</button></div>
     </DialogContent></Dialog>
 
