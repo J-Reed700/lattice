@@ -18,7 +18,9 @@ pub use presentation::{
     ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto,
     ResearchSummaryDto,
 };
-pub use trust::{CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto};
+pub use trust::{
+    source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
+};
 
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimState, LessonReviewState, ReopenCause, RepairOutcome,

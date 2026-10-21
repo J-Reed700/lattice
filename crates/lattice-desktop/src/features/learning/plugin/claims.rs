@@ -7,11 +7,9 @@
 use super::*;
 use std::sync::Arc;
 
-use crate::features::learning::curriculum::LearningGenerationJobStatus;
-use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::lessons::claim_reviews::attach::{
     self, report::ClaimAttachProgressDto, report::ClaimAttachReportDto, report::SnapshotNoteDto,
-    AttachDeps, AttachRequest,
+    AttachDeps, AttachRequest, Others,
 };
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
     export_file_name, CheckerAccuracyDto, CheckerExamples,
@@ -19,6 +17,7 @@ use crate::features::learning::lessons::claim_reviews::checker_examples::{
 use crate::features::learning::lessons::claim_reviews::dto::{
     AttachEvidenceDto, AttachScopeDto, ClaimActionRequestDto, LessonClaimReviewDto,
 };
+use crate::features::learning::lessons::claim_reviews::recheck::running_job;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use crate::features::learning::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
@@ -118,20 +117,6 @@ fn claim_reviews(container: &Container) -> ClaimReviewService {
     ClaimReviewService::new(container.db_pool().clone())
 }
 
-/// The lesson's preparation job while it runs, for event provenance.
-async fn running_job(container: &Container, ledger: &Ledger) -> Option<String> {
-    let job_id = &ledger.review.as_ref()?.job_id;
-    let job = LearningCurriculumRepository::new(container.db_pool().clone())
-        .job(job_id)
-        .await
-        .ok()?;
-    matches!(
-        job.status,
-        LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
-    )
-    .then_some(job.id)
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_lesson_claim_review(
@@ -180,7 +165,8 @@ fn in_course(ledger: &Ledger, program_id: &str) -> Result<(), ApiError> {
 }
 
 /// Attach the user's evidence to a claim (§5.4): save it as a course
-/// source, check the claim against it, then the lesson's other open claims.
+/// source, check the claim against it, then the other open claims in scope,
+/// reporting each stage on `on_progress`.
 #[tauri::command]
 #[specta::specta]
 pub async fn attach_learning_claim_evidence(
@@ -191,7 +177,7 @@ pub async fn attach_learning_claim_evidence(
     let store = claim_ledger(&container);
     let ledger = store.load(&request.lesson_id).await?;
     in_course(&ledger, &request.program_id)?;
-    let job_id = running_job(&container, &ledger).await;
+    let job_id = running_job(container.db_pool(), &ledger).await;
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
@@ -202,7 +188,14 @@ pub async fn attach_learning_claim_evidence(
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
     let claim_id = ClaimId(request.claim_id.clone());
-    let report = attach::attach(
+    let scoped: Vec<ClaimId> = match &request.scope {
+        AttachScopeDto::Claim => Vec::new(),
+        AttachScopeDto::Claims { claim_ids } => claim_ids.iter().cloned().map(ClaimId).collect(),
+    };
+    let progress = move |stage: ClaimAttachProgressDto| {
+        let _ = on_progress.send(stage);
+    };
+    let report = attach::attach_to(
         &AttachDeps {
             pool: container.db_pool(),
             store: store.as_ref(),
@@ -220,9 +213,10 @@ pub async fn attach_learning_claim_evidence(
             expected_revision: Revision(request.expected_revision),
             evidence: request.evidence.into(),
         },
+        Others::Only(&scoped),
+        &progress,
     )
     .await?;
-    let _ = on_progress.send(ClaimAttachProgressDto::Done);
     Ok(report)
 }
 
