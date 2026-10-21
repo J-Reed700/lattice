@@ -162,20 +162,21 @@ fn remap_uuids(text: &str, map: &HashMap<String, String>) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let (mut copied, mut at) = (0, 0);
-    while at + UUID_LEN <= bytes.len() {
-        if !is_uuid(&bytes[at..at + UUID_LEN]) {
+    while let Some(window) = bytes.get(at..at + UUID_LEN) {
+        if !is_uuid(window) {
             at += 1;
             continue;
         }
         // An ASCII match, so both ends are character boundaries.
-        if let Some(new) = map.get(&text[at..at + UUID_LEN]) {
-            out.push_str(&text[copied..at]);
+        let mapped = text.get(at..at + UUID_LEN).and_then(|old| map.get(old));
+        if let (Some(new), Some(before)) = (mapped, text.get(copied..at)) {
+            out.push_str(before);
             out.push_str(new);
             copied = at + UUID_LEN;
         }
         at += UUID_LEN;
     }
-    out.push_str(&text[copied..]);
+    out.push_str(text.get(copied..).unwrap_or_default());
     out
 }
 
