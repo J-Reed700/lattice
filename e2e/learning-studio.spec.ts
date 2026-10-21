@@ -106,9 +106,12 @@ test('Lesson preparation explains verification and research across navigation an
     }];
   });
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
-  const panel = page.getByRole('region', { name: 'Lesson preparation progress' });
-  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
+  const panel = page.getByRole('region', { name: 'Lesson preparation' });
+  // Collapsed: one status line with the bar; the step and statistics sit behind Details.
+  await expect(panel.getByRole('status')).toContainText('Preparing Reasoning from field observations · Fact checks & repairs');
   await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
+  await panel.getByRole('button', { name: 'Details' }).click();
+  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
   await expect(panel.getByText('30 saved checks reused. 87 of 134 model checks remaining in this pass.')).toBeVisible();
   await expect(panel.getByText(/Checkpoint saved at/)).toBeVisible();
   await expect(panel.getByText(/No new output or completed step/)).toBeVisible();
@@ -120,10 +123,12 @@ test('Lesson preparation explains verification and research across navigation an
   await panel.getByRole('status').scrollIntoViewIfNeeded();
   await page.screenshot({ path: `e2e-results/lesson-preparation-expanded-${browserName}.png` });
   await page.setViewportSize(desktopViewport);
-  await panel.getByRole('button', { name: 'Hide details' }).click();
-  await expect(panel.getByRole('progressbar')).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Details' }).click();
+  // Collapsed keeps the bar and Pause; the details leave the page.
+  await expect(panel.getByRole('progressbar')).toHaveCount(1);
+  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Pause lesson preparation' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Show details' }).click();
+  await panel.getByRole('button', { name: 'Details' }).click();
   await openStudioSection(page, 'Sources');
   await page.evaluate(() => {
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { planWorkspace: { jobs: Array<{ progressMessage: string; activity: { phase: string; modelRunning: boolean } }> } } }).__LATTICE_LEARNING_STATE__;
@@ -141,23 +146,23 @@ test('Lesson preparation explains verification and research across navigation an
   await page.screenshot({ path: `e2e-results/lesson-preparation-narrow-bottom-${browserName}.png` });
   await panel.getByRole('status').scrollIntoViewIfNeeded();
   await page.screenshot({ path: `e2e-results/lesson-preparation-narrow-${browserName}.png` });
-  await panel.getByRole('button', { name: 'Hide details' }).click();
+  await panel.getByRole('button', { name: 'Details' }).click();
   await panel.getByRole('button', { name: 'Pause lesson preparation' }).click();
-  await expect(panel.getByRole('status')).toHaveText('Lesson preparation paused');
+  await expect(panel.getByRole('status')).toContainText('Lesson preparation paused');
   await expect(panel.getByRole('button', { name: 'Resume lesson preparation' })).toBeVisible();
   await expect(panel.getByRole('alert')).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/lesson-preparation-paused-narrow-${browserName}.png` });
   await openStudioSection(page, 'Sources');
   await openStudioSection(page, 'Lessons');
-  await expect(panel.getByRole('status')).toHaveText('Lesson preparation paused');
-  await panel.getByRole('button', { name: 'Show details' }).click();
+  await expect(panel.getByRole('status')).toContainText('Lesson preparation paused');
+  await panel.getByRole('button', { name: 'Details' }).click();
   await expect(panel.getByText('77 / 164 checked')).toBeVisible();
   await expect(panel.getByText(/stays paused until you choose Resume, even after reopening/)).toBeVisible();
   await page.setViewportSize(desktopViewport);
   await panel.getByRole('status').scrollIntoViewIfNeeded();
   await page.screenshot({ path: `e2e-results/lesson-preparation-paused-desktop-${browserName}.png` });
   await panel.getByRole('button', { name: 'Resume lesson preparation' }).click();
-  await expect(panel.getByRole('status')).toHaveText('Preparing your lesson');
+  await expect(panel.getByRole('status')).toContainText('Preparing');
   await expect(panel.getByText('Retry queued')).toBeVisible();
   await expect(panel.getByText('77 / 164 checked')).toBeVisible();
   await expectNoUnsupportedIpc(page);

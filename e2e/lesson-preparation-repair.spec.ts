@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { installLearningStudioBackend } from './helpers/learningStudioBackend';
 
-test('Completed checking gives way to visible repair progress, including when details are collapsed', async ({ page, browserName }) => {
+test('Completed checking gives way to visible repair progress: the status line names it, Details shows the step', async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await page.goto('/studio');
   await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
@@ -29,24 +29,32 @@ test('Completed checking gives way to visible repair progress, including when de
     }];
   });
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
-  const panel = page.getByRole('region', { name: 'Lesson preparation progress' });
+  const panel = page.getByRole('region', { name: 'Lesson preparation' });
+  // Collapsed, the panel is one status line: the lesson, the step, the time, and Pause.
+  await expect(panel.getByRole('status')).toContainText('Preparing Reasoning from field observations · Fact checks & repairs');
+  await expect(panel.getByRole('progressbar')).toHaveCount(0);
+  await expect(panel.getByText('Lesson not ready yet')).toHaveCount(0);
+  // The repair progress is reached through Details.
+  await panel.getByRole('button', { name: 'Details' }).click();
   await expect(panel.getByText('Lesson not ready yet')).toBeVisible();
   await expect(panel.getByText(/Checking finished; 21 claims needed attention/)).toBeVisible();
   await expect(panel.getByText(/Correcting affected section 4 of 9/)).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Repairing the draft' })).toBeVisible();
+  await expect(panel.getByText('Waiting for model output')).toBeVisible();
+  await expect(panel.getByText(/Last reported progress/)).toBeVisible();
   await expect(panel.getByRole('progressbar')).toHaveCount(0);
   await expect(panel.getByText('Still to check')).toHaveCount(0);
   await panel.scrollIntoViewIfNeeded();
   await panel.screenshot({ path: `e2e-results/lesson-repair-progress-${browserName}.png` });
-  await panel.getByRole('button', { name: 'Hide details' }).click();
-  await expect(panel.getByRole('heading', { name: 'Repairing the draft' })).toBeVisible();
-  await expect(panel.getByText('Waiting for model output')).toBeVisible();
-  await expect(panel.getByText(/Last reported progress/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(panel.getByText(/Correcting affected section 4 of 9/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await panel.screenshot({ path: `e2e-results/lesson-repair-progress-narrow-${browserName}.png` });
+  await panel.getByRole('button', { name: 'Details' }).click();
+  await expect(panel.getByText('Waiting for model output')).toHaveCount(0);
+  await expect(panel.getByRole('status')).toContainText('Fact checks & repairs');
   await panel.getByRole('button', { name: 'Pause lesson preparation' }).click();
-  await expect(panel.getByRole('status')).toHaveText('Lesson preparation paused');
+  await expect(panel.getByRole('status')).toContainText('Lesson preparation paused');
   await expect(panel.getByText('Waiting for model output')).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Resume lesson preparation' })).toBeVisible();
 });

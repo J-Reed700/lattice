@@ -295,7 +295,8 @@ describe('Learning Studio program workflow', () => {
     });
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    const preparation = await screen.findByRole('region', { name: 'Lesson preparation progress' });
+    const preparation = await screen.findByRole('region', { name: 'Lesson preparation' });
+    await user.click(within(preparation).getByRole('button', { name: 'Details' }));
     expect(within(preparation).getByText('Checking saved evidence for another lesson')).toBeVisible();
     const finish = screen.getByRole('button', { name: 'Mark lesson complete' });
     expect(finish).toBeEnabled();
@@ -306,7 +307,7 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.prepare).not.toHaveBeenCalled();
   });
 
-  it('shows preparation as one line on other tabs, with View returning to the full panel on Lessons', async () => {
+  it('shows preparation as one line on other tabs, with View returning to the status and its Details on Lessons', async () => {
     const user = userEvent.setup();
     const active = program('active', true);
     const running: LearningGenerationJob = {
@@ -328,18 +329,19 @@ describe('Learning Studio program workflow', () => {
     mocks.get.mockResolvedValue(ok(active));
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    expect(await screen.findByRole('region', { name: 'Lesson preparation progress' })).toBeVisible();
+    const status = await screen.findByRole('region', { name: 'Lesson preparation' });
+    expect(within(status).getByRole('button', { name: 'Details' })).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Plan' }));
     expect(await screen.findByTestId('plan-panel')).toBeVisible();
     const line = screen.getByRole('region', { name: 'Lesson preparation' });
     expect(within(line).getByRole('status')).toHaveTextContent('Preparing lesson: Reading field notes · Verifying factual claims');
-    expect(screen.queryByRole('region', { name: 'Lesson preparation progress' })).not.toBeInTheDocument();
+    expect(within(line).queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
 
     await user.click(within(line).getByRole('button', { name: 'View' }));
-    expect(await screen.findByRole('region', { name: 'Lesson preparation progress' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Lesson preparation' })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Lesson preparation' })).getByRole('button', { name: 'Details' })).toBeVisible());
+    expect(screen.getAllByRole('region', { name: 'Lesson preparation' })).toHaveLength(1);
   });
 
   it('validates a quiz, preserves answers through a failed submit, and retries with the same attempt id', async () => {

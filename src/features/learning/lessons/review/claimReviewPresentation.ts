@@ -1,12 +1,19 @@
+import {
+  FIX_GROUP_LABELS,
+  FIX_GROUP_ORDER,
+  claimsCount,
+  fixGroupOf,
+  kindWord,
+} from '@/features/learning/lessons/review/claimReviewCopy';
 import type {
   ActorDto,
   CheckerVerdictDto,
   CheckResultDto,
   ClaimEvidencePassageDto,
-  ClaimActionKindDto,
   ClaimEventPayloadDto,
   ClaimLocationDto,
   ClaimReviewItemDto,
+  ClaimSupportDto,
   LearningGenerationJob,
   LearningSourceKind,
   LessonClaimReviewDto,
@@ -21,26 +28,8 @@ import type {
 /** The job's result reference for lessons held for review (§6.1). */
 export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
 
-/** The filters of §10, in display order. */
-export const CLAIM_FILTERS = ['needs_you', 'repairing', 'machine', 'confirmed', 'general', 'changed', 'all'] as const;
-export type ClaimFilter = (typeof CLAIM_FILTERS)[number];
-
-export const FILTER_LABELS: Record<ClaimFilter, string> = {
-  needs_you: 'Needs you',
-  repairing: 'With the machine',
-  machine: 'Resolved by the machine',
-  confirmed: 'Confirmed by you',
-  general: 'General knowledge',
-  changed: 'Removed or edited',
-  all: 'All',
-};
-
-/** Card actions in the fixed order of §10; History is always offered. */
-export const ACTION_ORDER: ClaimActionKindDto[] = [
-  'confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint', 'unconfirm', 'undo',
-];
-
-export function claimFilterOf(item: ClaimReviewItemDto): Exclude<ClaimFilter, 'all'> {
+/** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
+export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'general' | 'changed' {
   const state = item.state;
   switch (state.state) {
     case 'queued': return 'needs_you';
@@ -59,24 +48,6 @@ export function isWaitingForYou(item: ClaimReviewItemDto): boolean {
   return claimFilterOf(item) === 'needs_you';
 }
 
-export function filterCounts(claims: ClaimReviewItemDto[]): Record<ClaimFilter, number> {
-  const counts = Object.fromEntries(CLAIM_FILTERS.map((filter) => [filter, 0])) as Record<ClaimFilter, number>;
-  for (const claim of claims) counts[claimFilterOf(claim)] += 1;
-  counts.all = claims.length;
-  return counts;
-}
-
-export function applyFilter(claims: ClaimReviewItemDto[], filter: ClaimFilter): ClaimReviewItemDto[] {
-  return filter === 'all' ? claims : claims.filter((claim) => claimFilterOf(claim) === filter);
-}
-
-/** The filter to open on: the user's work first, else everything. */
-export function initialFilter(claims: ClaimReviewItemDto[]): ClaimFilter {
-  return claims.some(isWaitingForYou) ? 'needs_you' : 'all';
-}
-
-export type ClaimSection = { key: string; label: string; claims: ClaimReviewItemDto[] };
-
 /** Where a claim sits, in words: "Section 3 · Phase changes", "Question · answer key". */
 export function unitLabel(location: ClaimLocationDto): string {
   const title = location.unitTitle.trim();
@@ -87,49 +58,163 @@ export function unitLabel(location: ClaimLocationDto): string {
   }
 }
 
+// ── The queue's groups (§3.2) ───────────────────────────────────────────────
+
+export type GroupMode = 'source' | 'section' | 'fix';
+
+export const GROUP_MODE_LABELS: Record<GroupMode, string> = { source: 'Source', section: 'Section', fix: 'What fixes it' };
+
+export type ClaimGroup = {
+  key: string;
+  label: string;
+  /** A second line under the label: the source's site and kind, or a count. */
+  detail: string | null;
+  claims: ClaimReviewItemDto[];
+  /** The source every claim of a source group rests on. */
+  source: SourceRefDto | null;
+};
+
 /** Claims grouped by unit, in lesson order (blocks, then questions). */
-export function groupBySection(claims: ClaimReviewItemDto[]): ClaimSection[] {
-  const sections = new Map<string, ClaimSection & { index: number }>();
+export function groupBySection(claims: ClaimReviewItemDto[]): ClaimGroup[] {
+  const sections = new Map<string, ClaimGroup & { index: number }>();
   for (const claim of claims) {
     const { unitIndex, unitKind } = claim.location;
     // A question and its answer key share a unit; the key reads as part of it.
     const key = String(unitIndex);
-    const section = sections.get(key) ?? { key, index: unitIndex, label: unitLabel({ ...claim.location, unitKind: unitKind === 'answer_key' ? 'question' : unitKind }), claims: [] };
+    const section = sections.get(key) ?? { key, index: unitIndex, label: unitLabel({ ...claim.location, unitKind: unitKind === 'answer_key' ? 'question' : unitKind }), detail: null, claims: [], source: null };
     section.claims.push(claim);
     sections.set(key, section);
   }
-  return [...sections.values()].sort((a, b) => a.index - b.index).map(({ key, label, claims: items }) => ({ key, label, claims: items }));
+  return [...sections.values()].sort((a, b) => a.index - b.index).map(({ index: _index, ...group }) => group);
 }
 
-/** The honest name of a verdict (§3 VerdictKind). */
-export function verdictLabel(kind: VerdictKindDto | null): string {
-  if (!kind) return 'Not checked yet';
-  switch (kind.kind) {
-    case 'unsupported': return 'Unsupported';
-    case 'contradicted': return 'Contradicted';
-    case 'no_source': return 'No source found';
-    case 'could_not_judge': return 'Could not judge';
-    case 'general_knowledge_proposed': return 'General knowledge proposed';
-    case 'disputed': return `Disputed by the Verifier · ${verdictLabel(kind.verifier).toLowerCase()}`;
-    case 'insufficient_standing': return 'Support not enough for its kind';
+const supportOf = (item: ClaimReviewItemDto): ClaimSupportDto | null => (item.support?.role === 'supports' ? item.support : null);
+
+export const NO_SOURCE_GROUP = 'No source states it';
+
+/**
+ * A group per support source, the largest first, titled by the source; the
+ * claims no source states form the last group (§3.2).
+ */
+export function groupBySource(claims: ClaimReviewItemDto[]): ClaimGroup[] {
+  const groups = new Map<string, ClaimGroup>();
+  const none: ClaimReviewItemDto[] = [];
+  for (const claim of claims) {
+    const support = supportOf(claim);
+    if (!support) { none.push(claim); continue; }
+    const key = support.source.sourceId;
+    const group = groups.get(key) ?? {
+      key: `source:${key}`, label: support.source.title,
+      detail: [support.site, kindWord(support.kind)].filter(Boolean).join(' · '),
+      claims: [], source: support.source,
+    };
+    group.claims.push(claim);
+    groups.set(key, group);
   }
+  const ordered = [...groups.values()].sort((a, b) => b.claims.length - a.claims.length);
+  return none.length ? [...ordered, { key: 'source:none', label: NO_SOURCE_GROUP, detail: null, claims: none, source: null }] : ordered;
 }
 
-/** One sentence on what the verdict means, so the chip never stands alone. */
-export function verdictMeaning(kind: VerdictKindDto | null): string {
-  if (!kind) return 'The checker has not judged this claim yet.';
-  switch (kind.kind) {
-    case 'unsupported': return 'Evidence was compared and none of it supports the claim.';
-    case 'contradicted': return 'A passage says otherwise.';
-    case 'no_source': return 'No saved passage mentions the claim’s terms.';
-    case 'could_not_judge': return 'The checker could not give a usable answer for this claim.';
-    case 'general_knowledge_proposed': return 'The checker proposes this is general knowledge. It was not checked against a source.';
-    case 'disputed': return 'The local checker verified this claim; the Verifier audit disagrees.';
-    case 'insufficient_standing': return 'A passage supports the claim, but its source alone is not enough for this kind of claim.';
+/** Claims grouped by what fixes them (§4.2). */
+export function groupByFix(claims: ClaimReviewItemDto[]): ClaimGroup[] {
+  return FIX_GROUP_ORDER
+    .map((fix) => ({ key: `fix:${fix}`, label: FIX_GROUP_LABELS[fix], detail: null, claims: claims.filter((claim) => fixGroupOf(claim) === fix), source: null }))
+    .filter((group) => group.claims.length > 0);
+}
+
+export function groupClaims(claims: ClaimReviewItemDto[], mode: GroupMode): ClaimGroup[] {
+  if (mode === 'source') return groupBySource(claims);
+  if (mode === 'fix') return groupByFix(claims);
+  return groupBySection(claims);
+}
+
+/** By source when two or more waiting claims share a support source, else by section. */
+export function defaultGroupMode(claims: ClaimReviewItemDto[]): GroupMode {
+  const seen = new Set<string>();
+  for (const claim of claims) {
+    const source = supportOf(claim)?.source.sourceId;
+    if (!source) continue;
+    if (seen.has(source)) return 'source';
+    seen.add(source);
   }
+  return 'section';
 }
 
-/** Contradicted claims, local or by the Verifier, need a note to confirm (D3). */
+export const groupCountLabel = (group: ClaimGroup) => claimsCount(group.claims.length);
+
+// ── The evidence excerpt (§3.4) ─────────────────────────────────────────────
+
+/** A UTF-8 byte offset into `text` as a string index. */
+export function byteToIndex(text: string, byte: number): number {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  let index = 0;
+  for (const char of text) {
+    if (bytes >= byte) break;
+    bytes += encoder.encode(char).length;
+    index += char.length;
+  }
+  return index;
+}
+
+/**
+ * Sentence bounds as the backend finds them: a sentence ends at a line
+ * break, or at '.', '!' or '?' before whitespace or the end.
+ */
+export function sentenceBounds(text: string): Array<[number, number]> {
+  const bounds: Array<[number, number]> = [];
+  let start = 0;
+  const push = (from: number, to: number) => {
+    const piece = text.slice(from, to);
+    const lead = piece.length - piece.trimStart().length;
+    const trimmed = piece.trim();
+    if (trimmed) bounds.push([from + lead, from + lead + trimmed.length]);
+  };
+  for (let at = 0; at < text.length; at += 1) {
+    const ch = text[at];
+    const next = text[at + 1];
+    if (ch === '\n' || ('.!?'.includes(ch) && (next === undefined || /\s/.test(next)))) {
+      push(start, at + 1);
+      start = at + 1;
+    }
+  }
+  push(start, text.length);
+  return bounds;
+}
+
+export type Excerpt = { before: string; quote: string; after: string; clippedStart: boolean; clippedEnd: boolean };
+
+/**
+ * The quoted sentence with up to one sentence of context on each side, from
+ * the passage. Falls back to the quote alone when it is not found there.
+ */
+export function excerptAround(text: string, span: [number, number] | null, quote: string): Excerpt {
+  let from = -1;
+  let to = -1;
+  if (span) { from = byteToIndex(text, span[0]); to = byteToIndex(text, span[1]); }
+  if (from < 0 || to <= from || text.slice(from, to).trim() !== quote.trim()) {
+    from = text.indexOf(quote);
+    to = from + quote.length;
+  }
+  if (from < 0) return { before: '', quote, after: '', clippedStart: false, clippedEnd: false };
+  // Context is a sentence with words in it, never a stray fence or rule line.
+  const bounds = sentenceBounds(text).filter(([start, end], index, all) => /\w+\W+\w+/.test(text.slice(start, end)) || all[index][0] <= from && from < end);
+  const first = bounds.findIndex(([, end]) => end > from);
+  const last = bounds.findIndex(([, end]) => end >= to);
+  const startAt = first > 0 ? bounds[first - 1][0] : first === 0 ? bounds[0][0] : from;
+  const endAt = last >= 0 && last + 1 < bounds.length ? bounds[last + 1][1] : last >= 0 ? bounds[last][1] : to;
+  return {
+    before: text.slice(Math.min(startAt, from), from),
+    quote: text.slice(from, to),
+    after: text.slice(to, Math.max(endAt, to)),
+    clippedStart: Math.min(startAt, from) > 0,
+    clippedEnd: Math.max(endAt, to) < text.length,
+  };
+}
+
+// ── Actions and history ─────────────────────────────────────────────────────
+
+/** Contradicted claims, local or by the Verifier, need a note to accept (D3). */
 export function confirmNeedsNote(item: ClaimReviewItemDto): boolean {
   const kind = item.verdictKind;
   if (!kind) return false;
@@ -154,28 +239,21 @@ const REOPEN_CAUSES: Record<ReopenCauseDto['cause'], string> = {
   sentence_changed: 'Reopened: the sentence changed',
   source_deleted: 'Reopened: its source was deleted',
   source_replaced: 'Reopened: its source was replaced',
-  unconfirmed: 'Reopened: you unconfirmed it',
-  verifier_dispute: 'Reopened: the Verifier disputes it',
-  trust_changed: 'Reopened: a source’s trust or a bar changed',
+  unconfirmed: 'Reopened: you took back your acceptance',
+  verifier_dispute: 'Reopened: an independent check disagrees',
+  trust_changed: 'Reopened: how far a source is trusted changed',
 };
 
-function date(at: number): string {
-  return new Date(at).toLocaleDateString([], { day: 'numeric', month: 'short' });
-}
-
-/** The state in words, for the card's status line. Text, never colour alone. */
-export function stateLabel(item: ClaimReviewItemDto): string {
-  const state = item.state;
-  switch (state.state) {
-    case 'unchecked': return 'Waiting to be checked';
-    case 'open': return `${item.verdictKind?.kind === 'insufficient_standing' ? 'Sent back for stronger sources' : 'With the machine'} · ${state.machineAttemptsLeft} ${state.machineAttemptsLeft === 1 ? 'try' : 'tries'} left`;
-    case 'queued': return 'Needs your review';
-    case 'resolved_by_evidence': return 'Verified against a source';
-    case 'confirmed': return `Confirmed by you · ${date(state.at)}`;
-    case 'removed': return state.by === 'machine' ? `Removed by the machine · ${date(state.at)}` : `Removed by you · ${date(state.at)}`;
-    case 'edited': return state.successor ? `Edited · ${date(state.at)}` : `Removed by an edit · ${date(state.at)}`;
-    case 'general_knowledge': return `General knowledge · not checked against a source${state.by === 'user' ? ' · accepted by you' : ''}`;
-    case 'reopened': return REOPEN_CAUSES[state.cause.cause];
+/** A verdict in words, for the history and the checks. */
+function verdictWords(kind: VerdictKindDto): string {
+  switch (kind.kind) {
+    case 'unsupported': return 'Not stated by the passages compared';
+    case 'contradicted': return 'A source says otherwise';
+    case 'no_source': return 'No saved source mentions it';
+    case 'could_not_judge': return 'Could not check';
+    case 'general_knowledge_proposed': return 'Proposed as common knowledge';
+    case 'disputed': return `Disputed by an independent check · ${verdictWords(kind.verifier).toLowerCase()}`;
+    case 'insufficient_standing': return 'Stated, but not by a source enough on its own';
   }
 }
 
@@ -194,12 +272,12 @@ export const actorLabel = (actor: ActorDto) => ACTOR[actor];
 function describeUserAction(action: UserActionDto, note: string | null): string {
   const quoted = note ? ` · “${note}”` : '';
   switch (action.action) {
-    case 'confirm': return `Confirmed${quoted}`;
-    case 'unconfirm': return `Unconfirmed${quoted}`;
+    case 'confirm': return `Accepted${quoted}`;
+    case 'unconfirm': return `Acceptance withdrawn${quoted}`;
     case 'edit': return `Edited: “${action.before}” → “${action.after}”`;
     case 'remove': return 'Removed the sentence';
-    case 'general_knowledge': return 'Marked as general knowledge';
-    case 'research_with_hint': return `Asked for research: “${action.hint}”`;
+    case 'general_knowledge': return 'Accepted as common knowledge';
+    case 'research_with_hint': return `Asked for a search: “${action.hint}”`;
   }
 }
 
@@ -210,18 +288,17 @@ function checkVerdict(result: CheckResultDto): string {
   switch (result.verdict) {
     case 'supported': return 'Supported';
     case 'supported_elsewhere': return 'Supported elsewhere, citation repaired';
-    case 'failed': return verdictLabel(result.kind);
+    case 'failed': return verdictWords(result.kind);
   }
 }
 
 /** One history row in words. */
 export function describeEvent(payload: ClaimEventPayloadDto): string {
   switch (payload.kind) {
-    case 'extracted': return `Claim found in ${payload.field}: “${payload.quote}”`;
+    case 'extracted': return `Claim found in ${payload.field}: “${payload.statement}”`;
     case 'checked': {
-      const who = payload.check.checker.role === 'verifier' ? 'Verifier' : 'Checker';
-      const result = payload.check.result;
-      const verdict = checkVerdict(result).toLowerCase();
+      const who = payload.check.checker.role === 'verifier' ? 'Independent check' : 'Checker';
+      const verdict = checkVerdict(payload.check.result).toLowerCase();
       return `${who} (${payload.check.checker.model}): ${verdict}${payload.check.reason ? ` · ${payload.check.reason}` : ''}`;
     }
     case 'researched': return payload.queries.length
@@ -233,8 +310,8 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'user_action': return describeUserAction(payload.action, payload.note);
     case 'evidence_attached': {
       const input = { saved_passage: 'a saved passage', link: 'a link', document: 'a file', pasted_text: 'pasted text' }[payload.provenance.input];
-      const result = payload.result.outcome === 'no_passage' ? 'no passage mentions the claim'
-        : payload.result.check.result.verdict === 'failed' ? verdictLabel(payload.result.check.result.kind).toLowerCase() : 'verified';
+      const result = payload.result.outcome === 'no_passage' ? 'it does not mention the claim'
+        : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it states the claim';
       return `Added ${input}: ${result}`;
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
@@ -242,9 +319,9 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
     case 'standing_assessed': {
       const { assessment } = payload;
-      const decided = assessment.sufficient ? 'support meets the bar for its kind' : 'support is not enough for its kind';
-      const why = assessment.cause ? (assessment.cause.change === 'override' ? ' after a trust override' : ' after a bar moved') : '';
-      return `Standing: ${decided}${why}${assessment.reason ? ` · ${assessment.reason}` : ''}`;
+      const decided = assessment.sufficient ? 'its source is enough on its own' : 'its source is not enough on its own';
+      const why = assessment.cause ? (assessment.cause.change === 'override' ? ' after you changed how far a source is trusted' : ' after the course’s rules moved') : '';
+      return `Weighed: ${decided}${why}`;
     }
     case 'stopped': return `Stopped: ${payload.reason.message}`;
   }
@@ -267,11 +344,13 @@ function side(check: CheckerVerdictDto): CheckerSide {
   };
 }
 
-/** "Local checker said / Verifier said" (§14.5), once the Verifier has judged the claim. */
+/** "First check / Independent check" (§14.5), once the Verifier has judged the claim. */
 export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide | null; verifier: CheckerSide } | null {
   if (!item.verifierCheck) return null;
   return { local: item.localCheck ? side(item.localCheck) : null, verifier: side(item.verifierCheck) };
 }
+
+// ── Holds and jobs ──────────────────────────────────────────────────────────
 
 /** The code every Verifier audit stop starts with (`verifier_unset`, `verifier_turned_off`…). */
 export const AUDIT_STOP_PREFIX = 'verifier_';
@@ -290,7 +369,7 @@ export function reviewHold(review: LessonClaimReviewDto, waiting: number): Revie
   return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
-export const NOTHING_CHANGED = 'Nothing changed since the last pass. Resolve a claim or add evidence first.';
+export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a claim or add a source first.';
 
 /** Lessons a completed job held for review, from its result reference. */
 export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {
@@ -307,31 +386,4 @@ export function currentPreparationJobs(jobs: LearningGenerationJob[]): LearningG
 /** The job that holds `lessonId` for review, if its latest attempt does. */
 export function jobHoldingLesson(jobs: LearningGenerationJob[], lessonId: string): LearningGenerationJob | null {
   return currentPreparationJobs(jobs).find((job) => heldLessonIds(job).includes(lessonId)) ?? null;
-}
-
-export function claimsNoun(count: number): string {
-  return `${count} ${count === 1 ? 'claim' : 'claims'}`;
-}
-
-/** The panel's one-line summary, e.g. "12 verified · 3 confirmed by you · 2 general knowledge". */
-export function countsLine(review: LessonClaimReviewDto): string {
-  const { verified, confirmed, generalKnowledge, queued, open, removed } = review.counts;
-  return [
-    `${verified} verified`,
-    confirmed ? `${confirmed} confirmed by you` : null,
-    generalKnowledge ? `${generalKnowledge} general knowledge` : null,
-    open ? `${open} with the machine` : null,
-    removed ? `${removed} removed` : null,
-    `${queued} waiting for you`,
-  ].filter(Boolean).join(' · ');
-}
-
-/** What the live region says after an action. */
-export function announcement(action: ClaimActionKindDto | 'accept_all_general_knowledge', remaining: number): string {
-  const done: Record<string, string> = {
-    confirm: 'Claim confirmed.', edit: 'Sentence edited.', remove: 'Claim removed.', general_knowledge: 'Marked as general knowledge.',
-    attach_evidence: 'Evidence checked.', research_with_hint: 'Research finished.', unconfirm: 'Confirmation withdrawn.', undo: 'Undone.',
-    accept_all_general_knowledge: 'General-knowledge proposals accepted.',
-  };
-  return `${done[action]} ${remaining} ${remaining === 1 ? 'remains' : 'remain'}.`;
 }

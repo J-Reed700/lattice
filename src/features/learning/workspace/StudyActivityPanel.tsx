@@ -3,6 +3,11 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronUp, Clock3, LoaderCircle, X } from 'lucide-react';
 
+import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
+import { claimsNeedYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { isWaitingForYou } from '@/features/learning/lessons/review/claimReviewPresentation';
+import VaultAPI from '@/lib/api';
+import type { LessonClaimReviewDto } from '@/lib/bindings';
 import { queryClient } from '@/lib/queryClient';
 import { dismissStudyActivity, EMPTY_STUDY_ACTIVITY, STUDY_ACTIVITY_KEY, type StudyActivity, type StudyDestination } from '@/lib/studyActivity';
 
@@ -11,37 +16,60 @@ function duration(milliseconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+/**
+ * Claims waiting for the user in the lesson a finished request points at; 0
+ * when it points at no lesson, or the lesson is not held for review.
+ */
+function useClaimsWaitingIn(destination: StudyDestination, finished: boolean): number {
+  const { programId = '', lessonId = '' } = destination;
+  const { data } = useQuery<LessonClaimReviewDto | null>({
+    queryKey: learningClaimReviewKey(programId, lessonId),
+    queryFn: async () => {
+      const result = await VaultAPI.getLearningLessonClaimReview(programId, lessonId);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: finished && Boolean(programId && lessonId),
+    retry: false,
+  }, queryClient);
+  if (!data || (data.state !== 'needs_review' && data.state !== 'stopped')) return 0;
+  return data.claims.filter(isWaitingForYou).length;
+}
+
+/** One line per request: what it is, for which course, how long, and where it leads. */
 function ActivityCard({ activity, now, onOpen }: { activity: StudyActivity; now: number; onOpen: (destination: StudyDestination) => void }) {
   const pending = activity.status === 'pending';
   const failed = activity.status === 'failed';
   const destination = activity.destination;
-  return <article aria-label={activity.title} className="rounded-xl border border-border bg-surface p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        {activity.courseTitle && <p className="mb-1 truncate text-xs text-text-muted">{activity.courseTitle}</p>}
-        <h3 className="text-sm font-semibold text-text-primary">{activity.title}</h3>
-        <p role="status" className={`mt-1 flex items-center gap-1.5 text-xs ${failed ? 'text-rose-700 dark:text-rose-300' : 'text-text-secondary'}`}>
-          {pending ? <LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : !failed ? <Check size={13} aria-hidden="true" /> : null}
-          {pending ? 'Waiting for the result' : failed ? 'Request failed' : 'Request completed'}
-        </p>
-      </div>
+  const waiting = useClaimsWaitingIn(destination, !pending && !failed);
+  const outcome = pending ? 'Waiting for the result' : failed ? 'Request failed' : waiting > 0 ? claimsNeedYou(waiting) : 'Request completed';
+  return <article aria-label={activity.title} className="rounded-xl border border-border bg-surface px-4 py-2.5">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <p className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+        {pending ? <LoaderCircle size={14} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" /> : !failed ? <Check size={14} className="shrink-0 text-accent" aria-hidden="true" /> : null}
+        <span className="min-w-0 truncate"><span className="font-semibold text-text-primary">{activity.title}</span>{activity.courseTitle && <span className="text-text-muted"> · {activity.courseTitle}</span>}</span>
+      </p>
       <span className="shrink-0 text-xs tabular-nums text-text-muted" aria-live="off">{pending ? 'Elapsed' : 'Took'} {duration((activity.finishedAt ?? now) - activity.startedAt)}</span>
+      <span role="status" className={`shrink-0 text-xs ${failed ? 'text-rose-700 dark:text-rose-300' : waiting > 0 ? 'font-medium text-text-primary' : 'text-text-secondary'}`}>{outcome}</span>
+      <span className="flex shrink-0 items-center gap-1.5">
+        {waiting > 0
+          ? <button type="button" onClick={() => onOpen({ ...destination, tab: 'lessons', review: 'claims' })} className="min-h-8 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Review</button>
+          : (destination.programId || destination.flashcards) && <button type="button" onClick={() => onOpen(destination)} className="min-h-8 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
+        {!pending && <button type="button" onClick={() => dismissStudyActivity(activity.id)} className="min-h-8 rounded-full px-3 text-xs text-text-muted hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Dismiss</button>}
+      </span>
     </div>
-    <p role={failed ? 'alert' : undefined} className="mt-3 text-sm leading-6 text-text-secondary">{pending ? activity.detail : failed ? activity.error : 'The app has returned a result. Open the task to review it.'}</p>
-    <details key={activity.status} className="mt-3 text-xs text-text-secondary">
+    {failed && <p role="alert" className="mt-1.5 text-sm leading-6 text-text-secondary">{activity.error}</p>}
+    <details key={activity.status} className="mt-1 text-xs text-text-secondary">
       <summary className="cursor-pointer rounded-md py-1 font-medium text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Task details</summary>
       <div className="mt-2 rounded-lg bg-background p-3">
-        <p className="font-medium">What this task involves</p>
+        <p className="leading-5">{pending ? activity.detail : failed ? 'The request did not finish. Its error is shown above.' : 'The app has returned a result. Open the task to review it.'}</p>
+        <p className="mt-3 font-medium">What this task involves</p>
         <ul className="mt-2 list-disc space-y-1 pl-4">{activity.involves.map(step => <li key={step}>{step}</li>)}</ul>
         <p className="mt-3 leading-5 text-text-muted">These are the task’s steps, not live completion indicators. Live stage updates are not available for this task.</p>
         <p className="mt-2 text-text-muted">Started {new Date(activity.startedAt).toLocaleTimeString()}{activity.finishedAt ? ` · Finished ${new Date(activity.finishedAt).toLocaleTimeString()}` : ''}</p>
       </div>
     </details>
-    {pending && now - activity.startedAt >= 60_000 && <p className="mt-3 text-xs leading-5 text-text-muted">Still waiting for a response. Live stage updates are not available for this task. You can keep browsing Study.</p>}
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      {(destination.programId || destination.flashcards) && <button type="button" onClick={() => onOpen(destination)} className="min-h-9 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
-      {!pending && <button type="button" onClick={() => dismissStudyActivity(activity.id)} className="min-h-9 rounded-full px-3 text-xs text-text-muted hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Dismiss</button>}
-    </div>
+    {pending && now - activity.startedAt >= 60_000 && <p className="mt-1 text-xs leading-5 text-text-muted">Still waiting for a response. You can keep browsing Study.</p>}
   </article>;
 }
 
@@ -92,7 +120,7 @@ export function StudyActivityPanel({ onOpen }: { onOpen: (destination: StudyDest
       </div>
       <div id={panelId} hidden={!expanded}>
         <p className="my-3 text-xs leading-5 text-text-muted">{active.length ? 'Work continues while you browse Study. Collapse this panel to keep reading.' : 'Recent Study requests. Open a result or clear finished activity.'}</p>
-        <div ref={activityList} className={`grid max-h-[38vh] gap-3 overflow-y-auto pb-1 pr-1 ${ordered.length > 1 ? 'lg:grid-cols-2' : ''}`}>{ordered.map(activity => <ActivityCard key={activity.id} activity={activity} now={now} onOpen={destination => { setExpanded(false); onOpen(destination); }} />)}</div>
+        <div ref={activityList} className="grid max-h-[38vh] gap-2 overflow-y-auto pb-1 pr-1">{ordered.map(activity => <ActivityCard key={activity.id} activity={activity} now={now} onOpen={destination => { setExpanded(false); onOpen(destination); }} />)}</div>
       </div>
     </div>
   </section>;

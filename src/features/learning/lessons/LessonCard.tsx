@@ -6,10 +6,10 @@ import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueri
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
+import { claimsCount, claimsNeedYou, preparingLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
-import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
-import { isTeachingWaiting, teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
+import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
@@ -25,7 +25,7 @@ const blockLabels: Record<LearningBlockKind, string> = {
   independent_practice: 'Your assignment', reflection: 'Reflect & connect', recap: 'Key takeaways',
 };
 
-export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice }: {
+export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview }: {
   lesson: LearningLessonDto;
   moduleId: string;
   outlineEvidence?: LearningOutlineEvidenceDto | null;
@@ -37,6 +37,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   onComplete: () => void;
   onSelect: () => void;
   onPractice: () => void;
+  /** Opens the lesson's claim review screen; the course page never shows claims itself. */
+  onReview?: (programId: string, lessonId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
   const showCitations = useCitationDisplayStore((state) => state.visible);
@@ -45,6 +47,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const waitsForIndex = useEvidenceWaitsForIndex(program.summary.id);
   const heldByIndex = !pending && program.summary.status === 'active' ? waitsForIndex : undefined;
   const indexWaitId = useId();
+  const bodyId = useId();
   const evidenceReport = useLearningLessonEvidence(
     program.summary.id,
     lesson.id,
@@ -60,8 +63,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     lesson.id,
   );
   useEffect(() => { if (selected) setExpanded(true); }, [selected, lesson.preparation]);
-  // A lesson held for review is named by its job's result; its claims come
-  // from the review. While a job runs, an opened lesson lists claims live.
+  // A lesson held for review is named by its job's result; its counts come
+  // from the review. A ready lesson may still have teaching notes waiting.
   // A draft course has no plan and no jobs, so it asks for none.
   const jobs = useLearningPlan(program.summary.status === 'active' ? program.summary.id : '').data?.jobs ?? [];
   const holdingJob = lesson.preparation === 'outline' ? jobHoldingLesson(jobs, lesson.id) : null;
@@ -69,59 +72,68 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const review = useLessonClaimReview(
     program.summary.id,
     lesson.id,
-    Boolean(holdingJob) || expanded,
+    Boolean(holdingJob) || expanded || lesson.preparation === 'ready',
   );
-  const liveTally = activeJob?.activity?.claims ? JSON.stringify(activeJob.activity.claims) : null;
-  const refetchReview = review.refetch;
-  useEffect(() => { if (liveTally && expanded) void refetchReview(); }, [liveTally, expanded, refetchReview]);
   const reviewState = review.data?.state ?? (holdingJob ? 'needs_review' : null);
   const waiting = review.data?.claims.filter(isWaitingForYou).length ?? null;
-  // A published lesson can still have teaching notes waiting for the user.
   const teachingWaiting = review.data?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
   const needsReview = reviewState === 'needs_review' || reviewState === 'stopped';
   // Never "0 claims": a lesson with none waiting is held by the audit or ready to resume.
   const hold = review.data && waiting != null ? reviewHold(review.data, waiting) : 'claims';
   const holdLabel: Record<ReviewHold, string> = {
-    claims: `Needs your review${waiting ? ` · ${waiting} ${waiting === 1 ? 'claim' : 'claims'}` : ''}`,
-    audit_stop: 'Waiting for the Verifier audit', audit: 'Waiting for the Verifier audit', resolved: 'Ready to resume',
+    claims: waiting ? claimsNeedYou(waiting) : 'Waiting for you',
+    audit_stop: 'Waiting for the independent check', audit: 'Waiting for the independent check', resolved: 'Ready to resume',
   };
-  const statusLabel = reviewState === 'needs_review' ? holdLabel[hold]
-    : reviewState === 'stopped' ? 'Stopped · see why'
-    : lesson.preparation === 'ready' ? teachingWaiting > 0 ? `Ready · ${teachingNotesNoun(teachingWaiting)} for you` : 'Ready' : 'Outline';
-  const holdHint: Record<ReviewHold, string> = {
-    claims: 'Some claims could not be verified. Open the lesson to see each one with what was compared, and resolve it.',
-    audit_stop: 'No claim needs you; the Verifier audit could not finish. Open the lesson to see why and resume.',
-    audit: 'No claim needs you; the Verifier audit has not finished. Open the lesson to resume it.',
-    resolved: 'Every claim is resolved. Open the lesson and choose Resume verification.',
-  };
-  const showReview = needsReview || teachingWaiting > 0 || (Boolean(review.data) && lesson.preparation === 'outline' && Boolean(activeJob));
-  const reviewPanel = showReview && <LessonClaimReviewPanel programId={program.summary.id} lessonId={lesson.id} courseRevision={program.summary.revision}
-    jobActive={Boolean(activeJob)} lessonAnchor={lesson.preparation === 'ready' ? `lesson-${lesson.id}-section-` : null} />;
+  const preparingThis = lesson.preparation === 'outline' && activeJob?.activity?.lessonTitle === lesson.title;
+  // The first that applies, as §4.4 orders them.
+  const statusLabel = reviewState === 'stopped' ? 'Stopped with a cause to fix'
+    : needsReview ? holdLabel[hold]
+    : lesson.preparation === 'ready' ? teachingWaiting > 0 ? `Ready · ${teachingNotesForYou(teachingWaiting)}` : 'Ready'
+    : preparingThis ? preparingLine(activeJob?.activity?.claims)
+    : 'Outline';
+  const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0);
+  const openReview = () => onReview?.(program.summary.id, lesson.id);
 
   return (
     <article id={`lesson-${lesson.id}`} className={`overflow-clip rounded-2xl border bg-surface transition ${isCurrent ? 'border-accent/50 shadow-[0_8px_34px_-24px_hsl(var(--accent))]' : 'border-border shadow-sm'}`}>
-      <button type="button" onClick={() => { onSelect(); setExpanded((value) => !value); }} className="flex w-full items-start gap-4 p-5 text-left sm:p-6">
-        <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full ${lesson.completed ? 'bg-emerald-500/15 text-emerald-700' : lesson.preparation === 'ready' ? 'bg-accent/10 text-accent' : 'bg-background text-text-muted'}`}>
-          {lesson.completed ? <Check size={16} /> : <span className="font-serif text-base">{lesson.preparation === 'ready' ? <Play size={14} /> : '·'}</span>}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
+        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${lesson.completed ? 'bg-emerald-500/15 text-emerald-700' : lesson.preparation === 'ready' ? 'bg-accent/10 text-accent' : 'bg-background text-text-muted'}`}>
+          {lesson.completed ? <Check size={15} /> : <span className="font-serif text-base">{lesson.preparation === 'ready' ? <Play size={13} /> : '·'}</span>}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-2"><span className="font-serif text-xl text-text-primary">{lesson.title}</span>{isCurrent && <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-accent">Resume here</span>}</span>
-          <span className="mt-1 block text-sm leading-6 text-text-secondary">
+        <button type="button" aria-expanded={expanded} aria-controls={bodyId} onClick={() => { onSelect(); setExpanded((value) => !value); }} className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">
+          <span className="min-w-0 truncate font-serif text-lg text-text-primary">{lesson.title}</span>
+          {isCurrent && <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">Resume here</span>}
+        </button>
+        <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${needsReview || reviewable ? 'border border-accent/50 font-semibold text-text-primary' : 'bg-background text-text-muted'}`}>{needsReview && <ClipboardCheck size={12} aria-hidden="true" />}{statusLabel}</span>
+        {reviewable && <button type="button" onClick={openReview} className="min-h-9 shrink-0 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg">Review</button>}
+      </div>
+
+      {expanded && (
+        <div id={bodyId} className="border-t border-border bg-background/45 px-5 py-6 sm:px-9">
+          <div className="text-sm leading-6 text-text-secondary">
             <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective">
               <span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span>
             </StudyTangentSelection>
-          </span>
-          {needsReview && !expanded && <span className="mt-2 block text-xs leading-5 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. Open the lesson to see it and retry.' : holdHint[hold]}</span>}
-          <span className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"><span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 ${needsReview ? 'border border-accent/50 font-semibold text-text-primary' : 'bg-background'}`}>{needsReview && <ClipboardCheck size={12} aria-hidden="true" />}{statusLabel}</span><span className="shrink-0 whitespace-nowrap">{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></span>
-        </span>
-        <span className="mt-2 shrink-0 text-xs text-text-muted">{expanded ? 'Close' : 'Open'}</span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border bg-background/45 px-5 py-6 sm:px-9">
+          </div>
+          <p className="mb-4 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted"><span className="inline-flex items-center gap-1.5"><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span>{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></p>
           {showCitations && <OutlineCitation citation={objectiveCitation} evidence={outlineEvidence} className="mb-4 mt-0" />}
-          {lesson.preparation === 'outline' && reviewPanel}
-          {lesson.preparation === 'outline' ? needsReview ? null : (
+          {lesson.preparation === 'outline' ? needsReview ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/5 p-4">
+                <p className="max-w-xl text-sm leading-6 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. The review shows it and lets you retry.' : hold === 'claims' ? 'Some claims could not be verified. The review shows each one with its evidence, one at a time.' : hold === 'resolved' ? 'Every claim is resolved. Resume verification from the review to publish the lesson.' : 'No claim needs you; the independent check has not finished. The review shows why.'}</p>
+                {onReview && <button type="button" onClick={openReview} className="min-h-10 shrink-0 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg">{hold === 'claims' && waiting ? `Review ${claimsCount(waiting)}` : 'Open the review'}</button>}
+              </div>
+              {lesson.blocks.length > 0 && <div aria-label="Draft sections" className="space-y-3">
+                {lesson.blocks.map((block, index) => (
+                  <section key={`${lesson.id}-draft-${index}`} className="rounded-xl border border-border bg-surface p-5 opacity-90">
+                    <div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Draft · {blockLabels[block.kind]}</div>
+                    <h4 className="mt-1 font-serif text-lg text-text-primary">{block.title}</h4>
+                    <div className="prose prose-sm mt-3 max-w-none text-text-secondary dark:prose-invert"><MarkdownViewer content={block.body} /></div>
+                  </section>
+                ))}
+              </div>}
+            </div>
+          ) : (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div><h4 className="font-medium text-text-primary">Ready when you are</h4><p className="mt-1 text-sm text-text-secondary">This prepares this lesson only. The accepted outline stays in place if preparation fails.</p></div>
               <div className="flex flex-col items-start gap-1.5 sm:items-end">
@@ -131,7 +143,6 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
             </div>
           ) : (
             <>
-              {reviewPanel}
               <AuditLessonNow programId={program.summary.id} lessonId={lesson.id} />
               {showCitations && <LessonEvidencePanel key={lesson.id} programId={program.summary.id} lessonId={lesson.id} programRevision={program.summary.revision} report={evidenceReport} />}
               <nav aria-label={`Sections in ${lesson.title}`} className="mb-5 flex flex-wrap gap-2">

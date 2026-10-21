@@ -4,16 +4,14 @@ import {
   badgeText,
   barLine,
   impactLine,
-  insufficiencyExplanation,
   overrideLines,
   redecidedLine,
-  sufficiencyHeadline,
   sufficiencyNote,
   TRUST_LEVELS,
   verifiedByLevel,
 } from '@/features/learning/sources/trust/trustPresentation';
-import { blogOnlyClaim, SPECIFICATION_BAR, trustOf } from '@/features/learning/sources/trust/trustTestData';
-import type { LearningClaimEvidenceDto, LearningSufficiencyDto } from '@/lib/bindings';
+import { SPECIFICATION_BAR, trustOf } from '@/features/learning/sources/trust/trustTestData';
+import type { LearningClaimEvidenceDto } from '@/lib/bindings';
 
 describe('trust presentation', () => {
   it('names every level in words', () => {
@@ -59,20 +57,10 @@ describe('trust presentation', () => {
     expect(barLine({ ...SPECIFICATION_BAR, lowestAccepted: null })).toBe('No single source is enough for how an API, standard or rule is defined now; it needs independent sources that agree');
   });
 
-  it('explains in plain words why a blog is not enough for an API specification', () => {
-    const claim = blogOnlyClaim();
-    expect(sufficiencyHeadline(claim)).toBe('Specification claim about OpenAI API · supported only by an established source · accepted alone: a primary or authoritative source');
-    // The decision is the gate's, as the claim ledger recorded it.
-    const held: LearningSufficiencyDto = { claimKind: 'specification', subject: 'OpenAI API', sufficient: false, bar: 'primary', label: null, reasons: [] };
-    expect(insufficiencyExplanation(held, 'established', 'machine')).toBe('An established source (an identified author, such as a blog) isn’t enough for how an API, standard or rule is defined; looking for the owner’s documentation.');
-    expect(insufficiencyExplanation(held, 'established', 'you')).toMatch(/waiting for you: accept this source for this claim/);
-    expect(insufficiencyExplanation({ ...held, sufficient: true, bar: null }, 'established', 'machine')).toBeNull();
-  });
-
   it('shows a published claim’s kind, subject and label', () => {
-    expect(sufficiencyNote({ claimKind: 'specification', subject: 'C#', sufficient: true, bar: null, label: 'secondary', reasons: [] }))
+    expect(sufficiencyNote({ claimKind: 'specification', subject: 'C#', sufficient: true, bar: null, label: 'secondary', missing: null, ceiling: null, reasons: [] }))
       .toBe('Specification claim about C# · per a secondary source, not the owner’s documentation');
-    expect(sufficiencyNote({ claimKind: 'practice', subject: null, sufficient: true, bar: null, label: null, reasons: [] })).toBe('Practice claim');
+    expect(sufficiencyNote({ claimKind: 'practice', subject: null, sufficient: true, bar: null, label: null, missing: null, ceiling: null, reasons: [] })).toBe('Practice claim');
   });
 
   it('counts verified claims by the best level of their support', () => {

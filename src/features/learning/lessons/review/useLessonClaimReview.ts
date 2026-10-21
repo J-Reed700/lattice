@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
-import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import VaultAPI from '@/lib/api';
@@ -30,27 +29,19 @@ export function useLessonClaimReview(programId: string, lessonId: string, enable
   });
 }
 
-async function refreshAfterAction(client: QueryClient, programId: string, lessonId: string, attached: boolean) {
+async function refreshAfterAction(client: QueryClient, programId: string, lessonId: string) {
   await Promise.all([
     client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
     client.invalidateQueries({ queryKey: learningLessonEvidencePrefix(programId) }),
-    // An attach saves a source: every source-derived view changes with it.
-    ...(attached ? [
-      client.invalidateQueries({ queryKey: learningSourcesKey(programId) }),
-      invalidateLearningSourceDependents(client, programId),
-    ] : []),
   ]);
 }
-
-const ATTACH_ACTIONS: ReadonlySet<ClaimActionRequestDto['action']> = new Set(['attach_saved_source', 'attach_link', 'attach_document', 'attach_text']);
-export const isAttachAction = (action: ClaimActionRequestDto) => ATTACH_ACTIONS.has(action.action);
 
 export type ResolveClaimVariables = { claimId: string; action: ClaimActionRequestDto; expectedRevision: number };
 
 /**
- * Every card action goes through `resolve_learning_claim` with the review's
+ * Every claim action goes through `resolve_learning_claim` with the review's
  * revision; the review reloads after success and after a refusal, so a stale
- * card never stays on screen.
+ * claim never stays on screen. Adding a source has its own command (`useAddSource`).
  */
 export function useResolveLearningClaim(programId: string, lessonId: string) {
   const client = useQueryClient();
@@ -59,7 +50,7 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
     mutationFn: async ({ claimId, action, expectedRevision }) => unwrap(await VaultAPI.resolveLearningClaim({
       programId, lessonId, claimId, action, expectedRevision, operationId: operationId(),
     })),
-    onSettled: (_data, _error, { action }) => refreshAfterAction(client, programId, lessonId, isAttachAction(action)),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
 }
 

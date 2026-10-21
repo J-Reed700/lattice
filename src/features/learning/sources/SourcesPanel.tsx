@@ -4,6 +4,7 @@ import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
@@ -34,6 +35,7 @@ import type {
   LearningTrustLevel,
   RefreshLearningSourceRequestDto,
   UpdateLearningSourcePolicyRequestDto,
+  WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
 type AddKind = 'web' | 'document' | 'paste';
@@ -81,11 +83,19 @@ function isLegacy(source: LearningSourceLibraryItemDto) { return Boolean(source.
 function isCasConflict(error?: string) { return Boolean(error && /(revision|compare.and.swap|conflict|changed elsewhere|source changed; reload and retry)/i.test(error)); }
 function prettyPolicy(policy: LearningSourcePolicy) { return policy === 'before_use' ? 'Before use' : policy === 'fixed' ? 'Fixed snapshot' : 'Manual checks'; }
 
-export function SourcesPanel({ programId, active = true }: { programId: string; active?: boolean }) {
+export function SourcesPanel({ programId, active = true, onOpenReview }: {
+  programId: string;
+  active?: boolean;
+  /** Opens the review of the course's held lessons, after a new source re-checked their claims. */
+  onOpenReview?: () => void;
+}) {
   const workspace = useLearningSourceWorkspace(programId);
   const addWeb = useAddLearningWebSource();
   const addDocument = useAddLearningDocumentSource();
   const addText = useAddLearningTextSource();
+  // What checking the course's waiting claims against the source just added found (§3.6).
+  const [recheck, setRecheck] = useState<WaitingClaimsRecheckDto | null>(null);
+  const rechecked = <T extends { recheck: WaitingClaimsRecheckDto | null }>(data: T) => { setRecheck(data.recheck); return data; };
   const refresh = useRefreshLearningSource();
   const adopt = useAdoptLearningSourceVersion();
   const updatePolicy = useUpdateLearningSourcePolicy();
@@ -241,21 +251,21 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
       try { url = new URL(webUrl.trim()); } catch { setFormError('Enter a complete web address, such as https://example.org/article.'); return; }
       if (!['http:', 'https:'].includes(url.protocol)) { setFormError('Use an http or https web address.'); return; }
       const request = addRequest<AddLearningWebSourceRequestDto>('add-web', { programId, url: url.href, freshnessPolicy: webPolicy });
-      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request, (body) => addWeb.mutateAsync(body as AddLearningWebSourceRequestDto));
+      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request, (body) => addWeb.mutateAsync(body as AddLearningWebSourceRequestDto).then(rechecked));
       if (ok) { preparedAddRef.current = null; setWebUrl(''); setAddOpen(false); }
       return;
     }
     if (addKind === 'document') {
       if (!documentId) { setFormError('Choose a document from your Library.'); return; }
       const request = addRequest<AddLearningDocumentSourceRequestDto>('add-document', { programId, documentId });
-      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto));
+      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto).then(rechecked));
       if (ok) { preparedAddRef.current = null; setDocumentId(); setAddOpen(false); }
       return;
     }
     if (!pasteTitle.trim()) { setFormError('Give this saved text a title.'); return; }
     if (!pasteText.trim()) { setFormError('Paste some text to save.'); return; }
     const request = addRequest<AddLearningTextSourceRequestDto>('add-text', { programId, title: pasteTitle.trim(), publisher: pastePublisher.trim() || null, text: pasteText });
-    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto));
+    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto).then(rechecked));
     if (ok) { preparedAddRef.current = null; setPasteTitle(''); setPastePublisher(''); setPasteText(''); setAddOpen(false); }
   };
 
@@ -285,6 +295,11 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
         ['Downloaded', counts.downloaded], ['Pinned', counts.pinned], ['Update available', counts.updates], ['Failed checks', counts.failed], ['Incomplete captures', counts.legacy],
       ].map(([label, count]) => <div key={label} className="rounded-xl border border-white/70 bg-white/50 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"><div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><div className="mt-1 font-serif text-xl tabular-nums text-text-primary">{count}</div></div>)}</div>
     </header>
+
+    {recheckLine(recheck) && <p role="status" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary">
+      <span>{recheckLine(recheck)}</span>
+      {onOpenReview && <button type="button" onClick={onOpenReview} className="font-medium text-accent underline underline-offset-2">Open the review</button>}
+    </p>}
 
     {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-800"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={() => void replay()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Retry same operation</button>}{reloadRequired && <button type="button" onClick={() => { clearRetry(); void workspace.refetch(); }} className="rounded-full border border-rose-700/30 px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
 
