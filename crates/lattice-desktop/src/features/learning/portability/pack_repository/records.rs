@@ -167,6 +167,18 @@ async fn export_notice(
             LearningPackStaysBehindKind::PracticalDrafts,
             "SELECT COUNT(*) FROM learning_practical_drafts WHERE program_id=?",
         ),
+        (
+            LearningPackStaysBehindKind::UnfinishedLessonReviews,
+            "SELECT COUNT(*) FROM learning_lesson_reviews WHERE program_id=? AND state<>'ready'",
+        ),
+        (
+            LearningPackStaysBehindKind::TangentChats,
+            "SELECT COUNT(*) FROM learning_tangents WHERE program_id=?",
+        ),
+        (
+            LearningPackStaysBehindKind::VerifierConsent,
+            "SELECT COUNT(*) FROM learning_programs WHERE id=? AND verifier_audit='on'",
+        ),
     ] {
         let count: i64 = sqlx::query_scalar(sql)
             .bind(program_id)

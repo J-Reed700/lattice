@@ -74,76 +74,212 @@ pub(super) const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_operations", filter: "program_id=? AND scope<>'portability'" },
 ];
 
+/// Columns holding a JSON list of identifiers.
+const ID_LIST_COLUMNS: &[&str] = &[
+    "source_version_ids_json",
+    "outcome_ids_json",
+    "source_ids_json",
+    "evidence_event_ids_json",
+    "proposal_ids_json",
+];
+
+/// Columns holding JSON whose identifiers sit under known keys.
+const NESTED_ID_COLUMNS: &[&str] = &[
+    "source_json",
+    "citations_json",
+    "snapshot_json",
+    "before_json",
+    "after_json",
+    "activity_snapshot_json",
+    "request_json",
+    "result_json",
+    "prompt_json",
+    "response_json",
+    "findings_json",
+    "source_coverage_gaps_json",
+    "evaluation_json",
+    "assistance_json",
+    "details_json",
+    "revealed_solution_citations_json",
+];
+
 pub(super) async fn snapshot_evidence_tables(
     connection: &mut sqlx::SqliteConnection,
     program_id: &str,
 ) -> Result<LearningEvidenceSnapshot> {
     let mut tables = Vec::with_capacity(EVIDENCE_TABLES.len());
     for spec in EVIDENCE_TABLES {
-        let pragma = format!("PRAGMA table_info({})", spec.table);
-        let cols = sqlx::query(&pragma)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
-        let columns: Vec<String> = cols
-            .into_iter()
-            .map(|row| row.get::<String, _>("name"))
-            .collect();
-        if columns.is_empty() {
-            return Err(AppError::Database(format!(
-                "Missing expected pack table {}",
-                spec.table
-            )));
-        }
-        let query = format!("SELECT * FROM {} WHERE {}", spec.table, spec.filter);
-        let rows = sqlx::query(&query)
-            .bind(program_id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
-        let mut values = Vec::with_capacity(rows.len());
-        for row in rows {
-            let mut object = serde_json::Map::new();
-            for (index, column) in row.columns().iter().enumerate() {
-                let type_name = column.type_info().name().to_ascii_uppercase();
-                let value = if type_name.contains("INT") || type_name == "BOOL" {
-                    row.try_get::<Option<i64>, _>(index)
-                        .map_err(db)?
-                        .map(serde_json::Value::from)
-                        .unwrap_or(serde_json::Value::Null)
-                } else if type_name.contains("REAL")
-                    || type_name.contains("FLOA")
-                    || type_name.contains("DOUB")
-                {
-                    row.try_get::<Option<f64>, _>(index)
-                        .map_err(db)?
-                        .and_then(serde_json::Number::from_f64)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
-                } else if type_name.contains("BLOB") {
-                    return Err(invalid(format!(
-                        "Pack snapshot does not support binary column {}.{}",
-                        spec.table,
-                        column.name()
-                    )));
-                } else {
-                    row.try_get::<Option<String>, _>(index)
-                        .map_err(db)?
-                        .map(serde_json::Value::String)
-                        .unwrap_or(serde_json::Value::Null)
-                };
-                object.insert(column.name().to_owned(), value);
-            }
-            values.push(serde_json::Value::Object(object));
-        }
-        tables.push(AggregateTableSnapshot {
-            table: spec.table.into(),
-            columns,
-            rows: values,
-        });
+        tables.push(snapshot_table(connection, spec, program_id).await?);
     }
     Ok(LearningEvidenceSnapshot { tables })
 }
+
+/// One table's rows for one program, each a JSON object keyed by column.
+pub(super) async fn snapshot_table(
+    connection: &mut SqliteConnection,
+    spec: &AggregateTableSpec,
+    program_id: &str,
+) -> Result<AggregateTableSnapshot> {
+    let pragma = format!("PRAGMA table_info({})", spec.table);
+    let cols = sqlx::query(&pragma)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
+    let columns: Vec<String> = cols
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect();
+    if columns.is_empty() {
+        return Err(AppError::Database(format!(
+            "Missing expected pack table {}",
+            spec.table
+        )));
+    }
+    let query = format!("SELECT * FROM {} WHERE {}", spec.table, spec.filter);
+    let rows = sqlx::query(&query)
+        .bind(program_id)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
+    let mut values = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut object = serde_json::Map::new();
+        for (index, column) in row.columns().iter().enumerate() {
+            let type_name = column.type_info().name().to_ascii_uppercase();
+            let value = if type_name.contains("INT") || type_name == "BOOL" {
+                row.try_get::<Option<i64>, _>(index)
+                    .map_err(db)?
+                    .map(serde_json::Value::from)
+                    .unwrap_or(serde_json::Value::Null)
+            } else if type_name.contains("REAL")
+                || type_name.contains("FLOA")
+                || type_name.contains("DOUB")
+            {
+                row.try_get::<Option<f64>, _>(index)
+                    .map_err(db)?
+                    .and_then(serde_json::Number::from_f64)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            } else if type_name.contains("BLOB") {
+                return Err(invalid(format!(
+                    "Pack snapshot does not support binary column {}.{}",
+                    spec.table,
+                    column.name()
+                )));
+            } else {
+                row.try_get::<Option<String>, _>(index)
+                    .map_err(db)?
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null)
+            };
+            object.insert(column.name().to_owned(), value);
+        }
+        values.push(serde_json::Value::Object(object));
+    }
+    Ok(AggregateTableSnapshot {
+        table: spec.table.into(),
+        columns,
+        rows: values,
+    })
+}
+
+/// The rows of `table`, refused unless it is `spec`'s table with this
+/// database's columns in order, within the row cap, every row holding
+/// exactly those columns.
+pub(super) async fn checked_rows(
+    tx: &mut SqliteConnection,
+    spec: &AggregateTableSpec,
+    table: &AggregateTableSnapshot,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    if table.table != spec.table {
+        return Err(invalid(
+            "Pack aggregate contains an unknown or reordered table.",
+        ));
+    }
+    let pragma = format!("PRAGMA table_info({})", spec.table);
+    let cols = sqlx::query(&pragma).fetch_all(&mut *tx).await.map_err(db)?;
+    let expected: Vec<String> = cols
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect();
+    if expected != table.columns {
+        return Err(invalid(
+            "Pack aggregate columns do not match this application version.",
+        ));
+    }
+    if table.rows.len() > MAX_TABLE_ROWS {
+        return Err(invalid("Pack aggregate has too many records."));
+    }
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            let object = row
+                .as_object()
+                .ok_or_else(|| invalid("Pack aggregate row is malformed."))?;
+            if object.len() != table.columns.len()
+                || table
+                    .columns
+                    .iter()
+                    .any(|column| !object.contains_key(column))
+            {
+                return Err(invalid("Pack aggregate row has a different schema."));
+            }
+            Ok(object.clone())
+        })
+        .collect()
+}
+
+/// Write one row with `verb`, its values bound in `columns` order.
+pub(super) async fn insert_row(
+    tx: &mut SqliteConnection,
+    verb: &str,
+    table: &str,
+    columns: &[String],
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let col_sql = columns
+        .iter()
+        .map(|col| format!("\"{col}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+        "{verb} INTO {table} ({col_sql}) VALUES ("
+    ));
+    let mut values = query.separated(",");
+    for column in columns {
+        let value = object
+            .get(column)
+            .ok_or_else(|| invalid("Pack aggregate row is missing a column."))?;
+        match value {
+            serde_json::Value::Null => {
+                values.push_bind(Option::<String>::None);
+            }
+            serde_json::Value::Bool(v) => {
+                values.push_bind(i64::from(*v));
+            }
+            serde_json::Value::Number(v) => {
+                if let Some(i) = v.as_i64() {
+                    values.push_bind(i);
+                } else if let Some(f) = v.as_f64() {
+                    values.push_bind(f);
+                } else {
+                    return Err(invalid("Pack aggregate has an invalid number."));
+                }
+            }
+            serde_json::Value::String(v) => {
+                values.push_bind(v.clone());
+            }
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                values.push_bind(json_string(value)?);
+            }
+        }
+    }
+    values.push_unseparated(")");
+    query.build().execute(&mut *tx).await.map_err(db)?;
+    Ok(())
+}
+
 pub(super) async fn insert_evidence_snapshot(
     tx: &mut SqliteConnection,
     program_id: &str,
@@ -154,44 +290,7 @@ pub(super) async fn insert_evidence_snapshot(
         return Err(invalid("Pack aggregate table set is incomplete."));
     }
     for (table, spec) in snapshot.tables.iter().zip(EVIDENCE_TABLES) {
-        if table.table != spec.table {
-            return Err(invalid(
-                "Pack aggregate contains an unknown or reordered table.",
-            ));
-        }
-        let pragma = format!("PRAGMA table_info({})", spec.table);
-        let cols = sqlx::query(&pragma).fetch_all(&mut *tx).await.map_err(db)?;
-        let expected: Vec<String> = cols
-            .into_iter()
-            .map(|row| row.get::<String, _>("name"))
-            .collect();
-        if expected != table.columns {
-            return Err(invalid(
-                "Pack aggregate columns do not match this application version.",
-            ));
-        }
-        if table.rows.len() > MAX_TABLE_ROWS {
-            return Err(invalid("Pack aggregate has too many records."));
-        }
-        let col_sql = table
-            .columns
-            .iter()
-            .map(|col| format!("\"{col}\""))
-            .collect::<Vec<_>>()
-            .join(",");
-        for source_row in &table.rows {
-            let mut row = source_row.clone();
-            let object = row
-                .as_object_mut()
-                .ok_or_else(|| invalid("Pack aggregate row is malformed."))?;
-            if object.len() != table.columns.len()
-                || table
-                    .columns
-                    .iter()
-                    .any(|column| !object.contains_key(column))
-            {
-                return Err(invalid("Pack aggregate row has a different schema."));
-            }
+        for mut object in checked_rows(tx, spec, table).await? {
             for (column, value) in object.iter_mut() {
                 if column == "program_id" {
                     *value = serde_json::Value::String(program_id.to_owned());
@@ -206,56 +305,13 @@ pub(super) async fn insert_evidence_snapshot(
                                 ))
                             })?;
                         if !map.is_empty() {
-                            if matches!(
-                                column.as_str(),
-                                "source_version_ids_json"
-                                    | "outcome_ids_json"
-                                    | "source_ids_json"
-                                    | "evidence_event_ids_json"
-                            ) {
+                            let ids = ID_LIST_COLUMNS.contains(&column.as_str());
+                            if ids {
                                 remap_id_array(&mut nested, map)?;
-                            } else if matches!(
-                                column.as_str(),
-                                "source_json"
-                                    | "citations_json"
-                                    | "snapshot_json"
-                                    | "before_json"
-                                    | "after_json"
-                                    | "activity_snapshot_json"
-                                    | "request_json"
-                                    | "result_json"
-                                    | "prompt_json"
-                                    | "response_json"
-                                    | "findings_json"
-                                    | "source_coverage_gaps_json"
-                                    | "evaluation_json"
-                                    | "assistance_json"
-                                    | "details_json"
-                            ) {
+                            } else if NESTED_ID_COLUMNS.contains(&column.as_str()) {
                                 remap_nested_value(&mut nested, map);
                             }
-                            if matches!(
-                                column.as_str(),
-                                "source_version_ids_json"
-                                    | "outcome_ids_json"
-                                    | "source_ids_json"
-                                    | "evidence_event_ids_json"
-                                    | "source_json"
-                                    | "citations_json"
-                                    | "snapshot_json"
-                                    | "before_json"
-                                    | "after_json"
-                                    | "activity_snapshot_json"
-                                    | "request_json"
-                                    | "result_json"
-                                    | "prompt_json"
-                                    | "response_json"
-                                    | "findings_json"
-                                    | "source_coverage_gaps_json"
-                                    | "evaluation_json"
-                                    | "assistance_json"
-                                    | "details_json"
-                            ) {
+                            if ids || NESTED_ID_COLUMNS.contains(&column.as_str()) {
                                 *value = serde_json::Value::String(json_string(&nested)?);
                             }
                         }
@@ -302,41 +358,7 @@ pub(super) async fn insert_evidence_snapshot(
             } else {
                 "INSERT".to_owned()
             };
-            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
-                "{verb} INTO {} ({}) VALUES (",
-                spec.table, col_sql
-            ));
-            let mut values = query.separated(",");
-            for column in &table.columns {
-                let value = object
-                    .get(column)
-                    .ok_or_else(|| invalid("Pack aggregate row is missing a column."))?;
-                match value {
-                    serde_json::Value::Null => {
-                        values.push_bind(Option::<String>::None);
-                    }
-                    serde_json::Value::Bool(v) => {
-                        values.push_bind(i64::from(*v));
-                    }
-                    serde_json::Value::Number(v) => {
-                        if let Some(i) = v.as_i64() {
-                            values.push_bind(i);
-                        } else if let Some(f) = v.as_f64() {
-                            values.push_bind(f);
-                        } else {
-                            return Err(invalid("Pack aggregate has an invalid number."));
-                        }
-                    }
-                    serde_json::Value::String(v) => {
-                        values.push_bind(v.clone());
-                    }
-                    serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                        values.push_bind(json_string(value)?);
-                    }
-                }
-            }
-            values.push_unseparated(")");
-            query.build().execute(&mut *tx).await.map_err(db)?;
+            insert_row(tx, &verb, spec.table, &table.columns, &object).await?;
         }
     }
     Ok(())

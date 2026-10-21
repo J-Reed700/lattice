@@ -242,7 +242,7 @@ async fn export_pack(packs: &LearningPackRepository, program_id: &str) -> Result
 
 /// The preview `request` created. Previews are listed newest first by
 /// millisecond, so an earlier preview of the same course can tie with it.
-fn preview_for<'a>(
+pub(super) fn preview_for<'a>(
     workspace: &'a LearningPortabilityWorkspaceDto,
     request: &PreviewLearningPackImportRequestDto,
 ) -> &'a LearningPackImportPreviewDto {
@@ -253,7 +253,7 @@ fn preview_for<'a>(
         .expect("the requested preview")
 }
 
-async fn import(
+pub(super) async fn import(
     packs: &LearningPackRepository,
     path: &str,
     policy: LearningPackConflictPolicy,

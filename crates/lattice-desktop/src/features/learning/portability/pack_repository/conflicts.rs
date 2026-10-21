@@ -3,8 +3,14 @@
 //! ahead, and records another course owns. Every conflict says which
 //! policies clear it, so the renderer never re-derives these rules.
 use super::{
-    db, entries::CheckedPack, guards::active_job_exists, guards::PREPARING, invalid, parse,
-    records::PreviewRecord, replacement::unrecoverable_reason, validate_uuid,
+    db,
+    entries::CheckedPack,
+    guards::active_job_exists,
+    guards::PREPARING,
+    invalid, parse,
+    records::PreviewRecord,
+    replacement::{replace_warnings, unrecoverable_reason},
+    validate_uuid,
 };
 use crate::features::learning::{
     dto::LearningProgramDto,
@@ -160,6 +166,7 @@ pub(super) async fn scan(
             .await
             .map_err(db)?;
     let mut conflicts = Vec::new();
+    let mut warnings = checked.warnings;
     let mut action = "import";
     match (local_title, policy.on_existing()) {
         (None, ExistingAction::Replace) => action = "create",
@@ -167,6 +174,7 @@ pub(super) async fn scan(
         (Some(title), ExistingAction::Replace) => {
             let mut connection = pool.acquire().await.map_err(db)?;
             conflicts.extend(replace_conflicts(&mut connection, id, &title).await?);
+            warnings.extend(replace_warnings(&mut connection, id).await?);
         }
         (Some(title), _) => conflicts.push(conflict(
             LearningPackConflictKind::Program,
@@ -193,7 +201,7 @@ pub(super) async fn scan(
             action: action.into(),
             description: format!("Import {}", program.summary.title),
         }],
-        warnings: checked.warnings,
+        warnings,
     })
 }
 

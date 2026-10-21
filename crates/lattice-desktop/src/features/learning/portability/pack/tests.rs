@@ -99,8 +99,8 @@ fn only_the_current_pack_version_imports() -> anyhow::Result<()> {
     let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
     assert_eq!(decoded.manifest.version, LEARNING_PACK_VERSION);
     let mut manifest = decoded.manifest.clone();
-    assert_eq!(LEARNING_PACK_VERSION, 4);
-    for unsupported in [0, 1, 2, 3, LEARNING_PACK_VERSION + 1] {
+    assert_eq!(LEARNING_PACK_VERSION, 5);
+    for unsupported in [0, 1, 2, 3, 4, LEARNING_PACK_VERSION + 1] {
         manifest.version = unsupported;
         let error = decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)
             .expect_err("only the current pack version imports");

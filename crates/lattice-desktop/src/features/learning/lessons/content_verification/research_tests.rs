@@ -179,7 +179,7 @@ async fn reference_selection_reads_the_results_its_window_holds_in_order() -> Re
     assert!(prompts[0].contains("\"id\":\"result-0\""));
     assert!(!prompts[0].contains("paper.2999"));
     // The ones left out are the ones the room could not hold.
-    let held: usize = candidates[..sent].iter().map(|c| cost(c)).sum();
+    let held: usize = candidates[..sent].iter().map(&cost).sum();
     assert!(held <= room);
     assert!(held + cost(&candidates[sent]) > room - room / 100);
     Ok(())

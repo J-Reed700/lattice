@@ -25,14 +25,19 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 const STAYS_BEHIND: Record<LearningPackStaysBehindKind, [one: string, many: string]> = {
   notebook_notes: ['lesson note', 'lesson notes'],
   practical_drafts: ['lab draft', 'lab drafts'],
+  unfinished_lesson_reviews: ['unfinished lesson review', 'unfinished lesson reviews'],
+  tangent_chats: ['tangent chat', 'tangent chats'],
+  verifier_consent: ['Verifier audit consent', 'Verifier audit consents'],
 };
 const blockerSentence = (kind: LearningPackConflictKind) => CONFLICT_KINDS[kind].blocksExport ?? CONFLICT_KINDS[kind].reason(null);
 
-/** "2 lesson notes and 1 lab draft stay on this computer.", or null when nothing stays behind. */
+/** "2 lesson notes, 1 lab draft and 1 tangent chat stay on this computer.", or null when nothing stays behind. */
 function staysBehindLabel(notice: LearningPackExportNoticeDto | undefined) {
   if (!notice?.staysBehind.length) return null;
   const total = notice.staysBehind.reduce((sum, { count }) => sum + count, 0);
-  return `${notice.staysBehind.map(({ kind, count }) => plural(count, ...STAYS_BEHIND[kind])).join(' and ')} ${total === 1 ? 'stays' : 'stay'} on this computer.`;
+  const items = notice.staysBehind.map(({ kind, count }) => plural(count, ...STAYS_BEHIND[kind]));
+  const listed = items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}` : items[0];
+  return `${listed} ${total === 1 ? 'stays' : 'stay'} on this computer.`;
 }
 
 export function PortabilityPanel({ programId, onImported }: { programId: string; onImported?: (programId: string) => void }) {
