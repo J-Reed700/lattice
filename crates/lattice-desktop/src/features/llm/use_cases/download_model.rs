@@ -97,7 +97,7 @@ impl DownloadModelUseCase {
                 let mut expectation = FileExpectation::new(file.filename.clone());
 
                 // `size_bytes == 0` means "size unknown" in the curated catalog
-                // (see `build_safetensors_embedding_file_list` and the
+                // (see `build_gguf_embedding_file_list` and the
                 // transcription entries). Asserting an exact size of 0 would
                 // fail verification for every such file and force a needless
                 // re-download on every startup.
@@ -258,7 +258,7 @@ impl DownloadModelUseCase {
         }
 
         if !model_metadata.files.is_empty() {
-            // Multi-file model (e.g., BGE-M3 with model.onnx + model.onnx_data)
+            // Multi-file model (an embedding GGUF and its tokenizer, OCR weights and projector)
             info!(
                 model_id = %model_id,
                 file_count = model_metadata.files.len(),

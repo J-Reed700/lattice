@@ -63,86 +63,90 @@ async fn test_model_variants_integration() {
     assert!(variants.iter().all(|v| v.to_domain_model().is_ok()));
 }
 
-fn embedding_repo_with(files: &[&str]) -> HuggingFaceModel {
+fn embedding_repo_with(files: &[&str], gguf_architecture: Option<&str>) -> HuggingFaceModel {
     let siblings: Vec<serde_json::Value> = files
         .iter()
         .map(|name| serde_json::json!({ "rfilename": name, "size": 4_usize }))
         .collect();
-    serde_json::from_value(serde_json::json!({
-        "modelId": "BAAI/bge-m3",
-        "id": "BAAI/bge-m3",
-        "tags": ["sentence-transformers", "xlm-roberta"],
+    let mut repo = serde_json::json!({
+        "modelId": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+        "id": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+        "tags": ["sentence-transformers", "gguf"],
         "pipeline_tag": "feature-extraction",
         "siblings": siblings,
-    }))
-    .expect("deserialize embedding repo")
+    });
+    if let Some(architecture) = gguf_architecture {
+        repo["gguf"] = serde_json::json!({ "architecture": architecture });
+    }
+    serde_json::from_value(repo).expect("deserialize embedding repo")
+}
+
+fn embedding_verdict(
+    repo: &HuggingFaceModel,
+) -> lattice_core::domain::models::selection::EmbeddingCompatibility {
+    repo.to_external_metadata()
+        .embedding_compatibility
+        .expect("embedding repos carry a compatibility verdict")
 }
 
 #[test]
-fn weights_selection_falls_back_to_pytorch_bin() {
-    let repo = embedding_repo_with(&["pytorch_model.bin", "tokenizer.json", "config.json"]);
-    let (filename, _) = repo
-        .select_preferred_weights_file()
-        .expect("pickle-only repo is loadable");
-    assert_eq!(filename, "pytorch_model.bin");
+fn embedding_repo_results_list_its_gguf_files() {
+    let repo = embedding_repo_with(
+        &[
+            "Qwen3-Embedding-0.6B-f16.gguf",
+            "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "tokenizer.json",
+        ],
+        Some("qwen3"),
+    );
+    let preferred = repo
+        .to_external_metadata()
+        .preferred_filename
+        .expect("an embedding GGUF is downloadable");
+    assert!(preferred.ends_with(".gguf"), "{preferred}");
+    let variants: Vec<String> = repo
+        .gguf_variants()
+        .into_iter()
+        .filter_map(|variant| variant.preferred_filename)
+        .collect();
     assert_eq!(
-        repo.select_preferred_file().map(|(name, _)| name),
-        Some("pytorch_model.bin".to_string()),
+        variants,
+        [
+            "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "Qwen3-Embedding-0.6B-f16.gguf"
+        ]
     );
+    assert!(matches!(
+        embedding_verdict(&repo),
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible {
+            ref architecture
+        } if architecture == "qwen3"
+    ));
 }
 
 #[test]
-fn weights_selection_prefers_safetensors_over_pytorch_bin() {
-    let repo = embedding_repo_with(&[
-        "pytorch_model.bin",
-        "model.safetensors",
-        "tokenizer.json",
-        "config.json",
-    ]);
-    let (filename, _) = repo
-        .select_preferred_weights_file()
-        .expect("repo with both is loadable");
-    assert_eq!(filename, "model.safetensors");
-}
-
-#[test]
-fn weights_selection_still_requires_tokenizer_and_config() {
-    let repo = embedding_repo_with(&["pytorch_model.bin", "config.json"]);
-    assert!(repo.select_preferred_weights_file().is_none());
-}
-
-#[test]
-fn pytorch_bin_repo_is_reported_candle_compatible() {
-    let repo = embedding_repo_with(&["pytorch_model.bin", "tokenizer.json", "config.json"]);
-    let compatibility = repo
-        .to_external_metadata()
-        .embedding_compatibility
-        .expect("embedding repos carry a compatibility verdict");
-    assert!(
-        matches!(
-            compatibility,
-            lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible { .. }
-        ),
-        "pickle-only repo must not be rejected: {compatibility:?}",
+fn embedding_repo_without_a_gguf_is_incompatible() {
+    let repo = embedding_repo_with(
+        &["model.safetensors", "tokenizer.json", "config.json"],
+        None,
     );
-}
-
-#[test]
-fn repo_without_any_weights_names_both_candidates() {
-    let repo = embedding_repo_with(&["tokenizer.json", "config.json"]);
-    let compatibility = repo
-        .to_external_metadata()
-        .embedding_compatibility
-        .expect("embedding repos carry a compatibility verdict");
-    let reason = match compatibility {
+    assert_eq!(repo.to_external_metadata().preferred_filename, None);
+    match embedding_verdict(&repo) {
         lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
             reason,
             ..
-        } => reason,
+        } => assert!(reason.contains("GGUF"), "{reason}"),
         other => panic!("expected an incompatible verdict, got {other:?}"),
-    };
-    assert!(reason.contains("model.safetensors"), "{reason}");
-    assert!(reason.contains("pytorch_model.bin"), "{reason}");
+    }
+}
+
+#[test]
+fn embedding_gguf_of_an_architecture_the_engine_lacks_is_incompatible() {
+    let repo = embedding_repo_with(&["model-f16.gguf"], Some("not-a-llama-architecture"));
+    assert!(matches!(
+        embedding_verdict(&repo),
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible { .. }
+    ));
 }
 
 #[test]
@@ -329,31 +333,6 @@ fn filters_out_auxiliary_draft_and_fork_only_gguf_files() {
         mixed.to_external_metadata().preferred_filename.as_deref(),
         Some("Bonsai-27B-Q1_0.gguf")
     );
-}
-
-#[test]
-fn config_model_type_drives_embedding_compatibility_when_tags_do_not() {
-    let model: HuggingFaceModel = serde_json::from_value(serde_json::json!({
-        "modelId": "org/modern-embedder",
-        "tags": ["sentence-transformers", "safetensors"],
-        "pipeline_tag": "feature-extraction",
-        "config": { "model_type": "modernbert" },
-        "siblings": [
-            { "rfilename": "model.safetensors", "size": 1000 },
-            { "rfilename": "tokenizer.json", "size": 100 },
-            { "rfilename": "config.json", "size": 100 }
-        ]
-    }))
-    .expect("deserialize model");
-
-    let metadata = model.to_external_metadata();
-    assert!(metadata.tags.iter().any(|tag| tag == "modernbert"));
-    assert!(matches!(
-        metadata.embedding_compatibility,
-        Some(lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible {
-            ref architecture
-        }) if architecture == "modernbert"
-    ));
 }
 
 // Integration tests (requires network, mark with #[ignore])

@@ -6,6 +6,7 @@
 
 use crate::infrastructure::ml::artifact_identity;
 use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
@@ -56,6 +57,18 @@ impl SetActiveEmbeddingModelUseCase {
                 )));
             }
             model.validate_for_operation(false)?;
+            // Passages are cut with the model's own tokenizer, which a GGUF
+            // repository does not always ship beside the weights.
+            if !model
+                .location()
+                .enclosing_dir()
+                .is_some_and(|dir| has_tokenizer(&dir))
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "Model '{}' has no tokenizer.json beside it, so Lattice cannot cut documents into passages for it. Download an embedding model whose repository ships tokenizer.json.",
+                    model.model_name()
+                )));
+            }
         }
 
         artifact_identity::establish(&model).await
@@ -83,7 +96,7 @@ mod tests {
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
         let pool = SqlitePoolOptions::new()
@@ -98,28 +111,25 @@ mod tests {
         Arc::new(DownloadedModelRepository::new(pool))
     }
 
-    fn embedding_model_dir() -> tempfile::TempDir {
+    /// An embedding GGUF and its tokenizer, as a download leaves them.
+    fn embedding_model_dir() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("create model directory");
-        for (name, contents) in [
-            ("config.json", &b"{}"[..]),
-            ("tokenizer.json", &b"{}"[..]),
-            ("model.safetensors", &b"weights"[..]),
-        ] {
-            std::fs::write(dir.path().join(name), contents).expect("write model file");
-        }
-        dir
+        std::fs::write(dir.path().join("tokenizer.json"), b"{}").expect("write tokenizer");
+        let gguf = dir.path().join("model-f16.gguf");
+        std::fs::write(&gguf, b"weights").expect("write weights");
+        (dir, gguf)
     }
 
-    async fn save_directory_model(repo: &DownloadedModelRepository, model_id: &str, dir: &Path) {
+    async fn save_gguf_model(repo: &DownloadedModelRepository, model_id: &str, gguf: &Path) {
         let model = DownloadedModel::new(
             uuid::Uuid::new_v4().to_string(),
             format!("Embed {model_id}"),
             model_id.to_string(),
-            ModelLocation::LocalDirectory {
-                path: dir.to_path_buf(),
+            ModelLocation::LocalFile {
+                path: gguf.to_path_buf(),
             },
             7,
-            "bert".to_string(),
+            "qwen3".to_string(),
             None,
         )
         .expect("create embedding model");
@@ -141,9 +151,9 @@ mod tests {
     #[tokio::test]
     async fn activation_stores_the_computed_identity() {
         let repo = setup_repo().await;
-        let dir = embedding_model_dir();
-        save_directory_model(&repo, "local-embed", dir.path()).await;
-        let expected = artifact_identity::compute(dir.path()).expect("compute identity");
+        let (_dir, gguf) = embedding_model_dir();
+        save_gguf_model(&repo, "local-embed", &gguf).await;
+        let expected = artifact_identity::compute(&gguf).expect("compute identity");
 
         let returned = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
             .execute("local-embed")
@@ -166,8 +176,8 @@ mod tests {
     #[tokio::test]
     async fn reactivation_reuses_the_stored_identity_after_files_change() {
         let repo = setup_repo().await;
-        let dir = embedding_model_dir();
-        save_directory_model(&repo, "local-embed", dir.path()).await;
+        let (_dir, gguf) = embedding_model_dir();
+        save_gguf_model(&repo, "local-embed", &gguf).await;
         let use_case = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone());
         let first = use_case
             .execute("local-embed")
@@ -179,10 +189,9 @@ mod tests {
             .await
             .expect("switch away");
 
-        std::fs::write(dir.path().join("model.safetensors"), b"replaced weights")
-            .expect("replace weights");
+        std::fs::write(&gguf, b"replaced weights").expect("replace weights");
         assert_ne!(
-            artifact_identity::compute(dir.path()).expect("compute identity"),
+            artifact_identity::compute(&gguf).expect("compute identity"),
             first,
             "the files did change"
         );
@@ -199,8 +208,8 @@ mod tests {
     #[tokio::test]
     async fn establish_computes_without_writing() {
         let repo = setup_repo().await;
-        let dir = embedding_model_dir();
-        save_directory_model(&repo, "local-embed", dir.path()).await;
+        let (_dir, gguf) = embedding_model_dir();
+        save_gguf_model(&repo, "local-embed", &gguf).await;
 
         let established = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
             .establish("local-embed")
@@ -209,7 +218,7 @@ mod tests {
 
         assert_eq!(
             established,
-            Some(artifact_identity::compute(dir.path()).expect("compute identity"))
+            Some(artifact_identity::compute(&gguf).expect("compute identity"))
         );
         let model = repo
             .find_by_model_id("local-embed")
@@ -218,6 +227,29 @@ mod tests {
             .expect("model exists");
         assert!(!model.is_active_for_embedding());
         assert_eq!(model.embedding_artifact_identity(), None);
+        assert!(repo
+            .get_active_embedding_model()
+            .await
+            .expect("read active model")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_gguf_without_its_tokenizer_cannot_be_activated() {
+        let repo = setup_repo().await;
+        let (dir, gguf) = embedding_model_dir();
+        std::fs::remove_file(dir.path().join("tokenizer.json")).expect("remove tokenizer");
+        save_gguf_model(&repo, "local-embed", &gguf).await;
+
+        let err = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
+            .execute("local-embed")
+            .await
+            .expect_err("a GGUF without tokenizer.json is refused");
+
+        assert!(
+            matches!(&err, AppError::InvalidInput(message) if message.contains("tokenizer.json")),
+            "{err:?}"
+        );
         assert!(repo
             .get_active_embedding_model()
             .await
