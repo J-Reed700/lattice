@@ -61,6 +61,7 @@ use lessons::generation_jobs;
 use lessons::lesson_drafts;
 use lessons::lesson_progress;
 use lessons::review_evidence;
+use lessons::review_findings;
 use lessons::teaching_review;
 use planning::outline_citations;
 use planning::outline_draft_repository;

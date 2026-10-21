@@ -39,6 +39,9 @@ pub struct LessonClaimReviewDto {
     /// held by claims waiting for the user resumes only then.
     pub changed_since_stop: bool,
     pub claims: Vec<ClaimReviewItemDto>,
+    /// Teaching-review findings the repairs did not settle: the lesson
+    /// publishes with these waiting for the user.
+    pub teaching_findings: Vec<super::teaching_findings::TeachingFindingDto>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]

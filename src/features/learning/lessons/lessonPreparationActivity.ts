@@ -1,4 +1,5 @@
-import type { LearningGenerationPhase } from '@/lib/bindings';
+import { heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
+import type { LearningGenerationJob, LearningGenerationPhase } from '@/lib/bindings';
 
 export const PREPARATION_PHASES: Record<LearningGenerationPhase, { title: string; detail: string; next: string; group: number }> = {
   references: { title: 'Preparing reference material', detail: 'Loading saved sources and building the searchable passages used to check this lesson.', next: 'Write or restore the lesson draft.', group: 0 },
@@ -18,4 +19,47 @@ export function preparationDuration(seconds: number): string {
   if (total >= 3600) return `${Math.floor(total / 3600)}h ${Math.floor(total % 3600 / 60)}m`;
   if (total >= 60) return `${Math.floor(total / 60)}m ${total % 60}s`;
   return `${total}s`;
+}
+
+/** What a lesson preparation job is doing, as both the full panel and the compact line show it. */
+export type PreparationState = {
+  /** Running, waiting for a slot, or about to start. */
+  active: boolean;
+  /** Paused by the user; resumes only on Resume. */
+  paused: boolean;
+  queued: boolean;
+  /** Waiting for the model or network, and retrying by itself. */
+  reconnecting: boolean;
+  phase?: (typeof PREPARATION_PHASES)[LearningGenerationPhase];
+  /** Lessons held for the user's review: not a failure. */
+  held: string[];
+};
+
+export function preparationState(job: LearningGenerationJob | undefined, pending: boolean): PreparationState {
+  const queued = job?.status === 'pending';
+  return {
+    active: job ? ['pending', 'running'].includes(job.status) : pending,
+    paused: job?.status === 'cancelled',
+    queued,
+    reconnecting: queued && Boolean(job?.error),
+    phase: job?.activity ? PREPARATION_PHASES[job.activity.phase] : undefined,
+    held: heldLessonIds(job),
+  };
+}
+
+/**
+ * One line for the job, for tabs other than Lessons: "Preparing lesson:
+ * <title> · <current step>", "Lesson preparation failed: <title>". Null when
+ * there is nothing to show: no job, nothing pending and no error.
+ */
+export function preparationSummary(job: LearningGenerationJob | undefined, state: PreparationState, error?: string): string | null {
+  const title = job?.activity?.lessonTitle;
+  const named = (label: string) => (title ? `${label}: ${title}` : label);
+  if (state.held.length > 0) return named('Lesson waiting for your review');
+  if (state.reconnecting) return named('Lesson preparation will resume automatically');
+  if (state.active) return `${named('Preparing lesson')} · ${state.queued ? 'Queued' : state.phase?.title ?? 'Starting'}`;
+  if (state.paused) return named('Lesson preparation paused');
+  if (job && job.status !== 'completed') return named(`Lesson preparation ${job.status}`);
+  if (error) return 'Lesson preparation failed';
+  return null;
 }

@@ -24,6 +24,7 @@ import {
   type ReviewHold,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
+import { isTeachingWaiting, TeachingFindings, teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview, useResolveLearningClaim, useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
@@ -66,7 +67,7 @@ function AuditStop({ reason }: { reason: StopReasonDto }) {
   );
 }
 
-function Header({ review, waiting, hold }: { review: LessonClaimReviewDto; waiting: number; hold: ReviewHold }) {
+function Header({ review, waiting, teachingWaiting, hold }: { review: LessonClaimReviewDto; waiting: number; teachingWaiting: number; hold: ReviewHold }) {
   if (review.state === 'stopped' && review.stopReason) {
     return <><h3 className="text-base font-semibold text-text-primary">Lesson preparation stopped</h3><StopReason reason={review.stopReason} /></>;
   }
@@ -92,6 +93,12 @@ function Header({ review, waiting, hold }: { review: LessonClaimReviewDto; waiti
       <h3 className="text-base font-semibold text-text-primary">Needs your review · {waiting === 1 ? '1 claim needs your review' : `${claimsNoun(waiting)}`}</h3>
       <p className="mt-2 text-sm leading-6 text-text-secondary">Everything the lesson says was checked against your references. {waiting === 1 ? '1 claim' : `${waiting} claims`} could not be verified or {waiting === 1 ? 'was' : 'were'} contradicted; {waiting === 1 ? 'it is' : 'they are'} listed below with what was compared. Resolve each one, then choose <span className="font-semibold">Resume verification</span>. The lesson becomes ready only when every claim is verified, confirmed by you, removed, or edited and re-verified.</p>
       {auditStop && <AuditStop reason={auditStop} />}
+    </>;
+  }
+  if (review.state === 'ready' && teachingWaiting > 0) {
+    return <>
+      <h3 className="text-base font-semibold text-text-primary">Needs your review · {teachingNotesNoun(teachingWaiting)}</h3>
+      <p className="mt-2 text-sm leading-6 text-text-secondary">The lesson is published. The teaching review raised {teachingWaiting === 1 ? 'a point' : `${teachingWaiting} points`} its repairs did not settle; {teachingWaiting === 1 ? 'it is' : 'they are'} listed below with the reviewer’s note and the part of the lesson {teachingWaiting === 1 ? 'it is' : 'they are'} about. Choose <span className="font-semibold">Keep as written</span> when the lesson is right as it is.</p>
     </>;
   }
   if (review.state === 'verifying') {
@@ -141,6 +148,7 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
   const ordered = sections.flatMap((section) => section.claims);
   const counts = filterCounts(claims);
   const waiting = claims.filter(isWaitingForYou).length;
+  const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
   const proposals = claims.filter((claim) => claim.verdictKind?.kind === 'general_knowledge_proposed' && isWaitingForYou(claim));
   const single = claims.length === 1;
   const rovingId = ordered.some((claim) => claim.claimId === active) ? active : ordered[0]?.claimId ?? null;
@@ -222,7 +230,7 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
 
   return (
     <section aria-label="Claim review" className="my-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
-      <Header review={review} waiting={waiting} hold={hold} />
+      <Header review={review} waiting={waiting} teachingWaiting={teachingWaiting} hold={hold} />
       <p className="mt-3 text-xs leading-5 text-text-muted"><span className="font-medium text-text-secondary">Pass {review.pass}</span> · {countsLine(review)}</p>
       <p className="mt-1 text-xs leading-5 text-text-muted">{PASS_BOUND}</p>
       <LessonAuditLine programId={programId} lessonId={lessonId} />
@@ -293,6 +301,9 @@ export function LessonClaimReviewPanel({ programId, lessonId, courseRevision, jo
           </section>
         ))}
       </div>
+
+      <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings} lessonAnchor={lessonAnchor}
+        onKept={(remaining) => setMessage(`Kept as written. ${teachingNotesNoun(remaining)} waiting for you.`)} />
 
       <CheckerAccuracy programId={programId} />
 

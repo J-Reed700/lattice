@@ -169,7 +169,17 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             crate::features::learning::reference_collection::ReferenceCollection::lexical(
                 &sources,
             )?;
-        let issues: Vec<String> = serde_json::from_value(case["issues"].clone())?;
+        let issues: Vec<crate::features::learning::review_findings::ReviewFinding> =
+            serde_json::from_value::<Vec<String>>(case["issues"].clone())?
+                .into_iter()
+                .map(|issue| {
+                    crate::features::learning::review_findings::ReviewFinding::new(
+                        crate::features::learning::review_findings::FindingKind::Teaching,
+                        None,
+                        issue,
+                    )
+                })
+                .collect();
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
@@ -183,6 +193,7 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,
         )?;
+        let accepted: Vec<_> = accepted.into_iter().map(|f| f.note).collect();
         assert_eq!(
             serde_json::to_value(&accepted)?,
             case["expected"],

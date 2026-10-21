@@ -21,6 +21,7 @@ use super::dto::{
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
+use super::teaching_findings::TeachingFindingsRepository;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::persistence::db;
 use crate::features::learning::references::trust::dto_map;
@@ -131,6 +132,9 @@ impl ClaimReviewService {
             stop_reason: review.stop_reason.as_ref().map(StopReasonDto::from),
             changed_since_stop,
             claims,
+            teaching_findings: TeachingFindingsRepository::new(self.pool().clone())
+                .list(lesson_id)
+                .await?,
         }))
     }
 

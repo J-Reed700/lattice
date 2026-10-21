@@ -64,6 +64,19 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
 }
 
 /**
+ * "Keep as written" on a teaching finding: it stops waiting for the user;
+ * the review reloads either way.
+ */
+export function useKeepTeachingFinding(programId: string, lessonId: string) {
+  const client = useQueryClient();
+  return useMutation<void, Error, { findingKey: string }>({
+    retry: false,
+    mutationFn: async ({ findingKey }) => unwrap(await VaultAPI.keepLearningTeachingFinding({ programId, lessonId, findingKey })),
+    onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
+  });
+}
+
+/**
  * Resume verification (or Retry a stopped review). `courseRevision` is the
  * course's revision, which the job action checks.
  */
