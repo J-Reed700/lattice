@@ -6,7 +6,7 @@ fn recipe(server: Value, settings: Value) -> Result<CourseRecipe> {
         &json!({
             "schema": "course-eval-recipe/1", "name": "test", "results_model": "test",
             "requests": "evals/courses/course-eval-v1.json", "lessons": ["m1.l1"],
-            "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+            "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
             "embedding_model_id": "qwen3-embedding-0.6b",
             "server": server, "settings": settings,
             "web": {"mode": "replay", "traces": "artifacts/course-eval/traces"},
@@ -54,10 +54,10 @@ fn a_recipe_without_an_embedding_model_is_refused() {
         CourseRecipe::parse(&text.to_string())
     };
     let refused = recipe(json!({"embedding_model_id": "qwen3-embedding-0.6b"})).unwrap_err();
-    assert!(refused.to_string().contains("embedding_model_dir"));
-    assert!(recipe(json!({"embedding_model_dir": "~/m"})).is_err());
-    assert!(recipe(json!({"embedding_model_dir": " ", "embedding_model_id": "m"})).is_err());
-    assert!(recipe(json!({"embedding_model_dir": "~/m", "embedding_model_id": "m"})).is_ok());
+    assert!(refused.to_string().contains("embedding_gguf"));
+    assert!(recipe(json!({"embedding_gguf": "~/m"})).is_err());
+    assert!(recipe(json!({"embedding_gguf": " ", "embedding_model_id": "m"})).is_err());
+    assert!(recipe(json!({"embedding_gguf": "~/m", "embedding_model_id": "m"})).is_ok());
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn lesson_selectors_count_from_one() {
     assert!(recipe(local(), json!({})).is_ok());
     let bad_lessons = json!({
         "schema": "course-eval-recipe/1", "lessons": ["first"], "server": local(),
-        "embedding_model_dir": "~/m", "embedding_model_id": "m",
+        "embedding_gguf": "~/m", "embedding_model_id": "m",
         "web": {"traces": "artifacts/course-eval/traces"},
     });
     assert!(CourseRecipe::parse(&bad_lessons.to_string()).is_err());

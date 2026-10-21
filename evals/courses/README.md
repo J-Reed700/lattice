@@ -57,7 +57,7 @@ A recipe names the model server, the settings and the web mode. Two are committe
 | `results_model` | The folder under `results/` this model's runs go in |
 | `requests` | The set file, relative to the repository root |
 | `lessons` | Lesson selectors to prepare after the outline, in order. `m1.l1` is module 1, lesson 1. `[]` runs the outline only |
-| `embedding_model_dir`, `embedding_model_id` | Required. The embedding model's directory (`~/` is the home directory, anything else is relative to the repository root) and its catalog id, the same fields as the chat recipe. Lessons search each course's evidence index with it, as the app does; a recipe without one is refused, since a run without it would not measure the shipped path. `run.json` records the model's id, its artifact identity and its dimension |
+| `embedding_gguf`, `embedding_model_id` | Required. The embedding model's GGUF file, with its `tokenizer.json` beside it (`~/` is the home directory, anything else is relative to the repository root), and its catalog id. A llama-server is started for it the way the app does (`LATTICE_LLAMA_SERVER`, else the bundled build), the same fields as the chat recipe. Lessons search each course's evidence index with it, as the app does; a recipe without one is refused, since a run without it would not measure the shipped path. `run.json` records the model's id, its artifact identity and its dimension |
 | `server.url` or `server.url_env` | The server's address, or the name of a variable that holds it. Exactly one of the two |
 | `server.auth_env` | Optional. The name of a variable holding one `Header-Name: value` line. It is sent only to the model server and never written to a result |
 | `server.model` | The model name sent in requests |

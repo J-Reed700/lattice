@@ -54,7 +54,7 @@ describe('LeftoverEmbeddingFilesRow', () => {
 
     await user.click(screen.getByRole('button', { name: 'Remove' }));
     expect(remove).not.toHaveBeenCalled();
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Remove/ }));
 
     await waitFor(() => expect(remove).toHaveBeenCalledOnce());
     await waitFor(() =>

@@ -8,24 +8,13 @@
 
 import { useState } from 'react';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderX } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { VaultAPI } from '@/lib/api';
-import type { LeftoverEmbeddingFilesDto } from '@/lib/bindings';
-import { toast } from '@/stores/toastStore';
+import { useLeftoverEmbeddingFiles } from '@/features/model/hooks/useLeftoverEmbeddingFiles';
 import { formatBytes } from '@/utils/formatters';
 
 import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
-
-export const LEFTOVER_EMBEDDING_FILES_QUERY_KEY = ['leftover-embedding-files'] as const;
-
-async function loadLeftovers(): Promise<LeftoverEmbeddingFilesDto> {
-  const result = await VaultAPI.listLeftoverEmbeddingFiles();
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 /** The folders the leftovers sit in, each once. */
 function foldersOf(paths: string[]): string[] {
@@ -33,28 +22,8 @@ function foldersOf(paths: string[]): string[] {
 }
 
 export function LeftoverEmbeddingFilesRow() {
-  const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
-  const { data } = useQuery({
-    queryKey: LEFTOVER_EMBEDDING_FILES_QUERY_KEY,
-    queryFn: loadLeftovers,
-  });
-  const remove = useMutation({
-    mutationFn: async () => {
-      const result = await VaultAPI.removeLeftoverEmbeddingFiles();
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    onSuccess: (removed) => {
-      toast.success(`Removed ${formatBytes(removed.total_bytes)} of old embedding files`);
-    },
-    onError: (error) => {
-      toast.error("Couldn't remove the old embedding files", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: LEFTOVER_EMBEDDING_FILES_QUERY_KEY }),
-  });
+  const { leftovers: data, remove } = useLeftoverEmbeddingFiles();
 
   if (!data || data.paths.length === 0) return null;
   const folders = foldersOf(data.paths);

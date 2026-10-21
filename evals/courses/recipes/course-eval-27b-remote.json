@@ -4,7 +4,7 @@
   "results_model": "qwen3.8-27b-remote",
   "requests": "evals/courses/course-eval-v1.json",
   "lessons": ["m1.l1"],
-  "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+  "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
   "embedding_model_id": "qwen3-embedding-0.6b",
   "server": {
     "url_env": "LATTICE_COURSE_SERVER_URL",

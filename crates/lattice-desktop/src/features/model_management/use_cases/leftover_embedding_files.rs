@@ -104,9 +104,11 @@ fn find_leftovers(dirs: &[PathBuf], protected: &[PathBuf]) -> Result<LeftoverEmb
 }
 
 fn size_on_disk(path: &Path, metadata: &std::fs::Metadata) -> u64 {
+    // repository-barrier-allow: a leftover model file's size is what the user decides on.
     if !metadata.is_dir() {
         return metadata.len();
     }
+    // repository-barrier-allow: a leftover model folder's size is the sum of its files.
     std::fs::read_dir(path)
         .into_iter()
         .flatten()
@@ -131,6 +133,7 @@ fn remove_path(path: &Path) -> Result<()> {
             )))
         }
     };
+    // repository-barrier-allow: removal deletes exactly the leftover model artifact listed.
     let removed = if metadata.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
