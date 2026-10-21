@@ -473,7 +473,7 @@ async fn directory_model_fallback_tracks_required_weights_file() {
 }
 
 #[test]
-fn pickle_only_directory_counts_as_loadable_weights() {
+fn only_a_safetensors_shard_counts_as_directory_weights() {
     let directory = tempfile::tempdir().expect("create model directory");
     assert!(
         !directory_has_loadable_weights(directory.path()),
@@ -481,61 +481,21 @@ fn pickle_only_directory_counts_as_loadable_weights() {
     );
 
     std::fs::write(directory.path().join("config.json"), b"{}").expect("write config");
-    assert!(
-        !directory_has_loadable_weights(directory.path()),
-        "config alone is not a weights file"
-    );
-
     std::fs::write(directory.path().join("pytorch_model.bin"), b"pickle")
         .expect("write pickle weights");
     assert!(
-        directory_has_loadable_weights(directory.path()),
-        "BAAI/bge-m3 ships only pytorch_model.bin"
+        !directory_has_loadable_weights(directory.path()),
+        "nothing loads a PyTorch pickle"
     );
+
+    std::fs::write(directory.path().join("model.safetensors"), b"tensors").expect("write weights");
+    assert!(directory_has_loadable_weights(directory.path()));
     assert_eq!(
         fallback_artifact_path(&ModelLocation::LocalDirectory {
             path: directory.path().to_path_buf(),
         }),
-        Some(directory.path().join("pytorch_model.bin")),
+        Some(directory.path().join("model.safetensors")),
     );
-}
-
-#[tokio::test]
-async fn directory_model_fallback_tracks_pytorch_bin_weights() {
-    let repo = setup_repo().await;
-    let directory = tempfile::tempdir().expect("create model directory");
-    std::fs::write(
-        directory.path().join("pytorch_model.bin"),
-        b"pickle weights",
-    )
-    .expect("write model weights");
-
-    let model = DownloadedModel::new(
-        uuid::Uuid::new_v4().to_string(),
-        "BGE-M3".to_string(),
-        "bge-m3".to_string(),
-        ModelLocation::LocalDirectory {
-            path: directory.path().to_path_buf(),
-        },
-        14,
-        "xlm-roberta".to_string(),
-        None,
-    )
-    .expect("create directory model");
-
-    repo.save(&model).await.expect("save directory model");
-    assert!(repo
-        .is_downloaded("bge-m3")
-        .await
-        .expect("check directory model"));
-
-    let (file_path, size_bytes): (String, i64) =
-        sqlx::query_as("SELECT file_path, size_bytes FROM model_files WHERE model_id = 'bge-m3'")
-            .fetch_one(&repo.pool)
-            .await
-            .expect("load fallback file path");
-    assert!(file_path.ends_with("pytorch_model.bin"), "{file_path}");
-    assert_eq!(size_bytes, "pickle weights".len() as i64);
 }
 
 #[tokio::test]

@@ -1,28 +1,21 @@
 //! Structure-preserving, contextual input shared by imports and rebuilds.
 //! Source text remains byte-for-byte citation evidence; metadata is embedded separately.
 use crate::features::indexing::engine::extraction::is_code_mime;
-use lattice_core::application::ports::embedding_port::SpanEmbeddingGroup;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::entities::{chunk::Chunk, document::Document};
 use lattice_core::domain::value_objects::section_identifier::SectionIdentifier;
 use lattice_core::domain::value_objects::source_context::StructureMode;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Prepare a document's chunks and report how they group into structure spans.
+/// Prepare a document's chunks along its structure spans, each chunk carrying
+/// the span's context prefix.
 ///
 /// Page ranges and offsets are UTF-8 bytes, never printed page labels.
-///
-/// There is deliberately no variant that drops the spans. A caller that
-/// prepared chunks here and then embedded them itself would write chunk-first
-/// vectors under whatever identity the model reports — including the
-/// late-chunking one — and mix two vector spaces in a single generation. Pair
-/// this with [`embed_prepared_chunks`], which picks the right path from what
-/// the embedder reports.
-pub fn prepare_structured_with_spans(
+pub fn prepare_structured(
     document: Document,
     embedder: &dyn EmbeddingPort,
     pages: &[(usize, usize, usize)],
-) -> Result<(Document, Vec<SpanEmbeddingGroup>)> {
+) -> Result<Document> {
     // Some legacy use cases reconstruct content only from chunks.
     let text = if document.content().is_empty() {
         document
@@ -34,7 +27,7 @@ pub fn prepare_structured_with_spans(
         document.content().to_owned()
     };
     if text.trim().is_empty() {
-        return Ok((document, Vec::new()));
+        return Ok(document);
     }
     // In source code a `# ` line is a comment, so a code file is never split
     // into sections: one commented script would otherwise become many tiny
@@ -45,7 +38,6 @@ pub fn prepare_structured_with_spans(
             .is_none_or(|c| c.group.structure == StructureMode::Sections);
     let spans = structure_spans(&text, pages, by_sections)?;
     let mut chunks = Vec::new();
-    let mut groups: Vec<SpanEmbeddingGroup> = Vec::new();
     for span in spans {
         let passage = &text[span.start..span.end];
         if passage.trim().is_empty() {
@@ -68,12 +60,7 @@ pub fn prepare_structured_with_spans(
             prefix.push_str("\n\n");
         }
         // The embedder validates the prefix + passage using its real tokenizer.
-        let first_chunk_index = chunks.len();
-        let mut chunk_ranges = Vec::new();
         for part in embedder.split_text(passage, &prefix)? {
-            // Ranges address the passage inside `prefix + passage`, so the
-            // prefix is present exactly once and is never pooled into a chunk.
-            chunk_ranges.push(prefix.len() + part.start..prefix.len() + part.end);
             let mut chunk = Chunk::new(document.id().clone(), part.text.clone(), chunks.len());
             chunk.set_language(document.language().clone());
             chunk.set_token_count(part.token_count as i32);
@@ -87,60 +74,22 @@ pub fn prepare_structured_with_spans(
             );
             chunks.push(chunk);
         }
-        if !chunk_ranges.is_empty() {
-            groups.push(SpanEmbeddingGroup {
-                span_text: format!("{prefix}{passage}"),
-                chunk_ranges,
-                first_chunk_index,
-            });
-        }
     }
     let tags = document.tags().to_vec();
-    Ok((document.from_parts(chunks, tags)?, groups))
+    document.from_parts(chunks, tags)
 }
 
-/// Embed a prepared document's chunks, span by span when the embedder reports
-/// late chunking and chunk by chunk otherwise.
-///
-/// The result is always one vector per chunk, in chunk order. Spans that do not
-/// line up with the document's chunks (a legacy document whose chunks were not
-/// rebuilt here) fall back to the plain batch path rather than guessing.
+/// Embed a prepared document's chunks: one vector per chunk, in chunk order.
 pub async fn embed_prepared_chunks(
     document: &Document,
     embedder: &dyn EmbeddingPort,
-    spans: &[SpanEmbeddingGroup],
 ) -> Result<Vec<Vec<f32>>> {
     let chunk_texts: Vec<String> = document
         .chunks()
         .iter()
         .map(|chunk| chunk.embedding_text())
         .collect();
-    let aligned = spans
-        .iter()
-        .try_fold(0usize, |next, span| {
-            (span.first_chunk_index == next).then(|| next + span.chunk_ranges.len())
-        })
-        .is_some_and(|covered| covered == chunk_texts.len());
-    if !embedder.uses_late_chunking() || !aligned {
-        return embedder.embed_batch(&chunk_texts).await;
-    }
-    let mut vectors = Vec::with_capacity(chunk_texts.len());
-    for span in spans {
-        let span_vectors = embedder
-            .embed_span_chunks(&span.span_text, &span.chunk_ranges)
-            .await?;
-        if span_vectors.len() != span.chunk_ranges.len() {
-            return Err(AppError::EmbeddingFailed {
-                reason: format!(
-                    "Late chunking returned {} vectors for {} chunks",
-                    span_vectors.len(),
-                    span.chunk_ranges.len()
-                ),
-            });
-        }
-        vectors.extend(span_vectors);
-    }
-    Ok(vectors)
+    embedder.embed_batch(&chunk_texts).await
 }
 
 fn short(text: &str, count: usize) -> String {
@@ -403,9 +352,6 @@ mod tests {
         assert!(heading("706..07 Broken heading").is_none());
     }
 }
-
-#[cfg(test)]
-mod late_chunking_tests;
 
 #[cfg(test)]
 mod live_tests;

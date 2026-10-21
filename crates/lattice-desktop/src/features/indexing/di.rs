@@ -22,8 +22,8 @@ use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
     DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
-    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, SparseTermStorePort,
-    TranscriptionPort, VectorSearchPort,
+    FileStoragePort, FileSystemPort, OcrPort, SearchResultCachePort, TranscriptionPort,
+    VectorSearchPort,
 };
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::Result;
@@ -64,12 +64,11 @@ pub struct IndexingShared {
 }
 
 /// What indexing writes through that other features own, built by the
-/// composition root: the embedder and its vector rows, the learned sparse
-/// postings search reads, and on-device speech-to-text for audio.
+/// composition root: the embedder and its vector rows, and on-device
+/// speech-to-text for audio.
 pub struct IndexingPorts {
     pub embedding: Arc<dyn EmbeddingPort>,
     pub embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-    pub sparse_term_store: Arc<dyn SparseTermStorePort>,
     pub transcription: Arc<dyn TranscriptionPort>,
 }
 
@@ -89,7 +88,6 @@ pub fn build(
     let IndexingPorts {
         embedding: indexing_embedding,
         embedding_repo,
-        sparse_term_store,
         transcription,
     } = ports;
     let document_repo =
@@ -128,7 +126,6 @@ pub fn build(
             uow_factory.clone(),
         )
         .with_vector_search(vector_search.clone())
-        .with_sparse_term_store(Arc::clone(&sparse_term_store))
         .with_query_cache(Arc::clone(&query_cache))
         .with_index_observer(Arc::clone(&index_observer)),
     );
@@ -145,7 +142,6 @@ pub fn build(
             vector_search.clone(),
         )
         .with_content_extractor(content_extractor.clone())
-        .with_sparse_term_store(Arc::clone(&sparse_term_store))
         .with_query_cache(Arc::clone(&query_cache)),
     );
     let delete_document_use_case = Arc::new(

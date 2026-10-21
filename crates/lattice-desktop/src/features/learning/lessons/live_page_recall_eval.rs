@@ -77,21 +77,18 @@ impl EmbedderSource for GivenModel {
     }
 }
 
-/// `LATTICE_PAGE_RECALL_EMBEDDING`: the configured embedding model's
-/// directory, loaded through the app's own loader, which names the model by
-/// its artifact identity. `None` without the variable: the index is
-/// searched by words alone.
+/// `LATTICE_PAGE_RECALL_EMBEDDING`: the configured embedding model's GGUF,
+/// served by a llama-server this test starts the way the app's loader does,
+/// which names the model by its artifact identity. `None` without the
+/// variable: the index is searched by words alone.
 async fn embedding_model() -> Result<Option<Arc<dyn EmbeddingPort>>> {
-    let Some(dir) = std::env::var_os("LATTICE_PAGE_RECALL_EMBEDDING") else {
+    let Some(gguf) = std::env::var_os("LATTICE_PAGE_RECALL_EMBEDDING") else {
         return Ok(None);
     };
-    let model = tokio::task::spawn_blocking(move || {
-        crate::features::embedding::candle_service::CandleEmbeddingService::open_unregistered(
-            std::path::Path::new(&dir),
-        )
-    })
-    .await
-    .map_err(|error| AppError::InternalError(format!("Embedding model load failed: {error}")))??;
+    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
+        std::path::Path::new(&gguf),
+    )
+    .await?;
     Ok(Some(Arc::new(model)))
 }
 

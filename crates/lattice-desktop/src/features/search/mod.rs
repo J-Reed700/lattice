@@ -33,7 +33,7 @@
 //! `lattice_core::domain::entities::SearchResult`,
 //! and `lattice_core::domain::value_objects::{SearchMode, SearchQuery}`.
 //!
-//! The engine traits (`SearchServiceTrait`, `BM25SearchTrait`, `SparseSearchTrait`)
+//! The engine traits (`SearchServiceTrait`, `BM25SearchTrait`)
 //! live in `lattice_core::application::ports::search_engines`.
 //! The library search orchestrator is `use_cases::HybridSearchUseCase`.
 

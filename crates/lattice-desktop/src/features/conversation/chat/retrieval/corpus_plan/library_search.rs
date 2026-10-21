@@ -63,10 +63,7 @@ pub(in super::super) async fn retrieve(
         &scope.document_ids
     };
     // Independent lexical and vector branches: a query/model failure cannot
-    // silently discard successful retrieval from the other branch. Learned
-    // sparse retrieval joins only when its product switch is on, and it is
-    // off: it did not beat calibrated two-way fusion on the production-path
-    // corpus.
+    // silently discard successful retrieval from the other branch.
     for query in &plan.queries {
         // The allow-list is the space plus this chat's attachments; see
         // `fused_search`.

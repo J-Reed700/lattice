@@ -9,7 +9,6 @@ use sqlx::SqlitePool;
 
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
-use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
 use crate::features::search::engine::vector_search::persistence::open_or_rebuild_streaming;
 use crate::features::search::engine::vector_search::IndexPersistence;
@@ -21,18 +20,11 @@ use crate::infrastructure::vector_index::{USearchVectorIndex, VectorIndexCompres
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{
     BM25SearchTrait, ChunkRepositoryPort, DocumentRepository, EmbeddingPort, SearchServiceTrait,
-    SparseSearchTrait, TextSearchPort, VectorSearchPort,
+    TextSearchPort, VectorSearchPort,
 };
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::background::BackgroundTasks;
-
-/// Whether the learned sparse branch joins the fusion.
-///
-/// Off: `evals/retrieval/README.md` records the product decision to keep the
-/// BGE-M3 sparse branch out of the curated path. The service is still wired
-/// into the search orchestrator so the switch is the only thing that has to move.
-const SPARSE_BRANCH_ENABLED: bool = false;
 
 #[derive(Clone)]
 pub struct SearchDi {
@@ -50,8 +42,8 @@ pub struct SearchDi {
     pub document_repo: Arc<dyn DocumentRepository>,
 }
 
-/// Opens the active embedding model for the chunk-first backfill. It runs at
-/// most once, and only when the index is missing vectors.
+/// Opens the active embedding model for the backfill. It runs at most once,
+/// and only when the index is missing vectors.
 pub type BackfillModelLoader = Box<
     dyn FnOnce() -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<Box<dyn EmbeddingPort>>> + Send>,
@@ -59,15 +51,12 @@ pub type BackfillModelLoader = Box<
 >;
 
 /// The vector space the index opens for. The composition root resolves it
-/// from the active embedding model and the user's embedding strategy.
+/// from the active embedding model.
 pub struct VectorSpace {
     /// The identity of the persisted vectors. `None` means there is no usable
     /// local model: nothing active, a remote model, missing files, or a row
     /// without a recorded artifact identity.
     pub identity: Option<String>,
-    /// Late-chunked vectors are pooled from a shared forward pass, so the
-    /// chunk-first backfill must not fill their generation.
-    pub late_chunking: bool,
     /// Opens the active model for the backfill. Present whenever `identity` is.
     pub backfill_model: Option<BackfillModelLoader>,
 }
@@ -80,12 +69,6 @@ pub struct VectorSpace {
 /// path and the persisted sidecar both carry the configuration, so the old
 /// index is left untouched on disk and a fresh one is rebuilt from the
 /// f32 vectors SQLite already holds.
-///
-/// The embedding strategy is not used to embed anything here — it only names
-/// the vector space. Late-chunked vectors are pooled from a shared forward
-/// pass and are not interchangeable with chunk-first vectors of the same
-/// model, so the strategy joins the artifact digest in `vector_space.identity`,
-/// which selects the persisted vectors this index is rebuilt from.
 pub async fn build_with_compression(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
@@ -98,7 +81,6 @@ pub async fn build_with_compression(
 ) -> Result<SearchDi> {
     let VectorSpace {
         identity,
-        late_chunking,
         backfill_model,
     } = vector_space;
     // Every vector space has its own index files. A model switch cannot wipe its
@@ -118,12 +100,11 @@ pub async fn build_with_compression(
         .map(|dir| dir.join(lattice_core::shared::constants::REEMBED_MARKER_FILE));
     let usearch_index_path =
         usearch_index_path.with_file_name(format!("usearch-{}.usearch", generation));
-    // Candle-era models vary in output dimension (384 / 768 / 1024). The
-    // active model's true dimension comes from its config.json::hidden_size,
-    // resolved by the composition root before this point. If the active
-    // model is unset (or its config can't be read), fall back to the
-    // persisted index dimension — that way we keep an existing index intact
-    // until a model load actually proves its dimension.
+    // Models vary in output dimension. The active model's true dimension
+    // comes from its GGUF header, read by the composition root before this
+    // point. If the active model is unset (or its header can't be read), fall
+    // back to the persisted index dimension — that way we keep an existing
+    // index intact until a model load actually proves its dimension.
     let dimension = active_embedding_dimension
         .or_else(|| crate::infrastructure::vector_index::read_dimension(&usearch_index_path))
         .unwrap_or(DEFAULT_EMBEDDING_DIM);
@@ -184,14 +165,7 @@ pub async fn build_with_compression(
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
             .fetch_one(&db_pool)
             .await?;
-        // The backfill embeds one stored chunk at a time. That *is* the
-        // chunk-first path, so it can only fill a chunk-first generation —
-        // running it under the late-chunking identity would stamp chunk-first
-        // vectors with a label promising they were pooled from a shared forward
-        // pass, and the index would then mix the two. Late chunking therefore
-        // starts from whatever that generation already holds and fills in as
-        // documents are indexed.
-        if usearch_index.count() < total as usize && !late_chunking {
+        if usearch_index.count() < total as usize {
             // `identity` is only set for a local model with a recorded
             // artifact identity, so the loader is always present here.
             if let Some(open_model) = backfill_model {
@@ -213,13 +187,6 @@ pub async fn build_with_compression(
                 )
                 .await?;
             }
-        } else if usearch_index.count() < total as usize {
-            tracing::info!(
-                present = usearch_index.count(),
-                total,
-                "Late chunking is on and this generation is incomplete; the missing chunks get \
-                 their vectors when their documents are next indexed"
-            );
         }
         coverage = Some((usearch_index.count(), usize::try_from(total).unwrap_or(0)));
 
@@ -236,7 +203,7 @@ pub async fn build_with_compression(
     }
 
     if let Some(marker) = reembed_marker.as_deref().filter(|m| m.exists()) {
-        settle_reembed_marker(marker, coverage, late_chunking);
+        settle_reembed_marker(marker, coverage);
     }
 
     tracing::info!(
@@ -278,14 +245,6 @@ pub async fn build_with_compression(
     let chunk_repository = Arc::new(
         crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
     ) as Arc<dyn ChunkRepositoryPort>;
-    // The third branch is wired unconditionally and gated twice:
-    // `SPARSE_BRANCH_ENABLED` is the product switch, and
-    // `SparseSearchTrait::is_available` tracks whether the loaded model has a
-    // sparse head at all.
-    let sparse_search = Arc::new(SparseSearchService::new(
-        db_pool.clone(),
-        Arc::clone(&dynamic_embedding),
-    )) as Arc<dyn SparseSearchTrait>;
     let semantic_search_use_case = Arc::new(
         SemanticSearchUseCase::new(dynamic_embedding.clone(), vector_search.clone())
             .with_chunk_repository(Arc::clone(&chunk_repository)),
@@ -293,7 +252,6 @@ pub async fn build_with_compression(
     let hybrid_search_use_case = Arc::new(
         HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
             .with_chunk_repository(chunk_repository)
-            .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED)
             // Chat turns it on per turn through its retrieval tuning; direct
             // search and the tool executor never call the stage.
             .with_reranker(reranker),
@@ -366,14 +324,9 @@ impl Container {
 }
 
 /// Clear the post-restore marker once every chunk has a vector again, or say
-/// plainly what is still missing. Sparse postings and clusters have no
-/// startup backfill; they come back as documents are re-indexed and as the
-/// corpus view is recomputed.
-fn settle_reembed_marker(
-    marker: &std::path::Path,
-    coverage: Option<(usize, usize)>,
-    late_chunking: bool,
-) {
+/// plainly what is still missing. Clusters have no startup backfill; they
+/// come back as the corpus view is recomputed.
+fn settle_reembed_marker(marker: &std::path::Path, coverage: Option<(usize, usize)>) {
     match coverage {
         Some((present, total)) if present >= total => match std::fs::remove_file(marker) {
             Ok(()) => tracing::info!(
@@ -382,12 +335,6 @@ fn settle_reembed_marker(
             ),
             Err(e) => tracing::warn!(error = %e, "Could not clear the re-embed marker"),
         },
-        Some((present, total)) if late_chunking => tracing::warn!(
-            present,
-            total,
-            "Restored library is missing vectors and late chunking does not backfill; \
-             re-index documents to restore semantic search"
-        ),
         Some((present, total)) => tracing::warn!(
             present,
             total,
@@ -417,30 +364,28 @@ mod reembed_marker_tests {
     #[test]
     fn complete_coverage_clears_the_marker() {
         let (_dir, path) = marker();
-        settle_reembed_marker(&path, Some((10, 10)), false);
+        settle_reembed_marker(&path, Some((10, 10)));
         assert!(!path.exists());
     }
 
     #[test]
     fn an_empty_library_counts_as_complete() {
         let (_dir, path) = marker();
-        settle_reembed_marker(&path, Some((0, 0)), true);
+        settle_reembed_marker(&path, Some((0, 0)));
         assert!(!path.exists());
     }
 
     #[test]
-    fn missing_vectors_keep_the_marker_for_either_strategy() {
+    fn missing_vectors_keep_the_marker() {
         let (_dir, path) = marker();
-        settle_reembed_marker(&path, Some((3, 10)), false);
-        assert!(path.exists());
-        settle_reembed_marker(&path, Some((3, 10)), true);
+        settle_reembed_marker(&path, Some((3, 10)));
         assert!(path.exists());
     }
 
     #[test]
     fn no_active_model_keeps_the_marker() {
         let (_dir, path) = marker();
-        settle_reembed_marker(&path, None, false);
+        settle_reembed_marker(&path, None);
         assert!(path.exists());
     }
 }

@@ -6,7 +6,7 @@
 //!
 //! # Port Types
 //!
-//! - **Embedding** - Text embedding generation (ONNX, OpenAI, etc.)
+//! - **Embedding** - Text embedding generation (a GGUF on the bundled llama-server)
 //! - **Vector Search** - Similarity search (USearch HNSW)
 //! - **Text Search** - Keyword search (SQLite FTS, Tantivy, etc.)
 //! - **LLM** - Language model interaction (Ollama, Claude, GPT, etc.)
@@ -47,20 +47,20 @@
 //! use crate::application::ports::EmbeddingPort;
 //! use async_trait::async_trait;
 //!
-//! struct OnnxEmbedder {
-//!     model: OnnxModel,
+//! struct ServerEmbedder {
+//!     server: EmbeddingServer,
 //!     dimension: usize,
 //! }
 //!
 //! #[async_trait]
-//! impl EmbeddingPort for OnnxEmbedder {
+//! impl EmbeddingPort for ServerEmbedder {
 //!     async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
 //!         // Infrastructure implementation
-//!         self.model.encode(text).await
+//!         self.server.embed(text).await
 //!     }
 //!
 //!     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-//!         self.model.encode_batch(texts).await
+//!         self.server.embed_batch(texts).await
 //!     }
 //!
 //!     fn dimension(&self) -> usize {
@@ -120,7 +120,6 @@ pub mod settings_side_effects_port;
 pub mod source_finder;
 pub mod source_finding;
 pub mod source_trust;
-pub mod sparse_term_store_port;
 pub mod summary_search;
 pub mod system_info;
 pub mod tag_service;
@@ -178,7 +177,7 @@ pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use reference_snapshots::{ReferenceSnapshot, ReferenceSnapshotPort};
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
-pub use search_engines::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
+pub use search_engines::{BM25SearchTrait, SearchServiceTrait};
 pub use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
 pub use settings_reader::SettingsReaderPort;
@@ -186,7 +185,6 @@ pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffect
 pub use source_finder::{Budget, SourceFinder};
 pub use source_finding::SourceFinding;
 pub use source_trust::{SourceTrustStore, StoredJudgement};
-pub use sparse_term_store_port::{ChunkSparseTerms, SparseTermStorePort};
 pub use system_info::{
     AcceleratorProbe, ComputeType, GpuInfo, NoAcceleratorProbe, SystemInfo, SystemInfoPort,
 };

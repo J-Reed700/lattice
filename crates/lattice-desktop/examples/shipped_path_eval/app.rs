@@ -1,6 +1,7 @@
 //! A desktop app with no window: the composition root the desktop builds, a
 //! fresh data directory, the embedding model activated the way Settings
-//! activates it, and the corpus imported through the import use case.
+//! activates it on a llama-server this process starts, and the corpus imported
+//! through the import use case.
 
 use crate::Res;
 use lattice::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
@@ -9,6 +10,7 @@ use lattice::features::model_management::commands_extra::{
 };
 use lattice::features::settings::repository::SettingsRepository;
 use lattice::infrastructure::setup::database::setup_database;
+use lattice::interfaces::di::modules::embedding::standalone::StandaloneEmbeddingStarter;
 use lattice::Container;
 use lattice_core::application::contracts::settings::SettingsDto;
 use lattice_core::application::ports::SettingsRepositoryPort;
@@ -35,7 +37,8 @@ struct Corpus {
 }
 
 /// Writes the settings file, then builds the container on a new database,
-/// in the order the desktop's startup does.
+/// in the order the desktop's startup does. With no app to start sidecars,
+/// the container serves embeddings from a llama-server it spawns itself.
 pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
     SettingsRepository::new(data_dir.to_path_buf())
         .await?
@@ -52,25 +55,23 @@ pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
         data_dir.to_path_buf(),
         Arc::default(),
     )
-    .await?;
+    .await?
+    .with_embedding_starter(Arc::new(StandaloneEmbeddingStarter::from_env()));
     Ok(container)
 }
 
-/// Registers the embedding directory as a downloaded model and activates it
+/// Registers the embedding GGUF as a downloaded model and activates it
 /// through the same command path Settings uses, which establishes its
 /// artifact identity and prepares its vector generation.
-pub async fn activate_embedding(container: &Container, dir: &Path, model_id: &str) -> Res<Value> {
+pub async fn activate_embedding(container: &Container, gguf: &Path, model_id: &str) -> Res<Value> {
     let started = Instant::now();
-    let size = std::fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok()?.metadata().ok())
-        .map(|metadata| metadata.len())
-        .sum::<u64>();
+    let size = std::fs::metadata(gguf)?.len();
     let model = DownloadedModel::new(
         uuid::Uuid::new_v4().to_string(),
         model_id.to_owned(),
         model_id.to_owned(),
-        ModelLocation::LocalDirectory {
-            path: dir.to_path_buf(),
+        ModelLocation::LocalFile {
+            path: gguf.to_path_buf(),
         },
         i64::try_from(size)?,
         "qwen3".to_owned(),

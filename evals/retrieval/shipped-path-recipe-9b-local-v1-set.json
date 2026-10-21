@@ -2,7 +2,7 @@
   "name": "shipped-path-qwen3.5-9b-local-v1-set",
   "corpus": "evals/retrieval/synthetic-library-v1.json",
   "questions": "evals/retrieval/synthetic-library-v1.json",
-  "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+  "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
   "embedding_model_id": "qwen3-embedding-0.6b",
   "utility_role": {
     "model_id": "qwen3.5-9b-q4_k_m",

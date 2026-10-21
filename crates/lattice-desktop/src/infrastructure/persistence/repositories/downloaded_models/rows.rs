@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use tracing::warn;
 
-use lattice_core::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
+use lattice_core::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
 use lattice_core::domain::models::downloaded::{
     DownloadedModel, ModelLocation, StoredDownloadedModel,
 };
@@ -79,9 +79,8 @@ pub(super) fn normalize_model_type_for_models_table(model_type: ModelType) -> &'
     }
 }
 
-/// Weights the Candle runtime can load: any safetensors shard, or the
-/// `pytorch_model.bin` pickle for checkpoints like BAAI/bge-m3 that never
-/// published a safetensors conversion.
+/// Weights a checkpoint directory's model (the reranker's) loads from: any
+/// safetensors shard.
 pub(super) fn directory_has_loadable_weights(path: &Path) -> bool {
     path.is_dir()
         && std::fs::read_dir(path)
@@ -92,9 +91,7 @@ pub(super) fn directory_has_loadable_weights(path: &Path) -> bool {
             .map(|entry| entry.path())
             .any(|entry| {
                 entry.is_file()
-                    && (entry.extension().and_then(|value| value.to_str()) == Some("safetensors")
-                        || entry.file_name().and_then(|value| value.to_str())
-                            == Some(WEIGHTS_PYTORCH_BIN))
+                    && entry.extension().and_then(|value| value.to_str()) == Some("safetensors")
             })
 }
 
@@ -109,14 +106,7 @@ pub(super) fn location_is_available(location: &ModelLocation) -> bool {
 pub(super) fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf> {
     match location {
         ModelLocation::LocalFile { path } => Some(path.clone()),
-        // Name the weights file the directory actually holds. A checkpoint
-        // that ships only `pytorch_model.bin` would otherwise be recorded
-        // under a `model.safetensors` path that does not exist, and the
-        // synthesized manifest row would report a zero size.
-        ModelLocation::LocalDirectory { path } => Some(
-            lattice_core::domain::models::checkpoint::weights_path(path)
-                .unwrap_or_else(|| path.join(WEIGHTS_SAFETENSORS)),
-        ),
+        ModelLocation::LocalDirectory { path } => Some(path.join(WEIGHTS_SAFETENSORS)),
         ModelLocation::RemoteOllama => None,
     }
 }

@@ -55,7 +55,6 @@ export function createVaultAPIMock() {
         docSupportSingleHitRatioMax: 0.55,
       },
       vectorIndexCompression: { mode: 'none', dims: 512, quantization: 'i8' },
-      embeddingStrategy: 'chunk_first',
       summaryIndexEnabled: false,
     },
     llm: {

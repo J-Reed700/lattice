@@ -15,15 +15,16 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use lattice_core::application::ports::{BM25SearchTrait, SearchServiceTrait};
 
 // The active embedding model, which names the index's vector space
-use crate::features::embedding::candle_service::prefixes_for_model_dir;
-use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
-use crate::features::embedding::llama_cpp::{EmbeddingServerStarter, LlamaEmbeddingService};
+use crate::features::embedding::llama_cpp::{
+    resolve_prefixes, space_identity, EmbeddingModelFacts, EmbeddingServerStarter,
+    LlamaEmbeddingService,
+};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::di::{BackfillModelLoader, VectorSpace};
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::EmbeddingPort;
-use lattice_core::domain::models::checkpoint::has_loadable_weights;
-use lattice_core::domain::models::downloaded::DownloadedModel;
+use lattice_core::domain::models::checkpoint::has_tokenizer;
+use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 
 /// Search module for semantic, hybrid, and file search
 ///
@@ -36,20 +37,15 @@ use lattice_core::domain::models::downloaded::DownloadedModel;
 #[derive(Clone)]
 pub struct SearchModule {
     search: crate::features::search::di::SearchDi,
-    /// The strategy the index was opened for. The embedding loader reads it so
-    /// the model it publishes produces vectors in the same space the index was
-    /// keyed on — anything else silently mixes two generations.
-    embedding_strategy: crate::features::embedding::late_chunking::EmbeddingStrategy,
 }
 
 impl SearchModule {
     /// Build SearchModule by composing the search feature builder.
     ///
-    /// Resolves the active embedding model's expected dimension (from its
-    /// `config.json::hidden_size`) before opening the USearch index, so the
-    /// dimension sidecar can wipe a stale index *once*, ahead of the
-    /// container's model load — avoiding a startup loop where each restart
-    /// wipes-then-fails.
+    /// Reads the active embedding model's GGUF header before opening the
+    /// USearch index, so the dimension sidecar can wipe a stale index *once*,
+    /// ahead of the container's model load — avoiding a startup loop where
+    /// each restart wipes-then-fails.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -58,13 +54,16 @@ impl SearchModule {
     ) -> lattice_core::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
         let models_path = core.data_dir().join("models");
-        let active_dim = resolve_active_embedding_dimension(&db_pool).await;
-        let search_settings = read_search_settings(core.data_dir()).await;
-        let embedding_strategy = resolve_embedding_strategy(&search_settings);
-        let compression = resolve_vector_compression(&db_pool, &search_settings, active_dim).await;
         let active = DownloadedModelRepository::new(db_pool.clone())
             .get_active_embedding_model()
             .await?;
+        let facts = match active.as_ref() {
+            Some(model) => active_facts(model, embedding_starter.as_ref()).await,
+            None => None,
+        };
+        let active_dim = facts.as_ref().map(|facts| facts.dimension);
+        let search_settings = read_search_settings(core.data_dir()).await;
+        let compression = resolve_vector_compression(&db_pool, &search_settings, active_dim).await;
         let search = crate::features::search::di::build_with_compression(
             db_pool,
             usearch_index_path,
@@ -72,21 +71,11 @@ impl SearchModule {
             Arc::new(DynamicEmbedding::new(model_provider)),
             active_dim,
             compression,
-            vector_space(active.as_ref(), embedding_strategy, &embedding_starter),
+            vector_space(active.as_ref(), facts.as_ref(), &embedding_starter),
             Arc::clone(core.background()),
         )
         .await?;
-        Ok(Self {
-            search,
-            embedding_strategy,
-        })
-    }
-
-    /// The embedding strategy this index's vector space was keyed on.
-    pub fn embedding_strategy(
-        &self,
-    ) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
-        self.embedding_strategy
+        Ok(Self { search })
     }
 
     pub(crate) fn runtime_index(
@@ -163,18 +152,6 @@ async fn read_search_settings(
     }
 }
 
-fn resolve_embedding_strategy(
-    settings: &crate::features::settings::dto::SearchSettingsDto,
-) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
-    use crate::features::embedding::late_chunking::EmbeddingStrategy;
-    use crate::features::settings::dto::EmbeddingStrategySettingDto;
-
-    match settings.embedding_strategy {
-        EmbeddingStrategySettingDto::ChunkFirst => EmbeddingStrategy::ChunkFirst,
-        EmbeddingStrategySettingDto::LateChunking => EmbeddingStrategy::LateChunking,
-    }
-}
-
 /// Map the stored compression setting onto the index configuration, refusing
 /// truncation the active model cannot survive.
 ///
@@ -240,66 +217,19 @@ async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
     Some(active.model_id().to_owned())
 }
 
-/// Read the active embedding model's expected output dimension from disk.
-///
-/// Path: DB → active downloaded embedding model → file_path's parent dir
-/// → `config.json::hidden_size`. Returns `None` if any step is missing
-/// (no active model, file moved, malformed config) — the caller treats
-/// `None` as "leave the existing index dimension alone".
-///
-/// Why this matters: the USearch index sidecar (`.dim`) is checked at
-/// SearchDi::build() time. If we passed the legacy `DEFAULT_EMBEDDING_DIM`
-/// here while the active model was actually 1024-dim, every restart would
-/// wipe the user's index back to 384, then the container would fail to
-/// load the model at the wrong dim, cycle forever.
-async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usize> {
-    let repo = DownloadedModelRepository::new(db_pool.clone());
-    let active = repo.get_active_embedding_model().await.ok().flatten()?;
-    let model_dir = active.location().enclosing_dir()?;
-    let config_path = model_dir.join("config.json");
-    let bytes = std::fs::read(&config_path).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    json.get("hidden_size")?.as_u64().map(|n| n as usize)
-}
-
-/// The vector space the active embedding model writes under `strategy`, and
-/// how to start that model's server if the index needs its chunk-first
-/// backfill.
-fn vector_space(
-    active: Option<&DownloadedModel>,
-    strategy: EmbeddingStrategy,
-    starter: &Arc<dyn EmbeddingServerStarter>,
-) -> VectorSpace {
-    let backfill_model = active
-        .and_then(|m| {
-            m.location().enclosing_dir()?;
-            Some((m.clone(), m.embedding_artifact_identity()?.clone()))
-        })
-        .map(|(model, artifact)| -> BackfillModelLoader {
-            let starter = Arc::clone(starter);
-            Box::new(move || {
-                Box::pin(async move {
-                    LlamaEmbeddingService::start(starter, &model, artifact)
-                        .await
-                        .map(|s| Box::new(s) as Box<dyn EmbeddingPort>)
-                })
-            })
-        });
-    VectorSpace {
-        identity: index_identity(active, strategy),
-        late_chunking: strategy.is_late_chunking(),
-        backfill_model,
-    }
-}
-
-/// The vector-space identity of the active embedding model, read from its
-/// row: the recorded artifact identity plus the strategy. `None` means there
-/// is no usable local model — nothing active, a remote model, missing files,
-/// or a row without an identity. Hashes nothing.
-fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy) -> Option<String> {
-    let model = active?;
-    let dir = model.location().enclosing_dir()?;
-    let Some(artifact) = model.embedding_artifact_identity() else {
+/// What the active embedding model's row and GGUF header say, read as
+/// [`LlamaEmbeddingService::start`] reads them, without starting its server.
+/// `None` means the model cannot load: not a local GGUF, no recorded artifact
+/// identity, no `tokenizer.json` beside it, or a header that cannot serve
+/// embeddings. Hashes nothing.
+async fn active_facts(
+    model: &DownloadedModel,
+    starter: &dyn EmbeddingServerStarter,
+) -> Option<EmbeddingModelFacts> {
+    let ModelLocation::LocalFile { path: gguf } = model.location() else {
+        return None;
+    };
+    let Some(identity) = model.embedding_artifact_identity() else {
         // The repository refuses to activate a local model without an
         // identity. Startup does not fail over it; the embedding loader
         // refuses the model and asks the user to activate it again.
@@ -309,43 +239,145 @@ fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy)
         );
         return None;
     };
-    // Weights may be safetensors or, for a checkpoint that never
-    // published a conversion, the `pytorch_model.bin` pickle.
-    let files_present = ["config.json", "tokenizer.json"]
-        .iter()
-        .all(|name| dir.join(name).is_file())
-        && has_loadable_weights(&dir);
-    // The document prefix is part of the key the loaded model reports, so it
-    // is resolved here exactly as the loader resolves it.
-    files_present
-        .then(|| vector_identity(artifact.as_str(), strategy, prefixes_for_model_dir(&dir)))
+    if !gguf.parent().is_some_and(has_tokenizer) {
+        return None;
+    }
+    let header = starter.header(gguf).await?;
+    EmbeddingModelFacts::from_header(header, identity.clone(), model.model_name())
+        .map_err(
+            |error| tracing::warn!(%error, "The active embedding model cannot serve embeddings"),
+        )
+        .ok()
+}
+
+/// The vector space the active embedding model writes, and how to start that
+/// model's server if the index needs its backfill.
+fn vector_space(
+    active: Option<&DownloadedModel>,
+    facts: Option<&EmbeddingModelFacts>,
+    starter: &Arc<dyn EmbeddingServerStarter>,
+) -> VectorSpace {
+    let (Some(model), Some(facts)) = (active, facts) else {
+        return VectorSpace {
+            identity: None,
+            backfill_model: None,
+        };
+    };
+    let (starter, loaded, artifact) = (Arc::clone(starter), model.clone(), facts.identity.clone());
+    let backfill_model: BackfillModelLoader = Box::new(move || {
+        Box::pin(async move {
+            LlamaEmbeddingService::start(starter, &loaded, artifact)
+                .await
+                .map(|s| Box::new(s) as Box<dyn EmbeddingPort>)
+        })
+    });
+    VectorSpace {
+        identity: Some(index_identity(model, facts)),
+        backfill_model: Some(backfill_model),
+    }
+}
+
+/// The vector-space identity the active model reports once loaded: its GGUF
+/// hash plus its family's document prefix, resolved from its row and header
+/// exactly as the loader resolves them.
+fn index_identity(model: &DownloadedModel, facts: &EmbeddingModelFacts) -> String {
+    space_identity(
+        &facts.identity,
+        resolve_prefixes(model.model_id(), &facts.architecture),
+    )
 }
 
 #[cfg(test)]
 mod index_identity_tests {
-    use super::index_identity;
-    use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
-    use lattice_core::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
+    use super::{active_facts, index_identity, vector_space};
+    use crate::features::embedding::llama_cpp::{
+        EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, LlamaEmbeddingService,
+        RunningEmbeddingServer,
+    };
+    use async_trait::async_trait;
+    use lattice_core::application::ports::EmbeddingPort;
     use lattice_core::domain::models::downloaded::{
         DownloadedModel, ModelLocation, StoredDownloadedModel,
     };
     use lattice_core::domain::models::metadata::ModelType;
     use lattice_core::domain::value_objects::ArtifactIdentity;
+    use lattice_core::shared::error::Result;
     use std::path::Path;
+    use std::sync::Arc;
 
     fn recorded() -> ArtifactIdentity {
         ArtifactIdentity::from_digest(&[3; 32])
     }
 
-    fn model(location: ModelLocation, identity: Option<ArtifactIdentity>) -> DownloadedModel {
+    /// Reads one header and hands out a server that is never asked anything.
+    struct FakeStarter {
+        architecture: &'static str,
+        pooling_type: Option<u32>,
+    }
+
+    impl FakeStarter {
+        fn pooled(architecture: &'static str) -> Arc<dyn EmbeddingServerStarter> {
+            Arc::new(Self {
+                architecture,
+                pooling_type: Some(3),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingServerStarter for FakeStarter {
+        async fn header(&self, gguf: &Path) -> Option<EmbeddingHeader> {
+            gguf.is_file().then(|| EmbeddingHeader {
+                architecture: Some(self.architecture.to_owned()),
+                trained_tokens: Some(32_768),
+                dimension: Some(4),
+                pooling_type: self.pooling_type,
+                file_type: Some(1),
+            })
+        }
+        async fn accelerated(&self) -> bool {
+            false
+        }
+        async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
+            Ok(Arc::new(RunningEmbeddingServer::new(
+                "http://127.0.0.1:9",
+                "key",
+                None,
+                Arc::new(|| true),
+            )))
+        }
+    }
+
+    fn tokenizer() -> tokenizers::Tokenizer {
+        use tokenizers::models::wordlevel::WordLevel;
+        use tokenizers::pre_tokenizers::whitespace::Whitespace;
+        let vocab = [("[UNK]".to_owned(), 0), ("word".to_owned(), 1)]
+            .into_iter()
+            .collect();
+        let mut tokenizer = tokenizers::Tokenizer::new(
+            WordLevel::builder()
+                .vocab(vocab)
+                .unk_token("[UNK]".into())
+                .build()
+                .unwrap(),
+        );
+        tokenizer.with_pre_tokenizer(Whitespace);
+        tokenizer
+    }
+
+    fn model(
+        model_id: &str,
+        location: ModelLocation,
+        identity: Option<ArtifactIdentity>,
+    ) -> DownloadedModel {
         DownloadedModel::from_db(StoredDownloadedModel {
             id: "row-1".into(),
             model_name: "embedder".into(),
-            model_id: "org/embedder".into(),
+            model_id: model_id.into(),
             location,
             file_size_bytes: 0,
             model_type: ModelType::TextEmbeddings,
-            architecture: "bert".into(),
+            architecture: "qwen3".into(),
             downloaded_at: chrono::Utc::now(),
             last_used_at: None,
             use_count: 0,
@@ -357,96 +389,88 @@ mod index_identity_tests {
         })
     }
 
-    fn local(dir: &Path) -> ModelLocation {
-        ModelLocation::LocalDirectory {
-            path: dir.to_path_buf(),
+    /// A GGUF in `dir`, with `tokenizer.json` beside it when `tokenizer`.
+    fn gguf(dir: &Path, tokenizer_beside: bool) -> ModelLocation {
+        let path = dir.join("embedder.gguf");
+        std::fs::write(&path, b"GGUF").unwrap();
+        if tokenizer_beside {
+            tokenizer().save(dir.join("tokenizer.json"), false).unwrap();
         }
+        ModelLocation::LocalFile { path }
     }
 
-    fn model_dir(files: &[&str]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        for name in files {
-            std::fs::write(dir.path().join(name), b"{}").unwrap();
-        }
-        dir
-    }
-
-    const COMPLETE: [&str; 3] = ["config.json", "tokenizer.json", WEIGHTS_SAFETENSORS];
-
-    #[test]
-    fn no_active_model_is_unconfigured() {
-        assert_eq!(index_identity(None, EmbeddingStrategy::ChunkFirst), None);
-    }
-
-    #[test]
-    fn local_model_is_named_by_its_recorded_identity_and_strategy() {
-        let dir = model_dir(&COMPLETE);
-        let active = model(local(dir.path()), Some(recorded()));
-        for strategy in [
-            EmbeddingStrategy::ChunkFirst,
-            EmbeddingStrategy::LateChunking,
+    #[tokio::test]
+    async fn a_local_gguf_is_named_as_the_started_service_names_itself() {
+        for (model_id, architecture, prefixed) in [
+            ("qwen3-embedding-0.6b", "qwen3", false),
+            ("intfloat/e5-base-v2", "bert", true),
         ] {
-            assert_eq!(
-                index_identity(Some(&active), strategy),
-                Some(strategy_identity(recorded().as_str(), strategy))
-            );
-        }
-    }
-
-    #[test]
-    fn a_prefixed_model_is_named_as_the_loaded_service_names_itself() {
-        use crate::features::embedding::candle_service::CandleEmbeddingService;
-        use lattice_core::application::ports::EmbeddingPort;
-        let root = tempfile::tempdir().unwrap();
-        // Tiny real checkpoint; the directory name selects E5's `passage: `.
-        let dir = root.path().join("multilingual-e5-small");
-        std::fs::create_dir(&dir).unwrap();
-        crate::features::embedding::candle_service::tests::write_tiny_bert(&dir);
-        let active = model(local(&dir), Some(recorded()));
-        for strategy in [
-            EmbeddingStrategy::ChunkFirst,
-            EmbeddingStrategy::LateChunking,
-        ] {
-            let loaded = CandleEmbeddingService::open(&dir, recorded())
-                .unwrap()
-                .with_strategy(strategy);
+            let dir = tempfile::tempdir().unwrap();
+            let active = model(model_id, gguf(dir.path(), true), Some(recorded()));
+            let starter = FakeStarter::pooled(architecture);
+            let facts = active_facts(&active, starter.as_ref()).await.unwrap();
+            let loaded = LlamaEmbeddingService::start(starter, &active, recorded())
+                .await
+                .unwrap();
             let expected = EmbeddingPort::model_identity(&loaded);
-            assert!(expected.ends_with("+prefix-e5"), "{expected}");
-            assert_eq!(index_identity(Some(&active), strategy), Some(expected));
+            assert_eq!(expected.ends_with("+prefix-e5"), prefixed, "{expected}");
+            assert_eq!(index_identity(&active, &facts), expected);
+            assert_eq!(facts.dimension, 4);
         }
     }
 
-    #[test]
-    fn local_model_without_a_recorded_identity_is_unconfigured() {
-        let dir = model_dir(&COMPLETE);
-        let active = model(local(dir.path()), None);
-        assert_eq!(
-            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-            None
-        );
+    #[tokio::test]
+    async fn no_active_model_is_unconfigured() {
+        let space = vector_space(None, None, &FakeStarter::pooled("qwen3"));
+        assert_eq!(space.identity, None);
+        assert!(space.backfill_model.is_none());
     }
 
-    #[test]
-    fn remote_model_is_unconfigured() {
-        let active = model(ModelLocation::RemoteOllama, None);
-        assert_eq!(
-            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-            None
-        );
-    }
-
-    #[test]
-    fn local_model_with_missing_files_is_unconfigured() {
-        for files in [
-            &["config.json", WEIGHTS_SAFETENSORS][..],
-            &["config.json", "tokenizer.json"][..],
+    #[tokio::test]
+    async fn a_model_that_cannot_load_is_unconfigured() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let qwen = FakeStarter::pooled("qwen3");
+        let unpooled: Arc<dyn EmbeddingServerStarter> = Arc::new(FakeStarter {
+            architecture: "qwen3",
+            pooling_type: Some(0),
+        });
+        for (active, starter, why) in [
+            (
+                model("e", gguf(dir.path(), true), None),
+                &qwen,
+                "no recorded identity",
+            ),
+            (
+                model("e", gguf(bare.path(), false), Some(recorded())),
+                &qwen,
+                "no tokenizer.json beside the GGUF",
+            ),
+            (
+                model(
+                    "e",
+                    ModelLocation::LocalDirectory {
+                        path: dir.path().to_path_buf(),
+                    },
+                    Some(recorded()),
+                ),
+                &qwen,
+                "a safetensors-era directory",
+            ),
+            (
+                model("e", ModelLocation::RemoteOllama, Some(recorded())),
+                &qwen,
+                "a remote model",
+            ),
+            (
+                model("e", gguf(dir.path(), true), Some(recorded())),
+                &unpooled,
+                "a header that does not pool",
+            ),
         ] {
-            let dir = model_dir(files);
-            let active = model(local(dir.path()), Some(recorded()));
-            assert_eq!(
-                index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
-                None,
-                "files present: {files:?}"
+            assert!(
+                active_facts(&active, starter.as_ref()).await.is_none(),
+                "{why}"
             );
         }
     }

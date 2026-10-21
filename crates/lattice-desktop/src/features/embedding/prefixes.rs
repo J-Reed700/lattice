@@ -4,9 +4,9 @@
 //! the text, and each wants a different one: E5 wants `query: ` / `passage: `,
 //! Nomic wants `search_query: ` / `search_document: `, BGE's English v1.5
 //! models want a query instruction and no document one, and Qwen3-Embedding
-//! wants its instruct template on queries only. BGE-M3 and all-MiniLM want
-//! nothing at all, and guessing one for them would corrupt their vectors just
-//! as surely as omitting one corrupts E5's.
+//! wants its instruct template on queries only. BGE-M3 and plain sentence
+//! encoders want nothing at all, and guessing one for them would corrupt their
+//! vectors just as surely as omitting one corrupts E5's.
 //!
 //! The table is keyed by name because a name is all a model arriving through a
 //! Hugging Face search brings with it. This is the **only** place that reads an
@@ -53,7 +53,7 @@ fn prepend<'a>(prefix: &str, text: &'a str) -> Cow<'a, str> {
     }
 }
 
-/// No prefix on either side. all-MiniLM, BGE-M3, and anything unrecognized:
+/// No prefix on either side. BGE-M3, plain sentence encoders, and anything unrecognized:
 /// silence is not an instruction, and inventing one changes the vectors.
 pub const NONE: EmbeddingPrefixes = EmbeddingPrefixes {
     id: "none",
@@ -151,8 +151,8 @@ mod tests {
     fn families_trained_without_an_instruction_get_none() {
         assert_eq!(prefixes_for("BAAI/bge-m3"), Some(&NONE));
         // Not in the table at all: the caller decides, and its fallback is NONE.
-        assert_eq!(prefixes_for("sentence-transformers/all-MiniLM-L6-v2"), None);
-        assert_eq!(prefixes_for("nreimers/MiniLM-L6-H384-uncased"), None);
+        assert_eq!(prefixes_for("acme/custom-embedder"), None);
+        assert_eq!(prefixes_for("custom-embedder-f16.gguf"), None);
         assert_eq!(prefixes_for(""), None);
     }
 

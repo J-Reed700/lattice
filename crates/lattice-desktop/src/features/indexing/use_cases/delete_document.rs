@@ -72,8 +72,7 @@ pub struct DeleteDocumentResponseDto {
 ///
 /// - Document must exist to be deleted
 /// - Chunks and the document row go in one transaction; foreign keys cascade
-///   embeddings, sparse terms, images, tags, favorites, memberships and web
-///   assets
+///   embeddings, images, tags, favorites, memberships and web assets
 /// - Vector keys and the artifact on disk are removed only after that commit
 /// - A file Lattice does not own is never deleted
 pub struct DeleteDocumentUseCase {

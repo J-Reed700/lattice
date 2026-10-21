@@ -20,7 +20,6 @@ pub mod search_mode;
 pub mod search_query;
 pub mod section_identifier;
 pub mod source_context;
-pub mod sparse_embedding;
 
 pub use artifact_identity::{ArtifactIdentity, ArtifactIdentityError};
 pub use checksum::Checksum;
@@ -32,4 +31,3 @@ pub use metadata::ValidatedMetadata;
 pub use model_status::{FileStatus, ModelStatus};
 pub use search_mode::SearchMode;
 pub use search_query::SearchQuery;
-pub use sparse_embedding::SparseEmbedding;

@@ -1,11 +1,11 @@
 //! Opt-in real-model lifecycle check. All state lives in a temporary directory.
 use super::*;
-use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::indexing::use_cases::embedding_input::{
-    embed_prepared_chunks, prepare_structured_with_spans,
+    embed_prepared_chunks, prepare_structured,
 };
 use crate::infrastructure::persistence::repositories::embedding::generation;
 use crate::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
+use crate::interfaces::di::modules::embedding::standalone::open_gguf;
 use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::entities::document::Document;
@@ -15,11 +15,11 @@ use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 #[tokio::test]
-#[ignore = "requires LATTICE_TEST_EMBEDDING_MODEL pointing at downloaded model artifacts"]
+#[ignore = "requires LATTICE_EMBED_GGUF (tokenizer.json beside it) and a runnable llama-server"]
 async fn real_model_import_search_and_disk_restart_preserve_results() {
-    let model_dir = std::env::var_os("LATTICE_TEST_EMBEDDING_MODEL")
-        .expect("set LATTICE_TEST_EMBEDDING_MODEL to a local model directory");
-    let model = CandleEmbeddingService::open_unregistered(Path::new(&model_dir)).unwrap();
+    let gguf = std::env::var_os("LATTICE_EMBED_GGUF")
+        .expect("set LATTICE_EMBED_GGUF to an embedding GGUF");
+    let model = open_gguf(Path::new(&gguf)).await.unwrap();
     let dimension = model.dimension();
     let identity = model.model_identity();
     let dir = tempfile::tempdir().unwrap();
@@ -56,8 +56,8 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
         ChunkingStrategy::FixedSize { size: 512 },
     )
     .unwrap();
-    let (doc, spans) = prepare_structured_with_spans(doc, &model, &[]).unwrap();
-    let embeddings = embed_prepared_chunks(&doc, &model, &spans).await.unwrap();
+    let doc = prepare_structured(doc, &model, &[]).unwrap();
+    let embeddings = embed_prepared_chunks(&doc, &model).await.unwrap();
     assert_eq!(doc.chunks().len(), embeddings.len());
     assert!(embeddings.len() > 1, "exercise multiple real chunks");
     let mut tx = pool.begin().await.unwrap();

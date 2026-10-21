@@ -9,13 +9,11 @@ import { RetrievalTuningSection } from './RetrievalTuningSection';
 import {
   clamp,
   COMPRESSION_MODES,
-  EMBEDDING_STRATEGIES,
   MAX_COMPRESSION_DIMS,
   MIN_COMPRESSION_DIMS,
   QUANTIZATIONS,
   toFinite,
   type CompressionMode,
-  type EmbeddingStrategy,
   type Quantization,
   type VectorCompression,
 } from './searchSettingsOptions';
@@ -268,29 +266,6 @@ export function SearchTab() {
             onCheckedChange={(checked) => saveSearchUpdates({ summaryIndexEnabled: checked })}
             className={SWITCH_CLASS}
           />
-        </SettingsRow>
-
-        <SettingsRow
-          label="Embedding strategy"
-          hint="Late chunking conditions each chunk on its whole section. Changing it re-embeds your library."
-          htmlFor="search-embedding-strategy"
-        >
-          <select
-            id="search-embedding-strategy"
-            value={searchSettings.embeddingStrategy}
-            onChange={(event) =>
-              saveSearchUpdates({
-                embeddingStrategy: event.target.value as EmbeddingStrategy,
-              })
-            }
-            className={settingsFieldClass}
-          >
-            {EMBEDDING_STRATEGIES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
         </SettingsRow>
 
         <SettingsRow label="Maximum results" htmlFor="search-max-results">

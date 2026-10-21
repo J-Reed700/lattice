@@ -521,11 +521,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         tracing::warn!("Failed to process pending download queue on startup: {}", e);
     }
 
+    let embedding_state = crate::features::embedding::commands::EmbeddingState::new(
+        container.embedding_runtime.clone(),
+    );
     tracing::info!("📦 Managing DI Container in Tauri state");
     app_handle.manage(container);
     tracing::info!("✅ DI Container available for all commands");
 
-    let embedding_state = crate::features::embedding::commands::EmbeddingState::default();
     app_handle.manage(embedding_state);
 
     app_handle.manage(download_state);

@@ -610,30 +610,23 @@ async fn test_likely_video_urls_prefer_video_error_when_all_strategies_fail() {
     assert!(error.to_string().contains("Failed to execute yt-dlp"));
 }
 
-/// Mirrors `embedding_input::late_chunking_falls_back_to_the_identical_per_chunk_inputs`
-/// for the web importer: both strategies must hand the model the same text and
-/// store the same chunks, so the two paths land in one vector space.
-mod late_chunking {
+/// What an imported article's chunks and vectors become.
+mod article_vectors {
     use super::*;
     use std::sync::Mutex;
 
     /// Splits at a fixed byte width and records every text handed to the model.
     struct RecordingEmbeddingService {
-        late: bool,
         width: usize,
         embedded: Mutex<Vec<String>>,
     }
 
     impl RecordingEmbeddingService {
-        fn new(late: bool, width: usize) -> Self {
+        fn new(width: usize) -> Self {
             Self {
-                late,
                 width,
                 embedded: Mutex::new(Vec::new()),
             }
-        }
-        fn embedded(&self) -> Vec<String> {
-            self.embedded.lock().expect("lock").clone()
         }
     }
 
@@ -685,14 +678,9 @@ mod late_chunking {
             }
             Ok(chunks)
         }
-
-        fn uses_late_chunking(&self) -> bool {
-            self.late
-        }
     }
 
-    /// Records exactly what reached storage, so the two strategies can be
-    /// compared on citation evidence and not only on vectors.
+    /// Records exactly what reached storage.
     #[derive(Default)]
     struct RecordingStorage {
         stored: Mutex<Vec<ContextualizedChunk>>,
@@ -721,42 +709,6 @@ mod late_chunking {
     }
 
     const TEXT: &str = "First body line here. Second body line here. Third body line here.";
-
-    async fn ingest(late: bool) -> (Vec<String>, Vec<ContextualizedChunk>, Vec<Vec<f32>>) {
-        let extractor = Arc::new(MockArticleExtractorService::new());
-        extractor.set_response(
-            "https://example.com/article",
-            CleanArticle {
-                title: "Article".to_string(),
-                author: None,
-                content: String::new(),
-                text_content: TEXT.to_string(),
-                word_count: 12,
-                reading_time_minutes: 1,
-                published_date: None,
-                excerpt: None,
-            },
-        );
-        let embedding_service = Arc::new(RecordingEmbeddingService::new(late, 12));
-        let storage = Arc::new(RecordingStorage::default());
-        use tokenizers::models::wordpiece::WordPiece;
-        let service = WebIngestionService::new(
-            extractor,
-            Arc::new(MockWebArchiveService),
-            embedding_service.clone(),
-            storage.clone(),
-            Arc::new(Tokenizer::new(WordPiece::default())),
-        );
-
-        service
-            .ingest_url("https://example.com/article")
-            .await
-            .expect("ingest");
-
-        let stored = storage.stored.lock().expect("lock").clone();
-        let vectors = storage.vectors.lock().expect("lock").clone();
-        (embedding_service.embedded(), stored, vectors)
-    }
 
     /// Records what reaches the live vector index.
     #[derive(Default)]
@@ -836,7 +788,7 @@ mod late_chunking {
         let service = WebIngestionService::new(
             extractor,
             Arc::new(MockWebArchiveService),
-            Arc::new(RecordingEmbeddingService::new(false, 12)),
+            Arc::new(RecordingEmbeddingService::new(12)),
             storage.clone(),
             Arc::new(Tokenizer::new(WordPiece::default())),
         )
@@ -857,65 +809,5 @@ mod late_chunking {
             assert_eq!(entry.document_id, result.document_id);
             assert_eq!(entry.content, chunk.original_content);
         }
-    }
-
-    fn citations(chunks: &[ContextualizedChunk]) -> Vec<(String, usize, usize)> {
-        chunks
-            .iter()
-            .map(|c| (c.original_content.clone(), c.start_idx, c.end_idx))
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn both_strategies_embed_the_same_text_and_store_the_same_chunks() {
-        let (chunk_first_inputs, chunk_first_chunks, chunk_first_vectors) = ingest(false).await;
-        let (late_inputs, late_chunks, late_vectors) = ingest(true).await;
-
-        assert!(chunk_first_chunks.len() > 1, "the text should split");
-        assert_eq!(chunk_first_inputs, late_inputs);
-        assert_eq!(chunk_first_vectors, late_vectors);
-        // Citation evidence is untouched by the strategy.
-        assert_eq!(citations(&chunk_first_chunks), citations(&late_chunks));
-    }
-
-    #[test]
-    fn a_span_addresses_every_chunk_exactly_and_carries_the_prefix_once() {
-        let chunks = vec![
-            ContextualizedChunk {
-                contextualized_content: "[Document: Web Article]\n\nFirst ".to_string(),
-                original_content: "First ".to_string(),
-                context_prefix: "[Document: Web Article]".to_string(),
-                chunk_index: 0,
-                token_count: 1,
-                start_idx: 0,
-                end_idx: 6,
-            },
-            ContextualizedChunk {
-                contextualized_content: "[Document: Web Article]\n\nsecond".to_string(),
-                original_content: "second".to_string(),
-                context_prefix: "[Document: Web Article]".to_string(),
-                chunk_index: 1,
-                token_count: 1,
-                start_idx: 6,
-                end_idx: 12,
-            },
-        ];
-        let span = WebIngestionService::span_for_chunks("First second", &chunks).expect("span");
-        let prefix_end = span.chunk_ranges.first().expect("a range").start;
-        let prefix = span.span_text.get(..prefix_end).expect("prefix");
-        for (chunk, range) in chunks.iter().zip(&span.chunk_ranges) {
-            let sliced = span.span_text.get(range.clone()).expect("range");
-            assert_eq!(sliced, chunk.original_content);
-            assert_eq!(
-                format!("{prefix}{sliced}"),
-                chunk.contextualized_content,
-                "the span must reproduce the chunk-first input exactly"
-            );
-        }
-        assert_eq!(span.first_chunk_index, 0);
-
-        // Chunks that do not tile the text cannot be pooled from one pass.
-        assert!(WebIngestionService::span_for_chunks("First second!", &chunks).is_none());
-        assert!(WebIngestionService::span_for_chunks("", &[]).is_none());
     }
 }
