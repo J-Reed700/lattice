@@ -24,7 +24,7 @@ use lattice_core::application::services::context_assembler::budget::{
 };
 use lattice_core::shared::error::Result;
 
-use crate::features::learning::references::web_research::{self, PlannedNeed};
+use crate::features::learning::references::web_research::{self, PlannedNeed, Room};
 
 use super::calls::{cut_off, fit_text, Answer, AskError};
 use super::AuditPassage;
@@ -42,7 +42,8 @@ pub(crate) struct SearchHit {
 /// version as a passage over its whole text.
 #[async_trait]
 pub(crate) trait VerifierWeb: Send + Sync {
-    async fn search(&self, need: &PlannedNeed) -> Result<Vec<SearchHit>>;
+    /// Searches for `need`, bringing no more results than `room` holds.
+    async fn search(&self, need: &PlannedNeed, room: Room<'_>) -> Result<Vec<SearchHit>>;
     async fn save_page(&self, url: &str) -> Result<AuditPassage>;
 }
 
@@ -127,11 +128,19 @@ pub(super) async fn ask(
                 _ => None,
             })
             .collect();
+        let share = room / calls.len().max(1);
+        let cost = |candidate: &web_research::Candidate| {
+            let result = &candidate.result;
+            llm.count_tokens(&hit_json(&result.title, &result.url, &result.snippet).to_string()) + 1
+        };
+        let search_room = Room {
+            tokens: share,
+            cost: &cost,
+        };
         let mut outputs = Vec::with_capacity(calls.len());
         for (_, name, arguments) in &calls {
-            outputs.push(run(name, arguments, web, &mut answer).await);
+            outputs.push(run(name, arguments, web, search_room, &mut answer).await);
         }
-        let share = room / calls.len().max(1);
         let mut cut: Vec<String> = outputs
             .iter()
             .map(|output| fit_text(llm, output, share))
@@ -221,7 +230,13 @@ fn input_tokens(llm: &dyn LLMPort, item: &CompletionInput) -> usize {
 
 /// One tool call's result text. A failure is told to the model (and noted
 /// on the audit) instead of ending the batch: the audit runs without it.
-async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut Answer) -> String {
+async fn run(
+    name: &str,
+    arguments: &Value,
+    web: &dyn VerifierWeb,
+    room: Room<'_>,
+    answer: &mut Answer,
+) -> String {
     let argument = |key: &str| {
         arguments
             .get(key)
@@ -239,10 +254,10 @@ async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut 
                      of the listed kinds, dates as YYYY-MM-DD, and for asOf the page's address \
                      as identifier."
                 .into(),
-            Some(need) => match web.search(&need).await {
+            Some(need) => match web.search(&need, room).await {
                 Ok(hits) => json!(hits
                     .iter()
-                    .map(|hit| json!({"title": hit.title, "url": hit.url, "snippet": hit.snippet}))
+                    .map(|hit| hit_json(&hit.title, &hit.url, &hit.snippet))
                     .collect::<Vec<_>>())
                 .to_string(),
                 Err(error) => {
@@ -262,6 +277,11 @@ async fn run(name: &str, arguments: &Value, web: &dyn VerifierWeb, answer: &mut 
         },
         other => format!("There is no tool named {other}."),
     }
+}
+
+/// One search result as the model reads it.
+fn hit_json(title: &str, url: &str, snippet: &str) -> Value {
+    json!({"title": title, "url": url, "snippet": snippet})
 }
 
 #[cfg(test)]

@@ -13,7 +13,9 @@ use lattice_core::domain::sourcing::NeedKind;
 use lattice_core::shared::error::Result;
 use serde_json::json;
 
-use super::web_research::{need_schema, plan_needs, search_need, GapNeed, PlannedNeed};
+use super::web_research::{
+    need_schema, plan_needs, search_need, Candidate, GapNeed, PlannedNeed, Room,
+};
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use crate::features::web::mocks::MockWebService;
 
@@ -267,7 +269,7 @@ async fn a_search_reaches_the_finder_with_every_planned_field() -> Result<()> {
         after: Some("2024-10-07".into()),
         ..need("Python stable release", NeedKind::OfficialDocs)
     };
-    let found = search_need(&web, &newer).await?;
+    let found = search_need(&web, &newer, Room::for_all()).await?;
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].kind, NeedKind::OfficialDocs);
     assert_eq!(
@@ -279,7 +281,7 @@ async fn a_search_reaches_the_finder_with_every_planned_field() -> Result<()> {
         as_of: Some("2019-03-01".into()),
         ..need("python.org downloads page", NeedKind::Web)
     };
-    search_need(&web, &dated).await?;
+    search_need(&web, &dated, Room::for_all()).await?;
 
     let searches = web.searches.lock().unwrap();
     let first = &searches[0];
@@ -293,6 +295,55 @@ async fn a_search_reaches_the_finder_with_every_planned_field() -> Result<()> {
         last.identifier.as_deref(),
         Some("https://www.python.org/downloads/")
     );
+    Ok(())
+}
+
+/// A scholarly catalog: every page is full of results not seen before.
+struct Endless {
+    web: MockWebService,
+    pages: Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl WebServiceTrait for Endless {
+    async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+        *self.pages.lock().unwrap() += 1;
+        let mut output = self.web.search_web(input).await?;
+        output.results = (0..input.max_results)
+            .map(|i| WebSearchResult {
+                title: format!("Paper {} {i}", input.page),
+                url: format!("https://doi.org/10.1000/{}.{i}", input.page),
+                snippet: String::new(),
+                published_date: None,
+                source: Some("crossref".into()),
+            })
+            .collect();
+        Ok(output)
+    }
+    async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.web.fetch_url_content(url).await
+    }
+    fn validate_url(&self, url: &str) -> Result<()> {
+        self.web.validate_url(url)
+    }
+}
+
+#[tokio::test]
+async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full() -> Result<()> {
+    let web = Endless {
+        web: MockWebService::new(),
+        pages: Mutex::new(0),
+    };
+    let cost = |_: &Candidate| 1;
+    let room = Room {
+        tokens: 30,
+        cost: &cost,
+    };
+    let found = search_need(&web, &need("tonal centre", NeedKind::Paper), room).await?;
+    // Twelve a page: the third page fills the room and is the last asked for.
+    assert_eq!(found.len(), 30);
+    assert_eq!(*web.pages.lock().unwrap(), 3);
+    assert_eq!(found[29].result.url, "https://doi.org/10.1000/3.5");
     Ok(())
 }
 

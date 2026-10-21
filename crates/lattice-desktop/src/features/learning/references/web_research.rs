@@ -339,7 +339,7 @@ const PAGE_RESULTS: usize = 12;
 /// A search result with what the search that found it asked for and learned,
 /// for the reference selector to weigh.
 #[derive(Debug, Clone)]
-pub(in crate::features::learning) struct Candidate {
+pub(crate) struct Candidate {
     pub result: WebSearchResult,
     /// The kind of source the search asked for.
     pub kind: NeedKind,
@@ -347,17 +347,55 @@ pub(in crate::features::learning) struct Candidate {
     pub owner: Option<ResolvedOwnerDto>,
 }
 
+/// What the reader of a search's results can take: the tokens its model
+/// call has for them and what one result costs there. A catalog such as
+/// Crossref never runs out of further pages, so a search pages until its
+/// results fill this, not until the finders stop answering.
+#[derive(Clone, Copy)]
+pub(crate) struct Room<'a> {
+    pub tokens: usize,
+    pub cost: &'a (dyn Fn(&Candidate) -> usize + Sync),
+}
+
+impl Room<'_> {
+    /// An equal share, for one of `parts` searches one reader takes together.
+    pub(in crate::features::learning) fn share(self, parts: usize) -> Self {
+        Self {
+            tokens: self.tokens / parts.max(1),
+            ..self
+        }
+    }
+}
+
+#[cfg(test)]
+impl Room<'static> {
+    /// Room for every result, for tests about something else.
+    pub(in crate::features::learning) fn for_all() -> Self {
+        fn one(_: &Candidate) -> usize {
+            1
+        }
+        Self {
+            tokens: usize::MAX,
+            cost: &one,
+        }
+    }
+}
+
 /// One public search for a typed need, page by page while a page brings in-scope
-/// results not seen on an earlier page. Results outside a `site:` scope in the
-/// query or the need's `site` are dropped. A provider failure on the first page
-/// is returned so the caller can log it and move on; on a later page it ends the search.
+/// results not seen on an earlier page and the results found so far leave
+/// `room` for more. Only the results that fit the room are returned, in the
+/// order found. Results outside a `site:` scope in the query or the need's
+/// `site` are dropped. A provider failure on the first page is returned so
+/// the caller can log it and move on; on a later page it ends the search.
 pub(in crate::features::learning) async fn search_need(
     web: &dyn WebServiceTrait,
     need: &PlannedNeed,
+    room: Room<'_>,
 ) -> Result<Vec<Candidate>> {
-    let mut results: Vec<WebSearchResult> = Vec::new();
+    let mut found: Vec<Candidate> = Vec::new();
+    let mut spent = 0usize;
     let mut owner: Option<ResolvedOwnerDto> = None;
-    for page in 1.. {
+    'pages: for page in 1.. {
         let input: WebSearchInput = serde_json::from_value(serde_json::json!({
             "query": need.query,
             "kind": need.kind.as_str(),
@@ -382,7 +420,7 @@ pub(in crate::features::learning) async fn search_need(
             Err(error) => return Err(error),
         };
         let returned = output.results.len();
-        let before = results.len();
+        let before = found.len();
         owner = owner.or(output.owner);
         for result in output.results.into_iter().filter(|result| {
             within_search_scope(&need.query, &result.url)
@@ -391,22 +429,28 @@ pub(in crate::features::learning) async fn search_need(
                     .as_deref()
                     .is_none_or(|site| within_search_scope(&format!("site:{site}"), &result.url))
         }) {
-            if !results.iter().any(|known| known.url == result.url) {
-                results.push(result);
+            if found.iter().any(|known| known.result.url == result.url) {
+                continue;
             }
+            let candidate = Candidate {
+                result,
+                kind: need.kind,
+                owner: owner.clone(),
+            };
+            spent = spent.saturating_add((room.cost)(&candidate));
+            if spent > room.tokens {
+                break 'pages;
+            }
+            found.push(candidate);
         }
-        if results.len() == before || returned < PAGE_RESULTS {
+        if found.len() == before || returned < PAGE_RESULTS {
             break;
         }
     }
-    Ok(results
-        .into_iter()
-        .map(|result| Candidate {
-            result,
-            kind: need.kind,
-            owner: owner.clone(),
-        })
-        .collect())
+    for candidate in &mut found {
+        candidate.owner.clone_from(&owner);
+    }
+    Ok(found)
 }
 
 /// Fetch a page a supporting source cites (§8) as a complete reference
