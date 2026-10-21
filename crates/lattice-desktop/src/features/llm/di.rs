@@ -2,7 +2,7 @@
 
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::instances::{
-    GpuBudget, LearningShortfall, LoadedInstance, SidecarBudget,
+    ContextFit, GpuBudget, LearningShortfall, LoadedInstance, SidecarBudget,
 };
 use crate::features::llm::loading::ModelLoader;
 use std::sync::Arc;
@@ -124,16 +124,6 @@ pub fn build(
         delete_model_use_case,
         list_models_use_case,
     }
-}
-
-/// How much of a local model's window fits this machine's memory: `None`
-/// where the machine does not report its memory or the header cannot say.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ContextFit {
-    /// With the KV cache at f16, llama-server's default.
-    pub(crate) tokens: Option<u32>,
-    /// With the KV cache quantized to q8_0.
-    pub(crate) tokens_with_kv_quantization: Option<u32>,
 }
 
 /// LLM's registrar surface on `Container`.
@@ -289,11 +279,9 @@ impl Container {
     /// memory at now, beside the models loaded. A hint shown next to its
     /// context setting; the window is never set from it.
     pub(crate) async fn context_fit(&self, path: &std::path::Path) -> ContextFit {
-        let budget = SidecarBudget::new(self.app_handle(), self.llm_runtime.clone());
-        ContextFit {
-            tokens: budget.fits_window(path, false).await,
-            tokens_with_kv_quantization: budget.fits_window(path, true).await,
-        }
+        SidecarBudget::new(self.app_handle(), self.llm_runtime.clone())
+            .context_fit(path)
+            .await
     }
 
     /// Load the Learning model ahead of the first learning job, reporting

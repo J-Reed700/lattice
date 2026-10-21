@@ -357,19 +357,20 @@ impl MemoryHint {
 }
 
 /// The memory hint for a server started for `config`, beside the
-/// `resident_bytes` other models hold on its device. `None` when the
-/// platform does not report its memory.
+/// `resident_bytes` other models hold on its device, from `info`, its
+/// model's header as the caller read it. `None` when the platform does not
+/// report its memory.
 pub(crate) fn memory_hint(
     config: &SidecarConfig,
     capabilities: &SystemCapabilities,
     resident_bytes: u64,
+    info: Option<&GgufModelInfo>,
 ) -> Option<MemoryHint> {
     let room = memory_room(capabilities, config.n_gpu_layers > 0, resident_bytes)?;
     let weights = resident_weight_bytes(&config.model_path).unwrap_or(0);
-    let info = read_model_info(&config.model_path);
     Some(hint_for(
         weights,
-        info.as_ref(),
+        info,
         config.context_size,
         config.kv_cache_quantization,
         room,
