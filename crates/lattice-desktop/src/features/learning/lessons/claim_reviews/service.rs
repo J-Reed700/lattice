@@ -318,12 +318,6 @@ impl ClaimReviewService {
             ClaimActionRequestDto::AcceptAllGeneralKnowledge => Err(AppError::InternalError(
                 "Accepting every proposal is a lesson action".into(),
             )),
-            ClaimActionRequestDto::AttachSavedSource { .. }
-            | ClaimActionRequestDto::AttachLink { .. }
-            | ClaimActionRequestDto::AttachDocument { .. }
-            | ClaimActionRequestDto::AttachText { .. } => Err(AppError::InvalidInput(
-                "Evidence is attached through the attach pipeline, not as a claim action.".into(),
-            )),
         }
     }
 

@@ -84,6 +84,28 @@ pub struct LearningSourceLibraryItemDto {
 pub struct LearningSourceWorkspaceDto {
     pub program_id: String,
     pub sources: Vec<LearningSourceLibraryItemDto>,
+    /// What checking the course's waiting claims against a source just
+    /// added found; null when no re-check ran.
+    pub recheck: Option<WaitingClaimsRecheckDto>,
+}
+
+/// The course's waiting claims checked against a source the user added
+/// (UI design §5.3): the held lessons' open claims the source mentions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitingClaimsRecheckDto {
+    /// Held lessons whose claims were checked.
+    pub lessons: u32,
+    /// Waiting claims tried against the source.
+    pub tried: u32,
+    pub verified: u32,
+    /// Checked and still not supported (or not judged).
+    pub not_verified: u32,
+    /// No passage of the source mentions the claim's terms.
+    pub no_passage: u32,
+    /// Why the remaining claims were not checked, when the model stopped
+    /// answering part-way.
+    pub stopped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

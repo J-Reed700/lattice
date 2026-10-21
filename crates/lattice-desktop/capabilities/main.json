@@ -371,6 +371,7 @@
     "learning:allow-course-index-close",
     "learning:allow-get-learning-lesson-claim-review",
     "learning:allow-resolve-learning-claim",
+    "learning:allow-attach-learning-claim-evidence",
     "learning:allow-keep-learning-teaching-finding",
     "learning:allow-resume-learning-lesson-review",
     "learning:allow-capture-learning-source-snapshot",

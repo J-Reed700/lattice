@@ -16,7 +16,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 use super::dto::{
-    ClaimActionRequestDto, ClaimEventDto, ClaimStateDto, LessonClaimReviewDto, VerdictKindDto,
+    AttachEvidenceDto, ClaimActionRequestDto, ClaimEventDto, ClaimStateDto, LessonClaimReviewDto,
+    VerdictKindDto,
 };
 
 /// Parses `fixture`, reads it as `T`, writes it back and requires the same
@@ -70,11 +71,28 @@ fn every_action_request_round_trips() {
             "general_knowledge",
             "accept_all_general_knowledge",
             "research_with_hint",
+            "undo",
+        ]
+    );
+}
+
+#[test]
+fn every_attached_evidence_round_trips() {
+    let evidence =
+        round_trip::<Vec<AttachEvidenceDto>>(include_str!("fixtures/attach_evidence.json"));
+    let kinds: Vec<&str> = evidence
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|evidence| evidence["kind"].as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
             "attach_saved_source",
             "attach_link",
             "attach_document",
             "attach_text",
-            "undo",
         ]
     );
 }

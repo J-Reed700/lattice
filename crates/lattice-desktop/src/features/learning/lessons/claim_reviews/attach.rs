@@ -35,7 +35,7 @@ use self::acquire::Acquired;
 pub(crate) use self::acquire::{capture_page, PageCapture};
 use self::report::{ClaimAttachReportDto, OtherClaimsCheckedDto};
 use super::checker_examples::CheckerExamples;
-use super::dto::ClaimActionRequestDto;
+use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{record_verdict, Redecided};
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
@@ -63,29 +63,22 @@ pub enum Evidence {
     },
 }
 
-impl Evidence {
-    /// The evidence an attach action carries; `None` for every other action.
-    pub fn of(action: &ClaimActionRequestDto) -> Option<Self> {
-        Some(match action {
-            ClaimActionRequestDto::AttachSavedSource {
+impl From<AttachEvidenceDto> for Evidence {
+    fn from(evidence: AttachEvidenceDto) -> Self {
+        match evidence {
+            AttachEvidenceDto::AttachSavedSource {
                 source_version_id,
                 start_byte,
                 end_byte,
             } => Self::SavedPassage {
-                source_version_id: source_version_id.clone(),
-                start_byte: *start_byte,
-                end_byte: *end_byte,
+                source_version_id,
+                start_byte,
+                end_byte,
             },
-            ClaimActionRequestDto::AttachLink { url } => Self::Link { url: url.clone() },
-            ClaimActionRequestDto::AttachDocument { document_id } => Self::Document {
-                document_id: document_id.clone(),
-            },
-            ClaimActionRequestDto::AttachText { title, text } => Self::Text {
-                title: title.clone(),
-                text: text.clone(),
-            },
-            _ => return None,
-        })
+            AttachEvidenceDto::AttachLink { url } => Self::Link { url },
+            AttachEvidenceDto::AttachDocument { document_id } => Self::Document { document_id },
+            AttachEvidenceDto::AttachText { title, text } => Self::Text { title, text },
+        }
     }
 }
 

@@ -558,6 +558,7 @@ pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
         waiting: count(counts.queued),
         verified: count(counts.verified),
         resolved_by_you: count(counts.confirmed + counts.general_knowledge + counts.removed),
+        rewritten: 0,
     }
 }
 

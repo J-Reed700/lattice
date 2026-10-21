@@ -27,6 +27,27 @@ impl From<&CountedSupport> for CountedSupportDto {
     }
 }
 
+/// What kind of work a source is, as the review names it (UI design §4.3):
+/// from its judged nature and publisher kind and its library kind; `page`
+/// when nothing more is known.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKindDto {
+    OnlineBook,
+    Documentation,
+    ReferenceWork,
+    PeerReviewedPaper,
+    Report,
+    Article,
+    Guide,
+    Forum,
+    Wiki,
+    MarketingPage,
+    YourFile,
+    PastedText,
+    Page,
+}
+
 /// What moved the trust a decision rested on.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "change", rename_all = "snake_case")]

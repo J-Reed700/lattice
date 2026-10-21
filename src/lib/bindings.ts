@@ -736,6 +736,18 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 }
 },
 /**
+ * Attach the user's evidence to a claim (§5.4): save it as a course
+ * source, check the claim against it, then the lesson's other open claims.
+ */
+async attachLearningClaimEvidence(request: AttachLearningClaimEvidenceRequestDto, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<ClaimAttachReportDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|attach_learning_claim_evidence", { request, onProgress }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * "Keep as written": the user settles a teaching finding the repairs did
  * not, without changing the lesson. It stays settled while the part it is
  * about keeps its text.
@@ -4919,6 +4931,7 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+export type AttachEvidenceDto = { kind: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { kind: "attach_link"; url: string } | { kind: "attach_document"; documentId: string } | { kind: "attach_text"; title: string; text: string }
 export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
 export type AttachFailureKindDto =
 /**
@@ -4942,6 +4955,20 @@ export type AttachFailureKindDto =
  */
 "unreachable"
 /**
+ * Evidence the user attaches, and the claims it is checked for (UI design
+ * §5.3).
+ */
+export type AttachLearningClaimEvidenceRequestDto = { programId: string; lessonId: string;
+/**
+ * The claim the attach is recorded on; the first of `scope` when a
+ * scope is given.
+ */
+claimId: string;
+/**
+ * The review's revision the user acted on.
+ */
+expectedRevision: number; evidence: AttachEvidenceDto; scope: AttachScopeDto }
+/**
  * What the card offers after a failure.
  */
 export type AttachNextStepDto =
@@ -4955,6 +4982,11 @@ export type AttachNextStepDto =
  */
 { step: "add_file" } | { step: "retry" }
 export type AttachOutcomeDto = { outcome: "checked"; check: CheckDto } | { outcome: "no_passage" }
+/**
+ * The claims the attached source is checked for: the one claim, or the
+ * claims the user picked.
+ */
+export type AttachScopeDto = { scope: "claim" } | { scope: "claims"; claimIds: string[] }
 /**
  * One line of the backend's file log. Lines that do not match the log format
  * carry only `message` (the raw line) and an `Unknown` level.
@@ -5333,12 +5365,26 @@ export type ChecksumRequest = { algorithm: string; value: string }
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
 export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "general_knowledge" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
 /**
- * What the user asked for on a claim (§5.1, §5.4); `resolve_learning_claim`
- * carries it with the lesson's `expected_revision`.
+ * What the user asked for on a claim (§5.1); `resolve_learning_claim`
+ * carries it with the lesson's `expected_revision`. Evidence is attached
+ * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { action: "attach_link"; url: string } | { action: "attach_document"; documentId: string } | { action: "attach_text"; title: string; text: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
 /**
- * What `resolve_learning_claim` returns for an attach action.
+ * Where an attach is, for the line the review shows while it runs.
+ */
+export type ClaimAttachProgressDto =
+/**
+ * Fetching the link; `host` is null for a file or pasted text.
+ */
+{ stage: "fetching"; host: string | null } | { stage: "saving" } |
+/**
+ * Checking the claims in scope against the source: `done` of `total`,
+ * the one being checked now.
+ */
+{ stage: "checking"; done: number; total: number; statement: string } | { stage: "done" }
+/**
+ * What `attach_learning_claim_evidence` returns.
  */
 export type ClaimAttachReportDto = {
 /**
@@ -5362,7 +5408,19 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
  * The card's lines, in order.
  */
 lines: string[] }
-export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number; removed: number }
+export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number;
+/**
+ * Removed by the user.
+ */
+removedByYou: number;
+/**
+ * Edited away by the user (checker design §11).
+ */
+editedByYou: number;
+/**
+ * Rewritten or removed by the machine's repairs.
+ */
+rewritten: number }
 export type ClaimEventDto = { ordinal: number; actor: ActorDto; at: number; jobId: string | null; appVersion: string; checkerModel: string | null; event: ClaimEventPayloadDto }
 export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: string; span: [number, number] | null; statement: string } | { kind: "checked"; check: CheckDto } | { kind: "researched"; queries: string[]; sourcesAdded: string[]; passagesFound: number } | { kind: "repair_attempted"; attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto } | { kind: "executed"; observationId: string; passed: boolean; evidence: string } |
 /**
@@ -5385,6 +5443,29 @@ export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitT
  * Byte span of `quote` in the field; null when it occurs more than once.
  */
 span: [number, number] | null }
+/**
+ * The claim as the review shows it: plain text, in its sentence and
+ * paragraph.
+ */
+export type ClaimPresentationDto = {
+/**
+ * The checked statement, markdown and citation markers removed.
+ */
+statement: string;
+/**
+ * The sentence of the lesson field the statement was extracted from,
+ * plain.
+ */
+sentence: string;
+/**
+ * The paragraph around the sentence, plain, split at it.
+ */
+contextBefore: string; contextAfter: string;
+/**
+ * Where the claim is: "Section 2 · Defining Tool Schemas",
+ * "Question 3", "Question 3 · answer key".
+ */
+place: string }
 /**
  * One claim card.
  */
@@ -5412,12 +5493,64 @@ verifierCheck: CheckerVerdictDto | null;
  * (`StandingAssessed`): whether its support met the bar for its kind,
  * and why. Null when the gate did not decide the claim's state.
  */
-sufficiency: LearningSufficiencyDto | null }
+sufficiency: LearningSufficiencyDto | null;
+/**
+ * The claim in its sentence and paragraph, as plain text.
+ */
+presentation: ClaimPresentationDto;
+/**
+ * The strongest counted support, else the contradicting passage.
+ */
+support: ClaimSupportDto | null;
+/**
+ * The other supports the checker found.
+ */
+alsoSupported: ClaimSupportDto[];
+/**
+ * What research tried.
+ */
+tried: ResearchSummaryDto }
 /**
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
 export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+/**
+ * Whether a support counted toward the claim's bar.
+ */
+export type ClaimSupportCountsDto = { outcome: "enough" } |
+/**
+ * Counted, but below the bar for this claim on its own.
+ */
+{ outcome: "not_enough" } |
+/**
+ * Excluded (distrusted, ruled out by its date), with the plain reason.
+ */
+{ outcome: "not_counted"; reason: string }
+/**
+ * The best support the checker found, or the contradicting passage.
+ */
+export type ClaimSupportDto = { role: ClaimSupportRoleDto; source: SourceRefDto;
+/**
+ * The registrable domain, else the host; null for a file or pasted
+ * text.
+ */
+site: string | null; kind: SourceKindDto;
+/**
+ * The source's level for this claim's subject, when the gate weighed
+ * it.
+ */
+standing: LearningTrustLevel | null; counts: ClaimSupportCountsDto;
+/**
+ * The supporting (or contradicting) sentences, as the judge cited them.
+ */
+quote: string;
+/**
+ * Byte span of `quote` inside `passage.text`; null when it is not found
+ * there verbatim.
+ */
+quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
+export type ClaimSupportRoleDto = "supports" | "contradicts"
 /**
  * Clean article content extracted from HTML (reader mode).
  *
@@ -7570,7 +7703,11 @@ verified: number;
 /**
  * Closed by the user or removed: confirmed, general knowledge, removed.
  */
-resolvedByYou: number }
+resolvedByYou: number;
+/**
+ * Rewritten or dropped by the machine's repairs.
+ */
+rewritten?: number }
 /**
  * A claim's trust as its review card shows it: the profile, each support
  * levelled for the claim's subject, and the bar for its kind.
@@ -8171,7 +8308,12 @@ export type LearningSourceVersionSummaryDto = { id: string; versionNumber: numbe
  * (claim review §5.4); the reader opens it by its page URL.
  */
 snapshotHash: string | null }
-export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[] }
+export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[];
+/**
+ * What checking the course's waiting claims against a source just
+ * added found; null when no re-check ran.
+ */
+recheck: WaitingClaimsRecheckDto | null }
 /**
  * A subject class as the user named it ("Web platform APIs").
  */
@@ -8195,9 +8337,21 @@ bar: string | null;
 /**
  * How a sufficient claim is shown when its support is below primary
  * (`practice`, `attributed`, `community_consensus`, `reported_by`,
- * `secondary`, `mirror`).
+ * `secondary`, `mirror`, `best_available`).
  */
-label: string | null; reasons: LearningTrustReasonDto[] }
+label: string | null;
+/**
+ * What an insufficient support lacks (`no_identified_source`,
+ * `no_primary_for_subject`, `stronger_source_silent`,
+ * `no_independent_corroboration`, `only_testimonial`, `only_stale`,
+ * `no_measurement_origin`).
+ */
+missing: string | null;
+/**
+ * The highest level any course source reaches on the claim's subject;
+ * null when nothing beyond the claim's own supports is known.
+ */
+ceiling: LearningTrustLevel | null; reasons: LearningTrustReasonDto[] }
 export type LearningTangentDto = { conversationId: string; programId: string; programTitle: string; spaceId: string; moduleId: string; moduleTitle: string; lessonId: string; lessonTitle: string; sectionIndex: number | null; sectionTitle: string | null; selectedText: string; title: string; createdAt: number; updatedAt: string; messageCount: number; contextMessageCount: number }
 export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
 /**
@@ -9054,6 +9208,31 @@ enabled: boolean;
 active: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
+/**
+ * What research did for the claim, summed up.
+ */
+export type ResearchSummaryDto = {
+/**
+ * Research rounds with at least one query.
+ */
+searches: number;
+/**
+ * Distinct source versions research saved for this claim.
+ */
+pagesRead: number;
+/**
+ * Of those, the versions whose passages the checker compared for this
+ * claim.
+ */
+pagesMentioning: number;
+/**
+ * A page research saved supports the claim now.
+ */
+stated: boolean;
+/**
+ * The `pages_mentioning` versions, newest first.
+ */
+relevant: SourceRefDto[] }
 export type ResolveLearningClaimRequestDto = { programId: string; lessonId: string; claimId: string; action: ClaimActionRequestDto;
 /**
  * The review's revision the user acted on.
@@ -9063,11 +9242,7 @@ export type ResolveLearningClaimResultDto = {
 /**
  * The review's revision after the action: send it with the next one.
  */
-revision: number;
-/**
- * What attaching evidence found; null for the other actions.
- */
-attach: ClaimAttachReportDto | null }
+revision: number }
 /**
  * Response for link resolution (for frontend compatibility).
  */
@@ -9739,6 +9914,12 @@ citationId?: number | null;
  */
 webSnapshot?: WebSnapshotDto | null }
 export type SourceGroup = { id: string; title: string; edition: string | null; description: string | null; ordered: boolean; structure?: StructureMode }
+/**
+ * What kind of work a source is, as the review names it (UI design §4.3):
+ * from its judged nature and publisher kind and its library kind; `page`
+ * when nothing more is known.
+ */
+export type SourceKindDto = "online_book" | "documentation" | "reference_work" | "peer_reviewed_paper" | "report" | "article" | "guide" | "forum" | "wiki" | "marketing_page" | "your_file" | "pasted_text" | "page"
 export type SourceRefDto = {
 /**
  * The library source the version belongs to, for "Capture again" (§5.4).
@@ -10596,6 +10777,32 @@ export type VisionProjectorDownloadDto = {
  * when the whole projector is already on disk.
  */
 downloadId: string | null }
+/**
+ * The course's waiting claims checked against a source the user added
+ * (UI design §5.3): the held lessons' open claims the source mentions.
+ */
+export type WaitingClaimsRecheckDto = {
+/**
+ * Held lessons whose claims were checked.
+ */
+lessons: number;
+/**
+ * Waiting claims tried against the source.
+ */
+tried: number; verified: number;
+/**
+ * Checked and still not supported (or not judged).
+ */
+notVerified: number;
+/**
+ * No passage of the source mentions the claim's terms.
+ */
+noPassage: number;
+/**
+ * Why the remaining claims were not checked, when the model stopped
+ * answering part-way.
+ */
+stopped: string | null }
 /**
  * Response from web ingestion command
  */

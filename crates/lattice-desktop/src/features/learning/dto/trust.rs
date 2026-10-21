@@ -179,8 +179,16 @@ pub struct LearningSufficiencyDto {
     pub bar: Option<String>,
     /// How a sufficient claim is shown when its support is below primary
     /// (`practice`, `attributed`, `community_consensus`, `reported_by`,
-    /// `secondary`, `mirror`).
+    /// `secondary`, `mirror`, `best_available`).
     pub label: Option<String>,
+    /// What an insufficient support lacks (`no_identified_source`,
+    /// `no_primary_for_subject`, `stronger_source_silent`,
+    /// `no_independent_corroboration`, `only_testimonial`, `only_stale`,
+    /// `no_measurement_origin`).
+    pub missing: Option<String>,
+    /// The highest level any course source reaches on the claim's subject;
+    /// null when nothing beyond the claim's own supports is known.
+    pub ceiling: Option<LearningTrustLevel>,
     pub reasons: Vec<LearningTrustReasonDto>,
 }
 

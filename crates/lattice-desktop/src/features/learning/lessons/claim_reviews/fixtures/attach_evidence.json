@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "attach_saved_source",
+    "sourceVersionId": "v1",
+    "startByte": 120,
+    "endByte": 184
+  },
+  {
+    "kind": "attach_link",
+    "url": "https://example.org/steam"
+  },
+  {
+    "kind": "attach_document",
+    "documentId": "doc-7"
+  },
+  {
+    "kind": "attach_text",
+    "title": "Lab notebook, 12 Oct",
+    "text": "Boiled at 100.0 °C, 1013 hPa."
+  }
+]

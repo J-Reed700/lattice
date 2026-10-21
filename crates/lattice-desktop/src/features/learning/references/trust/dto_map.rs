@@ -407,16 +407,28 @@ fn wire_name<T: serde::Serialize>(value: &T, tag: Option<&str>) -> Option<String
 /// for its kind, the bar it failed, the label it is shown with, and the
 /// rules that decided.
 pub fn sufficiency(profile: &ClaimProfile, decision: &Decision) -> LearningSufficiencyDto {
-    let (sufficient, bar, label, decided) = match decision {
+    let (sufficient, bar, label, missing, decided) = match decision {
         Decision::Sufficient { label, reasons, .. } => (
             true,
             None,
             label
                 .as_ref()
                 .and_then(|label| wire_name(label, Some("label"))),
+            None,
             reasons,
         ),
-        Decision::Insufficient { bar, reasons, .. } => (false, wire_name(bar, None), None, reasons),
+        Decision::Insufficient {
+            bar,
+            missing,
+            reasons,
+            ..
+        } => (
+            false,
+            wire_name(bar, None),
+            None,
+            wire_name(missing, Some("missing")),
+            reasons,
+        ),
     };
     LearningSufficiencyDto {
         claim_kind: profile.kind.as_str().to_owned(),
@@ -424,6 +436,8 @@ pub fn sufficiency(profile: &ClaimProfile, decision: &Decision) -> LearningSuffi
         sufficient,
         bar,
         label,
+        missing,
+        ceiling: None,
         reasons: reasons(decided),
     }
 }

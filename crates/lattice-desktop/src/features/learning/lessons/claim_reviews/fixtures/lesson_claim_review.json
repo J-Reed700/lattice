@@ -9,7 +9,9 @@
     "generalKnowledge": 2,
     "queued": 1,
     "open": 0,
-    "removed": 1
+    "removedByYou": 1,
+    "editedByYou": 0,
+    "rewritten": 0
   },
   "pass": 3,
   "stopReason": null,
@@ -186,7 +188,91 @@
         "at": 1760000000001
       },
       "verifierCheck": null,
-      "sufficiency": null
+      "sufficiency": null,
+      "presentation": {
+        "statement": "Water boils at 100 °C at sea level.",
+        "sentence": "Water boils at 100 °C.",
+        "contextBefore": "Heating a liquid raises its vapour pressure.",
+        "contextAfter": "Higher up, it boils at a lower temperature.",
+        "place": "Section 1 · Phase changes"
+      },
+      "support": {
+        "role": "supports",
+        "source": {
+          "sourceId": "source-1",
+          "sourceVersionId": "v1",
+          "title": "Thermodynamics, ch. 4",
+          "url": "https://example.org/thermo",
+          "addedBy": "user"
+        },
+        "site": "example.org",
+        "kind": "reference_work",
+        "standing": "established",
+        "counts": {
+          "outcome": "enough"
+        },
+        "quote": "pure water boils at 99.97 °C",
+        "quoteSpan": [
+          19,
+          48
+        ],
+        "passage": {
+          "sourceVersionId": "v1",
+          "title": "Thermodynamics, ch. 4",
+          "url": "https://example.org/thermo",
+          "text": "At one atmosphere, pure water boils at 99.97 °C.",
+          "startByte": 120,
+          "endByte": 184,
+          "retrievalKind": "vector",
+          "trust": null
+        }
+      },
+      "alsoSupported": [
+        {
+          "role": "supports",
+          "source": {
+            "sourceId": "source-2",
+            "sourceVersionId": "v2",
+            "title": "Steam tables",
+            "url": null,
+            "addedBy": "research"
+          },
+          "site": null,
+          "kind": "report",
+          "standing": null,
+          "counts": {
+            "outcome": "not_counted",
+            "reason": "Its date rules it out for this claim."
+          },
+          "quote": "100 °C at 101.325 kPa",
+          "quoteSpan": null,
+          "passage": {
+            "sourceVersionId": "v1",
+            "title": "Thermodynamics, ch. 4",
+            "url": "https://example.org/thermo",
+            "text": "At one atmosphere, pure water boils at 99.97 °C.",
+            "startByte": 120,
+            "endByte": 184,
+            "retrievalKind": "vector",
+            "trust": null
+          }
+        }
+      ],
+      "tried": {
+        "searches": 1,
+        "pagesRead": 1,
+        "pagesMentioning": 1,
+        "stated": false,
+        "relevant": [
+          {
+            "sourceId": "source-2",
+            "sourceVersionId": "v2",
+            "title": "Steam tables",
+            "url": null,
+            "addedBy": "research"
+          }
+        ]
+      }
     },
     {
       "claimId": "claim-2",
@@ -273,7 +359,23 @@
         ],
         "at": 1760000400000
       },
-      "sufficiency": null
+      "sufficiency": null,
+      "presentation": {
+        "statement": "The snippet prints [1, 2, 3].",
+        "sentence": "print(sorted([3, 1, 2]))",
+        "contextBefore": "",
+        "contextAfter": "",
+        "place": "Question 1"
+      },
+      "support": null,
+      "alsoSupported": [],
+      "tried": {
+        "searches": 0,
+        "pagesRead": 0,
+        "pagesMentioning": 0,
+        "stated": false,
+        "relevant": []
+      }
     }
   ],
   "teachingFindings": [

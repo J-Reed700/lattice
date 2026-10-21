@@ -16,8 +16,9 @@ use serde_json::Value;
 
 use super::dto::{
     CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEvidencePassageDto, ClaimLocationDto,
-    ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto, RepairAttemptDto,
-    ResearchAttemptDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
+    ClaimPresentationDto, ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto,
+    RepairAttemptDto, ResearchAttemptDto, ResearchSummaryDto, SourceAddedByDto, SourceRefDto,
+    StopReasonDto,
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
@@ -414,12 +415,21 @@ fn item(
         ),
         _ => (failed_reason(entry), None, None),
     };
+    let unit_title = titles.get(location.unit_index).cloned().unwrap_or_default();
+    let presentation = ClaimPresentationDto {
+        statement: entry.statement().to_owned(),
+        sentence: location.quote.clone(),
+        context_before: String::new(),
+        context_after: String::new(),
+        place: unit_title.clone(),
+    };
+    let tried = tried(&research);
     ClaimReviewItemDto {
         claim_id: entry.claim_id().0.clone(),
         location: ClaimLocationDto {
             unit_index: location.unit_index,
             unit_kind: location.unit_kind.into(),
-            unit_title: titles.get(location.unit_index).cloned().unwrap_or_default(),
+            unit_title,
             field: location.field.clone(),
             quote: location.quote.clone(),
             span: location.span,
@@ -459,6 +469,33 @@ fn item(
         sufficiency: entry
             .trust()
             .map(|trust| dto_map::sufficiency(&trust.profile, &trust.decision)),
+        presentation,
+        support: None,
+        also_supported: Vec::new(),
+        tried,
+    }
+}
+
+/// What research did for the claim: its rounds with a query and the
+/// distinct versions it saved.
+fn tried(research: &[ResearchAttemptDto]) -> ResearchSummaryDto {
+    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    let mut saved: Vec<&str> = research
+        .iter()
+        .flat_map(|attempt| &attempt.sources_added)
+        .map(|source| source.source_version_id.as_str())
+        .collect();
+    saved.sort_unstable();
+    saved.dedup();
+    ResearchSummaryDto {
+        searches: count(
+            research
+                .iter()
+                .filter(|attempt| !attempt.queries.is_empty())
+                .count(),
+        ),
+        pages_read: count(saved.len()),
+        ..ResearchSummaryDto::default()
     }
 }
 
