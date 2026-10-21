@@ -227,6 +227,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
             lattice::features::model_management::plugin::commands::download_default_embedding_model,
+            lattice::features::model_management::plugin::commands::list_leftover_embedding_files,
+            lattice::features::model_management::plugin::commands::remove_leftover_embedding_files,
             lattice::features::model_management::plugin::commands::delete_model,
             lattice::features::model_management::plugin::commands::get_model_download_path::<tauri::Wry>,
             lattice::features::model_management::plugin::commands::list_downloaded_models,

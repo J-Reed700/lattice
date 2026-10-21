@@ -4,8 +4,10 @@ use crate::infrastructure::persistence::repositories::downloaded_models::Downloa
 use chrono::Utc;
 use lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort;
 use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::value_objects::model_status::FileStatus;
+use lattice_core::domain::value_objects::ArtifactIdentity;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -26,13 +28,7 @@ impl DownloadSaga {
     ) -> Option<&lattice_core::domain::entities::model_file::ModelFile> {
         files
             .iter()
-            .find(|file| file.file_name == "model.onnx" || file.file_name.ends_with("/model.onnx"))
-            .or_else(|| {
-                files.iter().find(|file| {
-                    file.file_name.ends_with(".onnx") && !file.file_name.ends_with(".onnx_data")
-                })
-            })
-            .or_else(|| files.iter().find(|file| file.file_name.ends_with(".gguf")))
+            .find(|file| file.file_name.ends_with(".gguf"))
             // Safetensors LLM repos contain a `config.json`. Treat it as
             // the canonical primary file — the loader takes the parent
             // directory anyway, and config.json is the only file
@@ -40,6 +36,20 @@ impl DownloadSaga {
             // (single- or multi-shard).
             .or_else(|| files.iter().find(|file| file.file_name == "config.json"))
             .or_else(|| files.first())
+    }
+
+    /// The identity of an embedding GGUF whose download was checked against a
+    /// pinned SHA-256: the transfer engine hashed the file and refused it on a
+    /// mismatch, so the digest is the file's, and activation need not read
+    /// 1.2 GB again. `None` when the download carried no digest.
+    fn verified_gguf_identity(
+        primary: &lattice_core::domain::entities::model_file::ModelFile,
+    ) -> Option<ArtifactIdentity> {
+        if !primary.file_name.ends_with(".gguf") {
+            return None;
+        }
+        let digest = primary.checksum_sha256.as_deref()?.to_ascii_lowercase();
+        ArtifactIdentity::parse(&format!("sha256:{digest}")).ok()
     }
 
     fn model_location_for_download(
@@ -307,14 +317,31 @@ impl DownloadSaga {
                     .get_active_embedding_model()
                     .await
                 {
+                    Ok(None)
+                        if !downloaded_model
+                            .location()
+                            .enclosing_dir()
+                            .is_some_and(|dir| has_tokenizer(&dir)) =>
+                    {
+                        info!(
+                            model_id = %event.model_id,
+                            "Saga: embedding model has no tokenizer.json beside it; not auto-activated"
+                        )
+                    }
                     Ok(None) => {
-                        // The completion write above has committed; hashing the
-                        // artifacts happens off the runtime thread, outside it.
+                        // The completion write above has committed; any hashing
+                        // happens off the runtime thread, outside it.
+                        let verified = Self::verified_gguf_identity(main_file);
                         let activation = async {
-                            let identity = crate::infrastructure::ml::artifact_identity::establish(
-                                &downloaded_model,
-                            )
-                            .await?;
+                            let identity = match verified {
+                                Some(identity) => Some(identity),
+                                None => {
+                                    crate::infrastructure::ml::artifact_identity::establish(
+                                        &downloaded_model,
+                                    )
+                                    .await?
+                                }
+                            };
                             self.downloaded_model_repo
                                 .set_active_embedding_model(&event.model_id, identity.as_ref())
                                 .await

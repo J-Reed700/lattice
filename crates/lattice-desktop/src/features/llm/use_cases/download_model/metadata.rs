@@ -7,129 +7,35 @@ use lattice_core::shared::error::AppError;
 use super::DownloadModelUseCase;
 
 impl DownloadModelUseCase {
-    pub(super) fn fallback_url_for_onnx_metadata(file_name: &str, url: &str) -> Option<String> {
-        // In some repos (e.g. Xenova), ONNX weights live in /onnx/ but tokenizer/config files
-        // live at repo root. If curated metadata uses /onnx/ for these files, retry at root.
-        if file_name == "model.onnx" || file_name == "model.onnx_data" {
-            return None;
-        }
-
-        let onnx_segment = "/resolve/main/onnx/";
-        if url.contains(onnx_segment) {
-            Some(url.replacen(onnx_segment, "/resolve/main/", 1))
-        } else {
-            None
-        }
-    }
-
-    /// Build a file list for Candle-backed embedding models.
+    /// The files of an embedding model picked from a Hugging Face search: the
+    /// chosen GGUF, plus the repository's `tokenizer.json` when it has one.
     ///
-    /// These require exactly:
-    /// - `weights_filename` — the weights, `model.safetensors` for almost
-    ///   every repo and `pytorch_model.bin` for the ones that never published
-    ///   a safetensors conversion (BAAI/bge-m3). The caller picks which,
-    ///   mirroring the catalog adapter's preference order.
-    /// - `tokenizer.json` — tokenizer vocab
-    /// - `config.json` — model configuration (hidden_size, architecture)
-    ///
-    /// Optionally includes `1_Pooling/config.json` if it exists at the repo
-    /// root — this tells the inference service whether to CLS- or mean-pool.
-    /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
-    ///
-    /// Also probes for `sparse_linear.pt`, the learned sparse head BGE-M3 and
-    /// its derivatives publish. It is a few kilobytes and only exists on
-    /// hybrid dense/sparse checkpoints; fetching it is what lets
-    /// `CandleEmbeddingService` report `supports_sparse()` and lets the sparse
-    /// retrieval branch run. A repo without one is unaffected.
-    async fn build_safetensors_embedding_file_list(
+    /// The embedding runtime cuts passages with the model's own tokenizer, so
+    /// a GGUF without one beside it downloads but cannot be activated for
+    /// search; activation says so. Sizes are left unknown (0): the transfer
+    /// engine takes them from the server rather than from a catalog estimate.
+    async fn build_gguf_embedding_file_list(
         repo_id: &str,
-        weights_filename: &str,
+        gguf_filename: &str,
         auth_token: Option<&str>,
     ) -> Vec<lattice_core::domain::models::metadata::ModelFileMetadata> {
+        use lattice_core::domain::models::checkpoint::TOKENIZER_JSON;
         use lattice_core::domain::models::metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-        let mut files = vec![
-            ModelFileMetadata::new(
-                weights_filename.to_string(),
-                format!("{}/{}", base_url, weights_filename),
-                0,
-            ),
-            ModelFileMetadata::new(
-                "tokenizer.json".to_string(),
-                format!("{}/tokenizer.json", base_url),
-                0,
-            ),
-            ModelFileMetadata::new(
-                "config.json".to_string(),
-                format!("{}/config.json", base_url),
-                0,
-            ),
-        ];
+        let mut files = vec![ModelFileMetadata::new(
+            gguf_filename.to_string(),
+            format!("{}/{}", base_url, gguf_filename),
+            0,
+        )];
 
-        let sparse_head = lattice_core::domain::models::checkpoint::SPARSE_HEAD_PT;
-        let sparse_url = format!("{}/{}", base_url, sparse_head);
-        if Self::remote_file_exists(&sparse_url, auth_token).await {
+        let tokenizer_url = format!("{}/{}", base_url, TOKENIZER_JSON);
+        if Self::remote_file_exists(&tokenizer_url, auth_token).await {
             files.push(ModelFileMetadata::new(
-                sparse_head.to_string(),
-                sparse_url,
+                TOKENIZER_JSON.to_string(),
+                tokenizer_url,
                 0,
             ));
-        }
-
-        files
-    }
-
-    /// Build a file list for ONNX embedding models with required companion files.
-    ///
-    /// ONNX embedding models require at minimum:
-    /// - The ONNX model file itself (e.g., `model.onnx` or `onnx/model.onnx`)
-    /// - `tokenizer.json` — required by OnnxEmbeddingService for tokenization
-    /// - `config.json` — model configuration
-    ///
-    /// Companion files are resolved at repo root since most HF repos store
-    /// tokenizer/config at root even when the ONNX file is in a subdirectory.
-    /// The `fallback_url_for_onnx_metadata` method handles the onnx/ → root
-    /// fallback for repos that use the onnx/ subdirectory convention.
-    async fn build_onnx_embedding_file_list(
-        repo_id: &str,
-        onnx_filename: &str,
-    ) -> Vec<lattice_core::domain::models::metadata::ModelFileMetadata> {
-        use lattice_core::domain::models::metadata::ModelFileMetadata;
-
-        let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-
-        // Many modern ONNX embedding models (EmbeddingGemma, BGE-M3, etc.) ship
-        // external weights in a sibling `*.onnx_data` file. The `.onnx` graph
-        // alone is ~500KB and will fail to load without its companion weights.
-        // Probe HF for the sibling and include it if present.
-        let onnx_data_filename = format!("{}_data", onnx_filename);
-        let onnx_data_url = format!("{}/{}", base_url, onnx_data_filename);
-        // Note: caller `resolve_model_metadata` does not currently thread an
-        // auth token here. ONNX is the legacy path on its way out; if we
-        // ever need gated-model ONNX support, add an auth_token parameter.
-        let include_onnx_data = Self::remote_file_exists(&onnx_data_url, None).await;
-
-        let mut files = vec![
-            ModelFileMetadata::new(
-                onnx_filename.to_string(),
-                format!("{}/{}", base_url, onnx_filename),
-                0,
-            ),
-            ModelFileMetadata::new(
-                "tokenizer.json".to_string(),
-                format!("{}/tokenizer.json", base_url),
-                0,
-            ),
-            ModelFileMetadata::new(
-                "config.json".to_string(),
-                format!("{}/config.json", base_url),
-                0,
-            ),
-        ];
-
-        if include_onnx_data {
-            files.push(ModelFileMetadata::new(onnx_data_filename, onnx_data_url, 0));
         }
 
         files
@@ -229,16 +135,14 @@ impl DownloadModelUseCase {
                 resolved.total_size_bytes = (resolved.size_gb * 1_000_000_000.0) as u64;
             }
 
-            // Embedding models need a multi-file download (weights + tokenizer
-            // + config). Dispatch on filename extension — safetensors is the
-            // Candle path; .onnx is the legacy ORT path (will be removed once
-            // all consumers have migrated).
+            // An embedding GGUF downloads with the tokenizer its passages are
+            // cut with, so it takes the multi-file path.
             if resolved.category
                 == lattice_core::domain::models::selection::ModelCategory::Embedding
+                && filename.to_ascii_lowercase().ends_with(".gguf")
             {
-                // For gated repos, fetch the user's HF token so HEAD probes
-                // (e.g., 1_Pooling/config.json) don't 401 silently and skip
-                // a file we'd actually need.
+                // A gated repo answers the tokenizer probe only with the
+                // user's token.
                 let auth_token: Option<String> = if resolved.requires_auth {
                     self.credentials
                         .get_api_key("huggingface_token")
@@ -249,26 +153,13 @@ impl DownloadModelUseCase {
                     None
                 };
 
-                // `pytorch_model.bin` joins the Candle branch: the catalog
-                // adapter picks it when a repo ships no safetensors, and the
-                // loader reads it through `candle_core::pickle`. Without this
-                // it would fall through to a bare single-file download with
-                // no tokenizer or config beside it.
-                if filename.ends_with(".safetensors")
-                    || filename == lattice_core::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN
-                {
-                    resolved.files = Self::build_safetensors_embedding_file_list(
-                        &repo_id,
-                        &filename,
-                        auth_token.as_deref(),
-                    )
-                    .await;
-                    resolved.default_filename = None;
-                } else if filename.ends_with(".onnx") {
-                    resolved.files =
-                        Self::build_onnx_embedding_file_list(&repo_id, &filename).await;
-                    resolved.default_filename = None;
-                }
+                resolved.files = Self::build_gguf_embedding_file_list(
+                    &repo_id,
+                    &filename,
+                    auth_token.as_deref(),
+                )
+                .await;
+                resolved.default_filename = None;
             }
 
             return Ok(resolved);

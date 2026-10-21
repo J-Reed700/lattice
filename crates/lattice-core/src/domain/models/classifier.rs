@@ -274,7 +274,6 @@ impl ModelTypeClassifier {
             || id.contains("e5-")
             || id.contains("bge-")
             || id.contains("gte-")
-            || id.starts_with("all-minilm")
             || id.starts_with("all-mpnet")
             || id.contains("sentence-transformers")
             || id.contains("instructor")

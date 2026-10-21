@@ -6435,6 +6435,12 @@
           "markdownDescription": "Enables the list_downloaded_models command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_leftover_embedding_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-list-leftover-embedding-files",
+          "markdownDescription": "Enables the list_leftover_embedding_files command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_loaded_models command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-list-loaded-models",
@@ -6445,6 +6451,12 @@
           "type": "string",
           "const": "model:allow-refresh-model-catalog",
           "markdownDescription": "Enables the refresh_model_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_leftover_embedding_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-remove-leftover-embedding-files",
+          "markdownDescription": "Enables the remove_leftover_embedding_files command without any pre-configured scope."
         },
         {
           "description": "Enables the search_model_catalog command without any pre-configured scope.",
@@ -6609,6 +6621,12 @@
           "markdownDescription": "Denies the list_downloaded_models command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_leftover_embedding_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-list-leftover-embedding-files",
+          "markdownDescription": "Denies the list_leftover_embedding_files command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_loaded_models command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-list-loaded-models",
@@ -6619,6 +6637,12 @@
           "type": "string",
           "const": "model:deny-refresh-model-catalog",
           "markdownDescription": "Denies the refresh_model_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_leftover_embedding_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-remove-leftover-embedding-files",
+          "markdownDescription": "Denies the remove_leftover_embedding_files command without any pre-configured scope."
         },
         {
           "description": "Denies the search_model_catalog command without any pre-configured scope.",

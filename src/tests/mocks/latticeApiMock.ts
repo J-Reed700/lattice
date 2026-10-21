@@ -157,6 +157,12 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
     downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
+    listLeftoverEmbeddingFiles: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { paths: [], total_bytes: 0 } }),
+    removeLeftoverEmbeddingFiles: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { paths: [], total_bytes: 0 } }),
     getModelDownloadPath: vi
       .fn()
       .mockResolvedValue({ ok: true, data: '/tmp/lattice/models' }),

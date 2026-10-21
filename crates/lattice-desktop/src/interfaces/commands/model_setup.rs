@@ -58,8 +58,8 @@ pub async fn check_first_run_status_impl(
 
 /// Download default embedding model implementation.
 ///
-/// Downloads the model `default_embedding_model` picks for this machine, which
-/// is the same one `check_first_run_status` offered.
+/// Downloads the model `default_embedding_model` names, the same one
+/// `check_first_run_status` offered.
 /// Progress can be monitored via download events.
 /// Called by gateway - async dispatch.
 pub async fn download_default_embedding_model_impl(
@@ -67,9 +67,7 @@ pub async fn download_default_embedding_model_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: download_default_embedding_model - ENTRY");
 
-    let default = default_embedding_model(
-        crate::infrastructure::ml::compute_device::gpu_acceleration_available(),
-    );
+    let default = default_embedding_model();
     let model_id = default.curated_id.to_string();
     let model_name = default.display_name.to_string();
 

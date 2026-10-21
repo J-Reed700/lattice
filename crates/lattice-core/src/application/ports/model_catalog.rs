@@ -67,10 +67,10 @@ pub struct ExternalModelMetadata {
     /// Preferred file size in bytes.
     #[serde(default)]
     pub preferred_size_bytes: Option<u64>,
-    /// For embedding models: whether the local Candle inference path can load
-    /// this architecture. `None` for non-embedding models. Catalog browsers
-    /// surface this so users see a "Coming soon" badge instead of starting a
-    /// download that will fail.
+    /// For embedding models: whether the bundled llama.cpp can run this
+    /// repository (a GGUF of an architecture the pinned engine lists). `None`
+    /// for non-embedding models. Catalog browsers surface this so users see
+    /// why a download is unavailable instead of starting one that will fail.
     #[serde(default)]
     pub embedding_compatibility: Option<crate::domain::models::selection::EmbeddingCompatibility>,
 }

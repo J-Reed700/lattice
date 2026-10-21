@@ -137,7 +137,7 @@ fn test_embedding_storage_format() {
         "document_id": "doc_xyz789",
         "embedding": vec![0.1, 0.2, 0.3, 0.4, 0.5],
         "dimensions": 5,
-        "model": "all-MiniLM-L6-v2",
+        "model": "Qwen3-Embedding-0.6B",
         "version": "1.0"
     });
 

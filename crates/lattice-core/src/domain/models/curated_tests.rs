@@ -240,7 +240,7 @@ fn embedding_catalog_contains_supported_runtime_models() {
     let ids: std::collections::HashSet<_> = models.iter().map(|model| model.id.as_str()).collect();
     assert_eq!(
         ids,
-        std::collections::HashSet::from(["qwen3-embedding-0.6b", "all-minilm-l6-v2"])
+        std::collections::HashSet::from(["qwen3-embedding-0.6b"])
     );
 }
 
@@ -293,7 +293,7 @@ fn test_get_by_category() {
     assert_eq!(llms.len(), 9);
 
     let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
-    assert_eq!(embeddings.len(), 2);
+    assert_eq!(embeddings.len(), 1);
 
     let ocr = get_curated_models_by_category(ModelCategory::OCR);
     assert_eq!(ocr.len(), 1);
@@ -468,8 +468,6 @@ fn only_matryoshka_trained_embedding_models_may_be_truncated() {
     assert!(embedding_model_supports_matryoshka(
         "Qwen/Qwen3-Embedding-0.6B"
     ));
-    // Documented for multi-granularity retrieval, not nested dimensions.
-    assert!(!embedding_model_supports_matryoshka("all-minilm-l6-v2"));
     // Silence is not a promise.
     assert!(!embedding_model_supports_matryoshka("some-local-model"));
     assert!(!embedding_model_supports_matryoshka(""));
@@ -477,14 +475,14 @@ fn only_matryoshka_trained_embedding_models_may_be_truncated() {
 
 #[test]
 fn test_lookup_embedding_model() {
-    let category = get_model_category_by_id("all-minilm-l6-v2");
+    let category = get_model_category_by_id("qwen3-embedding-0.6b");
     assert_eq!(category, Some(ModelCategory::Embedding));
 }
 
 #[test]
 fn test_lookup_case_insensitive() {
-    let category1 = get_model_category_by_id("ALL-MINILM-L6-V2");
-    let category2 = get_model_category_by_id("all-minilm-l6-v2");
+    let category1 = get_model_category_by_id("QWEN3-EMBEDDING-0.6B");
+    let category2 = get_model_category_by_id("qwen3-embedding-0.6b");
     assert_eq!(category1, category2);
     assert_eq!(category1, Some(ModelCategory::Embedding));
 }
@@ -495,32 +493,39 @@ fn test_lookup_nonexistent_model() {
     assert_eq!(category, None);
 }
 
+/// The embedding runtime is the bundled llama-server: one F16 GGUF, plus the
+/// `tokenizer.json` passages are cut with, each pinned to a commit and a
+/// digest so the engine verifies it and the GGUF's digest is the identity.
 #[test]
-fn embedding_models_use_safetensors_not_onnx() {
-    let models = get_curated_embedding_models();
-    for model in &models {
+fn every_embedding_entry_downloads_one_pinned_gguf_and_its_tokenizer() {
+    use crate::domain::models::checkpoint::TOKENIZER_JSON;
+    use crate::domain::models::selection::ModelFormat;
+    for model in get_curated_embedding_models() {
+        assert_eq!(model.format, ModelFormat::Gguf, "{}", model.id);
+        assert_eq!(model.supported_quantizations, ["F16"], "{}", model.id);
+        let names: Vec<&str> = model.files.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(names.len(), 2, "{}", model.id);
+        assert!(names[0].ends_with(".gguf"), "{}", model.id);
+        assert_eq!(names[1], TOKENIZER_JSON, "{}", model.id);
         for file in &model.files {
+            assert!(file.size_bytes > 0, "{} has no size", file.filename);
+            let digest = file.checksum.as_deref().unwrap_or_default();
+            assert_eq!(digest.len(), 64, "{} has no sha256", file.filename);
+            let revision = file
+                .url
+                .split("/resolve/")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap_or_default();
             assert!(
-                !file.filename.ends_with(".onnx") && !file.filename.ends_with(".onnx_data"),
-                "Embedding model '{}' file '{}' is ONNX; runtime is candle/safetensors only",
-                model.id,
-                file.filename,
-            );
-            assert!(
-                !file.url.contains("/onnx/"),
-                "Embedding model '{}' URL '{}' contains /onnx/ subdir; use the root safetensors path",
-                model.id, file.url,
+                revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{} is not pinned to a commit",
+                file.url
             );
         }
-        // The Candle runtime needs a supported weights artifact.
-        let has_weights = model
-            .files
-            .iter()
-            .any(|f| f.filename == "model.safetensors" || f.filename == "pytorch_model.bin");
-        assert!(
-            has_weights,
-            "Embedding model '{}' lists neither model.safetensors nor pytorch_model.bin",
-            model.id,
+        assert_eq!(
+            model.total_size_bytes,
+            model.files.iter().map(|f| f.size_bytes).sum::<u64>()
         );
     }
 }

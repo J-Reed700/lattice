@@ -1,4 +1,3 @@
-use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
 use lattice_core::application::ports::system_info::SystemInfoPort;
 use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
@@ -131,17 +130,18 @@ impl CheckFirstRunStatusUseCase {
 }
 
 fn embedding_recommendation() -> Option<RecommendedModel> {
-    // Qwen3 where there is a GPU to run it, MiniLM where there is not.
-    let default = default_embedding_model(gpu_acceleration_available());
-    let entry = lattice_core::domain::models::curated::get_curated_embedding_models()
+    // One model on every machine; the device decides only GPU offload.
+    let default = default_embedding_model();
+    let Some(entry) = lattice_core::domain::models::curated::get_curated_embedding_models()
         .into_iter()
-        .find(|m| m.id == default.curated_id);
-    if entry.is_none() {
+        .find(|m| m.id == default.curated_id)
+    else {
         warn!(
             model_id = default.curated_id,
-            "Default embedding model is not in the curated catalog; the download will fail"
+            "Default embedding model is not in the curated catalog; nothing to recommend"
         );
-    }
+        return None;
+    };
     debug!(
         model_id = default.curated_id,
         dimension = default.dimension,
@@ -152,10 +152,8 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
         model_id: default.curated_id.to_string(),
         // The setup screen labels the row "Embedding" already.
         display_name: default.display_name.to_string(),
-        // The catalog's own figure. The fallback is MiniLM's observed size, and
-        // under-reporting a 1.2 GB download would under-warn the disk check, so
-        // a missing entry is logged above rather than passed off as small.
-        estimated_size_bytes: entry.map(|m| m.total_size_bytes).unwrap_or(91_700_000),
+        // The catalog's own figure: the pinned files' sizes.
+        estimated_size_bytes: entry.total_size_bytes,
     })
 }
 
@@ -220,7 +218,7 @@ mod tests {
         assert!(response.needs_setup);
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
+            Some(default_embedding_model().curated_id)
         );
         assert!(response.recommended_model_name.is_some());
         assert!(response.estimated_size_bytes.is_some());
@@ -257,7 +255,7 @@ mod tests {
         assert!(response.needs_setup);
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
+            Some(default_embedding_model().curated_id)
         );
     }
 
@@ -306,7 +304,7 @@ mod tests {
         );
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
+            Some(default_embedding_model().curated_id)
         );
 
         // Sanity: empty `repo` still also reports needs_setup.

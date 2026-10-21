@@ -35,16 +35,6 @@ pub fn best_available_compute_device(workload: &str) -> Device {
     })
 }
 
-/// Whether local inference will actually get an accelerator on this machine.
-///
-/// Asks the same question [`best_available_compute_device`] answers, because
-/// choosing a default model on "the machine has a GPU" rather than "this build
-/// can use it" would hand a CPU-only install a model it cannot run at a usable
-/// speed.
-pub fn gpu_acceleration_available() -> bool {
-    !best_available_compute_device("accelerator-probe").is_cpu()
-}
-
 fn force_cpu_requested(value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         matches!(
@@ -62,7 +52,6 @@ mod tests {
     #[test]
     fn intel_mac_uses_cpu_for_local_inference() {
         assert!(super::best_available_compute_device("intel-mac-test").is_cpu());
-        assert!(!super::gpu_acceleration_available());
     }
 
     #[test]
