@@ -630,7 +630,10 @@ pub(in crate::features::learning) async fn finish(
                 // Plan findings an unchanged last attempt exhausted no longer
                 // block; only a blocking finding left uncorrected stops here.
                 if draft.review.issues.iter().any(LearningOutlineIssueDto::blocks_acceptance) {
-                    draft.review.note = "The model returned no usable correction. Your draft, findings and saved references are kept; Repair can retry checking.".into();
+                    // Say what was wrong with any correction that could not
+                    // be used, so the user can fix it by hand or press Repair.
+                    let refused: String = outcome.refused.iter().map(|reason| format!(" {reason}")).collect();
+                    draft.review.note = format!("The model returned no usable correction.{refused} Your draft, findings and saved references are kept; Repair can retry checking.");
                 } else {
                     draft.review.status = LearningOutlineReviewStatus::Passed;
                     draft.review.note = advisory_note(&draft, &sources);

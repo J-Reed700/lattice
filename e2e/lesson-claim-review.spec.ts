@@ -31,6 +31,7 @@ async function holdLessonForReview(page: Page) {
     state.claimReviews[lesson.id] = {
       lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null, changedSinceStop: false,
       counts: { verified: 9, confirmed: 0, generalKnowledge: 0, queued: 2, open: 0, removed: 0 },
+      teachingFindings: [],
       claims: [
         { claimId: 'contradicted', location: location(0, 'A comparison always proves a cause.'), statement: 'A comparison always proves a cause.',
           state: { state: 'queued' }, verdictKind: { kind: 'contradicted' }, reason: 'The notes say a comparison records limits; it does not prove causes.',

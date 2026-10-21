@@ -5,7 +5,7 @@ use std::path::Path;
 use async_trait::async_trait;
 
 use crate::features::llm::engine::factory::{launch_window, sidecar_config, LocalServerOptions};
-use crate::features::llm::engine::gguf_metadata::read_model_info;
+use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
 use crate::features::llm::engine::sidecar_manager::{
     memory_hint, Admission, SidecarConfig, SidecarRegistry,
 };
@@ -40,15 +40,24 @@ pub(crate) trait GpuBudget: Send + Sync {
     /// the embedding server.
     async fn server_admission(&self, config: &SidecarConfig) -> Admission;
 
-    /// The largest window, up to the one it was trained for, at which `path`
-    /// fits this machine's memory beside the models loaded now, its KV cache
-    /// quantized when `kv_cache_quantization`. `None` when the platform does
-    /// not report its memory or the header cannot say.
-    async fn fits_window(&self, path: &Path, kv_cache_quantization: bool) -> Option<u32>;
+    /// The largest windows, up to the one it was trained for, at which `path`
+    /// fits this machine's memory beside the models loaded now, with its KV
+    /// cache at f16 and quantized.
+    async fn context_fit(&self, path: &Path) -> ContextFit;
 
     /// The window `path` was trained for, which it launches with unless the
     /// user saved another; `None` when its header does not say.
     fn trained_window(&self, path: &Path) -> Option<u32>;
+}
+
+/// How much of a local model's window fits this machine's memory: `None`
+/// where the machine does not report its memory or the header cannot say.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ContextFit {
+    /// With the KV cache at f16, llama-server's default.
+    pub(crate) tokens: Option<u32>,
+    /// With the KV cache quantized to q8_0.
+    pub(crate) tokens_with_kv_quantization: Option<u32>,
 }
 
 /// The budget of the app's bundled servers: what the platform reports for
@@ -70,18 +79,10 @@ impl SidecarBudget {
         &self.runtime.devices
     }
 
-    /// The configuration the factory would start `path` with now, and the
-    /// machine it is priced on, or `None` when no servers are tracked or the
-    /// window is unknown.
-    async fn plan(
-        &self,
-        path: &Path,
-        launch: LocalServerOptions,
-    ) -> Option<(
-        SidecarConfig,
-        SystemCapabilities,
-        tauri::State<'_, SidecarRegistry>,
-    )> {
+    /// The configuration the factory would start `path` with now, the machine
+    /// it is priced on, and the header it was planned from, or `None` when no
+    /// servers are tracked or the window is unknown.
+    async fn plan(&self, path: &Path, launch: LocalServerOptions) -> Option<Plan<'_>> {
         use tauri::Manager;
         let app = self.app.as_ref()?;
         let registry = app.try_state::<SidecarRegistry>()?;
@@ -89,17 +90,22 @@ impl SidecarBudget {
         let info = read_model_info(path);
         let window = launch_window(launch, info.as_ref())?;
         let config = sidecar_config(path, -1, window, launch, &capabilities, info.as_ref());
-        Some((config, capabilities, registry))
+        Some(Plan {
+            config,
+            capabilities,
+            registry,
+            info,
+        })
     }
 }
 
 #[async_trait]
 impl GpuBudget for SidecarBudget {
     async fn admission(&self, path: &Path, launch: LocalServerOptions) -> Admission {
-        let Some((config, capabilities, registry)) = self.plan(path, launch).await else {
+        let Some(plan) = self.plan(path, launch).await else {
             return Admission::Unmetered;
         };
-        registry.admission(&config, &capabilities)
+        plan.registry.admission(&plan.config, &plan.capabilities)
     }
 
     async fn server_admission(&self, config: &SidecarConfig) -> Admission {
@@ -114,19 +120,35 @@ impl GpuBudget for SidecarBudget {
         registry.admission(config, &capabilities)
     }
 
-    async fn fits_window(&self, path: &Path, kv_cache_quantization: bool) -> Option<u32> {
-        let launch = LocalServerOptions {
-            kv_cache_quantization,
-            ..LocalServerOptions::default()
+    async fn context_fit(&self, path: &Path) -> ContextFit {
+        let Some(plan) = self.plan(path, LocalServerOptions::default()).await else {
+            return ContextFit::default();
         };
-        let (config, capabilities, registry) = self.plan(path, launch).await?;
-        let held = registry.other_models_gpu_bytes(path);
-        memory_hint(&config, &capabilities, held)?.fits_window
+        let held = plan.registry.other_models_gpu_bytes(path);
+        let fits = |config: &SidecarConfig| {
+            memory_hint(config, &plan.capabilities, held, plan.info.as_ref())
+                .and_then(|hint| hint.fits_window)
+        };
+        // The quantized server differs from the planned one in nothing else.
+        let mut quantized = plan.config.clone();
+        quantized.kv_cache_quantization = true;
+        ContextFit {
+            tokens: fits(&plan.config),
+            tokens_with_kv_quantization: fits(&quantized),
+        }
     }
 
     fn trained_window(&self, path: &Path) -> Option<u32> {
         read_model_info(path).and_then(|info| info.trained_context_length)
     }
+}
+
+/// What [`SidecarBudget::plan`] arrives at.
+struct Plan<'a> {
+    config: SidecarConfig,
+    capabilities: SystemCapabilities,
+    registry: tauri::State<'a, SidecarRegistry>,
+    info: Option<GgufModelInfo>,
 }
 
 /// Log an admission decision for `model` as `model.admission`, with the

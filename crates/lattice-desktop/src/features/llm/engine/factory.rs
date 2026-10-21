@@ -333,7 +333,12 @@ async fn create_local_llm_sidecar(
     );
 
     // Said, never acted on: the window is the user's to change.
-    let hint = memory_hint(&config, &capabilities, other_models_bytes);
+    let hint = memory_hint(
+        &config,
+        &capabilities,
+        other_models_bytes,
+        gguf_info.as_ref(),
+    );
     if let Some(hint) = hint.filter(|hint| !hint.fits()) {
         warn!(
             window = config.context_size,

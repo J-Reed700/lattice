@@ -689,3 +689,57 @@ fn a_header_without_vocabulary_or_feed_forward_still_prices_the_mask() {
 
     assert_eq!(info.compute_buffer_bytes(1_024), 512 * 1_024 * 6);
 }
+
+/// Counts the reads that reach the file beneath a `BufReader`.
+struct CountingReader<R> {
+    inner: R,
+    reads: usize,
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reads += 1;
+        self.inner.read(buf)
+    }
+}
+
+fn vocabulary(tokens: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&value_type::STRING.to_le_bytes());
+    bytes.extend_from_slice(&(tokens as u64).to_le_bytes());
+    for index in 0..tokens {
+        let token = format!("tok{index}");
+        bytes.extend_from_slice(&(token.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(token.as_bytes());
+    }
+    bytes
+}
+
+/// Seeking past each string threw the buffer away, a read per token: a
+/// million system calls for a Qwen 3.5 header, and seconds every time
+/// Settings listed a model. Reading through takes a buffer at a time.
+#[test]
+fn a_vocabulary_is_skipped_a_buffer_at_a_time_not_a_read_per_token() {
+    let mut bytes = vocabulary(100_000);
+    bytes.extend_from_slice(&7u32.to_le_bytes());
+    let mut reader = BufReader::new(CountingReader {
+        inner: std::io::Cursor::new(bytes),
+        reads: 0,
+    });
+
+    assert_eq!(skip_value(&mut reader, value_type::ARRAY), Some(()));
+    assert_eq!(read_u32(&mut reader), Some(7));
+    // About 1.6 MB: some 200 reads of 8 KiB, against 100,000 before.
+    assert!(reader.get_ref().reads < 1_000, "{}", reader.get_ref().reads);
+}
+
+#[test]
+fn a_value_longer_than_the_bytes_left_cannot_be_skipped() {
+    let mut bytes = vocabulary(10);
+    bytes.truncate(bytes.len() - 2);
+
+    assert_eq!(
+        skip_value(&mut std::io::Cursor::new(bytes), value_type::ARRAY),
+        None
+    );
+}
