@@ -1,0 +1,30 @@
+{
+  "fixture": "synthetic-library-v3.json",
+  "mode": "production",
+  "k": 5,
+  "chunks": 1145,
+  "recipe": "cargo run --example retrieval_eval -- --mode production ../../evals/retrieval/synthetic-library-v3.json (Candle: --sparse off EMBEDDING_DIR before the dataset)",
+  "candle_metal_f16": {
+    "queries": 194,
+    "retrieval_queries": 173,
+    "recall_at_k": 0.7726396917148362,
+    "ndcg_at_k": 0.6870895105887249,
+    "mrr_at_k": 0.6951830443159923,
+    "passage_recall_at_k": 0.7572254335260116
+  },
+  "llama_cpp_f16": {
+    "queries": 194,
+    "retrieval_queries": 173,
+    "recall_at_k": 0.7726396917148362,
+    "ndcg_at_k": 0.6882775483101012,
+    "mrr_at_k": 0.6966281310211946,
+    "passage_recall_at_k": 0.7572254335260116
+  },
+  "identical_ranking": {
+    "top1": 193,
+    "top5": 179,
+    "top10": 148,
+    "of": 194
+  },
+  "queries_whose_top5_relevant_set_changed": 0
+}
