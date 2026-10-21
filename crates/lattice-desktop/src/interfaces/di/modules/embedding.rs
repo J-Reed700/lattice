@@ -24,6 +24,8 @@ use crate::features::llm::engine::sidecar_manager::{
 use crate::features::llm::instances::{IdleServer, LlmInstances, SidecarBudget};
 use crate::features::llm::loading::LlmRuntime;
 
+pub mod standalone;
+
 /// The embedding server running now, as admission sees it: what it holds,
 /// whether it is busy, and how to stop it.
 #[derive(Default)]
@@ -118,6 +120,22 @@ impl SidecarEmbeddingStarter {
     }
 }
 
+/// The header facts of the GGUF at `gguf` an embedding server needs; `None`
+/// when it cannot be read.
+async fn read_header(gguf: &Path) -> Option<EmbeddingHeader> {
+    let gguf = gguf.to_path_buf();
+    let info = tokio::task::spawn_blocking(move || read_model_info(&gguf))
+        .await
+        .ok()??;
+    Some(EmbeddingHeader {
+        architecture: info.architecture,
+        trained_tokens: info.trained_context_length,
+        dimension: info.embedding_length,
+        pooling_type: info.pooling_type,
+        file_type: info.file_type,
+    })
+}
+
 /// The sidecar configuration of the server `launch` describes: its window
 /// and slots, every layer offloaded or none, and nothing a chat server sets.
 fn sidecar_config(launch: &EmbeddingLaunch) -> SidecarConfig {
@@ -140,17 +158,7 @@ fn sidecar_config(launch: &EmbeddingLaunch) -> SidecarConfig {
 #[async_trait]
 impl EmbeddingServerStarter for SidecarEmbeddingStarter {
     async fn header(&self, gguf: &Path) -> Option<EmbeddingHeader> {
-        let gguf = gguf.to_path_buf();
-        let info = tokio::task::spawn_blocking(move || read_model_info(&gguf))
-            .await
-            .ok()??;
-        Some(EmbeddingHeader {
-            architecture: info.architecture,
-            trained_tokens: info.trained_context_length,
-            dimension: info.embedding_length,
-            pooling_type: info.pooling_type,
-            file_type: info.file_type,
-        })
+        read_header(gguf).await
     }
 
     async fn accelerated(&self) -> bool {

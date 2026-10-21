@@ -143,6 +143,7 @@ pub use config::{
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;
+pub(crate) use readiness::{build_server_args, new_api_token};
 pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, Admission, SidecarRegistry};
 pub use startup::SidecarManager;
 

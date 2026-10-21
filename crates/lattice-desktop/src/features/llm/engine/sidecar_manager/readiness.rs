@@ -67,7 +67,7 @@ const CTX_CHECKPOINTS: u32 = 32;
 /// never consult these checkpoints, so the flag costs them nothing.
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
-pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
+pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
     if let Some(serving) = config.embedding {
         return embedding_server_args(config, serving, port);
     }
@@ -200,7 +200,7 @@ pub(super) fn refused_combination(output: &[String]) -> Option<AttemptError> {
 /// an `Authorization` header and an environment variable without escaping. A new
 /// one per spawn means the window in which a leaked token is worth anything
 /// closes when the process does.
-pub(super) fn new_api_token() -> String {
+pub(crate) fn new_api_token() -> String {
     use std::fmt::Write;
 
     let mut bytes = [0u8; 16];

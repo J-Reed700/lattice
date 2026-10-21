@@ -449,6 +449,19 @@ impl Container {
         })
     }
 
+    /// Serve embeddings through `starter` instead of the bundled sidecar.
+    /// Tools that build a container without the app (the shipped-path eval)
+    /// pass a [`StandaloneEmbeddingStarter`](super::modules::embedding::standalone::StandaloneEmbeddingStarter).
+    /// After construction the container is the starter's only holder, so
+    /// every load and activation from here on uses this one.
+    pub fn with_embedding_starter(
+        mut self,
+        starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    ) -> Self {
+        self.embedding_starter = starter;
+        self
+    }
+
     /// Attach the Tauri `AppHandle` post-construction. Real callers chain
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {

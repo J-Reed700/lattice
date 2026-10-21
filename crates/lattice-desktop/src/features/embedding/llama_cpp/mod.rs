@@ -12,6 +12,7 @@ mod identity;
 mod launch;
 
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -94,18 +95,37 @@ impl LlamaEmbeddingService {
                 model.model_name()
             )));
         };
+        Self::start_gguf(
+            starter,
+            gguf,
+            model.model_name(),
+            model.model_id(),
+            identity,
+        )
+        .await
+    }
+
+    /// [`Self::start`] for the GGUF at `gguf` rather than a model row. `name`
+    /// is what errors and logs call it; `model_ref` (a catalog id, repo id or
+    /// file name) picks its family's prefixes.
+    pub async fn start_gguf(
+        starter: Arc<dyn EmbeddingServerStarter>,
+        gguf: &Path,
+        name: &str,
+        model_ref: &str,
+        identity: ArtifactIdentity,
+    ) -> Result<Self> {
         let header = starter.header(gguf).await.ok_or_else(|| {
             AppError::ModelLoadFailed(format!(
-                "The GGUF header of {} cannot be read: {}",
-                model.model_name(),
+                "The GGUF header of {name} cannot be read: {}",
                 gguf.display()
             ))
         })?;
         let file_type = header.file_type;
-        let facts = EmbeddingModelFacts::from_header(header, identity, model.model_name())?;
+        let facts = EmbeddingModelFacts::from_header(header, identity, name)?;
         let policy = tokenizer_policy(gguf, &facts).await?;
-        let prefixes = resolve_prefixes(model.model_id(), &facts.architecture);
-        let launch = EmbeddingLaunch::new(gguf.clone(), &facts, starter.accelerated().await);
+        let prefixes = resolve_prefixes(model_ref, &facts.architecture);
+        let launch = EmbeddingLaunch::new(gguf.to_path_buf(), &facts, starter.accelerated().await);
         tracing::info!(
             model = %facts.display_name,
             architecture = %facts.architecture,
@@ -242,10 +262,7 @@ impl LlamaEmbeddingService {
 
 /// The splitter for the model at `gguf`, counting with the `tokenizer.json`
 /// beside it up to the window each server slot has.
-async fn tokenizer_policy(
-    gguf: &std::path::Path,
-    facts: &EmbeddingModelFacts,
-) -> Result<InputPolicy> {
+async fn tokenizer_policy(gguf: &Path, facts: &EmbeddingModelFacts) -> Result<InputPolicy> {
     let path = gguf
         .parent()
         .map(|dir| dir.join("tokenizer.json"))
