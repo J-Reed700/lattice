@@ -1,0 +1,8 @@
+{
+  "goal": "postgres query tuning: explain plans, indexes, slow queries",
+  "priorKnowledge": "know SQL, never tuned a database",
+  "minutesPerSession": 45,
+  "documentIds": [],
+  "sourceUrls": [],
+  "courseDepth": "course"
+}

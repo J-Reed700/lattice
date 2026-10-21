@@ -15,7 +15,7 @@ use crate::features::learning::{
 };
 use crate::features::web::services::web::WebService;
 
-fn review_status(program: &LearningProgramDto) -> Option<LearningOutlineReviewStatus> {
+pub(super) fn review_status(program: &LearningProgramDto) -> Option<LearningOutlineReviewStatus> {
     program
         .outline_review
         .as_ref()
@@ -23,7 +23,11 @@ fn review_status(program: &LearningProgramDto) -> Option<LearningOutlineReviewSt
 }
 
 /// Every outline state the learner would have seen, for diagnosis after a run.
-fn record(directory: &std::path::Path, step: &str, program: &LearningProgramDto) -> Result<()> {
+pub(super) fn record(
+    directory: &std::path::Path,
+    step: &str,
+    program: &LearningProgramDto,
+) -> Result<()> {
     std::fs::write(
         directory.join(format!("outline-{step}.json")),
         serde_json::to_vec_pretty(&serde_json::json!({

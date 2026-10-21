@@ -1,0 +1,114 @@
+{
+  "schema": "course-eval-requests/1",
+  "name": "course-eval-v1",
+  "items": [
+    {
+      "id": "postgres-performance",
+      "request": "requests/2-postgres-performance.json",
+      "shape": "full",
+      "outline_must_cover": [
+        "reading EXPLAIN and EXPLAIN ANALYZE output",
+        "choosing indexes (B-tree, composite, partial) for a query",
+        "diagnosing and fixing a slow query in a production database"
+      ],
+      "prior_knowledge_excludes": [
+        "writing SQL joins",
+        "GROUP BY and aggregate functions",
+        "simple subqueries",
+        "using an ORM"
+      ]
+    },
+    {
+      "id": "music-theory-production",
+      "request": "requests/3-music-theory-production.json",
+      "shape": "full",
+      "outline_must_cover": [
+        "scales and keys (major and minor)",
+        "building chords and chord progressions",
+        "writing basslines that fit the chords",
+        "writing melodies that fit the key and the chords",
+        "arranging a full track in a DAW"
+      ],
+      "prior_knowledge_excludes": [
+        "finding your way around a DAW: tracks, clips, the arrangement view",
+        "entering notes in a piano roll",
+        "programming drum loops"
+      ]
+    },
+    {
+      "id": "system-design-fundamentals",
+      "request": "requests/4-system-design-fundamentals.json",
+      "shape": "full",
+      "outline_must_cover": [
+        "caching: where to cache and how to invalidate",
+        "sharding and replication of a database",
+        "message queues for asynchronous work",
+        "consistency models (strong and eventual) and their trade-offs",
+        "structuring a 45-minute system design interview answer"
+      ],
+      "prior_knowledge_excludes": [
+        "building HTTP APIs and backend services",
+        "what Redis is and its basic commands",
+        "what a message broker is and how to publish and consume messages"
+      ]
+    },
+    {
+      "id": "postgres-performance-terse",
+      "request": "requests-terse/2t-postgres-performance-terse.json",
+      "shape": "terse",
+      "outline_must_cover": [
+        "reading EXPLAIN and EXPLAIN ANALYZE output",
+        "choosing indexes (B-tree, composite, partial) for a query",
+        "diagnosing and fixing a slow query in a production database"
+      ],
+      "prior_knowledge_excludes": [
+        "writing SQL joins",
+        "GROUP BY and aggregate functions",
+        "simple subqueries",
+        "using an ORM"
+      ]
+    },
+    {
+      "id": "music-theory-production-terse",
+      "request": "requests-terse/3t-music-theory-production-terse.json",
+      "shape": "terse",
+      "outline_must_cover": [
+        "scales and keys (major and minor)",
+        "building chords and chord progressions",
+        "writing basslines that fit the chords",
+        "writing melodies that fit the key and the chords",
+        "arranging a full track in a DAW"
+      ],
+      "prior_knowledge_excludes": [
+        "finding your way around a DAW: tracks, clips, the arrangement view",
+        "entering notes in a piano roll",
+        "programming drum loops"
+      ]
+    },
+    {
+      "id": "system-design-fundamentals-terse",
+      "request": "requests-terse/4t-system-design-fundamentals-terse.json",
+      "shape": "terse",
+      "outline_must_cover": [
+        "caching: where to cache and how to invalidate",
+        "sharding and replication of a database",
+        "message queues for asynchronous work",
+        "consistency models (strong and eventual) and their trade-offs",
+        "structuring a 45-minute system design interview answer"
+      ],
+      "prior_knowledge_excludes": [
+        "building HTTP APIs and backend services",
+        "what Redis is and its basic commands",
+        "what a message broker is and how to publish and consume messages"
+      ]
+    },
+    {
+      "id": "dotnet-interview",
+      "request": "requests/1-dotnet-interview.json",
+      "shape": "full",
+      "optional": true,
+      "outline_must_cover": [],
+      "prior_knowledge_excludes": []
+    }
+  ]
+}
