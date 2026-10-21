@@ -1276,6 +1276,30 @@ async downloadDefaultEmbeddingModel() : Promise<Result<string, ApiError>> {
 }
 },
 /**
+ * List the files left from the safetensors era in curated embedding model
+ * folders, with their total size. Never removes anything.
+ */
+async listLeftoverEmbeddingFiles() : Promise<Result<LeftoverEmbeddingFilesDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_leftover_embedding_files") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove exactly the files `list_leftover_embedding_files` reports, found
+ * again now, and return what was removed.
+ */
+async removeLeftoverEmbeddingFiles() : Promise<Result<LeftoverEmbeddingFilesDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|remove_leftover_embedding_files") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Delete a downloaded model
  */
 async deleteModel(modelId: string, deleteFile: boolean) : Promise<Result<null, ApiError>> {
@@ -6197,19 +6221,6 @@ export type EmbeddingCompatibilityDto =
  */
 { kind: "unknown" }
 /**
- * How chunk vectors are produced at index time.
- */
-export type EmbeddingStrategySettingDto =
-/**
- * Embed each chunk separately with its context prefix prepended.
- */
-"chunk_first" |
-/**
- * Embed the whole structure span once and mean-pool each chunk's token
- * states, so every chunk is conditioned on the rest of its span.
- */
-"late_chunking"
-/**
  * Enhanced search response with caching metadata.
  *
  * Includes cache statistics and execution metrics.
@@ -8303,6 +8314,19 @@ window_tokens: number;
  */
 window_is_saved: boolean }
 /**
+ * Files a safetensors-era embedding download left in a curated embedding
+ * model folder, which the llama.cpp runtime never reads.
+ */
+export type LeftoverEmbeddingFilesDto = {
+/**
+ * The leftover files and folders, absolute.
+ */
+paths: string[];
+/**
+ * Their size on disk, in bytes.
+ */
+total_bytes: number }
+/**
  * Everything the review panel shows for one lesson.
  */
 export type LessonClaimReviewDto = { lessonId: string; programId: string; state: LessonReviewStateDto;
@@ -8533,7 +8557,11 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
-export type ModelInfo = { model_name: string; dimensions: number; is_loaded: boolean }
+export type ModelInfo = {
+/**
+ * The loaded model's vector-space identity; empty when none is loaded.
+ */
+model_name: string; dimensions: number; is_loaded: boolean }
 /**
  * Model metadata DTO for frontend.
  */
@@ -9456,14 +9484,6 @@ retrievalTuning: RetrievalTuningSettingsDto;
  * the next start rebuilds it from the f32 vectors SQLite already holds.
  */
 vectorIndexCompression: VectorIndexCompressionSettingsDto;
-/**
- * How chunk vectors are produced at index time.
- *
- * Also a property of the vector space rather than of one document — the
- * two strategies are not interchangeable, so flipping it changes the
- * embedding generation and re-embeds the corpus.
- */
-embeddingStrategy: EmbeddingStrategySettingDto;
 /**
  * Generate and search document/section summaries as a collection-level
  * retrieval tier. Summaries are produced off the indexing critical path
