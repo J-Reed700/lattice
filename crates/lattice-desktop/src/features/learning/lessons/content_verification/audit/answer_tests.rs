@@ -88,6 +88,7 @@ impl VerifierWeb for SavingWeb {
     async fn search(
         &self,
         need: &crate::features::learning::references::web_research::PlannedNeed,
+        _room: crate::features::learning::references::web_research::Room<'_>,
     ) -> Result<Vec<tools::SearchHit>> {
         let query = &need.query;
         if self.search_fails {
