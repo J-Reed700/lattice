@@ -8,9 +8,8 @@
 //! ## Algorithm
 //!
 //! 1. Embed the query, then run the dense vector branch and the BM25 branch
-//!    at once, plus the learned sparse branch when it is switched on and the
-//!    loaded model has a sparse head. A failed branch costs the query that
-//!    branch, never the others' results.
+//!    at once. A failed branch costs the query that branch, never the other's
+//!    results.
 //! 2. Fuse the ranked lists by weighted reciprocal rank
 //!    ([`ReciprocalRankFusion`]), capping how many passages one document may
 //!    place before every other document has had a turn.
@@ -65,7 +64,6 @@ use lattice_core::application::contracts::search::{
     BranchKind, QueryBranches, RankedBranch, ReciprocalRankFusion, SearchModeDto, SearchRequestDto,
     SearchResponseDto, SearchResultDto, SearchResultRecord, Spread, WeightedRanking,
 };
-use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
@@ -94,16 +92,12 @@ const PER_DOCUMENT_CAP: usize = 4;
 /// - `EmbeddingPort`: embeds the query
 /// - `VectorSearchPort`: the dense branch
 /// - `TextSearchPort`: the BM25 branch
-/// - optionally a `SparseSearchTrait` branch, a `ChunkRepositoryPort` that
-///   supplies chunk bodies and attachment ids, and a `Reranker`
+/// - optionally a `ChunkRepositoryPort` that supplies chunk bodies and
+///   attachment ids, and a `Reranker`
 pub struct HybridSearchUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     vector_search: Arc<dyn VectorSearchPort>,
     text_search: Arc<dyn TextSearchPort>,
-    /// Learned sparse retrieval, when the composition root wired one. Gated
-    /// twice: the product switch *and* the loaded model having a sparse head.
-    sparse_search: Option<Arc<dyn SparseSearchTrait>>,
-    sparse_enabled: bool,
     chunk_repository: Option<Arc<dyn ChunkRepositoryPort>>,
     reranker: Option<Arc<dyn Reranker>>,
     rrf_k: f32,
@@ -126,8 +120,6 @@ impl HybridSearchUseCase {
             embedding_service,
             vector_search,
             text_search,
-            sparse_search: None,
-            sparse_enabled: false,
             chunk_repository: None,
             reranker: None,
             rrf_k: lattice_core::shared::constants::DEFAULT_RRF_K,
@@ -139,23 +131,6 @@ impl HybridSearchUseCase {
     #[must_use]
     pub fn with_chunk_repository(mut self, repository: Arc<dyn ChunkRepositoryPort>) -> Self {
         self.chunk_repository = Some(repository);
-        self
-    }
-
-    /// Attach the learned sparse branch.
-    ///
-    /// Wiring it is not the same as turning it on: `enabled` is the product
-    /// switch and [`SparseSearchTrait::is_available`] is the capability check,
-    /// so a user switching from BGE-M3 to a dense-only model simply goes back
-    /// to two-way fusion mid-session.
-    #[must_use]
-    pub fn with_sparse_search(
-        mut self,
-        sparse_search: Arc<dyn SparseSearchTrait>,
-        enabled: bool,
-    ) -> Self {
-        self.sparse_search = Some(sparse_search);
-        self.sparse_enabled = enabled;
         self
     }
 
@@ -178,14 +153,6 @@ impl HybridSearchUseCase {
     /// The embedding model the vector branch queries with.
     pub fn model_identity(&self) -> String {
         self.embedding_service.model_identity()
-    }
-
-    /// The sparse branch to run for this query, or `None` to keep two-way fusion.
-    fn active_sparse_branch(&self) -> Option<&Arc<dyn SparseSearchTrait>> {
-        self.sparse_search
-            .as_ref()
-            .filter(|_| self.sparse_enabled)
-            .filter(|sparse| sparse.is_available())
     }
 
     /// Run the vector branch without blocking the executor.
@@ -368,10 +335,7 @@ impl HybridSearchUseCase {
     /// `BRANCH_DEPTH` times `limit` candidates.
     ///
     /// The two weights are scaled to sum to one, and two non-positive weights
-    /// fuse evenly. When the sparse branch runs and finds anything, it and
-    /// BM25 split the lexical weight: both are lexical signals over the same
-    /// text, and enabling a branch must not move the vector/lexical balance.
-    /// A sparse failure costs the query only that branch.
+    /// fuse evenly.
     pub async fn search_branches(
         &self,
         query: &str,
@@ -383,8 +347,7 @@ impl HybridSearchUseCase {
     ) -> QueryBranches {
         let depth = limit.saturating_mul(BRANCH_DEPTH);
         let (vector_weight, lexical_weight) = normalized_weights(vector_weight, bm25_weight);
-        let sparse_branch = self.active_sparse_branch();
-        let (vector, lexical, sparse) = tokio::join!(
+        let (vector, lexical) = tokio::join!(
             async {
                 let embedding = self.embedding_service.embed_query(query).await?;
                 self.vector_branch(
@@ -396,28 +359,13 @@ impl HybridSearchUseCase {
                 .await
             },
             self.text_search
-                .search_scoped(query, depth, space_id, allowed_document_ids),
-            async {
-                match sparse_branch {
-                    Some(sparse) => {
-                        sparse
-                            .search_scoped(query, depth, space_id, allowed_document_ids)
-                            .await
-                    }
-                    None => Ok(Vec::new()),
-                }
-            }
+                .search_scoped(query, depth, space_id, allowed_document_ids)
         );
-        let sparse = sparse.unwrap_or_else(|error| {
-            warn!(%error, "Sparse retrieval branch failed; fusing the other two");
-            Vec::new()
-        });
-        let (bm25_weight, sparse_weight) = split_lexical_weight(lexical_weight, !sparse.is_empty());
 
         let mut query_branches = QueryBranches::default();
         for (kind, weight, outcome) in [
             (BranchKind::Vector, vector_weight, vector),
-            (BranchKind::Lexical, bm25_weight, lexical),
+            (BranchKind::Lexical, lexical_weight, lexical),
         ] {
             match outcome {
                 Ok(port_dtos) => {
@@ -435,13 +383,6 @@ impl HybridSearchUseCase {
                 }
                 Err(error) => warn!(branch = ?kind, %error, "A search branch failed"),
             }
-        }
-        if !sparse.is_empty() {
-            query_branches.branches.push(RankedBranch {
-                kind: BranchKind::Sparse,
-                weight: sparse_weight,
-                results: result_dtos(sparse),
-            });
         }
         query_branches
     }
@@ -521,7 +462,7 @@ impl BranchSignals {
         let slot = match kind {
             BranchKind::Vector => &mut self.vector,
             BranchKind::Lexical => &mut self.bm25,
-            BranchKind::Sparse | BranchKind::Fused => return,
+            BranchKind::Fused => return,
         };
         if slot.is_none_or(|(best, _)| rank < best) {
             *slot = Some((rank, score));
@@ -549,16 +490,6 @@ fn normalized_weights(vector_weight: f32, bm25_weight: f32) -> (f32, f32) {
         (0.5, 0.5)
     } else {
         (vector / total, lexical / total)
-    }
-}
-
-/// The lexical weight as `(bm25, sparse)`: halved between the two when the
-/// sparse branch found anything, all BM25's otherwise.
-fn split_lexical_weight(lexical_weight: f32, sparse_found: bool) -> (f32, f32) {
-    if sparse_found {
-        (lexical_weight / 2.0, lexical_weight / 2.0)
-    } else {
-        (lexical_weight, 0.0)
     }
 }
 

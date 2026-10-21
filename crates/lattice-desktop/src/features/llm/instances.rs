@@ -22,7 +22,7 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::llm::engine::factory::{CreatedLlm, LocalServerOptions, ServerFacts};
-use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, Admission};
+use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, Admission, SidecarConfig};
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::loading::LocalModel;
 use crate::infrastructure::ml::instance_pool::{Alive, InstancePool, Lease, Loaded};
@@ -32,7 +32,7 @@ mod invalidation;
 mod pinned;
 pub(crate) mod refusal;
 
-pub(crate) use admission::{GpuBudget, SidecarBudget};
+pub(crate) use admission::{GpuBudget, IdleServer, SidecarBudget};
 pub(crate) use pinned::PinnedLlm;
 
 /// How the bundled server for a model is launched: the server options its
@@ -292,6 +292,9 @@ pub(crate) struct LlmInstances {
     /// The last learning work refused for a window too small, until the
     /// model it named covers that window.
     learning_shortfall: Mutex<Option<LearningShortfall>>,
+    /// Servers outside the pool that admission may stop while they are idle,
+    /// once no idle LLM is left to unload: the embedding server.
+    evictable: Vec<Arc<dyn IdleServer>>,
     /// Models being loaded now.
     loads: Mutex<Loads>,
     /// Moved when a load starts or ends.
@@ -305,6 +308,7 @@ impl LlmInstances {
             admission: tokio::sync::Mutex::new(()),
             last_default: Mutex::new(None),
             learning_shortfall: Mutex::new(None),
+            evictable: Vec::new(),
             loads: Mutex::default(),
             changed: tokio::sync::watch::channel(0).0,
         }
@@ -345,6 +349,35 @@ impl LlmInstances {
             instances: self,
             id,
         }
+    }
+
+    /// The same, with `server` among those admission may stop while idle.
+    pub(crate) fn with_evictable(mut self, server: Arc<dyn IdleServer>) -> Self {
+        self.evictable.push(server);
+        self
+    }
+
+    /// Admit a server outside the pool, started for `config` and named
+    /// `name`: when it does not fit beside the others, unload idle models to
+    /// make room, then let it start either way. When it is to take GPU
+    /// memory, the admission turn comes back and must be held until that
+    /// server has started, as for a model [`Self::acquire`] loads.
+    pub(crate) async fn make_room_for(
+        &self,
+        name: &str,
+        config: &SidecarConfig,
+        budget: &dyn GpuBudget,
+    ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+        let turn = self.admission.lock().await;
+        let first = budget.server_admission(config).await;
+        let evicted = self.evict_for(first);
+        let outcome = if evicted.is_empty() {
+            first
+        } else {
+            budget.server_admission(config).await
+        };
+        admission::log(name, outcome, &evicted);
+        starting(outcome, turn)
     }
 
     /// Read before the settings a request is built from.
@@ -505,14 +538,28 @@ impl LlmInstances {
     ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
         let turn = self.admission.lock().await;
         let first = budget.admission(&local.path, launch).await;
-        let Admission::Short { needed, spare } = first else {
-            admission::log(&local.name, first, &[]);
-            return starting(first, turn);
+        let evicted = self.evict_for(first);
+        let outcome = if evicted.is_empty() {
+            first
+        } else {
+            budget.admission(&local.path, launch).await
         };
+        admission::log(&local.name, outcome, &evicted);
+        starting(outcome, turn)
+    }
+
+    /// Unload idle models until a server that came out `outcome` would fit:
+    /// idle LLMs first, then idle servers outside the pool. Nothing when it
+    /// already fits. Returns what was unloaded and the bytes each freed.
+    fn evict_for(&self, outcome: Admission) -> Vec<(String, u64)> {
+        let Admission::Short { needed, spare } = outcome else {
+            return Vec::new();
+        };
+        let shortfall = needed.total().saturating_sub(spare);
         let evicted = self.pool.evict_idle(
             ModelKey::server,
             |_, loaded| loaded.gpu_bytes.filter(|bytes| *bytes > 0),
-            needed.total().saturating_sub(spare),
+            shortfall,
         );
         for (key, bytes, stats) in &evicted {
             tracing::info!(
@@ -526,17 +573,28 @@ impl LlmInstances {
                 "model.evicted"
             );
         }
-        let evicted: Vec<(String, u64)> = evicted
+        let mut evicted: Vec<(String, u64)> = evicted
             .into_iter()
             .map(|(key, bytes, _)| (key.model.to_string(), bytes))
             .collect();
-        let outcome = if evicted.is_empty() {
-            first
-        } else {
-            budget.admission(&local.path, launch).await
-        };
-        admission::log(&local.name, outcome, &evicted);
-        starting(outcome, turn)
+        let mut freed = evicted
+            .iter()
+            .map(|(_, bytes)| *bytes)
+            .fold(0, u64::saturating_add);
+        for server in &self.evictable {
+            if freed >= shortfall {
+                break;
+            }
+            let Some(bytes) = server.idle_gpu_bytes() else {
+                continue;
+            };
+            server.stop();
+            let name = server.name();
+            tracing::info!(model = %name, bytes, reason = "admission", "model.evicted");
+            freed = freed.saturating_add(bytes);
+            evicted.push((name, bytes));
+        }
+        evicted
     }
 }
 

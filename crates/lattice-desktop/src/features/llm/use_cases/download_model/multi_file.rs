@@ -15,7 +15,8 @@ use lattice_core::shared::error::AppError;
 use super::{DownloadBatchItem, DownloadModelUseCase, DownloadRequest};
 
 impl DownloadModelUseCase {
-    /// Download a multi-file model (e.g., BGE-M3 with multiple ONNX files)
+    /// Download a model that spans several files (an embedding GGUF and its
+    /// tokenizer, an OCR model and its projector) as one batch.
     pub(super) async fn download_multi_file_model(
         &self,
         model_id: &str,
@@ -34,6 +35,47 @@ impl DownloadModelUseCase {
             total_size_gb = curated.total_size_bytes as f64 / 1_000_000_000.0,
             "Starting multi-file model download"
         );
+
+        let auth_token = if curated.requires_auth {
+            match self.credentials.get_api_key("huggingface_token").await {
+                Ok(Some(token)) => {
+                    info!(model_id = %model_id, "Model requires authentication, using HuggingFace token for all files");
+                    Some(token)
+                }
+                Ok(None) => {
+                    return Err(AppError::InvalidInput(format!(
+                        "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
+                        model_name
+                    )));
+                }
+                Err(e) => {
+                    warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
+                    return Err(AppError::Other(format!(
+                        "Failed to retrieve HuggingFace token: {}. Please check your keychain settings.",
+                        e
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Inspect an embedding GGUF's header before persisting a download or
+        // fetching its weights, as the chat path does: a GGUF extension says
+        // nothing about whether the bundled engine knows its architecture.
+        if curated.category == lattice_core::domain::models::selection::ModelCategory::Embedding {
+            for file in curated
+                .files
+                .iter()
+                .filter(|file| file.filename.to_ascii_lowercase().ends_with(".gguf"))
+            {
+                crate::features::llm::engine::compatibility::check_download(
+                    &file.url,
+                    auth_token.as_deref(),
+                )
+                .await?;
+            }
+        }
 
         // STEP 1: Create parent Model record FIRST (satisfies FK constraint)
         // Use explicit scope to ensure connections are released before download starts
@@ -169,30 +211,6 @@ impl DownloadModelUseCase {
         // Yield to allow connection pool to reclaim connections
         tokio::task::yield_now().await;
 
-        let auth_token = if curated.requires_auth {
-            match self.credentials.get_api_key("huggingface_token").await {
-                Ok(Some(token)) => {
-                    info!(model_id = %model_id, "Model requires authentication, using HuggingFace token for all files");
-                    Some(token)
-                }
-                Ok(None) => {
-                    return Err(AppError::InvalidInput(format!(
-                        "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
-                        model_name
-                    )));
-                }
-                Err(e) => {
-                    warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
-                    return Err(AppError::Other(format!(
-                        "Failed to retrieve HuggingFace token: {}. Please check your keychain settings.",
-                        e
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
         let mut batch_items = Vec::with_capacity(curated.files.len());
         for (index, file) in curated.files.iter().enumerate() {
             let destination = paths.manifest_file_path(&file.filename)?;
@@ -224,28 +242,17 @@ impl DownloadModelUseCase {
                 None
             };
 
-            let mut attempt_urls = vec![file.url.clone()];
-            if let Some(fallback_url) =
-                Self::fallback_url_for_onnx_metadata(&file.filename, &file.url)
-            {
-                if fallback_url != file.url {
-                    attempt_urls.push(fallback_url);
-                }
-            }
-
-            let requests = attempt_urls
-                .into_iter()
-                .map(|attempt_url| DownloadRequest {
-                    url: attempt_url.clone(),
-                    destination: destination.clone(),
-                    checksum: checksum.clone(),
+            batch_items.push(DownloadBatchItem {
+                requests: vec![DownloadRequest {
+                    url: file.url.clone(),
+                    destination,
+                    checksum,
                     auth_token: auth_token.clone(),
                     model_name: Some(model_name.clone()),
                     model_id: Some(model_id.to_string()),
                     model_file_name: Some(file.filename.clone()),
-                })
-                .collect();
-            batch_items.push(DownloadBatchItem { requests });
+                }],
+            });
         }
 
         let ids = match self

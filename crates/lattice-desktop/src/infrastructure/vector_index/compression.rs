@@ -6,8 +6,8 @@
 //!    Learning (Qwen3-Embedding-0.6B, for one) pack the most informative
 //!    directions into the leading coordinates, so the first `dims` components
 //!    of a 1024-d vector — renormalized — are still a usable embedding. Models
-//!    without MRL training (all-MiniLM-L6-v2) do *not* survive this, which is
-//!    why the choice is a per-index configuration rather than a global one.
+//!    without MRL training do *not* survive this, which is why the choice is a
+//!    per-index configuration rather than a global one.
 //!  - **Scalar quantization.** USearch stores each component as `i8` instead of
 //!    `f32`, quantizing on insert. Inputs are L2-normalized, so every component
 //!    already lives in `[-1, 1]` and the cast is a plain scale to `±127`.

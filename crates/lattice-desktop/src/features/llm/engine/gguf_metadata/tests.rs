@@ -220,6 +220,30 @@ fn the_trained_context_length_is_read_for_its_own_architecture() {
     assert_eq!(info.trained_context_length, Some(32768));
 }
 
+/// The keys and values of the pinned `Qwen3-Embedding-0.6B-f16.gguf`
+/// header (`general.file_type` 1 = F16, `qwen3.pooling_type` 3 = last),
+/// confirmed against the file itself.
+#[test]
+fn an_embedding_header_names_its_pooling_and_precision() {
+    let info = GgufBuilder::new(3)
+        .string("general.architecture", "qwen3")
+        .u32_value("qwen3.context_length", 32768)
+        .u32_value("qwen3.embedding_length", 1024)
+        .u32_value("general.file_type", 1)
+        .u32_value("qwen3.pooling_type", 3)
+        .read();
+
+    assert_eq!(info.pooling_type, Some(3));
+    assert_eq!(info.file_type, Some(1));
+    assert_eq!(info.embedding_length, Some(1024));
+}
+
+#[test]
+fn a_chat_header_has_no_pooling_type() {
+    let info = qwen35_9b_header().read();
+    assert_eq!(info.pooling_type, None);
+}
+
 /// Keys arrive in whatever order the converter wrote them, so the
 /// architecture cannot be assumed to come first.
 #[test]

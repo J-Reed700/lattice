@@ -67,7 +67,10 @@ const CTX_CHECKPOINTS: u32 = 32;
 /// never consult these checkpoints, so the flag costs them nothing.
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
-pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
+pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
+    if let Some(serving) = config.embedding {
+        return embedding_server_args(config, serving, port);
+    }
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
@@ -134,6 +137,44 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
     args
 }
 
+/// An embedding server's flags, and nothing else: no chat template, prompt
+/// cache, speculative decoding, projector or quantized cache. The GGUF names
+/// its pooling, so `--pooling` is not passed, and `--embd-normalize` stays at
+/// its default (Euclidean), which is the L2 normalisation stored vectors have.
+/// `-fa auto` is the build's default, named so a change upstream shows here.
+fn embedding_server_args(
+    config: &SidecarConfig,
+    serving: EmbeddingServing,
+    port: u16,
+) -> Vec<String> {
+    let mut args = vec![
+        "-m".to_string(),
+        config.model_path.to_string_lossy().to_string(),
+        "--embedding".to_string(),
+        "-c".to_string(),
+        config.context_size.to_string(),
+    ];
+    if let Some(slots) = config.parallel_slots.filter(|&s| s > 0) {
+        args.extend(["-np".to_string(), slots.to_string()]);
+    }
+    args.extend([
+        "-b".to_string(),
+        serving.ubatch.to_string(),
+        "-ub".to_string(),
+        serving.ubatch.to_string(),
+        "-ngl".to_string(),
+        config.n_gpu_layers.to_string(),
+        "-fa".to_string(),
+        "auto".to_string(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--no-webui".to_string(),
+    ]);
+    args
+}
+
 /// The line an older llama-server prints when asked to draft and see at once.
 const DRAFT_AND_SEE_REFUSAL: &str = "speculative decoding is not supported with multimodal";
 
@@ -159,7 +200,7 @@ pub(super) fn refused_combination(output: &[String]) -> Option<AttemptError> {
 /// an `Authorization` header and an environment variable without escaping. A new
 /// one per spawn means the window in which a leaked token is worth anything
 /// closes when the process does.
-pub(super) fn new_api_token() -> String {
+pub(crate) fn new_api_token() -> String {
     use std::fmt::Write;
 
     let mut bytes = [0u8; 16];

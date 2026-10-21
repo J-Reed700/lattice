@@ -21,7 +21,8 @@ pub struct Recipe {
     pub corpus: String,
     /// A desktop-path question set (`items`) or a dataset (`queries`).
     pub questions: String,
-    pub embedding_model_dir: String,
+    /// The embedding model's GGUF, with its `tokenizer.json` beside it.
+    pub embedding_gguf: String,
     pub embedding_model_id: String,
     pub server: Server,
     /// A model on the recipe's server to hold the utility role, as Settings ->

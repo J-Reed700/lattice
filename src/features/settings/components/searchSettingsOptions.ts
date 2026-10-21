@@ -1,14 +1,13 @@
 import type { SearchSettings as ApiSearchSettings } from '@/types/api/settings';
 
 
-/// Vector storage and embedding strategy are properties of the index rather
-/// than of a query, but they live here because this is where the index's knobs
-/// are: changing either one re-keys the vector space and the next start
-/// rebuilds from the vectors SQLite already holds.
+/// Vector storage is a property of the index rather than of a query, but it
+/// lives here because this is where the index's knobs are: changing it re-keys
+/// the vector space and the next start rebuilds from the vectors SQLite
+/// already holds.
 export type VectorCompression = ApiSearchSettings['vectorIndexCompression'];
 export type CompressionMode = VectorCompression['mode'];
 export type Quantization = VectorCompression['quantization'];
-export type EmbeddingStrategy = ApiSearchSettings['embeddingStrategy'];
 
 export const COMPRESSION_MODES: { value: CompressionMode; label: string }[] = [
   { value: 'none', label: 'Full precision' },
@@ -18,11 +17,6 @@ export const COMPRESSION_MODES: { value: CompressionMode; label: string }[] = [
 export const QUANTIZATIONS: { value: Quantization; label: string }[] = [
   { value: 'f32', label: '32-bit float' },
   { value: 'i8', label: '8-bit integer' },
-];
-
-export const EMBEDDING_STRATEGIES: { value: EmbeddingStrategy; label: string }[] = [
-  { value: 'chunk_first', label: 'Chunk first' },
-  { value: 'late_chunking', label: 'Late chunking' },
 ];
 
 /// Matches the backend's accepted range; the index clamps again against the

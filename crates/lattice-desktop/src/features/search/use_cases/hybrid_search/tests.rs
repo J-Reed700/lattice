@@ -1,13 +1,12 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use super::{normalized_weights, split_lexical_weight, HybridSearchUseCase};
+use super::{normalized_weights, HybridSearchUseCase};
 use crate::features::search::engine::reranker::{RerankResult, Reranker};
 use lattice_core::application::contracts::search::{
     BranchKind, RankedBranch, RerankOptions, SearchModeDto, SearchRequestDto, SearchResponseDto,
     SearchResultDto, SearchResultRecord, Spread,
 };
-use lattice_core::application::ports::SparseSearchTrait;
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -179,27 +178,6 @@ impl TextSearchPort for ScriptedTextSearch {
     }
 }
 
-/// A sparse branch that is always available and always returns `hits`.
-struct ScriptedSparseSearch {
-    hits: Vec<SearchResultRecord>,
-}
-
-#[async_trait::async_trait]
-impl SparseSearchTrait for ScriptedSparseSearch {
-    fn is_available(&self) -> bool {
-        true
-    }
-    async fn search_scoped(
-        &self,
-        _query: &str,
-        top_k: usize,
-        _space_id: Option<&str>,
-        _allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultRecord>> {
-        Ok(self.hits.iter().take(top_k).cloned().collect())
-    }
-}
-
 fn use_case(vector: Vec<SearchResultRecord>, text: Vec<SearchResultRecord>) -> HybridSearchUseCase {
     HybridSearchUseCase::new(
         Arc::new(FixedEmbedder),
@@ -361,38 +339,6 @@ fn a_fused_pass_keeps_its_branch_diagnostics_when_fused_again() {
     assert_eq!(fused[0].bm25_rank, Some(0));
 }
 
-#[test]
-fn a_sparse_only_hit_still_reaches_the_fused_list() {
-    let search = use_case(Vec::new(), Vec::new());
-    let fused = search.fuse(
-        vec![
-            branch(BranchKind::Vector, 0.7, vec![hit("dense", "a", 0.9)]),
-            branch(BranchKind::Lexical, 0.15, vec![hit("lexical", "b", 5.0)]),
-            branch(BranchKind::Sparse, 0.15, vec![hit("sparse", "c", 3.0)]),
-        ],
-        10,
-        Spread::AcrossDocuments,
-    );
-    assert!(ids(&fused).contains(&"sparse"), "{:?}", ids(&fused));
-}
-
-/// Two lexical branches agreeing on a passage still do not outvote one
-/// confident dense hit: 0.7/11 against 0.15/11 + 0.15/11.
-#[test]
-fn a_sparse_branch_cannot_outvote_a_confident_vector_hit() {
-    let search = use_case(Vec::new(), Vec::new());
-    let fused = search.fuse(
-        vec![
-            branch(BranchKind::Vector, 0.7, vec![hit("dense", "a", 0.9)]),
-            branch(BranchKind::Lexical, 0.15, vec![hit("lexical", "b", 5.0)]),
-            branch(BranchKind::Sparse, 0.15, vec![hit("lexical", "b", 5.0)]),
-        ],
-        10,
-        Spread::AcrossDocuments,
-    );
-    assert_eq!(ids(&fused), ["dense", "lexical"]);
-}
-
 /// Degenerate weights mean "no preference", not "no fusion".
 #[test]
 fn degenerate_weights_fuse_with_equal_weights() {
@@ -402,18 +348,11 @@ fn degenerate_weights_fuse_with_equal_weights() {
     assert!(close(vector, 0.7) && close(lexical, 0.3));
 }
 
-/// Turning the sparse branch on must not move the vector/lexical balance.
 #[tokio::test]
-async fn a_sparse_branch_takes_half_the_lexical_weight_rather_than_adding_one() {
+async fn each_branch_carries_its_normalized_weight() {
     let search = use_case(
         vec![port_hit("dense", "a", 0.9)],
         vec![port_hit("lexical", "b", 1.0)],
-    )
-    .with_sparse_search(
-        Arc::new(ScriptedSparseSearch {
-            hits: vec![port_hit("lexical", "b", 2.0)],
-        }),
-        true,
     );
 
     let query = search
@@ -428,32 +367,7 @@ async fn a_sparse_branch_takes_half_the_lexical_weight_rather_than_adding_one() 
             .map(|branch| branch.weight)
     };
     assert!(close(weight(BranchKind::Vector).unwrap(), 0.7));
-    assert!(close(weight(BranchKind::Lexical).unwrap(), 0.15));
-    assert!(close(weight(BranchKind::Sparse).unwrap(), 0.15));
-    assert_eq!(split_lexical_weight(0.3, false), (0.3, 0.0));
-}
-
-#[tokio::test]
-async fn a_switched_off_sparse_branch_never_runs() {
-    let search = use_case(
-        vec![port_hit("dense", "a", 0.9)],
-        vec![port_hit("lexical", "b", 1.0)],
-    )
-    .with_sparse_search(
-        Arc::new(ScriptedSparseSearch {
-            hits: vec![port_hit("sparse", "c", 2.0)],
-        }),
-        false,
-    );
-
-    let query = search
-        .search_branches("retention policy", None, None, 5, 0.7, 0.3)
-        .await;
-
-    assert!(query
-        .branches
-        .iter()
-        .all(|branch| branch.kind != BranchKind::Sparse));
+    assert!(close(weight(BranchKind::Lexical).unwrap(), 0.3));
 }
 
 // ---------------------------------------------------------------------------

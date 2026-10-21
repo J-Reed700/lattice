@@ -78,6 +78,10 @@ impl GpuBudget for FakeBudget {
         self.asked.fetch_add(1, Ordering::SeqCst);
         (self.answer)(self.watched.load(Ordering::SeqCst))
     }
+    async fn server_admission(&self, _: &SidecarConfig) -> Admission {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        (self.answer)(self.watched.load(Ordering::SeqCst))
+    }
     async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
         None
     }
@@ -195,6 +199,124 @@ async fn a_server_that_fits_is_loaded_after_one_check() {
         "an unreadable header counts its weights"
     );
     assert_eq!(budget.asked.load(Ordering::SeqCst), 1);
+}
+
+/// A server outside the pool, as the embedding server is to admission.
+struct FakeIdleServer {
+    /// What stopping it frees while it is idle; `None` while it is busy.
+    bytes: Option<u64>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl IdleServer for FakeIdleServer {
+    fn name(&self) -> String {
+        "embedding".to_owned()
+    }
+    fn idle_gpu_bytes(&self) -> Option<u64> {
+        self.bytes.filter(|_| !self.stopped.load(Ordering::SeqCst))
+    }
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+fn with_idle_server(bytes: Option<u64>, stopped: &Arc<AtomicBool>) -> LlmInstances {
+    LlmInstances::new().with_evictable(Arc::new(FakeIdleServer {
+        bytes,
+        stopped: Arc::clone(stopped),
+    }))
+}
+
+#[tokio::test]
+async fn an_idle_embedding_server_is_stopped_when_no_idle_model_frees_enough() {
+    let dir = tempfile::tempdir().unwrap();
+    let wanted = local_model(&dir, "wanted", 1);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+    let budget =
+        FakeBudget::until_unloaded(
+            Arc::clone(&stopped),
+            |stopped| {
+                if stopped {
+                    fits()
+                } else {
+                    short()
+                }
+            },
+        );
+
+    acquire_local(
+        &instances,
+        &budget,
+        &wanted,
+        None,
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        stopped.load(Ordering::SeqCst),
+        "the idle server was stopped"
+    );
+    assert_eq!(
+        budget.asked.load(Ordering::SeqCst),
+        2,
+        "checked again after"
+    );
+}
+
+#[tokio::test]
+async fn a_busy_embedding_server_is_left_running_and_the_model_starts_anyway() {
+    let dir = tempfile::tempdir().unwrap();
+    let wanted = local_model(&dir, "wanted", 1);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(None, &stopped);
+    let budget = FakeBudget::always(short());
+
+    acquire_local(
+        &instances,
+        &budget,
+        &wanted,
+        None,
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+
+    assert!(!stopped.load(Ordering::SeqCst));
+    assert_eq!(budget.asked.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn room_is_made_for_a_decided_server_and_its_turn_is_handed_back() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+    let budget =
+        FakeBudget::until_unloaded(
+            Arc::clone(&stopped),
+            |stopped| {
+                if stopped {
+                    fits()
+                } else {
+                    short()
+                }
+            },
+        );
+    let config = SidecarConfig::for_model(std::path::PathBuf::from("/models/other.gguf"));
+
+    let turn = instances.make_room_for("other", &config, &budget).await;
+
+    assert!(turn.is_some(), "a server taking GPU memory keeps the turn");
+    assert!(stopped.load(Ordering::SeqCst));
+    drop(turn);
+    assert!(
+        instances
+            .make_room_for("other", &config, &FakeBudget::always(Admission::NoOffload))
+            .await
+            .is_none(),
+        "a server on the CPU has nothing to hold the turn for"
+    );
 }
 
 #[tokio::test]
@@ -799,6 +921,10 @@ impl GpuBudget for MeteredBudget {
         } else {
             Admission::Short { needed, spare }
         }
+    }
+    async fn server_admission(&self, config: &SidecarConfig) -> Admission {
+        self.admission(&config.model_path, LocalServerOptions::default())
+            .await
     }
     async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
         None

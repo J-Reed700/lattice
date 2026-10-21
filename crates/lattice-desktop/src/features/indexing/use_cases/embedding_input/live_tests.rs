@@ -1,13 +1,14 @@
 use super::*;
-use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use lattice_core::application::ports::ContentExtractionPort;
 
 #[tokio::test]
-#[ignore = "requires LATTICE_STRUCTURE_MODEL and LATTICE_STRUCTURE_PDF (read-only)"]
+#[ignore = "requires LATTICE_EMBED_GGUF, a runnable llama-server and LATTICE_STRUCTURE_PDF (read-only)"]
 async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> {
-    let model =
-        CandleEmbeddingService::open_unregistered(std::env::var("LATTICE_STRUCTURE_MODEL")?)?;
+    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
+        std::path::Path::new(&std::env::var("LATTICE_EMBED_GGUF")?),
+    )
+    .await?;
     let path = std::path::PathBuf::from(std::env::var("LATTICE_STRUCTURE_PDF")?);
     let extracted = ContentExtractionAdapter::new()
         .extract_content(&path)
@@ -34,7 +35,7 @@ async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> 
             position: 0,
         },
     ));
-    let (doc, _spans) = prepare_structured_with_spans(doc, &model, &extracted.page_ranges)?;
+    let doc = prepare_structured(doc, &model, &extracted.page_ranges)?;
     assert!(!doc.chunks().is_empty());
     let mut covered = vec![false; extracted.text.len()];
     for chunk in doc.chunks() {
@@ -46,7 +47,11 @@ async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> 
             .any(|(page, a, b)| Some(*page as u32) == chunk.page_number()
                 && start >= *a
                 && end <= *b));
-        assert!(chunk.token_count() <= 256 && chunk.token_count() > 0);
+        assert!(
+            chunk.token_count() > 0
+                && chunk.token_count() as usize
+                    <= crate::features::embedding::input_policy::RETRIEVAL_CHUNK_TARGET_TOKENS
+        );
         assert!(chunk.embedding_text().contains("Manual of Patent"));
         covered[start..end].fill(true);
     }
@@ -64,7 +69,7 @@ async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> 
     assert_eq!(vectors.len(), inputs.len());
     assert!(vectors
         .iter()
-        .all(|v| v.len() == 384 && v.iter().all(|n| n.is_finite())));
+        .all(|v| v.len() == model.dimension() && v.iter().all(|n| n.is_finite())));
     println!(
         "Structured PDF smoke: {} pages, {} contextual passages, {} vectors; embedding {:?}",
         extracted.page_ranges.len(),

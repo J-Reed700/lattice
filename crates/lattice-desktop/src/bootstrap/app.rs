@@ -79,7 +79,6 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// # Arguments
 /// * `pool` - SQLite connection pool
 /// * `security_context` - Security context
-/// * `model_dir` - Directory containing ML models (checks for model.onnx)
 /// * `data_dir` - Application data directory
 /// * `config` - Application configuration
 ///
@@ -89,7 +88,6 @@ async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     _security_context: Arc<crate::security::SecurityContext>,
-    model_dir: PathBuf,
     data_dir: PathBuf,
     ollama_endpoint: String,
     ollama_model: String,
@@ -100,23 +98,13 @@ async fn create_container(
 
     tracing::info!("Creating DI Container (pure DDD architecture)");
 
-    let embedding_model_path = model_dir.join("model.onnx");
-    let embedding_model_path_opt = if embedding_model_path.exists() {
-        tracing::info!("✅ AI models found at {:?}", embedding_model_path);
-        Some(embedding_model_path.to_string_lossy().to_string())
-    } else {
-        tracing::info!("Optional ONNX model absent at {:?}", embedding_model_path);
-        tracing::info!("Configured embedding and chat providers will be resolved independently");
-        None
-    };
-
     // Create container (always succeeds, AI optional). Builder-style
     // `with_app_handle` attaches the Tauri AppHandle so the sidecar
     // dispatch path can spawn `llama-server` via tauri-plugin-shell.
     Container::new(
         pool,
         db_conn,
-        embedding_model_path_opt,
+        Some(app_handle.clone()),
         &ollama_endpoint,
         &ollama_model,
         data_dir,
@@ -197,8 +185,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
     let db_path = app_dir.join("lattice.db");
 
-    let model_dir_for_init = model_dir.clone();
-
     let app_handle_for_container = app_handle.clone();
     let background_for_container = Arc::clone(&background);
 
@@ -231,7 +217,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             conn.pool().clone(),
             Arc::new(conn),
             security_context,
-            model_dir_for_init.clone(),
             app_dir.clone(),
             ollama_endpoint,
             ollama_model,
@@ -536,11 +521,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         tracing::warn!("Failed to process pending download queue on startup: {}", e);
     }
 
+    let embedding_state = crate::features::embedding::commands::EmbeddingState::new(
+        container.embedding_runtime.clone(),
+    );
     tracing::info!("📦 Managing DI Container in Tauri state");
     app_handle.manage(container);
     tracing::info!("✅ DI Container available for all commands");
 
-    let embedding_state = crate::features::embedding::commands::EmbeddingState::default();
     app_handle.manage(embedding_state);
 
     app_handle.manage(download_state);

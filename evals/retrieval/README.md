@@ -198,9 +198,10 @@ keyword overlap with the relevant documents falls from 0.525 to 0.312.
 python3 scripts/terse_slice.py check evals/retrieval/synthetic-library-v3-terse.json
 python3 scripts/terse_slice.py build evals/retrieval/synthetic-library-v3-terse.json /tmp/terse.json
 cd crates/lattice-desktop   # build the evalopt example as in 2026-10-12-RERANKER-FTS-HEADER-FUSION.md
-F="--mode production --top-k 10 --compression none --sparse off"
-$BIN $F ~/.cache/lattice/models/qwen3-embedding-0.6b ../../evals/retrieval/synthetic-library-v3.json > /tmp/v3.jsonl
-$BIN $F ~/.cache/lattice/models/qwen3-embedding-0.6b /tmp/terse.json > /tmp/terse-run.jsonl
+export LATTICE_EMBED_GGUF=~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf
+F="--mode production --top-k 10 --compression none"
+$BIN $F ../../evals/retrieval/synthetic-library-v3.json > /tmp/v3.jsonl
+$BIN $F /tmp/terse.json > /tmp/terse-run.jsonl
 cd ../..
 python3 scripts/terse_slice.py compare evals/retrieval/synthetic-library-v3-terse.json /tmp/v3.jsonl /tmp/terse-run.jsonl
 ```
@@ -236,14 +237,21 @@ topical hard negatives (0.76 → 0.82) improve. Results:
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
-`--mode production`, then `EMBEDDING_DIR DATASET_JSON [RERANKER_DIR]`.
+`--mode production`, then `DATASET_JSON [RERANKER_DIR]`.
 
-`--strategy`, `--compression` and `--sparse` select the retrieval features under
-measurement. Every default reproduces the behaviour that existed before the flag,
-so an unflagged run is comparable with every earlier run. `--compression` and
-`--sparse` describe the index and the fusion, neither of which embedding mode
-builds, so passing either outside `--mode production` is an error rather than a
-silent no-op.
+The embedding model runs as the app runs it, on a llama-server the example
+starts itself with the app's flags: `LATTICE_EMBED_GGUF` names the model's GGUF
+(its `tokenizer.json` must sit beside it), and `LATTICE_LLAMA_SERVER` names the
+binary, else the bundled build in `crates/lattice-desktop/binaries/` is used.
+The server stops when the run ends.
+
+`--compression` selects the stored vector layout under measurement. Its default
+reproduces the behaviour that existed before the flag, so an unflagged run is
+comparable with every earlier run. It describes the index, which embedding mode
+does not build, so passing it outside `--mode production` is an error rather
+than a silent no-op. Late chunking (`--strategy`) and the learned sparse branch
+(`--sparse`) were removed with the Candle runtime on 2026-10-20; runs before
+that date may carry `embedding_strategy` and `sparse` row fields.
 
 ### Embedding mode
 
@@ -253,7 +261,8 @@ embedding quality; it exercises no fusion, no lexical branch, and no index.
 
 ```sh
 cd crates/lattice-desktop
-SQLX_OFFLINE=true cargo run --example retrieval_eval -- /path/to/model ../../evals/retrieval/starter.json > /tmp/model-run.jsonl
+export LATTICE_EMBED_GGUF=/path/to/model.gguf
+SQLX_OFFLINE=true cargo run --example retrieval_eval -- ../../evals/retrieval/starter.json > /tmp/model-run.jsonl
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/starter.json /tmp/model-run.jsonl --k 3
 ```
@@ -269,8 +278,9 @@ Runs chat's library search over the fixture instead of raw cosine:
 
 ```sh
 cd crates/lattice-desktop
+LATTICE_EMBED_GGUF=/path/to/model.gguf \
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
-  /path/to/model ../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
+  ../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/synthetic-library-v2.json /tmp/prod-run.jsonl \
   --k 5 --abstain-threshold 0.02
@@ -343,22 +353,6 @@ from different turns together, arXiv 2609.36700):
 Runs before 2026-10-19 have the first 34 items only; `shipped_path_stats.py
 compare` pairs runs on the items both have and lists the rest.
 
-### Embedding strategy
-
-`--strategy chunk-first` (the default) embeds every chunk on its own with its
-context prefix prepended. `--strategy late-chunking` embeds a whole span in one
-forward pass and mean-pools each chunk's token states, so every chunk is
-conditioned on the rest of its span. In embedding mode the span is the document
-itself; in production mode it is the document with its `[Document: … | Section: …]`
-prefix prepended once, mirroring
-`indexing::use_cases::embedding_input::prepare_structured_with_spans`. A span that
-does not fit the model window falls back to per-chunk embedding inside
-`embed_span_chunks`, which is the documented behaviour and not a failure.
-
-Late chunking changes `model_identity()` — the two vector spaces are not
-interchangeable — so the row's `model_identity` is what tells two runs apart, and
-a late-chunking run must never be compared against a chunk-first one on score.
-
 ### Vector compression
 
 `--compression` (production only, default `none`) sets how the USearch index
@@ -369,35 +363,15 @@ existed. Compression is lossy, so the index becomes a candidate generator and
 searches rescore over-fetched neighbours against full-precision vectors.
 
 Truncation only works on a model trained with Matryoshka Representation Learning
-(Qwen3-Embedding-0.6B is; all-MiniLM-L6-v2 is not), so measure it against an
-uncompressed run on the same model before reading anything into the numbers.
+(Qwen3-Embedding-0.6B is), so measure it against an uncompressed run on the same
+model before reading anything into the numbers.
 Because Qwen3 is the first-run default wherever there is a GPU, the settings
 default of 256 dimensions at i8 is live on those installs from the first
 document indexed, where it used to be inert behind MiniLM.
 
-### Learned sparse retrieval
-
-`--sparse` (production only, default `auto`) adds the learned sparse branch beside
-the dense and BM25 ones. `auto` turns it on exactly when the loaded checkpoint has
-a sparse head; `on` fails loudly on a checkpoint that has none, rather than
-reporting a run whose `sparse` field would be untrue; `off` keeps two-way fusion.
-When on, chunk term weights are written to a `chunk_sparse_terms` table copied from
-`migrations/20260916000000_init_schema.sql`, keyed by `model_identity`,
-and `branch_ranked_ids` gains a `"sparse"` entry so the branch is separately
-auditable. Chunk-first runs take dense and sparse from one forward pass; late
-chunking pools dense vectors over a span and reads the sparse head from the
-per-chunk texts in a second pass, exactly as `index_file` does.
-
-```sh
-cd crates/lattice-desktop
-SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
-  --strategy late-chunking --compression mrl256-i8 --sparse auto \
-  /path/to/model ../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
-```
-
 ### Reranking
 
-Pass a reranker directory as the optional third argument in either mode. In
+Pass a reranker directory as the optional second argument in either mode. In
 embedding mode it reranks the top-48 passage pool; in production mode the fused
 pool is widened as chat widens it (three times `--top-k`, at most 64) and passed
 through the orchestrator's rerank stage — the stage chat calls — at chat's default
@@ -407,9 +381,9 @@ match:
 
 ```sh
 cd crates/lattice-desktop
+LATTICE_EMBED_GGUF=/path/to/embedding/model.gguf \
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- \
-  /path/to/embedding/model ../../evals/retrieval/starter.json \
-  /path/to/reranker/model > /tmp/reranked-run.jsonl
+  ../../evals/retrieval/starter.json /path/to/reranker/model > /tmp/reranked-run.jsonl
 ```
 
 The loader selects the implementation from the checkpoint's `config.json`. It
@@ -427,8 +401,9 @@ fused pool, exactly as in chat. Every run records the embedding artifact/preproc
 Qwen3-Reranker uses a roughly 1.1 GB checkpoint and is expected to be slower than
 the 22M-parameter MiniLM cross-encoder, so compare memory and latency as well as
 ranking metrics.
-Set `LATTICE_FORCE_CPU=1` to run without Metal or CUDA, including in constrained
-CI workers. Embedding and reranking use the same accelerator-selection policy.
+Set `LATTICE_FORCE_CPU=1` to run the reranker without Metal or CUDA, including in
+constrained CI workers. The embedding server offloads to whatever accelerator the
+llama-server binary's own `--list-devices` reports, as the app's does.
 
 Saved starter results cover all six combinations of MiniLM and Qwen3 embeddings
 with reranking off, MiniLM reranking, or Qwen3 reranking under `results/`.
@@ -439,20 +414,18 @@ The first larger-corpus comparison and its interpretation are recorded in
 
 Every row carries `query_id`, `mode`, `ranked_ids`, `scores`,
 `first_stage_ranked_ids`, `top_score`, `score_spread`, `latency_ms`,
-`model_identity`, `reranked`, and `embedding_strategy`. `top_score` is the best
+`model_identity`, and `reranked`. `top_score` is the best
 document score and `score_spread` is that score minus the rank-five score, so a
 confident hit and a corpus miss are distinguishable without reading the ranking.
-`embedding_strategy` is `"chunk_first"` or `"late_chunking"`.
 
 Production rows add these fields so a regression is attributable:
 
 - `chunk_ranked_ids` — the chunk-level ranking as `document#chunk_index`, including
   the appended section neighbours, which is what makes a document-level miss
   traceable to a passage.
-- `branch_ranked_ids` — `{"vector": [...], "bm25": [...]}`, plus `"sparse"` when the
-  learned sparse branch ran: each branch's list exactly as the fusion received it,
-  collapsed to documents. When fused recall drops, these say whether the vector side,
-  the lexical side, the sparse side, or the fusion lost the document.
+- `branch_ranked_ids` — `{"vector": [...], "bm25": [...]}`: each branch's list exactly
+  as the fusion received it, collapsed to documents. When fused recall drops, these say
+  whether the vector side, the lexical side, or the fusion lost the document.
 - `first_stage_ranked_ids` means "before neighbour expansion" in production mode
   and "before reranking" in embedding mode. In production mode it is taken after the
   rerank stage, so the pre-rerank order is not separately observable there.
@@ -461,7 +434,6 @@ Production rows add these fields so a regression is attributable:
   fails).
 - `compression` — the stored vector layout token (`"mrl256i8"`, `"mrl512f32"`, …) or
   `"none"`. Two runs with different tokens indexed different vector spaces.
-- `sparse` — whether the learned sparse branch actually ran.
 - `sufficient`, `sufficiency_reasons`, `term_coverage` — the chat pipeline's own
   post-rerank verdict on the fused ranking, from
   `chat::retrieval::assess_retrieval_sufficiency`, computed where chat computes it:

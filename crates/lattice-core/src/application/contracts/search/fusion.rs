@@ -22,8 +22,8 @@ use std::hash::Hash;
 /// One branch's ranked ids and the weight its ranks carry in the fusion.
 ///
 /// Only rank is fused. Branch scores are on incomparable scales — cosine
-/// similarity, BM25, a sparse dot product, a blended reranker score — which is
-/// the reason to fuse by rank in the first place, so they are not carried here.
+/// similarity, BM25, a blended reranker score — which is the reason to fuse
+/// by rank in the first place, so they are not carried here.
 #[derive(Debug, Clone)]
 pub struct WeightedRanking<Id> {
     pub weight: f32,

@@ -63,8 +63,8 @@ impl HybridSearchTrait for HybridSearchUseCase {
 
 /// The library's orchestrator over a passage index's own storage.
 ///
-/// Only the three stores are given: the sparse branch, the reranker and the
-/// chunk repository are the library's and read `lattice.db`, and a passage
+/// Only the three stores are given: the reranker and the chunk repository
+/// are the library's and read `lattice.db`, and a passage
 /// index's rows are authoritative for its own passages. Fusion, branch
 /// depth, the vector floor and the per-document cap are the library's
 /// constants, so a folder or course is ranked the way the library is.

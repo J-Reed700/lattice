@@ -10,7 +10,6 @@ use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::factories::{ChecksumFactory, FileMetadataFactory};
 use lattice_core::application::ports::ImportedBlob;
 use lattice_core::domain::entities::Document;
-use lattice_core::domain::value_objects::SparseEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ValidatedFilePath;
 
@@ -91,7 +90,7 @@ impl IndexFileUseCase {
             )
             .await;
 
-        let (document, embeddings, sparse_terms) = match prepared {
+        let (document, embeddings) = match prepared {
             Ok(parts) => parts,
             Err(error) => {
                 // Release the lease first, or the collector would refuse its
@@ -110,7 +109,6 @@ impl IndexFileUseCase {
                 embeddings,
                 library_path: library_path.to_str().unwrap_or("").to_string(),
                 imported_new,
-                sparse_terms,
                 lease,
             },
         )))
@@ -131,7 +129,7 @@ impl IndexFileUseCase {
         requested_context: Option<
             lattice_core::domain::value_objects::source_context::SourceContext,
         >,
-    ) -> Result<(Document, Vec<EmbeddingWithVector>, Vec<SparseEmbedding>)> {
+    ) -> Result<(Document, Vec<EmbeddingWithVector>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;
         let checksum = ChecksumFactory::from_path(library_path)?;
@@ -195,58 +193,18 @@ impl IndexFileUseCase {
             document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
         }
 
-        let (mut document, spans) = super::super::embedding_input::prepare_structured_with_spans(
+        let mut document = super::super::embedding_input::prepare_structured(
             document,
             self.embedding_service.as_ref(),
             &page_ranges,
         )?;
         document.mark_ocr_pages(&ocr_pages);
         let model_identity = self.embedding_service.model_identity();
-        // With late chunking each structure span is embedded once and pooled
-        // per chunk; otherwise this is the per-chunk batch as before. Either
-        // way it yields one vector per chunk, in chunk order.
-        //
-        // When the model has a sparse head and is *not* late chunking, both
-        // representations come from one forward pass over exactly the texts
-        // `embed_prepared_chunks` would have used, so the dense vectors are
-        // unchanged. Late chunking pools dense vectors over a whole span and
-        // has no equivalent pooling for term weights, so there the sparse head
-        // is read from the per-chunk texts in a second pass instead.
-        let (embeddings, sparse_terms) = if self.sparse_indexing_enabled() {
-            let chunk_texts: Vec<String> = document
-                .chunks()
-                .iter()
-                .map(|chunk| chunk.embedding_text())
-                .collect();
-            if self.embedding_service.uses_late_chunking() {
-                let dense = super::super::embedding_input::embed_prepared_chunks(
-                    &document,
-                    self.embedding_service.as_ref(),
-                    &spans,
-                )
-                .await?;
-                (
-                    dense,
-                    self.embedding_service
-                        .embed_sparse_batch(&chunk_texts)
-                        .await?,
-                )
-            } else {
-                self.embedding_service
-                    .embed_batch_with_sparse(&chunk_texts)
-                    .await?
-            }
-        } else {
-            (
-                super::super::embedding_input::embed_prepared_chunks(
-                    &document,
-                    self.embedding_service.as_ref(),
-                    &spans,
-                )
-                .await?,
-                Vec::new(),
-            )
-        };
+        let embeddings = super::super::embedding_input::embed_prepared_chunks(
+            &document,
+            self.embedding_service.as_ref(),
+        )
+        .await?;
         if self.embedding_service.model_identity() != model_identity
             || embeddings.len() != document.chunks().len()
         {
@@ -254,21 +212,6 @@ impl IndexFileUseCase {
                 "Embedding model changed or returned an incomplete batch; retry indexing".into(),
             ));
         }
-        // A short sparse batch would silently key one chunk's terms to another
-        // chunk's id, which is worse than having no sparse rows at all.
-        let sparse_terms = if sparse_terms.len() == document.chunks().len() {
-            sparse_terms
-        } else {
-            if !sparse_terms.is_empty() {
-                tracing::warn!(
-                    expected = document.chunks().len(),
-                    received = sparse_terms.len(),
-                    "Sparse head returned an incomplete batch; indexing this document without sparse terms"
-                );
-            }
-            Vec::new()
-        };
-
         // Prepare embedding entries
         let embedding_entries: Vec<(Embedding, Vec<f32>)> = document
             .chunks()
@@ -281,7 +224,7 @@ impl IndexFileUseCase {
             })
             .collect();
 
-        Ok((document, embedding_entries, sparse_terms))
+        Ok((document, embedding_entries))
     }
 
     fn validate_supported_file(&self, path: &Path) -> Result<()> {

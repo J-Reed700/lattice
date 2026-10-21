@@ -26,7 +26,7 @@ pub struct ScopedHit {
 }
 
 /// One hybrid query per column, scoped to the given documents: the library
-/// search's vector, BM25 and sparse branches, fused, nothing else.
+/// search's vector and BM25 branches, fused, nothing else.
 #[async_trait]
 pub trait ScopedLibrarySearch: Send + Sync {
     /// Search `column` across `document_ids`, best `limit` hits first.

@@ -18,6 +18,9 @@ use crate::features::model_management::commands_extra::{
     warm_up_active_utility_model_impl, warm_up_learning_model_impl, LearningWindowShortfallDto,
     LoadedModelDto,
 };
+use crate::features::model_management::use_cases::{
+    LeftoverEmbeddingFiles, LeftoverEmbeddingFilesUseCase,
+};
 use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl, download_model_impl,
 };
@@ -101,6 +104,57 @@ pub async fn download_default_embedding_model(
             message: e,
             details: None,
         })
+}
+
+/// Files a safetensors-era embedding download left in a curated embedding
+/// model folder, which the llama.cpp runtime never reads.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct LeftoverEmbeddingFilesDto {
+    /// The leftover files and folders, absolute.
+    pub paths: Vec<String>,
+    /// Their size on disk, in bytes.
+    pub total_bytes: u64,
+}
+
+impl From<LeftoverEmbeddingFiles> for LeftoverEmbeddingFilesDto {
+    fn from(found: LeftoverEmbeddingFiles) -> Self {
+        Self {
+            paths: found
+                .paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+            total_bytes: found.total_bytes,
+        }
+    }
+}
+
+/// List the files left from the safetensors era in curated embedding model
+/// folders, with their total size. Never removes anything.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_leftover_embedding_files(
+    container: State<'_, Container>,
+) -> Result<LeftoverEmbeddingFilesDto, ApiError> {
+    LeftoverEmbeddingFilesUseCase::new(container.downloaded_models())
+        .list()
+        .await
+        .map(Into::into)
+        .map_err(ApiError::from)
+}
+
+/// Remove exactly the files `list_leftover_embedding_files` reports, found
+/// again now, and return what was removed.
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_leftover_embedding_files(
+    container: State<'_, Container>,
+) -> Result<LeftoverEmbeddingFilesDto, ApiError> {
+    LeftoverEmbeddingFilesUseCase::new(container.downloaded_models())
+        .remove()
+        .await
+        .map(Into::into)
+        .map_err(ApiError::from)
 }
 
 /// Delete a downloaded model

@@ -55,7 +55,6 @@ export function createVaultAPIMock() {
         docSupportSingleHitRatioMax: 0.55,
       },
       vectorIndexCompression: { mode: 'none', dims: 512, quantization: 'i8' },
-      embeddingStrategy: 'chunk_first',
       summaryIndexEnabled: false,
     },
     llm: {
@@ -157,6 +156,12 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
     downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
+    listLeftoverEmbeddingFiles: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { paths: [], total_bytes: 0 } }),
+    removeLeftoverEmbeddingFiles: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { paths: [], total_bytes: 0 } }),
     getModelDownloadPath: vi
       .fn()
       .mockResolvedValue({ ok: true, data: '/tmp/lattice/models' }),

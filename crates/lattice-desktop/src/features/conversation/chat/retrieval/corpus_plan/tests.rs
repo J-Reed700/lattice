@@ -393,7 +393,6 @@ fn beginning_uses_explicit_chapter_sequence_not_filename_or_upload_order() {
 #[tokio::test]
 #[ignore = "requires LATTICE_RETRIEVAL_DB, LATTICE_LLAMACPP_SETTINGS and LATTICE_RETRIEVAL_REPORT"]
 async fn live_corpus_retrieval_and_answer() {
-    use crate::features::embedding::candle_service::CandleEmbeddingService;
     use crate::features::llm::llama_cpp::LlamaCppLlm;
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::infrastructure::vector_index::USearchVectorIndex;
@@ -413,7 +412,13 @@ async fn live_corpus_retrieval_and_answer() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let embedding = Arc::new(CandleEmbeddingService::open_unregistered(model_path).unwrap());
+    let embedding = Arc::new(
+        crate::interfaces::di::modules::embedding::standalone::open_gguf(std::path::Path::new(
+            &model_path,
+        ))
+        .await
+        .unwrap(),
+    );
     let rows: Vec<(String, Vec<u8>, String, String, String)> = sqlx::query_as("SELECT c.id, e.embedding, c.content, c.document_id, COALESCE(NULLIF(c.contextualized_content,''),c.content) FROM text_chunks c JOIN text_embeddings e ON e.chunk_id=c.id WHERE e.model_name=? ORDER BY c.document_id,c.chunk_index")
         .bind(EmbeddingPort::model_identity(embedding.as_ref())).fetch_all(&pool).await.unwrap();
     assert!(

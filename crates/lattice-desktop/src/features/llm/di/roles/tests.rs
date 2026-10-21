@@ -383,6 +383,12 @@ impl GpuBudget for Windows {
     ) -> crate::features::llm::engine::sidecar_manager::Admission {
         crate::features::llm::engine::sidecar_manager::Admission::Unmetered
     }
+    async fn server_admission(
+        &self,
+        _: &crate::features::llm::engine::sidecar_manager::SidecarConfig,
+    ) -> crate::features::llm::engine::sidecar_manager::Admission {
+        crate::features::llm::engine::sidecar_manager::Admission::Unmetered
+    }
     async fn fits_window(&self, _: &std::path::Path, _: bool) -> Option<u32> {
         None
     }

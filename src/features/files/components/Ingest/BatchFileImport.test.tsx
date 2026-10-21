@@ -50,7 +50,7 @@ describe('BatchFileImport', () => {
     mocks.collectionsQuery.error = null;
     mocks.operations.clear();
     mocks.getOperation.mockReset();
-    mocks.startBatchImport.mockResolvedValue({ ok: false, error: 'Embedding model files are missing. Download MiniLM again.' });
+    mocks.startBatchImport.mockResolvedValue({ ok: false, error: 'Embedding model files are missing. Download the embedding model again.' });
     mocks.cancelBatchImport.mockResolvedValue({ ok: true, data: 1 });
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -62,7 +62,7 @@ describe('BatchFileImport', () => {
     await user.click(screen.getByRole('button', { name: 'choose files' }));
     await user.click(screen.getByRole('button', { name: 'Import 2 files' }));
 
-    expect(await screen.findAllByText('Failed — Embedding model files are missing. Download MiniLM again.')).toHaveLength(2);
+    expect(await screen.findAllByText('Failed — Embedding model files are missing. Download the embedding model again.')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Retry 2 files' })).toBeEnabled();
     mocks.startBatchImport.mockResolvedValue({ ok: true, data: 'retry-job' });
     await user.click(screen.getByRole('button', { name: 'Retry 2 files' }));
@@ -170,7 +170,7 @@ describe('BatchFileImport', () => {
     mocks.selectFiles.mockResolvedValue(['/Downloads/new.pdf']);
     await user.click(screen.getByRole('button', { name: 'choose files' }));
     await user.click(screen.getByRole('button', { name: 'Import 1 file' }));
-    expect(await screen.findByText('Failed — Embedding model files are missing. Download MiniLM again.')).toBeVisible();
+    expect(await screen.findByText('Failed — Embedding model files are missing. Download the embedding model again.')).toBeVisible();
     expect(screen.getByText('Failed — PDF extraction timed out')).toBeVisible();
   });
 

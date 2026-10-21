@@ -87,6 +87,12 @@ pub struct Container {
     pub(crate) llm_instances: Arc<LlmInstances>,
     /// Owns embedding readiness checks, loading, and retry cooldown.
     pub(crate) embedding_runtime: Arc<EmbeddingRuntime>,
+    /// Starts the llama-server the embedding model runs on.
+    pub(crate) embedding_starter:
+        Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    /// The embedding servers `embedding_starter` has started, for the
+    /// activity view.
+    pub(crate) embedding_servers: Arc<crate::features::embedding::activity::StartedServers>,
 
     /// All vault writes flow through a single mpsc-fed worker; see
     /// `features::vault::writeback`.
@@ -199,7 +205,7 @@ impl Container {
     pub async fn new(
         db_pool: SqlitePool,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
-        _embedding_model_path: Option<String>,
+        app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,
         llm_model: &str,
         data_dir: PathBuf,
@@ -207,7 +213,11 @@ impl Container {
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
-        let llm_instances = Arc::new(LlmInstances::new());
+        // The embedding server is the one server outside the pool of LLMs
+        // that their admission may stop while it is idle.
+        let current_embedding =
+            Arc::new(super::modules::embedding::CurrentEmbeddingServer::default());
+        let llm_instances = Arc::new(LlmInstances::new().with_evictable(current_embedding.clone()));
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // State more than one feature reaches. Each is built once, here, and
@@ -217,10 +227,23 @@ impl Container {
         let extraction_workers =
             crate::features::indexing::engine::extraction::ExtractionWorkers::new();
         let backend_devices = Arc::new(crate::features::llm::engine::system::BackendDevices::new());
-        let llm_runtime = crate::features::llm::loading::LlmRuntime::new(
-            Arc::clone(&backend_devices),
-            embedding_runtime.clone(),
-        );
+        let llm_runtime =
+            crate::features::llm::loading::LlmRuntime::new(Arc::clone(&backend_devices));
+        // Needs the app before the search module opens: its backfill starts
+        // the embedding server.
+        let embedding_servers =
+            Arc::new(crate::features::embedding::activity::StartedServers::default());
+        let embedding_starter: Arc<
+            dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
+        > = Arc::new(crate::features::embedding::activity::WatchedStarter::new(
+            Arc::new(super::modules::embedding::SidecarEmbeddingStarter::new(
+                app_handle,
+                llm_instances.clone(),
+                llm_runtime.clone(),
+                current_embedding,
+            )),
+            Arc::clone(&embedding_servers),
+        ));
 
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
@@ -253,6 +276,7 @@ impl Container {
                 db_pool.clone(),
                 core.clone(),
                 embedding_runtime.clone(),
+                embedding_starter.clone(),
             )
             .await?,
         );
@@ -415,6 +439,8 @@ impl Container {
             web_service,
             llm_instances,
             embedding_runtime,
+            embedding_starter,
+            embedding_servers,
             vault_writer,
             vault_write_suppression,
             vault_rescan_lock: Default::default(),
@@ -436,6 +462,23 @@ impl Container {
             index_turns: None,
             app_handle: None,
         })
+    }
+
+    /// Serve embeddings through `starter` instead of the bundled sidecar.
+    /// Tools that build a container without the app (the shipped-path eval)
+    /// pass a [`StandaloneEmbeddingStarter`](super::modules::embedding::standalone::StandaloneEmbeddingStarter).
+    /// After construction the container is the starter's only holder, so
+    /// every load and activation from here on uses this one.
+    pub fn with_embedding_starter(
+        mut self,
+        starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    ) -> Self {
+        self.embedding_starter =
+            Arc::new(crate::features::embedding::activity::WatchedStarter::new(
+                starter,
+                Arc::clone(&self.embedding_servers),
+            ));
+        self
     }
 
     /// Attach the Tauri `AppHandle` post-construction. Real callers chain

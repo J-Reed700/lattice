@@ -2,7 +2,7 @@
 //!
 //! A document's text is reassembled from its stored chunks — `documents` has no
 //! content column — and grouped by the *top-level* segment of each chunk's
-//! section breadcrumb (`prepare_structured_with_spans` writes "Parent > Child",
+//! section breadcrumb (`prepare_structured` writes "Parent > Child",
 //! so "Parent" is the section a reader would call a section).
 //!
 //! The whole text is read: the summarizer describes a long document from all

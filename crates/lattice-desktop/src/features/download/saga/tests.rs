@@ -24,38 +24,30 @@ fn make_file(file_name: &str, file_path: &str) -> ModelFile {
 }
 
 #[test]
-fn select_primary_prefers_model_onnx() {
+fn select_primary_prefers_the_gguf_over_its_tokenizer() {
     let files = vec![
-        make_file("config.json", "/tmp/config.json"),
-        make_file("model.onnx", "/tmp/model.onnx"),
-        make_file("tokenizer.json", "/tmp/tokenizer.json"),
+        make_file("tokenizer.json", "/tmp/m/tokenizer.json"),
+        make_file("model-f16.gguf", "/tmp/m/model-f16.gguf"),
     ];
 
     let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
-    assert_eq!(selected.file_name, "model.onnx");
+    assert_eq!(selected.file_name, "model-f16.gguf");
 }
 
 #[test]
-fn select_primary_prefers_onnx_in_subdirectory() {
-    let files = vec![
-        make_file("config.json", "/tmp/config.json"),
-        make_file("onnx/model.onnx", "/tmp/onnx/model.onnx"),
-        make_file("tokenizer.json", "/tmp/tokenizer.json"),
-    ];
+fn a_pinned_gguf_digest_is_its_identity() {
+    let mut gguf = make_file("model-f16.gguf", "/tmp/m/model-f16.gguf");
+    assert_eq!(DownloadSaga::verified_gguf_identity(&gguf), None);
 
-    let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
-    assert_eq!(selected.file_name, "onnx/model.onnx");
-}
+    gguf.checksum_sha256 = Some("AB".repeat(32));
+    assert_eq!(
+        DownloadSaga::verified_gguf_identity(&gguf).map(|identity| identity.to_string()),
+        Some(format!("sha256:{}", "ab".repeat(32)))
+    );
 
-#[test]
-fn select_primary_falls_back_to_gguf() {
-    let files = vec![
-        make_file("config.json", "/tmp/config.json"),
-        make_file("phi.gguf", "/tmp/phi.gguf"),
-    ];
-
-    let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
-    assert_eq!(selected.file_name, "phi.gguf");
+    let mut tokenizer = make_file("tokenizer.json", "/tmp/m/tokenizer.json");
+    tokenizer.checksum_sha256 = Some("ab".repeat(32));
+    assert_eq!(DownloadSaga::verified_gguf_identity(&tokenizer), None);
 }
 
 #[test]
@@ -93,11 +85,20 @@ fn model_location_returns_directory_for_config_json() {
     );
 }
 
-#[tokio::test]
-async fn first_embedding_download_is_activated_with_its_identity() {
+/// An embedding GGUF download: the GGUF (whose completion finishes the
+/// download, with `gguf_digest` as its pinned checksum) and, when
+/// `with_tokenizer`, its `tokenizer.json`. Returns the active embedding model
+/// once the saga has handled the GGUF's completion, and the GGUF's path.
+async fn complete_gguf_embedding_download(
+    gguf_digest: Option<String>,
+    with_tokenizer: bool,
+    dir: &std::path::Path,
+) -> (
+    Option<lattice_core::domain::models::downloaded::DownloadedModel>,
+    PathBuf,
+) {
     use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
     use crate::infrastructure::events::event_bus::EventBus;
-    use crate::infrastructure::ml::artifact_identity;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -113,38 +114,36 @@ async fn first_embedding_download_is_activated_with_its_identity() {
         .await
         .expect("run migrations");
 
-    let dir = tempfile::tempdir().expect("create model directory");
-    let files = [
-        ("config.json", &b"{}"[..]),
-        ("tokenizer.json", &b"{}"[..]),
-        ("model.safetensors", &b"weights"[..]),
-    ];
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
-             VALUES ('row-1', 'test-embed-model', 'test-embed-model', ?1, 'embedding', 'bert', 'downloading')",
+             VALUES ('row-1', 'test-embed-model', 'test-embed-model', ?1, 'embedding', 'GGUF', 'downloading')",
     )
-    .bind(dir.path().to_string_lossy().into_owned())
+    .bind(dir.to_string_lossy().into_owned())
     .execute(&pool)
     .await
     .expect("insert model row");
-    for (name, contents) in files {
-        let path = dir.path().join(name);
+    let mut files = vec![(
+        "model-f16.gguf",
+        &b"weights"[..],
+        gguf_digest,
+        "downloading",
+    )];
+    if with_tokenizer {
+        files.push(("tokenizer.json", &b"{}"[..], None, "completed"));
+    }
+    for (name, contents, digest, status) in files {
+        let path = dir.join(name);
         std::fs::write(&path, contents).expect("write model file");
-        // config.json is the file whose completion finishes the download.
-        let status = if name == "config.json" {
-            "downloading"
-        } else {
-            "completed"
-        };
         sqlx::query(
             "INSERT INTO model_files
-                     (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status)
-                 VALUES (?1, 'test-embed-model', ?2, ?3, ?2, ?4, 'https://example.com', ?5)",
+                     (id, model_id, file_name, file_path, relative_path, size_bytes, checksum_sha256, download_url, status)
+                 VALUES (?1, 'test-embed-model', ?2, ?3, ?2, ?4, ?5, 'https://example.com', ?6)",
         )
         .bind(format!("file-{name}"))
         .bind(name)
         .bind(path.to_string_lossy().into_owned())
         .bind(contents.len() as i64)
+        .bind(digest)
         .bind(status)
         .execute(&pool)
         .await
@@ -161,9 +160,9 @@ async fn first_embedding_download_is_activated_with_its_identity() {
 
     saga.handle_file_completed(FileDownloadCompletedEvent {
         model_id: "test-embed-model".to_string(),
-        file_id: "file-config.json".to_string(),
-        file_name: "config.json".to_string(),
-        file_size: 2,
+        file_id: "file-model-f16.gguf".to_string(),
+        file_name: "model-f16.gguf".to_string(),
+        file_size: 7,
         timestamp: Utc::now(),
     })
     .await
@@ -172,13 +171,60 @@ async fn first_embedding_download_is_activated_with_its_identity() {
     let active = downloaded_models
         .get_active_embedding_model()
         .await
-        .expect("read active embedding model")
-        .expect("the empty embedding slot is filled by the first download");
+        .expect("read active embedding model");
+    (active, dir.join("model-f16.gguf"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
+}
+
+#[tokio::test]
+async fn a_pinned_embedding_download_is_activated_with_its_verified_digest() {
+    let dir = tempfile::tempdir().expect("create model directory");
+    let digest = sha256_hex(b"weights");
+    let (active, gguf) =
+        complete_gguf_embedding_download(Some(digest.clone()), true, dir.path()).await;
+
+    let active = active.expect("the empty embedding slot is filled by the first download");
     assert_eq!(active.model_id(), "test-embed-model");
     assert_eq!(
+        active.location(),
+        &ModelLocation::LocalFile { path: gguf },
+        "the row points at the GGUF, not its directory"
+    );
+    assert_eq!(
+        active
+            .embedding_artifact_identity()
+            .map(|identity| identity.to_string()),
+        Some(format!("sha256:{digest}")),
+        "the identity is the GGUF's digest, reused from the download"
+    );
+}
+
+#[tokio::test]
+async fn an_unpinned_embedding_download_is_activated_with_its_files_hash() {
+    use crate::infrastructure::ml::artifact_identity;
+    let dir = tempfile::tempdir().expect("create model directory");
+    let (active, gguf) = complete_gguf_embedding_download(None, true, dir.path()).await;
+
+    let active = active.expect("the empty embedding slot is filled by the first download");
+    assert_eq!(
         active.embedding_artifact_identity(),
-        Some(&artifact_identity::compute(dir.path()).expect("compute identity")),
-        "a local embedding model is activated with the identity of its files"
+        Some(&artifact_identity::compute(&gguf).expect("compute identity")),
+    );
+}
+
+#[tokio::test]
+async fn an_embedding_download_without_a_tokenizer_is_not_activated() {
+    let dir = tempfile::tempdir().expect("create model directory");
+    let (active, _) =
+        complete_gguf_embedding_download(Some(sha256_hex(b"weights")), false, dir.path()).await;
+
+    assert!(
+        active.is_none(),
+        "a GGUF its passages cannot be cut for stays inactive"
     );
 }
 

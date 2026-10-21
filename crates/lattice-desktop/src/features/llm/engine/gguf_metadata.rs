@@ -122,6 +122,13 @@ pub struct GgufModelInfo {
     /// Whether `tokenizer.chat_template` in the GGUF header declares tool-calling
     /// markers (`tools`, `tool_call`, or `tool_calls`).
     pub chat_template_supports_tools: bool,
+    /// `{architecture}.pooling_type` (llama.cpp's `LLM_KV_POOLING_TYPE`): how
+    /// an embedding model pools its token states. 0 none, 1 mean, 2 CLS,
+    /// 3 last, 4 rank. Absent in a chat model.
+    pub pooling_type: Option<u32>,
+    /// `general.file_type` (`LLM_KV_GENERAL_FILE_TYPE`): the weights'
+    /// precision as llama.cpp's `llama_ftype`, 1 for F16.
+    pub file_type: Option<u32>,
 }
 
 /// llama.cpp stores keys and values as f16 by default: two bytes an element.
@@ -437,6 +444,13 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
         // Sizing keys are `{architecture}.{name}`. A longer prefix, such as a
         // vision tower's `{architecture}.vision.block_count`, is not the
         // language model's.
+        if key == "general.file_type" {
+            if let Value::Number(file_type) = value {
+                info.file_type = Some(file_type);
+            }
+            continue;
+        }
+
         let Some((_, name)) = key.split_once('.') else {
             continue;
         };
@@ -479,6 +493,7 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             ("ssm.state_size", Value::Number(size)) => info.ssm_state_size = Some(size),
             ("ssm.group_count", Value::Number(count)) => info.ssm_group_count = Some(count),
             ("ssm.inner_size", Value::Number(size)) => info.ssm_inner_size = Some(size),
+            ("pooling_type", Value::Number(pooling)) => info.pooling_type = Some(pooling),
             _ => {}
         }
     }

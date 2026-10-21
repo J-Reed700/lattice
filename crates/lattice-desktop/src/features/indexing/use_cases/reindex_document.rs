@@ -67,27 +67,12 @@ pub struct ReindexDocumentUseCase {
     /// A restart did not repair it either, because the persisted index is only
     /// rebuilt when it is *empty*.
     vector_search: Arc<dyn VectorSearchPort>,
-    /// Learned sparse postings. Reindexing replaces this document's chunk rows,
-    /// which cascades the old postings away; without rewriting them the
-    /// document would silently drop out of the sparse branch until it was
-    /// imported again.
-    sparse_term_store: Option<Arc<dyn lattice_core::application::ports::SparseTermStorePort>>,
     /// Search results cached against the corpus, dropped once the rebuilt
     /// chunks are live.
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
 }
 
 impl ReindexDocumentUseCase {
-    /// Persist learned sparse term weights alongside the rebuilt vectors.
-    #[must_use]
-    pub fn with_sparse_term_store(
-        mut self,
-        store: Arc<dyn lattice_core::application::ports::SparseTermStorePort>,
-    ) -> Self {
-        self.sparse_term_store = Some(store);
-        self
-    }
-
     pub fn with_content_extractor(
         mut self,
         extractor: Arc<dyn lattice_core::application::ports::ContentExtractionPort>,
@@ -149,7 +134,6 @@ impl ReindexDocumentUseCase {
             document_repo,
             uow_factory,
             vector_search,
-            sparse_term_store: None,
             query_cache: None,
         }
     }
@@ -257,15 +241,8 @@ impl ReindexDocumentUseCase {
             document.set_chunk_token_count(index, token_count);
         }
 
-        // 4. Generate new embeddings
-        //
-        // Span-grouped, like the import path: with late chunking each structure
-        // span is embedded once and pooled per chunk, and otherwise this is the
-        // same per-chunk batch as before. Embedding chunk-first here while the
-        // importer late-chunks would write two vector spaces into one
-        // generation — the stored chunk text and its offsets are identical
-        // either way, but the vectors are not comparable.
-        let (mut document, spans) = super::embedding_input::prepare_structured_with_spans(
+        // 4. Generate new embeddings, chunked exactly as the import path chunks.
+        let mut document = super::embedding_input::prepare_structured(
             document,
             self.embedding_service.as_ref(),
             &pages,
@@ -274,45 +251,11 @@ impl ReindexDocumentUseCase {
         // the last run loses its mark.
         document.mark_ocr_pages(&ocr_pages);
         let model_identity = self.embedding_service.model_identity();
-
-        // Same bargain as the import path: with a sparse head and a store
-        // wired, one forward pass yields both representations over exactly the
-        // texts the chunk-first path would have embedded. Late chunking pools
-        // dense vectors across a span and has no equivalent for term weights,
-        // so there the sparse head is read from the chunk texts separately.
-        let sparse_wanted =
-            self.sparse_term_store.is_some() && self.embedding_service.supports_sparse();
-        let (embeddings, sparse_terms) =
-            if sparse_wanted && !self.embedding_service.uses_late_chunking() {
-                let chunk_texts: Vec<String> = document
-                    .chunks()
-                    .iter()
-                    .map(|chunk| chunk.embedding_text())
-                    .collect();
-                self.embedding_service
-                    .embed_batch_with_sparse(&chunk_texts)
-                    .await?
-            } else {
-                let dense = super::embedding_input::embed_prepared_chunks(
-                    &document,
-                    self.embedding_service.as_ref(),
-                    &spans,
-                )
-                .await?;
-                let sparse = if sparse_wanted {
-                    let chunk_texts: Vec<String> = document
-                        .chunks()
-                        .iter()
-                        .map(|chunk| chunk.embedding_text())
-                        .collect();
-                    self.embedding_service
-                        .embed_sparse_batch(&chunk_texts)
-                        .await?
-                } else {
-                    Vec::new()
-                };
-                (dense, sparse)
-            };
+        let embeddings = super::embedding_input::embed_prepared_chunks(
+            &document,
+            self.embedding_service.as_ref(),
+        )
+        .await?;
         if self.embedding_service.model_identity() != model_identity
             || embeddings.len() != document.chunks().len()
         {
@@ -362,31 +305,6 @@ impl ReindexDocumentUseCase {
                     )));
                 }
                 return Err(err);
-            }
-        }
-
-        // After the commit: the postings reference chunk ids that only exist
-        // once `document_repo.save` has replaced this document's chunk rows.
-        if let Some(store) = self.sparse_term_store.as_ref() {
-            if sparse_terms.len() == document.chunks().len() {
-                let entries: Vec<lattice_core::application::ports::ChunkSparseTerms> = document
-                    .chunks()
-                    .iter()
-                    .zip(sparse_terms.iter())
-                    .map(|(chunk, sparse)| (chunk.id().to_string(), sparse.clone()))
-                    .collect();
-                if let Err(error) = store.replace_chunk_terms(&model_identity, &entries).await {
-                    tracing::warn!(
-                        %error,
-                        "Could not persist learned sparse terms during reindex; this document will be found by the dense and BM25 branches only"
-                    );
-                }
-            } else if !sparse_terms.is_empty() {
-                tracing::warn!(
-                    expected = document.chunks().len(),
-                    received = sparse_terms.len(),
-                    "Sparse head returned an incomplete batch; reindexing without sparse terms"
-                );
             }
         }
 

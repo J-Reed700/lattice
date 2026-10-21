@@ -24,7 +24,6 @@ use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::di::IndexingPorts;
 use crate::features::indexing::engine::storage::IndexStorage;
-use crate::features::search::engine::sparse_search::SqliteSparseTermStore;
 
 // Service Traits
 use crate::features::web::{
@@ -81,11 +80,6 @@ impl IndexingModule {
         let ports = IndexingPorts {
             embedding: Arc::new(DynamicEmbedding::new(model_provider)),
             embedding_repo: Arc::clone(&embedding_repo),
-            // Learned sparse postings live beside the dense vectors. Wired
-            // unconditionally: `IndexFileUseCase` only reads a sparse head when
-            // the loaded model actually has one, so this is inert for a
-            // dense-only model.
-            sparse_term_store: Arc::new(SqliteSparseTermStore::new(db_pool.clone())),
             // Built once: the extraction adapter and the transcribe command
             // share this engine.
             transcription: crate::features::transcription::di::build(

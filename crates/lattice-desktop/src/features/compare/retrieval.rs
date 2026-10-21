@@ -1,7 +1,7 @@
 //! Chunk retrieval for one document across every requested column.
 //!
 //! Each column is searched the way chat searches the library: the hybrid
-//! search's vector, BM25 and sparse branches, fused. How much of what comes
+//! search's vector and BM25 branches, fused. How much of what comes
 //! back reaches the model is decided by grounded generation against the
 //! model's window, not here.
 //!

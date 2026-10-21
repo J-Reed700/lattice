@@ -150,7 +150,7 @@ impl EmbeddingPort for MockEmbedder {
 }
 
 /// Embedder with a real input budget: it splits a passage into fixed-width
-/// windows. `embedding_input::prepare_structured_with_spans` rebuilds the chunk list
+/// windows. `embedding_input::prepare_structured` rebuilds the chunk list
 /// from `EmbeddingPort::split_text`, so this is what actually decides how
 /// many chunks an indexed document ends up with.
 struct MockSplittingEmbedder {
@@ -185,7 +185,7 @@ impl EmbeddingPort for MockSplittingEmbedder {
                 text: text[start..end].to_string(),
                 start,
                 end,
-                // Keeps the context-prefix budget loop in `prepare_structured_with_spans`
+                // Keeps the context-prefix budget loop in `prepare_structured`
                 // from shrinking the prefix.
                 token_count: 0,
             });
@@ -426,7 +426,7 @@ async fn test_index_file_execution() {
     let response = use_case.execute(request).await.unwrap();
 
     assert!(!response.document_id.is_empty());
-    // `prepare_structured_with_spans` discards the strategy-produced chunks and rebuilds
+    // `prepare_structured` discards the strategy-produced chunks and rebuilds
     // them from `EmbeddingPort::split_text`. `MockEmbedder` keeps the port's
     // default, which returns the whole passage as a single part, and this
     // short unstructured file is one structure span, so exactly one chunk.

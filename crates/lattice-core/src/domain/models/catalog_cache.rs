@@ -2,8 +2,7 @@
 //! download is classified and when model management records one.
 
 use crate::domain::models::embedding_defaults::{
-    DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, QWEN3_EMBEDDING_MODEL_CURATED_ID,
-    QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,
+    DEFAULT_EMBEDDING_MODEL_CURATED_ID, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
 };
 use crate::domain::models::metadata::ModelType;
 use std::collections::HashMap;
@@ -42,17 +41,11 @@ impl ModelCatalogCache {
     /// This is a curated list of popular models with explicit type mappings.
     fn populate_catalog(catalog: &mut HashMap<String, ModelType>) {
         // Text Embeddings - Popular sentence transformers
-        catalog.insert("all-minilm-l6-v2".to_string(), ModelType::TextEmbeddings);
-        catalog.insert("all-minilm-l12-v2".to_string(), ModelType::TextEmbeddings);
-        catalog.insert(
-            DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string(),
-            ModelType::TextEmbeddings,
-        );
-        // Both first-run defaults, by catalog id and display name, so the
-        // classifier never has to fall back to substring guessing for either.
+        // The first-run default, by catalog id and display name, so the
+        // classifier never has to fall back to substring guessing for it.
         for name in [
-            QWEN3_EMBEDDING_MODEL_CURATED_ID,
-            QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,
+            DEFAULT_EMBEDDING_MODEL_CURATED_ID,
+            DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
         ] {
             catalog.insert(name.to_lowercase(), ModelType::TextEmbeddings);
         }
@@ -173,7 +166,7 @@ mod tests {
         let cache = ModelCatalogCache::instance();
 
         assert_eq!(
-            cache.lookup("all-minilm-l6-v2"),
+            cache.lookup("qwen3-embedding-0.6b"),
             Some(ModelType::TextEmbeddings)
         );
         assert_eq!(
@@ -195,7 +188,7 @@ mod tests {
         let cache = ModelCatalogCache::instance();
 
         assert_eq!(
-            cache.lookup("ALL-MiniLM-L6-v2"),
+            cache.lookup("QWEN3-Embedding-0.6B"),
             Some(ModelType::TextEmbeddings)
         );
         assert_eq!(
@@ -209,7 +202,7 @@ mod tests {
         let cache = ModelCatalogCache::instance();
 
         assert_eq!(
-            cache.lookup("  all-minilm-l6-v2  "),
+            cache.lookup("  qwen3-embedding-0.6b  "),
             Some(ModelType::TextEmbeddings)
         );
     }
@@ -227,7 +220,7 @@ mod tests {
         let cache = ModelCatalogCache::instance();
 
         let embeddings = vec![
-            "all-minilm-l6-v2",
+            "qwen3-embedding-0.6b",
             "bge-large-en-v1.5",
             "e5-large-v2",
             "gte-base",
@@ -278,7 +271,7 @@ mod tests {
                 thread::spawn(|| {
                     let cache = ModelCatalogCache::instance();
                     for _ in 0..100 {
-                        let _ = cache.lookup("all-minilm-l6-v2");
+                        let _ = cache.lookup("qwen3-embedding-0.6b");
                         let _ = cache.lookup("llama-2-7b-chat");
                         let _ = cache.lookup("unknown-model");
                     }
@@ -292,7 +285,7 @@ mod tests {
         }
 
         assert_eq!(
-            cache.lookup("all-minilm-l6-v2"),
+            cache.lookup("qwen3-embedding-0.6b"),
             Some(ModelType::TextEmbeddings)
         );
     }

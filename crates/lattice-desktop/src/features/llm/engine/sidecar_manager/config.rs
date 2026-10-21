@@ -76,6 +76,19 @@ pub struct SidecarConfig {
     /// The vision projector to load beside the model (`--mmproj`), when the
     /// model may see and its catalog projector is downloaded.
     pub projector_path: Option<PathBuf>,
+
+    /// `Some` for an embedding server of this GGUF rather than a chat one.
+    /// Part of the key, so a chat and an embedding server of one file would
+    /// be two processes (no GGUF is both).
+    pub embedding: Option<EmbeddingServing>,
+}
+
+/// How an embedding server is launched beyond its window and slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EmbeddingServing {
+    /// `-b` and `-ub`: the per-slot window, so a non-causal model sees each
+    /// input in one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens`).
+    pub ubatch: u32,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -418,6 +431,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
+            embedding: None,
         }
     }
 
@@ -464,6 +478,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
+            embedding: None,
         }
     }
 }

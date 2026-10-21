@@ -62,14 +62,9 @@ notify-debouncer-full = "0.3"
 sqlx = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-# The reranker and embeddings both use Candle; the chat LLM runs in the
-# bundled llama-server sidecar.
-# (cross-encoder/ms-marco-MiniLM-L-6-v2). Embeddings already use Candle
-# (see features/embedding/candle_service.rs). With this removal Lattice
-# ships exactly one tensor framework — Candle — for both embedding and
-# reranker inference, with the bundled llama-server sidecar handling
-# the chat LLM. ~50MB removed from the binary; no more two-allocator
-# split between ORT's C++ runtime and Candle's pure-Rust runtime.
+# Candle runs the reranker (cross-encoder/ms-marco-MiniLM-L-6-v2 and
+# Qwen3-Reranker) and Whisper; the chat LLMs and the embedding model run in
+# bundled llama-server sidecars.
 # Drop tokenizers' default features to avoid `esaxx_fast`, which builds esaxx-rs
 # with `.static_crt(true)` (/MT). That collides with cxx/usearch using /MD on
 # Windows MSVC and the linker fails with LNK1319 "RuntimeLibrary mismatch".

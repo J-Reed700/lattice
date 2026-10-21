@@ -13,19 +13,15 @@
 //!    where the production `chunks_fts_insert` trigger mirrors them into both FTS5 tables.
 //! 4. `HybridSearchUseCase` — the orchestrator chat, the tool executor and the search page run —
 //!    is composed the way `features::search::di::build` composes it, and searches each query
-//!    exactly as chat's first pass searches one planned query: the vector and BM25 branches (and
-//!    the learned sparse one, with `--sparse on`), weighted reciprocal-rank fusion (k = 10 by
-//!    default) with chat's per-document cap. With a reranker, the fused pool is widened as chat
+//!    exactly as chat's first pass searches one planned query: the vector and BM25 branches,
+//!    weighted reciprocal-rank fusion (k = 10 by default) with chat's per-document cap. With a reranker, the fused pool is widened as chat
 //!    widens it and passed through the same cross-encoder stage chat calls, at chat's default
 //!    candidate cap and query budget.
 //! 5. Neighbouring-section evidence expansion mirrors `chat::retrieval::corpus_plan`.
 //! 6. `chat::retrieval::assess_retrieval_sufficiency` judges the ranking, so a run row carries
 //!    the verdict the chat pipeline would have acted on.
 //!
-//! `--strategy late-chunking` embeds each document in one forward pass and pools each chunk's
-//! token states, mirroring `indexing::use_cases::embedding_input`. `--compression` configures
-//! the USearch index's stored vector layout. `--sparse` adds the learned sparse branch, which
-//! needs a model with a sparse head.
+//! `--compression` configures the USearch index's stored vector layout.
 //!
 //! What a chat turn adds on top of this, and the harness leaves out: the corpus planner's query
 //! rewrites (each query here is searched as written, as one planned query), HyDE text in the
@@ -42,15 +38,12 @@
 use lattice::features::conversation::chat::retrieval::{
     assess_retrieval_sufficiency, RetrievalSufficiency,
 };
-use lattice::features::embedding::candle_service::CandleEmbeddingService;
+use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
 use lattice::features::indexing::engine::chunker::{
     context_prefix, ChunkerConfig, SemanticChunker,
 };
 use lattice::features::indexing::engine::metadata_extractor::extract_metadata;
 use lattice::features::search::engine::reranker::Reranker;
-use lattice::features::search::engine::sparse_search::{
-    SparseSearchService, SqliteSparseTermStore,
-};
 use lattice::features::search::engine::text_search::SqliteTextSearch;
 use lattice::features::search::use_cases::HybridSearchUseCase;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
@@ -61,14 +54,11 @@ use lattice_core::application::contracts::search::{
     BranchKind, RerankOptions, SearchModeDto, SearchRequestDto,
 };
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
-use lattice_core::application::ports::{
-    ChunkSparseTerms, EmbeddingPort, SparseSearchTrait, SparseTermStorePort, VectorSearchPort,
-};
+use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -80,8 +70,7 @@ const EVIDENCE_ANCHORS: usize = 8;
 /// The columns the search services actually read, plus the FTS5 tables, copied from
 /// `migrations/20260916000000_init_schema.sql` and `20261012090000_fts_header_column.sql`.
 /// `owner_conversation_id` is what a vault-wide search reads to leave chat attachments out; every
-/// fixture document is a library document. The sparse posting table is created unconditionally
-/// and simply stays empty when the branch is off. The insert trigger is chosen by [`FtsHeader`].
+/// fixture document is a library document. The insert trigger is chosen by [`FtsHeader`].
 const SCHEMA: &str = "
 CREATE TABLE documents (
     id TEXT PRIMARY KEY,
@@ -120,15 +109,6 @@ CREATE VIRTUAL TABLE chunks_trigram USING fts5(
     header,
     tokenize='trigram'
 );
-CREATE TABLE IF NOT EXISTS chunk_sparse_terms (
-    chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE,
-    model_identity TEXT NOT NULL,
-    term_id INTEGER NOT NULL,
-    weight REAL NOT NULL,
-    PRIMARY KEY (chunk_id, model_identity, term_id)
-);
-CREATE INDEX IF NOT EXISTS idx_chunk_sparse_terms_lookup
-    ON chunk_sparse_terms(model_identity, term_id);
 ";
 
 /// The production insert trigger: the context prefix in its own `header` column.
@@ -211,13 +191,6 @@ struct PreparedChunk {
     section: Option<String>,
 }
 
-/// One document's late-chunking input: the span text and the byte range of each of its
-/// chunks inside it, exactly the pair `EmbeddingPort::embed_span_chunks` expects.
-struct SpanGroup {
-    span_text: String,
-    chunk_ranges: Vec<Range<usize>>,
-}
-
 pub struct ProductionIndex {
     pool: SqlitePool,
     search: HybridSearchUseCase,
@@ -255,7 +228,6 @@ pub struct Ranking {
 #[derive(Debug, Clone)]
 pub struct IndexOptions {
     pub compression: VectorIndexCompression,
-    pub sparse_enabled: bool,
     /// Reciprocal-rank-fusion constant; the application uses `DEFAULT_RRF_K` (10).
     pub rrf_k: f32,
     /// Branch weights of the hybrid request; the application uses 0.7 / 0.3.
@@ -269,8 +241,8 @@ pub struct IndexOptions {
 
 impl ProductionIndex {
     pub async fn build(
-        model: Arc<CandleEmbeddingService>,
-        embedding_dir: &Path,
+        model: Arc<LlamaEmbeddingService>,
+        tokenizer: &Path,
         documents: &[Document],
         reranker: Option<Arc<dyn Reranker>>,
         top_k: usize,
@@ -278,7 +250,6 @@ impl ProductionIndex {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let IndexOptions {
             compression,
-            sparse_enabled,
             rrf_k,
             vector_weight,
             keyword_weight,
@@ -298,7 +269,7 @@ impl ProductionIndex {
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
         sqlx::raw_sql(fts_header.trigger()).execute(&pool).await?;
 
-        let tokenizer = Arc::new(load_tokenizer(&embedding_dir.join("tokenizer.json"))?);
+        let tokenizer = Arc::new(load_tokenizer(tokenizer)?);
         let chunker = SemanticChunker::new(tokenizer, ChunkerConfig::default())?;
         let dimension = EmbeddingPort::dimension(&*model);
         // `VectorIndexCompression::None` is what `USearchVectorIndex::new` passes, so an
@@ -308,9 +279,7 @@ impl ProductionIndex {
             None,
             compression,
         )?);
-        let late_chunking = EmbeddingPort::uses_late_chunking(&*model);
         let model_identity = EmbeddingPort::model_identity(&*model);
-        let sparse_store = SqliteSparseTermStore::new(pool.clone());
 
         let mut entries = Vec::new();
         let mut chunk_positions = HashMap::new();
@@ -334,35 +303,9 @@ impl ProductionIndex {
 
             let prepared = prepare_chunks(&model, &chunker, &title, &file_name, &document.text)?;
             // The texts `IndexingActor` hands the embedder: prefix plus chunk, once each.
-            let contextualized_texts: Vec<String> = prepared
-                .iter()
-                .map(|p| p.chunk.contextualized_content.clone())
-                .collect();
-            // The same split `index_file::index` makes. Chunk-first gets both representations
-            // from one forward pass; late chunking pools dense vectors over a whole span and
-            // has no equivalent pooling for term weights, so the sparse head reads the
-            // per-chunk texts in a second pass.
-            let (embeddings, sparse_terms) = match (sparse_enabled, late_chunking) {
-                (false, false) => {
-                    let contextualized: Vec<ContextualizedChunk> =
-                        prepared.iter().map(|p| p.chunk.clone()).collect();
-                    (
-                        embed_cached(&model, &model_identity, &contextualized).await?,
-                        Vec::new(),
-                    )
-                }
-                (false, true) => (
-                    embed_spans(&model, &prepared, &document.text).await?,
-                    Vec::new(),
-                ),
-                (true, false) => {
-                    EmbeddingPort::embed_batch_with_sparse(&*model, &contextualized_texts).await?
-                }
-                (true, true) => (
-                    embed_spans(&model, &prepared, &document.text).await?,
-                    EmbeddingPort::embed_sparse_batch(&*model, &contextualized_texts).await?,
-                ),
-            };
+            let contextualized: Vec<ContextualizedChunk> =
+                prepared.iter().map(|p| p.chunk.clone()).collect();
+            let embeddings = embed_cached(&model, &model_identity, &contextualized).await?;
             if embeddings.len() != prepared.len() {
                 return Err(format!(
                     "document {} produced {} chunks but {} embeddings",
@@ -372,19 +315,6 @@ impl ProductionIndex {
                 )
                 .into());
             }
-            // A short sparse batch would key one chunk's terms to another chunk's id, which
-            // is worse than having no sparse rows at all. `index_file` warns and drops; an
-            // evaluation run must not quietly measure a corrupted index.
-            if sparse_enabled && sparse_terms.len() != prepared.len() {
-                return Err(format!(
-                    "document {} produced {} chunks but {} sparse term vectors",
-                    document.id,
-                    prepared.len(),
-                    sparse_terms.len()
-                )
-                .into());
-            }
-            let mut sparse_entries: Vec<ChunkSparseTerms> = Vec::new();
             for (item, embedding) in prepared.into_iter().zip(embeddings) {
                 let chunk_id = format!("{}::{}", document.id, item.chunk.chunk_index);
                 sqlx::query(
@@ -410,9 +340,6 @@ impl ProductionIndex {
                     format!("{}#{}", document.id, item.chunk.chunk_index),
                     (item.chunk.start_idx, item.chunk.end_idx),
                 );
-                if let Some(sparse) = sparse_terms.get(item.chunk.chunk_index) {
-                    sparse_entries.push((chunk_id.clone(), sparse.clone()));
-                }
                 entries.push(VectorIndexEntry {
                     // The DB convention the USearch index expects: emb_<chunk_id>.
                     id: format!("emb_{chunk_id}"),
@@ -421,11 +348,6 @@ impl ProductionIndex {
                     chunk_id,
                     document_id: document.id.clone(),
                 });
-            }
-            if !sparse_entries.is_empty() {
-                sparse_store
-                    .replace_chunk_terms(&model_identity, &sparse_entries)
-                    .await?;
             }
         }
         if entries.is_empty() {
@@ -441,8 +363,7 @@ impl ProductionIndex {
         index.publish_embeddings(entries)?;
 
         // Composed as `features::search::di::build` composes the application's: the same
-        // keyword index and chunk repository over the same schema, the sparse branch behind its
-        // switch, and the shared reranker. Only the embedder differs: the app wraps whichever
+        // keyword index and chunk repository over the same schema, and the shared reranker. Only the embedder differs: the app wraps whichever
         // model is loaded, the harness hands in this one.
         let mut search = HybridSearchUseCase::new(
             Arc::clone(&model) as Arc<dyn EmbeddingPort>,
@@ -451,15 +372,6 @@ impl ProductionIndex {
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone())))
         .with_rrf_k(rrf_k);
-        if sparse_enabled {
-            search = search.with_sparse_search(
-                Arc::new(SparseSearchService::new(
-                    pool.clone(),
-                    Arc::clone(&model) as Arc<dyn EmbeddingPort>,
-                )) as Arc<dyn SparseSearchTrait>,
-                true,
-            );
-        }
         let reranks = reranker.is_some();
         if let Some(reranker) = reranker {
             search = search.with_reranker(reranker);
@@ -580,9 +492,8 @@ impl ProductionIndex {
     }
 
     /// Each branch the fusion saw for this query, collapsed to its document ranking, so a
-    /// regression can be blamed on the vector side, the lexical side or the sparse side instead
-    /// of on "retrieval". Keyed `vector`, `bm25` and, when that branch ran, `sparse`; a branch
-    /// that failed is absent.
+    /// regression can be blamed on the vector side or the lexical side instead of on
+    /// "retrieval". Keyed `vector` and `bm25`; a branch that failed is absent.
     pub async fn branch_documents(
         &self,
         query_text: &str,
@@ -604,7 +515,6 @@ impl ProductionIndex {
             let key = match branch.kind {
                 BranchKind::Vector => "vector",
                 BranchKind::Lexical => "bm25",
-                BranchKind::Sparse => "sparse",
                 BranchKind::Fused => continue,
             };
             let mut seen = HashSet::new();
@@ -682,73 +592,19 @@ impl ProductionIndex {
     }
 }
 
-/// Group prepared chunks into late-chunking spans, mirroring
-/// `indexing::use_cases::embedding_input::prepare_structured_with_spans`: the span text is
-/// the passage with its context prefix prepended exactly once, and each range addresses a
-/// chunk's bytes inside that span, so the prefix conditions the pass without ever being
-/// pooled into a chunk.
-///
-/// Here the passage is the whole document, because `prepare_chunks` records `start_idx` and
-/// `end_idx` against the document text; the ranges are those offsets shifted by the prefix.
-/// A document whose chunks were filed under different sections carries more than one prefix,
-/// and each prefix opens its own span rather than embedding a chunk under a neighbour's
-/// heading. On these fixtures a document almost always has exactly one.
-fn span_groups(prepared: &[PreparedChunk], text: &str) -> Vec<SpanGroup> {
-    let mut groups: Vec<SpanGroup> = Vec::new();
-    let mut current: Option<&str> = None;
-    for item in prepared {
-        let prefix = item.chunk.context_prefix.as_str();
-        if current != Some(prefix) {
-            groups.push(SpanGroup {
-                span_text: format!("{prefix}\n\n{text}"),
-                chunk_ranges: Vec::new(),
-            });
-            current = Some(prefix);
-        }
-        // `prepare_chunks` splits with `format!("{prefix}\n\n")`, so that is the prefix
-        // whose length the chunk offsets shift by.
-        let offset = prefix.len() + 2;
-        if let Some(group) = groups.last_mut() {
-            group
-                .chunk_ranges
-                .push(offset + item.chunk.start_idx..offset + item.chunk.end_idx);
-        }
-    }
-    groups
-}
-
-/// One vector per prepared chunk, in chunk order, from the late-chunking path.
-///
-/// `embed_span_chunks` falls back to per-chunk embedding internally when a span does not fit
-/// the model window, so a long document still yields a full set of vectors.
-async fn embed_spans(
-    model: &CandleEmbeddingService,
-    prepared: &[PreparedChunk],
-    text: &str,
-) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
-    let mut vectors = Vec::with_capacity(prepared.len());
-    for group in span_groups(prepared, text) {
-        vectors.extend(
-            EmbeddingPort::embed_span_chunks(model, &group.span_text, &group.chunk_ranges).await?,
-        );
-    }
-    Ok(vectors)
-}
-
-/// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
-/// Chunk-first embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
+/// Chunk embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
 /// names a directory. Embedding the corpus is most of a run's wall time, and a
 /// change to search, fusion or the index does not alter a single vector, so a
 /// cached run takes seconds. The key covers the model and the exact text, not
 /// the embedding code: clear the directory after changing how text is embedded.
 async fn embed_cached(
-    model: &CandleEmbeddingService,
+    model: &LlamaEmbeddingService,
     model_identity: &str,
     chunks: &[ContextualizedChunk],
 ) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
     use sha2::{Digest, Sha256};
     let Some(dir) = std::env::var_os("RETRIEVAL_EVAL_EMBED_CACHE").map(PathBuf::from) else {
-        return Ok(model.embed_contextualized_chunks(chunks).await?);
+        return Ok(embed_chunks(model, chunks).await?);
     };
     std::fs::create_dir_all(&dir)?;
     let paths: Vec<PathBuf> = chunks
@@ -777,7 +633,7 @@ async fn embed_cached(
     if let Some(vectors) = cached {
         return Ok(vectors);
     }
-    let vectors = model.embed_contextualized_chunks(chunks).await?;
+    let vectors = embed_chunks(model, chunks).await?;
     for (path, vector) in paths.iter().zip(&vectors) {
         let bytes: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
         std::fs::write(path, bytes)?;
@@ -785,8 +641,21 @@ async fn embed_cached(
     Ok(vectors)
 }
 
+/// Each chunk's contextualized text, embedded in one batch as indexing sends it.
+async fn embed_chunks(
+    model: &LlamaEmbeddingService,
+    chunks: &[ContextualizedChunk],
+) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
+    let texts: Vec<String> = chunks
+        .iter()
+        .map(|chunk| chunk.contextualized_content.clone())
+        .collect();
+    model.embed_batch(&texts).await
+}
+
+/// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
 fn prepare_chunks(
-    model: &CandleEmbeddingService,
+    model: &LlamaEmbeddingService,
     chunker: &SemanticChunker,
     title: &str,
     file_name: &str,

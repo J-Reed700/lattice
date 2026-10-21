@@ -85,6 +85,8 @@ fn main() {
                     "download_model",
                     "check_first_run_status",
                     "download_default_embedding_model",
+                    "list_leftover_embedding_files",
+                    "remove_leftover_embedding_files",
                     "delete_model",
                     "list_downloaded_models",
                     "is_model_already_downloaded",

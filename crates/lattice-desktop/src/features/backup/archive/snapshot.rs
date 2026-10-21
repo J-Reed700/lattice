@@ -33,7 +33,6 @@ pub const EXCLUDED_TABLES: &[&str] = &[
     "text_embeddings",
     "image_embeddings",
     "conversation_memory_vectors",
-    "chunk_sparse_terms",
     "cluster_members",
     "clusters",
     "cluster_runs",
@@ -264,9 +263,8 @@ pub async fn snapshot_database(
     // re-derivable, so we do not care about the order the rows disappear in.
     // (For the record, `PRAGMA foreign_key_list` on them gives
     // text_embeddings -> text_chunks, image_embeddings -> documents,
-    // conversation_memory_vectors -> conversations, chunk_sparse_terms ->
-    // text_chunks, cluster_members -> clusters/documents, clusters ->
-    // cluster_runs.
+    // conversation_memory_vectors -> conversations, cluster_members ->
+    // clusters/documents, clusters -> cluster_runs.
     // The list above is already child-before-parent, so the order would be
     // safe even with enforcement on.)
     let options = SqliteConnectOptions::new()
