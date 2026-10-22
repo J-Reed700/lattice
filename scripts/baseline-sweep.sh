@@ -213,14 +213,14 @@ if [[ -f $DIR/done/build ]] && ! (cd $DIR/bin && shasum -a 256 -s -c SHA256SUMS)
   exit 2
 fi
 
-EMB=$HOME/.cache/lattice/models/qwen3-embedding-0.6b
+EMB=$HOME/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf
 V3=evals/retrieval/synthetic-library-v3.json
 TERSE=evals/retrieval/synthetic-library-v3-terse.json
 CHAT_RECIPE=evals/retrieval/shipped-path-recipe-9b-local.json
 CHAT_OUT=evals/retrieval/results/chat/qwen3.5-9b-local/$DATE-shipped-path-desktop-path-v1
 COURSE_RECIPE=evals/courses/recipes/course-eval-9b-local.json
 CLAIM_GOLD=evals/grounding/lesson-claims-w1/gold-w1.jsonl
-RETRIEVAL_FLAGS=(--mode production --top-k 10 --compression none --sparse off)
+RETRIEVAL_FLAGS=(--mode production --top-k 10 --compression none)
 
 JUDGE_TAG=${LATTICE_JUDGE_TAG:-}
 if [[ -z $JUDGE_TAG && -n ${LATTICE_JUDGE_MODEL:-} ]]; then
@@ -375,8 +375,8 @@ step_retrieval_v3() {
   mkdir -p $work $DIR/embed-cache
   claim_output $out-run.jsonl $out-metrics.json
   cd $CRATE || return 1
-  say "+ (crates/lattice-desktop) RETRIEVAL_EVAL_EMBED_CACHE=${DIR#$REPO/}/embed-cache retrieval_eval ${RETRIEVAL_FLAGS[*]} $EMB ../../$V3"
-  RETRIEVAL_EVAL_EMBED_CACHE=$DIR/embed-cache $RET_BIN $RETRIEVAL_FLAGS $EMB ../../$V3 > $work/v3-run.jsonl.tmp || return 1
+  say "+ (crates/lattice-desktop) LATTICE_EMBED_GGUF=$EMB RETRIEVAL_EVAL_EMBED_CACHE=${DIR#$REPO/}/embed-cache retrieval_eval ${RETRIEVAL_FLAGS[*]} ../../$V3"
+  LATTICE_EMBED_GGUF=$EMB RETRIEVAL_EVAL_EMBED_CACHE=$DIR/embed-cache $RET_BIN $RETRIEVAL_FLAGS ../../$V3 > $work/v3-run.jsonl.tmp || return 1
   mv $work/v3-run.jsonl.tmp $work/v3-run.jsonl
   cd $REPO
   say "+ python3 scripts/rag_eval.py $V3 <run> --k 5"
@@ -401,8 +401,8 @@ step_retrieval_terse() {
   say "+ python3 scripts/terse_slice.py build $TERSE <work>/terse.json"
   python3 scripts/terse_slice.py build $TERSE $work/terse.json || return 1
   cd $CRATE || return 1
-  say "+ (crates/lattice-desktop) RETRIEVAL_EVAL_EMBED_CACHE=${DIR#$REPO/}/embed-cache retrieval_eval ${RETRIEVAL_FLAGS[*]} $EMB <work>/terse.json"
-  RETRIEVAL_EVAL_EMBED_CACHE=$DIR/embed-cache $RET_BIN $RETRIEVAL_FLAGS $EMB $work/terse.json > $work/terse-run.jsonl.tmp || return 1
+  say "+ (crates/lattice-desktop) LATTICE_EMBED_GGUF=$EMB RETRIEVAL_EVAL_EMBED_CACHE=${DIR#$REPO/}/embed-cache retrieval_eval ${RETRIEVAL_FLAGS[*]} <work>/terse.json"
+  LATTICE_EMBED_GGUF=$EMB RETRIEVAL_EVAL_EMBED_CACHE=$DIR/embed-cache $RET_BIN $RETRIEVAL_FLAGS $work/terse.json > $work/terse-run.jsonl.tmp || return 1
   mv $work/terse-run.jsonl.tmp $work/terse-run.jsonl
   cd $REPO
   say "+ python3 scripts/terse_slice.py compare $TERSE <v3 run> <terse run>"

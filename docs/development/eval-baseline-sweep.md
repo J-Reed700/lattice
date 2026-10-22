@@ -27,7 +27,7 @@ A judge's pass rate is a smoke signal until a person has checked a sample of its
 
 - A clean tree at the commit to measure.
 - `crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin`. A fresh worktree needs `crates/lattice-desktop/binaries/` copied in from the main checkout.
-- The 9B weights at `~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf`, and the embedding model at `~/.cache/lattice/models/qwen3-embedding-0.6b`.
+- The 9B weights at `~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf`, and the embedding model's GGUF at `~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf`, with its `tokenizer.json` beside it.
 - Port 8089 free. The sweep starts the 9B itself and refuses to start if anything else is listening there. Do not run the chat eval, the course e2e test or another sweep at the same time; the sweep holds `artifacts/baseline/.lock`.
 - The app's settings file (`~/Library/Application Support/tech.lattice.app/settings.json`, or `LATTICE_APP_SETTINGS`). The claim step copies it.
 - Disk space for an `evalopt` build next to the debug build, and for the course run (about 4M input tokens of model calls kept per lesson).
@@ -53,7 +53,7 @@ No committed file names a server address or key. The script never prints the aut
 | # | Step | What it runs | Model | Last known duration |
 |---|---|---|---|---|
 | 0 | `build` | `cargo test --lib --no-run`, `cargo test --test conversation_memory_evals --no-run`, `cargo build --example shipped_path_eval`, and the `evalopt` build of `retrieval_eval`. Copies all four into `bin/` | none | not recorded |
-| 1 | `retrieval-v3` | `retrieval_eval --mode production --top-k 10 --compression none --sparse off` on synthetic-library v3, scored with `rag_eval.py --k 5` | embedding model only | Embedding the corpus is "about seven minutes of a run" ([2026-09-19 results](../../evals/retrieval/2026-09-19-V3-MODERNIZATION-RESULTS.md#re-running)). The sweep's embedding cache starts empty |
+| 1 | `retrieval-v3` | `LATTICE_EMBED_GGUF=<the GGUF> retrieval_eval --mode production --top-k 10 --compression none` on synthetic-library v3, scored with `rag_eval.py --k 5` | embedding model only | Embedding the corpus is "about seven minutes of a run" ([2026-09-19 results](../../evals/retrieval/2026-09-19-V3-MODERNIZATION-RESULTS.md#re-running)). The sweep's embedding cache starts empty |
 | 2 | `retrieval-terse` | `terse_slice.py check` and `build`, the same retrieval run on the slice, then `terse_slice.py compare` against step 1's run | embedding model only | With the cache filled, a repeat run "takes about fifteen seconds" (same source) |
 | 3 | `chat-answers` | Starts the 9B from `shipped-path-recipe-9b-local.json`'s `server.launch` (16K). Runs `shipped_path_eval` on `desktop-path-v1`, stops the server, and gzips the call log | local 9B | 2026-10-20, 38 items: 76 min. 2026-10-13, 34 items: 46 min (`started_at`/`finished_at` in each run's `.run.json`). Indexing v3 takes "about 5.5 minutes" of that ([shipped-path baseline](../../evals/retrieval/2026-10-12-SHIPPED-PATH-BASELINE.md#reproduce)) |
 | 4 | `chat-score` | `shipped_path_eval.py score` with the remote judge | remote judge | not recorded |
