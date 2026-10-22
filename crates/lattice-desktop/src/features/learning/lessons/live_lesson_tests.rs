@@ -26,8 +26,10 @@ mod small;
 #[path = "live_web_trace.rs"]
 mod web_trace;
 
+/// The configured llama.cpp model as the app reaches it, every answer
+/// recorded under `directory`.
 struct ObservedModel {
-    inner: LlamaCppLlm,
+    inner: Arc<dyn LLMPort>,
     directory: std::path::PathBuf,
     call: std::sync::atomic::AtomicUsize,
 }
@@ -48,11 +50,7 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let mut cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "content_verification/claim_prerequisite_cases.json"
     ))?;
@@ -154,11 +152,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let mut cases = Vec::new();
     for (text, selected, omitted, unrelated) in [
         (
@@ -207,6 +201,35 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
 }
 
 impl ObservedModel {
+    /// `settings`' llama.cpp model as the app's factory builds it: behind its
+    /// server's scheduler, which measures the backend's pace and calibrates
+    /// the token estimate from its answers, with the server's tokenizer for
+    /// exact counts. The bare engine has none of these: a course eval run on
+    /// it had no pace, so every claim page filled the window, and sized
+    /// every check by the uncalibrated estimate. Calls are numbered from
+    /// `first_call`.
+    async fn new(
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
+        directory: std::path::PathBuf,
+        first_call: usize,
+    ) -> Result<Self> {
+        let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
+        let inner = LlamaCppLlm::new(settings)?.schedule(&schedulers).await;
+        Ok(Self::observing(inner, directory, first_call))
+    }
+
+    fn observing(
+        inner: Arc<dyn LLMPort>,
+        directory: std::path::PathBuf,
+        first_call: usize,
+    ) -> Self {
+        Self {
+            inner,
+            directory,
+            call: std::sync::atomic::AtomicUsize::new(first_call),
+        }
+    }
+
     fn record(
         &self,
         call: usize,
@@ -268,15 +291,97 @@ impl LLMPort for ObservedModel {
     fn count_tokens(&self, text: &str) -> usize {
         self.inner.count_tokens(text)
     }
+    fn chars_per_token(&self) -> f64 {
+        self.inner.chars_per_token()
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        self.inner.count_tokens_exact(text).await
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        self.inner.counts_tokens_exactly()
+    }
     fn max_context_tokens(&self) -> usize {
         self.inner.max_context_tokens()
     }
     fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
         self.inner.pace()
     }
+    fn requests(&self) -> Option<lattice_core::application::ports::llm_port::RequestLoad> {
+        self.inner.requests()
+    }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+}
+
+/// A backend that reports each answer's timing, as llama-server does: it
+/// reads 400 prompt tokens a second and writes 20.
+struct TimedBackend;
+
+#[async_trait::async_trait]
+impl LLMPort for TimedBackend {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            timing: Some(lattice_core::application::ports::llm_port::ServedTiming {
+                prompt_tokens: 30_000,
+                prompt_seconds: 75.0,
+                output_tokens: 172,
+                output_seconds: 8.6,
+            }),
+            ..CompletionResponse::from_text("supported")
+        })
+    }
+    fn model_name(&self) -> &str {
+        "timed"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The course eval of 2026-10-21 observed the bare engine, which measures no
+/// pace, so every claim page was bounded by the 32,768-token window alone.
+/// Observed as the app reaches it, the model measures its pace from its
+/// first answer, and the page that pace sizes is a small part of the window.
+#[tokio::test]
+async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
+    use crate::features::learning::content_verification::page_budget;
+    use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
+    use lattice_core::application::ports::llm_port::CompletionInput;
+    let directory = tempfile::tempdir()?;
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "timed",
+        BackendCapacity::concurrent(1),
+    ));
+    let model = ObservedModel::observing(
+        Arc::new(ScheduledLlm::new(Arc::new(TimedBackend), scheduler, 512)),
+        directory.path().to_path_buf(),
+        0,
+    );
+    assert_eq!(model.pace(), None, "nothing is measured before an answer");
+    model
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "Check this claim.".into(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let pace = model
+        .pace()
+        .expect("the backend's own timing measures the pace");
+    // 172 answer tokens a claim × 400 prompt tokens/s ÷ 20 output tokens/s.
+    let page = page_budget(Some(pace), Some(172.0)).expect("a measured pace sizes a page");
+    assert_eq!(page, 3_440);
+    assert!(
+        page * 8 < model.max_context_tokens(),
+        "a page is a small part of the window, not the window"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -292,11 +397,7 @@ async fn live_source_passage_judgments() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_CLAIM_CASES").unwrap(),
     )?)?;
@@ -422,11 +523,7 @@ async fn live_reference_selection() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let cases: Vec<serde_json::Value> = match std::env::var("LATTICE_REFERENCE_CASES") {
         Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
         Err(_) => {
@@ -478,11 +575,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_TEACHING_REVIEW_CALL").unwrap(),
     )?)?;
@@ -576,11 +669,7 @@ async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_COVERAGE_CALL").unwrap(),
     )?)?;
@@ -656,11 +745,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let model = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    };
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
     let draft: crate::features::learning::lesson_drafts::Draft = serde_json::from_slice(
         &std::fs::read(std::env::var("LATTICE_REVIEW_DRAFT").unwrap())?,
     )?;
@@ -809,11 +894,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let llm: Arc<dyn LLMPort> = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: std::sync::atomic::AtomicUsize::new(0),
-    });
+    let llm: Arc<dyn LLMPort> = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
         .foreign_keys(true)

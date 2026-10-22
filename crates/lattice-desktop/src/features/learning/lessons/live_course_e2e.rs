@@ -93,11 +93,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let model = Arc::new(ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
-        directory: directory.clone(),
-        call: Default::default(),
-    });
+    let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let web_directory = directory.join("web");
     std::fs::create_dir_all(&web_directory)?;
     let web = WebService::new(&web_directory)?;
