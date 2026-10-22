@@ -97,8 +97,12 @@ pub struct ClaimLocation {
     pub field: String,
     /// The exact lesson text the claim was extracted from.
     pub quote: String,
-    /// Byte span of `quote` in the field; `None` when the quote occurs more
-    /// than once (or not at all), so no single place can be named.
+    /// Byte span of `quote` in the field. A claim located to its sentence
+    /// (`lattice_core::shared::text::claim_sentence`) keeps the span the
+    /// locator found, so a short sentence that recurs elsewhere in the field
+    /// still has its one place; otherwise the span of the quote's only
+    /// occurrence, and `None` when it occurs more than once (or not at all),
+    /// so no single place can be named.
     pub span: Option<(usize, usize)>,
 }
 
@@ -173,13 +177,13 @@ impl VerdictKind {
         }
     }
 
-    /// A failure the machine may research and rewrite: no passage supports
-    /// the claim, one contradicts it, or its support is below the bar.
+    /// A failure the machine may rewrite: no passage supports the claim, or
+    /// one contradicts it. A claim whose support is below the bar is never
+    /// rewritten or removed for lack of standing (claim sources design
+    /// §10.4): research may look for a stronger source, then it waits for
+    /// the user.
     pub fn is_repairable(&self) -> bool {
-        matches!(
-            self,
-            Self::Unsupported | Self::Contradicted | Self::InsufficientStanding { .. }
-        )
+        matches!(self, Self::Unsupported | Self::Contradicted)
     }
 
     /// A passage, the local checker's or the Verifier's, says otherwise.
@@ -258,8 +262,14 @@ pub enum ClaimState {
     /// The sentence or claim was deleted.
     Removed { at: i64, by: Actor },
     /// The text changed; the successor claim owns the state. `None` is
-    /// "removed by the edit".
-    Edited { at: i64, successor: Option<ClaimId> },
+    /// "removed by the edit". `by`: who changed the text, the user's edit or
+    /// the machine's repair (claim sources design §11).
+    Edited {
+        at: i64,
+        successor: Option<ClaimId>,
+        #[serde(default)]
+        by: Actor,
+    },
     /// The general-knowledge label, accepted (D1).
     GeneralKnowledge { at: i64, by: Actor },
     /// A closed claim reopened; it waits for the user like `Queued`.
@@ -309,10 +319,12 @@ impl ClaimState {
     }
 }
 
-/// Who did something.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Who did something. Defaults to the machine: an event recorded before
+/// it said who acted was the machine's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
+    #[default]
     Machine,
     User,
 }
@@ -458,6 +470,10 @@ pub enum RepairOutcome {
     /// The user edited the unit meanwhile; the result was discarded and the
     /// attempt is not charged (§9).
     SupersededByUser,
+    /// The machine did not rewrite the sentence: it also states something
+    /// verified or waiting for the user, so the claim waits for the user at
+    /// once, with no attempt charged (claim sources design §18.5).
+    NotAttempted { reason: String },
 }
 
 /// What the user attached as evidence (§5.4).
@@ -597,9 +613,20 @@ pub enum ClaimEvent {
         result: AttachOutcome,
     },
     /// Re-extraction found the claim's successor (`None`: no successor, the
-    /// sentence went with the edit).
+    /// sentence went with the edit). `by`: whose edit, the user's or the
+    /// machine's repair.
     Superseded {
         successor: Option<ClaimId>,
+        #[serde(default)]
+        by: Actor,
+    },
+    /// The claim was born of a repair of `parent` (claim sources design
+    /// §9.1): a sentence the rewrite added beside the parent's successor. It
+    /// starts with the parent's remaining attempts, so a split sentence adds
+    /// no budget.
+    BornOfRepair {
+        parent: ClaimId,
+        attempts_left: u8,
     },
     Reopened {
         cause: ReopenCause,
@@ -634,6 +661,7 @@ impl ClaimEvent {
             Self::UserAction { .. } => "user_action",
             Self::EvidenceAttached { .. } => "evidence_attached",
             Self::Superseded { .. } => "superseded",
+            Self::BornOfRepair { .. } => "born_of_repair",
             Self::Reopened { .. } => "reopened",
             Self::Undone { .. } => "undone",
             Self::Stopped { .. } => "stopped",

@@ -75,35 +75,11 @@ const KIND_PHRASE: Record<string, string> = {
   general: 'a general statement',
 };
 
-/** A support of each level, as a sentence's subject. */
-const LEVEL_PHRASE: Record<LearningTrustLevel, string> = {
-  primary: 'a primary source',
-  authoritative: 'an authoritative source',
-  established: 'an established source (an identified author, such as a blog)',
-  community: 'a community page (a forum, wiki or Q&A)',
-  unknown: 'a source whose publisher is unknown',
-  distrusted: 'a distrusted source',
-};
-
-/** What research looks for next, by claim kind (§6.2 next steps). */
-const LOOKING_FOR: Record<string, string> = {
-  specification: 'looking for the owner’s documentation',
-  version_bound: 'looking for the owner’s documentation for that version',
-  measurement: 'looking for whoever measured it',
-  definition: 'looking for a reference work or a second independent source',
-  practice: 'looking for an identified practitioner or a second independent source',
-  historical: 'looking for an authoritative reference or a second independent source',
-};
-
 export const levelRank = (level: LearningTrustLevel) => TRUST_LEVELS.length - TRUST_LEVELS.indexOf(level);
 
 export const kindWord = (kind: string) => KIND_WORD[kind] ?? kind.replace(/_/g, ' ');
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
-
-function capitalised(text: string) {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 function hasReason(trust: LearningSourceTrustDto, code: string) {
   return trust.reasons.some((reason) => reason.code === code);
@@ -211,42 +187,6 @@ export function bestOf(levels: readonly LearningTrustLevel[]): LearningTrustLeve
   );
 }
 
-/**
- * The claim card's sufficiency line (§19): "Specification claim about OpenAI
- * API · supported only by an established source · accepted alone: …".
- */
-export function sufficiencyHeadline(trust: LearningClaimTrustDto): string | null {
-  const profile = trust.profile;
-  if (!profile) return null;
-  const subject = profile.subject ? ` about ${profile.subject.name}` : '';
-  const best = bestLevel(trust);
-  return [
-    `${kindWord(profile.claimKind)} claim${subject}`,
-    best ? `supported only by ${LEVEL_PHRASE[best].replace(/ \(.*\)$/, '')}` : 'no support that can be counted',
-    trust.bar ? barLine(trust.bar).replace(/^Accepted/, 'accepted') : null,
-  ].filter(Boolean).join(' · ');
-}
-
-/**
- * Why the gate held the claim back, in plain words: "An established source
- * (an identified author, such as a blog) isn't enough for how an API,
- * standard or rule is defined; looking for the owner's documentation." The
- * decision is the gate's (`sufficiency`, from the claim ledger); `best` is the
- * best level among the supports it weighed.
- */
-export function insufficiencyExplanation(
-  sufficiency: LearningSufficiencyDto,
-  best: LearningTrustLevel | null,
-  waitingFor: 'machine' | 'you',
-): string | null {
-  if (sufficiency.sufficient || !best) return null;
-  const kind = KIND_PHRASE[sufficiency.claimKind] ?? 'this kind of claim';
-  const next = waitingFor === 'machine'
-    ? LOOKING_FOR[sufficiency.claimKind] ?? 'looking for a stronger source'
-    : 'waiting for you: accept this source for this claim, add evidence, edit the claim or remove it';
-  return `${capitalised(LEVEL_PHRASE[best])} isn’t enough for ${kind}; ${next}.`;
-}
-
 /** How a claim accepted below primary is shown (§6.1 "Label"). */
 const LABEL_PHRASE: Record<string, string> = {
   practice: 'shown as a practice, per its source',
@@ -255,6 +195,7 @@ const LABEL_PHRASE: Record<string, string> = {
   reported_by: 'shown as reported by whoever measured it',
   secondary: 'per a secondary source, not the owner’s documentation',
   mirror: 'from a verified copy of the official text',
+  best_available: 'per the course’s strongest source on this subject',
 };
 
 /** A published claim's kind, subject and the label it is shown with. */

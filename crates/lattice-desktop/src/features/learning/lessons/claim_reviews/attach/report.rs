@@ -42,7 +42,26 @@ pub struct OtherClaimsCheckedDto {
     pub stopped: Option<String>,
 }
 
-/// What `resolve_learning_claim` returns for an attach action.
+/// Where an attach is, for the line the review shows while it runs.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum ClaimAttachProgressDto {
+    /// Fetching the link; `host` is null for a file or pasted text.
+    Fetching {
+        host: Option<String>,
+    },
+    Saving,
+    /// Checking the claims in scope against the source: `done` of `total`,
+    /// the one being checked now.
+    Checking {
+        done: u32,
+        total: u32,
+        statement: String,
+    },
+    Done,
+}
+
+/// What `attach_learning_claim_evidence` returns.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimAttachReportDto {

@@ -19,6 +19,14 @@ async function invokeCommand<T>(
   return result.data;
 }
 
+/** Whether a newly added source is checked against the course's waiting claims, and how that check reports. */
+export interface WaitingClaimsCheck {
+  checkWaiting: boolean;
+  onProgress: (update: Wire.ClaimAttachProgressDto) => void;
+}
+
+const NO_WAITING_CHECK: WaitingClaimsCheck = { checkWaiting: false, onProgress: () => {} };
+
 export const learningApi = {
   listLearningPrograms: (): Promise<
     ApiResult<Wire.LearningProgramSummaryDto[]>
@@ -104,6 +112,19 @@ export const learningApi = {
     request: Wire.ResolveLearningClaimRequestDto,
   ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
     learningCall('resolve_learning_claim', { request }),
+
+  /**
+   * Add a link, file, pasted text or saved passage as a course source and
+   * check the claims in scope against it, reporting each stage (§5.3).
+   */
+  attachLearningClaimEvidence: (
+    request: Wire.AttachLearningClaimEvidenceRequestDto,
+    onProgress: (update: Wire.ClaimAttachProgressDto) => void,
+  ): Promise<ApiResult<Wire.ClaimAttachReportDto>> =>
+    learningCall('attach_learning_claim_evidence', {
+      request,
+      onProgress: new Channel<Wire.ClaimAttachProgressDto>(onProgress),
+    }),
 
   /** "Keep as written" on a teaching finding the repairs did not settle. */
   keepLearningTeachingFinding: (
@@ -324,18 +345,33 @@ export const learningApi = {
 
   addLearningWebSource: (
     request: Wire.AddLearningWebSourceRequestDto,
+    recheck: WaitingClaimsCheck = NO_WAITING_CHECK,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>
-    learningCall('add_learning_web_source', { request }),
+    learningCall('add_learning_web_source', {
+      request,
+      checkWaiting: recheck.checkWaiting,
+      onProgress: new Channel<Wire.ClaimAttachProgressDto>(recheck.onProgress),
+    }),
 
   addLearningDocumentSource: (
     request: Wire.AddLearningDocumentSourceRequestDto,
+    recheck: WaitingClaimsCheck = NO_WAITING_CHECK,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>
-    learningCall('add_learning_document_source', { request }),
+    learningCall('add_learning_document_source', {
+      request,
+      checkWaiting: recheck.checkWaiting,
+      onProgress: new Channel<Wire.ClaimAttachProgressDto>(recheck.onProgress),
+    }),
 
   addLearningTextSource: (
     request: Wire.AddLearningTextSourceRequestDto,
+    recheck: WaitingClaimsCheck = NO_WAITING_CHECK,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>
-    learningCall('add_learning_text_source', { request }),
+    learningCall('add_learning_text_source', {
+      request,
+      checkWaiting: recheck.checkWaiting,
+      onProgress: new Channel<Wire.ClaimAttachProgressDto>(recheck.onProgress),
+    }),
 
   refreshLearningSource: (
     request: Wire.RefreshLearningSourceRequestDto,

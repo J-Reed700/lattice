@@ -4,6 +4,7 @@ import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
@@ -29,11 +30,13 @@ import type {
   AddLearningTextSourceRequestDto,
   AddLearningWebSourceRequestDto,
   AdoptLearningSourceVersionRequestDto,
+  ClaimAttachProgressDto,
   LearningSourceLibraryItemDto,
   LearningSourcePolicy,
   LearningTrustLevel,
   RefreshLearningSourceRequestDto,
   UpdateLearningSourcePolicyRequestDto,
+  WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
 type AddKind = 'web' | 'document' | 'paste';
@@ -81,11 +84,23 @@ function isLegacy(source: LearningSourceLibraryItemDto) { return Boolean(source.
 function isCasConflict(error?: string) { return Boolean(error && /(revision|compare.and.swap|conflict|changed elsewhere|source changed; reload and retry)/i.test(error)); }
 function prettyPolicy(policy: LearningSourcePolicy) { return policy === 'before_use' ? 'Before use' : policy === 'fixed' ? 'Fixed snapshot' : 'Manual checks'; }
 
-export function SourcesPanel({ programId, active = true }: { programId: string; active?: boolean }) {
+export function SourcesPanel({ programId, active = true, onOpenReview }: {
+  programId: string;
+  active?: boolean;
+  /** Opens the review of the course's held lessons, after a new source re-checked their claims. */
+  onOpenReview?: () => void;
+}) {
   const workspace = useLearningSourceWorkspace(programId);
-  const addWeb = useAddLearningWebSource();
-  const addDocument = useAddLearningDocumentSource();
-  const addText = useAddLearningTextSource();
+  // Whether a source added here is checked against the course's waiting claims; on unless the user unticks it.
+  const [checkWaiting, setCheckWaiting] = useState(true);
+  const [recheckProgress, setRecheckProgress] = useState<ClaimAttachProgressDto | null>(null);
+  const waitingCheck = { checkWaiting, onProgress: setRecheckProgress };
+  const addWeb = useAddLearningWebSource(waitingCheck);
+  const addDocument = useAddLearningDocumentSource(waitingCheck);
+  const addText = useAddLearningTextSource(waitingCheck);
+  // What checking the course's waiting claims against the source just added found (§3.6).
+  const [recheck, setRecheck] = useState<WaitingClaimsRecheckDto | null>(null);
+  const rechecked = <T extends { recheck: WaitingClaimsRecheckDto | null }>(data: T) => { setRecheck(data.recheck); setRecheckProgress(null); return data; };
   const refresh = useRefreshLearningSource();
   const adopt = useAdoptLearningSourceVersion();
   const updatePolicy = useUpdateLearningSourcePolicy();
@@ -241,21 +256,21 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
       try { url = new URL(webUrl.trim()); } catch { setFormError('Enter a complete web address, such as https://example.org/article.'); return; }
       if (!['http:', 'https:'].includes(url.protocol)) { setFormError('Use an http or https web address.'); return; }
       const request = addRequest<AddLearningWebSourceRequestDto>('add-web', { programId, url: url.href, freshnessPolicy: webPolicy });
-      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request, (body) => addWeb.mutateAsync(body as AddLearningWebSourceRequestDto));
+      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request, (body) => addWeb.mutateAsync(body as AddLearningWebSourceRequestDto).then(rechecked));
       if (ok) { preparedAddRef.current = null; setWebUrl(''); setAddOpen(false); }
       return;
     }
     if (addKind === 'document') {
       if (!documentId) { setFormError('Choose a document from your Library.'); return; }
       const request = addRequest<AddLearningDocumentSourceRequestDto>('add-document', { programId, documentId });
-      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto));
+      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto).then(rechecked));
       if (ok) { preparedAddRef.current = null; setDocumentId(); setAddOpen(false); }
       return;
     }
     if (!pasteTitle.trim()) { setFormError('Give this saved text a title.'); return; }
     if (!pasteText.trim()) { setFormError('Paste some text to save.'); return; }
     const request = addRequest<AddLearningTextSourceRequestDto>('add-text', { programId, title: pasteTitle.trim(), publisher: pastePublisher.trim() || null, text: pasteText });
-    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto));
+    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto).then(rechecked));
     if (ok) { preparedAddRef.current = null; setPasteTitle(''); setPastePublisher(''); setPasteText(''); setAddOpen(false); }
   };
 
@@ -285,6 +300,11 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
         ['Downloaded', counts.downloaded], ['Pinned', counts.pinned], ['Update available', counts.updates], ['Failed checks', counts.failed], ['Incomplete captures', counts.legacy],
       ].map(([label, count]) => <div key={label} className="rounded-xl border border-white/70 bg-white/50 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"><div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><div className="mt-1 font-serif text-xl tabular-nums text-text-primary">{count}</div></div>)}</div>
     </header>
+
+    {recheckLine(recheck) && <p role="status" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary">
+      <span>{recheckLine(recheck)}</span>
+      {onOpenReview && <button type="button" onClick={onOpenReview} className="font-medium text-accent underline underline-offset-2">Open the review</button>}
+    </p>}
 
     {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-800"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={() => void replay()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Retry same operation</button>}{reloadRequired && <button type="button" onClick={() => { clearRetry(); void workspace.refetch(); }} className="rounded-full border border-rose-700/30 px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
 
@@ -348,6 +368,8 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
       {addKind === 'document' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Choose an indexed document from a Space. Studio saves a snapshot for this course; later changes to the document do not rewrite it.</p><LearningDocumentPicker selected={selectedDocuments} onChange={setSelectedDocuments} limit={1} /></div>}
       {addKind === 'paste' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Paste notes, excerpts, or other material you have permission to use. The complete text is saved as a fixed snapshot and searched in passages when preparing lessons.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-title">Title<input id="paste-source-title" data-add-focus value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-publisher">Publisher or origin <span className="font-normal text-text-muted">(optional)</span><input id="paste-source-publisher" value={pastePublisher} onChange={(event) => setPastePublisher(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-text">Saved text<textarea id="paste-source-text" value={pasteText} onChange={(event) => setPasteText(event.target.value)} rows={8} className="mt-1.5 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6" /></label><div className="text-right text-[10px] tabular-nums text-text-muted">{Array.from(pasteText).length.toLocaleString()} characters</div></div>}
       {formError && <p role="alert" className="mt-4 rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700">{formError}</p>}{operationMessage && retryOperation?.kind.startsWith('add-') && <p role="alert" className="mt-3 text-xs text-rose-700">{operationMessage} You can retry the same submission without creating a duplicate.</p>}
+      <label className="mt-4 flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={checkWaiting} disabled={mutationBusy} onChange={(event) => setCheckWaiting(event.target.checked)} className="h-3.5 w-3.5 accent-accent" />Check the waiting claims against it</label>
+      {mutationBusy && recheckProgress && <p role="status" className="mt-3 text-xs text-text-secondary">{progressLine(recheckProgress)}</p>}
       <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full border border-border px-4 py-2.5 text-xs text-text-secondary disabled:opacity-50">Cancel</button><button type="button" disabled={mutationBusy} onClick={() => void submitAdd()} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-50"><Upload size={14} />{mutationBusy ? 'Saving…' : retryOperation?.kind.startsWith('add-') ? 'Retry save source' : 'Save source'}</button></div>
     </DialogContent></Dialog>
 

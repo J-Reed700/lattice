@@ -1,9 +1,13 @@
+mod claim_sentence;
 mod line_refs;
 mod salience;
+mod sentences;
 mod value_terms;
 
+pub use claim_sentence::claim_sentence;
 pub use line_refs::{contains_line_reference, is_line_reference};
 pub use salience::{is_stopword, select_informative_terms};
+pub use sentences::{plain_sentence_context, plain_text, sentences};
 pub use value_terms::{
     capitalised_words, has_digit, padded_lowercase, MONTH_MARKERS, NEGATION_MARKERS,
 };

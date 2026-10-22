@@ -48,6 +48,7 @@ mod authority;
 mod calibration;
 mod chain;
 mod claim_profile;
+mod content_evidence;
 mod contradiction;
 mod independence;
 mod judgement;
@@ -73,6 +74,7 @@ pub use chain::{citation_candidates, follow_further, CitationCandidate, LinkStan
 pub use claim_profile::{
     ClaimKind, ClaimProfile, ClaimSubject, SubjectClass, SubjectKey, SubjectKind, TemporalScope,
 };
+pub use content_evidence::{Chosen, CitationProfile, ContentEvidence, WorkEvidence, WorkShape};
 pub use contradiction::{resolve, resolve_all, Contrary, Resolution};
 pub use independence::{
     clusters, containment, page_relations, passage_merges, resemblance, shingles, Cluster,
@@ -80,7 +82,7 @@ pub use independence::{
     SKETCH_VALUES,
 };
 pub use judgement::{canonical_json, sha256_hex, Judged, JudgementKey};
-pub use level::{trust_level, LevelInputs};
+pub use level::{trust_level, work_level, LevelInputs};
 pub use links::markdown_links;
 pub use origin::{
     ArchivedFrom, CanonicalLink, Origin, OriginError, OriginKey, RegistryKind, TldRegistry,
@@ -102,8 +104,8 @@ pub use standing::{
     TrackRecord,
 };
 pub use sufficiency::{
-    decide, Bar, CountedSupport, Decision, Label, Missing, NextStep, PassageKind, StaticBars,
-    Support,
+    decide, Available, Bar, CountedSupport, Decision, Label, Missing, NextStep, PassageKind,
+    StaticBars, Support,
 };
 pub use temporal::{effective_date, validity, EffectiveDate, TemporalValidity};
 

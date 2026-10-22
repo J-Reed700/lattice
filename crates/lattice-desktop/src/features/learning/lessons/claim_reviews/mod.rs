@@ -13,6 +13,7 @@ pub mod dto;
 mod dto_tests;
 #[cfg(test)]
 mod migration_tests;
+pub mod recheck;
 pub mod repository;
 pub mod service;
 pub mod teaching_findings;

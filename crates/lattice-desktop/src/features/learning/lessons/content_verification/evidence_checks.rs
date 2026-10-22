@@ -42,13 +42,18 @@ mod outcome;
 mod page_budget;
 mod requests;
 mod run;
+mod standing;
 mod walk;
 
 use claims::{Compared, Comparison, Context, Prepared};
 #[cfg(test)]
+pub(super) use outcome::with_standing;
+#[cfg(test)]
 pub(in crate::features::learning) use outcome::ContraryPassage;
 use outcome::{combine, decision_key};
-pub(in crate::features::learning) use outcome::{Pass, TwoPass};
+pub(in crate::features::learning) use outcome::{
+    same_passage, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
+};
 pub(in crate::features::learning) use page_budget::{page_budget, page_seconds, AnswerSize};
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
@@ -59,7 +64,7 @@ use walk::{deepen, log_page, walk_budget, Walk};
 pub(super) use walk::{first_page, page_tokens};
 pub(super) use walk::{page_of, page_one, within_page, PageBudget, PageNote, Sizing};
 #[cfg(test)]
-pub(in crate::features::learning) use walk::{walk_pages, WalkedPage};
+pub(in crate::features::learning) use walk::{walk_pages, walk_standing_pages, WalkedPage};
 #[cfg(test)]
 pub(in crate::features::learning) use walk::{Depth, ORDERS, REACHES};
 pub(in crate::features::learning) use walk::{Paging, Reach};
@@ -342,14 +347,18 @@ pub(super) async fn check_with_paging(
         .into_inner()
         .unwrap_or_else(|error| error.into_inner());
     let mut results = run.finish(&context, &labels, &mut answers).await?;
+    results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
+    // The gate call (§18.6): every supported verdict's support is weighed
+    // before the claim ledger sees it.
+    provenance_gate::weigh(llm, &mut results, &run.decided).await?;
+    // A claim the gate leaves unsupported, insufficient or contradicted reads
+    // the course's strongest sources on its subject before it waits, and is
+    // weighed again against what the course has (claim sources design §7).
+    standing::corroborate(&context, &mut results, &run.decided, &labels, &mut answers).await?;
     *retained
         .answers
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = answers;
-    results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
-    // The gate call (§18.6): every supported verdict's support is weighed
-    // before the claim ledger sees it; no further model check is made.
-    provenance_gate::weigh(llm, &mut results, &run.decided).await?;
     crate::features::learning::lesson_progress::sent_back(
         results
             .iter()

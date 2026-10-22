@@ -112,6 +112,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 raw,
                 output_tokens,
                 active,
+                &repair::Protected::of_ledger(&ledger, &[]),
             )
             .await?;
             candidate = crate::features::learning::generation::parse_json(&raw)?;
@@ -251,7 +252,22 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             crate::features::learning::lesson_drafts::save(&raw).await?;
             continue;
         }
-        match ledger.decide() {
+        // A failed claim whose every sentence another live claim stands on
+        // waits for the user without a repair call (claim sources design
+        // §18.5); with none left to repair the decision is the review.
+        let decision = loop {
+            match ledger.decide() {
+                claim_ledger::Decision::Repair(targets) => {
+                    let editable = ledger.withhold_shared(&targets).await?;
+                    if editable.is_empty() {
+                        continue;
+                    }
+                    break claim_ledger::Decision::Repair(editable);
+                }
+                decision => break decision,
+            }
+        };
+        match decision {
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.
@@ -497,7 +513,10 @@ pub(super) fn repair_context(
                 });
                 format!("evidence-{index}")
             }).collect();
-            json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence,"repeatedDefect":escalates(id)})
+            // The exact lesson text the repair may change (claim sources
+            // design §18.5).
+            let sentence = ledger.entry(id).map(|entry| entry.location().quote.clone());
+            json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence,"repeatedDefect":escalates(id)})
         }).collect();
     let examples: Vec<(&execution::Observation, &ClaimId)> = report
         .executions

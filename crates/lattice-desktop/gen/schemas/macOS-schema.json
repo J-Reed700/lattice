@@ -4839,6 +4839,12 @@
           "markdownDescription": "Enables the apply_learning_pack_import command without any pre-configured scope."
         },
         {
+          "description": "Enables the attach_learning_claim_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-attach-learning-claim-evidence",
+          "markdownDescription": "Enables the attach_learning_claim_evidence command without any pre-configured scope."
+        },
+        {
           "description": "Enables the audit_learning_lesson_now command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-audit-learning-lesson-now",
@@ -5575,6 +5581,12 @@
           "type": "string",
           "const": "learning:deny-apply-learning-pack-import",
           "markdownDescription": "Denies the apply_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the attach_learning_claim_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-attach-learning-claim-evidence",
+          "markdownDescription": "Denies the attach_learning_claim_evidence command without any pre-configured scope."
         },
         {
           "description": "Denies the audit_learning_lesson_now command without any pre-configured scope.",

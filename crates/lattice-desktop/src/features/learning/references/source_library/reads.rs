@@ -97,6 +97,7 @@ impl LearningSourceLibraryRepository {
         Ok(LearningSourceWorkspaceDto {
             program_id: program_id.into(),
             sources,
+            recheck: None,
         })
     }
 

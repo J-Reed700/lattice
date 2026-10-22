@@ -58,6 +58,11 @@ async fn judge_institutional(course: &Course, saved: &Saved) -> Result<()> {
         .provenance(&saved.version_id)
         .await?
         .expect("capture records provenance");
+    let content =
+        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+            .await?
+            .expect("the version is the course's");
+    let key = standing_key(&record.signals, &content, MODEL);
     let value: StandingAssessment = serde_json::from_value(json!({
         "standing": "institutional",
         "publisher": { "name": "Example Docs" },
@@ -66,15 +71,15 @@ async fn judge_institutional(course: &Course, saved: &Saved) -> Result<()> {
         "nature": "documentation",
         "flags": [],
         "reasons": [{ "code": "publisher_metadata", "text": "JSON-LD publisher: Example Docs" }],
-        "policy": "source-standing-v1",
+        "policy": "source-standing-v2",
         "model": MODEL,
-        "signals_sha256": record.signals_sha256,
+        "signals_sha256": key.input_sha256,
     }))
     .expect("standing assessment");
     course
         .store
         .save_standing(&StoredJudgement {
-            key: standing_key(&record.signals, MODEL),
+            key,
             value,
             input_tokens: 1,
             output_tokens: 1,

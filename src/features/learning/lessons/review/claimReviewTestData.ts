@@ -1,4 +1,4 @@
-import type { ClaimEventDto, ClaimReviewItemDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
+import type { ClaimEventDto, ClaimReviewItemDto, ClaimSupportDto, LessonClaimReviewDto, SourceRefDto, TeachingFindingDto } from '@/lib/bindings';
 
 /** Shared by the claim review tests: one card per verdict, overridable. */
 export const STOPPED_AT = 1_760_000_010_000;
@@ -7,6 +7,33 @@ const passage = {
   sourceVersionId: 'v1', title: 'Thermodynamics, ch. 4', url: null,
   text: 'At one atmosphere, pure water boils at 99.97 °C.', startByte: 120, endByte: 184, retrievalKind: 'hybrid', trust: null,
 };
+
+/** The review screen's default claim (UI design §5.4): a field guide that states it, below the bar a measurement needs. */
+const GUIDE_TEXT = 'Each autumn, monarch butterflies migrate up to 3,000 miles to wintering sites in central Mexico.';
+const GUIDE_QUOTE = 'monarch butterflies migrate up to 3,000 miles';
+const guideSource: SourceRefDto = {
+  sourceId: 'source-field-guide', sourceVersionId: 'v-field-guide', title: 'Field Guide to North American Butterflies, ch. 7',
+  url: 'https://example.org/field-guide/monarch', addedBy: 'research',
+};
+
+export function fieldGuideSupport(overrides: Partial<ClaimSupportDto> = {}): ClaimSupportDto {
+  const at = GUIDE_TEXT.indexOf(GUIDE_QUOTE);
+  return {
+    role: 'supports',
+    source: guideSource,
+    site: 'example.org',
+    kind: 'online_book',
+    standing: 'established',
+    counts: { outcome: 'not_enough' },
+    quote: GUIDE_QUOTE,
+    quoteSpan: [at, at + GUIDE_QUOTE.length],
+    passage: {
+      sourceVersionId: guideSource.sourceVersionId, title: guideSource.title, url: guideSource.url,
+      text: GUIDE_TEXT, startByte: 2048, endByte: 2048 + GUIDE_TEXT.length, retrievalKind: 'hybrid', trust: null,
+    },
+    ...overrides,
+  };
+}
 
 export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimReviewItemDto {
   return {
@@ -27,6 +54,16 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     localCheck: null,
     verifierCheck: null,
     sufficiency: null,
+    presentation: {
+      statement: 'Monarch butterflies migrate up to 3,000 miles.',
+      sentence: 'Each autumn, monarch butterflies migrate up to 3,000 miles.',
+      contextBefore: 'Monarchs breed across the northern United States and southern Canada.',
+      contextAfter: 'They winter in the fir forests of central Mexico.',
+      place: 'Section 2 · Migration',
+    },
+    support: fieldGuideSupport(),
+    alsoSupported: [],
+    tried: { searches: 1, pagesRead: 1, pagesMentioning: 1, stated: false, relevant: [guideSource] },
     ...overrides,
   };
 }
@@ -51,7 +88,7 @@ export function userActionAt(at: number): ClaimEventDto {
 export function review(claims: ClaimReviewItemDto[], overrides: Partial<LessonClaimReviewDto> = {}): LessonClaimReviewDto {
   return {
     lessonId: 'lesson-1', programId: 'program-1', state: 'needs_review', revision: 7, pass: 3, stopReason: null, changedSinceStop: false,
-    counts: { verified: 12, confirmed: 0, generalKnowledge: 0, queued: claims.length, open: 0, removed: 0 },
+    counts: { verified: 12, confirmed: 0, generalKnowledge: 0, queued: claims.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
     claims,
     teachingFindings: [],
     ...overrides,

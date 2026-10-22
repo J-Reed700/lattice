@@ -246,6 +246,9 @@ pub struct LearningClaimTally {
     pub verified: u32,
     /// Closed by the user or removed: confirmed, general knowledge, removed.
     pub resolved_by_you: u32,
+    /// Rewritten or dropped by the machine's repairs.
+    #[serde(default)]
+    pub rewritten: u32,
 }
 
 /// One round of checking unsupported claims against their next evidence page.

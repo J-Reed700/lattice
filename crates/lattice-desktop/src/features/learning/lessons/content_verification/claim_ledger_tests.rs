@@ -850,7 +850,8 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
         entry(1, Some(VerdictKind::Unsupported), false),
         entry(2, Some(weak()), false),
         entry(3, Some(weak()), false),
-        // Researched on this evidence: a rewrite comes next.
+        // Researched on this evidence and nothing found: no rewrite fixes
+        // standing, so it waits for the user (claim sources design §10.4).
         entry(4, Some(weak()), true),
     ];
     let tally = claim_ledger::claim_tally(&entries);
@@ -859,8 +860,426 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
             tally.unchecked,
             tally.searching,
             tally.sent_back,
-            tally.repairing
+            tally.repairing,
+            tally.waiting
         ),
-        (1, 1, 2, 1)
+        (1, 1, 2, 0, 1)
     );
+}
+
+/// A biology paragraph under 600 characters, so the extractor is given it as
+/// one passage, with three claims and a sentence no claim stands on (claim
+/// sources design §18.8).
+pub(super) const CELL: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation. They carry their own circular DNA, passed down from the mother. A typical human cell holds exactly twelve mitochondria. Their inner membrane folds into cristae that enlarge its surface.";
+const ATP_SENTENCE: &str =
+    "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
+const TWELVE_SENTENCE: &str = "A typical human cell holds exactly twelve mitochondria.";
+/// The claims' statements, worded as an extractor words them.
+const ATP: &str = "Mitochondria make most of a cell's ATP by oxidative phosphorylation.";
+const TWELVE: &str = "A typical human cell contains exactly twelve mitochondria.";
+const CELL_SOURCE: &str = "Mitochondria generate most cellular ATP by oxidative phosphorylation; the cristae of their inner membrane enlarge its surface.";
+
+fn cell_lesson(body: &str) -> Value {
+    json!({"blocks":[{"kind":"explanation","title":"Mitochondria","body":body,"rubric":[]}],"questions":[]})
+}
+
+/// The one passage the extractor is given for a section of `body`, as the
+/// inventory cuts it.
+pub(super) fn only_passage(body: &str) -> String {
+    let input = super::super::inventory::inputs(&[json!({"kind":"explanation","body":body})]);
+    let passages = input[0]["passages"].as_array().unwrap();
+    assert_eq!(passages.len(), 1, "one passage: {passages:?}");
+    passages[0]["text"].as_str().unwrap().to_owned()
+}
+
+/// A finding on `body`'s one passage as the inventory resolves it, the
+/// passage being its quote; checked against `source`.
+pub(super) fn passage_finding(
+    body: &str,
+    statement: &str,
+    supported: bool,
+    source: &str,
+) -> Finding {
+    Finding {
+        unit: 0,
+        quote: only_passage(body),
+        statement: statement.into(),
+        verdict: if supported {
+            ClaimVerdict::Supported
+        } else {
+            ClaimVerdict::Unsupported
+        },
+        reason: "compared".into(),
+        evidence: vec![EvidencePassage {
+            source_id: "source-1".into(),
+            text: source.into(),
+            start_byte: 0,
+            end_byte: source.len(),
+            retrieval_kind: "lexical".into(),
+            score: 1.0,
+        }],
+        supporting_quote: supported.then(|| source.to_owned()),
+        resolution: None,
+        trust: None,
+        two_pass: Default::default(),
+    }
+}
+
+/// A pass's report of `findings`, its one source active.
+pub(super) fn pass_report(findings: Vec<Finding>) -> LessonVerificationReport {
+    LessonVerificationReport {
+        policy: String::new(),
+        lesson_id: String::new(),
+        content_sha256: String::new(),
+        checker_model: String::new(),
+        checked_at: 0,
+        sources: vec![SourceBinding {
+            id: "source-1".into(),
+            sha256: String::new(),
+        }],
+        coverage: vec![],
+        coverage_audit: vec![],
+        findings,
+        executions: vec![],
+        confirmed_examples: None,
+        issues: vec![],
+        retrieval_mode: String::new(),
+        embedding_model: None,
+        page_budget: None,
+        unexecuted_languages: vec![],
+    }
+}
+
+/// The events a pass added to a claim's log.
+fn added(entry: &ClaimLedgerEntry, from: usize) -> Vec<&ClaimEvent> {
+    entry.events()[from..]
+        .iter()
+        .map(|record| &record.event)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_location() -> Result<()>
+{
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let id = ClaimId("atp".into());
+    // As older code stored it: located by its whole passage, verified.
+    ledger
+        .append(
+            &id,
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", CELL, CELL),
+                statement: ATP.into(),
+            },
+        )
+        .await?;
+    let seen = vec![EvidenceSeen {
+        source_version_id: "source-1".into(),
+        start_byte: 0,
+        end_byte: CELL_SOURCE.len(),
+        text_sha256: text_sha256(CELL_SOURCE),
+    }];
+    ledger
+        .append(
+            &id,
+            ClaimEvent::Checked(Check {
+                checker: Checker::Local {
+                    model: model.model_name().into(),
+                },
+                result: CheckResult::Supported {
+                    source_version_id: "source-1".into(),
+                    supporting_quote: CELL_SOURCE.into(),
+                },
+                reason: "compared".into(),
+                fingerprint: EvidenceFingerprint::of(evidence_policy(), model.model_name(), &seen),
+                evidence: seen,
+                window_tokens: model.max_context_tokens(),
+            }),
+        )
+        .await?;
+    let before = ledger.entry(&id).unwrap().clone();
+
+    ledger
+        .observe(
+            &cell_lesson(CELL),
+            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
+        )
+        .await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    let added = added(entry, before.events().len());
+    let [ClaimEvent::Extracted {
+        location,
+        statement,
+    }] = added.as_slice()
+    else {
+        panic!("one Extracted and nothing else: {added:?}");
+    };
+    let at = CELL.find(ATP_SENTENCE).unwrap();
+    assert_eq!(location.quote, ATP_SENTENCE);
+    assert_eq!(location.span, Some((at, at + ATP_SENTENCE.len())));
+    assert_eq!(statement, ATP);
+    assert!(matches!(
+        entry.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    assert_eq!(entry.state(), before.state());
+    assert_eq!(entry.basis(), before.basis());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sentence_stands(
+) -> Result<()> {
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
+        )
+        .await?;
+    let id = ledger.finding_claims()[0].clone();
+    let verified = ledger.entry(&id).unwrap().clone();
+    assert_eq!(verified.location().quote, ATP_SENTENCE);
+    assert!(matches!(
+        verified.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    // Re-extraction rewords the statement over the same sentence, and the
+    // check, on other passages, fails: nothing new about the claim.
+    let reworded = "Most of a cell's ATP comes from oxidative phosphorylation in mitochondria.";
+    let other = "Glycolysis in the cytoplasm also yields a little ATP.";
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, reworded, false, other)]),
+        )
+        .await?;
+    let entry = ledger.entry(&id).unwrap();
+    let events = added(entry, verified.events().len());
+    assert!(
+        matches!(events.as_slice(), [ClaimEvent::Extracted { statement, .. }] if statement == reworded),
+        "{events:?}"
+    );
+    assert_eq!(entry.state(), verified.state());
+    assert_eq!(entry.basis(), verified.basis());
+
+    // The sentence changed: the check applies.
+    let changed = CELL.replace("produce most", "produce nearly all");
+    let from = entry.events().len();
+    ledger
+        .observe(
+            &cell_lesson(&changed),
+            &pass_report(vec![passage_finding(&changed, ATP, false, other)]),
+        )
+        .await?;
+    let entry = ledger.entry(&id).unwrap();
+    assert!(added(entry, from)
+        .iter()
+        .any(|event| matches!(event, ClaimEvent::Checked(_))));
+    assert!(matches!(entry.state(), ClaimState::Open { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_waits_without_a_repair_call(
+) -> Result<()> {
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let overstated = "Mitochondria produce all of a cell's ATP.";
+    ledger
+        .observe(
+            &cell_lesson(CELL),
+            &pass_report(vec![
+                passage_finding(CELL, ATP, true, CELL_SOURCE),
+                passage_finding(CELL, overstated, false, CELL_SOURCE),
+                passage_finding(CELL, TWELVE, false, CELL_SOURCE),
+            ]),
+        )
+        .await?;
+    let ids = ledger.finding_claims().to_vec();
+    let (verified, shared, own) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
+    assert_eq!(
+        ledger.entry(&shared).unwrap().location().quote,
+        ATP_SENTENCE
+    );
+    assert_eq!(
+        ledger.entry(&own).unwrap().location().quote,
+        TWELVE_SENTENCE
+    );
+    let untouched = ledger.entry(&verified).unwrap().clone();
+
+    let editable = ledger
+        .withhold_shared(&[shared.clone(), own.clone()])
+        .await?;
+    assert_eq!(
+        editable,
+        std::slice::from_ref(&own),
+        "a sentence of its own stays a target"
+    );
+    let entry = ledger.entry(&shared).unwrap();
+    assert!(
+        matches!(
+            &entry.events().last().unwrap().event,
+            ClaimEvent::RepairAttempted {
+                attempt: 1,
+                escalated: false,
+                after: None,
+                outcome: RepairOutcome::NotAttempted { .. },
+                ..
+            }
+        ),
+        "{:?}",
+        entry.events().last()
+    );
+    assert!(matches!(
+        entry.state(),
+        ClaimState::Queued {
+            kind: VerdictKind::Unsupported,
+            ..
+        }
+    ));
+    assert!(!ledger.may_repair(&shared));
+    assert!(ledger.may_repair(&own));
+    assert_eq!(ledger.entry(&verified).unwrap(), &untouched);
+    assert!(!*model.repaired.lock().unwrap());
+    assert_eq!(*model.judge_calls.lock().unwrap(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
+    use lattice_core::domain::learning::claim_review::UserAction;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let program_id = repo.job(&job).await?.program_id;
+    // The lesson writes the ATP sentence with markdown and a citation.
+    let raw_atp =
+        "Mitochondria produce most of a cell's **ATP** through oxidative phosphorylation [1].";
+    let body = CELL.replace(ATP_SENTENCE, raw_atp);
+    let draft = cell_lesson(&body).to_string();
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&draft).await
+    })
+    .await?;
+    let store = ClaimReviewRepository::new(pool.clone());
+    let mut revision = store
+        .set_lesson_review(
+            &lesson_id,
+            LessonReview {
+                program_id,
+                job_id: job.clone(),
+                state: LessonReviewState::NeedsReview,
+                draft_sha256: digest(&draft),
+                checker_model: "figures-fixture".into(),
+                stop_reason: None,
+            },
+        )
+        .await?;
+    let machine = || EventProvenance {
+        actor: Actor::Machine,
+        at: 1,
+        job_id: Some(job.clone()),
+        app_version: "fixture".into(),
+        checker_model: Some("figures-fixture".into()),
+    };
+    let seen = vec![EvidenceSeen {
+        source_version_id: "source-1".into(),
+        start_byte: 0,
+        end_byte: CELL_SOURCE.len(),
+        text_sha256: text_sha256(CELL_SOURCE),
+    }];
+    // Both claims as older code stored them: located by the whole passage.
+    for (id, statement) in [("twelve", TWELVE), ("atp", ATP)] {
+        let id = ClaimId(id.into());
+        revision = store
+            .append(
+                &lesson_id,
+                &id,
+                machine(),
+                ClaimEvent::Extracted {
+                    location: ClaimLocation::locate(0, UnitKind::Block, "body", &body, &body),
+                    statement: statement.into(),
+                },
+                revision,
+            )
+            .await?;
+        let check = Check {
+            checker: Checker::Local {
+                model: "figures-fixture".into(),
+            },
+            result: CheckResult::Failed {
+                kind: VerdictKind::Unsupported,
+            },
+            reason: "The reference does not say so.".into(),
+            fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
+            evidence: seen.clone(),
+            window_tokens: 128_000,
+        };
+        revision = store
+            .append(
+                &lesson_id,
+                &id,
+                machine(),
+                ClaimEvent::Checked(check),
+                revision,
+            )
+            .await?;
+    }
+    let service = ClaimReviewService::new(pool.clone());
+    let revision = service
+        .resolve(
+            &lesson_id,
+            "twelve",
+            ClaimActionRequestDto::Remove,
+            revision.0,
+        )
+        .await?;
+    // The card sends the sentence as it shows it: plain text.
+    let after = "Mitochondria make most of a cell's ATP [1].";
+    service
+        .resolve(
+            &lesson_id,
+            "atp",
+            ClaimActionRequestDto::Edit {
+                before: ATP_SENTENCE.into(),
+                after: after.into(),
+            },
+            revision,
+        )
+        .await?;
+    let ledger = store.load(&lesson_id).await?;
+    let atp = ledger
+        .claims
+        .iter()
+        .find(|entry| entry.claim_id().0 == "atp")
+        .unwrap();
+    assert!(atp.events().iter().any(|record| matches!(
+        &record.event,
+        ClaimEvent::UserAction {
+            action: UserAction::Edit { before, .. },
+            ..
+        } if before == raw_atp
+    )));
+
+    // On resume the draft loses one sentence and has the other replaced; the
+    // rest of the paragraph is as it was.
+    let candidate = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), &draft).await?;
+        let mut candidate: Value = serde_json::from_str(&draft)?;
+        super::super::review_pass::apply_user_changes(&mut ledger, &mut candidate).await?;
+        Ok(candidate)
+    })
+    .await?;
+    assert_eq!(
+        candidate["blocks"][0]["body"],
+        body.replace(&format!("{TWELVE_SENTENCE} "), "")
+            .replace(raw_atp, after)
+    );
+    Ok(())
 }

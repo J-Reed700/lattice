@@ -3,6 +3,17 @@
 //! walks of the claims still unsupported.
 use super::*;
 
+/// What researching one claim on the web costs, in seconds, as break-even
+/// weighs it (D5): this job's last research round's, else the latest the
+/// ledger holds.
+pub(super) async fn research_seconds(context: &Context<'_, '_>) -> Result<Option<f64>> {
+    Ok(match context.retained.research_cost {
+        Some(cost) => Some(cost),
+        None => claim_ledger::research_cost().await?,
+    }
+    .map(|cost| cost.as_secs_f64()))
+}
+
 /// The claims of one pass.
 #[derive(Default)]
 pub(super) struct Run {
@@ -141,11 +152,7 @@ impl Run {
         answers: &mut AnswerSize,
     ) -> Result<Vec<CheckedClaim>> {
         let llm = context.llm;
-        let research = match context.retained.research_cost {
-            Some(cost) => Some(cost),
-            None => claim_ledger::research_cost().await?,
-        }
-        .map(|cost| cost.as_secs_f64());
+        let research = research_seconds(context).await?;
         // A rule that would not read even the cheapest next page, one more
         // answer, reads no claim past its first page: no walk starts.
         let reads_on = context.paging.depth.reads_next(
@@ -207,7 +214,7 @@ impl Run {
             );
         }
         if !walks.is_empty() {
-            let found = deepen(
+            let (found, _) = deepen(
                 llm,
                 context.references,
                 walks,

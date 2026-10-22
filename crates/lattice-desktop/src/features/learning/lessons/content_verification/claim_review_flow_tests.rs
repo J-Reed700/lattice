@@ -520,3 +520,253 @@ async fn resume_with_nothing_changed_is_refused_and_starts_nothing() -> Result<(
     assert_eq!(jobs[0].status, LearningGenerationJobStatus::Completed);
     Ok(())
 }
+
+/// The repair loop's invariant and bound (claim sources design §12), over
+/// the confinement, the identity rules and the ledger the pass uses.
+mod loop_bound {
+    use super::super::*;
+    use lattice_core::domain::learning::claim_review::{
+        text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
+        ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen,
+        RepairOutcome, UnitKind, VerdictKind, MACHINE_ATTEMPTS,
+    };
+
+    const MODEL: &str = "loop-fixture";
+    const WINDOW: usize = 32_768;
+    const VERIFIED: &str = "Water boils at 100 °C at sea level.";
+    const ALSO_VERIFIED: &str = "Ice melts at 0 °C.";
+    const FAILED: &str = "Salt lowers the boiling point a lot.";
+    const FIXED: &str = "Salt raises the boiling point slightly.";
+
+    fn machine(at: i64) -> EventProvenance {
+        EventProvenance {
+            actor: Actor::Machine,
+            at,
+            job_id: None,
+            app_version: "fixture".into(),
+            checker_model: Some(MODEL.into()),
+        }
+    }
+
+    fn seen() -> Vec<EvidenceSeen> {
+        vec![EvidenceSeen {
+            source_version_id: "v1".into(),
+            start_byte: 0,
+            end_byte: 10,
+            text_sha256: text_sha256("v1"),
+        }]
+    }
+
+    fn check(kind: Option<VerdictKind>) -> ClaimEvent {
+        ClaimEvent::Checked(Check {
+            checker: Checker::Local {
+                model: MODEL.into(),
+            },
+            result: match kind {
+                None => CheckResult::Supported {
+                    source_version_id: "v1".into(),
+                    supporting_quote: "boils".into(),
+                },
+                Some(kind) => CheckResult::Failed { kind },
+            },
+            reason: "compared".into(),
+            fingerprint: EvidenceFingerprint::of("fixture-v1", MODEL, &seen()),
+            evidence: seen(),
+            window_tokens: WINDOW,
+        })
+    }
+
+    fn claim(id: &str, sentence: &str, body: &str, kind: Option<VerdictKind>) -> ClaimLedgerEntry {
+        let mut entry = ClaimLedgerEntry::extracted(
+            ClaimId(id.into()),
+            machine(1),
+            ClaimLocation::locate(0, UnitKind::Block, "body", sentence, body),
+            sentence.into(),
+        )
+        .unwrap();
+        entry.append(machine(2), check(kind)).unwrap();
+        entry
+    }
+
+    fn rewrite(attempt: u8, escalated: bool) -> ClaimEvent {
+        ClaimEvent::RepairAttempted {
+            attempt,
+            escalated,
+            before: FAILED.into(),
+            after: Some(FIXED.into()),
+            outcome: RepairOutcome::Rewritten,
+        }
+    }
+
+    fn left(entry: &ClaimLedgerEntry) -> u8 {
+        match entry.state() {
+            ClaimState::Open {
+                machine_attempts_left,
+                ..
+            } => *machine_attempts_left,
+            _ => 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
+        use super::super::claim_ledger_tests::{only_passage, pass_report, passage_finding};
+        const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
+        const BOILS: &str = "At sea level, water boils at 100 °C.";
+        let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
+        let body = format!("{VERIFIED} {ALSO_VERIFIED} {FAILED}");
+        // One inventory passage holds all three claims: it is each one's
+        // quote as the extractor names it, and the ledger locates each claim
+        // to its own sentence.
+        assert_eq!(only_passage(&body), body);
+        let model = Model::new();
+        let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+        let before = lesson(&body);
+        ledger
+            .observe(
+                &before,
+                &pass_report(vec![
+                    passage_finding(&body, BOILS, true, SOURCE),
+                    passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
+                    passage_finding(
+                        &body,
+                        "Salt lowers water's boiling point a lot.",
+                        false,
+                        SOURCE,
+                    ),
+                ]),
+            )
+            .await?;
+        let ids = ledger.finding_claims().to_vec();
+        let quotes: Vec<String> = ids
+            .iter()
+            .map(|id| ledger.entry(id).unwrap().location().quote.clone())
+            .collect();
+        assert_eq!(quotes, [VERIFIED, ALSO_VERIFIED, FAILED]);
+        let target = ids[2].clone();
+        let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+            panic!("the failed claim is repaired");
+        };
+        let targets = ledger.withhold_shared(&targets).await?;
+        assert_eq!(targets, std::slice::from_ref(&target));
+        ledger.begin_repairs(&before, &targets).await?;
+        let verified: Vec<ClaimLedgerEntry> = ids[..2]
+            .iter()
+            .map(|id| ledger.entry(id).unwrap().clone())
+            .collect();
+
+        // The scripted repair also rewords a verified sentence.
+        let repaired = json!({
+            "kind": "explanation",
+            "title": "Boiling",
+            "body": format!("Water boils at 100 degrees at sea level. {ALSO_VERIFIED} {FIXED}"),
+            "rubric": [],
+        });
+        let confined = confine(
+            &before["blocks"][0],
+            &repaired,
+            &Protected::of_claims(&ledger, &targets),
+            &Protected::of_ledger(&ledger, &targets),
+        )
+        .unwrap();
+        let after = confined["body"].as_str().unwrap().to_owned();
+        assert_eq!(after, format!("{VERIFIED} {ALSO_VERIFIED} {FIXED}"));
+
+        // The pass after the repair, its claims again from one passage.
+        let checks = |ledger: &claim_ledger::ClaimLedger| -> usize {
+            ids.iter()
+                .map(|id| {
+                    ledger
+                        .entry(id)
+                        .unwrap()
+                        .events()
+                        .iter()
+                        .filter(|record| matches!(record.event, ClaimEvent::Checked(_)))
+                        .count()
+                })
+                .sum()
+        };
+        let checked = checks(&ledger);
+        ledger
+            .observe(
+                &lesson(&after),
+                &pass_report(vec![
+                    passage_finding(&after, BOILS, true, SOURCE),
+                    passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
+                    passage_finding(
+                        &after,
+                        "Salt raises water's boiling point slightly.",
+                        false,
+                        SOURCE,
+                    ),
+                ]),
+            )
+            .await?;
+
+        // The verified claims keep their ids, states and bases, and nothing
+        // is recorded for them; the target continues with one attempt fewer,
+        // and its check is the pass's only one.
+        assert_eq!(ledger.finding_claims(), ids.as_slice());
+        for entry in &verified {
+            assert_eq!(ledger.entry(entry.claim_id()).unwrap(), entry);
+        }
+        assert_eq!(checks(&ledger), checked + 1, "one model check in the pass");
+        let target = ledger.entry(&target).unwrap();
+        assert_eq!(target.location().quote, FIXED);
+        assert_eq!(left(target), MACHINE_ATTEMPTS - 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_machine_attempt_budget_never_grows_across_passes() {
+        let body = format!("{FAILED} {FAILED}");
+        let unsupported = || Some(VerdictKind::Unsupported);
+        let mut rewritten = claim("a", FAILED, &body, unsupported());
+        let mut split = claim("b", FAILED, &body, unsupported());
+        let total = |entries: &[&ClaimLedgerEntry]| -> u32 {
+            entries.iter().map(|entry| u32::from(left(entry))).sum()
+        };
+        let mut sums = vec![total(&[&rewritten, &split])];
+
+        // Pass 1: `a` is rewritten; `b` is split, its child born with what
+        // `b` has left after this attempt.
+        for entry in [&mut rewritten, &mut split] {
+            entry.append(machine(3), rewrite(1, false)).unwrap();
+            entry.append(machine(4), check(unsupported())).unwrap();
+        }
+        let mut child = ClaimLedgerEntry::extracted(
+            ClaimId("b-child".into()),
+            machine(3),
+            ClaimLocation::locate(0, UnitKind::Block, "body", FIXED, FIXED),
+            FIXED.into(),
+        )
+        .unwrap();
+        child
+            .append(
+                machine(3),
+                ClaimEvent::BornOfRepair {
+                    parent: ClaimId("b".into()),
+                    attempts_left: MACHINE_ATTEMPTS - 1,
+                },
+            )
+            .unwrap();
+        child.append(machine(4), check(unsupported())).unwrap();
+        sums.push(total(&[&rewritten, &split, &child]));
+
+        // Pass 2: every claim's last attempt.
+        for entry in [&mut rewritten, &mut split, &mut child] {
+            entry.append(machine(5), rewrite(2, true)).unwrap();
+            entry.append(machine(6), check(unsupported())).unwrap();
+        }
+        sums.push(total(&[&rewritten, &split, &child]));
+
+        assert!(
+            sums.windows(2).all(|pair| pair[1] < pair[0]),
+            "the budget falls every pass: {sums:?}"
+        );
+        assert_eq!(sums.last(), Some(&0));
+        assert!([&rewritten, &split, &child]
+            .iter()
+            .all(|entry| entry.state().awaits_user()));
+    }
+}

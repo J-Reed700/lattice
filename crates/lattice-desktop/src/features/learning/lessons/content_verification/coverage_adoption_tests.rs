@@ -24,6 +24,12 @@ struct JudgingModel {
     /// mentions it, the evidence judge answers unsupported, as it did live.
     watched_claim: &'static str,
     unsourced: bool,
+    /// The extractor reads the exercise as the lesson's own instruction and
+    /// records no claim on it, as it did live: the premise it presupposes is
+    /// missed, and only the coverage judge names it. (A claim on the whole
+    /// exercise sentence that the checker supports would protect that
+    /// sentence from the repair: claim sources design §10.2.)
+    premise_missed: bool,
     judged: AtomicUsize,
     judged_watched_claim: AtomicBool,
 }
@@ -64,11 +70,26 @@ impl JudgingModel {
             judge_reply: json!({"missingAssertions":missing,"reason":reason}),
             watched_claim,
             unsourced: watched_claim == UNSOURCED,
+            premise_missed: !missing.is_empty(),
             judged: AtomicUsize::new(0),
             judged_watched_claim: AtomicBool::new(false),
         }
     }
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if self.premise_missed && prompt.starts_with("Extract lesson claims.") {
+            let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
+            for unit in context(prompt)["units"].as_array().unwrap() {
+                let exercise = unit["passages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|passage| passage["text"] == self.proposed_passage);
+                if exercise {
+                    response["units"][format!("unit-{}", unit["index"])] = json!({"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
+                }
+            }
+            return Ok(response.to_string());
+        }
         if prompt.starts_with("Audit inventory fidelity.") {
             let data = context(prompt);
             if data["targetPassage"]["text"] == self.proposed_passage {

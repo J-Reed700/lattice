@@ -118,8 +118,21 @@ pub(in crate::features::learning) async fn select_references(
     topic: &str,
     query: &str,
     gaps: &[Value],
-    mut candidates: Vec<web_research::Candidate>,
+    candidates: Vec<web_research::Candidate>,
 ) -> Result<Vec<WebSearchResult>> {
+    let selected = select_noted(llm, topic, query, gaps, candidates).await?;
+    Ok(selected.into_iter().map(|(result, _)| result).collect())
+}
+
+/// [`select_references`] with the planner's reason for each selection, the
+/// source's `selection_note` (claim sources design §4.4).
+async fn select_noted(
+    llm: &dyn LLMPort,
+    topic: &str,
+    query: &str,
+    gaps: &[Value],
+    mut candidates: Vec<web_research::Candidate>,
+) -> Result<Vec<(WebSearchResult, String)>> {
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
@@ -217,7 +230,7 @@ pub(in crate::features::learning) async fn select_references(
                 ));
                 }
                 if let Some(result) = result.filter(|_| choice.use_for_gap) {
-                    selected.push(result.clone());
+                    selected.push((result.clone(), choice.reason.trim().to_owned()));
                 }
             }
             Ok(selected)
@@ -577,7 +590,7 @@ async fn research<'a>(
             }
         };
         if let Some(version_id) = saving
-            .save(&mut sources, &mut urls, &cited.url, captured)
+            .save(&mut sources, &mut urls, &cited.url, captured, None)
             .await?
         {
             saving.record_citation(cited, &version_id).await?;
@@ -624,9 +637,8 @@ async fn research<'a>(
                     && !scrutiny::published_on(&candidate.result.url, &excluded)
             })
             .collect();
-        let selected =
-            select_references(llm, &context.topic, &need.query, gaps, candidates).await?;
-        for result in selected {
+        let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
+        for (result, note) in selected {
             if !urls.insert(identity(&result.url)) {
                 continue;
             }
@@ -644,7 +656,7 @@ async fn research<'a>(
                     }
                 };
             if let Some(version_id) = saving
-                .save(&mut sources, &mut urls, &result.url, captured)
+                .save(&mut sources, &mut urls, &result.url, captured, Some(&note))
                 .await?
             {
                 searched.sources_added.push(version_id);
@@ -683,15 +695,16 @@ struct Saving<'s> {
 
 impl Saving<'_> {
     /// Saves a capture as a research source unless the course already holds
-    /// that page; the new version's id, or `None` for a page already held.
-    /// `sources` and `urls` (pages without fragments) are brought up to
-    /// date.
+    /// that page, with the planner's reason for selecting it (`note`); the
+    /// new version's id, or `None` for a page already held. `sources` and
+    /// `urls` (pages without fragments) are brought up to date.
     async fn save(
         &self,
         sources: &mut Vec<LearningSourceDto>,
         urls: &mut HashSet<String>,
         requested_url: &str,
         captured: crate::features::learning::source_library::CapturedLearningSource,
+        note: Option<&str>,
     ) -> Result<Option<String>> {
         let resolved = captured.resolved_url.clone().unwrap_or_default();
         if sources.iter().any(|s| {
@@ -703,7 +716,7 @@ impl Saving<'_> {
         let version_id = uuid::Uuid::new_v4().to_string();
         let hash = digest(&captured.text);
         self.library
-            .add(
+            .add_selected(
                 crate::features::learning::source_library::NewLearningSource {
                     operation_id: &uuid::Uuid::new_v4().to_string(),
                     source_id: &uuid::Uuid::new_v4().to_string(),
@@ -717,6 +730,7 @@ impl Saving<'_> {
                 },
                 captured,
                 hash,
+                note,
             )
             .await?;
         urls.insert(identity(requested_url));

@@ -5,6 +5,18 @@
 use super::*;
 use lattice_core::shared::http::url_identity::identity;
 
+/// What the standing judgement's key is computed from for one live source's
+/// active version (claim sources design §4.3, §7.3): its text, who added it
+/// and why research selected it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChosenVersion {
+    pub source_id: String,
+    pub version_id: String,
+    pub text: String,
+    pub added_by: SourceAddedBy,
+    pub selection_note: Option<String>,
+}
+
 /// The active version of one live source of a program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedSource {
@@ -23,6 +35,16 @@ struct LiveSource {
     origin: String,
     requested_url: Option<String>,
     content_sha256: String,
+}
+
+fn chosen_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ChosenVersion> {
+    Ok(ChosenVersion {
+        source_id: row.get("source_id"),
+        version_id: row.get("version_id"),
+        text: row.get("full_text"),
+        added_by: parse_added_by(row.get("added_by"))?,
+        selection_note: row.get("selection_note"),
+    })
 }
 
 impl LearningSourceLibraryRepository {
@@ -60,6 +82,55 @@ impl LearningSourceLibraryRepository {
                 })
             })
             .collect()
+    }
+
+    /// Who added each live source, keyed by its active version: what the
+    /// standing scope reads without a model (claim sources design §7.3).
+    pub async fn added_by_version(
+        &self,
+        program_id: &str,
+    ) -> Result<HashMap<String, SourceAddedBy>> {
+        Ok(self
+            .live_sources(program_id)
+            .await?
+            .into_iter()
+            .map(|source| (source.saved.version_id, source.saved.added_by))
+            .collect())
+    }
+
+    /// Every live source's active version with its text, who added it and
+    /// the planner's note: what the standing scope keys stored standing
+    /// judgements by, without a model.
+    pub async fn chosen_versions(&self, program_id: &str) -> Result<Vec<ChosenVersion>> {
+        Self::validate_program_id(program_id)?;
+        sqlx::query("SELECT s.id AS source_id,v.id AS version_id,v.full_text,s.added_by,s.selection_note FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+            .bind(program_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(chosen_from_row)
+            .collect()
+    }
+
+    /// One version of a program's source with its text, who added the
+    /// source and why research selected it (claim sources design §4.3): what
+    /// the version's standing judgement is keyed by. `None` when the version
+    /// is not in the program.
+    pub async fn chosen_version(
+        &self,
+        program_id: &str,
+        version_id: &str,
+    ) -> Result<Option<ChosenVersion>> {
+        Self::validate_program_id(program_id)?;
+        sqlx::query("SELECT l.id AS source_id,v.id AS version_id,v.full_text,l.added_by,l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id=v.source_id AND l.program_id=v.program_id WHERE v.program_id=? AND v.id=?")
+            .bind(program_id)
+            .bind(version_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .map(|row| chosen_from_row(&row))
+            .transpose()
     }
 
     /// The live web source the user already saved for `url`, by the address

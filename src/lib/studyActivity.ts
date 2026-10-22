@@ -4,7 +4,9 @@ import type { ApiResult } from '@/types';
 import { queryClient } from './queryClient';
 
 export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
-export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string };
+export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string;
+  /** Open the lesson's claim review screen (`?review=claims`). */
+  review?: 'claims' };
 // `withdrawsOn` names the result `outcome` tag that means the request did
 // nothing (a closed save or folder dialog), so its receipt is withdrawn.
 type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; quickStart?: boolean; withdrawsOn?: string };
@@ -42,6 +44,7 @@ const descriptions: Record<string, TaskDescription> = {
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
   save_learning_pack_as: { withdrawsOn: 'cancelled', title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
   export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
+  attach_learning_claim_evidence: model('Checking claims against your source', 'lessons', 'Save the source to the course', 'Check the waiting claims against it'),
   generate_study_deck: { ...model('Creating your flashcard deck', 'recall', 'Read the selected documents', 'Generate cited questions and answers', 'Save your deck'), tab: undefined },
   generate_conversation_study_deck: { ...model('Creating flashcards from your conversation', 'recall', 'Read the verified claims and citations', 'Create and save a deck from those claims'), tab: undefined },
 };
@@ -70,6 +73,14 @@ function describe(command: string): TaskDescription {
     tab, detail: read ? 'This is taking longer than usual. The request is still waiting for a response.' : 'Waiting for the app to finish this change.',
     involves: [read ? 'Retrieve the saved material' : 'Apply and save your requested change'],
   };
+}
+
+/** A course's name for a one-line receipt: its title up to the first sentence
+ * or 60 characters, so a course whose title is its whole goal stays one line. */
+export function shortCourseTitle(title: string): string {
+  const trimmed = title.trim();
+  const sentence = /^(.{12,}?[.!?])\s/.exec(trimmed)?.[1] ?? trimmed;
+  return sentence.length > 60 ? `${sentence.slice(0, 59).trimEnd()}…` : sentence;
 }
 
 export type StudyActivity = TaskDescription & {
@@ -126,7 +137,7 @@ export function beginStudyActivity(domain: string, command: string, args?: Recor
       formId: typeof request?.formId === 'string' ? request.formId : undefined,
       flashcards: domain === 'study', deckId: command === 'get_study_deck' && typeof args?.id === 'string' ? args.id : undefined,
     },
-    courseTitle: course?.summary?.title,
+    courseTitle: course?.summary?.title ? shortCourseTitle(course.summary.title) : undefined,
     status: 'pending', startedAt: Date.now(),
   };
   let visible = false;

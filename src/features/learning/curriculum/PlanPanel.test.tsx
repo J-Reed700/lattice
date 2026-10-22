@@ -57,6 +57,9 @@ describe('Learning Studio Plan editor', () => {
     expect(await screen.findByText('Required lesson count')).toBeVisible();
     expect(screen.getByText('Current plan to draft preview')).toBeVisible();
     expect(screen.getByText(/Resume: Build a source-backed explanation/)).toBeVisible();
+    // The running job is one status line; its staging and progress sit behind Details (§2.2).
+    expect(screen.queryByText(/2\/5 lessons staged/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText(/2\/5 lessons staged/)).toBeVisible();
     expect(screen.getByText('Preparing a lesson')).toBeVisible();
     const pause = screen.getByRole('button', { name: 'Pause lesson preparation' });
@@ -76,7 +79,9 @@ describe('Learning Studio Plan editor', () => {
       { ...running, id: 'job-c', retryOfJobId: 'job-b', createdAt: 1_790_000_200_000 },
     ] })));
     renderPlan();
-    expect(await screen.findByText('Preparing a lesson')).toBeVisible();
+    // Only the running attempt gets a status line; its progress sits behind Details (§2.2).
+    await userEvent.click(await screen.findByRole('button', { name: 'Details' }));
+    expect(screen.getByText('Preparing a lesson')).toBeVisible();
     expect(screen.getAllByRole('button', { name: 'Pause lesson preparation' })).toHaveLength(1);
     const earlier = screen.getByText('Earlier attempts (2)');
     const disclosure = earlier.closest('details')!;

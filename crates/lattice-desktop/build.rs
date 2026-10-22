@@ -537,6 +537,7 @@ fn main() {
                     "course_index_close",
                     "get_learning_lesson_claim_review",
                     "resolve_learning_claim",
+                    "attach_learning_claim_evidence",
                     "keep_learning_teaching_finding",
                     "resume_learning_lesson_review",
                     "capture_learning_source_snapshot",

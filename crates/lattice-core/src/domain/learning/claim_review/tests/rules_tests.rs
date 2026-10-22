@@ -82,13 +82,13 @@ fn identity_gives_each_prior_id_once_and_orphans_vanished_sentences() {
     assert_eq!(result.assigned, vec![None, Some(ClaimId("c1".into()))]);
     assert_eq!(result.orphaned, vec![ClaimId("c2".into())]);
 
-    // A prior quote that now occurs twice has no single place to overlap.
+    // A prior quote that now occurs twice falls back to its stored span.
     let doubled = format!("{QUOTE} {QUOTE}");
     let ambiguous = identities(&[&old], &[extracted("boils at 100 °C", "x")], |_, _| {
         Some(doubled.as_str())
     });
-    assert_eq!(ambiguous.assigned, vec![None]);
-    assert_eq!(ambiguous.orphaned, vec![ClaimId("c1".into())]);
+    assert_eq!(ambiguous.assigned, vec![Some(ClaimId("c1".into()))]);
+    assert!(ambiguous.orphaned.is_empty());
 }
 
 #[test]
@@ -280,7 +280,9 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
             general_knowledge: 1,
             queued: 1,
             open: 1,
-            removed: 1,
+            removed_by_you: 1,
+            edited_by_you: 0,
+            rewritten: 0,
         }
     );
 }
@@ -325,7 +327,14 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
             },
             result: AttachOutcome::Checked(local_check(Some(VerdictKind::NoSource), "v3")),
         },
-        ClaimEvent::Superseded { successor: None },
+        ClaimEvent::Superseded {
+            successor: None,
+            by: Actor::Machine,
+        },
+        ClaimEvent::BornOfRepair {
+            parent: ClaimId("c0".into()),
+            attempts_left: 1,
+        },
         ClaimEvent::Reopened {
             cause: ReopenCause::SourceReplaced {
                 from: "v1".into(),
@@ -397,4 +406,81 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         Some(UnitKind::AnswerKey)
     );
     assert_eq!(LessonReviewState::from_column("bogus"), None);
+}
+
+#[test]
+fn the_tally_counts_only_the_users_actions_as_resolved_by_you() {
+    // The machine's: a rewrite whose sentence found no successor, and a
+    // removal by repair.
+    let mut rewritten = claim("c1");
+    rewritten
+        .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    rewritten
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    rewritten
+        .append(
+            machine(4),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    let mut removed_by_machine = claim("c2");
+    removed_by_machine
+        .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    removed_by_machine
+        .append(machine(3), rewrite(1, false, RepairOutcome::Removed))
+        .unwrap();
+    // The user's: a removal and an edit.
+    let mut removed_by_you = queued_claim("c3", VerdictKind::Unsupported);
+    removed_by_you
+        .append(user(7), act(UserAction::Remove, None))
+        .unwrap();
+    let mut edited_by_you = queued_claim("c4", VerdictKind::Unsupported);
+    edited_by_you
+        .append(
+            user(7),
+            act(
+                UserAction::Edit {
+                    before: QUOTE.into(),
+                    after: "Water boils at 100 °C at one atmosphere.".into(),
+                },
+                None,
+            ),
+        )
+        .unwrap();
+    edited_by_you
+        .append(
+            machine(8),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::User,
+            },
+        )
+        .unwrap();
+    let counts = ClaimCounts::tally([
+        &rewritten,
+        &removed_by_machine,
+        &removed_by_you,
+        &edited_by_you,
+    ]);
+    assert_eq!(counts.rewritten, 2);
+    assert_eq!(counts.removed_by_you, 1);
+    assert_eq!(counts.edited_by_you, 1);
+    assert_eq!(counts.resolved_by_you(), 2);
+
+    // A Superseded event stored before it said who edited is the machine's.
+    let stored: ClaimEvent =
+        serde_json::from_value(json!({ "kind": "superseded", "successor": null })).unwrap();
+    assert_eq!(
+        stored,
+        ClaimEvent::Superseded {
+            successor: None,
+            by: Actor::Machine,
+        }
+    );
 }

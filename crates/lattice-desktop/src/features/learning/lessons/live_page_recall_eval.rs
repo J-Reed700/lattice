@@ -22,6 +22,22 @@
 //! (`Depth::reads_next`, `page_seconds`): how many the course supports, how
 //! many go to web research, and the minutes that takes.
 //!
+//! Given `LATTICE_PAGE_RECALL_TARGETS`, a recall set (JSONL), it reads that
+//! set instead of the stored reports: each claim names the passages that
+//! should support it and what its section cites, and the same walk reports
+//! where the first of them lies (`recall_set`).
+//!
+//! The `standing` order (claim sources design §7, §14.2) walks the claim's
+//! standing scope instead: the course's versions a stored judgement says
+//! stand on its subject, built from the trust store with no model
+//! (`Judgements::standing_scope`). It reads a recall set only, and the
+//! trust store through the app's own queries, on a migrated scratch copy of
+//! the database. Each row says what the scope held (`scope`), or `null`
+//! when the claim has no stored profile or its subject no stored ownership
+//! judgement. `LATTICE_PAGE_RECALL_TRUST_MODEL` names the model whose
+//! judgements are read; by default the one that made most of the course's
+//! ownership judgements.
+//!
 //! A section's citations are what the stored report marks `cited`: a
 //! finding's own unit's for pass A, and across the lesson the sources they
 //! come from for the lesson-sources orders. The stored quote is the whole
@@ -42,6 +58,10 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::sync::Arc;
+
+#[path = "live_page_recall_set.rs"]
+mod recall_set;
+use recall_set::{migrated_copy, recall_set, STANDING};
 
 /// Counts tokens by the calibrated estimate and holds the run's configured
 /// window, which bounds a page and a check. It is never asked to answer.
@@ -243,17 +263,24 @@ impl DepthTally {
 }
 
 /// `LATTICE_PAGE_RECALL_ORDER`: the orders of §5.2 to walk, by name, or
-/// `all` (the default) for every one.
+/// `all` (the default) for every pass B order; `standing` walks the
+/// standing scope and is asked for by name.
 fn orders_from_env() -> Vec<(&'static str, &'static [Reach])> {
     let wanted = std::env::var("LATTICE_PAGE_RECALL_ORDER").unwrap_or_else(|_| "all".into());
     let orders: Vec<_> = ORDERS
         .iter()
         .copied()
-        .filter(|(name, _)| wanted == "all" || *name == wanted)
+        .filter(|(name, _)| {
+            if wanted == "all" {
+                *name != STANDING
+            } else {
+                *name == wanted
+            }
+        })
         .collect();
     assert!(
         !orders.is_empty(),
-        "LATTICE_PAGE_RECALL_ORDER is relevance, lesson-sources, tie-break or all"
+        "LATTICE_PAGE_RECALL_ORDER is relevance, lesson-sources, tie-break, standing or all"
     );
     orders
 }
@@ -381,6 +408,25 @@ async fn live_page_recall_eval() -> Result<()> {
             None =>
                 "not given (no LATTICE_PAGE_RECALL_RESEARCH_SECONDS), no depth rule compared".into(),
         }
+    );
+    if let Ok(path) = std::env::var("LATTICE_PAGE_RECALL_TARGETS") {
+        let trust = match orders.iter().any(|(name, _)| *name == STANDING) {
+            true => Some(migrated_copy(&database, scratch.path()).await?),
+            false => None,
+        };
+        return recall_set(
+            &path,
+            (&pool, &indexes, &llm),
+            trust.as_ref(),
+            budget,
+            &orders,
+            (&json!(identity), &mut results),
+        )
+        .await;
+    }
+    assert!(
+        orders.iter().all(|(name, _)| *name != STANDING),
+        "the standing order reads a recall set: set LATTICE_PAGE_RECALL_TARGETS"
     );
     let mut tallies: HashMap<&str, Tally> = HashMap::new();
     let mut depth_tallies: HashMap<(&str, &str), DepthTally> = HashMap::new();

@@ -53,6 +53,12 @@ impl Passes {
             || self.repairs.get(key).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
     }
 
+    /// Holds these findings for the user: the machine does not repair them
+    /// (a finding about a sentence a live claim stands on, §10.3).
+    pub fn hold(&mut self, keys: impl IntoIterator<Item = FindingKey>) {
+        self.held.extend(keys);
+    }
+
     /// Whether a deterministic finding at `key` still blocks the content
     /// review: one the machine stopped on no longer does.
     pub fn repairable(&self, key: &FindingKey) -> bool {

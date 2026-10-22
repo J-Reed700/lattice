@@ -41,6 +41,7 @@ fn insufficient(next: Vec<NextStep>) -> FindingTrust {
             next,
             reasons: Vec::new(),
         },
+        available: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn sufficient() -> FindingTrust {
             label: None,
             reasons: Vec::new(),
         },
+        available: None,
     }
 }
 

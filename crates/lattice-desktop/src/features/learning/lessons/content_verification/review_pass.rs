@@ -110,10 +110,16 @@ fn changes(ledger: &ClaimLedger, candidate: &Value) -> Vec<Change> {
                     by: Actor::User, ..
                 },
                 _,
-            ) => changes.push(Change::Remove {
-                pointer,
-                quote: location.quote.clone(),
-            }),
+            ) => {
+                // The claim's own sentence, not a passage it was located by
+                // (claim sources design §18.3).
+                let text = candidate
+                    .pointer(&pointer)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let quote = super::located_quote(location, entry.statement(), text);
+                changes.push(Change::Remove { pointer, quote })
+            }
             _ => {}
         }
     }

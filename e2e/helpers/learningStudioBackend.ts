@@ -27,12 +27,17 @@ import type {
   ClaimActionRequestDto,
   ClaimEventPayloadDto,
   LessonClaimReviewDto,
+  AttachLearningClaimEvidenceRequestDto,
+  LearningTrustOverrideInputDto,
+  LearningTrustOverrideScopeDto,
+  WaitingClaimsRecheckDto,
   StudyCardDto,
   StudyDeckSummaryDto,
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
 import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
+import { installClaimReviewBackend, type ClaimReviewBackend, type TrustOverrideRecord } from "./claimReviewBackend";
 
 /** Collect any HTTP(S) requests the renderer sends outside the local app. */
 export function watchExternalHttpRequests(page: Page, localOrigin: string) {
@@ -236,7 +241,11 @@ type LabDraft = {
 /** Install a stateful Tauri command fixture for Learning Studio route tests. */
 export async function installLearningStudioBackend(page: Page) {
   await installTauriMock(page);
+  await installClaimReviewBackend(page);
   await mockCommands(page, (settings, ipc) => {
+    // The factory runs in the page; the claim review helpers wait there for it.
+    const { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } =
+      (window as unknown as { __LATTICE_CLAIM_REVIEW_BACKEND__: ClaimReviewBackend }).__LATTICE_CLAIM_REVIEW_BACKEND__;
     const source = {
       id: "source-version-field-notes-1",
       title: "Public field notes",
@@ -445,6 +454,7 @@ export async function installLearningStudioBackend(page: Page) {
       program,
       // Lesson claim reviews by lesson id; a lesson without one answers null.
       claimReviews: {} as Record<string, ClaimReviewFixture>,
+      trustOverrides: [] as TrustOverrideRecord[],
       claimActions: [] as Array<{ claimId: string; action: { action: string } & Record<string, unknown>; at: number }>,
       verifierAudit: {
         programId: program.summary.id, on: false, webSearch: false, consentAt: null as number | null, consentProvider: null as string | null,
@@ -780,8 +790,13 @@ export async function installLearningStudioBackend(page: Page) {
     const packSchemaVersion = 20261013000000;
     const copyCanvasWorkspace = () =>
       JSON.parse(JSON.stringify(canvasWorkspace));
-    const copySourceWorkspace = () =>
-      JSON.parse(JSON.stringify(state.sourceWorkspace)) as SourceWorkspace;
+    const copySourceWorkspace = (recheck: WaitingClaimsRecheckDto | null = null) =>
+      ({ ...(JSON.parse(JSON.stringify(state.sourceWorkspace)) as SourceWorkspace), recheck });
+    // The Sources tab's add commands check the waiting claims against the
+    // new source when the user leaves the box on (claim review UI §5.3).
+    const recheckAdded = (args: MockArgs, request: Record<string, unknown>, title: string, url: string | null, text: string) =>
+      recheckWaiting(state.claimReviews, args as { checkWaiting?: boolean; onProgress?: unknown },
+        { sourceId: String(request.sourceId), versionId: String(request.versionId), title, url, text }, ipc.send);
     const copyPracticeWorkspace = () =>
       JSON.parse(JSON.stringify(practiceWorkspace)) as PracticeWorkspace;
     const findLesson = (lessonId: string) => {
@@ -1197,7 +1212,7 @@ export async function installLearningStudioBackend(page: Page) {
       },
       get_learning_lesson_claim_review: (args: MockArgs) => {
         const review = state.claimReviews[String((args as { lessonId?: string }).lessonId)];
-        return review ? structuredClone(review) : null;
+        return review ? structuredClone(withReviewFields(review)) : null;
       },
       resolve_learning_claim: (args: MockArgs) => {
         const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: ClaimActionRequestDto }>(args);
@@ -1209,24 +1224,7 @@ export async function installLearningStudioBackend(page: Page) {
         const now = Date.now();
         const { action } = request;
         const record = (event: ClaimEventPayloadDto) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
-        let attach: Record<string, unknown> | null = null;
-        if (action.action === "attach_link") {
-          const url = String(action.url);
-          if (url.includes("403")) {
-            const host = new URL(url).host;
-            const failure = { kind: "refused", message: `${host} refused the request (HTTP 403).`, nextSteps: [{ step: "paste_text", origin: url }, { step: "add_file" }] };
-            attach = { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [failure.message] };
-            state.claimActions.push({ claimId: claim.claimId, action, at: now });
-            return { revision: review.revision, attach };
-          }
-        }
-        if (action.action === "attach_text" || action.action === "attach_link") {
-          const title = action.action === "attach_text" ? String(action.title) : String(action.url);
-          claim.state = { state: "resolved_by_evidence" };
-          claim.availableActions = ["attach_evidence"];
-          record({ kind: "evidence_attached", sourceVersionId: "pasted-version", provenance: action.action === "attach_text" ? { input: "pasted_text" } : { input: "link", url: action.url }, result: { outcome: "no_passage" } });
-          attach = { revision: review.revision + 1, source: { sourceId: "pasted-source", sourceVersionId: "pasted-version", title, url: null, addedBy: "user" }, alreadySaved: false, outcome: { outcome: "no_passage" }, failure: null, snapshot: { state: "not_applicable" }, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [`Verified against ${title}.`] };
-        } else if (action.action === "confirm") {
+        if (action.action === "confirm") {
           claim.state = { state: "confirmed", at: now };
           claim.human = { at: now, note: (action.note as string | null) ?? null, boundSources: [] };
           claim.availableActions = ["unconfirm", "undo", "attach_evidence"];
@@ -1246,7 +1244,15 @@ export async function installLearningStudioBackend(page: Page) {
         review.changedSinceStop = true;
         const waiting = review.claims.filter((item) => item.state.state === "queued").length;
         review.counts = { ...review.counts, queued: waiting, confirmed: review.claims.filter((item) => item.state.state === "confirmed").length };
-        return { revision: review.revision, attach: attach && { ...attach, revision: review.revision } };
+        return { revision: review.revision };
+      },
+      attach_learning_claim_evidence: (args: MockArgs) => {
+        const request = getRequest<AttachLearningClaimEvidenceRequestDto>(args);
+        const review = state.claimReviews[request.lessonId];
+        if (review) withReviewFields(review);
+        const report = attachEvidence(state.claimReviews, { request, onProgress: (args as { onProgress?: unknown }).onProgress }, ipc.send);
+        state.claimActions.push({ claimId: request.claimId, action: { action: request.evidence.kind, ...request.evidence, scope: request.scope }, at: Date.now() });
+        return report;
       },
       resume_learning_lesson_review: (args: MockArgs) => {
         const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number; operationId: string }>(args);
@@ -1729,9 +1735,23 @@ export async function installLearningStudioBackend(page: Page) {
       // Source trust (provenance §19): no judgements made yet, so no levels;
       // specs that exercise trust install their own handlers over these.
       get_learning_source_trust: (args) => {
-        const request = getRequest<{ claim: unknown | null }>(args);
-        return { sources: [], claim: request.claim ? { profile: null, supports: [], bar: null } : null };
+        const request = getRequest<{ claim: unknown | null; sourceIds?: string[]; includeImpact?: boolean }>(args);
+        const claim = request.claim ? { profile: null, supports: [], bar: null } : null;
+        if (!request.includeImpact) return { sources: [], claim };
+        Object.values(state.claimReviews).forEach(withReviewFields);
+        const supports = Object.values(state.claimReviews).flatMap((review) => review.claims.flatMap((item) => (item.support ? [item.support.source] : [])));
+        const known = [
+          ...state.sourceWorkspace.sources.map((item) => ({ sourceId: item.id, sourceVersionId: item.activeVersionId ?? item.id, url: item.requestedUrl })),
+          ...supports.map((source) => ({ sourceId: source.sourceId, sourceVersionId: source.sourceVersionId, url: source.url })),
+        ];
+        const wanted = request.sourceIds?.length ? request.sourceIds : state.sourceWorkspace.sources.map((item) => item.id);
+        const sources = wanted.flatMap((id) => known.find((entry) => entry.sourceId === id) ?? []);
+        return { sources: trustImpacts(state.claimReviews, sources), claim };
       },
+      set_source_trust_override: (args) =>
+        setTrustOverride(state.claimReviews, state.trustOverrides, getRequest<LearningTrustOverrideInputDto>(args)),
+      clear_source_trust_override: (args) =>
+        clearTrustOverride(state.claimReviews, state.trustOverrides, getArg<LearningTrustOverrideScopeDto>(args, "scope")),
       list_source_trust_overrides: () => [],
       get_learning_source_workspace: (args) => {
         const programId = getArg<string>(args, "id");
@@ -1850,6 +1870,7 @@ export async function installLearningStudioBackend(page: Page) {
           });
           recordSourceEffect(command, operation);
           maybeLoseSourceResponse();
+          return copySourceWorkspace(recheckAdded(args, request, title, url, text));
         }
         return copySourceWorkspace();
       },
@@ -1895,6 +1916,7 @@ export async function installLearningStudioBackend(page: Page) {
           });
           recordSourceEffect(command, operation);
           maybeLoseSourceResponse();
+          return copySourceWorkspace(recheckAdded(args, request, version.title, null, text));
         }
         return copySourceWorkspace();
       },
@@ -1939,6 +1961,7 @@ export async function installLearningStudioBackend(page: Page) {
           });
           recordSourceEffect(command, operation);
           maybeLoseSourceResponse();
+          return copySourceWorkspace(recheckAdded(args, request, version.title, null, text));
         }
         return copySourceWorkspace();
       },

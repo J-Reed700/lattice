@@ -16,7 +16,8 @@ import {
   useSubmitLearningDiagnostic,
 } from '@/features/learning/curriculum/useLearningPlan';
 import { PREPARATION_PHASES } from '@/features/learning/lessons/lessonPreparationActivity';
-import { LessonPreparationProgress } from '@/features/learning/lessons/LessonPreparationProgress';
+import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
+import { CheckerAccuracy } from '@/features/learning/lessons/review/CheckerAccuracy';
 import { VerifierAuditSwitch } from '@/features/learning/lessons/review/VerifierAuditSwitch';
 import type {
   LearningCurriculumLesson,
@@ -102,7 +103,7 @@ function EarlierAttempts({ jobs }: { jobs: LearningGenerationJob[] }) {
 
 function JobCard({ job, programId, revision }: { job: LearningGenerationJob; programId: string; revision: number }) {
   return job.kind === 'lesson_preparation' && job.status !== 'completed'
-    ? <LessonPreparationProgress job={job} pending={false} programId={programId} revision={revision} />
+    ? <LessonPreparationStatus job={job} pending={false} programId={programId} revision={revision} />
     : <OtherJobCard job={job} programId={programId} revision={revision} />;
 }
 
@@ -171,6 +172,7 @@ export function PlanPanel({ programId, onStartingPoint }: { programId: string; o
   return <div className="space-y-5" data-testid="learning-plan-panel"><header className="overflow-hidden rounded-2xl border border-border bg-[#eee8df] p-5 dark:bg-[#28251f] sm:p-7"><div className="flex flex-wrap items-start justify-between gap-5"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Curriculum plan</div><h2 className="mt-1 font-serif text-3xl text-text-primary">Revise with the work in view</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Changes are previewed as a new revision. Completed lessons and work with started assessments stay protected; the learner’s resume point remains visible.</p></div><div className="rounded-xl border border-white/70 bg-white/55 px-4 py-3 text-right dark:border-white/10 dark:bg-black/10"><div className="text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Required lesson count</div><div className="mt-1 font-serif text-2xl text-text-primary">{plan.requiredLessonCountBefore}<span className="px-2 text-sm text-text-muted">→</span>{plan.requiredLessonCountAfter}</div><div className="text-[10px] text-text-muted">Current plan to draft preview</div></div></div><div className="mt-5 flex flex-wrap gap-3 border-t border-black/10 pt-4 text-xs dark:border-white/10"><span className="rounded-full bg-white/70 px-3 py-1.5 text-text-secondary dark:bg-white/5">Accepted revision {revision?.revisionNumber ?? '—'}</span><span className="rounded-full bg-white/70 px-3 py-1.5 text-text-secondary dark:bg-white/5">{draft ? `Draft revision ${draft.revisionNumber}` : 'No pending revision'}</span><span className="rounded-full bg-white/70 px-3 py-1.5 text-text-secondary dark:bg-white/5">Resume: {plan.resumeLessonId ? allLessons.find((entry) => entry.lesson.id === plan.resumeLessonId)?.lesson.title ?? 'saved lesson' : 'no eligible lesson'}</span></div></header>
 
     <VerifierAuditSwitch programId={programId} />
+    <section aria-label="Checker accuracy" className="rounded-2xl border border-border bg-surface px-5 pb-4 pt-1"><CheckerAccuracy programId={programId} /></section>
     {onStartingPoint ? <section className="rounded-2xl border border-border bg-surface p-5"><h3 className="font-serif text-xl">Check your starting point</h3><p className="mt-2 text-sm text-text-secondary">Try short performance tasks and get feedback on where to begin.</p><button type="button" onClick={onStartingPoint} className="mt-3 min-h-11 rounded-full border border-accent/40 px-4 text-sm text-accent">Open starting-point check</button></section> : <DiagnosticCard plan={plan} programId={programId} />}
 
     <section className="rounded-2xl border border-border bg-surface p-5 sm:p-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Revision editor</div><h3 className="mt-1 font-serif text-2xl text-text-primary">Shape the next version</h3></div><div className="flex gap-2"><button type="button" disabled={!current?.modules.length || busy} onClick={(event) => openAddEditor(event.currentTarget)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3.5 py-2 text-xs font-medium disabled:opacity-45"><Plus size={14} /> Add lesson</button><button type="button" disabled={busy || operations.length === 0 || !reason.trim()} onClick={previewRequest} className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"><Sparkles size={13} /> Preview changes</button></div></div>

@@ -52,6 +52,33 @@ async fn run(model: &ScriptedModel, candidate: Value) -> Result<Reviewed> {
         4000,
         ReviewContext {
             outline: None,
+            protected: &[],
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await
+}
+
+/// The teaching review after a claim repair, `protected` the sentences the
+/// lesson's live claims stand on.
+async fn review_protecting(
+    model: &ScriptedModel,
+    candidate: &Value,
+    protected: &[crate::features::learning::lessons::content_verification::Protected],
+) -> Result<Reviewed> {
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    review_material(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected,
             lesson_references: Some(&references),
             held: BTreeSet::new(),
         },
@@ -183,6 +210,7 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         4000,
         ReviewContext {
             outline: None,
+            protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::from([FindingKey {
                 kind: FindingKind::Teaching,
@@ -218,4 +246,101 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_repair_leaves_it(
+) -> Result<()> {
+    // After a claim repair, the sentence a verified claim stands on is
+    // protected: the reviewer's finding about it is held, not repaired.
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+    ]);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    let protected = [
+        crate::features::learning::lessons::content_verification::Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: sentence.into(),
+        },
+    ];
+    let reviewed = review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: &protected,
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await?;
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_eq!(
+        reviewed.set_aside[0].finding.key().id(),
+        "teaching:section-0"
+    );
+    // The review and its evidence check; no repair was asked for.
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(after["blocks"][0]["body"], candidate["blocks"][0]["body"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims(
+) -> Result<()> {
+    // One paragraph, one inventory passage, two verified claims located to
+    // their sentences; the teaching finding is about a sentence no claim
+    // stands on, in the review's second passage (claim sources design §18.5).
+    use crate::features::learning::lessons::content_verification::Protected;
+    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
+    const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
+    let body = format!(
+        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
+    );
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
+    let defect = || {
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-1","finding":"The example says a harder-working muscle cell grows fewer mitochondria, which contradicts the section's point that cells divide them when they need more energy.","hasDefect":true})])}).to_string()
+    };
+    let fix = json!({"edits":[{"path":"/blocks/0/body","before":"grows fewer mitochondria","after":"grows more mitochondria"}]}).to_string();
+    let sentence = |quote: &str| Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: quote.into(),
+    };
+
+    // Held when the claims were located by their passage: it holds the
+    // finding's sentence too.
+    let held = model(vec![defect(), actionable()]);
+    let outcome = review_protecting(&held, &candidate, &[sentence(&body)]).await?;
+    assert_eq!(outcome.set_aside.len(), 1);
+    assert_eq!(
+        held.prompts.lock().unwrap().len(),
+        2,
+        "no repair was asked for"
+    );
+
+    // Repaired now: the claims protect their own sentences only.
+    let repaired = model(vec![defect(), actionable(), fix, review(None)]);
+    let outcome = review_protecting(&repaired, &candidate, &[sentence(V1), sentence(V2)]).await?;
+    assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
+    let after: Value = serde_json::from_str(&outcome.candidate)?;
+    let after = after["blocks"][0]["body"].as_str().unwrap();
+    assert_eq!(after, body.replace("grows fewer", "grows more"));
+    assert!(
+        after.starts_with(&format!("{V1} {V2} ")),
+        "the claims' sentences are byte-identical"
+    );
+    Ok(())
 }

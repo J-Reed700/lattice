@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::domain::provenance::{
-    decide, effective_bars, AddedBy, Calibration, ClaimKind, ClaimProfile, ClaimSubject, ClusterId,
-    Decision, EffectiveBars, LabelSource, Outcome, PassageKind, SourceDates, StaticBars,
+    decide, effective_bars, AddedBy, Available, Calibration, ClaimKind, ClaimProfile, ClaimSubject,
+    ClusterId, Decision, EffectiveBars, LabelSource, Outcome, PassageKind, SourceDates, StaticBars,
     SubjectKind, Support, TemporalScope, TemporalValidity, Trust, TrustLevel, POLICY,
 };
 use serde_json::json;
@@ -81,7 +81,7 @@ fn relaxed_bars() -> EffectiveBars {
 fn assessment(supports: Vec<Support>, bars: &EffectiveBars) -> TrustAssessment {
     let profile = profile();
     TrustAssessment {
-        decision: decide(&profile, &supports, &[], bars),
+        decision: decide(&profile, &supports, &[], bars, &Available::default()),
         profile,
         supports,
         contrary: vec![],
@@ -90,6 +90,7 @@ fn assessment(supports: Vec<Support>, bars: &EffectiveBars) -> TrustAssessment {
             supporting_quote: SUPPORTING_QUOTE.into(),
         },
         policy: "source-trust-v1".into(),
+        available: None,
     }
 }
 
@@ -168,7 +169,7 @@ fn replayed(entry: &ClaimLedgerEntry) -> ClaimLedgerEntry {
 }
 
 #[test]
-fn a_support_below_its_bar_is_the_gates_failure_and_the_machines_to_repair() {
+fn a_support_below_its_bar_is_the_gates_failure_researched_but_never_repaired() {
     let entry = gated_claim("c1");
     let ClaimState::Open {
         kind: VerdictKind::InsufficientStanding { bar, have },
@@ -188,7 +189,10 @@ fn a_support_below_its_bar_is_the_gates_failure_and_the_machines_to_repair() {
     );
     assert!(entry.trust().is_some());
     assert!(entry.redecidable());
-    assert!(entry.may_research() && entry.may_repair());
+    // Design 2026-10-21 §10.4: a lack of standing is researched, never
+    // rewritten or removed by the machine.
+    assert!(entry.may_research());
+    assert!(!entry.may_repair());
     assert!(!entry.allows(ClaimActionKind::GeneralKnowledge));
 }
 

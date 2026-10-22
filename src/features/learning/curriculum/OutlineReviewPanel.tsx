@@ -27,6 +27,16 @@ export function OutlineReviewPanel({ program, generation, repair }: {
   const pending = operation.isPending;
   if (!review) return null;
   const passed = review.status === 'passed';
+  // Once the course is accepted, a passed outline is a fact, not a task: one line.
+  if (passed && program.summary.status === 'active' && !pending) {
+    const references = program.sources.length;
+    return <section aria-label="Outline review" className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-secondary">
+      <CheckCircle2 size={14} className="shrink-0 text-emerald-700" aria-hidden="true" />
+      <span>Outline checks passed</span>
+      {references > 0 && <span className="text-text-muted">· {references} {references === 1 ? 'reference' : 'references'}</span>}
+      {review.issues.length > 0 && <details className="w-full"><summary className="cursor-pointer text-text-muted">Advisory suggestions ({review.issues.length})</summary><ul className="mt-2 space-y-1">{review.issues.map((issue, index) => <li key={issue.id || `${issue.path}:${index}`}><span className="font-medium text-text-primary">{location(program, issue.path)}</span> · {issue.message}</li>)}</ul></details>}
+    </section>;
+  }
   return <section aria-label="Outline review" className={`mt-4 rounded-2xl border p-5 ${passed ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
     <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between"><div className="min-w-0 w-full flex-1"><h2 className="flex items-center gap-2 font-serif text-xl text-text-primary">{passed ? <CheckCircle2 size={19} /> : <Wrench size={19} />}{passed ? 'Outline checks passed' : review.status === 'unchecked' ? 'Saved draft · review incomplete' : `Saved draft · ${review.issues.length} unresolved ${review.issues.length === 1 ? 'finding' : 'findings'}`}</h2><p className="mt-2 text-sm leading-6 text-text-secondary">{review.note}</p><p className="mt-1 text-xs text-text-muted">{review.repairPasses} repair {review.repairPasses === 1 ? 'pass' : 'passes'} saved. {passed ? 'This is an AI review; lesson content receives separate checks when prepared.' : 'You can inspect this draft now. Resolve its findings before accepting the course.'}</p></div>
       {(!passed || review.issues.length > 0) && !pending && program.summary.status === 'draft' && <button type="button" onClick={() => {
