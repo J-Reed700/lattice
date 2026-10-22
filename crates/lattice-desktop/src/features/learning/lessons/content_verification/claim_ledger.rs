@@ -14,6 +14,7 @@
 mod audit;
 mod observe;
 mod receipts;
+mod successor;
 
 pub(super) use audit::Audited;
 
@@ -557,8 +558,8 @@ pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
         ),
         waiting: count(counts.queued),
         verified: count(counts.verified),
-        resolved_by_you: count(counts.confirmed + counts.general_knowledge + counts.removed),
-        rewritten: 0,
+        resolved_by_you: count(counts.resolved_by_you()),
+        rewritten: count(counts.rewritten),
     }
 }
 

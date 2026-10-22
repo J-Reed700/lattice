@@ -17,9 +17,11 @@ use lattice_core::application::services::grounded_generation::GroundedRequest;
 use std::collections::{BTreeSet, VecDeque};
 
 mod citation;
+mod confine;
 #[cfg(test)]
 pub(super) use citation::quotation;
 pub(super) use citation::{cite_where_supported, number_sources};
+pub(in crate::features::learning) use confine::{confine, Protected};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
     let blocks = candidate
@@ -161,7 +163,7 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
 }
 
 fn repair_system() -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. A failed claim with repeatedDefect true was left unresolved by the previous repair on the same evidence: remove that entire factual assertion while preserving the rest of the section; repeatedDefects is true when any listed claim or failed example is such a claim. Label Markdown code/output fences. {} {}", lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. A failed claim with repeatedDefect true was left unresolved by the previous repair on the same evidence: remove that entire factual assertion while preserving the rest of the section; repeatedDefects is true when any listed claim or failed example is such a claim. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
@@ -350,6 +352,9 @@ pub(in crate::features::learning) async fn candidate(
     references: &ReferenceCollection<'_>,
     ledger: &mut ClaimLedger,
 ) -> Result<String> {
+    // What this repair left as it was: the teaching review after it leaves
+    // it too (claim sources design §10.3).
+    let protected = Protected::from_context(&context);
     let candidate = repair_sections(
         llm,
         prompt,
@@ -368,6 +373,7 @@ pub(in crate::features::learning) async fn candidate(
         candidate.to_string(),
         output_tokens,
         references,
+        &protected,
     )
     .await
 }
@@ -472,13 +478,33 @@ async fn repair_sections(
             let original = local
                 .get("candidate")
                 .ok_or_else(|| invalid("Missing repair candidate."))?;
-            let repaired =
-                match repair_group(llm, &system, &local, original, schema, field, output_tokens)
-                    .await
-                {
-                    Ok(repaired) => merge(&mut candidate, repaired, unit),
-                    Err(error) => Err(error),
-                };
+            // The group's failed sentences may change; every other sentence
+            // of the section a claim stands on comes back as it was (§10).
+            let mut sent = claim_ids(&group);
+            if part == 1 {
+                sent.extend(claim_ids(&section_examples(&context, unit)));
+            }
+            let of_unit = |set: Vec<Protected>| -> Vec<Protected> {
+                set.into_iter().filter(|item| item.unit == unit).collect()
+            };
+            let confined = (
+                of_unit(Protected::of_claims(ledger, &sent)),
+                of_unit(Protected::from_context(&context)),
+            );
+            let repaired = match repair_group(
+                llm,
+                &system,
+                (&local, original),
+                schema,
+                field,
+                output_tokens,
+                (&confined.0, &confined.1),
+            )
+            .await
+            {
+                Ok(repaired) => merge(&mut candidate, repaired, unit),
+                Err(error) => Err(error),
+            };
             if let Err(error) = repaired {
                 if !rejected(&error) {
                     return Err(error);
@@ -511,15 +537,17 @@ async fn repair_sections(
     Ok(candidate)
 }
 
-/// One request's edit of one section, validated against the lesson schema.
+/// One request's edit of one section, confined to the failed sentences
+/// (`targets`; `protected` must come back byte-identical) and validated
+/// against the lesson schema.
 async fn repair_group(
     llm: &dyn LLMPort,
     system: &str,
-    local: &Value,
-    original: &Value,
+    (local, original): (&Value, &Value),
     schema: &Value,
     field: &str,
     output_tokens: usize,
+    (targets, protected): (&[Protected], &[Protected]),
 ) -> Result<Value> {
     let raw = crate::features::learning::generation::complete_json(
         llm,
@@ -529,8 +557,14 @@ async fn repair_group(
         output_tokens,
     )
     .await?;
-    let repaired =
+    let mut repaired =
         apply_or_replace_section(llm, local, original, schema, field, output_tokens, &raw).await?;
+    let pointer = format!("/{field}/0");
+    if let (Some(before), Some(after)) =
+        (original.pointer(&pointer), repaired.pointer_mut(&pointer))
+    {
+        *after = confine(before, after, targets, protected)?;
+    }
     let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
         .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;
     if !validator.is_valid(&repaired) {

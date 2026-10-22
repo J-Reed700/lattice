@@ -856,3 +856,127 @@ async fn the_latest_measured_research_cost_is_read_and_an_unmeasured_event_is_pa
     assert_eq!(cost().await?, Some(Duration::from_secs(90)));
     Ok(())
 }
+
+/// A decided finding over one passage of `id` whose quotation is `text`.
+fn decided_by(verdict: ClaimVerdict, id: &str, text: &str) -> Finding {
+    Finding {
+        unit: 0,
+        quote: CLAIM.into(),
+        statement: CLAIM.into(),
+        verdict,
+        reason: String::new(),
+        evidence: vec![EvidencePassage {
+            source_id: id.into(),
+            text: text.into(),
+            start_byte: 0,
+            end_byte: text.len(),
+            retrieval_kind: "lexical".into(),
+            score: 0.0,
+        }],
+        supporting_quote: Some(text.into()),
+        resolution: None,
+        trust: None,
+        two_pass: Default::default(),
+    }
+}
+
+/// What the gate decided, naming `met_by` best first (or insufficient).
+fn gate(met_by: Option<&[&str]>) -> provenance_gate::FindingTrust {
+    use lattice_core::domain::provenance::{
+        Bar, ClaimKind, ClaimProfile, Decision, Missing, TemporalScope,
+    };
+    provenance_gate::FindingTrust {
+        profile: ClaimProfile {
+            kind: ClaimKind::Specification,
+            subject: None,
+            temporal: TemporalScope::Timeless,
+            measurement_origin: None,
+            attributed_to: None,
+            reasons: vec![],
+            policy: "test".into(),
+            model: "test".into(),
+        },
+        supports: vec![],
+        contrary: vec![],
+        decision: match met_by {
+            Some(met_by) => Decision::Sufficient {
+                met_by: met_by.iter().map(|id| (*id).to_owned()).collect(),
+                label: None,
+                reasons: vec![],
+            },
+            None => Decision::Insufficient {
+                bar: Bar::Primary,
+                have: vec![],
+                missing: Missing::NoPrimaryForSubject,
+                next: vec![],
+                reasons: vec![],
+            },
+        },
+        available: None,
+    }
+}
+
+#[test]
+fn both_passes_supports_are_kept_and_the_strongest_names_the_claim() {
+    // Pass A's citation (established) and pass B's page (primary) both
+    // support the claim: B's support is kept beside A's, not dropped.
+    let mut combined = evidence_checks::combined(
+        Some(decided_by(ClaimVerdict::Supported, "book", MARKER)),
+        decided_by(ClaimVerdict::Supported, "owner", CONTRARY),
+        (Some(Reach::Course), 1),
+        &["book".to_owned()],
+    );
+    assert_eq!(combined.two_pass.pass, Some(Pass::Attribution));
+    assert_eq!(combined.two_pass.also_supported.len(), 1);
+    assert_eq!(
+        combined.two_pass.also_supported[0].passage.source_id,
+        "owner"
+    );
+    let weighed: Vec<&str> = provenance_gate::supporting_passages(&combined)
+        .iter()
+        .map(|passage| passage.source_id.as_str())
+        .collect();
+    assert_eq!(weighed, ["book", "owner"], "both are weighed");
+    // The gate met the bar with the owner's page first: it names the claim.
+    combined.trust = Some(Box::new(gate(Some(&["owner", "book"]))));
+    provenance_gate::name_strongest(&mut combined);
+    assert_eq!(combined.supporting_quote.as_deref(), Some(CONTRARY));
+    assert_eq!(
+        combined.two_pass.supported_by.as_ref().unwrap().source_id,
+        "owner"
+    );
+    assert_eq!(
+        combined.two_pass.also_supported[0].passage.source_id,
+        "book"
+    );
+    assert!(combined
+        .evidence
+        .iter()
+        .any(|passage| passage.source_id == "owner" && passage.text.contains(CONTRARY)));
+}
+
+#[test]
+fn with_standing_takes_the_found_support_and_keeps_the_prior_as_corroboration() {
+    let mut prior = decided_by(ClaimVerdict::Supported, "blog", MARKER);
+    prior.trust = Some(Box::new(gate(None)));
+    let found = decided_by(ClaimVerdict::Supported, "university-press", CONTRARY);
+    let finding = evidence_checks::with_standing(
+        prior.clone(),
+        Some((found, Reach::Standing, 1)),
+        &["blog".to_owned()],
+    );
+    assert_eq!(finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(finding.supporting_quote.as_deref(), Some(CONTRARY));
+    assert_eq!(finding.two_pass.reach, Some(Reach::Standing));
+    assert_eq!(finding.two_pass.page, Some(1));
+    assert_eq!(
+        finding.two_pass.supported_by.as_ref().unwrap().source_id,
+        "university-press"
+    );
+    assert_eq!(finding.two_pass.also_supported[0].passage.source_id, "blog");
+    assert!(finding.trust.is_none(), "weighed again with the ceiling");
+    // Nothing found: the finding as it was, its evidence not extended.
+    let unchanged = evidence_checks::with_standing(prior.clone(), None, &["blog".to_owned()]);
+    assert_eq!(unchanged.evidence.len(), prior.evidence.len());
+    assert_eq!(unchanged.supporting_quote, prior.supporting_quote);
+}

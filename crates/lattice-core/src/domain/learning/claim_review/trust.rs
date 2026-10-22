@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ClaimLedgerEntry, ClaimState, ReopenCause, VerdictKind};
 use crate::domain::provenance::{
-    decide, overturn, resolve_all, AddedBy, ClaimKind, ClaimProfile, ClusterId, Contrary, Decision,
-    EffectiveBars, LabelSource, Outcome, Overturn, Support, TrustLevel,
+    decide, overturn, resolve_all, AddedBy, Available, ClaimKind, ClaimProfile, ClusterId,
+    Contrary, Decision, EffectiveBars, LabelSource, Outcome, Overturn, Support, TrustLevel,
 };
 
 /// The checker's supported verdict the gate weighed: what verifies the
@@ -39,6 +39,10 @@ pub struct TrustAssessment {
     pub decision: Decision,
     pub supported: SupportedBy,
     pub policy: String,
+    /// What the course has on the claim's subject, when the standing reach
+    /// weighed it (claim sources design §6.1); `None` decides as before it.
+    #[serde(default)]
+    pub available: Option<Available>,
 }
 
 /// What the gate makes of a supported claim: verified, or the failure the
@@ -77,7 +81,13 @@ impl TrustAssessment {
     /// overrides, or as recorded) and the bars in force. Pure: `decide`
     /// reads judgements already made, so a trust change costs no model call.
     pub fn redecide(&self, supports: Vec<Support>, bars: &EffectiveBars) -> Self {
-        let decision = decide(&self.profile, &supports, &self.contrary, bars);
+        let decision = decide(
+            &self.profile,
+            &supports,
+            &self.contrary,
+            bars,
+            &self.available.unwrap_or_default(),
+        );
         Self {
             supports,
             decision,

@@ -18,7 +18,7 @@ mod lifecycle;
 mod reads;
 pub use reads::ActiveVersion;
 mod user_evidence;
-pub use user_evidence::SavedSource;
+pub use user_evidence::{ChosenVersion, SavedSource};
 
 const MAX_EXCERPT_CHARS: usize = 2_400;
 /// The extraction a pasted text is recorded with: the text as written.

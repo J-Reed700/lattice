@@ -112,6 +112,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 raw,
                 output_tokens,
                 active,
+                &repair::Protected::of_ledger(&ledger, &[]),
             )
             .await?;
             candidate = crate::features::learning::generation::parse_json(&raw)?;
@@ -513,5 +514,7 @@ pub(super) fn repair_context(
         "executions":examples.iter().map(|(observation, _)| observation).collect::<Vec<_>>(),
         "exampleClaims":examples.iter().map(|(observation, id)| json!({"unit":observation.unit,"claimId":id.0,"repeatedDefect":escalates(id)})).collect::<Vec<_>>(),
         "repairHistory":repair_history,
+        // What the repair must leave as it is (claim sources design §10.1).
+        "protected":repair::Protected::of_ledger(ledger, targets),
     }))
 }

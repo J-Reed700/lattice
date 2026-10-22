@@ -37,6 +37,10 @@ use super::*;
 use crate::features::learning::reference_collection::{ClaimList, Scope};
 use std::collections::BTreeMap;
 
+mod standing;
+#[cfg(test)]
+pub(in crate::features::learning) use standing::walk_standing_pages;
+
 /// Where pass B reads, one scope after another (§5.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +54,9 @@ pub(in crate::features::learning) enum Reach {
     CourseLessonFirstOnTies,
     /// The versions research saved for this claim, and nothing else.
     Researched,
+    /// The course's highest-standing sources on the claim's subject (claim
+    /// sources design §7): read after the gate, never part of [`REACHES`].
+    Standing,
 }
 
 /// The order pass B reads in: the one line that holds decision D2, pure
@@ -60,10 +67,11 @@ pub(in crate::features::learning) const REACHES: &[Reach] = &[Reach::Course];
 /// the lesson's sources first, and the lesson's sources first on ties. The
 /// eval reads them all; the app reads [`REACHES`].
 #[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::features::learning) const ORDERS: [(&str, &[Reach]); 3] = [
+pub(in crate::features::learning) const ORDERS: [(&str, &[Reach]); 4] = [
     ("relevance", &[Reach::Course]),
     ("lesson-sources", &[Reach::LessonSources, Reach::Course]),
     ("tie-break", &[Reach::CourseLessonFirstOnTies]),
+    ("standing", &[Reach::Standing]),
 ];
 
 /// How far pass B reads a claim its first page leaves unsupported (D5).
@@ -235,12 +243,18 @@ pub(in crate::features::learning::lessons::content_verification) fn page_of(
     (page, passed_over)
 }
 
-/// The scope `reach` searches.
-fn scope_of(reach: Reach, citations: &Citations, researched: &[String]) -> Scope {
+/// The scope `reach` searches; `standing`, the standing scope's versions.
+fn scope_of(
+    reach: Reach,
+    citations: &Citations,
+    researched: &[String],
+    standing: &HashSet<String>,
+) -> Scope {
     match reach {
         Reach::LessonSources => Scope::Keys(citations.sources().clone()),
         Reach::Course | Reach::CourseLessonFirstOnTies => Scope::All,
         Reach::Researched => Scope::Keys(researched.iter().cloned().collect()),
+        Reach::Standing => Scope::Keys(standing.clone()),
     }
 }
 
@@ -250,10 +264,14 @@ async fn list_of(
     statement: &str,
     reach: Reach,
     shown: &[EvidencePassage],
-    (citations, researched): (&Citations, &[String]),
+    (citations, researched, standing): (&Citations, &[String], &HashSet<String>),
 ) -> Result<ClaimList> {
     let mut list = references
-        .claim_list(statement, &scope_of(reach, citations, researched), shown)
+        .claim_list(
+            statement,
+            &scope_of(reach, citations, researched, standing),
+            shown,
+        )
         .await?;
     if reach == Reach::CourseLessonFirstOnTies {
         // Only passages of equal fused score trade places: relevance still
@@ -293,6 +311,9 @@ pub(super) struct Walk {
     reaches: Vec<Reach>,
     list: Option<ClaimList>,
     researched: Vec<String>,
+    /// The standing scope's versions, for a standing walk (`Walk::standing`):
+    /// its first page is read whatever break-even says, as pass B's is.
+    standing: Option<HashSet<String>>,
     budget: PageBudget,
     /// The pass B pages read so far.
     pub(super) pages: usize,
@@ -336,6 +357,7 @@ impl Walk {
             reaches,
             list: None,
             researched,
+            standing: None,
             budget,
             pages,
             spent: 0.0,
@@ -359,7 +381,11 @@ impl Walk {
                         &self.claim.statement,
                         reach,
                         &self.shown,
-                        (citations, &self.researched),
+                        (
+                            citations,
+                            &self.researched,
+                            self.standing.as_ref().unwrap_or(&HashSet::new()),
+                        ),
                     )
                     .await?
                 }
@@ -550,12 +576,16 @@ pub(super) async fn walk_budget(first_page_receipt: &str, fresh: PageBudget) -> 
 /// it was read.
 type Decided = BTreeMap<usize, (Finding, Reach, usize)>;
 
+/// The source versions on the pages each walker read, per ordinal.
+pub(super) type Read = BTreeMap<usize, Vec<String>>;
+
 /// Reads every walker on, a page a round, until its page decides it, its
 /// reaches run out or `depth` reads no further, weighing `research`, the
 /// seconds researching one claim on the web costs. A page's check has its
 /// own receipt; a page whose receipt is saved is not checked again. Returns
-/// each decided walker's deciding page's finding; a walker that stopped
-/// undecided is not in it.
+/// each decided walker's deciding page's finding (a walker that stopped
+/// undecided is not in it), and the versions on every page each read. A
+/// standing walk's first page is read whatever `depth` says.
 pub(super) async fn deepen(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
@@ -564,10 +594,11 @@ pub(super) async fn deepen(
     citations: &Citations,
     labels: &Labels,
     answers: &mut AnswerSize,
-) -> Result<Decided> {
+) -> Result<(Decided, Read)> {
     let mut walks: BTreeMap<usize, Walk> =
         walks.into_iter().map(|walk| (walk.ordinal, walk)).collect();
     let mut decided = Decided::new();
+    let mut read = Read::new();
     let mut round = 1;
     while !walks.is_empty() {
         round += 1;
@@ -584,7 +615,8 @@ pub(super) async fn deepen(
                 continue;
             };
             let cost = page_seconds(llm.pace(), page_tokens(llm, &page), answers.per_claim());
-            if !depth.reads_next(walk.spent, cost, research) {
+            let first_standing_page = walk.standing.is_some() && walk.pages == 1;
+            if !first_standing_page && !depth.reads_next(walk.spent, cost, research) {
                 tracing::info!(
                     claim = ordinal,
                     pages = walk.pages - 1,
@@ -595,7 +627,9 @@ pub(super) async fn deepen(
                 );
                 continue;
             }
-            walk.spent += cost.unwrap_or_default();
+            if !first_standing_page {
+                walk.spent += cost.unwrap_or_default();
+            }
             canonicalize_evidence(&mut page);
             at.insert(ordinal, (note.reach, note.page));
             let checked = Claim {
@@ -666,6 +700,12 @@ pub(super) async fn deepen(
             }
         }
         for (ordinal, finding) in outcomes {
+            let versions = read.entry(ordinal).or_default();
+            for passage in &finding.evidence {
+                if !versions.contains(&passage.source_id) {
+                    versions.push(passage.source_id.clone());
+                }
+            }
             if finding.verdict == ClaimVerdict::Unsupported {
                 if let Some(walk) = walks.get_mut(&ordinal) {
                     let before = walk.shown.len();
@@ -685,7 +725,7 @@ pub(super) async fn deepen(
         }
     }
     crate::features::learning::lesson_progress::deeper_done();
-    Ok(decided)
+    Ok((decided, read))
 }
 
 /// One page of a claim's pass B walk, as [`walk_pages`] reports it.

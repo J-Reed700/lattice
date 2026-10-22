@@ -128,6 +128,7 @@ fn claim_states_mirror_the_domain() {
         ClaimState::Edited {
             at: 1_760_000_500_000,
             successor: Some(ClaimId("claim-2".into())),
+            by: Actor::Machine,
         },
         ClaimState::GeneralKnowledge {
             at: 1_760_000_600_000,
@@ -233,6 +234,7 @@ fn below_the_bar() -> TrustAssessment {
             supporting_quote: "boils at 100 °C".into(),
         },
         policy: "source-trust-v1".into(),
+        available: None,
     }
 }
 
@@ -327,6 +329,7 @@ fn claim_events_mirror_the_domain() {
         },
         ClaimEvent::Superseded {
             successor: Some(ClaimId("claim-2".into())),
+            by: Actor::Machine,
         },
         ClaimEvent::Reopened {
             cause: ReopenCause::SourceDeleted("v3".into()),

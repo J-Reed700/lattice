@@ -5,6 +5,8 @@ The labelled data that the source-trust rules are tested and calibrated against.
 | File | Items | What it holds | Test |
 | --- | --- | --- | --- |
 | `sources-v1.jsonl` | 120 | Sources in eight areas and eight languages. Each has the signals capture records for it, the subject of a claim, and the expected standing, ownership and level. | `fixture_tests::every_labelled_source_*` |
+| `sources-v2.jsonl` | 20 | The claim sources design's rows (`docs/design/2026-10-21-claim-official-sources.md` §14.1): each adds the `content` evidence the `source-standing-v2` judgement sees and is levelled by the §5 rules (the owner's own account, the user's own sources, the ladder for an unidentified publisher). A biology set with no vendor at all, plus history, medicine, law, science, cooking and news. | `fixture_tests::every_v2_source_gets_its_labelled_level_from_its_judgement_and_content` |
+| `sufficiency-cases-v2.jsonl` | 8 | Best-available cases (§6.1 of the claim sources design): each may carry `available: {ceiling, considered}`, what the course has on the claim's subject | `fixture_tests::every_v2_sufficiency_case_decides_as_labelled` |
 | `independence-pairs-v1.jsonl` | 219 | Text pairs labelled `copy`, `contains` or `independent` | `fixture_tests::the_copy_thresholds_are_the_sweeps_f1_optimum` |
 | `sufficiency-cases-v1.jsonl` | 50 | Claim profiles with levelled supports and contrary passages, and the decision, the contradiction outcome and the overturn expected for each (§6, §9, §10, §11, §13) | `fixture_tests::every_sufficiency_case_decides_as_labelled` |
 | `chain-cases-v1.jsonl` | 12 | Passages with links, and the citation candidates expected in rank order (§8) | `fixture_tests::every_chain_case_ranks_its_candidates_as_labelled` |
@@ -36,6 +38,8 @@ The pairs are built to be separable: the sweep finds a range of thresholds at F1
 ## Format
 
 - `sources-v1.jsonl`: `{ id, area, language, subject: {name, kind, aliases, classes}, added_by, signals: ProvenanceSignals, expected: {standing, publisher_kind, editorial, nature, flags, relation, level}, mirror_of?: {id, relation, containment}, rationale, labeller, origin: real|perturbed }`. `signals` is the serde form of `ProvenanceSignals`, which is what `source_provenance.signals_json` stores.
+- `sources-v2.jsonl`: the `sources-v1.jsonl` format plus an optional `content`, the serde form of `ContentEvidence` (`domain/provenance/content_evidence.rs`); `expected` is the v2 judgement and the level. Written by hand as JSONL by builder A on 2026-10-21 (the same labelling rule; the content evidence is part of what the labels describe). A second labeller is still owed.
+- `sufficiency-cases-v2.jsonl`: the `sufficiency-cases-v1.jsonl` format plus an optional `available: {ceiling, considered}`.
 - `independence-pairs-v1.jsonl`: `{ id, label, construction, a, b, note }`.
 - `sufficiency-cases-v1.jsonl`: `{ id, rule, profile: {kind, subject?, temporal: {scope, version?, date?}, measurement_origin?}, supports: [{id, cluster?, level, passage?, published?, mentions_version?, added_by?, cited_urls?, owner_hints?, mirror?}], contrary?: [{id, cluster?, level, published?}], newest_primary?: {id, published}, verdicts?: [{level, kind, held, count}], expected: {decision, overturn, label?, met_by?, bar?, missing?, next?, counted?, temporal?} }`. Every source in the cases was read on 2026-10-18, and the test computes temporal validity from the dates.
 - `chain-cases-v1.jsonl`: `{ id, passage_markdown, span_text, subject, owner_domains, authoritative_domains, expected_candidates_in_order, note }`.

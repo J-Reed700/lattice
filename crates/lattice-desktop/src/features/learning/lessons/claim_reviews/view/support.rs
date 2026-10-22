@@ -6,22 +6,20 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::application::ports::SourceTrustStore;
-use lattice_core::application::services::source_trust::STANDING_POLICY;
 use lattice_core::domain::learning::claim_review::{
     ClaimLedgerEntry, ClaimState, Ledger, TrustAssessment,
 };
 use lattice_core::domain::provenance::{Decision, StandingAssessment, TrustLevel};
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
 
 use super::super::dto::{source_kind, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto};
 use super::super::repository::ShownPassage;
 use super::super::service::ClaimReviewService;
 use super::{evidence_passage, latest_check, PassageKey, PassageText, SourceFacts};
 use crate::features::learning::dto::LearningTrustLevel;
-use crate::features::learning::persistence::db;
 use crate::features::learning::references::trust::dto_map;
 use crate::features::learning::references::trust::repository::SqliteSourceTrustStore;
+use crate::features::learning::references::trust::source_view::latest_standing;
 
 /// What the review knows of a version beyond the library: the site it was
 /// served from and its publisher's judged standing.
@@ -44,6 +42,7 @@ impl ClaimReviewService {
     /// contrary passage comes from.
     pub(super) async fn standings(
         &self,
+        program_id: &str,
         ledger: &Ledger,
     ) -> Result<HashMap<String, VersionStanding>> {
         let store = SqliteSourceTrustStore::new(self.pool().clone());
@@ -52,7 +51,7 @@ impl ClaimReviewService {
             let standing = match store.provenance(&version).await? {
                 Some(record) => VersionStanding {
                     site: record.origin.site().map(str::to_owned),
-                    assessment: latest_standing(self.pool(), &record.signals_sha256).await?,
+                    assessment: latest_standing(self.pool(), program_id, &record).await?,
                 },
                 None => VersionStanding::default(),
             };
@@ -79,24 +78,6 @@ fn support_versions(ledger: &Ledger) -> BTreeSet<String> {
         }
     }
     versions
-}
-
-/// The latest standing judgement of a publisher's signals, by any model. A
-/// judgement this build cannot read is left out: the source shows as a
-/// page.
-async fn latest_standing(
-    pool: &SqlitePool,
-    signals_sha256: &str,
-) -> Result<Option<StandingAssessment>> {
-    let judgement: Option<String> = sqlx::query_scalar(
-        "SELECT judgement_json FROM source_standing_assessments WHERE signals_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
-    )
-    .bind(signals_sha256)
-    .bind(STANDING_POLICY)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?;
-    Ok(judgement.and_then(|json| serde_json::from_str(&json).ok()))
 }
 
 /// The card's `support` and `also_supported`.
@@ -285,7 +266,13 @@ fn support(
     let standing_of = context.standings.get(version);
     let judged = standing_of
         .and_then(|standing| standing.assessment.as_ref())
-        .map(|assessment| (assessment.nature, assessment.publisher_kind));
+        .map(|assessment| {
+            (
+                assessment.nature,
+                assessment.publisher_kind,
+                &assessment.work,
+            )
+        });
     let quote_span = (!quote.is_empty())
         .then(|| passage.text.find(&quote))
         .flatten()

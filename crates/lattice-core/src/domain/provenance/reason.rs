@@ -43,6 +43,13 @@ pub enum ReasonCode {
     ContentFarmSignal,
     GeneratedContentSignal,
     DeclaredByUser,
+    // Content evidence (claim sources design §4.2).
+    BylineInContent,
+    NameInDomain,
+    AboutPageLinked,
+    CitesIndependentWork,
+    WorkShape,
+    ChosenForCourse,
 
     // Ownership judgement (§12.2).
     PublisherIsOwner,
@@ -81,6 +88,11 @@ pub enum ReasonCode {
     GeneratedContentCap,
     AddedByYou,
     NoSubject,
+    // The level ladder for an unidentified publisher (claim sources §5.3).
+    WorkStandsOnSources,
+    WorkUnsourced,
+    ArticleCitesSources,
+    UnsortedWorkCitesSources,
 
     // Sufficiency (§6).
     ExcludedDistrusted,
@@ -95,6 +107,8 @@ pub enum ReasonCode {
     CalibratedBar,
     PrimaryContradicts,
     ContradictionBlocksCorroboration,
+    MetAsBestAvailable,
+    StrongerSourceSilent,
 
     // Temporal validity (§9).
     FutureDateIgnored,

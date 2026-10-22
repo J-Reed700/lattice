@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::domain::provenance::{
-    decide, effective_bars, AddedBy, Calibration, ClaimKind, ClaimProfile, ClaimSubject, ClusterId,
-    Decision, EffectiveBars, LabelSource, Outcome, PassageKind, SourceDates, StaticBars,
+    decide, effective_bars, AddedBy, Available, Calibration, ClaimKind, ClaimProfile, ClaimSubject,
+    ClusterId, Decision, EffectiveBars, LabelSource, Outcome, PassageKind, SourceDates, StaticBars,
     SubjectKind, Support, TemporalScope, TemporalValidity, Trust, TrustLevel, POLICY,
 };
 use serde_json::json;
@@ -81,7 +81,7 @@ fn relaxed_bars() -> EffectiveBars {
 fn assessment(supports: Vec<Support>, bars: &EffectiveBars) -> TrustAssessment {
     let profile = profile();
     TrustAssessment {
-        decision: decide(&profile, &supports, &[], bars),
+        decision: decide(&profile, &supports, &[], bars, &Available::default()),
         profile,
         supports,
         contrary: vec![],
@@ -90,6 +90,7 @@ fn assessment(supports: Vec<Support>, bars: &EffectiveBars) -> TrustAssessment {
             supporting_quote: SUPPORTING_QUOTE.into(),
         },
         policy: "source-trust-v1".into(),
+        available: None,
     }
 }
 

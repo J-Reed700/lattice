@@ -13,6 +13,12 @@ use super::reason::{AddedBy, Reason, ReasonCode};
 use super::signals::SourceDates;
 use super::temporal::TemporalValidity;
 
+mod best_available;
+mod insufficient;
+
+use best_available::best_available;
+use insufficient::insufficient;
+
 /// How a passage bears on the claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "passage", rename_all = "snake_case")]
@@ -78,9 +84,16 @@ pub enum Label {
     Practice,
     Attributed,
     CommunityConsensus,
-    ReportedBy { attributing_to: String },
+    ReportedBy {
+        attributing_to: String,
+    },
     Secondary,
     Mirror,
+    /// The strongest source the course has on the claim's subject: nothing
+    /// in the course stands higher on it (claim sources design §6.1).
+    BestAvailable {
+        level: TrustLevel,
+    },
 }
 
 /// A support as the gate counted it.
@@ -128,6 +141,27 @@ pub enum Missing {
     OnlyStale {
         newer_primary: String,
     },
+    /// The course has a source at `level` on this subject, above every
+    /// support, and it does not state the claim.
+    StrongerSourceSilent {
+        level: TrustLevel,
+    },
+}
+
+/// What the course has on the claim's subject, for the best-available rule
+/// (claim sources design §6.1). `considered == 0` (an assessment stored
+/// before the standing reach, or a claim it never read for) decides as the
+/// static bars and corroboration alone would.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Available {
+    /// The highest level any course source reaches for this subject among
+    /// the sources levelled for the claim and the proxies of the standing
+    /// scope; `None` when nothing beyond the claim's own supports is known.
+    #[serde(default)]
+    pub ceiling: Option<TrustLevel>,
+    /// How many course versions on the subject the ceiling was taken over.
+    #[serde(default)]
+    pub considered: usize,
 }
 
 /// What research may do next, in order.
@@ -150,7 +184,7 @@ pub struct StaticBars {
 
 /// Independent origins a corroboration rule asks for (§6.1, "two
 /// independent …"): the smallest number that is corroboration at all.
-const CORROBORATING_ORIGINS: usize = 2;
+pub(super) const CORROBORATING_ORIGINS: usize = 2;
 
 impl StaticBars {
     /// The "accepted alone" column of §6.1: the lowest level accepted as a
@@ -208,13 +242,15 @@ struct Counted<'a> {
 ///
 /// Order: exclusions (Distrusted, a date that rules the source out); the
 /// user's own evidence; one support at or above the kind's effective bar
-/// (calibrated, §13); independent corroboration; otherwise what is missing
-/// and what research may do next.
+/// (calibrated, §13); independent corroboration; the strongest the course
+/// has on the subject (`available`, claim sources design §6.1); otherwise
+/// what is missing and what research may do next.
 pub fn decide(
     profile: &ClaimProfile,
     supports: &[Support],
     contrary: &[Contrary],
     bars: &EffectiveBars,
+    available: &Available,
 ) -> Decision {
     let kind = profile.kind;
     let mut reasons = Vec::new();
@@ -271,7 +307,12 @@ pub fn decide(
     if let Some(decision) = corroborated(profile, &usable, &contrary_levels, &mut reasons) {
         return decision;
     }
-    insufficient(profile, &counted, lowest, bars, reasons)
+    if let Some(decision) =
+        best_available(profile, &usable, &contrary_levels, available, &mut reasons)
+    {
+        return decision;
+    }
+    insufficient(profile, &counted, lowest, bars, available, reasons)
 }
 
 fn count<'a>(
@@ -561,159 +602,6 @@ fn best_per_cluster<'a, 'b>(
     }
     best.sort_by(|a, b| a.0.support.origin_cluster.cmp(&b.0.support.origin_cluster));
     best
-}
-
-fn insufficient(
-    profile: &ClaimProfile,
-    counted: &[Counted<'_>],
-    lowest: Option<TrustLevel>,
-    bars: &EffectiveBars,
-    mut reasons: Vec<Reason>,
-) -> Decision {
-    let kind = profile.kind;
-    let usable: Vec<&Counted<'_>> = counted.iter().filter(|c| c.level.is_some()).collect();
-    let clusters_at = |floor: TrustLevel| {
-        let mut seen: Vec<&ClusterId> = Vec::new();
-        for c in usable.iter().filter(|c| c.level >= Some(floor)) {
-            if !seen.contains(&&c.support.origin_cluster) {
-                seen.push(&c.support.origin_cluster);
-            }
-        }
-        seen.len()
-    };
-    let stale: Vec<&str> = usable
-        .iter()
-        .filter_map(|c| match &c.support.temporal {
-            super::temporal::TemporalValidity::Stale { newer_primary } => {
-                Some(newer_primary.as_str())
-            }
-            _ => None,
-        })
-        .collect();
-    let testimonial_would_meet =
-        lowest.is_some_and(|lowest| usable.iter().any(|c| c.reported && c.page >= lowest));
-    let missing = if !usable.is_empty() && stale.len() == usable.len() {
-        Missing::OnlyStale {
-            newer_primary: stale.first().map(|s| (*s).to_owned()).unwrap_or_default(),
-        }
-    } else if testimonial_would_meet {
-        Missing::OnlyTestimonial
-    } else {
-        match kind {
-            ClaimKind::Specification | ClaimKind::VersionBound => Missing::NoPrimaryForSubject,
-            ClaimKind::Measurement => Missing::NoMeasurementOrigin,
-            ClaimKind::Historical => Missing::NoIndependentCorroboration {
-                have: clusters_at(TrustLevel::Established),
-            },
-            ClaimKind::Definition | ClaimKind::Practice
-                if clusters_at(TrustLevel::Community) == 1 =>
-            {
-                Missing::NoIndependentCorroboration { have: 1 }
-            }
-            _ => Missing::NoIdentifiedSource,
-        }
-    };
-
-    let mut next = Vec::new();
-    let mut push = |step: NextStep| {
-        if !next.contains(&step) {
-            next.push(step);
-        }
-    };
-    for newer in &stale {
-        push(NextStep::FetchNewer {
-            newer_primary: (*newer).to_owned(),
-        });
-    }
-    let mut by_level: Vec<&&Counted<'_>> = usable.iter().collect();
-    by_level.sort_by_key(|c| std::cmp::Reverse(c.page));
-    for c in &by_level {
-        for url in &c.support.cited_urls {
-            push(NextStep::FollowCitation {
-                url: url.clone(),
-                from: c.support.source_version_id.clone(),
-            });
-        }
-    }
-    if matches!(
-        kind,
-        ClaimKind::Specification | ClaimKind::VersionBound | ClaimKind::Measurement
-    ) {
-        let mut hints: Vec<String> = Vec::new();
-        for c in counted {
-            for hint in &c.support.owner_hints {
-                if !hints.contains(hint) {
-                    hints.push(hint.clone());
-                }
-            }
-        }
-        if !hints.is_empty() {
-            push(NextStep::SearchOwner {
-                origin_hints: hints,
-            });
-        }
-    }
-    push(NextStep::SearchIndependent);
-    push(NextStep::AskUser);
-
-    let have_levels: Vec<&str> = usable
-        .iter()
-        .filter_map(|c| c.level.map(TrustLevel::as_str))
-        .collect();
-    let about = profile
-        .subject
-        .as_ref()
-        .map(|subject| format!(" about {}", subject.name))
-        .unwrap_or_default();
-    reasons.push(Reason::new(
-        ReasonCode::BelowBar,
-        format!(
-            "{} claim{about}: {}; needs {}",
-            capitalised(kind_name(kind)),
-            if have_levels.is_empty() {
-                "no support that can be counted".to_owned()
-            } else {
-                format!("supported only by {} sources", have_levels.join(", "))
-            },
-            requirement(kind, lowest)
-        ),
-    ));
-    reasons.extend(bars.moved_reason(kind));
-    Decision::Insufficient {
-        bar: Bar::for_kind(kind),
-        have: counted
-            .iter()
-            .map(|c| CountedSupport {
-                source_version_id: c.support.source_version_id.clone(),
-                origin_cluster: c.support.origin_cluster.clone(),
-                counted: c.level,
-            })
-            .collect(),
-        missing,
-        next,
-        reasons,
-    }
-}
-
-/// What meets the bar, in words.
-fn requirement(kind: ClaimKind, lowest: Option<TrustLevel>) -> String {
-    let alone = match lowest {
-        Some(TrustLevel::Primary) if kind == ClaimKind::Measurement => {
-            "the measurement's own source".to_owned()
-        }
-        Some(TrustLevel::Primary) => "the owner's own source".to_owned(),
-        Some(level) => format!("one {} source or better", level.as_str()),
-        None => "independent corroboration (calibration accepts no single source)".to_owned(),
-    };
-    let corroboration = match kind {
-        ClaimKind::Specification | ClaimKind::VersionBound | ClaimKind::Historical => {
-            " or two independent established sources"
-        }
-        ClaimKind::Measurement => " or two independent reports naming the same origin",
-        ClaimKind::Definition | ClaimKind::Practice => " or two independent community sources",
-        ClaimKind::Opinion | ClaimKind::General => "",
-    };
-    format!("{alone}{corroboration}")
 }
 
 fn one_lower(level: TrustLevel) -> TrustLevel {

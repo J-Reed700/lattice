@@ -8,7 +8,9 @@
 //! in-memory ledger, a scripted web, frozen-copy service and judge (§5.4,
 //! §12): the link failures of the §5.4 table (fixture
 //! `fixtures/attach_link_failures.json`), a supporting and a contradicting
-//! source, the other open claims, dedupe, provenance and the frozen copy.
+//! source, the other open claims, dedupe, provenance and the frozen copy;
+//! and a source added on the Sources tab, checked for the waiting claims
+//! (`recheck`, UI design §5.3).
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -30,6 +32,8 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 
+use super::super::recheck::waiting_claims;
+use super::acquire::{acquire, Acquired};
 use super::failures::AttachFailureDto;
 use super::report::{ClaimAttachProgressDto, SnapshotNoteDto};
 use super::{attach, attach_to, AttachDeps, AttachRequest, Evidence, Others};
@@ -776,6 +780,72 @@ async fn a_claims_scope_checks_the_chosen_claims_with_a_running_count() {
     // The mercury claim is in scope; the pasted text has no passage for it.
     assert_eq!(report.others.tried, 1);
     assert_eq!(report.others.no_passage, 1);
+    let checking: Vec<(u32, u32)> = stages
+        .iter()
+        .filter_map(|stage| match stage {
+            ClaimAttachProgressDto::Checking { done, total, .. } => Some((*done, *total)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(checking, [(0, 2), (1, 2)]);
+    assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+#[tokio::test]
+async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let library = EmptyLibrary;
+    let judge = Judge::says("supported");
+    let deps = AttachDeps {
+        pool: &world.pool,
+        store: &world.ledger,
+        web: &web,
+        snapshots: &snapshots,
+        documents: &library,
+        courses: None,
+        llm: &judge,
+        job_id: None,
+    };
+    // Saved on the Sources tab: in the library, attached to no claim.
+    let Acquired::Saved(source) = acquire(&deps, &world.program_id, &World::pasted(NOTES))
+        .await
+        .unwrap()
+    else {
+        panic!("the pasted text was not saved");
+    };
+    let version_id = source.saved.version_id;
+    let lessons = [world.ledger.load(LESSON).await.unwrap()];
+    let stages = Mutex::new(Vec::new());
+    let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
+
+    let recheck = waiting_claims(&deps, &world.program_id, &version_id, &lessons, &progress)
+        .await
+        .unwrap();
+
+    // Both claims wait; the boiling notes have a passage for water only.
+    assert_eq!(recheck.lessons, 1);
+    assert_eq!(recheck.tried, 2);
+    assert_eq!(recheck.verified, 1);
+    assert_eq!(recheck.not_verified, 0);
+    assert_eq!(recheck.no_passage, 1);
+    assert!(recheck.stopped.is_none());
+    // The check is the machine's, outside any job, against the new source.
+    let water = world.ledger.claim("water");
+    let last = water.events().last().unwrap();
+    assert_eq!(last.provenance.actor, Actor::Machine);
+    assert!(last.provenance.job_id.is_none());
+    let ClaimEvent::Checked(check) = &last.event else {
+        panic!("expected Checked, got {:?}", last.event);
+    };
+    assert!(matches!(check.result, CheckResult::Supported { .. }));
+    assert!(check
+        .evidence
+        .iter()
+        .all(|seen| seen.source_version_id == version_id));
+    assert_eq!(world.ledger.claim("mercury").events().len(), 2);
+    let stages = stages.into_inner().unwrap();
     let checking: Vec<(u32, u32)> = stages
         .iter()
         .filter_map(|stage| match stage {

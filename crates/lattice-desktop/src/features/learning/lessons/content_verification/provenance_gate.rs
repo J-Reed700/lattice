@@ -24,18 +24,22 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::TRUST_POLICY_VERSION;
 use lattice_core::domain::provenance::{
-    citation_candidates, clusters, decide, effective_date, passage_merges, AddedBy, ClaimProfile,
-    ClusterId, Contrary, Decision, EffectiveBars, LinkStanding, Missing, OriginKey, OutboundLink,
-    Overturn, PassageKind, Policy, Reason, SourceDates, SourceRelation, Support, TemporalScope,
-    Trust, TrustLevel,
+    citation_candidates, clusters, decide, effective_date, passage_merges, AddedBy, Available,
+    ClaimProfile, ClusterId, Contrary, Decision, EffectiveBars, LinkStanding, Missing, OriginKey,
+    OutboundLink, Overturn, PassageKind, Policy, Reason, SourceDates, SourceRelation, Support,
+    TemporalScope, Trust, TrustLevel,
 };
 use std::sync::Arc;
 
 mod context;
 mod relevel;
+mod strongest;
 pub(super) use context::passage_labels;
+pub(in crate::features::learning) use context::Judgements;
 pub(in crate::features::learning) use context::{outline_trust, with_outline_trust, with_trust};
 pub(in crate::features::learning) use relevel::relevel;
+#[cfg(test)]
+pub(super) use strongest::name_strongest;
 
 #[cfg(test)]
 #[path = "provenance_gate_tests.rs"]
@@ -60,6 +64,10 @@ pub(in crate::features::learning) struct FindingTrust {
     #[serde(default)]
     pub(super) contrary: Vec<Contrary>,
     pub(super) decision: Decision,
+    /// What the course has on the claim's subject, when the standing reach
+    /// weighed the claim (claim sources design §6.1, §7.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) available: Option<Available>,
 }
 
 impl FindingTrust {
@@ -93,6 +101,7 @@ impl FindingTrust {
                 supporting_quote: supporting_quote.to_owned(),
             },
             policy: TRUST_POLICY_VERSION.to_owned(),
+            available: self.available,
         }
     }
 }
@@ -139,6 +148,10 @@ fn lacks(missing: &Missing) -> String {
         Missing::OnlyStale { newer_primary } => {
             format!("is older than the newest primary source ({newer_primary})")
         }
+        Missing::StrongerSourceSilent { level } => format!(
+            "is below a {} source the course has on this subject, which does not state it",
+            level.as_str()
+        ),
     }
 }
 
@@ -221,22 +234,28 @@ pub(super) struct Evidence<'a> {
     pub(super) relations: &'a [SourceRelation],
     pub(super) bars: &'a EffectiveBars,
     pub(super) policy: &'a Policy,
+    /// What the course has on the claim's subject, once the standing reach
+    /// has weighed it; `None` before.
+    pub(super) available: Option<Available>,
 }
 
-/// The passages that support `finding`: one per source version whose
-/// passage holds the checker's supporting quotation, in evidence order.
+/// The passages that support `finding`: one per source version, first those
+/// holding the checker's supporting quotation, in evidence order, then the
+/// other supports it carries (`also_supported`, claim sources design §8).
 pub(super) fn supporting_passages(finding: &Finding) -> Vec<&EvidencePassage> {
     let quote = finding.supporting_quote.as_deref().unwrap_or_default();
     let mut seen = HashSet::new();
-    finding
-        .evidence
+    let quoted = finding.evidence.iter().filter(|passage| {
+        !quote.is_empty() && passage.retrieval_kind != EXECUTION && passage.text.contains(quote)
+    });
+    let others = finding
+        .two_pass
+        .also_supported
         .iter()
-        .filter(|passage| {
-            !quote.is_empty()
-                && passage.retrieval_kind != EXECUTION
-                && passage.text.contains(quote)
-                && seen.insert(passage.source_id.as_str())
-        })
+        .map(|other| &other.passage);
+    quoted
+        .chain(others)
+        .filter(|passage| seen.insert(passage.source_id.as_str()))
         .collect()
 }
 
@@ -358,12 +377,19 @@ pub(super) fn assess(
             })
         })
         .collect();
-    let decision = decide(profile, &supports, &contrary, evidence.bars);
+    let decision = decide(
+        profile,
+        &supports,
+        &contrary,
+        evidence.bars,
+        &evidence.available.unwrap_or_default(),
+    );
     FindingTrust {
         profile: profile.clone(),
         supports,
         contrary,
         decision,
+        available: evidence.available,
     }
 }
 
@@ -476,10 +502,25 @@ pub(super) async fn weigh(
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
         };
-        finding.trust = Some(Box::new(
-            weighed(&mut judgements, llm, &profile, finding).await?,
-        ));
+        reweigh(&mut judgements, llm, &profile, finding, None).await?;
     }
+    Ok(())
+}
+
+/// Weighs a supported `finding` again with what the course has on its
+/// subject (`available`, from the standing reach), and names the strongest
+/// counted support as the claim's support (claim sources design §8).
+pub(super) async fn reweigh(
+    judgements: &mut context::Judgements,
+    llm: &dyn LLMPort,
+    profile: &ClaimProfile,
+    finding: &mut Finding,
+    available: Option<Available>,
+) -> Result<()> {
+    finding.trust = Some(Box::new(
+        weighed(judgements, llm, profile, finding, available).await?,
+    ));
+    strongest::name_strongest(finding);
     Ok(())
 }
 
@@ -490,6 +531,7 @@ async fn weighed(
     llm: &dyn LLMPort,
     profile: &ClaimProfile,
     finding: &Finding,
+    available: Option<Available>,
 ) -> Result<FindingTrust> {
     let mut versions: Vec<String> = supporting_passages(finding)
         .into_iter()
@@ -513,6 +555,7 @@ async fn weighed(
             relations: judgements.relations(),
             bars: judgements.bars(),
             policy: &lattice_core::domain::provenance::POLICY,
+            available,
         },
     ))
 }
@@ -556,7 +599,7 @@ pub(in crate::features::learning) async fn weigh_claim(
     else {
         return Ok(None);
     };
-    let trust = weighed(&mut judgements, llm, &profile, &finding).await?;
+    let trust = weighed(&mut judgements, llm, &profile, &finding, None).await?;
     Ok(Some(trust.assessment(
         &supported.source_version_id,
         &supported.supporting_quote,

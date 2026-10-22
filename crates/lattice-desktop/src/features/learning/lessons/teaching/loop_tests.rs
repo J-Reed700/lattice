@@ -52,6 +52,7 @@ async fn run(model: &ScriptedModel, candidate: Value) -> Result<Reviewed> {
         4000,
         ReviewContext {
             outline: None,
+            protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::new(),
         },
@@ -183,6 +184,7 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         4000,
         ReviewContext {
             outline: None,
+            protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::from([FindingKey {
                 kind: FindingKind::Teaching,
@@ -218,4 +220,53 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_repair_leaves_it(
+) -> Result<()> {
+    // After a claim repair, the sentence a verified claim stands on is
+    // protected: the reviewer's finding about it is held, not repaired.
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+    ]);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    let protected = [
+        crate::features::learning::lessons::content_verification::Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: sentence.into(),
+        },
+    ];
+    let reviewed = review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: &protected,
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await?;
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_eq!(
+        reviewed.set_aside[0].finding.key().id(),
+        "teaching:section-0"
+    );
+    // The review and its evidence check; no repair was asked for.
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(after["blocks"][0]["body"], candidate["blocks"][0]["body"]);
+    Ok(())
 }

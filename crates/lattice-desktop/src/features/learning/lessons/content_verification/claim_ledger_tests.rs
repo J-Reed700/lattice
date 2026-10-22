@@ -850,7 +850,8 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
         entry(1, Some(VerdictKind::Unsupported), false),
         entry(2, Some(weak()), false),
         entry(3, Some(weak()), false),
-        // Researched on this evidence: a rewrite comes next.
+        // Researched on this evidence and nothing found: no rewrite fixes
+        // standing, so it waits for the user (claim sources design §10.4).
         entry(4, Some(weak()), true),
     ];
     let tally = claim_ledger::claim_tally(&entries);
@@ -859,8 +860,9 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
             tally.unchecked,
             tally.searching,
             tally.sent_back,
-            tally.repairing
+            tally.repairing,
+            tally.waiting
         ),
-        (1, 1, 2, 1)
+        (1, 1, 2, 0, 1)
     );
 }

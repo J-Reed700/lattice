@@ -8,11 +8,14 @@ use super::dto_map;
 use super::repository::{unix_seconds, SqliteSourceTrustStore};
 use crate::features::learning::dto::LearningClaimProfileDto;
 use crate::features::learning::persistence::db;
+use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
     claim_profile_key, judge_standing, profile_claims, standing_key, ClaimToProfile, ProfileRequest,
 };
-use lattice_core::domain::provenance::{known_classes, Judged, JudgementKey};
+use lattice_core::domain::provenance::{
+    known_classes, AddedBy, Chosen, ContentEvidence, Judged, JudgementKey, ProvenanceRecord,
+};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
@@ -24,6 +27,38 @@ fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
         output_tokens: judged.output_tokens,
         assessed_at: unix_seconds(),
     }
+}
+
+/// The content evidence a version's `source-standing-v2` judgement is keyed
+/// by (claim sources design §4.3): its saved text, its recorded links and
+/// origin, and how the course got it. `None` when the version is not in the
+/// program.
+pub(in crate::features::learning) async fn content_evidence(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    record: &ProvenanceRecord,
+) -> Result<Option<ContentEvidence>> {
+    let Some(version) = LearningSourceLibraryRepository::new(pool.clone())
+        .chosen_version(program_id, &record.source_version_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let by = AddedBy::from_column(version.added_by.as_str()).ok_or_else(|| {
+        AppError::InternalError(format!(
+            "Unknown source origin \"{}\".",
+            version.added_by.as_str()
+        ))
+    })?;
+    Ok(Some(ContentEvidence::of(
+        &version.text,
+        &record.links,
+        &record.origin,
+        Chosen {
+            by,
+            note: version.selection_note,
+        },
+    )))
 }
 
 /// Judges the standing of a source's active version again, with the
@@ -52,11 +87,14 @@ pub async fn reassess_source(
                 .into(),
         )
     })?;
+    let content = content_evidence(store.pool(), program_id, &record)
+        .await?
+        .ok_or_else(|| AppError::NotFound("This source has no saved version to assess.".into()))?;
     let track_record = store.track_record(&record.origin.key).await?;
-    let judged = judge_standing(llm, &record.signals, track_record).await?;
+    let judged = judge_standing(llm, &record.signals, &content, track_record).await?;
     store
         .save_standing(&stored(
-            standing_key(&record.signals, llm.model_name()),
+            standing_key(&record.signals, &content, llm.model_name()),
             judged,
         ))
         .await

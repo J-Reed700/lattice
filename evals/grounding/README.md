@@ -276,3 +276,15 @@ LATTICE_PAGE_RECALL_INDEXES=<optional copy of the app's course-index folder> \
 Record each run's summary in [`results/README.md`](results/README.md). The
 per-finding results are the user's own content and, like
 `lesson-claims-<date>.jsonl`, are not committed unless the user chooses to.
+
+## Corroboration by official docs: `claim-corroboration-db8397ff/`
+
+Inputs for why the lesson checker left the "Function Calling & Tool
+Schemas" lesson's claims waiting while the course held the official docs
+that state them. Two evals read them. `live_claim_pairs_eval` now also
+takes a pair whose evidence is a page of `passages`, each `{label, text}`,
+labelled as the lesson check labels it. `live_page_recall_eval` takes a
+recall set through `LATTICE_PAGE_RECALL_TARGETS` in place of the stored
+reports: claims with the passages that should be found. How the inputs were
+built, the commands and what each result would mean are in
+[`claim-corroboration-db8397ff/README.md`](claim-corroboration-db8397ff/README.md).

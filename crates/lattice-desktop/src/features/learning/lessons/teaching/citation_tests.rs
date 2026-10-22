@@ -55,6 +55,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             original.to_string(),
             4000,
             &references,
+            &[],
         )
         .await?;
         assert_eq!(

@@ -98,11 +98,9 @@ impl From<ClaimCounts> for ClaimCountsDto {
             general_knowledge: counts.general_knowledge,
             queued: counts.queued,
             open: counts.open,
-            // The ledger counts every removal as one until it records who
-            // removed a claim (checker design §11).
-            removed_by_you: counts.removed,
-            edited_by_you: 0,
-            rewritten: 0,
+            removed_by_you: counts.removed_by_you,
+            edited_by_you: counts.edited_by_you,
+            rewritten: counts.rewritten,
         }
     }
 }
@@ -244,7 +242,7 @@ impl From<&ClaimState> for ClaimStateDto {
                 at: *at,
                 by: (*by).into(),
             },
-            ClaimState::Edited { at, successor } => Self::Edited {
+            ClaimState::Edited { at, successor, .. } => Self::Edited {
                 at: *at,
                 successor: successor.as_ref().map(|id| id.0.clone()),
             },
