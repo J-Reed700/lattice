@@ -5429,7 +5429,11 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
  * found elsewhere in the course; `addedSource` when the lesson had to
  * number that source to cite it.
  */
-{ kind: "citation_repaired"; cited: string[]; sourceVersionId: string; quote: string; addedSource: boolean } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
+{ kind: "citation_repaired"; cited: string[]; sourceVersionId: string; quote: string; addedSource: boolean } | { kind: "user_action"; action: UserActionDto; note: string | null } | { kind: "evidence_attached"; sourceVersionId: string; provenance: ProvenanceDto; result: AttachOutcomeDto } | { kind: "superseded"; successor: string | null } |
+/**
+ * A sentence a repair of `parent` added (checker design §9.1).
+ */
+{ kind: "born_of_repair"; parent: string; attemptsLeft: number } | { kind: "reopened"; cause: ReopenCauseDto } | { kind: "undone"; eventOrdinal: number } | { kind: "stopped"; reason: StopReasonDto } |
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */

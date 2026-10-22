@@ -315,6 +315,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
       return `Added ${input}: ${result}`;
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
+    case 'born_of_repair': return 'Added while repairing another claim';
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
     case 'standing_assessed': {
