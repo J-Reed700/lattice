@@ -5,9 +5,9 @@
 //! parent had left, so a rewrite or a split sentence adds no attempts.
 
 use super::RepairRecord;
-use crate::features::learning::lessons::content_verification::repair::sentences;
 use crate::features::learning::reference_collection::shared_terms;
 use lattice_core::domain::learning::claim_review::{ClaimId, ExtractedClaim, MACHINE_ATTEMPTS};
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
 

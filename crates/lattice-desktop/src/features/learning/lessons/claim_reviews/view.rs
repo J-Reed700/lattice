@@ -120,7 +120,7 @@ impl ClaimReviewService {
         let titles = unit_titles(&units);
         let shown = self.store().shown_passages(lesson_id).await?;
         let texts = self.passage_texts(program_id, &ledger, &shown).await?;
-        let standings = self.standings(&ledger).await?;
+        let standings = self.standings(program_id, &ledger).await?;
         let pass = self
             .drafts()
             .job(&review.job_id)
@@ -488,7 +488,7 @@ fn item(
         verifier_check: checker_verdict(entry, true, sources, texts),
         sufficiency: entry
             .trust()
-            .map(|trust| dto_map::sufficiency(&trust.profile, &trust.decision)),
+            .map(|trust| dto_map::sufficiency(&trust.profile, &trust.decision, trust.available)),
         presentation,
         support,
         also_supported,

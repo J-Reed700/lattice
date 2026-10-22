@@ -8,35 +8,8 @@ use super::super::*;
 use crate::features::learning::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
 use crate::features::learning::reference_collection::shared_terms;
 use lattice_core::domain::learning::claim_review::ClaimEvent;
+use lattice_core::shared::text::sentences;
 use std::collections::BTreeSet;
-
-/// The byte spans of `text`'s sentences, trimmed: a sentence ends at a
-/// line break, or at '.', '!' or '?' before whitespace or the end.
-pub(in crate::features::learning) fn sentences(text: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut start = 0;
-    let mut push = |from: usize, to: usize| {
-        let Some(piece) = text.get(from..to) else {
-            return;
-        };
-        let lead = piece.len() - piece.trim_start().len();
-        let trimmed = piece.trim();
-        if !trimmed.is_empty() {
-            spans.push((from + lead, from + lead + trimmed.len()));
-        }
-    };
-    let mut chars = text.char_indices().peekable();
-    while let Some((at, ch)) = chars.next() {
-        let before_space = chars.peek().is_none_or(|(_, next)| next.is_whitespace());
-        if ch == '\n' || (matches!(ch, '.' | '!' | '?') && before_space) {
-            let end = at + ch.len_utf8();
-            push(start, end);
-            start = end;
-        }
-    }
-    push(start, text.len());
-    spans
-}
 
 /// The quotation a section can cite for the found `passage` of `source`:
 /// the contiguous run of the passage's whole sentences that holds most of

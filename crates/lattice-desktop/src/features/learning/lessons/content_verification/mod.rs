@@ -84,7 +84,7 @@ pub(in crate::features::learning) use provenance_gate::{
     gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
 };
 mod repair;
-pub(in crate::features::learning) use repair::{confine, sentences, Protected};
+pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;

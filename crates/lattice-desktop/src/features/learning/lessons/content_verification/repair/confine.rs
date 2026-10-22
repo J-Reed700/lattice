@@ -13,8 +13,8 @@
 
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
-use super::citation::sentences;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
+use lattice_core::shared::text::sentences;
 
 /// The repair system prompt's confinement sentence.
 pub(super) const CONFINEMENT: &str = "Edit only the failed sentences; every other sentence is returned byte-identical and any change to it is discarded.";

@@ -15,9 +15,10 @@ use crate::features::learning::dto::{
     LearningTrustReasonDto,
 };
 use lattice_core::domain::provenance::{
-    BarBasis, BarChange, Calibration, ClaimProfile, Decision, EffectiveBar, OverrideScope, Policy,
-    ProvenanceRecord, ProvenanceSignals, Reason, RelationKind, RelationTarget, SiteStanding,
-    SourceRelation, Standing, SubjectClass, SubjectKey, Support, TrustLevel, TrustOverride,
+    Available, BarBasis, BarChange, Calibration, ClaimProfile, Decision, EffectiveBar,
+    OverrideScope, Policy, ProvenanceRecord, ProvenanceSignals, Reason, RelationKind,
+    RelationTarget, SiteStanding, SourceRelation, Standing, SubjectClass, SubjectKey, Support,
+    TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -404,9 +405,14 @@ fn wire_name<T: serde::Serialize>(value: &T, tag: Option<&str>) -> Option<String
 }
 
 /// The gate's decision on a claim (§18.9): whether its support met the bar
-/// for its kind, the bar it failed, the label it is shown with, and the
-/// rules that decided.
-pub fn sufficiency(profile: &ClaimProfile, decision: &Decision) -> LearningSufficiencyDto {
+/// for its kind, the bar it failed, the label it is shown with, the rules
+/// that decided, and the best level the course reaches on the claim's
+/// subject (`available`, claim sources design §6.1) as its ceiling.
+pub fn sufficiency(
+    profile: &ClaimProfile,
+    decision: &Decision,
+    available: Option<Available>,
+) -> LearningSufficiencyDto {
     let (sufficient, bar, label, missing, decided) = match decision {
         Decision::Sufficient { label, reasons, .. } => (
             true,
@@ -437,7 +443,7 @@ pub fn sufficiency(profile: &ClaimProfile, decision: &Decision) -> LearningSuffi
         bar,
         label,
         missing,
-        ceiling: None,
+        ceiling: available.and_then(|available| available.ceiling).map(level),
         reasons: reasons(decided),
     }
 }

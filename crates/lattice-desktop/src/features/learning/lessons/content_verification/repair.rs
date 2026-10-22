@@ -20,7 +20,6 @@ mod citation;
 mod confine;
 #[cfg(test)]
 pub(super) use citation::quotation;
-pub(in crate::features::learning) use citation::sentences;
 pub(super) use citation::{cite_where_supported, number_sources};
 pub(in crate::features::learning) use confine::{confine, Protected};
 

@@ -5,7 +5,7 @@
 
 use lattice_core::domain::learning::claim_review::{TrustAssessment, TrustCause};
 use lattice_core::domain::provenance::{
-    ContentNature, CountedSupport, Decision, PublisherKind, TrustLevel,
+    ContentNature, CountedSupport, Decision, PublisherKind, TrustLevel, WorkEvidence,
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,10 +51,13 @@ pub enum SourceKindDto {
 }
 
 /// The kind of work a source is: the user's own file or pasted text by its
-/// library kind, else by its judged nature and publisher kind (`None` when
-/// no judgement of it is stored, which reads as `page`).
+/// library kind, else by its judged nature and publisher kind and the shape
+/// of the work the judgement read (`None` when no judgement of it is
+/// stored, which reads as `page`). A reference text is an online book when
+/// it is chaptered: its address is a path of numbered chapters, or a
+/// publisher issues it sectioned (checker design §4.2).
 pub fn source_kind(
-    judged: Option<(ContentNature, PublisherKind)>,
+    judged: Option<(ContentNature, PublisherKind, &WorkEvidence)>,
     library: &LearningSourceKind,
 ) -> SourceKindDto {
     use ContentNature as N;
@@ -64,9 +67,10 @@ pub fn source_kind(
         LearningSourceKind::Pasted => return SourceKindDto::PastedText,
         LearningSourceKind::Web => {}
     }
-    let Some((nature, publisher)) = judged else {
+    let Some((nature, publisher, work)) = judged else {
         return SourceKindDto::Page;
     };
+    let chaptered = work.numbered_path || (publisher == P::Publisher && work.structured());
     match (nature, publisher) {
         (N::PrimaryDocument | N::Reporting, P::Academic) => SourceKindDto::PeerReviewedPaper,
         (N::PrimaryDocument | N::Reporting, P::Government | P::StandardsBody) => {
@@ -74,7 +78,7 @@ pub fn source_kind(
         }
         (N::PrimaryDocument | N::Documentation, _) => SourceKindDto::Documentation,
         (N::Reference | N::Aggregation, P::CommunityPlatform) => SourceKindDto::Wiki,
-        (N::Reference, P::Publisher) => SourceKindDto::OnlineBook,
+        (N::Reference, _) if chaptered => SourceKindDto::OnlineBook,
         (N::Reference, _) => SourceKindDto::ReferenceWork,
         (N::Reporting | N::Opinion, _) => SourceKindDto::Article,
         (N::Tutorial, _) => SourceKindDto::Guide,

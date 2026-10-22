@@ -107,7 +107,7 @@ pub async fn latest_profile(
 /// model: its key is computed from the version's text and how the course got
 /// it, as the gate computes it (claim sources design §4.3). A version judged
 /// only under v1 has none: the view shows it as not judged yet.
-async fn latest_standing(
+pub(in crate::features::learning) async fn latest_standing(
     pool: &SqlitePool,
     program_id: &str,
     record: &ProvenanceRecord,

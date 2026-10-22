@@ -93,9 +93,7 @@ fn targets_of(
             }
             _ => {
                 for (field, text) in &fields {
-                    for (start, end) in
-                        crate::features::learning::lessons::content_verification::sentences(text)
-                    {
+                    for (start, end) in lattice_core::shared::text::sentences(text) {
                         let sentence = &text[start..end];
                         let guarded = protected.iter().any(|item| {
                             item.field == *field
