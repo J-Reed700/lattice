@@ -574,7 +574,7 @@ fn sufficiency_failures(cases: &[Value]) -> Vec<String> {
             &bars_of(case),
             &case
                 .get("available")
-                .map(|available| enum_of::<Available>(available))
+                .map(enum_of::<Available>)
                 .unwrap_or_default(),
         );
         let resolutions = resolve_all(&profile, &supports, &contrary);

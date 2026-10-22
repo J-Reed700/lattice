@@ -99,3 +99,30 @@ fn a_removed_failed_sentence_and_an_inserted_qualifier_beside_it_are_kept() {
     let confined = confine(&before, &qualified, &[sentence("body", FAILED)], &[]).unwrap();
     assert_eq!(confined, qualified);
 }
+
+#[test]
+fn a_failed_sentence_repeated_outside_its_quote_is_repaired_where_it_repeats() {
+    // The claim's quote (its inventory passage) holds only the first copy of
+    // the failed sentence; the repair takes out both.
+    let before = section(&format!("{FAILED} {OTHER} {FAILED} {VERIFIED}"));
+    let quote = format!("{FAILED} {OTHER}");
+    let removed = section(&format!("{OTHER} {VERIFIED}"));
+    let confined = confine(
+        &before,
+        &removed,
+        &[sentence("body", &quote)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+    assert_eq!(confined["body"], format!("{OTHER} {VERIFIED}"));
+
+    // A repeat inside a protected claim's quote stays as it was.
+    let confined = confine(
+        &before,
+        &removed,
+        &[sentence("body", &quote)],
+        &[sentence("body", &format!("{FAILED} {VERIFIED}"))],
+    )
+    .unwrap();
+    assert_eq!(confined["body"], format!("{OTHER} {FAILED} {VERIFIED}"));
+}

@@ -83,7 +83,7 @@ pub(super) fn best_available(
             ),
         ));
         let mut ranked = clusters;
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.sort_by_key(|&(_, level)| std::cmp::Reverse(level));
         ranked
             .iter()
             .map(|(c, _)| c.support.source_version_id.clone())

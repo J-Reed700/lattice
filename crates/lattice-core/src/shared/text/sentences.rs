@@ -88,13 +88,14 @@ fn split_at_quote(plain: &str, quote: &str) -> Option<(String, String, String)> 
     let end = at + quote.len();
     let first = offsets.iter().position(|&(_, stop)| stop > at)?;
     let last = offsets.iter().rposition(|&(start, _)| start < end)?;
-    (first <= last).then(|| {
-        (
-            pieces[..first].join(" "),
-            pieces[first..=last].join(" "),
-            pieces[last + 1..].join(" "),
-        )
-    })
+    if first > last {
+        return None;
+    }
+    Some((
+        pieces.get(..first)?.join(" "),
+        pieces.get(first..=last)?.join(" "),
+        pieces.get(last + 1..)?.join(" "),
+    ))
 }
 
 /// The text's paragraphs: runs of lines between blank lines.
@@ -158,7 +159,9 @@ fn without_emphasis(line: &str) -> String {
                 '*' | '_' => {
                     let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric());
                     let space = |c: Option<&char>| c.is_none_or(|c| c.is_whitespace());
-                    !(word(before) && word(after)) && !(ch == '*' && space(before) && space(after))
+                    let joins_words = word(before) && word(after);
+                    let stands_alone = ch == '*' && space(before) && space(after);
+                    !(joins_words || stands_alone)
                 }
                 '~' => before == Some(&'~') || after == Some(&'~'),
                 _ => false,

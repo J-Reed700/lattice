@@ -15,6 +15,7 @@ use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
 use lattice_core::shared::text::sentences;
+use std::collections::HashSet;
 
 /// The repair system prompt's confinement sentence.
 pub(super) const CONFINEMENT: &str = "Edit only the failed sentences; every other sentence is returned byte-identical and any change to it is discarded.";
@@ -83,10 +84,12 @@ impl Protected {
 }
 
 /// `repaired`, a section, with every change outside the sentences of
-/// `targets` reverted to `previous`'s bytes (§10.2). Both sets name this
-/// section's sentences (their `unit` is not read). Errs, as a rejected
-/// repair, when one change rewrites a target together with a protected
-/// sentence, or a protected sentence does not come out byte-identical.
+/// `targets` reverted to `previous`'s bytes (§10.2); a word-for-word repeat
+/// of a target's sentence outside every protected one counts as that
+/// target. Both sets name this section's sentences (their `unit` is not
+/// read). Errs, as a rejected repair, when one change rewrites a target
+/// together with a protected sentence, or a protected sentence does not come
+/// out byte-identical.
 pub(in crate::features::learning) fn confine(
     previous: &Value,
     repaired: &Value,
@@ -166,44 +169,59 @@ struct Pieces<'t> {
 impl<'t> Pieces<'t> {
     fn of(text: &'t str) -> Self {
         let spans = sentences(text);
-        let lead = &text[..spans.first().map_or(text.len(), |span| span.0)];
+        let lead = text
+            .get(..spans.first().map_or(text.len(), |span| span.0))
+            .unwrap_or_default();
         let units = spans
             .iter()
             .enumerate()
             .map(|(index, &(start, end))| {
                 let next = spans.get(index + 1).map_or(text.len(), |span| span.0);
-                (start, end, &text[start..next])
+                (start, end, text.get(start..next).unwrap_or_default())
             })
             .collect();
         Self { lead, units }
     }
 
-    fn sentence(&self, index: usize, text: &'t str) -> &'t str {
-        let (start, end, _) = self.units[index];
-        &text[start..end]
+    /// The sentences themselves, without their separators.
+    fn sentences(&self, text: &'t str) -> Vec<&'t str> {
+        self.units
+            .iter()
+            .map(|&(start, end, _)| text.get(start..end).unwrap_or_default())
+            .collect()
+    }
+
+    /// Sentence `index` with the separator after it.
+    fn piece(&self, index: usize) -> &'t str {
+        self.units.get(index).map_or("", |unit| unit.2)
     }
 }
 
 /// The longest common subsequence of two sentence lists, as matched index
 /// pairs in order.
 fn aligned(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
-    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            table[i][j] = if a[i] == b[j] {
-                table[i + 1][j + 1] + 1
+    let width = b.len() + 1;
+    let mut table = vec![0usize; (a.len() + 1) * width];
+    let cell = |table: &[usize], i: usize, j: usize| table.get(i * width + j).copied().unwrap_or(0);
+    for (i, x) in a.iter().enumerate().rev() {
+        for (j, y) in b.iter().enumerate().rev() {
+            let value = if x == y {
+                cell(&table, i + 1, j + 1) + 1
             } else {
-                table[i + 1][j].max(table[i][j + 1])
+                cell(&table, i + 1, j).max(cell(&table, i, j + 1))
             };
+            if let Some(slot) = table.get_mut(i * width + j) {
+                *slot = value;
+            }
         }
     }
     let (mut i, mut j, mut pairs) = (0, 0, Vec::new());
-    while i < a.len() && j < b.len() {
-        if a[i] == b[j] {
+    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
+        if x == y {
             pairs.push((i, j));
             i += 1;
             j += 1;
-        } else if table[i + 1][j] >= table[i][j + 1] {
+        } else if cell(&table, i + 1, j) >= cell(&table, i, j + 1) {
             i += 1;
         } else {
             j += 1;
@@ -234,13 +252,28 @@ fn confine_text(
         return Ok(after.to_owned());
     }
     let (old, new) = (Pieces::of(before), Pieces::of(after));
-    let old_sentences: Vec<&str> = (0..old.units.len())
-        .map(|index| old.sentence(index, before))
-        .collect();
-    let new_sentences: Vec<&str> = (0..new.units.len())
-        .map(|index| new.sentence(index, after))
-        .collect();
+    let old_sentences = old.sentences(before);
+    let new_sentences = new.sentences(after);
     let pairs = aligned(&old_sentences, &new_sentences);
+    let overlaps = |k: usize, set: &[String]| {
+        old.units
+            .get(k)
+            .is_some_and(|&(start, end, _)| overlaps_any(before, (start, end), set))
+    };
+    // A failed sentence the field repeats word for word outside the quote
+    // its claim was located by is the same failed sentence: the repair may
+    // change those repeats too, unless one lies in a protected sentence.
+    let failed_texts: HashSet<&str> = old_sentences
+        .iter()
+        .enumerate()
+        .filter(|&(k, _)| overlaps(k, targets))
+        .map(|(_, sentence)| *sentence)
+        .collect();
+    let repeats_failed = |k: usize| {
+        old_sentences
+            .get(k)
+            .is_some_and(|sentence| failed_texts.contains(sentence))
+    };
     // What comes before the first sentence is whitespace no repair needs.
     let mut out = String::from(old.lead);
     let (mut i, mut j) = (0, 0);
@@ -261,36 +294,33 @@ fn confine_text(
             vec![((i..match_i).collect(), j..match_j)]
         };
         for (replaced, written) in hunks {
-            let touches = |set: &[String], indices: &[usize]| {
-                indices.iter().any(|&k| {
-                    let (start, end, _) = old.units[k];
-                    overlaps_any(before, (start, end), set)
-                })
-            };
             // An insertion touches the failed sentence beside it.
             let beside: Vec<usize> = if replaced.is_empty() {
                 (i.saturating_sub(1)..(match_i + 1).min(old.units.len())).collect()
             } else {
                 Vec::new()
             };
-            let failed = touches(targets, &replaced) || touches(targets, &beside);
-            if failed && touches(protected, &replaced) {
+            let reach = || replaced.iter().chain(&beside).copied();
+            let on_target = reach().any(|k| overlaps(k, targets));
+            let on_protected = replaced.iter().any(|&k| overlaps(k, protected));
+            if on_target && on_protected {
                 return Err(invalid(
                     "The repair rewrote a sentence that already passed together with the failed one; the draft is kept.",
                 ));
             }
+            let failed = on_target || (!on_protected && reach().any(repeats_failed));
             if failed {
                 for k in written {
-                    out.push_str(new.units[k].2);
+                    out.push_str(new.piece(k));
                 }
             } else {
                 for k in replaced {
-                    out.push_str(old.units[k].2);
+                    out.push_str(old.piece(k));
                 }
             }
         }
         if match_i < old.units.len() {
-            out.push_str(new.units[match_j].2);
+            out.push_str(new.piece(match_j));
         }
         (i, j) = (match_i + 1, match_j + 1);
     }

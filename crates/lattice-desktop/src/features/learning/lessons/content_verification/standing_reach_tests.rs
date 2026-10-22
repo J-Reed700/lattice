@@ -464,7 +464,7 @@ async fn the_standing_scope_is_built_from_stored_facts_without_a_model() -> Resu
     let mut judgements =
         provenance_gate::Judgements::cached(pool.clone(), &course.program_id, MODEL).await?;
     let scope = judgements
-        .standing_scope(&profile(), &[shown.version_id.clone()])
+        .standing_scope(&profile(), std::slice::from_ref(&shown.version_id))
         .await?;
     let expected: HashSet<String> = [&owner, &restricted, &user, &hinted]
         .iter()

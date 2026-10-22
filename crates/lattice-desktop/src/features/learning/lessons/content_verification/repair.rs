@@ -687,10 +687,14 @@ mod tests {
         let passages: Vec<_> = (0..12)
             .map(|i| json!({"id":format!("evidence-{i}"),"sourceId":"s","startByte":i * 2000,"endByte":i * 2000 + 1600,"text":format!("passage-{i} {}", "x".repeat(1600))}))
             .collect();
+        // Each failed claim is a ledger claim located on its own marker: a
+        // repair may change only the failed claims' sentences (claim sources
+        // design §10.2), so the edits must land on sentences it targets.
+        let body = "[0] [1] [2] [3] [4] [5]";
         let claims: Vec<_> = (0..6)
-            .map(|k| json!({"unit":0,"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
+            .map(|k| json!({"unit":0,"claimId":format!("claim-{k}"),"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
             .collect();
-        let context = json!({"candidate":{"blocks":[{"kind":"explanation","title":"T","body":"[0] [1] [2] [3] [4] [5]"}],"questions":[]},"requirements":{},"failedClaims":claims,"evidence":passages,"executions":[],"repairHistory":[]});
+        let context = json!({"candidate":{"blocks":[{"kind":"explanation","title":"T","body":body}],"questions":[]},"requirements":{},"failedClaims":claims,"evidence":passages,"executions":[],"repairHistory":[]});
         let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
         let output_tokens = 500;
         let llm = SmallWindow {
@@ -699,6 +703,39 @@ mod tests {
         };
         let references = ReferenceCollection::lexical(&[])?;
         let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+        // Open for repair, as a pass leaves its failed claims.
+        for k in 0..6 {
+            use lattice_core::domain::learning::claim_review::{
+                Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
+                EvidenceFingerprint, UnitKind, VerdictKind,
+            };
+            let id = ClaimId(format!("claim-{k}"));
+            let location =
+                ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), body);
+            ledger
+                .append(
+                    &id,
+                    ClaimEvent::Extracted {
+                        location,
+                        statement: format!("Claim {k}"),
+                    },
+                )
+                .await?;
+            let check = Check {
+                checker: Checker::Local {
+                    model: llm.model_name().into(),
+                },
+                result: CheckResult::Failed {
+                    kind: VerdictKind::Unsupported,
+                },
+                reason: "Unstated.".into(),
+                fingerprint: EvidenceFingerprint::of("fixture-v1", llm.model_name(), &[]),
+                evidence: Vec::new(),
+                window_tokens: 4_000,
+            };
+            ledger.append(&id, ClaimEvent::Checked(check)).await?;
+            assert!(ledger.may_repair(&id));
+        }
 
         let repaired = repair_sections(
             &llm,

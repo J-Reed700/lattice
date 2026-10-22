@@ -169,7 +169,7 @@ fn replayed(entry: &ClaimLedgerEntry) -> ClaimLedgerEntry {
 }
 
 #[test]
-fn a_support_below_its_bar_is_the_gates_failure_and_the_machines_to_repair() {
+fn a_support_below_its_bar_is_the_gates_failure_researched_but_never_repaired() {
     let entry = gated_claim("c1");
     let ClaimState::Open {
         kind: VerdictKind::InsufficientStanding { bar, have },
@@ -189,7 +189,10 @@ fn a_support_below_its_bar_is_the_gates_failure_and_the_machines_to_repair() {
     );
     assert!(entry.trust().is_some());
     assert!(entry.redecidable());
-    assert!(entry.may_research() && entry.may_repair());
+    // Design 2026-10-21 §10.4: a lack of standing is researched, never
+    // rewritten or removed by the machine.
+    assert!(entry.may_research());
+    assert!(!entry.may_repair());
     assert!(!entry.allows(ClaimActionKind::GeneralKnowledge));
 }
 

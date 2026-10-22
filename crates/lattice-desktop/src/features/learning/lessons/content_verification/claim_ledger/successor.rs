@@ -92,24 +92,24 @@ pub(super) fn heirs(
                     .span
                     .is_some_and(|(from, to)| from >= start && to <= end)
         };
-        let mut found: Vec<usize> = extracted
+        let mut found: Vec<(usize, &ExtractedClaim)> = extracted
             .iter()
             .enumerate()
-            .filter(|(index, claim)| !taken[*index] && qualifies(claim))
-            .map(|(index, _)| index)
+            .filter(|(index, claim)| taken.get(*index) == Some(&false) && qualifies(claim))
             .collect();
-        found.sort_by_key(|index| {
-            let claim = &extracted[*index];
+        found.sort_by_key(|(_, claim)| {
             (
                 std::cmp::Reverse(shared_terms(&claim.statement, &record.before)),
                 claim.location.span.map_or(usize::MAX, |(from, _)| from),
             )
         });
         let attempts_left = MACHINE_ATTEMPTS.saturating_sub(record.attempt);
-        let mut found = found.into_iter();
+        let mut found = found.into_iter().map(|(index, _)| index);
         match found.next() {
             Some(successor) => {
-                taken[successor] = true;
+                if let Some(slot) = taken.get_mut(successor) {
+                    *slot = true;
+                }
                 heirs.successors.push((record.claim_id.clone(), successor));
             }
             None => {
@@ -121,7 +121,9 @@ pub(super) fn heirs(
             }
         }
         for child in found {
-            taken[child] = true;
+            if let Some(slot) = taken.get_mut(child) {
+                *slot = true;
+            }
             heirs
                 .children
                 .insert(child, (record.claim_id.clone(), attempts_left));

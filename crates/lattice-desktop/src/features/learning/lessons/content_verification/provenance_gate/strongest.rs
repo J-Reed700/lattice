@@ -27,11 +27,11 @@ pub(in crate::features::learning::lessons::content_verification) fn name_stronge
     let holds_quote = |passage: &EvidencePassage| {
         !quote.is_empty() && passage.retrieval_kind != EXECUTION && passage.text.contains(&quote)
     };
-    let current = finding
-        .evidence
-        .iter()
-        .position(|passage| holds_quote(passage));
-    if current.is_some_and(|at| finding.evidence[at].source_id == best) {
+    let current = finding.evidence.iter().position(holds_quote);
+    if current
+        .and_then(|at| finding.evidence.get(at))
+        .is_some_and(|passage| passage.source_id == best)
+    {
         return;
     }
     // Another passage of the evidence holding the same quotation: it goes
@@ -70,11 +70,11 @@ pub(in crate::features::learning::lessons::content_verification) fn name_stronge
             cited
         }
     };
-    if let Some(at) = current {
-        finding.two_pass.also_supported.push(SupportingPassage {
-            passage: finding.evidence[at].clone(),
-            quote,
-        });
+    if let Some(passage) = current.and_then(|at| finding.evidence.get(at)).cloned() {
+        finding
+            .two_pass
+            .also_supported
+            .push(SupportingPassage { passage, quote });
     }
     finding.two_pass.supported_by =
         (!cited.contains(&strongest.passage.source_id)).then(|| SupportedElsewhere {

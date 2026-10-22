@@ -273,9 +273,7 @@ fn byline_name(line: &str) -> Option<String> {
         if is_separator(first) || !word.chars().any(char::is_alphabetic) {
             break;
         }
-        if first.is_uppercase() {
-            name.push(word);
-        } else if NAME_PARTICLES.contains(&word) && !name.is_empty() {
+        if first.is_uppercase() || (NAME_PARTICLES.contains(&word) && !name.is_empty()) {
             name.push(word);
         } else {
             // A lower-case word that is not a particle: the line is prose.

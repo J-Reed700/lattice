@@ -372,6 +372,8 @@ impl Walk {
         references: &ReferenceCollection<'_>,
         citations: &Citations,
     ) -> Result<Option<(Vec<EvidencePassage>, PageNote)>> {
+        // A walk with no standing scope lists none of it.
+        let no_scope = HashSet::new();
         while let Some(&reach) = self.reaches.first() {
             let list = match self.list.take() {
                 Some(list) => list,
@@ -384,7 +386,7 @@ impl Walk {
                         (
                             citations,
                             &self.researched,
-                            self.standing.as_ref().unwrap_or(&HashSet::new()),
+                            self.standing.as_ref().unwrap_or(&no_scope),
                         ),
                     )
                     .await?
