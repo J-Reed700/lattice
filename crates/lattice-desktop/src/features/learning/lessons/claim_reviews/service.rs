@@ -23,11 +23,13 @@ use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::repository::ClaimReviewRepository;
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
+use crate::features::learning::content_verification::located_quote;
 use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::persistence::now;
 use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::features::learning::references::trust::outcomes::VerdictScope;
+use lattice_core::shared::text::plain_text;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
@@ -267,13 +269,16 @@ impl ClaimReviewService {
             ClaimActionRequestDto::Confirm {
                 note,
                 source_version_ids,
-            } => user(
-                UserAction::Confirm {
-                    bound: HumanBinding::new(&entry.location().quote, source_version_ids),
-                },
-                note,
-                Some(LabelSource::UserConfirm),
-            ),
+            } => {
+                let quote = self.bound_quote(review, lesson_id, entry).await;
+                user(
+                    UserAction::Confirm {
+                        bound: HumanBinding::new(&quote, source_version_ids),
+                    },
+                    note,
+                    Some(LabelSource::UserConfirm),
+                )
+            }
             ClaimActionRequestDto::Unconfirm => user(UserAction::Unconfirm, None, None),
             ClaimActionRequestDto::Edit { before, after } => {
                 if before.is_empty() || before == after {
@@ -283,9 +288,23 @@ impl ClaimReviewService {
                     ));
                 }
                 let text = self.field_text(review, lesson_id, entry).await?;
-                if text.matches(before.as_str()).count() != 1 {
+                // The card shows the claim's sentence as plain text; the
+                // edit replaces the sentence as the lesson writes it (claim
+                // sources design §18.3). Other text must occur once.
+                let sentence = located_quote(entry.location(), entry.statement(), &text);
+                let before = if before == sentence || before == plain_text(&sentence) {
+                    sentence
+                } else if text.matches(before.as_str()).count() == 1 {
+                    before
+                } else {
                     return Err(AppError::InvalidInput(
                         "The text to replace must occur exactly once in its section.".into(),
+                    ));
+                };
+                if before == after {
+                    return Err(AppError::InvalidInput(
+                        "An edit names the text it replaces and different text to put there."
+                            .into(),
                     ));
                 }
                 user(
@@ -296,7 +315,8 @@ impl ClaimReviewService {
             }
             ClaimActionRequestDto::Remove => {
                 let text = self.field_text(review, lesson_id, entry).await?;
-                if !whole_sentence(&text, &entry.location().quote) {
+                let sentence = located_quote(entry.location(), entry.statement(), &text);
+                if !whole_sentence(&text, &sentence) {
                     return Err(AppError::InvalidInput(
                         "This claim is part of a sentence. Edit the sentence to say what goes."
                             .into(),
@@ -340,7 +360,8 @@ impl ClaimReviewService {
             .ok_or_else(|| AppError::InternalError("Undo target not in the claim's log".into()))?;
         let removal_applied = || async {
             let text = self.field_text(review, lesson_id, entry).await?;
-            Ok::<bool, AppError>(!text.contains(&entry.location().quote))
+            let sentence = located_quote(entry.location(), entry.statement(), &text);
+            Ok::<bool, AppError>(!text.contains(&sentence))
         };
         let changed_draft = match &undone.event {
             ClaimEvent::UserAction {
@@ -390,6 +411,21 @@ impl ClaimReviewService {
     /// The claim's field as the lesson's draft has it now. Edits and
     /// removals change a draft that waits for review; a published lesson is
     /// prepared again instead.
+    /// The claim's sentence in the draft (claim sources design §18.3); the
+    /// stored quote when the draft cannot be read, as for a published
+    /// lesson, whose text no longer changes.
+    async fn bound_quote(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        entry: &ClaimLedgerEntry,
+    ) -> String {
+        match self.field_text(review, lesson_id, entry).await {
+            Ok(text) => located_quote(entry.location(), entry.statement(), &text),
+            Err(_) => entry.location().quote.clone(),
+        }
+    }
+
     async fn field_text(
         &self,
         review: &LessonReview,

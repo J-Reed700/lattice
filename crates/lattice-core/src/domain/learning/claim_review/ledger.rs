@@ -585,8 +585,13 @@ impl ClaimLedgerEntry {
         if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
+        // A repair not attempted ran no model, so nothing escalated.
+        let expected_escalation = match outcome {
+            RepairOutcome::NotAttempted { .. } => false,
+            _ => *machine_attempts_left == 1,
+        };
         if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left)
-            || escalated != (*machine_attempts_left == 1)
+            || escalated != expected_escalation
         {
             return Err(LedgerError::RepairMismatch {
                 claim: self.claim_id.0.clone(),
@@ -604,6 +609,9 @@ impl ClaimLedgerEntry {
             }
             RepairOutcome::Rejected { .. } => {
                 next.state = charge(kind.clone(), reason.clone(), *machine_attempts_left)
+            }
+            RepairOutcome::NotAttempted { .. } => {
+                next.state = super::replay::queued(kind.clone(), reason.clone())
             }
             RepairOutcome::SupersededByUser => {}
         }

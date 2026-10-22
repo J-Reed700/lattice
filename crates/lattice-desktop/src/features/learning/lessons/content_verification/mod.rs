@@ -20,8 +20,11 @@ use std::collections::{HashMap, HashSet};
 mod citations;
 mod claim_ledger;
 use citations::{overlaps, section_citations, source_mentions, take_cited, Citations, CITED};
+#[cfg(test)]
+pub(in crate::features::learning) use claim_ledger::locate;
 pub(in crate::features::learning) use claim_ledger::{
-    field_text, held_for_review, held_lessons, review_outcome, unit_texts, HeldForReview,
+    field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
+    HeldForReview,
 };
 mod coverage;
 #[cfg(test)]

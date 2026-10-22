@@ -12,12 +12,12 @@ use serde_json::Value;
 
 use super::super::dto::{ClaimPresentationDto, ResearchSummaryDto};
 use super::SourceFacts;
-use crate::features::learning::content_verification::field_text;
+use crate::features::learning::content_verification::{field_text, located_quote};
 
 /// The claim as plain text in its sentence and paragraph. `units` is the
 /// lesson's blocks and questions, as the draft or the published lesson has
 /// them; `title` is the claim's unit title.
-pub(super) fn presentation(
+pub(in crate::features::learning::lessons::claim_reviews) fn presentation(
     entry: &ClaimLedgerEntry,
     units: &Value,
     title: &str,
@@ -25,7 +25,9 @@ pub(super) fn presentation(
     let location = entry.location();
     let (context_before, sentence, context_after) =
         match field_text(units, location.unit_index, &location.field) {
-            Some(text) => plain_sentence_context(&text, &location.quote),
+            Some(text) => {
+                plain_sentence_context(&text, &located_quote(location, entry.statement(), &text))
+            }
             None => (String::new(), plain_text(&location.quote), String::new()),
         };
     ClaimPresentationDto {

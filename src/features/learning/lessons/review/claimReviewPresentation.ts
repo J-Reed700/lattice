@@ -282,6 +282,7 @@ export function repairOutcomeLabel(outcome: RepairOutcomeDto): string {
     case 'removed': return 'The repair removed the sentence';
     case 'rejected': return `Repair rejected: ${outcome.reason}`;
     case 'superseded_by_user': return 'Your change superseded this repair';
+    case 'not_attempted': return `Not repaired: ${outcome.reason}`;
   }
 }
 

@@ -735,3 +735,77 @@ fn a_claim_born_of_a_repair_starts_with_its_parents_remaining_attempts() {
         )
         .is_err());
 }
+
+/// Events as code before sentence locations wrote them: the claim located
+/// by its whole passage, and no repair outcome but the four it knew.
+const PASSAGE_HISTORIES: &str = r#"{
+  "c1": [
+    {"ordinal": 0, "provenance": {"actor": "machine", "at": 1, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "extracted", "location": {"unit_index": 0, "unit_kind": "block", "field": "body", "quote": "Heat it. Water boils at 100 °C at sea level. Then cool it.", "span": [0, 59]}, "statement": "Water boils at 100 °C at sea level."}},
+    {"ordinal": 1, "provenance": {"actor": "machine", "at": 2, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "checked", "checker": {"local": {"model": "qwen3.5-27b"}}, "result": {"failed": {"kind": "unsupported"}}, "reason": "compared v1", "fingerprint": "fp-v1", "evidence": [{"source_version_id": "v1", "start_byte": 0, "end_byte": 40, "text_sha256": "sha-v1"}], "window_tokens": 32768}},
+    {"ordinal": 2, "provenance": {"actor": "machine", "at": 3, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "repair_attempted", "attempt": 1, "escalated": false, "before": "Heat it. Water boils at 100 °C at sea level. Then cool it.", "after": "Heat it. Water boils at 100 °C. Then cool it.", "outcome": "rewritten"}},
+    {"ordinal": 3, "provenance": {"actor": "machine", "at": 4, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "checked", "checker": {"local": {"model": "qwen3.5-27b"}}, "result": {"failed": {"kind": "unsupported"}}, "reason": "compared v1", "fingerprint": "fp-v1", "evidence": [{"source_version_id": "v1", "start_byte": 0, "end_byte": 40, "text_sha256": "sha-v1"}], "window_tokens": 32768}},
+    {"ordinal": 4, "provenance": {"actor": "machine", "at": 5, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "repair_attempted", "attempt": 2, "escalated": true, "before": "Heat it. Water boils at 100 °C at sea level. Then cool it.", "after": null, "outcome": {"rejected": {"reason": "changed a protected sentence"}}}},
+    {"ordinal": 5, "provenance": {"actor": "machine", "at": 6, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "checked", "checker": {"local": {"model": "qwen3.5-27b"}}, "result": {"failed": {"kind": "unsupported"}}, "reason": "compared v1", "fingerprint": "fp-v1", "evidence": [{"source_version_id": "v1", "start_byte": 0, "end_byte": 40, "text_sha256": "sha-v1"}], "window_tokens": 32768}}
+  ],
+  "c2": [
+    {"ordinal": 0, "provenance": {"actor": "machine", "at": 1, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "extracted", "location": {"unit_index": 0, "unit_kind": "block", "field": "body", "quote": "Heat it. Water boils at 100 °C at sea level. Then cool it.", "span": [0, 59]}, "statement": "Heat it."}},
+    {"ordinal": 1, "provenance": {"actor": "machine", "at": 2, "job_id": "job-1", "app_version": "1.0.0", "checker_model": "qwen3.5-27b"},
+     "event": {"kind": "checked", "checker": {"local": {"model": "qwen3.5-27b"}}, "result": {"supported": {"source_version_id": "v1", "supporting_quote": "heat it"}}, "reason": "compared v1", "fingerprint": "fp-v1", "evidence": [{"source_version_id": "v1", "start_byte": 0, "end_byte": 40, "text_sha256": "sha-v1"}], "window_tokens": 32768}}
+  ]
+}"#;
+
+#[test]
+fn histories_written_before_sentence_locations_replay_unchanged() {
+    let histories: std::collections::BTreeMap<String, Vec<RecordedEvent>> =
+        serde_json::from_str(PASSAGE_HISTORIES).unwrap();
+    let replay = |id: &str| {
+        ClaimLedgerEntry::from_events(ClaimId(id.into()), histories[id].clone()).unwrap()
+    };
+
+    // Two failures on the same evidence, a rewrite and a rejected repair:
+    // the user's, as before.
+    let queued = replay("c1");
+    assert_eq!(
+        queued.state(),
+        &ClaimState::Queued {
+            kind: VerdictKind::Unsupported,
+            reason: "compared v1".into(),
+        }
+    );
+    assert!(!queued.may_repair());
+    assert_eq!(queued.location().quote, FIELD_TEXT);
+    assert_eq!(queued.location().span, Some((0, FIELD_TEXT.len())));
+
+    let verified = replay("c2");
+    assert_eq!(
+        verified.state(),
+        &ClaimState::ResolvedByEvidence {
+            source_version_id: "v1".into(),
+            supporting_quote: "heat it".into(),
+        }
+    );
+    assert_eq!(verified.location().quote, FIELD_TEXT);
+
+    // What replays is what was stored: written back, the events read the same.
+    for id in ["c1", "c2"] {
+        let entry = replay(id);
+        let written = serde_json::to_string(entry.events()).unwrap();
+        let read: Vec<RecordedEvent> = serde_json::from_str(&written).unwrap();
+        assert_eq!(read, histories[id]);
+    }
+    // The one new outcome reads as its own variant, beside the old ones.
+    assert_eq!(
+        serde_json::to_value(RepairOutcome::NotAttempted {
+            reason: "shared".into()
+        })
+        .unwrap(),
+        serde_json::json!({ "not_attempted": { "reason": "shared" } })
+    );
+}

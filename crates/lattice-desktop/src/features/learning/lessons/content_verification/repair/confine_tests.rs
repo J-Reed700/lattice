@@ -126,3 +126,48 @@ fn a_failed_sentence_repeated_outside_its_quote_is_repaired_where_it_repeats() {
     .unwrap();
     assert_eq!(confined["body"], format!("{OTHER} {FAILED} {VERIFIED}"));
 }
+
+#[test]
+fn a_failed_sentence_is_repaired_beside_verified_ones_in_the_same_passage() {
+    // The case that broke (claim sources design §18.1): one biology
+    // paragraph, the extractor's one passage, holds a failed claim between
+    // two verified ones. Each is located through `observe::locate` from the
+    // passage and its statement.
+    use crate::features::learning::lessons::content_verification::locate;
+    const PASSAGE: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation. They carry their own circular DNA, passed down from the mother. A typical human cell holds exactly twelve mitochondria. Their inner membrane folds into cristae that enlarge its surface.";
+    const TWELVE: &str = "A typical human cell holds exactly twelve mitochondria.";
+    let before = section(PASSAGE);
+    let lesson = json!({ "blocks": [before.clone()], "questions": [] });
+    let located = |statement: &str| {
+        let location = locate(&lesson, 0, PASSAGE, Some(statement));
+        sentence(&location.field, &location.quote)
+    };
+    let v1 = located("Mitochondria make most of a cell's ATP by oxidative phosphorylation.");
+    let failed = located("A typical human cell contains exactly twelve mitochondria.");
+    let v2 =
+        located("The inner mitochondrial membrane folds into cristae that enlarge its surface.");
+    assert_eq!(failed, sentence("body", TWELVE));
+    assert!(v1.quote.starts_with("Mitochondria produce") && v2.quote.starts_with("Their inner"));
+
+    let fixed = PASSAGE.replace(
+        TWELVE,
+        "A human cell holds hundreds to thousands of mitochondria.",
+    );
+    let after = section(&fixed);
+    let confined = confine(
+        &before,
+        &after,
+        std::slice::from_ref(&failed),
+        &[v1.clone(), v2.clone()],
+    )
+    .unwrap();
+    assert_eq!(confined["body"], fixed, "the repair is accepted");
+    for verified in [&v1, &v2] {
+        assert!(confined["body"].as_str().unwrap().contains(&verified.quote));
+    }
+
+    // A verified claim the locator could not narrow keeps its passage, which
+    // holds the failed sentence too: the repair is rejected, as before.
+    let unlocated = sentence("body", PASSAGE);
+    assert!(confine(&before, &after, &[failed], &[unlocated, v2]).is_err());
+}

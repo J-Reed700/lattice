@@ -18,7 +18,7 @@ use lattice_core::shared::text::sentences;
 use std::collections::HashSet;
 
 /// The repair system prompt's confinement sentence.
-pub(super) const CONFINEMENT: &str = "Edit only the failed sentences; every other sentence is returned byte-identical and any change to it is discarded.";
+pub(super) const CONFINEMENT: &str = "Edit only each failed claim's `sentence`; every other sentence is returned byte-identical and any change to it is discarded.";
 
 /// A claim's sentence by its section, the field it is in (a path inside
 /// the section, such as `body` or `options/1`) and its quotation.
@@ -68,18 +68,6 @@ impl Protected {
             field: location.field.clone(),
             quote: location.quote.clone(),
         }
-    }
-
-    /// The protected set a repair context carries (`"protected"`), so a
-    /// resumed repair confines as the first one did.
-    pub(in crate::features::learning::lessons::content_verification) fn from_context(
-        context: &Value,
-    ) -> Vec<Self> {
-        context
-            .get("protected")
-            .cloned()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or_default()
     }
 }
 

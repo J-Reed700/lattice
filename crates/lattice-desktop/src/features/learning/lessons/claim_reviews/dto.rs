@@ -433,8 +433,15 @@ pub struct RepairAttemptDto {
 pub enum RepairOutcomeDto {
     Rewritten,
     Removed,
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
     SupersededByUser,
+    /// Left to the user without a rewrite: the sentence also states
+    /// something verified or waiting (claim sources design §18.5).
+    NotAttempted {
+        reason: String,
+    },
 }
 
 impl From<&RepairOutcome> for RepairOutcomeDto {
@@ -446,6 +453,9 @@ impl From<&RepairOutcome> for RepairOutcomeDto {
                 reason: reason.clone(),
             },
             RepairOutcome::SupersededByUser => Self::SupersededByUser,
+            RepairOutcome::NotAttempted { reason } => Self::NotAttempted {
+                reason: reason.clone(),
+            },
         }
     }
 }

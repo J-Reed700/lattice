@@ -391,3 +391,33 @@ fn claim_events_mirror_the_domain() {
     let dtos: Vec<ClaimEventDto> = records.iter().map(ClaimEventDto::from).collect();
     assert_mirrors(&dtos, &fixture);
 }
+
+#[test]
+fn the_review_shows_the_claims_own_sentence_for_a_location_stored_as_a_passage() {
+    // The screenshot's card: the claim was stored with its whole passage as
+    // the quote, as passes before sentence locations wrote it (claim sources
+    // design §18.6).
+    use lattice_core::domain::learning::claim_review::ClaimLedgerEntry;
+    const BODY: &str = "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values. This description is called a **tool schema** [2]. Most APIs write it as a JSON object.";
+    let entry = ClaimLedgerEntry::extracted(
+        ClaimId("claim-1".into()),
+        provenance(Actor::Machine, 1),
+        ClaimLocation::locate(0, UnitKind::Block, "body", BODY, BODY),
+        "Before a model can call a tool, it needs a structured description of what the tool does, its arguments and its return values.".into(),
+    )
+    .unwrap();
+    let units = serde_json::json!({
+        "blocks": [{ "kind": "explanation", "title": "Tool schemas", "body": BODY }],
+        "questions": [],
+    });
+    let card = super::view::presentation(&entry, &units, "Tool schemas");
+    assert_eq!(
+        card.sentence,
+        "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values."
+    );
+    assert_eq!(card.context_before, "");
+    assert_eq!(
+        card.context_after,
+        "This description is called a tool schema. Most APIs write it as a JSON object."
+    );
+}

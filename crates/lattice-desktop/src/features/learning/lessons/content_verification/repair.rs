@@ -9,7 +9,8 @@
 //! to the passage found.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{
-    claim_ids, drop_group, escalated, ledger_targets, rejected, section_examples, withdraw_resolved,
+    claim_ids, context_claims, drop_group, escalated, ledger_targets, rejected, section_examples,
+    withdraw_resolved,
 };
 use super::*;
 use crate::features::learning::lessons::text_edits;
@@ -352,9 +353,7 @@ pub(in crate::features::learning) async fn candidate(
     references: &ReferenceCollection<'_>,
     ledger: &mut ClaimLedger,
 ) -> Result<String> {
-    // What this repair left as it was: the teaching review after it leaves
-    // it too (claim sources design §10.3).
-    let protected = Protected::from_context(&context);
+    let targets = context_claims(&context);
     let candidate = repair_sections(
         llm,
         prompt,
@@ -365,6 +364,9 @@ pub(in crate::features::learning) async fn candidate(
         ledger,
     )
     .await?;
+    // What this repair left as it was: the teaching review after it leaves
+    // it too (claim sources design §10.3), as the synced ledger has it now.
+    let protected = Protected::of_ledger(ledger, &targets);
     crate::features::learning::teaching::review_lesson(
         llm,
         crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,
@@ -398,6 +400,9 @@ async fn repair_sections(
     if pending.is_empty() {
         return Err(invalid("No affected sections were recorded for repair."));
     }
+    // Every claim this repair was sent for; the ledger's other live claims
+    // are what it leaves as it is (claim sources design §18.5).
+    let sent_claims = context_claims(&context);
     let mut candidate = context
         .get("candidate")
         .cloned()
@@ -489,7 +494,7 @@ async fn repair_sections(
             };
             let confined = (
                 of_unit(Protected::of_claims(ledger, &sent)),
-                of_unit(Protected::from_context(&context)),
+                of_unit(Protected::of_ledger(ledger, &sent_claims)),
             );
             let repaired = match repair_group(
                 llm,

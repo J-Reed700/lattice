@@ -1,5 +1,5 @@
 //! Which claim continues a repaired one (claim sources design §9). A
-//! repaired claim's id continues only in new text inside the part of its
+//! repaired claim's id continues only in new text over the part of its
 //! field the repair changed, never in a sentence that was there before; the
 //! other claims that repair wrote are its children and start with what the
 //! parent had left, so a rewrite or a split sentence adds no attempts.
@@ -58,10 +58,12 @@ fn sentence_region(current: &str, (start, end): (usize, usize)) -> (usize, usize
 
 /// The heirs of `repairs` (claims `orphaned` by the identity rules only):
 /// for each, the unowned extracted claims of its field whose quote is new
-/// text inside the field's changed region; the one sharing most words with
-/// the sentence the repair replaced continues it (ties to the earliest), the
-/// rest are its children. `previous` is the lesson before the repairs,
-/// `current` after; `field_of` names a claim's field; `field_text` reads one.
+/// text overlapping the field's changed region (a claim located by a whole
+/// passage reaches past it; claim sources design §18.4 iv); the one sharing
+/// most words with the sentence the repair replaced continues it (ties to
+/// the earliest), the rest are its children. `previous` is the lesson before
+/// the repairs, `current` after; `field_of` names a claim's field;
+/// `field_text` reads one.
 pub(super) fn heirs(
     repairs: &[RepairRecord],
     orphaned: &[ClaimId],
@@ -90,7 +92,7 @@ pub(super) fn heirs(
                 && claim
                     .location
                     .span
-                    .is_some_and(|(from, to)| from >= start && to <= end)
+                    .is_some_and(|(from, to)| from < end && to > start)
         };
         let mut found: Vec<(usize, &ExtractedClaim)> = extracted
             .iter()
@@ -223,6 +225,48 @@ mod tests {
             heirs_of_rewrite.rewritten.get(&ClaimId("quoted".into())),
             Some(&Some(opinion.to_owned()))
         );
+    }
+
+    #[test]
+    fn a_repaired_sentence_among_verified_ones_continues_its_claim_alone() {
+        // One passage of three located claims, V1, F and V2; the repair
+        // rewrote F (claim sources design §18.4 iv).
+        const V1: &str =
+            "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
+        const F: &str = "A typical human cell holds exactly twelve mitochondria.";
+        const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
+        let fixed = "A human cell holds hundreds to thousands of mitochondria.";
+        let before = format!("{V1} {F} {V2}");
+        let after = format!("{V1} {fixed} {V2}");
+        let found = |claims: &[ExtractedClaim]| {
+            heirs(
+                &[record("f", F, 1)],
+                &[ClaimId("f".into())],
+                (claims, &[false, false, false]),
+                (Some(&lesson(&before)), &lesson(&after)),
+                |_| Some("body".into()),
+                field_text,
+            )
+        };
+        // Even unowned, the verified sentences stood before the repair: they
+        // are neither its successor nor its children.
+        let kept = found(&[
+            extracted(&after, V1),
+            extracted(&after, fixed),
+            extracted(&after, V2),
+        ]);
+        assert_eq!(kept.successors, vec![(ClaimId("f".into()), 1)]);
+        assert!(kept.children.is_empty(), "{:?}", kept.children);
+
+        // A successor the locator could not narrow, located by its whole new
+        // passage, reaches past the rewritten sentence and still continues it.
+        let by_passage = ExtractedClaim {
+            location: ClaimLocation::locate(0, UnitKind::Block, "body", after.as_str(), &after),
+            statement: fixed.into(),
+        };
+        let kept = found(&[extracted(&after, V1), by_passage, extracted(&after, V2)]);
+        assert_eq!(kept.successors, vec![(ClaimId("f".into()), 1)]);
+        assert!(kept.children.is_empty(), "{:?}", kept.children);
     }
 
     #[test]

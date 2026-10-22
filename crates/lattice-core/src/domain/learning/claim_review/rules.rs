@@ -48,7 +48,11 @@ pub struct Observation {
 /// Why the machine may look at a claim again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewInformation {
-    /// The claim's quote changed; carries the new quote's SHA-256.
+    /// The claim's quote changed; carries the new quote's SHA-256. A
+    /// location that only narrows (a stored passage re-located to one of
+    /// its sentences while the field still holds the passage) is not a
+    /// changed sentence: the pass records the new location and nothing else
+    /// (claim sources design §18.4 i).
     SentenceChanged {
         quote_sha256: String,
     },
@@ -89,13 +93,19 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
         {
             return Some(NewInformation::CheckerChanged)
         }
-        Some(basis) if basis.fingerprint == now.fingerprint => {}
-        _ => return Some(NewInformation::EvidenceChanged),
-    }
-    if let (Some(now), Some(before)) = (&now.gate, prev.trust()) {
-        if *now != before.verdict() {
-            return Some(NewInformation::DecisionChanged);
+        Some(basis) if basis.fingerprint == now.fingerprint => {
+            if let (Some(gate), Some(before)) = (&now.gate, prev.trust()) {
+                if *gate != before.verdict() {
+                    return Some(NewInformation::DecisionChanged);
+                }
+            }
         }
+        // A verified claim is not re-judged on reselected evidence (claim
+        // sources design §18.4 ii): only its sentence or a source it cites
+        // changing reopens it, as `reopen_cause` says. The gate weighed other
+        // evidence, so it is not compared either.
+        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. }) => {}
+        _ => return Some(NewInformation::EvidenceChanged),
     }
     now.attached_source_version_id
         .clone()
@@ -201,10 +211,11 @@ pub struct Identities {
 
 /// §3 `identity`, applied to a whole re-extraction so no prior id is given
 /// twice. A claim keeps a prior id when it is in the same unit and has the
-/// same statement or the same quote; failing that, when the prior quote still
-/// occurs once in the same field and its span overlaps the new claim's (the
-/// largest overlap wins). `prior` is the live claims of the re-extracted
-/// units; `field_text(unit_index, field)` is a field's current text.
+/// same statement or the same quote; failing that, when the prior quote's
+/// span in the same field (where it occurs once now, or else its stored span)
+/// overlaps the new claim's (the largest overlap wins). `prior` is the live
+/// claims of the re-extracted units; `field_text(unit_index, field)` is a
+/// field's current text.
 pub fn identities<'a>(
     prior: &[&ClaimLedgerEntry],
     extracted: &[ExtractedClaim],
@@ -253,8 +264,11 @@ pub fn identities<'a>(
             if old.unit_index != new.location.unit_index || old.field != new.location.field {
                 continue;
             }
-            let Some((old_start, old_end)) =
-                field_text(old.unit_index, &old.field).and_then(|text| span_of(text, &old.quote))
+            // A quote the field no longer holds (a repaired passage) falls
+            // back to where the claim last stood.
+            let Some((old_start, old_end)) = field_text(old.unit_index, &old.field)
+                .and_then(|text| span_of(text, &old.quote))
+                .or(old.span)
             else {
                 continue;
             };

@@ -9,9 +9,10 @@ use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::claim_review::{
     identities, new_information, reopen_cause, text_sha256, Actor, Check, CheckResult, Checker,
     ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceFingerprint,
-    EvidenceSeen, ExtractedClaim, NewInformation, Observation, RepairOutcome, SourceChange,
-    TrustAssessment, UnitKind, VerdictKind,
+    EvidenceSeen, ExtractedClaim, Observation, RepairOutcome, SourceChange, TrustAssessment,
+    UnitKind, VerdictKind,
 };
+use lattice_core::shared::text::{claim_sentence, sentences};
 
 /// A claim of one pass: as extracted, its check, the passages its card
 /// shows, and what the provenance gate weighed for the check, when it did.
@@ -108,11 +109,16 @@ pub(in crate::features::learning) fn unit_texts(candidate: &Value) -> Vec<(Strin
     units
 }
 
-/// Where `quote` is in unit `unit`: the first field holding it.
+/// Where `quote` is in unit `unit`: the first field holding it. With the
+/// claim's `statement`, the location narrows to the one sentence of the
+/// quote that the statement restates (claim sources design §18.3), its span
+/// the sentence's own place; a statement the locator cannot place, and a
+/// code example (`None`, its quote is the code), keep the quote.
 pub(in crate::features::learning) fn locate(
     candidate: &Value,
     unit: usize,
     quote: &str,
+    statement: Option<&str>,
 ) -> ClaimLocation {
     let blocks = candidate
         .get("blocks")
@@ -144,7 +150,23 @@ pub(in crate::features::learning) fn locate(
         (false, "explanation") => UnitKind::AnswerKey,
         (false, _) => UnitKind::Question,
     };
-    ClaimLocation::locate(unit, kind, field, quote, &text)
+    let sentence = statement.and_then(|statement| {
+        let within = text
+            .find(quote)
+            .map_or((0, text.len()), |at| (at, at + quote.len()));
+        let (start, end) = claim_sentence(&text, within, statement)?;
+        Some((text.get(start..end)?.to_owned(), (start, end)))
+    });
+    match sentence {
+        Some((sentence, span)) => ClaimLocation {
+            unit_index: unit,
+            unit_kind: kind,
+            field,
+            quote: sentence,
+            span: Some(span),
+        },
+        None => ClaimLocation::locate(unit, kind, field, quote, &text),
+    }
 }
 
 fn seen(passage: &EvidencePassage) -> EvidenceSeen {
@@ -331,7 +353,12 @@ impl ClaimLedger {
             let (check, trust) = self.check_of(finding, false);
             found.push((
                 ExtractedClaim {
-                    location: locate(candidate, finding.unit, &finding.quote),
+                    location: locate(
+                        candidate,
+                        finding.unit,
+                        &finding.quote,
+                        Some(&finding.statement),
+                    ),
                     statement: finding.statement.clone(),
                 },
                 check,
@@ -339,6 +366,15 @@ impl ClaimLedger {
                 trust,
             ));
         }
+        let located = found
+            .iter()
+            .filter(|(claim, ..)| sentences(&claim.location.quote).len() == 1)
+            .count();
+        tracing::info!(
+            "claim.locate: {located} of {} claims located to one sentence; {} kept their passage",
+            found.len(),
+            found.len() - located
+        );
         let mut example_ids = Vec::new();
         for observation in &report.executions {
             let statement = example_statement(&observation.id);
@@ -352,7 +388,12 @@ impl ClaimLedger {
             let check = self.example_check(observation);
             found.push((
                 ExtractedClaim {
-                    location: locate(candidate, observation.unit.unwrap_or(0), observation.code()),
+                    location: locate(
+                        candidate,
+                        observation.unit.unwrap_or(0),
+                        observation.code(),
+                        None,
+                    ),
                     statement,
                 },
                 check.clone(),
@@ -571,8 +612,24 @@ impl ClaimLedger {
         let Some(entry) = self.entry(id).cloned() else {
             return self.start(id, claim, check, trust, None).await;
         };
+        // A claim stands on its sentence, not on the quote an extraction
+        // picked: while the stored quote is still in its field, its sentence
+        // did not change, whatever the claim's state (§3 `relitigate`; claim
+        // sources design §18.4 i). A stored passage re-located to one of its
+        // sentences takes the new location below and nothing else; what else
+        // is new about the claim is weighed as for any other.
+        let stands = field_text(
+            candidate,
+            entry.location().unit_index,
+            &entry.location().field,
+        )
+        .is_some_and(|text| text.contains(&entry.location().quote));
         let observation = Observation {
-            quote: claim.location.quote.clone(),
+            quote: if stands {
+                entry.location().quote.clone()
+            } else {
+                claim.location.quote.clone()
+            },
             fingerprint: check.fingerprint.clone(),
             checker_model: self.checker_model.clone(),
             window_tokens: self.window_tokens,
@@ -581,21 +638,7 @@ impl ClaimLedger {
             attached_source_version_id: None,
             gate: trust.as_ref().map(TrustAssessment::verdict),
         };
-        let mut information = new_information(&entry, &observation);
-        // A confirmation is bound to its sentence, not to the quote an
-        // extraction picked: while the bound sentence is still in its field,
-        // nothing about it changed (§3 `relitigate`).
-        if matches!(information, Some(NewInformation::SentenceChanged { .. }))
-            && field_text(
-                candidate,
-                entry.location().unit_index,
-                &entry.location().field,
-            )
-            .is_some_and(|text| text.contains(&entry.location().quote))
-            && matches!(entry.state(), ClaimState::Confirmed { .. })
-        {
-            information = None;
-        }
+        let information = new_information(&entry, &observation);
         let quote = claim.location.quote.clone();
         if claim.location != *entry.location() || claim.statement != entry.statement() {
             self.append(

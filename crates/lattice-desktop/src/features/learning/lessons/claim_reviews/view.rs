@@ -7,31 +7,50 @@
 mod presentation;
 mod support;
 
+#[cfg(test)]
+pub(super) use presentation::presentation;
+
 use std::collections::HashMap;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     AttachOutcome, Check, CheckResult, Checker, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState, TrustAssessment,
+    ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState,
+    TrustAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 use self::support::SupportContext;
 use super::dto::{
-    CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEvidencePassageDto, ClaimLocationDto,
-    ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto, RepairAttemptDto,
-    ResearchAttemptDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
+    CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEventPayloadDto,
+    ClaimEvidencePassageDto, ClaimLocationDto, ClaimReviewItemDto, HumanVerdictDto,
+    LessonClaimReviewDto, RepairAttemptDto, ResearchAttemptDto, SourceAddedByDto, SourceRefDto,
+    StopReasonDto,
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
 use super::teaching_findings::TeachingFindingsRepository;
+use crate::features::learning::content_verification::{field_text, located};
 use crate::features::learning::dto::LearningSourceKind;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::persistence::db;
 use crate::features::learning::references::trust::dto_map;
 use crate::features::learning::repository::LearningRepository;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
+
+/// A stored location's quote and span narrowed to the claim's sentence in
+/// the lesson's current text; as stored when its field is gone.
+fn located_in(
+    units: &Value,
+    location: &ClaimLocation,
+    statement: &str,
+) -> (String, Option<(usize, usize)>) {
+    match field_text(units, location.unit_index, &location.field) {
+        Some(text) => located(location, statement, &text),
+        None => (location.quote.clone(), location.span),
+    }
+}
 
 /// What a card says about a source version.
 struct SourceFacts {
@@ -446,13 +465,18 @@ fn item(
     let (support, also_supported) = support::supports(entry, context);
     ClaimReviewItemDto {
         claim_id: entry.claim_id().0.clone(),
-        location: ClaimLocationDto {
-            unit_index: location.unit_index,
-            unit_kind: location.unit_kind.into(),
-            unit_title,
-            field: location.field.clone(),
-            quote: location.quote.clone(),
-            span: location.span,
+        location: {
+            // The claim's own sentence, as the next pass will locate it
+            // (claim sources design §18.3).
+            let (quote, span) = located_in(units, location, entry.statement());
+            ClaimLocationDto {
+                unit_index: location.unit_index,
+                unit_kind: location.unit_kind.into(),
+                unit_title,
+                field: location.field.clone(),
+                quote,
+                span,
+            }
         },
         statement: entry.statement().to_owned(),
         state: entry.state().into(),
@@ -483,7 +507,24 @@ fn item(
             .into_iter()
             .map(Into::into)
             .collect(),
-        history: entry.events().iter().map(ClaimEventDto::from).collect(),
+        history: entry
+            .events()
+            .iter()
+            .map(|record| {
+                let mut event = ClaimEventDto::from(record);
+                if let (
+                    ClaimEvent::Extracted {
+                        location,
+                        statement,
+                    },
+                    ClaimEventPayloadDto::Extracted { quote, span, .. },
+                ) = (&record.event, &mut event.event)
+                {
+                    (*quote, *span) = located_in(units, location, statement);
+                }
+                event
+            })
+            .collect(),
         local_check: checker_verdict(entry, false, sources, texts),
         verifier_check: checker_verdict(entry, true, sources, texts),
         sufficiency: entry

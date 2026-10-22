@@ -97,8 +97,12 @@ pub struct ClaimLocation {
     pub field: String,
     /// The exact lesson text the claim was extracted from.
     pub quote: String,
-    /// Byte span of `quote` in the field; `None` when the quote occurs more
-    /// than once (or not at all), so no single place can be named.
+    /// Byte span of `quote` in the field. A claim located to its sentence
+    /// (`lattice_core::shared::text::claim_sentence`) keeps the span the
+    /// locator found, so a short sentence that recurs elsewhere in the field
+    /// still has its one place; otherwise the span of the quote's only
+    /// occurrence, and `None` when it occurs more than once (or not at all),
+    /// so no single place can be named.
     pub span: Option<(usize, usize)>,
 }
 
@@ -466,6 +470,10 @@ pub enum RepairOutcome {
     /// The user edited the unit meanwhile; the result was discarded and the
     /// attempt is not charged (§9).
     SupersededByUser,
+    /// The machine did not rewrite the sentence: it also states something
+    /// verified or waiting for the user, so the claim waits for the user at
+    /// once, with no attempt charged (claim sources design §18.5).
+    NotAttempted { reason: String },
 }
 
 /// What the user attached as evidence (§5.4).

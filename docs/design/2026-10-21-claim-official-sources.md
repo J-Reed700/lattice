@@ -462,3 +462,159 @@ The review screen (UI design §3–§5) shows the facts this document produces. 
 Two shared helpers cross the builders: `shared/text::sentences` (C creates it; A's `confine` and §9's successor rule use it) and `ContentEvidence::of` (A creates it in lattice-core; C calls it to compute v2 keys for the review's sources). C's stub commit of the DTO shapes comes first (UI design §9.1); A and C both start from it.
 
 The screenshot claim `7cf7155f` is traced through this document's rules in the UI design §8 and is expected to verify by the book alone (`Established` under v2 or the §5.3 ladder, meeting a general claim's `Established` bar), with the standing reach as the backstop. If a live run shows it still waiting, the fault is in §4 or §7, not in the screen.
+
+## 18. Addendum, 2026-10-21 (after the build): a claim's own sentence
+
+Status: design addendum to §9, §10, §12, §13, §14, §16 and §17, written after reading the built code on `ui/claim-review` (`c21d5d48` plus the uncommitted confinement patch). Nothing in this section is built. Where it and an earlier section disagree, this section stands. Paths follow the header's conventions; `core/` is `crates/lattice-core/src/`.
+
+### 18.1 What the built code does, and what follows from it
+
+A claim's `ClaimLocation.quote` is not its sentence. The extractor is given the unit's text cut into *passages*: a cut falls at the first line break after 600 characters, or at 1,400 characters (`inventory.rs:68-98`, the rule at `:75`). The model names a passage by id and `resolve` (`inventory.rs:140-180`) stores that passage's whole text as the claim's `quote`. `observe::locate` (`claim_ledger/observe.rs:112-148`) finds the field that contains it and `ClaimLocation::locate` (`core/domain/learning/claim_review.rs:105-122`) takes `span_of` it. A paragraph of five sentences with four claims gives four claims with one identical 700-character quote. The owner's screenshot card shows exactly that quote.
+
+§9–§12 were written as if the quote were the sentence, and the §14 tests built their fixtures with one-sentence quotes, so none of them met a passage. Read against the passage, five consequences:
+
+1. **Confinement protects passages.** `Protected::of_ledger` (`repair/confine.rs`) collects quotes; `confine_text` marks a sentence protected when it overlaps any protected quote and failed when it overlaps a target quote. A failed claim that shares its passage with any live claim has every sentence of that passage both failed and protected, so every hunk the repair writes trips `on_target && on_protected`, `Err`, `ledger.reject`, one attempt charged; twice, then the user. Passages usually hold several claims, so most failed claims would reach the user unrepaired. The opposite of the goal.
+2. **A repair anywhere in a passage reopens every verified claim in it, with a fresh budget.** After a repair the passage text differs, so every claim located by it has a new quote; `new_information` (`core/domain/learning/claim_review/rules.rs:71-76`) says `SentenceChanged`; `carry_on` (`observe.rs:563-643`) appends the pass's `Checked`; and `apply_check` (`core/domain/learning/claim_review/replay.rs:136-205`) does not treat `ResolvedByEvidence` as settled (`is_settled`, `claim_review.rs:299-307`, lists Confirmed, Removed, Edited and GeneralKnowledge only), so a failing check on a verified claim falls through `match &cursor.state { .. _ => first_failure(..) }`: Open again, `MACHINE_ATTEMPTS` restored, and no `Reopened` event, because `reopen_cause` (`rules.rs:162-173`) only reopens a verified claim when its source changes. `reopen_cause` states the intent; `apply_check` does not keep it. This is the mechanism behind "verifying 2 claims became 38" and "it keeps bringing back old claims it already verified".
+3. **Identity is lost for the rest.** Re-extraction after a repair rewords statements; with the passage changed, `identities` (`rules.rs:208-280`) finds neither the same quote nor the same statement, and its span fallback `span_of(text, &old.quote)` (`:257`) finds nothing because the old passage is gone. Orphans end `Edited { successor: None, by: Machine }` and their sentences become new claims with new budgets: 62 of the owner's 119.
+4. **The successor rule (§9) can never fire.** `heirs` (`claim_ledger/successor.rs`) accepts a claim only when its span lies inside the changed region widened to sentences; a passage span never does. Every repaired claim is recorded `Rewritten` and its sentence starts over.
+5. **The review acts on the passage.** `presentation` (`claim_reviews/view/presentation.rs:20-37`) hands `plain_sentence_context` the passage, which "takes them all"; "Remove it" passes `whole_sentence` (`claim_reviews/service.rs:299`, `:458-471`) for any passage that begins a line and ends in a full stop, and `review_pass::apply` (`review_pass.rs:172-183`) would delete the paragraph; a confirmation binds to the passage (`service.rs:272`); the teaching review holds for the user every finding whose passage lies inside a protected quote (`teaching/protected.rs::on_protected`), which is every finding in any paragraph with a live claim.
+
+The builder's patch at `confine.rs:266, :311` (a word-for-word repeat of a failed sentence counts as failed unless it lies inside a protected quote) is right and stays; it met a symptom of the same cause, a failed sentence repeated beyond a 1,400-character cut.
+
+### 18.2 Decision: a claim is located by one sentence, found without a model
+
+**The locator.** `lattice_core::shared::text::claim_sentence` (new file `core/shared/text/claim_sentence.rs`, `pub mod` beside `sentences.rs`):
+
+```rust
+/// The one sentence of `text`, among those overlapping `within`, that
+/// `statement` restates; `None` when no sentence holds the greater part of
+/// the statement's words.
+pub fn claim_sentence(text: &str, within: (usize, usize), statement: &str) -> Option<(usize, usize)>;
+```
+
+Rules, in order, all deterministic:
+
+1. **Candidates**: the spans of `sentences(text)` (`core/shared/text/sentences.rs`) that overlap `within`. A sentence cut by a passage boundary is a candidate whole. No candidate → `None`.
+2. **Terms** of a text: `plain_text` (markdown, link syntax and `[n]` markers removed), `fold_diacritics`, lowercased, split into maximal runs of alphanumerics and `_`, keeping `.`, `,` and `'` when both neighbours are alphanumeric (`3,000`, `2.5`, `e.g`, `don't`); a run shorter than two characters is dropped unless it is digits. No stop list and no language table: a word that carries no information is found by the next rule, in any language.
+3. **Weights**: with `S` candidates and `df(t)` the number of candidates holding `t`, `w(t) = ln(1 + S / max(df(t), 1))`. A term in every candidate weighs least; a term in one weighs most. Two terms match when equal, or when both have at least four characters and one is the other plus at most two more (`schema`/`schemas`, `list`/`lists`, `call`/`called`).
+4. **Score** of a candidate: the summed weight of the statement's distinct terms it holds. Ties: the candidate holding more of the statement's adjacent term pairs in order, then the earlier one.
+5. **Floor**: the winner is the claim's sentence only when its score is at least half the statement's total weight (every statement term counted, absent ones at `ln(1 + S)`). Below it the statement draws on more than one sentence or paraphrases, and the claim keeps the passage, as today.
+
+Worked. "In autumn, **monarch butterflies** migrate up to 3,000 miles [1]. They winter in Mexico." with the statement "Monarch butterflies winter in Mexico": `S` = 2; `in` is in both (ln 2), every other term in one (ln 3); sentence 1 holds monarch, butterflies, in = 2.89; sentence 2 holds winter, in, mexico = 2.89; pairs: sentence 1 has "monarch butterflies" (1), sentence 2 has "winter in" and "in mexico" (2); sentence 2 wins at 57 % of the total and is located. The owner's card: "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values." is located by the statement that opens the same way; the bullet "**`type`**: Should always be `"function"` [5]." by a statement that `type` is `"function"`.
+
+**Why one sentence and not a run.** Protection narrower than a claim's words costs nothing: a sentence no target names is reverted by `confine_text` whether protected or not (§10.2 rule 2), so protection decides only the rejection rule and the byte-identity check. Protection wider than a claim's words is the whole fault of 18.1. A statement that genuinely spans two sentences is located by the one holding more of it; the other is "neither" (18.5) and comes back byte-identical.
+
+**Why not the extractor.** Asking the model for the sentence changes the inventory schema and so `inventory-section-v1:` (`section_checkpoints.rs:13-24` keys on `INVENTORY_POLICY` and the content), re-extracting every held lesson's sections on first start; small models misquote, so the app would need this locator anyway as the check and the fallback; and the locator's cost is string work over one passage. **No model call is made to locate a claim: not at extraction, repair, review or display.** If the share of located claims measured in 18.7 is low on real lessons, the extractor option is the next step, with this locator verifying what it returns.
+
+**Idempotence.** Applied to a located sentence (`within` = its own span) the locator returns it, or `None` when the one candidate falls under the floor, and every caller keeps the quote on `None`; applied to a quote the field no longer holds, callers keep the quote. The same function therefore serves stored passages, stored sentences and quotes relocated by `inventory/revisions/locations.rs::anchor`.
+
+### 18.3 Where the sentence lives
+
+The passage stays the unit of extraction, checking and checkpointing. Nothing keyed on it changes: `inventory-section-v1:`, `claim-v1:` (`ClaimChecks::key` is unit, statement, passages), `claim-evidence-v2:`, `claim_reuse.rs` (statement and prior quote), `report.rs:55-80` (unit, quote, statement), `receipts.rs::settled_finding`, `learner_view.rs:48-55`, the fidelity audit's passage ids.
+
+The **ledger** holds the sentence. `observe::locate` (`observe.rs:112-148`) gains `statement: Option<&str>`. With `Some`, after finding the field, it calls `claim_sentence(text, within, statement)`, `within` being the first occurrence of the quote in the field (the whole field when the quote is not found), and builds `ClaimLocation { quote: text[run], span: Some(run), .. }`. The span comes from the run, not from `span_of(text, quote)`, so a short sentence that recurs elsewhere still has its one place; `ClaimLocation.span`'s comment changes to say so. With `None` (code examples, `observe.rs:342-363`, whose quote is the code) and when the locator returns `None`, the location is built as today. The call at `observe.rs:334` passes `Some(&finding.statement)`.
+
+One helper for every other reader of a stored quote, so the review and the sync points agree with the pass before the pass has run:
+
+```rust
+// content_verification/claim_ledger/located.rs (new; re-exported from content_verification)
+/// `location.quote` narrowed to the claim's sentence in `field_text` when the
+/// stored quote is wider than one; the quote itself otherwise.
+pub(in crate::features::learning) fn located_quote(location: &ClaimLocation, statement: &str, field_text: &str) -> String;
+```
+
+| site | today | with `located_quote` |
+|---|---|---|
+| `claim_reviews/view/presentation.rs:28` | `plain_sentence_context(&text, &location.quote)` | `plain_sentence_context(&text, &located_quote(location, entry.statement(), &text))` |
+| `claim_reviews/view.rs:449-456` `ClaimLocationDto.quote`/`span`; `claim_reviews/dto/history.rs:126` | stored quote | located quote and its span |
+| `claim_reviews/service.rs:272` Confirm | `HumanBinding::new(&entry.location().quote, ..)` | bound to the located quote |
+| `service.rs:285-295` Edit | `before` must occur once | `before` is accepted when it is the located raw sentence or its `plain_text` (the UI sends `presentation.sentence`, which is plain); the stored `UserAction::Edit.before` is always the raw located sentence |
+| `service.rs:299` Remove | `whole_sentence(&text, &entry.location().quote)` | on the located quote |
+| `service.rs:343` undo | `!text.contains(&entry.location().quote)` | located quote |
+| `review_pass.rs:115` `Change::Remove { quote }` | stored quote | located quote (`changes` has the candidate) |
+| `audit/ledger.rs:63` `AuditClaim.quote` | stored quote | unchanged: after the first pass it is the sentence (18.7 states the one-time cost) |
+
+### 18.4 The ledger across passes (replaces I1 of §12.1 and amends §9)
+
+**(i) A location that narrows is not a changed sentence.** `carry_on`'s rule at `observe.rs:584-598` ("a confirmation is bound to its sentence, not to the quote an extraction picked: while the bound sentence is still in its field, nothing about it changed") drops its `Confirmed` condition and holds for every state: `SentenceChanged` stands only when the field no longer contains the stored quote. A stored passage that still stands byte-identical, re-located to one of its sentences, appends one `Extracted` event (`observe.rs:600-609`, which already fires when the location differs; `core/.../ledger.rs:412-419` makes it the entry's location) and nothing else: no `Reopened`, no `Checked`. The doc comment on `NewInformation::SentenceChanged` says so. The one risk (a short sentence that recurs in its field and was rewritten in one place) is closed by confinement: `overlaps_any` protects every occurrence of a protected quote, so a protected sentence cannot be rewritten anywhere in its field.
+
+**(ii) A verified claim is not re-judged on reselected evidence.** `new_information` (`rules.rs`): when `prev.state()` is `ResolvedByEvidence` and the basis fingerprint differs, return `None` instead of `EvidenceChanged`, without going on to the gate comparison (the gate weighed other evidence; `DecisionChanged` still applies on the same fingerprint, as source provenance §18.7 intends). `SentenceChanged`, `SourceChanged`, `CheckerChanged`, `UserSource` and `UserHint` are unchanged. This is what `reopen_cause` already promises for a verified claim (only its source changing reopens it) and what `apply_check`'s fall-through broke. The re-extraction's statement is still adopted by `Extracted` as today, so `receipts.rs::settled_finding` and the audit key by the current wording.
+
+With (i) and (ii), I1 reads: *every claim not in `targets` whose sentence is unchanged keeps its id, state and basis and receives no `Checked`*; confinement guarantees the unchanged sentence. A claim the locator could not narrow keeps the status quo of 18.1 (2) and (3); it is the residue `K` measured in 18.7.
+
+**(iii) Identity.** `identities` (`rules.rs:245-270`): the old span is `span_of(text, &old.quote).or(old.location().span)`; nothing else changes. With sentence quotes, `same_quote` matches every unchanged sentence whatever the extractor reworded.
+
+**(iv) Successor.** `heirs` (`successor.rs`): `qualifies` accepts a span that *overlaps* the sentence region (today: lies inside), so a claim the locator could not narrow that sits over the rewritten text can still continue the repaired claim or inherit from it, and never starts a budget of its own (§9.1). `RepairRecord.before` (`claim_ledger.rs:384`) is now the sentence, which is what `shared_terms` (`lessons/reference_collection/subject.rs:44`, not `repair/citation.rs` as §9 said) was meant to compare. Nothing else in §9 changes. **The claim id does not change form and no id is rewritten.**
+
+**(v) Old histories.** Every event written by older code replays as before: an `Extracted` with a passage location is the stored state until the next pass narrows it with another `Extracted`; the one new variant, `RepairOutcome::NotAttempted { reason }` (18.5), appears only in new events. `ClaimEvent` is `#[serde(tag = "kind")]` and `RepairOutcome` `#[serde(rename_all = "snake_case")]`; adding a variant reads old JSON unchanged. No migration.
+
+### 18.5 Confinement with sentences (replaces §10.1 and amends §10.2)
+
+**Protected** (`Protected::of_ledger`, code unchanged): the stored quotes of every live claim in the unit that is not a target: now sentences, or a passage where the locator declined. **Targets** (`Protected::of_claims`): the targets' stored quotes. `confine_text` is unchanged, including the repeat rule.
+
+**A sentence holding both a failed and a protected claim** is protected. The machine does not rewrite words a verified, confirmed, accepted or waiting claim stands on, and it does not spend attempts and model calls finding that out:
+
+- In the loop at `repair_loop.rs:291` (`Decision::Repair(targets)`), before `repair_context` and `begin_repairs`, `ClaimLedger::withhold_shared(&mut self, targets: &[ClaimId]) -> Vec<ClaimId>` (new, `claim_ledger.rs` beside `begin_repairs`) returns the targets that are editable and records the rest. A target is **editable** when at least one sentence of its stored quote (`sentences(quote)`: one for a located claim, several for a passage) neither contains nor is contained in a protected quote of the same unit and field (`Protected::of_ledger(self, targets)` filtered to the field). For each target that is not editable it appends `RepairAttempted { attempt: <as begin_repairs computes it>, escalated: false, before: quote, after: None, outcome: RepairOutcome::NotAttempted { reason } }`, reason "This sentence also states something that is verified or waiting for you; rewriting it would change that too." If no target is left, the loop goes back to `decide()`, which returns `NeedsReview`.
+- `RepairOutcome::NotAttempted { reason }` (`core/domain/learning/claim_review.rs:459-469`); `apply_repair` (`core/.../ledger.rs`, reached from `:477-482`) makes it `queued(kind, reason)` at once: no attempt is charged, none is left to the machine, `repair_pending` is not set. `may_repair` is false afterwards; `ClaimCounts` counts it as `queued`; the tally shows it as waiting for the user, never as rewritten.
+- Order: `decide()` runs after this pass's research (`repair_loop.rs:166`, then `:255`), so a withheld claim has had its research; a later check on new information can still verify it (`apply_check` on `Queued` with `Supported` gives `ResolvedByEvidence`).
+- `confine_text`'s rejection (`on_target && on_protected`) stays as the second line, for a repair that strays onto a protected sentence that is not the target's own.
+
+**A sentence holding neither** (no live claim located to it) is unchanged territory: a hunk on it is reverted, as §10.2 rule 2 says, except an insertion adjacent to an allowed hunk. The repair's job is the failed sentence; the teaching review owns the rest with its own targets (§10.3, code unchanged, which now holds for the user only the findings that sit on a claim's own sentence).
+
+**What the repair model is told.** `repair_context` (`repair_loop.rs:465-520`) adds to each `failedClaims` entry `"sentence": <the target's stored quote>`, the exact lesson text it may change; `section_context` (`repair.rs:111`) passes the entries through as it does. The cost is one sentence per failed claim. `CONFINEMENT` (`confine.rs`) reads: "Edit only each failed claim's `sentence`; every other sentence is returned byte-identical and any change to it is discarded." `repair_context` stops writing `"protected"` (`:518`); `Protected::from_context` is deleted; `candidate` (`repair.rs:357`) and `repair_sections` (`repair.rs:487-492`) take `Protected::of_ledger(ledger, &targets)` from the synced ledger, which is also more right: a claim the user removed since the repair was saved need not be protected. §10.1's "carried in the context so a resumed repair has it" is withdrawn.
+
+### 18.6 The review screen (amends the last row of §17 and UI design §3.3, §3.5)
+
+The screen shares the locator through `located_quote` (18.3): `presentation.sentence` is the claim's sentence even for a claim the ledger still locates by a passage, so the owner's card shows "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values." with the rest of the paragraph in `context_before` and `context_after`. Edit replaces that sentence; Remove deletes that sentence and refuses, as today, when the located quote is not a whole sentence. The support highlight (`support.quote_span`) is the judge's quotation in the evidence passage and is untouched.
+
+One copy-deck row for builder B (UI design §4.1): state `queued` whose latest `RepairAttempted` is `NotAttempted` → chip "Waiting for you", reason "This sentence also states something already verified, so the machine left it to you.", fix "Edit the sentence · Accept".
+
+### 18.7 First start on the owner's data (amends §13)
+
+Nothing runs at app start. Opening the review before Resume: every card shows one sentence (18.6); Edit and Remove act on it. On Resume or Retry of `db8397ff`:
+
+| what | count (copy) | effect |
+|---|---|---|
+| inventory, receipts, pages | as §13 | restored; this addendum adds no extraction or judge call |
+| live claims (12 verified, 33 queued, 2 open) | 47 | one `Extracted` event each with its sentence where the locator places it (the rest keep their passage); no `Reopened`, no `Checked`; states and bases unchanged |
+| the 2 open claims | 2 | a sentence of its own: repaired inside it, the other sentences of its paragraph byte-identical; shared with a verified or waiting claim: `NotAttempted`, waits for the user with the reason. The next pass re-extracts only the repaired sections (one call each); their verified claims keep ids and states |
+| Verifier audit | only if the course opted in (`repair_loop.rs:265`) | `audit/ledger.rs:32-37` hashes statement and quote, so narrowed quotes give new wording hashes and the verified, confirmed and accepted claims are audited once more, batched as today. Not opted in: nothing |
+| `claim-ledger-v1:pending` | one or none | a saved `PendingRepair` resumes with `protected` recomputed from the ledger |
+| tally, checkpoints, schema | — | unchanged; no migration |
+
+The pass logs one line, `claim.locate: N of M claims located to one sentence; K kept their passage`, and `ClaimLocationDto.span` says which. The **coordinator** records N, M and K from the run on the copy here, beside the §13 counts. If K is a large share, 18.2's extractor option is next.
+
+### 18.8 Tests (adds to §14.1)
+
+| file | test | asserts |
+|---|---|---|
+| `core/shared/text/claim_sentence.rs` (tests module) | `a_statement_finds_its_sentence_not_the_one_naming_its_subject` | the monarch paragraph of 18.2: "Monarch butterflies winter in Mexico." → "They winter in Mexico." |
+| same | `a_lead_line_and_a_bullet_are_located_apart` | the owner's "five key fields" passage: the opening statement → the opening sentence; the `type` statement → the `type` bullet, markdown and `[5]` inside |
+| same | `a_history_statement_drawn_from_three_sentences_keeps_its_passage` | a Westphalia paragraph; a statement combining three sentences → `None` |
+| same | `a_statute_subsection_is_located_in_a_law_passage` | a numbered statute: subsection (2) is found for a statement restating it, not (1) or (3) |
+| same | `inflections_separators_and_diacritics_match_as_the_passage_writes_them` | `schemas`/`schema`, `lists`/`list`, `3,000`, `2.5`, `café`/`cafe` |
+| same | `a_sentence_cut_by_a_passage_boundary_is_taken_whole_and_locating_is_idempotent` | `within` ends mid-sentence → the whole sentence; locating that sentence again returns it |
+| `claim_ledger_tests.rs` | `a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_location` | an entry stored with a passage quote, as older code wrote it, the field unchanged: after `observe` one `Extracted`, no `Reopened`, no `Checked`; state verified, basis unchanged |
+| same | `a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sentence_stands` | same sentence, reworded statement, a failing check with another fingerprint → `Extracted` only, state verified; the sentence changed → the check applies |
+| same | `a_failed_claim_sharing_its_sentence_with_a_verified_one_waits_without_a_repair_call` | `withhold_shared` → `RepairAttempted { NotAttempted }`, `Queued`, zero model calls, `may_repair` false, the verified claim untouched; a target with one unshared sentence stays a target |
+| `successor.rs` tests | `a_repaired_sentence_among_verified_ones_continues_its_claim_alone` | a passage of three located claims V1, F, V2; F rewritten; F's id continues in the new sentence; V1 and V2 are neither successors nor children |
+| `repair/confine_tests.rs` | `a_failed_sentence_is_repaired_beside_verified_ones_in_the_same_passage` | **the case that broke**: one passage (a biology or law paragraph), claims V1, F, V2 located through `observe::locate` with the real passage text; the repair rewrites F → accepted, V1 and V2 byte-identical. The same with V1 unlocated (passage quote) → rejected, documenting the fallback |
+| `claim_review_flow_tests.rs` | `a_repair_pass_touches_only_the_failed_sentences` (rewritten, `:614-650`) | the three claims come from **one inventory passage** (body under 600 characters) as `inputs`/`resolve` shape them, not hand-made sentence quotes; after the pass the two verified keep id, state and basis with no `Checked`; the target continues with one attempt fewer; one model check |
+| `teaching/loop_tests.rs` | `a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims` | held today; repaired now; the claims' sentences byte-identical |
+| `claim_reviews/dto_tests.rs` | `the_review_shows_the_claims_own_sentence_for_a_location_stored_as_a_passage` | the screenshot claim's card: `sentence` is its first sentence, `context_after` the rest |
+| `claim_reviews` service tests | `remove_and_edit_act_on_the_located_sentence` | Remove deletes one sentence of a passage-located claim; Edit with the plain sentence replaces the raw one |
+| `core/domain/learning/claim_review` ledger tests | `histories_written_before_sentence_locations_replay_unchanged` | a JSON fixture of events with passage locations and no `NotAttempted` replays to the same states |
+
+Course eval: `3-music-theory-production` `m1.l1` (§14.2) reports the log line's N, M and K beside `lesson.rounds.repair`; its acceptance keeps `quotes_unmatched = 0` and no verified claim re-checked.
+
+### 18.9 Build steps (amends §16 steps 2, 6 and 7) and what stays outside
+
+1. **lattice-core.** `shared/text/claim_sentence.rs` with its tests; `RepairOutcome::NotAttempted` and `apply_repair`; `new_information`'s rule (ii); `identities`' span fallback. `cargo check -p lattice-core`.
+2. **Ledger.** `observe::locate` with the statement; `claim_ledger/located.rs`; `carry_on` rule (i); `withhold_shared` and its call at `repair_loop.rs:291`; `heirs`' overlap; the log line. `cargo check -p lattice-desktop`.
+3. **Repairs.** `failedClaims[].sentence`; `CONFINEMENT`; delete `Protected::from_context` and the `"protected"` key; `Protected::of_ledger` at `repair.rs:357` and `:487-492`.
+4. **Review.** The `located_quote` sites of 18.3; the copy row to builder B.
+5. **Tests** of 18.8, the rewritten flow test among them. The builder runs `cargo check` only; the coordinator runs the suites once, then the first-start run on a copy (18.7) and fills in N, M and K.
+
+Not touched: the extractor prompt and schema; `inventory.rs::passages` and its cut rule; every checkpoint key; `confine_text`'s algorithm; `MACHINE_ATTEMPTS`; the judge; `text_edits`; anything in §4–§8. The only constants added are the locator's two rules, the half floor and the two-character inflection, both named in 18.2 and tested. No model call, timeout or count cap is added anywhere.
+
+The next optimisation, not in this addendum: `claim_reuse.rs` reuses receipts by statement, so a reworded statement over an unchanged sentence still costs a judge call in the checker (the ledger ignores its result under (ii)). Reusing by located sentence would make a repaired section's re-check free for every sentence it did not change.

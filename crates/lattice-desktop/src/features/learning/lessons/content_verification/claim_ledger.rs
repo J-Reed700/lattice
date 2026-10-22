@@ -12,6 +12,7 @@
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §4, §6, §9.
 
 mod audit;
+mod located;
 mod observe;
 mod receipts;
 mod successor;
@@ -35,6 +36,10 @@ use lattice_core::domain::learning::claim_review::{
     UserAction, VerdictKind, MACHINE_ATTEMPTS,
 };
 
+use lattice_core::shared::text::sentences;
+pub(in crate::features::learning) use located::{located, located_quote};
+#[cfg(test)]
+pub(in crate::features::learning) use observe::locate;
 pub(in crate::features::learning) use observe::{field_text, unit_texts};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
@@ -42,6 +47,9 @@ const PENDING_KEY: &str = "claim-ledger-v1:pending";
 /// The prefix of a job's result reference when lessons wait for review.
 const NEEDS_REVIEW_REF: &str = "needs_review:";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Why a failed claim was left to the user unrepaired (claim sources design
+/// §18.5).
+const SHARED_SENTENCE: &str = "This sentence also states something that is verified or waiting for you; rewriting it would change that too.";
 
 /// A repair sent for a claim, awaiting the pass that shows what became of
 /// its sentence: rewritten (the check decides) or removed.
@@ -390,6 +398,80 @@ impl ClaimLedger {
             .previous
             .get_or_insert_with(|| candidate.clone());
         self.save_pending().await
+    }
+
+    /// The targets a repair may rewrite; the rest wait for the user without
+    /// a model call (claim sources design §18.5). A target is editable when
+    /// at least one sentence of its stored quote neither contains nor lies
+    /// inside a sentence another live claim of its unit and field stands on;
+    /// a sentence that also carries a verified, confirmed, accepted or
+    /// waiting claim is not the machine's to rewrite. Each target withheld
+    /// is recorded as a repair not attempted: queued at once, no attempt
+    /// charged.
+    pub(super) async fn withhold_shared(&mut self, targets: &[ClaimId]) -> Result<Vec<ClaimId>> {
+        let protected = Protected::of_ledger(self, targets);
+        let mut editable = Vec::new();
+        let mut withheld = Vec::new();
+        for id in targets {
+            let Some(entry) = self.entry(id) else {
+                editable.push(id.clone());
+                continue;
+            };
+            let location = entry.location();
+            let shared = |sentence: &str| {
+                protected.iter().any(|other| {
+                    other.unit == location.unit_index
+                        && other.field == location.field
+                        && (sentence.contains(other.quote.as_str())
+                            || other.quote.contains(sentence))
+                })
+            };
+            let quote = &location.quote;
+            let free = quote.trim().is_empty()
+                || sentences(quote)
+                    .into_iter()
+                    .filter_map(|(start, end)| quote.get(start..end))
+                    .any(|sentence| !shared(sentence));
+            let ClaimState::Open {
+                machine_attempts_left,
+                ..
+            } = entry.state()
+            else {
+                editable.push(id.clone());
+                continue;
+            };
+            if free {
+                editable.push(id.clone());
+            } else {
+                withheld.push((
+                    id.clone(),
+                    (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left),
+                    quote.clone(),
+                ));
+            }
+        }
+        for (id, attempt, before) in withheld {
+            let recorded = self
+                .append(
+                    &id,
+                    ClaimEvent::RepairAttempted {
+                        attempt,
+                        escalated: false,
+                        before,
+                        after: None,
+                        outcome: RepairOutcome::NotAttempted {
+                            reason: SHARED_SENTENCE.into(),
+                        },
+                    },
+                )
+                .await?;
+            // A claim whose state refused the event is left as the decision
+            // named it.
+            if !recorded {
+                editable.push(id);
+            }
+        }
+        Ok(editable)
     }
 
     /// The repair of these claims produced nothing usable; each uses its

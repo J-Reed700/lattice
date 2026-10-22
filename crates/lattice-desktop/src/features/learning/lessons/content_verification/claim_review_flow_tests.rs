@@ -526,10 +526,9 @@ async fn resume_with_nothing_changed_is_refused_and_starts_nothing() -> Result<(
 mod loop_bound {
     use super::super::*;
     use lattice_core::domain::learning::claim_review::{
-        identities, new_information, text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent,
-        ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint,
-        EvidenceSeen, ExtractedClaim, Observation, RepairOutcome, UnitKind, VerdictKind,
-        MACHINE_ATTEMPTS,
+        text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
+        ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen,
+        RepairOutcome, UnitKind, VerdictKind, MACHINE_ATTEMPTS,
     };
 
     const MODEL: &str = "loop-fixture";
@@ -609,83 +608,113 @@ mod loop_bound {
         }
     }
 
-    #[test]
-    fn a_repair_pass_touches_only_the_failed_sentences() {
+    #[tokio::test]
+    async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
+        use super::super::claim_ledger_tests::{only_passage, pass_report, passage_finding};
+        const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
+        const BOILS: &str = "At sea level, water boils at 100 °C.";
+        let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
         let body = format!("{VERIFIED} {ALSO_VERIFIED} {FAILED}");
-        let verified = claim("c1", VERIFIED, &body, None);
-        let also = claim("c2", ALSO_VERIFIED, &body, None);
-        let mut failed = claim("c3", FAILED, &body, Some(VerdictKind::Unsupported));
-        let protected = [VERIFIED, ALSO_VERIFIED].map(|quote| Protected {
-            unit: 0,
-            field: "body".into(),
-            quote: quote.into(),
-        });
-        let targets = [Protected {
-            unit: 0,
-            field: "body".into(),
-            quote: FAILED.into(),
-        }];
+        // One inventory passage holds all three claims: it is each one's
+        // quote as the extractor names it, and the ledger locates each claim
+        // to its own sentence.
+        assert_eq!(only_passage(&body), body);
+        let model = Model::new();
+        let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+        let before = lesson(&body);
+        ledger
+            .observe(
+                &before,
+                &pass_report(vec![
+                    passage_finding(&body, BOILS, true, SOURCE),
+                    passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
+                    passage_finding(
+                        &body,
+                        "Salt lowers water's boiling point a lot.",
+                        false,
+                        SOURCE,
+                    ),
+                ]),
+            )
+            .await?;
+        let ids = ledger.finding_claims().to_vec();
+        let quotes: Vec<String> = ids
+            .iter()
+            .map(|id| ledger.entry(id).unwrap().location().quote.clone())
+            .collect();
+        assert_eq!(quotes, [VERIFIED, ALSO_VERIFIED, FAILED]);
+        let target = ids[2].clone();
+        let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+            panic!("the failed claim is repaired");
+        };
+        let targets = ledger.withhold_shared(&targets).await?;
+        assert_eq!(targets, std::slice::from_ref(&target));
+        ledger.begin_repairs(&before, &targets).await?;
+        let verified: Vec<ClaimLedgerEntry> = ids[..2]
+            .iter()
+            .map(|id| ledger.entry(id).unwrap().clone())
+            .collect();
+
         // The scripted repair also rewords a verified sentence.
         let repaired = json!({
             "kind": "explanation",
+            "title": "Boiling",
             "body": format!("Water boils at 100 degrees at sea level. {ALSO_VERIFIED} {FIXED}"),
+            "rubric": [],
         });
         let confined = confine(
-            &json!({ "kind": "explanation", "body": body }),
+            &before["blocks"][0],
             &repaired,
-            &targets,
-            &protected,
+            &Protected::of_claims(&ledger, &targets),
+            &Protected::of_ledger(&ledger, &targets),
         )
         .unwrap();
-        let after = confined["body"].as_str().unwrap();
+        let after = confined["body"].as_str().unwrap().to_owned();
         assert_eq!(after, format!("{VERIFIED} {ALSO_VERIFIED} {FIXED}"));
 
-        // Re-extraction: the verified claims keep their ids, states and
-        // bases, and nothing about them is new, so they get no check.
-        let extracted: Vec<ExtractedClaim> = [VERIFIED, ALSO_VERIFIED, FIXED]
-            .iter()
-            .map(|sentence| ExtractedClaim {
-                location: ClaimLocation::locate(0, UnitKind::Block, "body", *sentence, after),
-                statement: (*sentence).into(),
-            })
-            .collect();
-        let ids = identities(&[&verified, &also, &failed], &extracted, |_, _| Some(after));
-        assert_eq!(ids.assigned[0], Some(ClaimId("c1".into())));
-        assert_eq!(ids.assigned[1], Some(ClaimId("c2".into())));
-        let observed = |sentence: &str| Observation {
-            quote: sentence.into(),
-            fingerprint: EvidenceFingerprint::of("fixture-v1", MODEL, &seen()),
-            checker_model: MODEL.into(),
-            window_tokens: WINDOW,
-            source_changes: vec![],
-            hint: None,
-            attached_source_version_id: None,
-            gate: None,
+        // The pass after the repair, its claims again from one passage.
+        let checks = |ledger: &claim_ledger::ClaimLedger| -> usize {
+            ids.iter()
+                .map(|id| {
+                    ledger
+                        .entry(id)
+                        .unwrap()
+                        .events()
+                        .iter()
+                        .filter(|record| matches!(record.event, ClaimEvent::Checked(_)))
+                        .count()
+                })
+                .sum()
         };
-        let checked: Vec<bool> = [
-            (&verified, VERIFIED),
-            (&also, ALSO_VERIFIED),
-            (&failed, FIXED),
-        ]
-        .iter()
-        .map(|(entry, sentence)| new_information(entry, &observed(sentence)).is_some())
-        .collect();
-        assert_eq!(
-            checked,
-            [false, false, true],
-            "exactly one check in the pass"
-        );
-        assert!(matches!(
-            verified.state(),
-            ClaimState::ResolvedByEvidence { .. }
-        ));
+        let checked = checks(&ledger);
+        ledger
+            .observe(
+                &lesson(&after),
+                &pass_report(vec![
+                    passage_finding(&after, BOILS, true, SOURCE),
+                    passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
+                    passage_finding(
+                        &after,
+                        "Salt raises water's boiling point slightly.",
+                        false,
+                        SOURCE,
+                    ),
+                ]),
+            )
+            .await?;
 
-        // The target's id continues with one attempt fewer.
-        failed.append(machine(3), rewrite(1, false)).unwrap();
-        failed
-            .append(machine(4), check(Some(VerdictKind::Unsupported)))
-            .unwrap();
-        assert_eq!(left(&failed), MACHINE_ATTEMPTS - 1);
+        // The verified claims keep their ids, states and bases, and nothing
+        // is recorded for them; the target continues with one attempt fewer,
+        // and its check is the pass's only one.
+        assert_eq!(ledger.finding_claims(), ids.as_slice());
+        for entry in &verified {
+            assert_eq!(ledger.entry(entry.claim_id()).unwrap(), entry);
+        }
+        assert_eq!(checks(&ledger), checked + 1, "one model check in the pass");
+        let target = ledger.entry(&target).unwrap();
+        assert_eq!(target.location().quote, FIXED);
+        assert_eq!(left(target), MACHINE_ATTEMPTS - 1);
+        Ok(())
     }
 
     #[test]

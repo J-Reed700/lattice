@@ -82,13 +82,13 @@ fn identity_gives_each_prior_id_once_and_orphans_vanished_sentences() {
     assert_eq!(result.assigned, vec![None, Some(ClaimId("c1".into()))]);
     assert_eq!(result.orphaned, vec![ClaimId("c2".into())]);
 
-    // A prior quote that now occurs twice has no single place to overlap.
+    // A prior quote that now occurs twice falls back to its stored span.
     let doubled = format!("{QUOTE} {QUOTE}");
     let ambiguous = identities(&[&old], &[extracted("boils at 100 °C", "x")], |_, _| {
         Some(doubled.as_str())
     });
-    assert_eq!(ambiguous.assigned, vec![None]);
-    assert_eq!(ambiguous.orphaned, vec![ClaimId("c1".into())]);
+    assert_eq!(ambiguous.assigned, vec![Some(ClaimId("c1".into()))]);
+    assert!(ambiguous.orphaned.is_empty());
 }
 
 #[test]
