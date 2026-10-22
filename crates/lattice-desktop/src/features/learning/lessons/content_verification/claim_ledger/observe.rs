@@ -4,14 +4,15 @@
 use super::super::provenance_gate::gate_reason;
 use super::super::support_gate::{Sufficiency, Support};
 use super::super::*;
-use super::{is_gone, ClaimLedger, RepairRecord};
+use super::{is_gone, successor, ClaimLedger, RepairRecord};
 use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::claim_review::{
-    identities, new_information, reopen_cause, text_sha256, Check, CheckResult, Checker,
+    identities, new_information, reopen_cause, text_sha256, Actor, Check, CheckResult, Checker,
     ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceFingerprint,
-    EvidenceSeen, ExtractedClaim, NewInformation, Observation, RepairOutcome, SourceChange,
-    TrustAssessment, UnitKind, VerdictKind,
+    EvidenceSeen, ExtractedClaim, Observation, RepairOutcome, SourceChange, TrustAssessment,
+    UnitKind, VerdictKind,
 };
+use lattice_core::shared::text::{claim_sentence, sentences};
 
 /// A claim of one pass: as extracted, its check, the passages its card
 /// shows, and what the provenance gate weighed for the check, when it did.
@@ -108,11 +109,16 @@ pub(in crate::features::learning) fn unit_texts(candidate: &Value) -> Vec<(Strin
     units
 }
 
-/// Where `quote` is in unit `unit`: the first field holding it.
+/// Where `quote` is in unit `unit`: the first field holding it. With the
+/// claim's `statement`, the location narrows to the one sentence of the
+/// quote that the statement restates (claim sources design §18.3), its span
+/// the sentence's own place; a statement the locator cannot place, and a
+/// code example (`None`, its quote is the code), keep the quote.
 pub(in crate::features::learning) fn locate(
     candidate: &Value,
     unit: usize,
     quote: &str,
+    statement: Option<&str>,
 ) -> ClaimLocation {
     let blocks = candidate
         .get("blocks")
@@ -144,7 +150,23 @@ pub(in crate::features::learning) fn locate(
         (false, "explanation") => UnitKind::AnswerKey,
         (false, _) => UnitKind::Question,
     };
-    ClaimLocation::locate(unit, kind, field, quote, &text)
+    let sentence = statement.and_then(|statement| {
+        let within = text
+            .find(quote)
+            .map_or((0, text.len()), |at| (at, at + quote.len()));
+        let (start, end) = claim_sentence(&text, within, statement)?;
+        Some((text.get(start..end)?.to_owned(), (start, end)))
+    });
+    match sentence {
+        Some((sentence, span)) => ClaimLocation {
+            unit_index: unit,
+            unit_kind: kind,
+            field,
+            quote: sentence,
+            span: Some(span),
+        },
+        None => ClaimLocation::locate(unit, kind, field, quote, &text),
+    }
 }
 
 fn seen(passage: &EvidencePassage) -> EvidenceSeen {
@@ -331,7 +353,12 @@ impl ClaimLedger {
             let (check, trust) = self.check_of(finding, false);
             found.push((
                 ExtractedClaim {
-                    location: locate(candidate, finding.unit, &finding.quote),
+                    location: locate(
+                        candidate,
+                        finding.unit,
+                        &finding.quote,
+                        Some(&finding.statement),
+                    ),
                     statement: finding.statement.clone(),
                 },
                 check,
@@ -339,6 +366,15 @@ impl ClaimLedger {
                 trust,
             ));
         }
+        let located = found
+            .iter()
+            .filter(|(claim, ..)| sentences(&claim.location.quote).len() == 1)
+            .count();
+        tracing::info!(
+            "claim.locate: {located} of {} claims located to one sentence; {} kept their passage",
+            found.len(),
+            found.len() - located
+        );
         let mut example_ids = Vec::new();
         for observation in &report.executions {
             let statement = example_statement(&observation.id);
@@ -352,7 +388,12 @@ impl ClaimLedger {
             let check = self.example_check(observation);
             found.push((
                 ExtractedClaim {
-                    location: locate(candidate, observation.unit.unwrap_or(0), observation.code()),
+                    location: locate(
+                        candidate,
+                        observation.unit.unwrap_or(0),
+                        observation.code(),
+                        None,
+                    ),
                     statement,
                 },
                 check.clone(),
@@ -397,30 +438,25 @@ impl ClaimLedger {
         let repairs = std::mem::take(&mut self.pending.repairs);
         // A repaired sentence the matching rules lost (a rewrite that changed
         // its statement where no single span can be named) continues as the
-        // new claim its repair left in the same field: the rewrite keeps the
-        // claim's attempts, so a claim the machine keeps rewriting still
-        // reaches the user (§4 "Bounded").
-        for record in &repairs {
-            let Some(position) = assigned
-                .orphaned
-                .iter()
-                .position(|id| *id == record.claim_id)
-            else {
-                continue;
-            };
-            let field = self
-                .entry(&record.claim_id)
-                .map(|entry| entry.location().field.clone());
-            let successor = extracted
-                .iter()
-                .zip(&assigned.assigned)
-                .position(|(claim, owner)| {
-                    owner.is_none()
-                        && claim.location.unit_index == record.unit
-                        && Some(&claim.location.field) == field.as_ref()
-                });
-            if let Some(slot) = successor.and_then(|index| assigned.assigned.get_mut(index)) {
-                *slot = Some(assigned.orphaned.remove(position));
+        // new text its repair wrote in the same field, never as a sentence
+        // that was there before; the other claims that repair wrote are its
+        // children. Both keep the claim's attempts, so a claim the machine
+        // keeps rewriting still reaches the user (§4 "Bounded"; claim
+        // sources design §9).
+        let owned: Vec<bool> = assigned.assigned.iter().map(Option::is_some).collect();
+        let heirs = successor::heirs(
+            &repairs,
+            &assigned.orphaned,
+            (&extracted, &owned),
+            (self.pending.previous.as_ref(), candidate),
+            |id| self.entry(id).map(|entry| entry.location().field.clone()),
+            field_text,
+        );
+        for (parent, index) in &heirs.successors {
+            if let Some(position) = assigned.orphaned.iter().position(|id| id == parent) {
+                if let Some(slot) = assigned.assigned.get_mut(*index) {
+                    *slot = Some(assigned.orphaned.remove(position));
+                }
             }
         }
         let records: HashMap<ClaimId, RepairRecord> = repairs
@@ -429,7 +465,9 @@ impl ClaimLedger {
             .collect();
         let active: HashSet<&str> = report.sources.iter().map(|s| s.id.as_str()).collect();
         let mut claim_ids = Vec::with_capacity(found.len());
-        for ((claim, check, passages, trust), prior) in found.into_iter().zip(assigned.assigned) {
+        for (index, ((claim, check, passages, trust), prior)) in
+            found.into_iter().zip(assigned.assigned).enumerate()
+        {
             let edited = prior.as_ref().is_some_and(|id| self.edited_now.remove(id));
             let id = match prior {
                 Some(id) if edited => {
@@ -438,10 +476,11 @@ impl ClaimLedger {
                         &id,
                         ClaimEvent::Superseded {
                             successor: Some(successor.clone()),
+                            by: Actor::User,
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, check, trust).await?;
+                    self.start(&successor, claim, check, trust, None).await?;
                     successor
                 }
                 Some(id) => {
@@ -452,7 +491,8 @@ impl ClaimLedger {
                 }
                 None => {
                     let id = ClaimId::generate();
-                    self.start(&id, claim, check, trust).await?;
+                    let born = heirs.children.get(&index).cloned();
+                    self.start(&id, claim, check, trust, born).await?;
                     id
                 }
             };
@@ -463,23 +503,52 @@ impl ClaimLedger {
             if self.edited_now.contains(&id) {
                 continue;
             }
-            let event = match records.get(&id) {
-                // The repair took the sentence out (§4: undo restores it).
-                Some(record) => ClaimEvent::RepairAttempted {
-                    attempt: record.attempt,
-                    escalated: record.escalated,
-                    before: record.before.clone(),
-                    after: None,
-                    outcome: RepairOutcome::Removed,
-                },
-                None => ClaimEvent::Superseded { successor: None },
+            let gone = ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
             };
-            self.append(&id, event).await?;
+            let Some(record) = records.get(&id) else {
+                self.append(&id, gone).await?;
+                continue;
+            };
+            // The repair rewrote the claim's part of its field and nothing it
+            // wrote continues the claim: rewritten, its sentence gone with
+            // the rewrite; it took text out only: removed (§4: undo restores
+            // it).
+            match heirs.rewritten.get(&id).cloned().flatten() {
+                Some(after) => {
+                    let event = ClaimEvent::RepairAttempted {
+                        attempt: record.attempt,
+                        escalated: record.escalated,
+                        before: record.before.clone(),
+                        after: Some(after),
+                        outcome: RepairOutcome::Rewritten,
+                    };
+                    self.append(&id, event).await?;
+                    self.append(&id, gone).await?;
+                }
+                None => {
+                    let event = ClaimEvent::RepairAttempted {
+                        attempt: record.attempt,
+                        escalated: record.escalated,
+                        before: record.before.clone(),
+                        after: None,
+                        outcome: RepairOutcome::Removed,
+                    };
+                    self.append(&id, event).await?;
+                }
+            }
         }
         // An edited claim no re-extracted claim continues: removed by the edit.
         for id in std::mem::take(&mut self.edited_now) {
-            self.append(&id, ClaimEvent::Superseded { successor: None })
-                .await?;
+            self.append(
+                &id,
+                ClaimEvent::Superseded {
+                    successor: None,
+                    by: Actor::User,
+                },
+            )
+            .await?;
         }
         self.pending.previous = None;
         if self.sink.is_some() {
@@ -492,7 +561,9 @@ impl ClaimLedger {
         Ok(())
     }
 
-    /// A claim seen for the first time: extracted, then checked (and the
+    /// A claim seen for the first time: extracted, born of a repair when one
+    /// wrote it beside its parent's successor (`born`: the parent and the
+    /// attempts it left, claim sources design §9.1), then checked (and the
     /// gate's assessment, when it decided the check).
     async fn start(
         &mut self,
@@ -500,6 +571,7 @@ impl ClaimLedger {
         claim: ExtractedClaim,
         check: Check,
         trust: Option<TrustAssessment>,
+        born: Option<(ClaimId, u8)>,
     ) -> Result<()> {
         self.append(
             id,
@@ -509,6 +581,16 @@ impl ClaimLedger {
             },
         )
         .await?;
+        if let Some((parent, attempts_left)) = born {
+            self.append(
+                id,
+                ClaimEvent::BornOfRepair {
+                    parent,
+                    attempts_left,
+                },
+            )
+            .await?;
+        }
         self.append(id, ClaimEvent::Checked(check)).await?;
         if let Some(trust) = trust {
             self.append(id, assessed(trust)).await?;
@@ -528,10 +610,26 @@ impl ClaimLedger {
         active: &HashSet<&str>,
     ) -> Result<()> {
         let Some(entry) = self.entry(id).cloned() else {
-            return self.start(id, claim, check, trust).await;
+            return self.start(id, claim, check, trust, None).await;
         };
+        // A claim stands on its sentence, not on the quote an extraction
+        // picked: while the stored quote is still in its field, its sentence
+        // did not change, whatever the claim's state (§3 `relitigate`; claim
+        // sources design §18.4 i). A stored passage re-located to one of its
+        // sentences takes the new location below and nothing else; what else
+        // is new about the claim is weighed as for any other.
+        let stands = field_text(
+            candidate,
+            entry.location().unit_index,
+            &entry.location().field,
+        )
+        .is_some_and(|text| text.contains(&entry.location().quote));
         let observation = Observation {
-            quote: claim.location.quote.clone(),
+            quote: if stands {
+                entry.location().quote.clone()
+            } else {
+                claim.location.quote.clone()
+            },
             fingerprint: check.fingerprint.clone(),
             checker_model: self.checker_model.clone(),
             window_tokens: self.window_tokens,
@@ -540,21 +638,7 @@ impl ClaimLedger {
             attached_source_version_id: None,
             gate: trust.as_ref().map(TrustAssessment::verdict),
         };
-        let mut information = new_information(&entry, &observation);
-        // A confirmation is bound to its sentence, not to the quote an
-        // extraction picked: while the bound sentence is still in its field,
-        // nothing about it changed (§3 `relitigate`).
-        if matches!(information, Some(NewInformation::SentenceChanged { .. }))
-            && field_text(
-                candidate,
-                entry.location().unit_index,
-                &entry.location().field,
-            )
-            .is_some_and(|text| text.contains(&entry.location().quote))
-            && matches!(entry.state(), ClaimState::Confirmed { .. })
-        {
-            information = None;
-        }
+        let information = new_information(&entry, &observation);
         let quote = claim.location.quote.clone();
         if claim.location != *entry.location() || claim.statement != entry.statement() {
             self.append(

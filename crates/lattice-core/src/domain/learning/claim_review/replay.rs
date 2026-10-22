@@ -21,6 +21,9 @@ pub(super) struct Cursor {
     /// What the provenance gate weighed for the latest local check, when
     /// the gate decided it; cleared by every other local check.
     pub(super) trust: Option<TrustAssessment>,
+    /// A claim born of a repair starts with its parent's remaining attempts
+    /// instead of a full budget (claim sources design §9.1).
+    pub(super) inherited_budget: Option<u8>,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -45,21 +48,34 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
 }
 
 /// A first failure, or a failure on new evidence: the machine gets its full
-/// budget for the kinds a rewrite or research can address.
-fn first_failure(kind: VerdictKind, reason: String) -> ClaimState {
+/// budget for the kinds a rewrite or research can address, or, for a claim
+/// born of a repair, what its parent had left. A repairable claim with no
+/// attempts left waits for the user.
+fn first_failure(kind: VerdictKind, reason: String, inherited: Option<u8>) -> ClaimState {
+    let budget = inherited.unwrap_or(MACHINE_ATTEMPTS);
     match kind {
+        kind if budget == 0 && budgeted(&kind) => queued(kind, reason),
         VerdictKind::Unsupported
         | VerdictKind::Contradicted
         | VerdictKind::NoSource
         | VerdictKind::InsufficientStanding { .. } => ClaimState::Open {
             kind,
             reason,
-            machine_attempts_left: MACHINE_ATTEMPTS,
+            machine_attempts_left: budget,
         },
         VerdictKind::CouldNotJudge
         | VerdictKind::GeneralKnowledgeProposed
         | VerdictKind::Disputed { .. } => queued(kind, reason),
     }
+}
+
+/// A failure the machine's budget counts: the kinds a rewrite addresses,
+/// and a claim below its bar, whose recorded repairs (made before claim
+/// sources design §10.4 stopped them) replay as they were. No new repair of
+/// one is made (`ClaimLedgerEntry::may_repair`); an Open one research has
+/// had its chance on waits for the user (`held_for_standing`).
+pub(super) fn budgeted(kind: &VerdictKind) -> bool {
+    kind.is_repairable() || matches!(kind, VerdictKind::InsufficientStanding { .. })
 }
 
 /// One machine attempt used up on the same evidence; none left queues it.
@@ -93,14 +109,14 @@ fn after_machine_failure(
         ..
     } = cursor.state
     else {
-        return first_failure(kind, reason);
+        return first_failure(kind, reason, cursor.inherited_budget);
     };
     if new_evidence {
-        return first_failure(kind, reason);
+        return first_failure(kind, reason, cursor.inherited_budget);
     }
     match kind {
-        kind if kind.is_repairable() && charged => charge(kind, reason, machine_attempts_left),
-        kind if kind.is_repairable() && machine_attempts_left > 0 => ClaimState::Open {
+        kind if budgeted(&kind) && charged => charge(kind, reason, machine_attempts_left),
+        kind if budgeted(&kind) && machine_attempts_left > 0 => ClaimState::Open {
             kind,
             reason,
             machine_attempts_left,
@@ -179,7 +195,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
                     after_machine_failure(cursor, kind, reason, new_evidence, charged)
                 }
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => queued(kind, reason),
-                _ => first_failure(kind, reason),
+                _ => first_failure(kind, reason, cursor.inherited_budget),
             }
         }
     };

@@ -105,6 +105,15 @@ pub(super) fn withdraw_resolved(context: &mut Value, ledger: &ClaimLedger) -> Ve
     withdrawn
 }
 
+/// The claims a repair context was sent for: its failed claims and examples.
+pub(super) fn context_claims(context: &Value) -> Vec<ClaimId> {
+    ["failedClaims", "exampleClaims"]
+        .into_iter()
+        .filter_map(|key| context.get(key).and_then(Value::as_array))
+        .flat_map(|items| claim_ids(items))
+        .collect()
+}
+
 /// The claims the remaining repair work is for.
 pub(super) fn ledger_targets(context: &Value) -> usize {
     ["failedClaims", "exampleClaims"]

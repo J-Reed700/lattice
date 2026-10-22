@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
-import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { review, teachingFinding, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), index: vi.fn() }));
@@ -28,12 +28,13 @@ const held: LearningGenerationJob = {
 };
 const noReview = { ok: true, data: null };
 
-function show(card: LearningLessonDto) {
+function show(card: LearningLessonDto, onReview = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}>
     <LessonCard lesson={card} moduleId="module-1" program={program} isCurrent={false} selected={false} pending={false}
-      onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} />
+      onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} onReview={onReview} />
   </QueryClientProvider>);
+  return onReview;
 }
 
 describe('Lesson card review state', () => {
@@ -42,17 +43,31 @@ describe('Lesson card review state', () => {
     api.index.mockResolvedValue({ ok: true, data: { state: 'ready', mode: 'hybrid' } });
   });
 
-  it('says "Needs your review" with the count, never failed, and opens onto the claim list', async () => {
+  it('a held lesson is one line with a Review button that opens the review screen', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [held] } });
     api.review.mockResolvedValue({ ok: true, data: review([unsupportedItem(1), unsupportedItem(2), unsupportedItem(3)]) });
-    show(lesson);
-    const card = screen.getByRole('button', { name: /Phase changes/ });
-    expect(await within(card).findByText('Needs your review · 3 claims')).toBeVisible();
-    expect(within(card).getByText(/Open the lesson to see each one/)).toBeVisible();
-    expect(within(card).queryByText(/failed|Outline/)).not.toBeInTheDocument();
-    await userEvent.click(card);
-    expect(await screen.findByRole('region', { name: 'Claim review' })).toBeVisible();
+    const onReview = show(lesson);
+    const row = screen.getByRole('article');
+    expect(await within(row).findByText('3 claims need you')).toBeVisible();
+    expect(within(row).queryByText(/failed|Outline/)).not.toBeInTheDocument();
+    // The row says how many and leads away; no claim text is on the course page.
+    expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: 'Review' }));
+    expect(onReview).toHaveBeenCalledWith('program-1', 'lesson-1');
+    await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
+    expect(screen.queryByRole('region', { name: /claim review/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Prepare lesson' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Review 3 claims' }));
+    expect(onReview).toHaveBeenCalledTimes(2);
+  });
+
+  it('says a published lesson with teaching notes is ready, with a Review button', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue({ ok: true, data: review([], { state: 'ready', teachingFindings: [teachingFinding(), teachingFinding({ findingKey: 'teaching:section-3' })] }) });
+    const onReview = show({ ...lesson, preparation: 'ready' });
+    expect(await screen.findByText('Ready · 2 teaching notes for you')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(onReview).toHaveBeenCalledWith('program-1', 'lesson-1');
   });
 
   it('keeps an outline lesson with no review as it was', async () => {
@@ -60,9 +75,10 @@ describe('Lesson card review state', () => {
     api.review.mockResolvedValue(noReview);
     show(lesson);
     expect(await screen.findByText('Outline')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
     expect(await screen.findByRole('button', { name: 'Prepare lesson' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Claim review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /claim review/i })).not.toBeInTheDocument();
   });
 
   it.each([

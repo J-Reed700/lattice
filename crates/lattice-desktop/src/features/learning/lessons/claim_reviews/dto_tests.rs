@@ -16,7 +16,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 use super::dto::{
-    ClaimActionRequestDto, ClaimEventDto, ClaimStateDto, LessonClaimReviewDto, VerdictKindDto,
+    AttachEvidenceDto, ClaimActionRequestDto, ClaimEventDto, ClaimStateDto, LessonClaimReviewDto,
+    VerdictKindDto,
 };
 
 /// Parses `fixture`, reads it as `T`, writes it back and requires the same
@@ -70,11 +71,28 @@ fn every_action_request_round_trips() {
             "general_knowledge",
             "accept_all_general_knowledge",
             "research_with_hint",
+            "undo",
+        ]
+    );
+}
+
+#[test]
+fn every_attached_evidence_round_trips() {
+    let evidence =
+        round_trip::<Vec<AttachEvidenceDto>>(include_str!("fixtures/attach_evidence.json"));
+    let kinds: Vec<&str> = evidence
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|evidence| evidence["kind"].as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
             "attach_saved_source",
             "attach_link",
             "attach_document",
             "attach_text",
-            "undo",
         ]
     );
 }
@@ -110,6 +128,7 @@ fn claim_states_mirror_the_domain() {
         ClaimState::Edited {
             at: 1_760_000_500_000,
             successor: Some(ClaimId("claim-2".into())),
+            by: Actor::Machine,
         },
         ClaimState::GeneralKnowledge {
             at: 1_760_000_600_000,
@@ -215,6 +234,7 @@ fn below_the_bar() -> TrustAssessment {
             supporting_quote: "boils at 100 °C".into(),
         },
         policy: "source-trust-v1".into(),
+        available: None,
     }
 }
 
@@ -309,6 +329,7 @@ fn claim_events_mirror_the_domain() {
         },
         ClaimEvent::Superseded {
             successor: Some(ClaimId("claim-2".into())),
+            by: Actor::Machine,
         },
         ClaimEvent::Reopened {
             cause: ReopenCause::SourceDeleted("v3".into()),
@@ -369,4 +390,34 @@ fn claim_events_mirror_the_domain() {
         .collect();
     let dtos: Vec<ClaimEventDto> = records.iter().map(ClaimEventDto::from).collect();
     assert_mirrors(&dtos, &fixture);
+}
+
+#[test]
+fn the_review_shows_the_claims_own_sentence_for_a_location_stored_as_a_passage() {
+    // The screenshot's card: the claim was stored with its whole passage as
+    // the quote, as passes before sentence locations wrote it (claim sources
+    // design §18.6).
+    use lattice_core::domain::learning::claim_review::ClaimLedgerEntry;
+    const BODY: &str = "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values. This description is called a **tool schema** [2]. Most APIs write it as a JSON object.";
+    let entry = ClaimLedgerEntry::extracted(
+        ClaimId("claim-1".into()),
+        provenance(Actor::Machine, 1),
+        ClaimLocation::locate(0, UnitKind::Block, "body", BODY, BODY),
+        "Before a model can call a tool, it needs a structured description of what the tool does, its arguments and its return values.".into(),
+    )
+    .unwrap();
+    let units = serde_json::json!({
+        "blocks": [{ "kind": "explanation", "title": "Tool schemas", "body": BODY }],
+        "questions": [],
+    });
+    let card = super::view::presentation(&entry, &units, "Tool schemas");
+    assert_eq!(
+        card.sentence,
+        "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values."
+    );
+    assert_eq!(card.context_before, "");
+    assert_eq!(
+        card.context_after,
+        "This description is called a tool schema. Most APIs write it as a JSON object."
+    );
 }

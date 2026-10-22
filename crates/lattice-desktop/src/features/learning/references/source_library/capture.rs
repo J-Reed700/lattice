@@ -5,6 +5,33 @@ use super::*;
 use crate::features::learning::references::trust;
 
 impl LearningSourceLibraryRepository {
+    /// Captures a source research selected, with the planner's reason for
+    /// selecting it (`selection_note`, claim sources design §4.4).
+    pub async fn add_selected(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+        note: Option<&str>,
+    ) -> Result<()> {
+        let (program_id, source_id) = (source.program_id.to_owned(), source.source_id.to_owned());
+        self.add_by(source, captured, payload_hash, SourceAddedBy::Research)
+            .await?;
+        let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) else {
+            return Ok(());
+        };
+        sqlx::query(
+            "UPDATE learning_source_library SET selection_note=? WHERE program_id=? AND id=?",
+        )
+        .bind(note)
+        .bind(&program_id)
+        .bind(&source_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db)?;
+        Ok(())
+    }
+
     /// Captures a new source and its first version, recording who added it
     /// (`added_by`, claim review §5.4).
     pub async fn add_by(

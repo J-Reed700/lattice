@@ -47,7 +47,7 @@ const source = {
   versions: [pendingText, activeText], latestCheck: { operationId: 'check-1', status: 'update_available' as const, checkedAt: 1_790_100_000_000, activeDigest: 'sha256-a', pendingVersionId: 'version-2', message: null },
   checks: [], createdAt: 1_790_000_000_000, updatedAt: 1_790_100_000_000,
 };
-const workspace: LearningSourceWorkspaceDto = { programId: 'program-1', sources: [source] };
+const workspace: LearningSourceWorkspaceDto = { programId: 'program-1', recheck: null, sources: [source] };
 const version: LearningSourceVersionDto = {
   sourceId: 'source-1', version: activeText,
   fullText: 'A saved passage about careful observation.\n\nA full second paragraph from the captured text.',
@@ -57,11 +57,11 @@ const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePa
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 
-function renderSources(initial = workspace, openedVersion = version) {
+function renderSources(initial = workspace, openedVersion = version, onOpenReview?: () => void) {
   mocks.workspace.mockResolvedValue(ok(initial));
   mocks.version.mockResolvedValue(ok(openedVersion));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /></QueryClientProvider>);
 }
 
 describe('Learning Studio Sources workspace', () => {
@@ -109,7 +109,7 @@ describe('Learning Studio Sources workspace', () => {
       return { ...source, id: `source-${index + 10}`, activeVersionId: saved.id, activeVersion: saved, versions: [saved], pendingVersionId: index === 21 ? 'version-pending' : null, pendingVersion: null };
     });
     mocks.search.mockResolvedValue(ok(many.map((item, index) => ({ sourceId: item.id, versionId: item.activeVersionId, title: `Archive ${index + 1}`, excerpt: `match ${index + 1}` }))));
-    renderSources({ programId: 'program-1', sources: many });
+    renderSources({ programId: 'program-1', recheck: null, sources: many });
 
     const list = await screen.findByLabelText('Source list');
     const titles = () => within(list).getAllByRole('button').map((row) => row.textContent?.replace(/(Update available|Stored for offline reading)(Added by you)?$/, ''));
@@ -147,7 +147,7 @@ describe('Learning Studio Sources workspace', () => {
   it('supports paste text and retries a lost response with the exact same operation and version ids', async () => {
     const user = userEvent.setup();
     mocks.addText.mockResolvedValueOnce(fail('Connection interrupted')).mockResolvedValueOnce(ok({ ...workspace, sources: [] }));
-    renderSources({ programId: 'program-1', sources: [] });
+    renderSources({ programId: 'program-1', recheck: null, sources: [] });
     await user.click(await screen.findByRole('button', { name: 'Add material' }));
     await user.click(screen.getByRole('button', { name: 'Paste text' }));
     expect(screen.getByLabelText('Title')).toHaveFocus();
@@ -162,10 +162,26 @@ describe('Learning Studio Sources workspace', () => {
     expect(mocks.addText.mock.calls[1][0]).toEqual(firstRequest);
   });
 
+  it('adding a source checks the waiting claims and links to the review', async () => {
+    const user = userEvent.setup();
+    const openReview = vi.fn();
+    const recheck = { lessons: 1, tried: 33, verified: 12, notVerified: 18, noPassage: 3, stopped: null };
+    mocks.addText.mockResolvedValueOnce(ok({ ...workspace, recheck }));
+    renderSources({ programId: 'program-1', recheck: null, sources: [] }, version, openReview);
+    await user.click(await screen.findByRole('button', { name: 'Add material' }));
+    await user.click(screen.getByRole('button', { name: 'Paste text' }));
+    await user.type(screen.getByLabelText('Title'), 'Parish register, 1740–1760');
+    await user.type(screen.getByLabelText('Saved text'), 'Baptisms recorded in the parish between 1740 and 1760.');
+    await user.click(screen.getByRole('button', { name: 'Save source' }));
+    expect(await screen.findByText('Checked 33 waiting claims against it: 12 verified.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Open the review' }));
+    expect(openReview).toHaveBeenCalledTimes(1);
+  });
+
   it('adds a web page with an explicit policy and offers opening in the reader', async () => {
     const user = userEvent.setup();
     mocks.addWeb.mockResolvedValue(ok(workspace));
-    renderSources({ programId: 'program-1', sources: [] });
+    renderSources({ programId: 'program-1', recheck: null, sources: [] });
     await user.click(await screen.findByRole('button', { name: 'Add material' }));
     await user.type(screen.getByLabelText('Web address'), 'https://example.org/article');
     await user.selectOptions(screen.getByLabelText('Freshness policy'), 'before_use');
@@ -192,12 +208,15 @@ describe('Learning Studio Sources workspace', () => {
   it('adds an indexed Library document from the existing Library query', async () => {
     const user = userEvent.setup();
     mocks.addDocument.mockResolvedValue(ok(workspace));
-    renderSources({ programId: 'program-1', sources: [] });
+    renderSources({ programId: 'program-1', recheck: null, sources: [] });
     await user.click(await screen.findByRole('button', { name: 'Add material' }));
     await user.click(screen.getByRole('button', { name: 'Library document' }));
-    await user.click(await screen.findByRole('checkbox'));
+    await user.click(await screen.findByRole('checkbox', { name: 'Field guide.pdf' }));
     await user.click(screen.getByRole('button', { name: 'Save source' }));
-    await waitFor(() => expect(mocks.addDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'doc-1', programId: 'program-1' })));
+    await waitFor(() => expect(mocks.addDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ documentId: 'doc-1', programId: 'program-1' }),
+      expect.objectContaining({ checkWaiting: true }),
+    ));
   });
 
   it('searches only stored text, opens the exact matching historical version, and changes freshness policy', async () => {
@@ -253,7 +272,7 @@ describe('Learning Studio Sources workspace', () => {
     const user = userEvent.setup();
     const secondVersion = { ...activeText, id: 'version-3', title: 'Second archive' };
     const second = { ...source, id: 'source-2', pendingVersionId: null, pendingVersion: null, requestedUrl: 'https://archive.example/second', activeVersionId: 'version-3', activeVersion: secondVersion, versions: [secondVersion] };
-    const multi = { programId: 'program-1', sources: [source, second] };
+    const multi = { programId: 'program-1', recheck: null, sources: [source, second] };
     mocks.refresh.mockResolvedValueOnce(fail('Temporary network error')).mockResolvedValueOnce(ok(multi));
     renderSources(multi);
     await user.click(await screen.findByRole('button', { name: 'Check for changes' }));
@@ -287,14 +306,14 @@ describe('Learning Studio Sources workspace', () => {
     const loading = render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" /></QueryClientProvider>);
     expect(screen.getByRole('status')).toHaveTextContent('Opening the source library');
     loading.unmount();
-    mocks.workspace.mockResolvedValue(ok({ programId: 'program-1', sources: [] }));
-    renderSources({ programId: 'program-1', sources: [] });
+    mocks.workspace.mockResolvedValue(ok({ programId: 'program-1', recheck: null, sources: [] }));
+    renderSources({ programId: 'program-1', recheck: null, sources: [] });
     expect(await screen.findByText('No materials have been saved to this program yet.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Add first material' })).toBeVisible();
   });
 
   it('shows a retryable workspace error instead of an empty library', async () => {
-    mocks.workspace.mockRejectedValueOnce(new Error('Could not read source library')).mockResolvedValueOnce(ok({ programId: 'program-1', sources: [] }));
+    mocks.workspace.mockRejectedValueOnce(new Error('Could not read source library')).mockResolvedValueOnce(ok({ programId: 'program-1', recheck: null, sources: [] }));
     renderSources();
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read source library');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));

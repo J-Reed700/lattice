@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Archive, BookOpenCheck, Clock3, Plus, Sparkles, Upload } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 
 import { type FormSnapshot } from '@/features/learning/assessment/AssessmentPanel';
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
+import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { ExportAllCourses } from '@/features/learning/portability/ExportAllCourses';
 import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFlow';
 import { useExportAllPending } from '@/features/learning/portability/useLearningPortability';
@@ -54,7 +55,10 @@ export function LearningStudioPage() {
   // `?course=` (with `&lesson=`), as the activity view links, opens that
   // course or lesson like a task does.
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedCourse = searchParams.get('course');
+  // A review link (`&review=claims`) stays in the address: the review screen
+  // reads it, so the browser's Back leaves the screen.
+  const reviewLink = searchParams.get('review') === 'claims';
+  const requestedCourse = reviewLink ? null : searchParams.get('course');
   const requestedLesson = searchParams.get('lesson');
   const latestOpenTask = useRef(openTask);
   latestOpenTask.current = openTask;
@@ -78,8 +82,11 @@ export function LearningStudioPage() {
   </div>;
 }
 
+const REVIEW_PARAMS = ['course', 'lesson', 'review'] as const;
+
 function LearningStudioContent({ destination, exportingAll, onOpenDestination }: { destination?: StudyDestination; exportingAll: boolean; onOpenDestination?: (destination: StudyDestination) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const client = useQueryClient();
   const [screen, setScreen] = useState<Screen>('programs');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -96,16 +103,58 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const flashcardsRef = useRef<HTMLElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
   const flashcardRoute = searchParams.has('deck') || searchParams.get('newDeck') === '1';
+  // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
+  const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
+  const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;
+  const reviewing = Boolean(reviewCourse && reviewLesson);
+  const pushedReview = useRef(false);
+  useEffect(() => {
+    if (!reviewCourse) return;
+    setScreen('programs');
+    setSelectedId(reviewCourse);
+  }, [reviewCourse]);
+  // Left by the browser's Back: the next leave has no entry of ours to pop.
+  useEffect(() => { if (!reviewing) pushedReview.current = false; }, [reviewing]);
+  const openReview = (programId: string, lessonId: string) => {
+    pushedReview.current = true;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('course', programId);
+      next.set('lesson', lessonId);
+      next.set('review', 'claims');
+      return next;
+    });
+  };
+  const leaveReview = () => {
+    const lessonId = reviewLesson;
+    if (pushedReview.current) { pushedReview.current = false; void navigate(-1); }
+    else setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      REVIEW_PARAMS.forEach((key) => next.delete(key));
+      return next;
+    }, { replace: true });
+    // Back on the Lessons tab, on the lesson's row.
+    if (lessonId) setTimeout(() => requestAnimationFrame(() => {
+      const row = document.getElementById(`lesson-${lessonId}`);
+      row?.scrollIntoView({ block: 'center' });
+      (row?.querySelector<HTMLElement>('button') ?? row)?.focus();
+    }), 0);
+  };
 
   useEffect(() => {
     if (!destination) return;
     setScreen('programs');
     setSelectedId(destination.programId ?? null);
   }, [destination]);
+  const latestOpenReview = useRef(openReview);
+  latestOpenReview.current = openReview;
+  useEffect(() => {
+    if (destination?.review === 'claims' && destination.programId && destination.lessonId) latestOpenReview.current(destination.programId, destination.lessonId);
+  }, [destination]);
   useEffect(() => {
     // Let the current course's save guard update before moving to a deck.
     // Avoid navigating to the current URL, which would unnecessarily block.
-    if (!destination || routedDestination.current === destination || screen !== 'programs' || selectedId !== (destination.programId ?? null)) return;
+    if (!destination || destination.review || routedDestination.current === destination || screen !== 'programs' || selectedId !== (destination.programId ?? null)) return;
     routedDestination.current = destination;
     const next = new URLSearchParams(destination.flashcards ? destination.deckId ? { deck: destination.deckId } : { section: 'flashcards' } : {});
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
@@ -193,12 +242,21 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   if (screen === 'import' || screen === 'export-all') return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
   if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
 
-  return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5">
+  const reviewTitle = reviewing ? detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === reviewLesson)?.title ?? 'Lesson' : '';
+  return <>
+    {reviewing && <div className="h-full min-h-0">
+      {detail.data?.summary.id === reviewCourse
+        ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}`} programId={reviewCourse!} lessonId={reviewLesson!} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
+        : detail.isError ? <div role="alert" className="m-6 rounded-xl bg-danger-muted p-4 text-sm text-text-primary"><p>{message(detail.error)}</p><button type="button" onClick={leaveReview} className="mt-3 underline">Back to the course</button></div>
+          : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
+    </div>}
+    {/* The course page stays mounted behind the review, so leaving it returns to the same tab and scroll. */}
+    <div hidden={reviewing} className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5">
     {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
     ) : <div className="mx-auto max-w-[1450px]">
       <header className="relative overflow-hidden rounded-[1.6rem] border border-[#d7c9b8] bg-[#eee8df] px-7 py-8 sm:px-10 sm:py-10 dark:border-white/10 dark:bg-[#28251f]"><div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full border border-accent/20" /><div className="relative flex flex-wrap items-end justify-between gap-6"><div className="max-w-2xl"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-accent"><BookOpenCheck size={15} /> Learning Studio</div><h1 className="mt-3 font-serif text-4xl leading-tight text-text-primary sm:text-[3.2rem]">A course shaped around your curiosity.</h1><p className="mt-3 max-w-xl text-sm leading-6 text-text-secondary">Start with a goal. Follow a complete course through in-depth lessons, practical assignments, knowledge checks, and a final project. Your own materials are optional.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setScreen('import')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Upload size={15} /> Import a course…</button><button type="button" onClick={() => setScreen('export-all')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Archive size={15} /> Export all courses…</button><button type="button" onClick={() => { generate.reset(); setScreen('builder'); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95"><Plus size={16} /> Build a program</button></div></div></header>
       <CourseTangentsSection onOpenDestination={handleSelectDestination} />
@@ -215,5 +273,6 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
       <FlashcardsSection ref={flashcardsRef} />
       <div className="mt-8 flex flex-wrap items-center gap-2 text-[10px] text-text-muted"><span className="rounded-full border border-border px-2.5 py-1">Topic or source-based</span><span className="rounded-full border border-border px-2.5 py-1">Review outline before lessons</span><span className="rounded-full border border-border px-2.5 py-1">Progress from persisted work</span><span className="ml-auto">Programs stay on this device</span></div>
     </div>}
-  </div>;
+    </div>
+  </>;
 }

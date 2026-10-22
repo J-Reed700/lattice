@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    span_of, text_sha256, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState,
+    span_of, text_sha256, Actor, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState,
     EvidenceFingerprint, GateVerdict, HumanBinding, LessonReviewState, ReopenCause,
 };
 
@@ -48,7 +48,11 @@ pub struct Observation {
 /// Why the machine may look at a claim again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewInformation {
-    /// The claim's quote changed; carries the new quote's SHA-256.
+    /// The claim's quote changed; carries the new quote's SHA-256. A
+    /// location that only narrows (a stored passage re-located to one of
+    /// its sentences while the field still holds the passage) is not a
+    /// changed sentence: the pass records the new location and nothing else
+    /// (claim sources design §18.4 i).
     SentenceChanged {
         quote_sha256: String,
     },
@@ -89,13 +93,19 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
         {
             return Some(NewInformation::CheckerChanged)
         }
-        Some(basis) if basis.fingerprint == now.fingerprint => {}
-        _ => return Some(NewInformation::EvidenceChanged),
-    }
-    if let (Some(now), Some(before)) = (&now.gate, prev.trust()) {
-        if *now != before.verdict() {
-            return Some(NewInformation::DecisionChanged);
+        Some(basis) if basis.fingerprint == now.fingerprint => {
+            if let (Some(gate), Some(before)) = (&now.gate, prev.trust()) {
+                if *gate != before.verdict() {
+                    return Some(NewInformation::DecisionChanged);
+                }
+            }
         }
+        // A verified claim is not re-judged on reselected evidence (claim
+        // sources design §18.4 ii): only its sentence or a source it cites
+        // changing reopens it, as `reopen_cause` says. The gate weighed other
+        // evidence, so it is not compared either.
+        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. }) => {}
+        _ => return Some(NewInformation::EvidenceChanged),
     }
     now.attached_source_version_id
         .clone()
@@ -201,10 +211,11 @@ pub struct Identities {
 
 /// §3 `identity`, applied to a whole re-extraction so no prior id is given
 /// twice. A claim keeps a prior id when it is in the same unit and has the
-/// same statement or the same quote; failing that, when the prior quote still
-/// occurs once in the same field and its span overlaps the new claim's (the
-/// largest overlap wins). `prior` is the live claims of the re-extracted
-/// units; `field_text(unit_index, field)` is a field's current text.
+/// same statement or the same quote; failing that, when the prior quote's
+/// span in the same field (where it occurs once now, or else its stored span)
+/// overlaps the new claim's (the largest overlap wins). `prior` is the live
+/// claims of the re-extracted units; `field_text(unit_index, field)` is a
+/// field's current text.
 pub fn identities<'a>(
     prior: &[&ClaimLedgerEntry],
     extracted: &[ExtractedClaim],
@@ -253,8 +264,11 @@ pub fn identities<'a>(
             if old.unit_index != new.location.unit_index || old.field != new.location.field {
                 continue;
             }
-            let Some((old_start, old_end)) =
-                field_text(old.unit_index, &old.field).and_then(|text| span_of(text, &old.quote))
+            // A quote the field no longer holds (a repaired passage) falls
+            // back to where the claim last stood.
+            let Some((old_start, old_end)) = field_text(old.unit_index, &old.field)
+                .and_then(|text| span_of(text, &old.quote))
+                .or(old.span)
             else {
                 continue;
             };
@@ -285,7 +299,7 @@ pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> 
     let mut needs_review = false;
     for claim in claims {
         let state = claim.state();
-        if state.is_machine_owned() {
+        if state.is_machine_owned() && !claim.held_for_standing() {
             return LessonReviewState::Verifying;
         }
         needs_review |= !state.is_resolved();
@@ -298,18 +312,25 @@ pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> 
 }
 
 /// Claims per outcome, for the review header and the lesson card (§6.3).
-/// An edited claim with a successor is counted through its successor.
+/// An edited claim with a successor is counted through its successor. What
+/// the user did and what the machine did are counted apart (claim sources
+/// design §11): only the user's actions are "resolved by you".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimCounts {
     pub verified: usize,
     pub confirmed: usize,
     pub general_knowledge: usize,
-    /// Waiting for the user: Queued or Reopened.
+    /// Waiting for the user: Queued, Reopened, or held for standing.
     pub queued: usize,
     /// The machine's: Unchecked or Open.
     pub open: usize,
-    /// Removed, or removed by an edit.
-    pub removed: usize,
+    /// Removed by the user.
+    pub removed_by_you: usize,
+    /// Edited away by the user: no successor claim.
+    pub edited_by_you: usize,
+    /// Rewritten or removed by the machine's repairs: removed, or edited
+    /// with no successor.
+    pub rewritten: usize,
 }
 
 impl ClaimCounts {
@@ -321,11 +342,24 @@ impl ClaimCounts {
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
                 ClaimState::GeneralKnowledge { .. } => &mut counts.general_knowledge,
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => &mut counts.queued,
+                ClaimState::Open { .. } if claim.held_for_standing() => &mut counts.queued,
                 ClaimState::Unchecked | ClaimState::Open { .. } => &mut counts.open,
-                ClaimState::Removed { .. }
+                ClaimState::Removed {
+                    by: Actor::User, ..
+                } => &mut counts.removed_by_you,
+                ClaimState::Edited {
+                    successor: None,
+                    by: Actor::User,
+                    ..
+                } => &mut counts.edited_by_you,
+                ClaimState::Removed {
+                    by: Actor::Machine, ..
+                }
                 | ClaimState::Edited {
-                    successor: None, ..
-                } => &mut counts.removed,
+                    successor: None,
+                    by: Actor::Machine,
+                    ..
+                } => &mut counts.rewritten,
                 ClaimState::Edited {
                     successor: Some(_), ..
                 } => continue,
@@ -333,5 +367,11 @@ impl ClaimCounts {
             *slot += 1;
         }
         counts
+    }
+
+    /// The user's own verdicts: confirmed, accepted as general knowledge,
+    /// removed or edited away.
+    pub fn resolved_by_you(&self) -> usize {
+        self.confirmed + self.general_knowledge + self.removed_by_you + self.edited_by_you
     }
 }

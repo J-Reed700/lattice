@@ -20,8 +20,11 @@ use std::collections::{HashMap, HashSet};
 mod citations;
 mod claim_ledger;
 use citations::{overlaps, section_citations, source_mentions, take_cited, Citations, CITED};
+#[cfg(test)]
+pub(in crate::features::learning) use claim_ledger::locate;
 pub(in crate::features::learning) use claim_ledger::{
-    field_text, held_for_review, held_lessons, review_outcome, unit_texts, HeldForReview,
+    field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
+    HeldForReview,
 };
 mod coverage;
 #[cfg(test)]
@@ -33,11 +36,13 @@ pub(in crate::features::learning) use evidence_checks::Reach;
 pub(in crate::features::learning) use evidence_checks::ORDERS;
 #[cfg(test)]
 pub(in crate::features::learning) use evidence_checks::{
-    page_budget, page_seconds, walk_pages, Depth, WalkedPage,
+    page_budget, page_seconds, walk_pages, walk_standing_pages, Depth, WalkedPage,
+};
+use evidence_checks::{
+    same_passage, Paging, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
 };
 #[cfg(test)]
 use evidence_checks::{ContraryPassage, Pass, REACHES};
-use evidence_checks::{Paging, TwoPass, CHECKER_OUTPUT_TOKENS};
 mod evidence_selection;
 mod execution;
 mod general_knowledge;
@@ -76,10 +81,13 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
 mod passes;
 use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
+#[cfg(test)]
+pub(in crate::features::learning) use provenance_gate::Judgements;
 pub(in crate::features::learning) use provenance_gate::{
     gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
 };
 mod repair;
+pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;

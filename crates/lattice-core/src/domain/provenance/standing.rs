@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::content_evidence::WorkEvidence;
 use super::reason::Reason;
 use super::signals::NamedEntity;
 
@@ -160,11 +161,17 @@ pub struct StandingAssessment {
     pub reasons: Vec<Reason>,
     pub policy: String,
     pub model: String,
-    /// The cache key: sha256 of the canonical signals JSON.
+    /// The cache key's `input_sha256`: under `source-standing-v2`, the
+    /// sha256 of the signals and the content evidence the judgement saw.
     pub signals_sha256: String,
     /// The origin's track record the judgement saw. Not part of the key: a
     /// new verdict does not re-judge every page of the origin; "Reassess"
     /// does.
     #[serde(default)]
     pub track_record: TrackRecord,
+    /// The content evidence's summary, copied from the judgement's input,
+    /// never from the model's answer: what the level ladder reads (claim
+    /// sources design §4.2, §5.3). Empty for a v1 row.
+    #[serde(default)]
+    pub work: WorkEvidence,
 }

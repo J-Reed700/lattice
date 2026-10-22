@@ -160,6 +160,7 @@ impl ClaimLedgerEntry {
             researched: false,
             latest_failure: None,
             trust: None,
+            inherited_budget: None,
         };
         let mut entry = Self {
             claim_id,
@@ -263,6 +264,37 @@ impl ClaimLedgerEntry {
         ) && !cursor.repair_pending
     }
 
+    /// Whether a recorded repair is one the machine could make here: Open,
+    /// attempts left, a budgeted kind ([`replay::budgeted`]: a claim below
+    /// its bar too, whose repairs recorded before claim sources design §10.4
+    /// replay as they were) and no rewrite waiting for its check. What the
+    /// machine repairs next is [`Self::may_repair`]'s.
+    fn repair_recordable(&self) -> bool {
+        let cursor = self.cursor();
+        matches!(
+            &cursor.state,
+            ClaimState::Open {
+                kind,
+                machine_attempts_left,
+                ..
+            } if super::replay::budgeted(kind) && *machine_attempts_left > 0
+        ) && !cursor.repair_pending
+    }
+
+    /// Held for standing (claim sources design §10.4): its support is below
+    /// the bar, research has had its chance on this evidence and no rewrite
+    /// fixes standing, so it waits for the user though the machine's budget
+    /// for it is not spent. Counted and decided as waiting.
+    pub fn held_for_standing(&self) -> bool {
+        matches!(
+            self.state(),
+            ClaimState::Open {
+                kind: VerdictKind::InsufficientStanding { .. },
+                ..
+            }
+        ) && !self.may_research()
+    }
+
     /// The next repair is the escalated one (`repeatedDefects`): it is the
     /// claim's last attempt on this evidence.
     pub fn next_repair_escalates(&self) -> bool {
@@ -276,13 +308,15 @@ impl ClaimLedgerEntry {
     }
 
     /// Research runs once per claim and fingerprint, for the kinds new
-    /// passages can answer (§4).
+    /// passages can answer (§4): a claim below the bar too, which research
+    /// may find a stronger source for though no rewrite fixes it.
     pub fn may_research(&self) -> bool {
         let cursor = self.cursor();
         matches!(
             &cursor.state,
             ClaimState::Open { kind, .. }
-                if kind.is_repairable() || *kind == VerdictKind::NoSource
+                if kind.is_repairable()
+                    || matches!(kind, VerdictKind::NoSource | VerdictKind::InsufficientStanding { .. })
         ) && !cursor.researched
             && !cursor.repair_pending
     }
@@ -471,18 +505,31 @@ impl ClaimLedgerEntry {
                     AttachOutcome::NoPassage => hand_to_user(&mut next.state),
                 }
             }
-            ClaimEvent::Superseded { successor } => {
+            ClaimEvent::Superseded { successor, by } => {
                 next.state = match &next.state {
                     ClaimState::Removed { .. } => return Err(self.refuse(&record.event)),
-                    ClaimState::Edited { at: edited, .. } => ClaimState::Edited {
+                    // The user's edit already said who changed the text.
+                    ClaimState::Edited {
+                        at: edited,
+                        by: editor,
+                        ..
+                    } => ClaimState::Edited {
                         at: *edited,
                         successor: successor.clone(),
+                        by: *editor,
                     },
                     _ => ClaimState::Edited {
                         at,
                         successor: successor.clone(),
+                        by: *by,
                     },
                 };
+            }
+            ClaimEvent::BornOfRepair { attempts_left, .. } => {
+                if !matches!(next.state, ClaimState::Unchecked) {
+                    return Err(self.refuse(&record.event));
+                }
+                next.inherited_budget = Some(*attempts_left);
             }
             ClaimEvent::Reopened { cause } => {
                 if !matches!(
@@ -535,11 +582,16 @@ impl ClaimLedgerEntry {
         else {
             return Err(self.refuse(event));
         };
-        if !self.may_repair() {
+        if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
+        // A repair not attempted ran no model, so nothing escalated.
+        let expected_escalation = match outcome {
+            RepairOutcome::NotAttempted { .. } => false,
+            _ => *machine_attempts_left == 1,
+        };
         if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left)
-            || escalated != (*machine_attempts_left == 1)
+            || escalated != expected_escalation
         {
             return Err(LedgerError::RepairMismatch {
                 claim: self.claim_id.0.clone(),
@@ -557,6 +609,9 @@ impl ClaimLedgerEntry {
             }
             RepairOutcome::Rejected { .. } => {
                 next.state = charge(kind.clone(), reason.clone(), *machine_attempts_left)
+            }
+            RepairOutcome::NotAttempted { .. } => {
+                next.state = super::replay::queued(kind.clone(), reason.clone())
             }
             RepairOutcome::SupersededByUser => {}
         }
@@ -608,6 +663,7 @@ impl ClaimLedgerEntry {
                 next.state = ClaimState::Edited {
                     at,
                     successor: None,
+                    by: Actor::User,
                 }
             }
             UserAction::Remove => {

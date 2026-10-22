@@ -31,7 +31,9 @@ export type ShortcutContext =
   | 'files'
   | 'settings'
   | 'daily'
-  | 'qa';
+  | 'qa'
+  /** The claim review screen (Learning Studio). */
+  | 'review';
 
 export interface ShortcutConflict {
   shortcut1: string;

@@ -3,11 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { StudyActivityPanel } from '@/features/learning/workspace/StudyActivityPanel';
 import { queryClient } from '@/lib/queryClient';
-import { beginStudyActivity, STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
+import { beginStudyActivity, shortCourseTitle, STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
 
+const api = vi.hoisted(() => ({ review: vi.fn() }));
+vi.mock('@/lib/api', () => ({ default: { getLearningLessonClaimReview: api.review } }));
 
 beforeEach(() => { vi.useFakeTimers(); queryClient.clear(); });
-afterEach(() => { cleanup(); queryClient.clear(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); queryClient.clear(); vi.useRealTimers(); vi.resetAllMocks(); });
 const advance = async (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
 it('shows honest elapsed progress, task details, and survives collapse and navigation', async () => {
@@ -56,4 +58,27 @@ it('keeps failures available without cancelling another request or silently retr
   expect(queryClient.getQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY)).toMatchObject([{ status: 'pending' }]);
   act(() => model.finish());
   await advance(10);
+});
+
+it('a finished preparation that holds claims links to the review', async () => {
+  const waiting = { state: { state: 'queued' } };
+  api.review.mockResolvedValue({ ok: true, data: { state: 'needs_review', claims: [waiting, waiting, waiting] } as never });
+  const open = vi.fn();
+  render(<StudyActivityPanel onOpen={open} />);
+  const task = beginStudyActivity('learning', 'attach_learning_claim_evidence', { request: { programId: 'course', lessonId: 'lesson-1' } })!;
+  await advance(1000);
+  act(() => task.finish());
+  await advance(10);
+  const card = screen.getByRole('article', { name: 'Checking claims against your source' });
+  expect(within(card).getByRole('status')).toHaveTextContent('3 claims need you');
+  fireEvent.click(within(card).getByRole('button', { name: 'Review' }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ programId: 'course', lessonId: 'lesson-1', tab: 'lessons', review: 'claims' }));
+  expect(within(card).queryByRole('button', { name: 'View result' })).not.toBeInTheDocument();
+});
+
+it('names a course by its short title, never its whole goal', () => {
+  expect(shortCourseTitle('Function Calling & Tool Schemas')).toBe('Function Calling & Tool Schemas');
+  const goal = 'I want to understand how the circulatory system moves oxygen through the body, from the lungs to the cells. Then I want to read papers.';
+  expect(shortCourseTitle(goal).length).toBeLessThanOrEqual(60);
+  expect(shortCourseTitle(goal)).not.toContain('Then I want');
 });

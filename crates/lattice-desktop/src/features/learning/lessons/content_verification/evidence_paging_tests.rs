@@ -143,7 +143,7 @@ pub(super) fn reference(id: String, excerpt: String) -> LearningSourceDto {
 
 /// A passage about the claim's subject that does not state the claim, then
 /// filler on nothing the claim names.
-fn related_text(index: usize) -> String {
+pub(super) fn related_text(index: usize) -> String {
     format!(
         "Mineral alpha notes {index}: property beta was measured, pressure varied. {}",
         "Field measurements continue. ".repeat(70)

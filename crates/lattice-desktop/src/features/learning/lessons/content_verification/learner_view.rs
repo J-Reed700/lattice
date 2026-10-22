@@ -26,7 +26,7 @@ fn passage_trust(trust: &FindingTrust, source_version_id: &str) -> Option<Learni
 
 /// Whether the claim's support met the bar for its kind (§18.9).
 fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
-    dto_map::sufficiency(&trust.profile, &trust.decision)
+    dto_map::sufficiency(&trust.profile, &trust.decision, trust.available)
 }
 
 fn unavailable() -> AppError {

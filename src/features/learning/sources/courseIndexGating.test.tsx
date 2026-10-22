@@ -6,8 +6,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
-import { LessonClaimReviewPanel } from '@/features/learning/lessons/review/LessonClaimReviewPanel';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { useCourseIndexStatusEvents } from '@/features/learning/sources/useCourseIndexStatus';
 import type { CourseIndexStatusDto, JobDto } from '@/lib/bindings';
@@ -19,6 +19,7 @@ vi.mock('@/lib/api', () => ({ default: {
   courseIndexStatus: api.status,
   getLearningLessonClaimReview: api.review,
   getLearningLessonAudit: api.audit,
+  getLearningPlan: async () => ({ ok: true, data: { jobs: [] } }),
   getLearningSourceTrust: async () => ({ ok: true, data: { sources: [], claim: null } }),
   getLearningSourceWorkspace: api.workspace,
   getLearningSourceVersion: api.version,
@@ -50,13 +51,13 @@ describe('Evidence actions while a course indexes', () => {
 
   it('holds back resuming verification and says why, but leaves adding evidence open', async () => {
     api.status.mockResolvedValue(ok(INDEXING));
-    wrap(<LessonClaimReviewPanel programId="program-1" lessonId="lesson-1" courseRevision={4} />);
+    wrap(<ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Reading field notes" courseRevision={4} onBack={() => undefined} />);
     const resume = await screen.findByRole('button', { name: 'Resume verification' });
     await waitFor(() => expect(resume).toBeDisabled());
     expect(screen.getByText(MEASURING)).toBeVisible();
     expect(resume).toHaveAccessibleDescription(MEASURING);
-    // Attaching reads the course's words at once, as do reading and judging the claim.
-    const attach = screen.getByRole('button', { name: 'Add evidence' });
+    // Adding a source reads the course's words at once, as do reading and judging the claim.
+    const attach = screen.getByRole('button', { name: 'Add a source' });
     expect(attach).toBeEnabled();
     expect(attach).not.toHaveAttribute('title');
     expect(screen.getByRole('button', { name: 'Edit the sentence' })).toBeEnabled();
@@ -69,7 +70,7 @@ describe('Evidence actions while a course indexes', () => {
       useCourseIndexStatusEvents('program-1');
       return null;
     }
-    wrap(<><StatusEvents /><LessonClaimReviewPanel programId="program-1" lessonId="lesson-1" courseRevision={4} /></>);
+    wrap(<><StatusEvents /><ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Reading field notes" courseRevision={4} onBack={() => undefined} /></>);
     const resume = await screen.findByRole('button', { name: 'Resume verification' });
     expect(await screen.findByText('Waits for the course index · about 11 min left')).toBeVisible();
     expect(resume).toBeDisabled();
@@ -83,11 +84,11 @@ describe('Evidence actions while a course indexes', () => {
 
   it.each([['ready', READY], ['searched by words only', WORDS_ONLY]])('leaves evidence actions open when the course is %s', async (_, status) => {
     api.status.mockResolvedValue(ok(status));
-    wrap(<LessonClaimReviewPanel programId="program-1" lessonId="lesson-1" courseRevision={4} />);
+    wrap(<ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Reading field notes" courseRevision={4} onBack={() => undefined} />);
     const resume = await screen.findByRole('button', { name: 'Resume verification' });
     await waitFor(() => expect(api.status).toHaveBeenCalledWith('program-1'));
     expect(resume).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Add evidence' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add a source' })).toBeEnabled();
   });
 
   it('searches the course’s sources whether it is indexing, ready or searched by words', async () => {

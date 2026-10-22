@@ -23,7 +23,7 @@ use crate::features::learning::dto::{
 use crate::features::learning::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::application::services::source_trust::{
-    claim_profile_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
+    claim_profile_key, standing_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
 };
 use lattice_core::domain::provenance::{
     containment, known_classes, shingles, trust_level, AddedBy, AuthorityAssessment, ClaimProfile,
@@ -103,14 +103,24 @@ pub async fn latest_profile(
     .await
 }
 
-async fn latest_standing(
+/// The latest `source-standing-v2` judgement of `record`'s version, by any
+/// model: its key is computed from the version's text and how the course got
+/// it, as the gate computes it (claim sources design §4.3). A version judged
+/// only under v1 has none: the view shows it as not judged yet.
+pub(in crate::features::learning) async fn latest_standing(
     pool: &SqlitePool,
-    signals_sha256: &str,
+    program_id: &str,
+    record: &ProvenanceRecord,
 ) -> Result<Option<StandingAssessment>> {
+    let Some(content) = super::judgements::content_evidence(pool, program_id, record).await? else {
+        return Ok(None);
+    };
+    // The input hash does not depend on the model; any model's key has it.
+    let key = standing_key(&record.signals, &content, "");
     latest(
         pool,
         "SELECT judgement_json AS judgement FROM source_standing_assessments WHERE signals_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
-        &[signals_sha256, STANDING_POLICY],
+        &[&key.input_sha256, STANDING_POLICY],
         "judgement_json",
     )
     .await
@@ -256,7 +266,7 @@ impl Course<'_> {
             None => TrackRecord::default(),
         };
         let standing = match &record {
-            Some(record) => latest_standing(self.pool(), &record.signals_sha256).await?,
+            Some(record) => latest_standing(self.pool(), self.program_id, record).await?,
             None => None,
         };
         let trust = match (&record, &standing) {
@@ -378,7 +388,8 @@ impl Course<'_> {
             let Some(record) = self.store.provenance(original).await? else {
                 continue;
             };
-            let Some(standing) = latest_standing(self.pool(), &record.signals_sha256).await? else {
+            let Some(standing) = latest_standing(self.pool(), self.program_id, &record).await?
+            else {
                 continue;
             };
             let own = Box::pin(self.level(&source, &record, &standing, subject, false)).await?;

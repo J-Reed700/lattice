@@ -10,19 +10,19 @@ use crate::domain::provenance::signals::{
 use crate::domain::provenance::standing::{PublisherKind, TrackRecord};
 use crate::domain::provenance::NamedEntity;
 
-struct Case {
-    origin: Origin,
-    signals: ProvenanceSignals,
-    standing: StandingAssessment,
-    subject: Option<ClaimSubject>,
-    relation: Option<AuthorityAssessment>,
-    inherited: Vec<InheritedTrust>,
-    overrides: Overrides,
-    added_by: AddedBy,
+pub(super) struct Case {
+    pub(super) origin: Origin,
+    pub(super) signals: ProvenanceSignals,
+    pub(super) standing: StandingAssessment,
+    pub(super) subject: Option<ClaimSubject>,
+    pub(super) relation: Option<AuthorityAssessment>,
+    pub(super) inherited: Vec<InheritedTrust>,
+    pub(super) overrides: Overrides,
+    pub(super) added_by: AddedBy,
 }
 
 impl Case {
-    fn web(
+    pub(super) fn web(
         url: &str,
         standing: Standing,
         editorial: EditorialProcess,
@@ -67,6 +67,7 @@ impl Case {
                 model: "m".into(),
                 signals_sha256: "s".into(),
                 track_record: TrackRecord::default(),
+                work: WorkEvidence::default(),
             },
             subject: Some(fetch()),
             relation: None,
@@ -76,7 +77,7 @@ impl Case {
         }
     }
 
-    fn related(mut self, relation: SubjectRelation) -> Self {
+    pub(super) fn related(mut self, relation: SubjectRelation) -> Self {
         self.relation = Some(AuthorityAssessment {
             origin_key: self.origin.key.clone(),
             subject_key: fetch().key,
@@ -92,7 +93,7 @@ impl Case {
         self
     }
 
-    fn level(&self) -> Trust {
+    pub(super) fn level(&self) -> Trust {
         trust_level(&LevelInputs {
             program_id: "course-1",
             source_id: "source-1",
@@ -118,7 +119,7 @@ fn fetch() -> ClaimSubject {
     )
 }
 
-fn codes(trust: &Trust) -> Vec<ReasonCode> {
+pub(super) fn codes(trust: &Trust) -> Vec<ReasonCode> {
     trust.reasons.iter().map(|reason| reason.code).collect()
 }
 
@@ -473,6 +474,10 @@ fn pasted_text_without_an_origin_says_it_was_added_by_you() {
     case.origin = Origin::pasted("v-9");
     case.added_by = AddedBy::User;
     let trust = case.level();
-    assert_eq!(trust.level, TrustLevel::Unknown);
+    assert_eq!(trust.level, TrustLevel::Established);
     assert_eq!(trust.reasons.last().unwrap().code, ReasonCode::AddedByYou);
+    assert_eq!(
+        trust.reasons.last().unwrap().text,
+        "Added by you · origin not stated"
+    );
 }

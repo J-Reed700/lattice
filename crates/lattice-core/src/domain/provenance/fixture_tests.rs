@@ -56,6 +56,9 @@ struct SourceRow {
     expected: Expected,
     #[serde(default)]
     mirror_of: Option<MirrorRow>,
+    /// The content evidence the v2 judgement saw (`sources-v2.jsonl`).
+    #[serde(default)]
+    content: Option<ContentEvidence>,
     rationale: String,
 }
 
@@ -88,7 +91,10 @@ struct MirrorRow {
 #[test]
 fn every_labelled_source_has_the_origin_the_suffix_list_gives() {
     let mut failures = Vec::new();
-    for row in lines("sources-v1.jsonl") {
+    for row in lines("sources-v1.jsonl")
+        .into_iter()
+        .chain(lines("sources-v2.jsonl"))
+    {
         let row: SourceRow = serde_json::from_value(row).unwrap();
         if let ProvenanceSignals::Web(page) = &row.signals {
             let computed = Origin::of_url(&page.resolved_url).unwrap();
@@ -110,9 +116,36 @@ fn every_labelled_source_gets_its_labelled_level_from_its_labelled_judgements() 
     let languages: std::collections::BTreeSet<&str> =
         rows.iter().map(|r| r.language.as_str()).collect();
     assert!(languages.len() >= 6, "{languages:?}");
+    let failures = level_failures(&rows);
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The v2 rows (claim sources design §14.1): content evidence beside the
+/// signals, the ladder for unidentified publishers, the owner's own
+/// account and the user's own sources, in every area plus a biology set
+/// with no vendor at all.
+#[test]
+fn every_v2_source_gets_its_labelled_level_from_its_judgement_and_content() {
+    let raw = lines("sources-v2.jsonl");
+    let areas: std::collections::BTreeSet<&str> =
+        raw.iter().filter_map(|row| row["area"].as_str()).collect();
+    for area in [
+        "biology", "history", "medicine", "law", "science", "cooking", "news",
+    ] {
+        assert!(areas.contains(area), "{area} missing from {areas:?}");
+    }
+    let rows: Vec<SourceRow> = raw
+        .iter()
+        .map(|row| serde_json::from_value(row.clone()).unwrap())
+        .collect();
+    let failures = level_failures(&rows);
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+fn level_failures(rows: &[SourceRow]) -> Vec<String> {
     let mut levels: HashMap<String, TrustLevel> = HashMap::new();
     let mut failures = Vec::new();
-    for row in &rows {
+    for row in rows {
         assert!(!row.rationale.trim().is_empty(), "{}", row.id);
         let origin = match &row.signals {
             ProvenanceSignals::Web(page) => page.origin.clone(),
@@ -139,6 +172,11 @@ fn every_labelled_source_gets_its_labelled_level_from_its_labelled_judgements() 
             model: "label".into(),
             signals_sha256: row.signals.signals_sha256(),
             track_record: TrackRecord::default(),
+            work: row
+                .content
+                .as_ref()
+                .map(WorkEvidence::of)
+                .unwrap_or_default(),
         };
         let relation = AuthorityAssessment {
             origin_key: origin.key.clone(),
@@ -184,7 +222,7 @@ fn every_labelled_source_gets_its_labelled_level_from_its_labelled_judgements() 
         }
         levels.insert(row.id.clone(), trust.level);
     }
-    assert!(failures.is_empty(), "{failures:#?}");
+    failures
 }
 
 // Independence ----------------------------------------------------------------------------
@@ -449,8 +487,23 @@ fn json_name<T: serde::Serialize>(value: &T, tag: &str) -> Value {
 fn every_sufficiency_case_decides_as_labelled() {
     let cases = lines("sufficiency-cases-v1.jsonl");
     assert!(cases.len() >= 40);
+    let failures = sufficiency_failures(&cases);
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The best-available cases (claim sources design §6.1, §14.1): each case
+/// carries what the course has on the subject (`available`).
+#[test]
+fn every_v2_sufficiency_case_decides_as_labelled() {
+    let cases = lines("sufficiency-cases-v2.jsonl");
+    assert!(cases.iter().any(|case| case.get("available").is_some()));
+    let failures = sufficiency_failures(&cases);
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+fn sufficiency_failures(cases: &[Value]) -> Vec<String> {
     let mut failures = Vec::new();
-    for case in &cases {
+    for case in cases {
         let id = case["id"].as_str().unwrap();
         let profile = profile_of(case);
         let newest = case.get("newest_primary").map(|n| {
@@ -514,7 +567,16 @@ fn every_sufficiency_case_decides_as_labelled() {
                 }
             })
             .collect();
-        let decision = decide(&profile, &supports, &contrary, &bars_of(case));
+        let decision = decide(
+            &profile,
+            &supports,
+            &contrary,
+            &bars_of(case),
+            &case
+                .get("available")
+                .map(enum_of::<Available>)
+                .unwrap_or_default(),
+        );
         let resolutions = resolve_all(&profile, &supports, &contrary);
         let overturned = overturn(&decision, &resolutions);
         let expected = &case["expected"];
@@ -609,7 +671,7 @@ fn every_sufficiency_case_decides_as_labelled() {
             }
         }
     }
-    assert!(failures.is_empty(), "{failures:#?}");
+    failures
 }
 
 // Citation chains and injection -----------------------------------------------------------

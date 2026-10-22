@@ -4,6 +4,8 @@
 //! does not fit is halved, and a claim the batch leaves unusable is rechecked
 //! on its own. This is the whole model check a lesson claim gets; whether its
 //! support is enough is the provenance gate's decision, which makes no call.
+//! A pair's evidence is one `passage`, or a page of `passages` each with the
+//! source label the lesson check puts above it (`requests::labelled`).
 use super::*;
 
 #[tokio::test]
@@ -56,9 +58,24 @@ async fn live_claim_pairs_eval() -> Result<()> {
         512,
         CheckPolicy::Strict,
     );
+    // A pair holds one `passage`, or a page of `passages`, each `{label,
+    // text}`: a labelled passage reaches the judge as the lesson check shows
+    // it, its label line above its text (`requests::labelled`).
     let target = |pair: &serde_json::Value| LocatedClaim {
         claim: pair["claim"].as_str().unwrap().into(),
-        passages: vec![pair["passage"].as_str().unwrap().into()],
+        passages: match pair["passages"].as_array() {
+            Some(page) => page
+                .iter()
+                .map(|passage| {
+                    let text = passage["text"].as_str().unwrap();
+                    match passage["label"].as_str() {
+                        Some(label) => format!("{label}\n{text}"),
+                        None => text.to_owned(),
+                    }
+                })
+                .collect(),
+            None => vec![pair["passage"].as_str().unwrap().into()],
+        },
     };
     let mut results = std::fs::OpenOptions::new()
         .create(true)
@@ -119,7 +136,8 @@ async fn live_claim_pairs_eval() -> Result<()> {
                 "{}",
                 serde_json::json!({
                     "id": pair["id"], "checker": checker_name, "label": pair["label"],
-                    "difficulty": pair["difficulty"], "verdict": verdict, "reason": reason,
+                    "difficulty": pair["difficulty"], "kind": pair["kind"],
+                    "verdict": verdict, "reason": reason,
                     "latency_ms": latency_ms, "batch": group.len(), "calls": calls,
                 })
             )?;

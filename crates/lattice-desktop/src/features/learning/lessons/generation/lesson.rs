@@ -414,6 +414,7 @@ pub async fn prepare_lesson_with_references<'a>(
             raw,
             output_tokens,
             references,
+            &[],
         )
         .await?
     };

@@ -3,14 +3,24 @@
 //! the review and its items are assembled by the claim review service, which
 //! knows unit titles and source titles.
 
+mod attach;
 mod history;
+mod presentation;
 mod trust;
+
+pub use attach::{AttachEvidenceDto, AttachScopeDto};
 
 pub use history::{
     AttachOutcomeDto, CheckDto, CheckResultDto, CheckerDto, CheckerRoleDto, ClaimEventDto,
     ClaimEventPayloadDto, EvidenceSeenDto, ProvenanceDto, UserActionDto,
 };
-pub use trust::{CountedSupportDto, StandingAssessedDto, TrustCauseDto};
+pub use presentation::{
+    ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto,
+    ResearchSummaryDto,
+};
+pub use trust::{
+    source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
+};
 
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimState, LessonReviewState, ReopenCause, RepairOutcome,
@@ -72,7 +82,12 @@ pub struct ClaimCountsDto {
     pub general_knowledge: usize,
     pub queued: usize,
     pub open: usize,
-    pub removed: usize,
+    /// Removed by the user.
+    pub removed_by_you: usize,
+    /// Edited away by the user (checker design §11).
+    pub edited_by_you: usize,
+    /// Rewritten or removed by the machine's repairs.
+    pub rewritten: usize,
 }
 
 impl From<ClaimCounts> for ClaimCountsDto {
@@ -83,7 +98,9 @@ impl From<ClaimCounts> for ClaimCountsDto {
             general_knowledge: counts.general_knowledge,
             queued: counts.queued,
             open: counts.open,
-            removed: counts.removed,
+            removed_by_you: counts.removed_by_you,
+            edited_by_you: counts.edited_by_you,
+            rewritten: counts.rewritten,
         }
     }
 }
@@ -118,6 +135,14 @@ pub struct ClaimReviewItemDto {
     /// (`StandingAssessed`): whether its support met the bar for its kind,
     /// and why. Null when the gate did not decide the claim's state.
     pub sufficiency: Option<LearningSufficiencyDto>,
+    /// The claim in its sentence and paragraph, as plain text.
+    pub presentation: ClaimPresentationDto,
+    /// The strongest counted support, else the contradicting passage.
+    pub support: Option<ClaimSupportDto>,
+    /// The other supports the checker found.
+    pub also_supported: Vec<ClaimSupportDto>,
+    /// What research tried.
+    pub tried: ResearchSummaryDto,
 }
 
 /// One checker's latest verdict on a claim.
@@ -217,7 +242,7 @@ impl From<&ClaimState> for ClaimStateDto {
                 at: *at,
                 by: (*by).into(),
             },
-            ClaimState::Edited { at, successor } => Self::Edited {
+            ClaimState::Edited { at, successor, .. } => Self::Edited {
                 at: *at,
                 successor: successor.as_ref().map(|id| id.0.clone()),
             },
@@ -408,8 +433,15 @@ pub struct RepairAttemptDto {
 pub enum RepairOutcomeDto {
     Rewritten,
     Removed,
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
     SupersededByUser,
+    /// Left to the user without a rewrite: the sentence also states
+    /// something verified or waiting (claim sources design §18.5).
+    NotAttempted {
+        reason: String,
+    },
 }
 
 impl From<&RepairOutcome> for RepairOutcomeDto {
@@ -421,6 +453,9 @@ impl From<&RepairOutcome> for RepairOutcomeDto {
                 reason: reason.clone(),
             },
             RepairOutcome::SupersededByUser => Self::SupersededByUser,
+            RepairOutcome::NotAttempted { reason } => Self::NotAttempted {
+                reason: reason.clone(),
+            },
         }
     }
 }
@@ -471,8 +506,9 @@ impl From<ClaimActionKind> for ClaimActionKindDto {
     }
 }
 
-/// What the user asked for on a claim (§5.1, §5.4); `resolve_learning_claim`
-/// carries it with the lesson's `expected_revision`.
+/// What the user asked for on a claim (§5.1); `resolve_learning_claim`
+/// carries it with the lesson's `expected_revision`. Evidence is attached
+/// through `attach_learning_claim_evidence` instead.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ClaimActionRequestDto {
@@ -491,25 +527,6 @@ pub enum ClaimActionRequestDto {
     AcceptAllGeneralKnowledge,
     ResearchWithHint {
         hint: String,
-    },
-    AttachSavedSource {
-        #[serde(rename = "sourceVersionId")]
-        source_version_id: String,
-        #[serde(rename = "startByte")]
-        start_byte: usize,
-        #[serde(rename = "endByte")]
-        end_byte: usize,
-    },
-    AttachLink {
-        url: String,
-    },
-    AttachDocument {
-        #[serde(rename = "documentId")]
-        document_id: String,
-    },
-    AttachText {
-        title: String,
-        text: String,
     },
     Undo,
 }

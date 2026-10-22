@@ -1,132 +1,81 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
+import { claimFixture, holdLessonForReview, unsupportedCommands } from './helpers/claimReviewFixtures';
 import { installLearningStudioBackend } from './helpers/learningStudioBackend';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 
-type LearningState = {
-  program: { modules: Array<{ lessons: Array<{ id: string; title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> };
-  planWorkspace: { programId: string; programRevision: number; jobs: unknown[] };
-  claimReviews: Record<string, unknown>;
-  claimActions: unknown[];
-  unsupportedCommands: string[];
-};
+const NOTES = { sourceId: 'source-field-notes', title: 'Public field notes', site: null, kind: 'your_file', url: null };
 
-/** Hold the first lesson for review with a contradicted and an unsupported claim. */
-async function holdLessonForReview(page: Page) {
-  return page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: LearningState }).__LATTICE_LEARNING_STATE__;
-    const lesson = state.program.modules[0].lessons[0];
-    lesson.preparation = 'outline';
-    lesson.blocks = [];
-    lesson.questions = [];
-    const finishedAt = Date.now() - 60_000;
-    state.planWorkspace.jobs = [{
-      id: 'held-job', programId: state.planWorkspace.programId, operationId: 'operation', kind: 'lesson_preparation', payloadSha256: 'fixture',
-      baseRevisionNumber: state.planWorkspace.programRevision, status: 'completed', progressCompleted: 1, progressTotal: 1,
-      progressMessage: 'Needs your review: 2 claims', activity: null, resultId: `needs_review:${lesson.id}`, error: null, retryOfJobId: null,
-      createdAt: finishedAt - 3_600_000, startedAt: finishedAt - 3_600_000, finishedAt,
-    }];
-    const passage = { sourceVersionId: 'source-version-field-notes-1', title: 'Public field notes', url: null, text: 'A careful comparison records the chosen measure and the observation period.', startByte: 0, endByte: 76, retrievalKind: 'hybrid' };
-    const location = (unitIndex: number, quote: string) => ({ unitIndex, unitKind: 'block', unitTitle: `Section ${unitIndex + 1} title`, field: 'body', quote, span: null });
-    state.claimReviews[lesson.id] = {
-      lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null, changedSinceStop: false,
-      counts: { verified: 9, confirmed: 0, generalKnowledge: 0, queued: 2, open: 0, removed: 0 },
-      teachingFindings: [],
-      claims: [
-        { claimId: 'contradicted', location: location(0, 'A comparison always proves a cause.'), statement: 'A comparison always proves a cause.',
-          state: { state: 'queued' }, verdictKind: { kind: 'contradicted' }, reason: 'The notes say a comparison records limits; it does not prove causes.',
-          evidence: [{ passage, addedBy: 'outline' }], supportingQuote: null,
-          research: [{ queries: ['does comparison prove causation'], sourcesAdded: [], passagesFound: 0, at: finishedAt - 10_000 }],
-          repairs: [{ attempt: 1, escalated: false, before: 'A comparison always proves a cause.', after: null, outcome: { outcome: 'rejected', reason: 'The section came back with the wrong number of paragraphs.' }, at: finishedAt - 5_000 }],
-          executions: [], human: null, availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'], history: [], localCheck: null, verifierCheck: null },
-        { claimId: 'unsupported', location: location(1, 'Samples are always complete.'), statement: 'Samples are always complete.',
-          state: { state: 'queued' }, verdictKind: { kind: 'unsupported' }, reason: 'No saved passage states that samples are complete.',
-          evidence: [], supportingQuote: null, research: [], repairs: [], executions: [], human: null,
-          availableActions: ['confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint'], history: [], localCheck: null, verifierCheck: null },
-      ],
-    };
-    return lesson.id;
-  });
-}
-
-test('A lesson held for review lists each claim with what was compared, takes the user’s fixes, and resumes', async ({ page, browserName }) => {
+test('A held lesson is one line on the course page; its review screen takes the user’s fixes one claim at a time, then resumes', async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await page.goto('/studio');
   await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
-  const lessonId = await holdLessonForReview(page);
+  const lesson = await holdLessonForReview(page, [
+    claimFixture({ id: 'contradicted', statement: 'A comparison always proves a cause.', unitIndex: 0, verdict: 'contradicted', source: NOTES, role: 'contradicts',
+      quote: 'A comparison records limits; it does not prove causes.', context: 'A careful comparison records the chosen measure and the observation period.' }),
+    claimFixture({ id: 'unsupported', statement: 'Samples are always complete.', unitIndex: 1, verdict: 'unsupported' }),
+  ]);
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
 
-  // Not a failure: the progress area becomes the claim list.
-  const progress = page.getByRole('region', { name: 'Lesson preparation progress' });
-  await expect(progress.getByRole('heading', { name: 'Lesson preparation is waiting for you' })).toBeVisible();
-  await expect(progress.getByText(/failed/i)).toHaveCount(0);
-  const panel = progress.getByRole('region', { name: 'Claim review' });
-  await expect(panel.getByRole('heading', { name: /Needs your review · 2 claims/ })).toBeVisible();
-  // The lesson card names the state, not "Outline" and never "failed".
-  await expect(page.locator(`#lesson-${lessonId} > button`).getByText('Needs your review · 2 claims', { exact: true })).toBeVisible();
+  // The course page knows counts and states, never claim text.
+  const row = page.locator(`#lesson-${lesson.id}`);
+  await expect(row.getByText('2 claims need you')).toBeVisible();
+  await expect(page.getByText('A comparison always proves a cause.')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: /claim review/i })).toHaveCount(0);
+  await row.getByRole('button', { name: 'Review', exact: true }).click();
+
+  // The review screen: the queue beside one claim in focus.
+  await expect(page).toHaveURL(/review=claims/);
+  const queue = page.getByRole('navigation', { name: 'Claims waiting for you' });
+  await queue.getByLabel('Group by').selectOption('source');
+  await expect(queue.getByRole('region', { name: 'No source states it · 2 claims' })).toBeVisible();
+  const focus = page.getByRole('article', { name: 'Claim in focus' });
+  await expect(focus.getByText('A source says otherwise.')).toBeVisible();
+  const against = focus.getByRole('region', { name: 'says otherwise' });
+  await expect(against.locator('mark')).toHaveText('A comparison records limits; it does not prove causes.');
 
   // Nothing changed yet: Resume says why it is disabled.
-  const resume = panel.getByRole('button', { name: 'Resume verification' });
+  const resume = page.getByRole('button', { name: 'Resume verification' });
   await expect(resume).toBeDisabled();
-  await expect(resume).toHaveAccessibleDescription('Nothing changed since the last pass. Resolve a claim or add evidence first.');
+  await expect(resume).toHaveAccessibleDescription('Nothing changed since the last check. Resolve a claim or add a source first.');
 
-  // Keyboard: the claim headers are one tab stop, arrows move between them.
-  const headers = panel.locator('[data-claim-header]');
-  await expect(headers).toHaveCount(2);
-  await headers.first().focus();
-  await page.keyboard.press('ArrowDown');
-  await expect(headers.nth(1)).toBeFocused();
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('Enter');
-  await expect(headers.first()).toHaveAttribute('aria-expanded', 'true');
-
-  // The contradicted claim: verdict, reason, the passage compared, what was tried.
-  const first = panel.getByRole('article').filter({ hasText: 'A comparison always proves a cause.' });
-  await expect(first.getByText('A passage says otherwise.')).toBeVisible();
-  await expect(first.getByText(/does not prove causes/)).toBeVisible();
-  await expect(first.getByText('A careful comparison records the chosen measure and the observation period.')).toBeVisible();
-  await expect(first.getByText('Saved with the course')).toBeVisible();
-  await expect(first.getByText(/Searched: “does comparison prove causation”/)).toContainText('No page added.');
-  await expect(first.getByText(/Repair rejected: The section came back with the wrong number of paragraphs/)).toBeVisible();
-  await first.getByRole('button', { name: 'Open in reader' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  // A saved source version is not a file: the reader shows the passage as saved.
-  await expect(page.getByRole('dialog').getByText('A careful comparison records the chosen measure and the observation period.').first()).toBeVisible();
-  await page.keyboard.press('Escape');
-
-  // Confirming a contradiction needs a note; Undo takes it back.
-  await first.getByRole('button', { name: 'Confirm anyway (note required)' }).click();
-  await expect(first.getByRole('button', { name: 'Confirm with this note' })).toBeDisabled();
-  await first.getByLabel('Why the claim is right (required)').fill('In this course the comparison is a controlled experiment.');
-  await first.getByRole('button', { name: 'Confirm with this note' }).click();
-  await expect(panel.getByText('Claim confirmed. 1 remains.')).toBeVisible();
-  await panel.getByRole('button', { name: 'Undo' }).first().click();
-  await expect(panel.getByText('Undone. 2 remain.')).toBeVisible();
+  // Accepting a contradiction needs a note; Undo takes it back.
+  await focus.getByRole('button', { name: 'Accept with a note' }).click();
+  await expect(focus.getByRole('button', { name: 'Accept with this note' })).toBeDisabled();
+  await focus.getByLabel('Why the claim is right (required)').fill('In this course the comparison is a controlled experiment.');
+  await focus.getByRole('button', { name: 'Accept with this note' }).click();
+  await expect(page.getByText('Accepted. 1 left.')).toBeVisible();
+  await expect(focus.getByText('Samples are always complete.')).toBeVisible();
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByText('Undone. 2 left.')).toBeVisible();
 
   // A link the site refuses: the honest message and the way forward.
-  await headers.nth(1).click();
-  const second = panel.getByRole('article').filter({ hasText: 'Samples are always complete.' });
-  await second.getByRole('button', { name: 'Add evidence' }).click();
-  await second.getByLabel('Page address').fill('https://paywalled.example.com/403/sampling');
-  await second.getByRole('button', { name: 'Add and check' }).click();
-  await expect(second.getByText('paywalled.example.com refused the request (HTTP 403).')).toBeVisible();
-  await second.getByRole('button', { name: 'Open it in your browser, then paste the relevant text' }).click();
-  await expect(second.getByLabel('Where it is from')).toHaveValue('Text from https://paywalled.example.com/403/sampling');
-  await second.getByLabel('Text').fill('Every sample in the study was complete.');
-  await second.getByRole('button', { name: 'Add and check' }).click();
-  await expect(panel.getByText(/Verified against Text from https:\/\/paywalled.example.com\/403\/sampling/).first()).toBeVisible();
+  await queue.getByRole('button', { name: /Samples are always complete\./ }).click();
+  await focus.getByRole('button', { name: 'Add a source' }).click();
+  const sheet = page.getByRole('region', { name: 'Add a source for this claim' });
+  // The claim's group holds another waiting claim, so the sheet checks it too unless the user unticks it (§3.6).
+  await expect(sheet.getByRole('checkbox', { name: /Also check the 1 other claim that waits/ })).toBeChecked();
+  await sheet.getByLabel('Page address').fill('https://paywalled.example.com/403/sampling');
+  await sheet.getByRole('button', { name: 'Add and check' }).click();
+  await expect(sheet.getByText('paywalled.example.com refused the request (HTTP 403).')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Open it in your browser, then paste the relevant text' }).click();
+  await expect(sheet.getByLabel('Where it is from')).toHaveValue('https://paywalled.example.com/403/sampling');
+  await sheet.getByLabel('Text').fill('Field protocol, section 4.\nSamples are always complete.');
+  await sheet.getByRole('button', { name: 'Add and check' }).click();
+  await expect(page.getByText(/Verified 1 of 2 claims; 1 is not mentioned by it\./)).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await panel.screenshot({ path: `e2e-results/lesson-claim-review-narrow-${browserName}.png` });
+  await page.screenshot({ path: `e2e-results/lesson-claim-review-narrow-${browserName}.png` });
+  await page.setViewportSize({ width: 1280, height: 800 });
 
-  // Something changed: Resume starts a new attempt of the held job.
+  // Something changed: Resume starts a new attempt of the held job and returns to the course page.
   await expect(resume).toBeEnabled();
   await resume.click();
-  await expect(page.getByRole('region', { name: 'Lesson preparation progress' }).getByRole('status').first()).toContainText(/Preparing your lesson|Preparation will resume/);
+  await expect(page).not.toHaveURL(/review=claims/);
+  await expect(page.getByRole('region', { name: 'Lesson preparation' }).getByRole('status').first()).toContainText(/Preparing|Preparation will resume/);
 
-  const unsupported = await page.evaluate(() => (window as unknown as { __LATTICE_LEARNING_STATE__: LearningState }).__LATTICE_LEARNING_STATE__.unsupportedCommands);
-  expect(unsupported).toEqual([]);
+  expect(await unsupportedCommands(page)).toEqual([]);
 });
 
 test('Turning on the Verifier audit names the provider and what is sent, and needs the confirm button', async ({ page }) => {

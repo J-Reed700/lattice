@@ -1,23 +1,23 @@
 //! Lesson claim review commands (§7.4): read a lesson's review, act on a
-//! claim, keep a teaching finding as written, resume the review, and
-//! capture an attached page's frozen copy again. Attaching evidence runs here, in the command's own task, through
-//! the scheduler like any model call (§9).
+//! claim, attach evidence to claims, keep a teaching finding as written,
+//! resume the review, and capture an attached page's frozen copy again.
+//! Attaching evidence runs here, in the command's own task, through the
+//! scheduler like any model call (§9).
 
 use super::*;
 use std::sync::Arc;
 
-use crate::features::learning::curriculum::LearningGenerationJobStatus;
-use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::features::learning::lessons::claim_reviews::attach::{
-    self, report::ClaimAttachReportDto, report::SnapshotNoteDto, AttachDeps, AttachRequest,
-    Evidence,
+    self, report::ClaimAttachProgressDto, report::ClaimAttachReportDto, report::SnapshotNoteDto,
+    AttachDeps, AttachRequest, Others,
 };
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
     export_file_name, CheckerAccuracyDto, CheckerExamples,
 };
 use crate::features::learning::lessons::claim_reviews::dto::{
-    ClaimActionRequestDto, LessonClaimReviewDto,
+    AttachEvidenceDto, AttachScopeDto, ClaimActionRequestDto, LessonClaimReviewDto,
 };
+use crate::features::learning::lessons::claim_reviews::recheck::running_job;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use crate::features::learning::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
@@ -48,8 +48,22 @@ pub struct ResolveLearningClaimRequestDto {
 pub struct ResolveLearningClaimResultDto {
     /// The review's revision after the action: send it with the next one.
     pub revision: i64,
-    /// What attaching evidence found; null for the other actions.
-    pub attach: Option<ClaimAttachReportDto>,
+}
+
+/// Evidence the user attaches, and the claims it is checked for (UI design
+/// §5.3).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachLearningClaimEvidenceRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// The claim the attach is recorded on; the first of `scope` when a
+    /// scope is given.
+    pub claim_id: String,
+    /// The review's revision the user acted on.
+    pub expected_revision: i64,
+    pub evidence: AttachEvidenceDto,
+    pub scope: AttachScopeDto,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -103,20 +117,6 @@ fn claim_reviews(container: &Container) -> ClaimReviewService {
     ClaimReviewService::new(container.db_pool().clone())
 }
 
-/// The lesson's preparation job while it runs, for event provenance.
-async fn running_job(container: &Container, ledger: &Ledger) -> Option<String> {
-    let job_id = &ledger.review.as_ref()?.job_id;
-    let job = LearningCurriculumRepository::new(container.db_pool().clone())
-        .job(job_id)
-        .await
-        .ok()?;
-    matches!(
-        job.status,
-        LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
-    )
-    .then_some(job.id)
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_lesson_claim_review(
@@ -135,32 +135,49 @@ pub async fn resolve_learning_claim(
     request: ResolveLearningClaimRequestDto,
     container: State<'_, Container>,
 ) -> Result<ResolveLearningClaimResultDto, ApiError> {
-    let store = claim_ledger(&container);
-    let ledger = store.load(&request.lesson_id).await?;
+    in_course(
+        &claim_ledger(&container).load(&request.lesson_id).await?,
+        &request.program_id,
+    )?;
+    let revision = claim_reviews(&container)
+        .resolve(
+            &request.lesson_id,
+            &request.claim_id,
+            request.action,
+            request.expected_revision,
+        )
+        .await?;
+    Ok(ResolveLearningClaimResultDto { revision })
+}
+
+/// The lesson's review belongs to the course the request names.
+fn in_course(ledger: &Ledger, program_id: &str) -> Result<(), ApiError> {
     if ledger
         .review
         .as_ref()
-        .is_some_and(|review| review.program_id != request.program_id)
+        .is_some_and(|review| review.program_id != program_id)
     {
         return Err(ApiError::from(AppError::NotFound(
             "Lesson not found in this course".into(),
         )));
     }
-    let Some(evidence) = Evidence::of(&request.action) else {
-        let revision = claim_reviews(&container)
-            .resolve(
-                &request.lesson_id,
-                &request.claim_id,
-                request.action,
-                request.expected_revision,
-            )
-            .await?;
-        return Ok(ResolveLearningClaimResultDto {
-            revision,
-            attach: None,
-        });
-    };
-    let job_id = running_job(&container, &ledger).await;
+    Ok(())
+}
+
+/// Attach the user's evidence to a claim (§5.4): save it as a course
+/// source, check the claim against it, then the other open claims in scope,
+/// reporting each stage on `on_progress`.
+#[tauri::command]
+#[specta::specta]
+pub async fn attach_learning_claim_evidence(
+    request: AttachLearningClaimEvidenceRequestDto,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
+    container: State<'_, Container>,
+) -> Result<ClaimAttachReportDto, ApiError> {
+    let store = claim_ledger(&container);
+    let ledger = store.load(&request.lesson_id).await?;
+    in_course(&ledger, &request.program_id)?;
+    let job_id = running_job(container.db_pool(), &ledger).await;
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
@@ -171,7 +188,14 @@ pub async fn resolve_learning_claim(
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
     let claim_id = ClaimId(request.claim_id.clone());
-    let report = attach::attach(
+    let scoped: Vec<ClaimId> = match &request.scope {
+        AttachScopeDto::Claim => Vec::new(),
+        AttachScopeDto::Claims { claim_ids } => claim_ids.iter().cloned().map(ClaimId).collect(),
+    };
+    let progress = move |stage: ClaimAttachProgressDto| {
+        let _ = on_progress.send(stage);
+    };
+    let report = attach::attach_to(
         &AttachDeps {
             pool: container.db_pool(),
             store: store.as_ref(),
@@ -187,14 +211,13 @@ pub async fn resolve_learning_claim(
             lesson_id: &request.lesson_id,
             claim_id: &claim_id,
             expected_revision: Revision(request.expected_revision),
-            evidence,
+            evidence: request.evidence.into(),
         },
+        Others::Only(&scoped),
+        &progress,
     )
     .await?;
-    Ok(ResolveLearningClaimResultDto {
-        revision: report.revision,
-        attach: Some(report),
-    })
+    Ok(report)
 }
 
 /// "Keep as written": the user settles a teaching finding the repairs did

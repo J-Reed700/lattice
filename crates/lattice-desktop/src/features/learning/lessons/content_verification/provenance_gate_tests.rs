@@ -104,6 +104,7 @@ fn weighed(
             relations: &[],
             bars: &bars(),
             policy: &POLICY,
+            available: None,
         },
     )
 }
