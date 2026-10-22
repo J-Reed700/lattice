@@ -25,9 +25,9 @@ use lattice_core::domain::learning::claim_review::{
     TrustVerdict, UnitKind, UserAction,
 };
 use lattice_core::domain::provenance::{
-    decide, AddedBy, ClaimKind, ClaimProfile, ClusterId, EffectiveBars, LabelSource, OriginKey,
-    Outcome, OutcomeRecord, PassageKind, SourceDates, StandingAssessment, StaticBars, Support,
-    TemporalScope, TemporalValidity, Trust, TrustLevel, TrustOverride, POLICY,
+    decide, AddedBy, Available, ClaimKind, ClaimProfile, ClusterId, EffectiveBars, LabelSource,
+    OriginKey, Outcome, OutcomeRecord, PassageKind, SourceDates, StandingAssessment, StaticBars,
+    Support, TemporalScope, TemporalValidity, Trust, TrustLevel, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
 use serde_json::json;
@@ -80,6 +80,7 @@ fn below_the_bar(version: &str) -> TrustAssessment {
             &supports,
             &[],
             &EffectiveBars::unmoved(&StaticBars::table(), &POLICY),
+            &Available::default(),
         ),
         profile,
         supports,
@@ -89,6 +90,7 @@ fn below_the_bar(version: &str) -> TrustAssessment {
             supporting_quote: QUOTE.into(),
         },
         policy: POLICY.version.into(),
+        available: None,
     }
 }
 
@@ -419,7 +421,11 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
     )
     .await?;
     let record = course.store.provenance(&judged.version_id).await?.unwrap();
-    let key = standing_key(&record.signals, MODEL);
+    let content =
+        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+            .await?
+            .unwrap();
+    let key = standing_key(&record.signals, &content, MODEL);
     course
         .store
         .save_standing(&StoredJudgement {
@@ -498,7 +504,11 @@ async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_de
     )
     .await?;
     let record = course.store.provenance(&chosen.version_id).await?.unwrap();
-    let key = standing_key(&record.signals, MODEL);
+    let content =
+        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+            .await?
+            .unwrap();
+    let key = standing_key(&record.signals, &content, MODEL);
     course
         .store
         .save_standing(&StoredJudgement {
@@ -609,6 +619,7 @@ async fn the_verifier_agreeing_with_an_accepted_claim_is_a_held_outcome() -> Res
         &trust.supports,
         &[],
         &EffectiveBars::unmoved(&StaticBars::table(), &POLICY),
+        &Available::default(),
     );
     let claim = ClaimId(id());
     let local = Checker::Local {

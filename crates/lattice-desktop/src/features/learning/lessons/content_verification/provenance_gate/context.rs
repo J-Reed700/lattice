@@ -4,7 +4,11 @@
 //! ownership for the claim's subject. A judgement the store lacks is made
 //! once with the lesson's model (§12) and saved, so a later pass, an
 //! override or a new relation re-decides without a model call (§18.3).
-//! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16.
+//! A version's standing is judged from its signals and the content evidence
+//! of its saved text (`source-standing-v2`); the standing scope (`scope`)
+//! reads what the store already holds about the course's other versions.
+//! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
+//! docs/design/2026-10-21-claim-official-sources.md §4.3, §7.3.
 
 use super::{SavedText, VersionFacts};
 use crate::features::learning::references::trust::{calibration, SqliteSourceTrustStore};
@@ -15,15 +19,17 @@ use lattice_core::application::services::source_trust::{
 };
 use lattice_core::domain::provenance::{
     containment, effective_date, known_classes, markdown_links, shingles, trust_level, AddedBy,
-    AuthorityAssessment, ClaimProfile, ClaimSubject, EffectiveBars, InheritedTrust, Judged,
-    LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode, RelationEvidence,
-    RelationKind, RelationTarget, SourceDates, SourceRelation, StandingAssessment, TrustLevel,
-    POLICY,
+    AuthorityAssessment, Chosen, ClaimProfile, ClaimSubject, ContentEvidence, EffectiveBars,
+    InheritedTrust, Judged, LevelInputs, Origin, Overrides, ProvenanceRecord, Reason, ReasonCode,
+    RelationEvidence, RelationKind, RelationTarget, SourceDates, SourceRelation,
+    StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+mod scope;
 
 /// Milliseconds in a second: the library stores times in milliseconds, the
 /// provenance domain in seconds.
@@ -145,7 +151,7 @@ struct VersionRecord {
 }
 
 /// The judgements of one verification pass.
-pub(in crate::features::learning::lessons::content_verification) struct Judgements {
+pub(in crate::features::learning) struct Judgements {
     store: SqliteSourceTrustStore,
     pool: SqlitePool,
     program_id: String,
@@ -158,6 +164,9 @@ pub(in crate::features::learning::lessons::content_verification) struct Judgemen
     /// their wording and class matching stays exact.
     known_classes: Vec<String>,
     versions: HashMap<String, Arc<VersionRecord>>,
+    /// The course's versions as the standing scope reads them, loaded once
+    /// per pass (`scope`).
+    course: Option<Arc<Vec<scope::CourseVersion>>>,
 }
 
 impl Judgements {
@@ -176,7 +185,7 @@ impl Judgements {
     /// course's overrides, relations and bars as they are now: what a trust
     /// change re-decides from. Nothing here calls a model; a judgement the
     /// store lacks is an error (`facts` with no model).
-    pub(in crate::features::learning::lessons::content_verification) async fn cached(
+    pub(in crate::features::learning) async fn cached(
         pool: SqlitePool,
         program_id: &str,
         model: &str,
@@ -206,7 +215,23 @@ impl Judgements {
             bars,
             known_classes,
             versions: HashMap::new(),
+            course: None,
         })
+    }
+
+    /// The profile stored for `statement` under this pass's model, if any;
+    /// never a model call (the page-recall eval's standing order).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::features::learning) async fn profile_if_stored(
+        &self,
+        statement: &str,
+    ) -> Result<Option<ClaimProfile>> {
+        let key = claim_profile_key(statement, &self.known_classes, &self.model);
+        Ok(self
+            .store
+            .claim_profile(&key)
+            .await?
+            .map(|saved| saved.value))
     }
 
     pub(in crate::features::learning::lessons::content_verification) fn relations(
@@ -478,7 +503,7 @@ impl Judgements {
             return Ok(record.clone());
         }
         let row = sqlx::query(
-            "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
+            "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
         )
         .bind(&self.program_id)
         .bind(version)
@@ -489,15 +514,21 @@ impl Judgements {
         let added_by = AddedBy::from_column(&added_by).ok_or_else(|| {
             AppError::InternalError(format!("Unknown source origin \"{added_by}\"."))
         })?;
+        let selection_note: Option<String> = row.try_get("selection_note").map_err(db)?;
         let text: String = row.try_get("full_text").map_err(db)?;
         let acquired_at: i64 = row.try_get("acquired_at").map_err(db)?;
         let provenance = self.store.provenance(version).await?;
         let links = provenance
             .as_ref()
             .map_or_else(|| markdown_links(&text), |record| record.links.clone());
+        let saved = SavedText { text, links };
+        let chosen = Chosen {
+            by: added_by,
+            note: selection_note,
+        };
         let judged = match provenance {
             Some(provenance) => {
-                let standing = self.standing(llm, &provenance).await?;
+                let standing = self.standing(llm, &provenance, &saved, chosen).await?;
                 Some((provenance, standing))
             }
             None => None,
@@ -506,25 +537,30 @@ impl Judgements {
             source_id: row.try_get("source_id").map_err(db)?,
             added_by,
             acquired_at: acquired_at / MILLIS_PER_SECOND,
-            saved: Arc::new(SavedText { text, links }),
+            saved: Arc::new(saved),
             judged,
         });
         self.versions.insert(version.to_owned(), record.clone());
         Ok(record)
     }
 
+    /// A version's standing (`source-standing-v2`): judged from its signals
+    /// and the content evidence of its saved text and links, keyed by both.
     async fn standing(
         &self,
         llm: Option<&dyn LLMPort>,
         provenance: &ProvenanceRecord,
+        saved: &SavedText,
+        chosen: Chosen,
     ) -> Result<StandingAssessment> {
-        let key = standing_key(&provenance.signals, &self.model);
+        let content = ContentEvidence::of(&saved.text, &saved.links, &provenance.origin, chosen);
+        let key = standing_key(&provenance.signals, &content, &self.model);
         if let Some(saved) = self.store.standing(&key).await? {
             return Ok(saved.value);
         }
         let llm = llm.ok_or_else(|| not_judged("standing", &provenance.origin.key.0))?;
         let track_record = self.store.track_record(&provenance.origin.key).await?;
-        let judged = judge_standing(llm, &provenance.signals, track_record).await?;
+        let judged = judge_standing(llm, &provenance.signals, &content, track_record).await?;
         let value = judged.value.clone();
         self.store.save_standing(&stored(key, judged)).await?;
         Ok(value)

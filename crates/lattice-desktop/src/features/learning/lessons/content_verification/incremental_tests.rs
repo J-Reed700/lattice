@@ -544,6 +544,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             candidate.clone(),
             3000,
             &ReferenceCollection::lexical(&sources)?,
+            &[],
         )
         .await?;
         // Keep the model name identical but make any new request fail.
@@ -585,6 +586,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             first.clone(),
             3000,
             &ReferenceCollection::lexical(&sources)?,
+            &[],
         )
         .await?;
         assert_eq!(restored, first);
@@ -596,7 +598,8 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &json!({}),
             first,
             3000,
-            &ReferenceCollection::lexical(&sources)?
+            &ReferenceCollection::lexical(&sources)?,
+            &[],
         )
         .await
         .is_err());
@@ -607,7 +610,8 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &json!({}),
             candidate.replace(GOOD, BAD),
             3000,
-            &ReferenceCollection::lexical(&sources)?
+            &ReferenceCollection::lexical(&sources)?,
+            &[],
         )
         .await
         .is_err());

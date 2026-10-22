@@ -261,28 +261,13 @@ fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
         !entry.may_research(),
         "no further research on that evidence"
     );
-    assert!(entry.may_repair(), "its repairs on that evidence are left");
-    entry
-        .append(machine(5), rewrite(1, false, RepairOutcome::Rewritten))
-        .unwrap();
-    entry
-        .append(
-            machine(6),
-            checked(short(vec![blog(), same_publisher.clone()]), "v2"),
-        )
-        .unwrap();
-    entry
-        .append(machine(7), rewrite(2, true, RepairOutcome::Rewritten))
-        .unwrap();
-    entry
-        .append(
-            machine(8),
-            checked(short(vec![blog(), same_publisher]), "v2"),
-        )
-        .unwrap();
     assert!(
-        entry.state().awaits_user(),
-        "two tries on that evidence hand it over: {:?}",
+        !entry.may_repair(),
+        "a claim is never rewritten for standing"
+    );
+    assert!(
+        entry.held_for_standing(),
+        "after research it waits for the user: {:?}",
         entry.state()
     );
 
@@ -489,6 +474,7 @@ fn an_edit_retires_the_claim_and_names_its_successor() {
             machine(8),
             ClaimEvent::Superseded {
                 successor: Some(ClaimId("c2".into())),
+                by: Actor::Machine,
             },
         )
         .unwrap();
@@ -496,8 +482,10 @@ fn an_edit_retires_the_claim_and_names_its_successor() {
         entry.state(),
         &ClaimState::Edited {
             at: 7,
-            successor: Some(ClaimId("c2".into()))
-        }
+            successor: Some(ClaimId("c2".into())),
+            by: Actor::User,
+        },
+        "the user's edit says who changed the text"
     );
     assert!(entry.state().is_resolved());
     assert!(!entry.allows(ClaimActionKind::Edit));
@@ -659,4 +647,91 @@ fn the_card_offers_only_what_the_state_allows() {
         .append(user(2), act(UserAction::GeneralKnowledge, None))
         .is_err());
     assert!(fresh.append(user(2), act(confirm(), None)).is_err());
+}
+
+#[test]
+fn an_insufficient_standing_claim_is_never_a_repair_target_and_waits_after_research() {
+    use crate::domain::provenance::{Bar, ClusterId, CountedSupport, TrustLevel};
+    let short = Some(VerdictKind::InsufficientStanding {
+        bar: Bar::Primary,
+        have: vec![CountedSupport {
+            source_version_id: "v1".into(),
+            origin_cluster: ClusterId("v1".into()),
+            counted: Some(TrustLevel::Established),
+        }],
+    });
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), checked(short.clone(), "v1"))
+        .unwrap();
+    assert!(!entry.may_repair(), "no rewrite for lack of standing");
+    assert!(entry.may_research(), "research may find a stronger source");
+    entry
+        .append(
+            machine(3),
+            ClaimEvent::Researched {
+                queries: vec!["q".into()],
+                sources_added: vec![],
+                passages_found: 0,
+                round_ms_per_claim: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        entry.held_for_standing(),
+        "research found nothing: it waits for the user ({:?})",
+        entry.state()
+    );
+    assert!(!entry.may_repair());
+    assert_eq!(ClaimCounts::tally([&entry]).queued, 1);
+    assert_eq!(end_state([&entry]), LessonReviewState::NeedsReview);
+
+    // A repair recorded before standing stopped being repaired still
+    // replays as it was: stored ledgers load.
+    let mut stored = claim("c2");
+    stored.append(machine(2), checked(short, "v1")).unwrap();
+    assert!(stored
+        .append(machine(3), rewrite(1, false, RepairOutcome::Removed))
+        .is_ok());
+}
+
+#[test]
+fn a_claim_born_of_a_repair_starts_with_its_parents_remaining_attempts() {
+    let born = |attempts_left: u8| {
+        let mut entry = claim("child");
+        entry
+            .append(
+                machine(2),
+                ClaimEvent::BornOfRepair {
+                    parent: ClaimId("parent".into()),
+                    attempts_left,
+                },
+            )
+            .unwrap();
+        entry
+            .append(machine(3), checked(Some(VerdictKind::Unsupported), "v1"))
+            .unwrap();
+        entry
+    };
+    assert!(matches!(
+        born(1).state(),
+        ClaimState::Open {
+            machine_attempts_left: 1,
+            ..
+        }
+    ));
+    assert!(
+        born(0).state().awaits_user(),
+        "a split of a claim with nothing left adds no attempt"
+    );
+    let mut checked_first = verified_claim("c2");
+    assert!(checked_first
+        .append(
+            machine(3),
+            ClaimEvent::BornOfRepair {
+                parent: ClaimId("parent".into()),
+                attempts_left: 1,
+            },
+        )
+        .is_err());
 }

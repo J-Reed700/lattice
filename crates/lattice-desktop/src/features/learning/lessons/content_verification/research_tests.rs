@@ -758,6 +758,7 @@ fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
                 }],
                 reasons: vec![],
             },
+            available: None,
         })),
     }
 }

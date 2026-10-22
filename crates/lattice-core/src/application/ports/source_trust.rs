@@ -48,6 +48,10 @@ pub trait SourceTrustStore: Send + Sync {
 
     async fn save_standing(&self, judgement: &StoredJudgement<StandingAssessment>) -> Result<()>;
 
+    /// The standing judgements stored for `keys`, in key order; a key with
+    /// no row is skipped (claim sources design §7.3).
+    async fn standings(&self, keys: &[JudgementKey]) -> Result<Vec<StandingAssessment>>;
+
     /// The ownership judgement for (origin, subject) in a course under a
     /// policy and model.
     async fn authority(
@@ -64,6 +68,17 @@ pub trait SourceTrustStore: Send + Sync {
         program_id: &str,
         judgement: &StoredJudgement<AuthorityAssessment>,
     ) -> Result<()>;
+
+    /// Every ownership judgement stored for a subject in a course under a
+    /// policy and model, whatever the origin: where the subject's owner is
+    /// believed to publish (claim sources design §7.3).
+    async fn authority_for_subject(
+        &self,
+        program_id: &str,
+        subject_key: &SubjectKey,
+        policy: &str,
+        model: &str,
+    ) -> Result<Vec<AuthorityAssessment>>;
 
     /// The profile for `key` (`input_sha256` is the claim's profile input
     /// hash, `claim_profile_key`).

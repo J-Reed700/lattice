@@ -93,6 +93,12 @@ pub enum ClaimEventPayloadDto {
     Superseded {
         successor: Option<String>,
     },
+    /// A sentence a repair of `parent` added (checker design §9.1).
+    BornOfRepair {
+        parent: String,
+        #[serde(rename = "attemptsLeft")]
+        attempts_left: u8,
+    },
     Reopened {
         cause: ReopenCauseDto,
     },
@@ -180,8 +186,15 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 provenance: provenance.into(),
                 result: result.into(),
             },
-            ClaimEvent::Superseded { successor } => Self::Superseded {
+            ClaimEvent::Superseded { successor, .. } => Self::Superseded {
                 successor: successor.as_ref().map(|id| id.0.clone()),
+            },
+            ClaimEvent::BornOfRepair {
+                parent,
+                attempts_left,
+            } => Self::BornOfRepair {
+                parent: parent.0.clone(),
+                attempts_left: *attempts_left,
             },
             ClaimEvent::Reopened { cause } => Self::Reopened {
                 cause: cause.into(),

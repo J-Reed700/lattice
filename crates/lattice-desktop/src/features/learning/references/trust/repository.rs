@@ -153,6 +153,36 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         Ok(())
     }
 
+    async fn standings(&self, keys: &[JudgementKey]) -> Result<Vec<StandingAssessment>> {
+        let mut found = Vec::new();
+        for key in keys {
+            if let Some(stored) = self.standing(key).await? {
+                found.push(stored.value);
+            }
+        }
+        Ok(found)
+    }
+
+    async fn authority_for_subject(
+        &self,
+        program_id: &str,
+        subject_key: &SubjectKey,
+        policy: &str,
+        model: &str,
+    ) -> Result<Vec<AuthorityAssessment>> {
+        sqlx::query("SELECT judgement_json FROM source_subject_authority WHERE program_id=? AND subject_key=? AND policy=? AND model=? ORDER BY origin_key")
+            .bind(program_id)
+            .bind(&subject_key.0)
+            .bind(policy)
+            .bind(model)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(|row| from_json(row.get::<&str, _>("judgement_json"), "judgement_json"))
+            .collect()
+    }
+
     async fn authority(
         &self,
         program_id: &str,

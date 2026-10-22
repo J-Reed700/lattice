@@ -462,6 +462,9 @@ mod evidence_paging_tests;
 #[path = "two_pass_tests.rs"]
 mod two_pass_tests;
 
+#[path = "standing_reach_tests.rs"]
+mod standing_reach_tests;
+
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
 

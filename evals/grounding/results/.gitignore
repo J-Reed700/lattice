@@ -1,0 +1,4 @@
+# Rows of the claim-corroboration eval hold real excerpts of the owner's saved
+# pages: they stay local (claim sources design §15). Git cannot ignore a
+# parent's path from claim-corroboration-db8397ff/.gitignore, so it is here.
+2026-10-21-claim-corroboration-*.jsonl

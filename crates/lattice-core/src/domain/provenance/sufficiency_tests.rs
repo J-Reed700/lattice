@@ -53,7 +53,13 @@ fn static_bars() -> EffectiveBars {
 }
 
 fn decide_static(profile: &ClaimProfile, supports: &[Support]) -> Decision {
-    decide(profile, supports, &[], &static_bars())
+    decide(
+        profile,
+        supports,
+        &[],
+        &static_bars(),
+        &Available::default(),
+    )
 }
 
 #[test]
@@ -133,6 +139,7 @@ fn an_authoritative_source_is_secondary_and_a_primary_contradiction_blocks_it() 
         &supports,
         &[contrary],
         &static_bars(),
+        &Available::default(),
     );
     let Decision::Insufficient { reasons, .. } = decision else {
         panic!()
@@ -356,6 +363,7 @@ fn a_calibrated_bar_accepts_what_the_users_verdicts_showed_reliable() {
         &[support("blog", "blog", TrustLevel::Established)],
         &[],
         &bars,
+        &Available::default(),
     );
     let Decision::Sufficient { reasons, label, .. } = decision else {
         panic!("{decision:?}")
@@ -383,4 +391,211 @@ fn opinions_need_an_identified_source_and_are_attributed() {
         (bar, missing),
         (Bar::Attributed, Missing::NoIdentifiedSource)
     );
+}
+
+// Best available (claim sources design §6.1) -----------------------------------------------
+
+fn available(ceiling: TrustLevel, considered: usize) -> Available {
+    Available {
+        ceiling: Some(ceiling),
+        considered,
+    }
+}
+
+fn decide_available(
+    profile: &ClaimProfile,
+    supports: &[Support],
+    contrary: &[Contrary],
+    available: &Available,
+) -> Decision {
+    decide(profile, supports, contrary, &static_bars(), available)
+}
+
+fn contrary_at(id: &str, level: TrustLevel) -> Contrary {
+    Contrary {
+        source_version_id: id.into(),
+        origin_cluster: ClusterId(id.into()),
+        trust: Trust {
+            level,
+            reasons: vec![],
+            override_: None,
+        },
+        dates: SourceDates::default(),
+        temporal: TemporalValidity::Valid,
+        quote: "q".into(),
+    }
+}
+
+#[test]
+fn the_courses_strongest_source_on_a_subject_meets_the_bar_as_best_available() {
+    // A kind whose static bar is above Established, so neither the bar nor
+    // corroboration settles it and the best-available rule decides.
+    let decision = decide_available(
+        &profile(ClaimKind::Specification),
+        &[support("book", "book", TrustLevel::Established)],
+        &[],
+        &available(TrustLevel::Established, 3),
+    );
+    let Decision::Sufficient { label, reasons, .. } = decision else {
+        panic!("{decision:?}")
+    };
+    assert_eq!(
+        label,
+        Some(Label::BestAvailable {
+            level: TrustLevel::Established
+        })
+    );
+    assert!(reasons
+        .iter()
+        .any(|reason| reason.code == ReasonCode::MetAsBestAvailable
+            && reason.text.contains("3 sources considered")));
+}
+
+#[test]
+fn nothing_considered_decides_as_the_static_bars_alone() {
+    let decision = decide_available(
+        &profile(ClaimKind::Specification),
+        &[support("book", "book", TrustLevel::Established)],
+        &[],
+        &Available::default(),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Insufficient {
+            missing: Missing::NoPrimaryForSubject,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_stronger_silent_source_blocks_best_available() {
+    let decision = decide_available(
+        &profile(ClaimKind::Specification),
+        &[support("book", "book", TrustLevel::Established)],
+        &[],
+        &available(TrustLevel::Authoritative, 3),
+    );
+    let Decision::Insufficient {
+        missing, reasons, ..
+    } = decision
+    else {
+        panic!("{decision:?}")
+    };
+    assert_eq!(
+        missing,
+        Missing::StrongerSourceSilent {
+            level: TrustLevel::Authoritative
+        }
+    );
+    assert!(reasons
+        .iter()
+        .any(|reason| reason.code == ReasonCode::StrongerSourceSilent));
+}
+
+#[test]
+fn two_independent_community_origins_are_best_available_but_one_is_not() {
+    let spec = profile(ClaimKind::Specification);
+    let community = available(TrustLevel::Community, 4);
+    let two = decide_available(
+        &spec,
+        &[
+            support("a", "a", TrustLevel::Community),
+            support("b", "b", TrustLevel::Community),
+        ],
+        &[],
+        &community,
+    );
+    assert!(matches!(
+        two,
+        Decision::Sufficient {
+            label: Some(Label::BestAvailable {
+                level: TrustLevel::Community
+            }),
+            ..
+        }
+    ));
+    let one = decide_available(
+        &spec,
+        &[support("a", "a", TrustLevel::Community)],
+        &[],
+        &community,
+    );
+    assert!(matches!(one, Decision::Insufficient { .. }));
+    let one_cluster = decide_available(
+        &spec,
+        &[
+            support("a", "same", TrustLevel::Community),
+            support("b", "same", TrustLevel::Community),
+        ],
+        &[],
+        &community,
+    );
+    assert!(matches!(one_cluster, Decision::Insufficient { .. }));
+}
+
+#[test]
+fn a_contrary_at_the_supports_level_blocks_best_available() {
+    let decision = decide_available(
+        &profile(ClaimKind::Specification),
+        &[support("book", "book", TrustLevel::Established)],
+        &[contrary_at("other", TrustLevel::Established)],
+        &available(TrustLevel::Established, 2),
+    );
+    assert!(matches!(decision, Decision::Insufficient { .. }));
+}
+
+#[test]
+fn a_measurement_is_never_best_available() {
+    let decision = decide_available(
+        &profile(ClaimKind::Measurement),
+        &[support("book", "book", TrustLevel::Established)],
+        &[],
+        &available(TrustLevel::Established, 2),
+    );
+    assert!(matches!(decision, Decision::Insufficient { .. }));
+}
+
+#[test]
+fn best_available_in_a_biology_course() {
+    let species = |kind| ClaimProfile {
+        subject: Some(ClaimSubject::new(
+            "Quercus robur",
+            SubjectKind::Other,
+            vec!["English oak".into()],
+            vec!["trees".into()],
+        )),
+        ..profile(kind)
+    };
+    let museum = support("museum", "museum", TrustLevel::Established);
+    let field_guide = support("guide", "guide", TrustLevel::Established);
+    for kind in [ClaimKind::Historical, ClaimKind::General] {
+        let decision = decide_available(
+            &species(kind),
+            &[museum.clone(), field_guide.clone()],
+            &[],
+            &available(TrustLevel::Established, 2),
+        );
+        assert!(
+            matches!(decision, Decision::Sufficient { .. }),
+            "{kind:?}: {decision:?}"
+        );
+    }
+    // A nomenclature code's rule, with the code's publisher in the course
+    // (ceiling Primary) and only the field guide stating it.
+    let decision = decide_available(
+        &species(ClaimKind::Specification),
+        &[field_guide],
+        &[],
+        &available(TrustLevel::Primary, 3),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Insufficient {
+            missing: Missing::StrongerSourceSilent {
+                level: TrustLevel::Primary
+            },
+            ..
+        }
+    ));
 }

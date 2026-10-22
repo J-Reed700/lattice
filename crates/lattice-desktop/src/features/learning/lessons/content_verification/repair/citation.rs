@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 /// The byte spans of `text`'s sentences, trimmed: a sentence ends at a
 /// line break, or at '.', '!' or '?' before whitespace or the end.
-fn sentences(text: &str) -> Vec<(usize, usize)> {
+pub(in crate::features::learning) fn sentences(text: &str) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut start = 0;
     let mut push = |from: usize, to: usize| {

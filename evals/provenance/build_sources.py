@@ -766,8 +766,8 @@ other("src-116", "medicine", "en", WHO_PA,
        "title": "WHO guidelines on physical activity and sedentary behaviour",
        "heading_lines": ["WHO guidelines on physical activity and sedentary behaviour", "Recommendations"],
        "declared_origin": None, "dates": {"acquired_at": ts(ACQUIRED)}},
-      "unknown unknown unknown primary_document - unknown unknown",
-      "A file's headings name the WHO but nothing verifies who made the file; no declared origin.")
+      "unknown unknown unknown primary_document - unknown established",
+      "A file's headings name the WHO but nothing verifies who made the file; no declared origin. The user added it, so it counts as an identified source (claim sources design 2026-10-21 §5 rule 2).")
 other("src-117", "medicine", "en", WHO_PA,
       {"source": "document", "file_name": "who-pa-guidelines.pdf", "mime_type": "application/pdf", "page_count": 104,
        "title": "WHO guidelines on physical activity and sedentary behaviour", "heading_lines": [],
@@ -777,8 +777,8 @@ other("src-117", "medicine", "en", WHO_PA,
       "The user declared the file came from who.int: the user's statement identifies the publisher.")
 other("src-118", "software", "en", ASYNCIO,
       {"source": "pasted", "declared_origin": None, "chars": 1840, "dates": {"acquired_at": ts(ACQUIRED)}},
-      "unknown unknown unknown reference - unknown unknown",
-      "Pasted text with no stated origin: standing unknown, the user's own evidence.")
+      "unknown unknown unknown reference - unknown established",
+      "Pasted text with no stated origin: standing unknown, the user's own evidence. The user added it, so it counts as an identified source (claim sources design 2026-10-21 §5 rule 2).")
 other("src-119", "law", "en", GDPR,
       {"source": "pasted", "declared_origin": {"url": None, "description": "my notes from a data protection course"}, "chars": 960,
        "dates": {"acquired_at": ts(ACQUIRED)}},
