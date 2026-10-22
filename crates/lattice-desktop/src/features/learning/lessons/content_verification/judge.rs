@@ -64,9 +64,10 @@ impl Judged {
 /// cost. `ranking` orders the
 /// passages by how much the check needs them, most first (see [`ranking`]).
 /// A page too long for this judge's window loses passages from the end of
-/// that order: those the calibrated estimate says do not fit, then, when the
-/// backend counts the prompt past the window anyway, as many more as its
-/// refusal says, and the judge is asked again. The judge always reads the
+/// that order: those the count of the request says do not fit, the
+/// backend's own count where it can be asked, then, should the backend
+/// still count the prompt past the window, as many more as its refusal
+/// says, and the judge is asked again. The judge always reads the
 /// passages it is shown in their page order. A passage it was not shown is no
 /// part of the judgment, so the caller binds the finding to the shown ones
 /// alone. Only when not even the most needed passage fits is the claim left
@@ -114,24 +115,44 @@ pub(in crate::features::learning) async fn judge_in_order(
             .collect();
         (positions, texts)
     };
+    let window = llm.max_context_tokens();
     // A page is sized for this judge; one sized for a batch call is cut to
-    // what this judge's window holds, least needed first.
+    // what this judge's window holds, least needed first. Every request is
+    // sized by the count of what it sends, the backend's own where it can
+    // count: a page counted past the room loses as many of its least needed
+    // passages as the count says and is counted again, before anything is
+    // sent.
     let mut kept = ranking.len();
-    while kept > 0 && !checker.located_fits(claim, &shown(kept).1) {
-        kept -= 1;
-    }
-    if kept < passages.len() {
-        tracing::warn!(
-            shown = kept,
-            page = passages.len(),
-            "A claim's page holds more than the single-claim judge's window; checking the passages that fit"
-        );
-    }
+    let mut cut = false;
     loop {
+        let (positions, texts) = shown(kept);
+        let counted = checker.located_prompt_tokens_measured(claim, &texts).await;
+        if window.saturating_sub(counted) < ANSWER_ROOM_TOKENS {
+            if kept == 0 {
+                return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
+            }
+            kept = kept_after_count(
+                llm,
+                &checker,
+                claim,
+                (passages, ranking),
+                kept,
+                (counted, window),
+            );
+            cut = true;
+            continue;
+        }
+        if std::mem::take(&mut cut) {
+            tracing::warn!(
+                shown = kept,
+                page = passages.len(),
+                prompt_tokens = counted,
+                "A claim's page holds more than the single-claim judge's window; checking the passages that fit"
+            );
+        }
         if kept == 0 && !passages.is_empty() {
             return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
-        let (positions, texts) = shown(kept);
         let refusal = {
             let _model_call = crate::features::learning::lesson_progress::model_call();
             match checker.check_passages_or_size_refusal(claim, &texts).await {
@@ -156,7 +177,7 @@ pub(in crate::features::learning) async fn judge_in_order(
         if kept == 0 {
             return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
-        let fewer = kept_after_refusal(
+        let fewer = kept_after_count(
             llm,
             &checker,
             claim,
@@ -166,6 +187,7 @@ pub(in crate::features::learning) async fn judge_in_order(
         );
         tracing::info!(
             prompt_tokens,
+            counted,
             window,
             shown = fewer,
             sent = kept,
@@ -176,14 +198,14 @@ pub(in crate::features::learning) async fn judge_in_order(
 }
 
 /// How many of the `kept` most needed passages (`ranking` into `passages`) a
-/// claim check sends after the backend counted its prompt at
-/// `prompt_tokens`, past `window`: the least needed go until those dropped
-/// cover the overshoot and the answer's room. Each dropped passage's
-/// estimate is scaled by how far the backend's count ran past the estimate
-/// of the whole prompt, so one step usually lands; a step that does not is
-/// refused again with the new numbers. At least one passage always goes, so
-/// each request sends less than the last.
-fn kept_after_refusal(
+/// claim check keeps once its prompt was counted at `prompt_tokens`, leaving
+/// less than the answer's room in `window`: the least needed go until those
+/// dropped cover the overshoot and the answer's room. Each dropped passage's
+/// estimate is scaled by how far the count ran from the estimate of the
+/// whole prompt, so one step usually lands; a step that does not is counted
+/// again. At least one passage always goes, so each count is of less than
+/// the last.
+fn kept_after_count(
     llm: &dyn LLMPort,
     checker: &ClaimChecker<'_>,
     claim: &str,
