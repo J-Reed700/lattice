@@ -372,7 +372,7 @@ export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, r
   const outcome = report.outcome;
   const checked = outcome?.outcome === 'checked' ? outcome.check.result : null;
   const stated = Boolean(checked && checked.verdict !== 'failed');
-  const notStated = Boolean(checked && checked.verdict === 'failed');
+  const notStated = checked?.verdict === 'failed';
   const noPassage = outcome?.outcome === 'no_passage';
   const others = report.others;
   if (scopeSize > 1) {

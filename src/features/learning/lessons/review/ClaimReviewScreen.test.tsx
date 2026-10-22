@@ -20,7 +20,8 @@ vi.mock('@/lib/api', () => ({ default: {
 } }));
 
 const ok = <T,>(data: T) => ({ ok: true, data });
-const BANNED = [/[0-9a-f]{8}-[0-9a-f]{4}-/i, /bytes/i, /hybrid/i, /\bPass\b/, /established/i, /community/i, /\bprimary\b/i, /authoritative/i, /machine/i, /\bkind\b/i];
+// Internal names (§4 house style); "kind of" is plain English the copy deck uses (§4.1), "kind" alone is a field name.
+const BANNED = [/[0-9a-f]{8}-[0-9a-f]{4}-/i, /bytes/i, /hybrid/i, /\bPass\b/, /established/i, /community/i, /\bprimary\b/i, /authoritative/i, /machine/i, /\bkind\b(?! of\b)/i];
 
 /** Each review read answers the next fixture; the last one repeats. */
 function show(data: LessonClaimReviewDto | LessonClaimReviewDto[], onBack = vi.fn()) {
@@ -112,7 +113,8 @@ describe('Claim review screen', () => {
     expect(within(best).getByText(/an unidentified author’s work · not enough on its own for this claim/)).toBeVisible();
     expect(screen.queryByText(/"route": "south"/)).not.toBeInTheDocument();
     await userEvent.click(within(best).getByRole('button', { name: 'Full passage' }));
-    await waitFor(() => expect(within(best).getByText(/"route": "south"/)).toBeInTheDocument());
+    // The code block is highlighted token by token, so read the passage's text rather than one element.
+    await waitFor(() => expect(best.textContent).toMatch(/"route":\s*"south"/));
     expect(best.textContent).not.toMatch(/jsonjson/);
   });
 

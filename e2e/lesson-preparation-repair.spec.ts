@@ -31,7 +31,7 @@ test('Completed checking gives way to visible repair progress: the status line n
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
   const panel = page.getByRole('region', { name: 'Lesson preparation' });
   // Collapsed, the panel is one status line: the lesson, the step, the time, and Pause.
-  await expect(panel.getByRole('status')).toContainText('Preparing Reasoning from field observations · Fact checks & repairs');
+  await expect(panel.getByRole('status')).toContainText('Preparing Compare observations · Fact checks & repairs');
   await expect(panel.getByRole('progressbar')).toHaveCount(0);
   await expect(panel.getByText('Lesson not ready yet')).toHaveCount(0);
   // The repair progress is reached through Details.

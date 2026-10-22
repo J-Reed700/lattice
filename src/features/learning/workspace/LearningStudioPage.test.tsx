@@ -199,8 +199,10 @@ describe('Learning Studio program workflow', () => {
     await user.selectOptions(screen.getByLabelText('Module'), 'module-2');
     expect(screen.getAllByText(/Putting it together gives the course/).some((element) => element.closest('[hidden]') === null)).toBe(true);
     expect(mocks.complete).not.toHaveBeenCalled();
-    const compareCard = screen.getByRole('button', { name: /Compare approaches.*Outline/ }).closest('article');
+    // The row is one line: the title is its own button, and the state sits beside it (§2.2).
+    const compareCard = screen.getByRole('button', { name: /^Compare approaches/ }).closest('article');
     expect(compareCard).not.toBeNull();
+    expect(within(compareCard as HTMLElement).getByText('Outline')).toBeVisible();
     await user.click(within(compareCard as HTMLElement).getByRole('button', { name: 'Prepare lesson' }));
     await waitFor(() => expect(mocks.prepare).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-3', expectedRevision: 1 }));
     expect(screen.getByLabelText('Module')).toBeVisible();

@@ -38,11 +38,15 @@ test('One page added for the whole queue checks every claim, and a source added 
   await page.getByRole('button', { name: lesson.title, exact: true }).click();
   await expect(page).not.toHaveURL(/review=claims/);
   await openStudioSection(page, 'Sources');
-  await page.getByRole('button', { name: 'Add material' }).click();
-  await page.getByRole('button', { name: 'Paste text' }).click();
-  await page.getByLabel('Title').fill('Monarch life cycle notes');
-  await page.getByLabel('Saved text').fill(STATEMENTS[3]);
-  await page.getByRole('button', { name: 'Save source' }).click();
+  await page.getByRole('button', { name: 'Add material', exact: true }).click();
+  const addDialog = page.getByRole('dialog', { name: 'Bring in a source' });
+  await addDialog.getByRole('button', { name: 'Paste text', exact: true }).click();
+  await addDialog.getByLabel('Title', { exact: true }).fill('Monarch life cycle notes');
+  await addDialog.getByLabel('Saved text').fill(STATEMENTS[3]);
+  // On by default: the new source is checked against the claims still waiting.
+  await expect(addDialog.getByRole('checkbox', { name: 'Check the waiting claims against it' })).toBeChecked();
+  await addDialog.getByRole('button', { name: 'Save source' }).click();
+  await expect(addDialog).not.toBeVisible();
   await expect(page.getByText('Checked 2 waiting claims against it: 1 verified.')).toBeVisible();
   await page.getByRole('button', { name: 'Open the review' }).click();
   await expect(page).toHaveURL(/review=claims/);

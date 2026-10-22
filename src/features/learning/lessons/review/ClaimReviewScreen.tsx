@@ -108,7 +108,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     { id: 'review-general', keys: 'G', description: 'General knowledge', handler: () => { if (active?.availableActions.includes('general_knowledge')) void session.run(active, { action: 'general_knowledge' }, 'general_knowledge'); } },
     { id: 'review-undo', keys: 'U', description: 'Undo', handler: () => void session.undoLast() },
     { id: 'review-legend', keys: 'Shift+?', description: 'Keyboard keys', handler: () => setLegend((open) => !open) },
-  ], [session, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  ], [session, active]);  
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
   const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', handler: () => {
     if (reader || trusting) return; // the dialog closes itself

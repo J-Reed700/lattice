@@ -37,7 +37,7 @@ import type {
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
 import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
-import { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } from "./claimReviewBackend";
+import { installClaimReviewBackend, type ClaimReviewBackend, type TrustOverrideRecord } from "./claimReviewBackend";
 
 /** Collect any HTTP(S) requests the renderer sends outside the local app. */
 export function watchExternalHttpRequests(page: Page, localOrigin: string) {
@@ -241,7 +241,11 @@ type LabDraft = {
 /** Install a stateful Tauri command fixture for Learning Studio route tests. */
 export async function installLearningStudioBackend(page: Page) {
   await installTauriMock(page);
+  await installClaimReviewBackend(page);
   await mockCommands(page, (settings, ipc) => {
+    // The factory runs in the page; the claim review helpers wait there for it.
+    const { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } =
+      (window as unknown as { __LATTICE_CLAIM_REVIEW_BACKEND__: ClaimReviewBackend }).__LATTICE_CLAIM_REVIEW_BACKEND__;
     const source = {
       id: "source-version-field-notes-1",
       title: "Public field notes",
@@ -450,7 +454,7 @@ export async function installLearningStudioBackend(page: Page) {
       program,
       // Lesson claim reviews by lesson id; a lesson without one answers null.
       claimReviews: {} as Record<string, ClaimReviewFixture>,
-      trustOverrides: [] as LearningTrustOverrideInputDto[],
+      trustOverrides: [] as TrustOverrideRecord[],
       claimActions: [] as Array<{ claimId: string; action: { action: string } & Record<string, unknown>; at: number }>,
       verifierAudit: {
         programId: program.summary.id, on: false, webSearch: false, consentAt: null as number | null, consentProvider: null as string | null,

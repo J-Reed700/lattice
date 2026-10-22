@@ -108,7 +108,7 @@ test('Lesson preparation explains verification and research across navigation an
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
   const panel = page.getByRole('region', { name: 'Lesson preparation' });
   // Collapsed: one status line with the bar; the step and statistics sit behind Details.
-  await expect(panel.getByRole('status')).toContainText('Preparing Reasoning from field observations · Fact checks & repairs');
+  await expect(panel.getByRole('status')).toContainText('Preparing Compare observations · Fact checks & repairs');
   await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
   await panel.getByRole('button', { name: 'Details' }).click();
   await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();

@@ -6,8 +6,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
+import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { useCourseIndexStatusEvents } from '@/features/learning/sources/useCourseIndexStatus';
 import type { CourseIndexStatusDto, JobDto } from '@/lib/bindings';

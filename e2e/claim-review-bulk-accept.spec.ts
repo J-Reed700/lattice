@@ -38,7 +38,8 @@ test('Accepting one source for all its claims verifies those it states, keeps th
 
   await expect(page.getByText(/Trusted County Farmers’ Almanac, 1890 for this course: 4 claims verified, 1 still needs you\./)).toBeVisible();
   await expect(page.getByTestId('review-tally')).toContainText('1 claim needs you');
-  await expect(page.getByRole('article', { name: 'Claim in focus' }).getByText('The river froze over in early December.')).toBeVisible();
+  // The contradicted one is now in focus; its statement also appears in the evidence excerpt, so read the statement itself.
+  await expect(page.getByRole('article', { name: 'Claim in focus' }).locator('[data-claim-statement]')).toContainText('The river froze over in early December.');
 
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(page.getByText('Undone. 5 left.')).toBeVisible();

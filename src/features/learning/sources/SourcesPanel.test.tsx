@@ -211,9 +211,12 @@ describe('Learning Studio Sources workspace', () => {
     renderSources({ programId: 'program-1', recheck: null, sources: [] });
     await user.click(await screen.findByRole('button', { name: 'Add material' }));
     await user.click(screen.getByRole('button', { name: 'Library document' }));
-    await user.click(await screen.findByRole('checkbox'));
+    await user.click(await screen.findByRole('checkbox', { name: 'Field guide.pdf' }));
     await user.click(screen.getByRole('button', { name: 'Save source' }));
-    await waitFor(() => expect(mocks.addDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'doc-1', programId: 'program-1' })));
+    await waitFor(() => expect(mocks.addDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ documentId: 'doc-1', programId: 'program-1' }),
+      expect.objectContaining({ checkWaiting: true }),
+    ));
   });
 
   it('searches only stored text, opens the exact matching historical version, and changes freshness policy', async () => {

@@ -45,7 +45,7 @@ function pendingAttach() {
     return new Promise((resolve) => { finish = resolve; });
   });
   return {
-    progress: (update: ClaimAttachProgressDto) => act(() => progress!(update)),
+    progress: async (update: ClaimAttachProgressDto) => { await act(async () => { progress!(update); }); },
     finish: (value: ClaimAttachReportDto) => act(async () => finish!(ok(value))),
   };
 }

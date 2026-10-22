@@ -117,7 +117,9 @@ describe('claim review presentation', () => {
   it('kind and standing words cover every DTO value', () => {
     for (const kind of KINDS) expect(kindWord(kind)).toMatch(/^[a-z][a-z -]+$/);
     expect(new Set(KINDS.map(kindWord)).size).toBe(KINDS.length);
-    for (const level of LEVELS) expect(standingWords(level)).not.toMatch(new RegExp(`\\b${level}\\b`));
+    // No level word in the standing words, except the one the copy deck keeps (§4.3).
+    for (const level of LEVELS.filter((each) => each !== 'community')) expect(standingWords(level)).not.toMatch(new RegExp(`\\b${level}\\b`));
+    expect(standingWords('community')).toBe('a community page (forum, wiki, Q&A)');
     expect(countsAs(support(), sufficiency('no_identified_source'))).toBe('an unidentified author’s work · not enough on its own for this claim');
     expect(countsAs(support({ standing: 'established', counts: { outcome: 'enough' } }), null)).toBe('a reliable identified source · enough');
     expect(countsAs(support({ source: { ...support().source, addedBy: 'user' } }), null)).toBe('a source you added · enough, it states this');

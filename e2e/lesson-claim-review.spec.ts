@@ -53,6 +53,8 @@ test('A held lesson is one line on the course page; its review screen takes the 
   await queue.getByRole('button', { name: /Samples are always complete\./ }).click();
   await focus.getByRole('button', { name: 'Add a source' }).click();
   const sheet = page.getByRole('region', { name: 'Add a source for this claim' });
+  // The claim's group holds another waiting claim, so the sheet checks it too unless the user unticks it (§3.6).
+  await expect(sheet.getByRole('checkbox', { name: /Also check the 1 other claim that waits/ })).toBeChecked();
   await sheet.getByLabel('Page address').fill('https://paywalled.example.com/403/sampling');
   await sheet.getByRole('button', { name: 'Add and check' }).click();
   await expect(sheet.getByText('paywalled.example.com refused the request (HTTP 403).')).toBeVisible();
@@ -60,7 +62,7 @@ test('A held lesson is one line on the course page; its review screen takes the 
   await expect(sheet.getByLabel('Where it is from')).toHaveValue('https://paywalled.example.com/403/sampling');
   await sheet.getByLabel('Text').fill('Field protocol, section 4.\nSamples are always complete.');
   await sheet.getByRole('button', { name: 'Add and check' }).click();
-  await expect(page.getByText(/; it states this\./)).toBeVisible();
+  await expect(page.getByText(/Verified 1 of 2 claims; 1 is not mentioned by it\./)).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

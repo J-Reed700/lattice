@@ -184,6 +184,20 @@ export function sentenceBounds(text: string): Array<[number, number]> {
 
 export type Excerpt = { before: string; quote: string; after: string; clippedStart: boolean; clippedEnd: boolean };
 
+/** The spans of fenced code blocks (``` or ~~~), fences included; an unclosed fence runs to the end. */
+function fencedRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let open = -1;
+  for (const match of text.matchAll(/^[ \t]*(?:```|~~~)/gm)) {
+    if (open < 0) { open = match.index; continue; }
+    const lineEnd = text.indexOf('\n', match.index);
+    ranges.push([open, lineEnd < 0 ? text.length : lineEnd]);
+    open = -1;
+  }
+  if (open >= 0) ranges.push([open, text.length]);
+  return ranges;
+}
+
 /**
  * The quoted sentence with up to one sentence of context on each side, from
  * the passage. Falls back to the quote alone when it is not found there.
@@ -197,12 +211,17 @@ export function excerptAround(text: string, span: [number, number] | null, quote
     to = from + quote.length;
   }
   if (from < 0) return { before: '', quote, after: '', clippedStart: false, clippedEnd: false };
-  // Context is a sentence with words in it, never a stray fence or rule line.
-  const bounds = sentenceBounds(text).filter(([start, end], index, all) => /\w+\W+\w+/.test(text.slice(start, end)) || all[index][0] <= from && from < end);
+  // Context is the neighbouring sentence when it is prose: never code, a fence
+  // or a rule line, which stay behind Full passage.
+  const code = fencedRanges(text);
+  const prose = ([start, end]: [number, number]) => /\w+\W+\w+/.test(text.slice(start, end)) && !code.some(([open, close]) => start < close && end > open);
+  const bounds = sentenceBounds(text);
   const first = bounds.findIndex(([, end]) => end > from);
   const last = bounds.findIndex(([, end]) => end >= to);
-  const startAt = first > 0 ? bounds[first - 1][0] : first === 0 ? bounds[0][0] : from;
-  const endAt = last >= 0 && last + 1 < bounds.length ? bounds[last + 1][1] : last >= 0 ? bounds[last][1] : to;
+  const previous = first > 0 ? bounds[first - 1] : null;
+  const next = last >= 0 && last + 1 < bounds.length ? bounds[last + 1] : null;
+  const startAt = previous && prose(previous) ? previous[0] : first >= 0 ? bounds[first][0] : from;
+  const endAt = next && prose(next) ? next[1] : last >= 0 ? bounds[last][1] : to;
   return {
     before: text.slice(Math.min(startAt, from), from),
     quote: text.slice(from, to),

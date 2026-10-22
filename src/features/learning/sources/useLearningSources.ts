@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import VaultAPI from '@/lib/api';
-import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,

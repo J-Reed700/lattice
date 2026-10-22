@@ -122,7 +122,12 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
       setUndo(kind === 'undo' ? null : { kind: 'claim', claimId: item.claimId });
       const stillWaiting = after?.claims.find((claim) => claim.claimId === item.claimId);
       if (kind !== 'undo' && (!stillWaiting || !isWaitingForYou(stillWaiting))) settle(item, next);
-      if (kind === 'undo') { select(item.claimId); setFocusTick((tick) => tick + 1); }
+      if (kind === 'undo') {
+        // It waits again: no longer settling, so it counts among its group's others at once.
+        setSettling((current) => { const after = new Set(current); after.delete(item.claimId); return after; });
+        select(item.claimId);
+        setFocusTick((tick) => tick + 1);
+      }
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The action could not be saved.');
