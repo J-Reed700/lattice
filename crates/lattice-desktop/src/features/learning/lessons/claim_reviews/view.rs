@@ -4,6 +4,9 @@
 //! checker's latest verdict (the local checker's and the Verifier's, side by
 //! side, §14.5), and the actions the claim allows now.
 
+mod presentation;
+mod support;
+
 use std::collections::HashMap;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
@@ -14,15 +17,16 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
+use self::support::SupportContext;
 use super::dto::{
     CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEvidencePassageDto, ClaimLocationDto,
-    ClaimPresentationDto, ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto,
-    RepairAttemptDto, ResearchAttemptDto, ResearchSummaryDto, SourceAddedByDto, SourceRefDto,
-    StopReasonDto,
+    ClaimReviewItemDto, HumanVerdictDto, LessonClaimReviewDto, RepairAttemptDto,
+    ResearchAttemptDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
 use super::teaching_findings::TeachingFindingsRepository;
+use crate::features::learning::dto::LearningSourceKind;
 use crate::features::learning::lesson_evidence::LearningEvidencePassageDto;
 use crate::features::learning::persistence::db;
 use crate::features::learning::references::trust::dto_map;
@@ -35,9 +39,16 @@ struct SourceFacts {
     title: String,
     url: Option<String>,
     added_by: SourceAddedByDto,
+    library_kind: LearningSourceKind,
 }
 
 impl SourceFacts {
+    /// The host of the version's address; `None` for a file or pasted text.
+    fn host(&self) -> Option<String> {
+        let url = url::Url::parse(self.url.as_deref()?).ok()?;
+        url.host_str().map(str::to_owned)
+    }
+
     fn reference(&self, source_version_id: &str) -> SourceRefDto {
         SourceRefDto {
             source_id: self.source_id.clone(),
@@ -105,9 +116,11 @@ impl ClaimReviewService {
         };
         let changed_since_stop = self.changed_in(&ledger).await?;
         let sources = self.sources(program_id).await?;
-        let titles = self.unit_titles(&review, program_id, lesson_id).await?;
+        let units = self.units(&review, program_id, lesson_id).await?;
+        let titles = unit_titles(&units);
         let shown = self.store().shown_passages(lesson_id).await?;
         let texts = self.passage_texts(program_id, &ledger, &shown).await?;
+        let standings = self.standings(&ledger).await?;
         let pass = self
             .drafts()
             .job(&review.job_id)
@@ -120,7 +133,13 @@ impl ClaimReviewService {
             .iter()
             .map(|entry| {
                 let passages = shown.get(entry.claim_id()).map_or(&[][..], Vec::as_slice);
-                item(entry, passages, &sources, &titles, &texts)
+                let context = SupportContext {
+                    shown: passages,
+                    texts: &texts,
+                    sources: &sources,
+                    standings: &standings,
+                };
+                item(entry, &context, &units, &titles)
             })
             .collect();
         Ok(Some(LessonClaimReviewDto {
@@ -214,6 +233,7 @@ impl ClaimReviewService {
             .into_iter()
             .flat_map(|source| {
                 let added_by = source.added_by;
+                let library_kind = source.kind;
                 let source_id = source.id;
                 source.versions.into_iter().map(move |version| {
                     (
@@ -223,6 +243,7 @@ impl ClaimReviewService {
                             title: version.title,
                             url: version.resolved_url,
                             added_by,
+                            library_kind: library_kind.clone(),
                         },
                     )
                 })
@@ -230,56 +251,56 @@ impl ClaimReviewService {
             .collect())
     }
 
-    /// The title of each unit, blocks then questions: from the draft that
-    /// waits for review, or from the published lesson.
-    async fn unit_titles(
+    /// The lesson's blocks and questions: the draft that waits for review,
+    /// else the published lesson; `Null` when neither is found.
+    async fn units(
         &self,
         review: &LessonReview,
         program_id: &str,
         lesson_id: &str,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Value> {
         if review.state != LessonReviewState::Ready {
             if let Some(draft) = self
                 .drafts()
                 .lesson_draft(&review.job_id, lesson_id)
                 .await?
             {
-                let candidate: Value = serde_json::from_str(&draft.candidate)
-                    .map_err(|error| AppError::Serialization(error.to_string()))?;
-                let titles = |field: &str, key: &str| -> Vec<String> {
-                    candidate
-                        .get(field)
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .map(|unit| {
-                            unit.get(key)
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned()
-                        })
-                        .collect()
-                };
-                let mut units = titles("blocks", "title");
-                units.extend(titles("questions", "prompt"));
-                return Ok(units);
+                return serde_json::from_str(&draft.candidate)
+                    .map_err(|error| AppError::Serialization(error.to_string()));
             }
         }
         let program = LearningRepository::new(self.pool().clone())
             .get(program_id)
             .await?;
-        Ok(program
+        program
             .modules
             .iter()
             .flat_map(|module| &module.lessons)
             .find(|lesson| lesson.id == lesson_id)
-            .map(|lesson| {
-                let blocks = lesson.blocks.iter().map(|block| block.title.clone());
-                let questions = lesson.questions.iter().map(|q| q.prompt.clone());
-                blocks.chain(questions).collect()
-            })
-            .unwrap_or_default())
+            .map_or(Ok(Value::Null), serde_json::to_value)
+            .map_err(|error| AppError::Serialization(error.to_string()))
     }
+}
+
+/// The title of each unit, blocks then questions.
+fn unit_titles(units: &Value) -> Vec<String> {
+    let titles = |field: &str, key: &str| -> Vec<String> {
+        units
+            .get(field)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|unit| {
+                unit.get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    };
+    let mut titles_of = titles("blocks", "title");
+    titles_of.extend(titles("questions", "prompt"));
+    titles_of
 }
 
 /// A compared passage as a card shows it, with its level for the claim's
@@ -354,11 +375,16 @@ fn checker_verdict(
 /// One claim card.
 fn item(
     entry: &ClaimLedgerEntry,
-    shown: &[ShownPassage],
-    sources: &HashMap<String, SourceFacts>,
+    context: &SupportContext<'_>,
+    units: &Value,
     titles: &[String],
-    texts: &HashMap<PassageKey, PassageText>,
 ) -> ClaimReviewItemDto {
+    let SupportContext {
+        shown,
+        texts,
+        sources,
+        ..
+    } = *context;
     let location = entry.location();
     let reference = |id: &String| sources.get(id).map(|facts| facts.reference(id));
     let mut research = Vec::new();
@@ -416,14 +442,8 @@ fn item(
         _ => (failed_reason(entry), None, None),
     };
     let unit_title = titles.get(location.unit_index).cloned().unwrap_or_default();
-    let presentation = ClaimPresentationDto {
-        statement: entry.statement().to_owned(),
-        sentence: location.quote.clone(),
-        context_before: String::new(),
-        context_after: String::new(),
-        place: unit_title.clone(),
-    };
-    let tried = tried(&research);
+    let presentation = presentation::presentation(entry, units, &unit_title);
+    let (support, also_supported) = support::supports(entry, context);
     ClaimReviewItemDto {
         claim_id: entry.claim_id().0.clone(),
         location: ClaimLocationDto {
@@ -470,32 +490,9 @@ fn item(
             .trust()
             .map(|trust| dto_map::sufficiency(&trust.profile, &trust.decision)),
         presentation,
-        support: None,
-        also_supported: Vec::new(),
-        tried,
-    }
-}
-
-/// What research did for the claim: its rounds with a query and the
-/// distinct versions it saved.
-fn tried(research: &[ResearchAttemptDto]) -> ResearchSummaryDto {
-    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
-    let mut saved: Vec<&str> = research
-        .iter()
-        .flat_map(|attempt| &attempt.sources_added)
-        .map(|source| source.source_version_id.as_str())
-        .collect();
-    saved.sort_unstable();
-    saved.dedup();
-    ResearchSummaryDto {
-        searches: count(
-            research
-                .iter()
-                .filter(|attempt| !attempt.queries.is_empty())
-                .count(),
-        ),
-        pages_read: count(saved.len()),
-        ..ResearchSummaryDto::default()
+        support,
+        also_supported,
+        tried: presentation::tried(entry, sources),
     }
 }
 

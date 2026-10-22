@@ -31,8 +31,8 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 
 use super::failures::AttachFailureDto;
-use super::report::SnapshotNoteDto;
-use super::{attach, AttachDeps, AttachRequest, Evidence};
+use super::report::{ClaimAttachProgressDto, SnapshotNoteDto};
+use super::{attach, attach_to, AttachDeps, AttachRequest, Evidence, Others};
 use crate::features::learning::lessons::claim_reviews::dto::{AttachOutcomeDto, SourceAddedByDto};
 use crate::features::learning::lessons::content_verification::tests::{
     fixture_completion, fixture_prompts,
@@ -409,6 +409,48 @@ impl World {
         .await
     }
 
+    /// An attach checked for `others` only, with the stages it reported.
+    async fn attach_scoped(
+        &self,
+        judge: &dyn LLMPort,
+        claim: &str,
+        evidence: Evidence,
+        others: &[ClaimId],
+    ) -> (
+        super::report::ClaimAttachReportDto,
+        Vec<ClaimAttachProgressDto>,
+    ) {
+        let library = EmptyLibrary;
+        let web = ScriptedWeb::article();
+        let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+        let stages = Mutex::new(Vec::new());
+        let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
+        let report = attach_to(
+            &AttachDeps {
+                pool: &self.pool,
+                store: &self.ledger,
+                web: &web,
+                snapshots: &snapshots,
+                documents: &library,
+                courses: None,
+                llm: judge,
+                job_id: None,
+            },
+            AttachRequest {
+                program_id: &self.program_id,
+                lesson_id: LESSON,
+                claim_id: &ClaimId(claim.into()),
+                expected_revision: self.ledger.revision(),
+                evidence,
+            },
+            Others::Only(others),
+            &progress,
+        )
+        .await
+        .unwrap();
+        (report, stages.into_inner().unwrap())
+    }
+
     async fn source_count(&self) -> usize {
         LearningSourceLibraryRepository::new(self.pool.clone())
             .workspace(&self.program_id)
@@ -692,4 +734,55 @@ async fn a_stale_review_is_refused_before_anything_is_saved() {
     .await;
     assert!(matches!(refused, Err(AppError::InvalidState(_))));
     assert_eq!(world.source_count().await, before);
+}
+
+#[tokio::test]
+async fn a_claim_scope_checks_that_claim_alone_and_reports_each_stage() {
+    let world = world().await;
+    let judge = Judge::says("supported");
+    let (report, stages) = world
+        .attach_scoped(&judge, "water", World::pasted(NOTES), &[])
+        .await;
+
+    assert_eq!(report.others.tried, 0);
+    assert_eq!(world.ledger.claim("mercury").events().len(), 2);
+    let names: Vec<Value> = stages
+        .iter()
+        .map(|stage| serde_json::to_value(stage).unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            json!({ "stage": "saving" }),
+            json!({ "stage": "checking", "done": 0, "total": 1, "statement": WATER }),
+            json!({ "stage": "done" }),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_claims_scope_checks_the_chosen_claims_with_a_running_count() {
+    let world = world().await;
+    let judge = Judge::says("supported");
+    let (report, stages) = world
+        .attach_scoped(
+            &judge,
+            "water",
+            World::pasted(NOTES),
+            &[ClaimId("water".into()), ClaimId("mercury".into())],
+        )
+        .await;
+
+    // The mercury claim is in scope; the pasted text has no passage for it.
+    assert_eq!(report.others.tried, 1);
+    assert_eq!(report.others.no_passage, 1);
+    let checking: Vec<(u32, u32)> = stages
+        .iter()
+        .filter_map(|stage| match stage {
+            ClaimAttachProgressDto::Checking { done, total, .. } => Some((*done, *total)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(checking, [(0, 2), (1, 2)]);
+    assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
 }

@@ -33,13 +33,14 @@ use std::sync::Arc;
 
 use self::acquire::Acquired;
 pub(crate) use self::acquire::{capture_page, PageCapture};
-use self::report::{ClaimAttachReportDto, OtherClaimsCheckedDto};
+use self::report::{ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto};
 use super::checker_examples::CheckerExamples;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{record_verdict, Redecided};
+use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-use crate::features::learning::references::course_index::CourseIndexes;
+use crate::features::learning::references::course_index::{CourseIndexes, CourseSearch};
 use crate::features::learning::references::trust::outcomes::VerdictScope;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 
@@ -121,9 +122,54 @@ impl AttachDeps<'_> {
     }
 }
 
+/// Which other claims of the lesson are checked against the new source.
+pub enum Others<'a> {
+    /// Every open claim of the lesson.
+    Lesson,
+    /// These claims, when they are open.
+    Only(&'a [ClaimId]),
+}
+
+/// The claims `check_others` takes: open ones in scope, other than the one
+/// the evidence was attached to.
+pub(super) struct OtherClaims<'a> {
+    pub scope: Others<'a>,
+    pub except: Option<&'a ClaimId>,
+}
+
+impl OtherClaims<'_> {
+    pub(super) fn take(&self, entry: &ClaimLedgerEntry) -> bool {
+        let in_scope = match self.scope {
+            Others::Lesson => true,
+            Others::Only(ids) => ids.contains(entry.claim_id()),
+        };
+        in_scope && self.except != Some(entry.claim_id()) && open_for_recheck(entry.state())
+    }
+}
+
+/// Where the checks are, for the progress line: `done` of `total` claims.
+pub(super) struct Checking<'a> {
+    pub report: &'a (dyn Fn(ClaimAttachProgressDto) + Send + Sync),
+    pub done: u32,
+    pub total: u32,
+}
+
+impl Checking<'_> {
+    /// Reports the claim about to be checked.
+    fn next(&mut self, statement: &str) {
+        self.total = self.total.max(self.done + 1);
+        (self.report)(ClaimAttachProgressDto::Checking {
+            done: self.done,
+            total: self.total,
+            statement: statement.to_owned(),
+        });
+        self.done += 1;
+    }
+}
+
 /// A claim that is still open: the machine's, or waiting for the user. A
 /// claim extracted and never checked is left to the pass that checks it.
-fn open_for_recheck(state: &ClaimState) -> bool {
+pub(super) fn open_for_recheck(state: &ClaimState) -> bool {
     matches!(state, ClaimState::Open { .. }) || state.awaits_user()
 }
 
@@ -201,10 +247,54 @@ async fn record_check(
     Ok(())
 }
 
-/// Attaches the user's evidence to one claim and reports the result (§5.4).
+/// The course's sources and its evidence index opened for searching: where
+/// a new source's passages are found. The new source is chunked into the
+/// index before it is read; its embedding is left to a background build.
+pub(super) async fn course_material(
+    deps: &AttachDeps<'_>,
+    program_id: &str,
+) -> Result<(Vec<LearningSourceDto>, Option<CourseSearch>)> {
+    let sources = LearningSourceLibraryRepository::new(deps.pool.clone())
+        .verification_sources(program_id)
+        .await?;
+    let course = match deps.courses {
+        Some(courses) => courses
+            .search(program_id, tokio_util::sync::CancellationToken::new())
+            .await
+            .inspect_err(|error| tracing::warn!(%error, "Course index could not be opened"))
+            .ok(),
+        None => None,
+    };
+    Ok((sources, course))
+}
+
+/// Attaches the user's evidence to one claim and checks it for every other
+/// open claim of the lesson (§5.4).
 pub async fn attach(
     deps: &AttachDeps<'_>,
     request: AttachRequest<'_>,
+) -> Result<ClaimAttachReportDto> {
+    attach_to(deps, request, Others::Lesson, &|_| {}).await
+}
+
+/// Attaches the user's evidence to one claim, checks it for the `others`
+/// in scope, and reports each stage through `progress` (UI design §5.3).
+pub async fn attach_to(
+    deps: &AttachDeps<'_>,
+    request: AttachRequest<'_>,
+    others: Others<'_>,
+    progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
+) -> Result<ClaimAttachReportDto> {
+    let report = attach_reporting(deps, request, others, progress).await;
+    progress(ClaimAttachProgressDto::Done);
+    report
+}
+
+async fn attach_reporting(
+    deps: &AttachDeps<'_>,
+    request: AttachRequest<'_>,
+    others: Others<'_>,
+    progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
 ) -> Result<ClaimAttachReportDto> {
     let ledger = deps.store.load(request.lesson_id).await?;
     if ledger
@@ -227,28 +317,37 @@ pub async fn attach(
         ));
     }
     let statement = entry.statement().to_owned();
+    let others = OtherClaims {
+        scope: others,
+        except: Some(request.claim_id),
+    };
+    let mut checking = Checking {
+        report: progress,
+        done: 0,
+        total: 1 + count(
+            ledger
+                .claims
+                .iter()
+                .filter(|entry| others.take(entry))
+                .count(),
+        ),
+    };
+    progress(match &request.evidence {
+        Evidence::Link { url } => ClaimAttachProgressDto::Fetching {
+            host: url::Url::parse(url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned)),
+        },
+        _ => ClaimAttachProgressDto::Saving,
+    });
     let source = match acquire::acquire(deps, request.program_id, &request.evidence).await? {
         Acquired::Saved(source) => source,
         Acquired::NotSaved(failure) => return Ok(report::not_saved(ledger.revision, failure)),
     };
     let version_id = source.saved.version_id.clone();
-    let sources = LearningSourceLibraryRepository::new(deps.pool.clone())
-        .verification_sources(request.program_id)
-        .await?;
-    // The new source is chunked into the course's index before it is read;
-    // its embedding is left to a background build.
-    let course = match deps.courses {
-        Some(courses) => courses
-            .search(
-                request.program_id,
-                tokio_util::sync::CancellationToken::new(),
-            )
-            .await
-            .inspect_err(|error| tracing::warn!(%error, "Course index could not be opened"))
-            .ok(),
-        None => None,
-    };
+    let (sources, course) = course_material(deps, request.program_id).await?;
     let references = ReferenceCollection::searchable_now(course.as_ref(), &sources).await?;
+    checking.next(&statement);
     let passages = match source.span {
         Some(span) => vec![check::picked_passage(&references, &version_id, span)?],
         None => check::passages_from(deps.llm, &references, &version_id, &statement).await?,
@@ -306,8 +405,9 @@ pub async fn attach(
         &references,
         &version_id,
         lesson,
-        request.claim_id,
+        &others,
         source.already_saved,
+        &mut checking,
     )
     .await?;
     if let Some(after) = after {
@@ -330,27 +430,29 @@ pub async fn attach(
     ))
 }
 
-/// Every other open claim of the lesson, checked against the new source
-/// when it has a passage for it (§5.4 "Other open claims"). Returns the
+/// The lesson's other open claims in scope, checked against the new source
+/// when it has a passage for them (§5.4 "Other open claims"). Returns the
 /// tally and the revision after the last append.
-async fn check_others(
+pub(super) async fn check_others(
     deps: &AttachDeps<'_>,
     references: &ReferenceCollection<'_>,
     version_id: &str,
     (program_id, lesson_id): (&str, &str),
-    attached_to: &ClaimId,
+    others: &OtherClaims<'_>,
     in_collection: bool,
+    checking: &mut Checking<'_>,
 ) -> Result<(OtherClaimsCheckedDto, Option<Revision>)> {
     let ledger = deps.store.load(lesson_id).await?;
     let candidates: Vec<&ClaimLedgerEntry> = ledger
         .claims
         .iter()
-        .filter(|entry| entry.claim_id() != attached_to && open_for_recheck(entry.state()))
+        .filter(|entry| others.take(entry))
         .collect();
     let mut tally = OtherClaimsCheckedDto::default();
     let mut revision = None;
     for flagged in candidates {
         let (claim_id, statement) = (flagged.claim_id(), flagged.statement());
+        checking.next(statement);
         tally.tried += 1;
         let passages = check::passages_from(deps.llm, references, version_id, statement).await?;
         if passages.is_empty() {
@@ -402,4 +504,8 @@ async fn check_others(
         }
     }
     Ok((tally, revision))
+}
+
+fn count(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }

@@ -4,10 +4,12 @@
 //! show them.
 
 use lattice_core::domain::learning::claim_review::{TrustAssessment, TrustCause};
-use lattice_core::domain::provenance::{CountedSupport, Decision, TrustLevel};
+use lattice_core::domain::provenance::{
+    ContentNature, CountedSupport, Decision, PublisherKind, TrustLevel,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::features::learning::dto::LearningTrustLevel;
+use crate::features::learning::dto::{LearningSourceKind, LearningTrustLevel};
 
 /// One support as the gate counted it: `level` is `null` when it was
 /// excluded (distrusted, ruled out by its date).
@@ -46,6 +48,40 @@ pub enum SourceKindDto {
     YourFile,
     PastedText,
     Page,
+}
+
+/// The kind of work a source is: the user's own file or pasted text by its
+/// library kind, else by its judged nature and publisher kind (`None` when
+/// no judgement of it is stored, which reads as `page`).
+pub fn source_kind(
+    judged: Option<(ContentNature, PublisherKind)>,
+    library: &LearningSourceKind,
+) -> SourceKindDto {
+    use ContentNature as N;
+    use PublisherKind as P;
+    match library {
+        LearningSourceKind::Document => return SourceKindDto::YourFile,
+        LearningSourceKind::Pasted => return SourceKindDto::PastedText,
+        LearningSourceKind::Web => {}
+    }
+    let Some((nature, publisher)) = judged else {
+        return SourceKindDto::Page;
+    };
+    match (nature, publisher) {
+        (N::PrimaryDocument | N::Reporting, P::Academic) => SourceKindDto::PeerReviewedPaper,
+        (N::PrimaryDocument | N::Reporting, P::Government | P::StandardsBody) => {
+            SourceKindDto::Report
+        }
+        (N::PrimaryDocument | N::Documentation, _) => SourceKindDto::Documentation,
+        (N::Reference | N::Aggregation, P::CommunityPlatform) => SourceKindDto::Wiki,
+        (N::Reference, P::Publisher) => SourceKindDto::OnlineBook,
+        (N::Reference, _) => SourceKindDto::ReferenceWork,
+        (N::Reporting | N::Opinion, _) => SourceKindDto::Article,
+        (N::Tutorial, _) => SourceKindDto::Guide,
+        (N::Discussion, _) => SourceKindDto::Forum,
+        (N::Marketing, _) => SourceKindDto::MarketingPage,
+        (N::Aggregation | N::Unknown, _) => SourceKindDto::Page,
+    }
 }
 
 /// What moved the trust a decision rested on.
