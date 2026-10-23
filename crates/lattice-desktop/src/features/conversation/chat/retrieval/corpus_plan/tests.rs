@@ -219,13 +219,12 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     );
 }
 
-/// "Start at the beginning" used to read at most four opening passages of
-/// each document whatever the window. It now reads as deep as the search's
-/// budget-sized limit, round-robin in reading order, so a large window carries
-/// far more of the opening documents and the first chapter is never crowded
-/// out by long front matter.
+/// "Start at the beginning" reads the named documents round-robin in reading
+/// order, to half of the search's budget-sized limit: deep enough that the
+/// first chapter is never crowded out by long front matter, and never the
+/// whole pool, so what the searches find still reaches the answer.
 #[tokio::test]
-async fn reading_from_the_beginning_goes_as_deep_as_the_budget_round_robin() {
+async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::MockEmbeddingPort;
@@ -279,9 +278,10 @@ async fn reading_from_the_beginning_goes_as_deep_as_the_budget_round_robin() {
         ids.get(..6).unwrap(),
         ["intro-0", "ch1-0", "intro-1", "ch1-1", "intro-2", "ch1-2"]
     );
-    // Ten passages of each: past the old four, and everything these hold.
+    // Reading in order is half the pool, shared evenly between the documents;
+    // the other half stays for what the searches find.
     assert!(
-        ids.contains(&"intro-9") && ids.contains(&"ch1-9"),
+        !ids.contains(&"intro-3") && !ids.contains(&"ch1-3"),
         "{ids:?}"
     );
 }
@@ -834,6 +834,7 @@ struct PlannerStub {
     responses: std::sync::Mutex<std::collections::VecDeque<String>>,
     prompts: std::sync::Mutex<Vec<String>>,
     systems: std::sync::Mutex<Vec<Vec<String>>>,
+    schemas: std::sync::Mutex<Vec<Option<serde_json::Value>>>,
     cancels: std::sync::Mutex<Vec<Option<CancellationToken>>>,
 }
 
@@ -843,6 +844,7 @@ impl PlannerStub {
             responses: std::sync::Mutex::new(responses.iter().map(|r| (*r).to_string()).collect()),
             prompts: std::sync::Mutex::new(Vec::new()),
             systems: std::sync::Mutex::new(Vec::new()),
+            schemas: std::sync::Mutex::new(Vec::new()),
             cancels: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -864,6 +866,10 @@ impl LLMPort for PlannerStub {
             .unwrap()
             .push(request.user_text().to_string());
         self.systems.lock().unwrap().push(system_messages(request));
+        self.schemas
+            .lock()
+            .unwrap()
+            .push(request.json_schema.clone());
         self.cancels.lock().unwrap().push(request.cancel.clone());
         Ok(CompletionResponse::from_text(
             self.responses
@@ -965,6 +971,79 @@ async fn the_planner_request_carries_the_turns_cancellation() {
     assert!(!carried.is_cancelled());
     stop.cancel();
     assert!(carried.is_cancelled());
+}
+
+/// A request that names a document and asks what it says is a focused
+/// question, not a reading from the beginning. The prompt carries that rule;
+/// the schema the planner answers in keeps its three fields.
+#[tokio::test]
+async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged() {
+    const NAMED_DOCUMENT_RULE: &str = "A request that names a document but asks what it says about something is a focused question: leave start_at_beginning false and put that document in opening_document_ids.";
+    let schema = serde_json::json!({
+        "type":"object", "additionalProperties":false,
+        "properties":{
+            "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
+            "opening_document_ids":{"type":"array","items":{"type":"string"},"maxItems":4},
+            "start_at_beginning":{"type":"boolean"}
+        }, "required":["queries","opening_document_ids","start_at_beginning"]
+    });
+    let cases = [
+        (
+            "saibou-note",
+            "細胞生物学ノート",
+            "第1章 細胞周期",
+            "『細胞生物学ノート』では、S期の長さについて何と書いてありますか？",
+            "S期 長さ 細胞周期",
+        ),
+        (
+            "requiem-notes",
+            "Mozart Requiem programme notes",
+            "Introitus",
+            "In the Mozart Requiem programme notes, what key is the Lacrimosa in?",
+            "Lacrimosa key signature D minor",
+        ),
+    ];
+    assert!(PLANNER_SYSTEM.contains(NAMED_DOCUMENT_RULE));
+    for (id, name, opening, question, query) in cases {
+        let answer = serde_json::json!({
+            "queries": [query],
+            "opening_document_ids": [id],
+            "start_at_beginning": false,
+        })
+        .to_string();
+        let stub = PlannerStub::new(&[answer.as_str()]);
+        let catalog = vec![CorpusDocument {
+            sections: Vec::new(),
+            source_context: None,
+            id: id.into(),
+            name: name.into(),
+            opening: opening.into(),
+            chapter_number: None,
+        }];
+
+        let planned = plan(
+            &stub,
+            question,
+            None,
+            &catalog,
+            &HashMap::new(),
+            &PlannerTurn::with_health(&PlannerHealth::default()),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(planned.opening_document_ids, [id], "{question}");
+        assert!(!planned.start_at_beginning, "{question}");
+        assert_eq!(
+            stub.systems.lock().unwrap().first(),
+            Some(&vec![PLANNER_SYSTEM.to_string()])
+        );
+        assert_eq!(
+            stub.schemas.lock().unwrap().first(),
+            Some(&Some(schema.clone()))
+        );
+    }
 }
 
 #[tokio::test]

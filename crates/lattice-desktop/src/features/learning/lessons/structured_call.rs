@@ -68,6 +68,7 @@ impl CallKind {
 }
 
 /// How a two-step call describes its work.
+#[derive(Clone, Copy)]
 pub(in crate::features::learning) struct ReasonFirst<'a> {
     pub kind: CallKind,
     /// What the call produces, for progress text and logs: "the lesson".
@@ -172,29 +173,70 @@ pub(in crate::features::learning) async fn complete_checked<T>(
     reasoning: Option<ReasonFirst<'_>>,
     accept: impl Fn(&str) -> Result<T>,
 ) -> Result<T> {
-    let one_step = |prompt: String, schema: Value| {
-        let accept = &accept;
+    complete_checked_request(
+        llm,
+        model_call::structured(system, prompt, schema, output_tokens, "low"),
+        progress,
+        reasoning,
+        accept,
+    )
+    .await
+}
+
+/// [`complete_checked`] for a request built whole, as a site that packs its
+/// own material builds it at the room [`model_call::send_fitted`] settled.
+/// The answer's reservation is the request's `output_tokens`.
+///
+/// The two-step form continues the request's user message, which a learning
+/// request carries in its task. One that also carries evidence passages,
+/// which the planner selects, is made in one step.
+pub(in crate::features::learning) async fn complete_checked_request<T>(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    progress: Option<&OutlineProgress>,
+    reasoning: Option<ReasonFirst<'_>>,
+    accept: impl Fn(&str) -> Result<T>,
+) -> Result<T> {
+    let output_tokens = request.output_tokens;
+    let at = |output_tokens: usize| {
+        let mut request = request.clone();
+        request.output_tokens = output_tokens;
+        request
+    };
+    let one_step = || {
+        let (at, accept) = (&at, &accept);
         async move {
-            let request = |output_tokens| {
-                model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low")
-            };
-            answer(llm, request, output_tokens, progress, Step::Direct, accept)
+            answer(llm, at, output_tokens, progress, Step::Direct, accept)
                 .await
                 .map(|(value, _)| value)
         }
     };
-    let Some(reasoning) = reasoning.filter(|reasoning| reasoning.kind.reasons_first()) else {
-        return one_step(prompt, schema).await;
+    let Some(reasoning) = reasoning
+        .filter(|reasoning| reasoning.kind.reasons_first())
+        .filter(|_| request.evidence.is_empty())
+    else {
+        return one_step().await;
     };
     let subject = reasoning.subject;
-    let two_step_system = format!("{system}\n\n{TWO_STEPS} {} {DRAFT_CLOSE}", reasoning.brief);
+    let two_step_system = format!(
+        "{}\n\n{TWO_STEPS} {} {DRAFT_CLOSE}",
+        request.instructions, reasoning.brief
+    );
+    // The user message the draft reads, as the request renders it.
+    let prompt = [request.task.as_str(), request.closing.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let draft_step = |output_tokens: usize| {
+        let mut draft = at(output_tokens);
+        draft.instructions = two_step_system.clone();
+        draft.call.json_schema = None;
+        draft
+    };
     // A draft cut to fit a small window helps less than it costs, so such a
     // window gets the one-step call instead.
-    let room = model_call::source_room(
-        llm,
-        &model_call::prose(&two_step_system, prompt.clone(), output_tokens, "low"),
-        usize::MAX,
-    );
+    let room = model_call::source_room(llm, &draft_step(output_tokens), usize::MAX);
     if room < output_tokens + ANSWER_STEP_OVERHEAD_TOKENS {
         tracing::info!(
             subject,
@@ -202,7 +244,7 @@ pub(in crate::features::learning) async fn complete_checked<T>(
             output_tokens,
             "Window cannot hold a draft beside the answer; answering in one step"
         );
-        return one_step(prompt, schema).await;
+        return one_step().await;
     }
 
     let key = format!(
@@ -227,13 +269,7 @@ pub(in crate::features::learning) async fn complete_checked<T>(
         }
         None => {
             lesson_progress::stage(format!("Working through {subject} in prose (step 1 of 2)"));
-            let output = send(
-                llm,
-                model_call::prose(&two_step_system, prompt.clone(), output_tokens, "low"),
-                progress,
-                Step::Draft,
-            )
-            .await?;
+            let output = send(llm, draft_step(output_tokens), progress, Step::Draft).await?;
             // A draft that ran out of room is still worth answering from: the
             // answer step has the whole task and completes what is missing.
             let truncated = cut_off(&output.finish_reason);
@@ -245,7 +281,7 @@ pub(in crate::features::learning) async fn complete_checked<T>(
                     subject,
                     "Draft step returned no text; answering in one step"
                 );
-                return one_step(prompt, schema).await;
+                return one_step().await;
             }
             lesson_drafts::record_checkpoint(&key, json!({ "draft": output.text })).await?;
             (
@@ -259,14 +295,11 @@ pub(in crate::features::learning) async fn complete_checked<T>(
 
     let draft_tokens = llm.count_tokens(&draft);
     let answer_step = |output_tokens: usize| {
-        let mut request = model_call::structured(
-            &two_step_system,
-            ANSWER_STEP.to_owned(),
-            schema.clone(),
-            output_tokens,
-            "low",
-        );
-        request.history = vec![
+        let mut request = at(output_tokens);
+        request.instructions = two_step_system.clone();
+        request.task = ANSWER_STEP.to_owned();
+        request.closing.clear();
+        request.history.extend([
             HistoryItem {
                 role: "user".into(),
                 content: prompt.clone(),
@@ -275,22 +308,23 @@ pub(in crate::features::learning) async fn complete_checked<T>(
                 role: "assistant".into(),
                 content: draft.clone(),
             },
-        ];
+        ]);
         // The answer transcribes a draft; sampling it at the chat temperature
         // would only add variation the draft does not contain.
         request.call.sampling = Some(SamplingOverride::deterministic());
         request
     };
-    if !model_call::fits(llm, &answer_step(output_tokens)) {
-        // The draft was capped in the model's own tokens, but the planner
-        // counts it with an estimate that can come out larger. The one-step
+    if !model_call::fits(llm, &answer_step(output_tokens)).await {
+        // The draft was capped in the model's own tokens, but it can still
+        // measure over beside the task, by the backend's count or, where it
+        // cannot count, by an estimate that can come out larger. The one-step
         // call needs no room for a draft.
         tracing::warn!(
             subject,
             draft_tokens,
             "Draft does not fit beside the answer; answering in one step"
         );
-        return one_step(prompt, schema).await;
+        return one_step().await;
     }
     lesson_progress::stage(format!(
         "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
@@ -344,7 +378,8 @@ async fn answer<T>(
     };
     // A task that nearly fills the window has no room left for the refused
     // answer, so it is sent again with the reason instead of continued.
-    let continues = model_call::fits(llm, &reask(request(output_tokens), &output.text, reason));
+    let continues =
+        model_call::fits(llm, &reask(request(output_tokens), &output.text, reason)).await;
     let again = |output_tokens| {
         let request = request(output_tokens);
         if continues {
@@ -353,7 +388,7 @@ async fn answer<T>(
             restate(request, reason)
         }
     };
-    if !continues && !model_call::fits(llm, &again(output_tokens)) {
+    if !continues && !model_call::fits(llm, &again(output_tokens)).await {
         tracing::warn!(
             step = step.name(),
             reason,
@@ -438,7 +473,7 @@ async fn send_completing(
         return Ok(output);
     }
     let larger = request(output_tokens.saturating_mul(2));
-    if !model_call::fits(llm, &larger) {
+    if !model_call::fits(llm, &larger).await {
         return Ok(output);
     }
     tracing::warn!(

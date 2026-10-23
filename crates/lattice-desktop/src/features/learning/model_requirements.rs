@@ -50,8 +50,8 @@ pub fn study_deck(card_count: usize) -> ModelRequirements {
 }
 
 /// A study deck from a conversation's verified claims: its claims are
-/// counted only once they are read, and each batch of them is checked
-/// against the window before it is sent.
+/// counted only once they are read, and each request carries as many of
+/// them as the window holds.
 pub fn conversation_study_deck() -> ModelRequirements {
     ModelRequirements::default()
 }

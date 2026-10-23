@@ -2,7 +2,9 @@
 //! and the passages of each that a query retrieves.
 use super::*;
 
-/// The room a request built with an empty snapshot list leaves for passages.
+/// The room a request built with an empty snapshot list leaves for passages,
+/// by the planner's estimate: how deep retrieval goes, and the first room a
+/// caller that builds its prompt from the passages packs from.
 pub(in crate::features::learning) fn snapshot_room(
     llm: &dyn lattice_core::application::ports::LLMPort,
     system: &str,

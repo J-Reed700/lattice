@@ -15,9 +15,11 @@ const ANSWER: &str = r#"{"answer":"Air scatters blue light more than red light."
 
 /// Answers the prose step with a draft and the schema step with an answer, or
 /// fails the schema step as a dropped connection would. Schema steps answer
-/// with `first_answers`, in order, before `answer`.
+/// with `first_answers`, in order, before `answer`. With `exact`, its
+/// tokenizer counts twice the tokens its estimate does.
 struct Recorder {
     window: usize,
+    exact: bool,
     draft: CompletionResponse,
     answer: Option<&'static str>,
     first_answers: Mutex<Vec<&'static str>>,
@@ -28,6 +30,7 @@ impl Recorder {
     fn new(window: usize) -> Self {
         Self {
             window,
+            exact: false,
             draft: CompletionResponse::from_text(DRAFT),
             answer: Some(ANSWER),
             first_answers: Mutex::new(Vec::new()),
@@ -79,6 +82,16 @@ impl LLMPort for Recorder {
     }
     fn count_tokens(&self, text: &str) -> usize {
         text.len() / 4
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok(if self.exact {
+            text.len() / 2
+        } else {
+            self.count_tokens(text)
+        })
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        self.exact
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -191,6 +204,25 @@ async fn a_window_without_room_for_a_draft_answers_in_one_step() -> Result<()> {
     assert_eq!(sent[0].json_schema, Some(schema()));
     assert_eq!(
         messages(&sent[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_step_only_the_exact_count_rejects_falls_back_to_one_step() -> Result<()> {
+    // The estimate holds this draft beside the task and its answer; the
+    // tokenizer counts it at twice that and does not.
+    let mut llm = Recorder::new(8_192);
+    llm.exact = true;
+    llm.draft = CompletionResponse::from_text("Sunlight scatters off the air. ".repeat(600));
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].json_schema, None);
+    assert_eq!(sent[1].json_schema, Some(schema()));
+    assert_eq!(
+        messages(&sent[1]),
         vec![("system", SYSTEM), ("user", PROMPT)]
     );
     Ok(())

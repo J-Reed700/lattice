@@ -51,6 +51,18 @@ pub const DEFAULT_COMPLETION_TIME_BUDGET: Duration = Duration::from_secs(10 * 60
 /// lower, which is what calibration against reported usage corrects.
 pub const DEFAULT_CHARS_PER_TOKEN: f64 = 4.0;
 
+/// Tokens a chat template adds around each message, on top of its text: a
+/// ChatML-style template wraps a message in about five special tokens
+/// (`<|im_start|>`, the role, a newline, `<|im_end|>`, a newline). Eight
+/// covers those with room to spare. Every exact count of a prompt adds it, so
+/// a request measured before it is built and the gate that sends it agree.
+pub const TEMPLATE_TOKENS_PER_MESSAGE: usize = 8;
+
+/// Tokens a chat template adds to open the answer: about six for the
+/// assistant header and an empty think block. Sixteen covers those with room
+/// to spare.
+pub const TEMPLATE_TOKENS_FOR_ANSWER: usize = 16;
+
 /// Tokens in `chars` characters at `chars_per_token`, rounded up.
 pub fn tokens_for_chars(chars: usize, chars_per_token: f64) -> usize {
     if chars == 0 {

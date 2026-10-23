@@ -7,14 +7,23 @@
 //! needs (the answer's reservation, its priority and schema); it never does
 //! window arithmetic of its own.
 //!
+//! Material is fitted, not refused: a site that packs material builds its
+//! request at a room, [`fit_room`] measures it exactly where the backend can
+//! count and shrinks the room until it fits, and [`send_fitted`] also shrinks
+//! on a size refusal the measurement could not foresee. Only instructions
+//! that do not fit without any material are a window too small.
+//!
 //! No learning call has a wall-clock limit. A slow model is not a failed
 //! one: the adapter's stall detection ends a call whose server has gone
 //! quiet, the answer's output reservation ends a runaway one, and dropping
 //! the future (a cancelled job, a closed window) ends one nobody wants.
 
+use std::future::Future;
+
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Streaming,
+    self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Measured,
+    Streaming,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -45,23 +54,6 @@ pub(in crate::features::learning) fn structured(
     request.output_tokens = output_tokens;
     request.call = CallOptions {
         json_schema: Some(schema),
-        reasoning_effort: Some(reasoning_effort.to_owned()),
-        ..Default::default()
-    };
-    request
-}
-
-/// A free-text request with the same call options as [`structured`] and no
-/// schema: the reasoning step of a reason-first call.
-pub(in crate::features::learning) fn prose(
-    system: &str,
-    prompt: String,
-    output_tokens: usize,
-    reasoning_effort: &str,
-) -> GroundedRequest {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_tokens = output_tokens;
-    request.call = CallOptions {
         reasoning_effort: Some(reasoning_effort.to_owned()),
         ..Default::default()
     };
@@ -118,9 +110,15 @@ pub(in crate::features::learning) fn window_too_small(llm: &dyn LLMPort, what: &
     ))
 }
 
-/// Whether the model's window holds `request` as it stands.
-pub(in crate::features::learning) fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
-    grounded_generation::evidence_room(llm, request).is_ok()
+/// Whether the model's window holds `request` as it stands: counted exactly
+/// where the backend can count, by the planner's estimate where it cannot.
+pub(in crate::features::learning) async fn fits(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> bool {
+    grounded_generation::measure(llm, request)
+        .await
+        .is_ok_and(|measured| measured.fits())
 }
 
 /// The room the planner leaves for source material once `request` — the
@@ -134,211 +132,186 @@ pub(in crate::features::learning) fn source_room(
     grounded_generation::evidence_room(llm, request).map_or(0, |room| room.min(ceiling))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-    use std::sync::Mutex;
+/// The room [`fit_room`] settled on and the request built at it. Room zero
+/// means the request carries no material: none fits beside the skeleton, or
+/// the skeleton itself does not fit.
+pub(in crate::features::learning) struct Fit {
+    pub room: usize,
+    pub request: GroundedRequest,
+    /// How `request` measured; `None` when the planner refuses even the
+    /// skeleton, so nothing was measured.
+    pub measured: Option<Measured>,
+}
 
-    struct Recorder {
-        window: usize,
-        sent: Mutex<Vec<CompletionRequest>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LLMPort for Recorder {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            if let Ok(mut sent) = self.sent.lock() {
-                sent.push(request.clone());
-            }
-            Ok(CompletionResponse::from_text("{}"))
-        }
-        fn model_name(&self) -> &str {
-            "recorder"
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.window
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    fn recorder(window: usize) -> Recorder {
-        Recorder {
-            window,
-            sent: Mutex::new(Vec::new()),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_structured_call_sends_the_prompt_whole_with_its_schema() -> Result<()> {
-        let llm = recorder(32_000);
-        let schema = serde_json::json!({"type": "object"});
-        send(
-            &llm,
-            structured(
-                "Return JSON.",
-                "{\"task\":1}".into(),
-                schema.clone(),
-                2000,
-                "low",
-            ),
-            None,
-            "too large",
-        )
-        .await?;
-        let sent = llm
-            .sent
-            .lock()
-            .map_err(|_| AppError::InternalError("lock".into()))?;
-        let request = sent
-            .first()
-            .ok_or_else(|| AppError::InternalError("unsent".into()))?;
-        assert_eq!(request.user_text(), "{\"task\":1}");
-        assert_eq!(request.json_schema, Some(schema));
-        assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
-        assert_eq!(request.max_output_tokens, Some(2000));
-        // No learning call is killed by a clock.
-        assert!(request.no_time_limit);
-        assert_eq!(request.wall_clock_budget(), None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_prompt_the_window_cannot_hold_is_refused_in_the_callers_words() {
-        let llm = recorder(4096);
-        let error = send(
-            &llm,
-            structured(
-                "Return JSON.",
-                "x".repeat(40_000),
-                serde_json::json!({}),
-                500,
-                "low",
-            ),
-            None,
-            "Choose fewer sources.",
-        )
-        .await
-        .err()
-        .map(|error| error.to_string())
-        .unwrap_or_default();
-        assert!(error.contains("Choose fewer sources."), "{error}");
-        assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
-    }
-
-    #[tokio::test]
-    async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() {
-        let llm = recorder(4096);
-        let error = send(
-            &llm,
-            structured(
-                "Return JSON.",
-                "x".repeat(40_000),
-                serde_json::json!({}),
-                500,
-                "low",
-            ),
-            None,
-            TooLarge::Window("The requested learning material does not fit"),
-        )
-        .await
-        .err();
-        let Some(AppError::InvalidConfig(message)) = error else {
-            panic!("expected a configuration refusal, got {error:?}");
-        };
-        assert_eq!(
-            message,
-            "The requested learning material does not fit in recorder's 4096-token context \
-             window. Raise your Learning model's context length in Settings → Models, or choose \
-             a Learning model with a larger window"
-        );
-        assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
-    }
-
-    /// A backend whose own window check refuses every request with the
-    /// numbers, as the scheduler and the llama.cpp client do.
-    struct Refusing;
-
-    const NUMBERED_REFUSAL: &str = "This request's prompt is 8500 tokens (counted exactly), \
-         which leaves no room for an answer; the configured context window is 8192. It was not sent.";
-
-    #[async_trait::async_trait]
-    impl LLMPort for Refusing {
-        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
-            Err(AppError::PromptExceedsWindow {
-                prompt_tokens: 8_500,
-                window: 8_192,
-                counted_exactly: true,
-                message: NUMBERED_REFUSAL.into(),
-            })
-        }
-        fn model_name(&self) -> &str {
-            "refusing"
-        }
-        fn max_context_tokens(&self) -> usize {
-            32_000
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    #[tokio::test]
-    async fn the_backends_numbered_refusal_reaches_the_learner_once_and_unchanged() {
-        for too_large in [
-            TooLarge::Input("Choose fewer sources."),
-            TooLarge::Window("The requested learning material does not fit"),
-        ] {
-            let error = send(
-                &Refusing,
-                structured(
-                    "Return JSON.",
-                    "{}".into(),
-                    serde_json::json!({}),
-                    500,
-                    "low",
-                ),
-                None,
-                too_large,
-            )
-            .await
-            .err();
-            let Some(AppError::PromptExceedsWindow { message, .. }) = error else {
-                panic!("expected the backend's refusal, got {error:?}");
-            };
-            assert_eq!(message, NUMBERED_REFUSAL);
-        }
-    }
-
-    #[test]
-    fn source_room_is_what_the_planner_leaves_under_the_ceiling() {
-        let llm = recorder(32_000);
-        let small = structured("Teach.", "{}".into(), serde_json::json!({}), 4000, "low");
-        assert_eq!(source_room(&llm, &small, 7000), 7000);
-        let crowded = structured(
-            "Teach.",
-            "x".repeat(100_000),
-            serde_json::json!({}),
-            4000,
-            "low",
-        );
-        assert!(source_room(&llm, &crowded, 7000) < 7000);
-        let overflowing = structured(
-            "Teach.",
-            "x".repeat(200_000),
-            serde_json::json!({}),
-            4000,
-            "low",
-        );
-        assert_eq!(source_room(&llm, &overflowing, 7000), 0);
-        assert!(!fits(&llm, &overflowing));
+impl Fit {
+    /// Whether `request` fits the window as measured.
+    pub fn fits(&self) -> bool {
+        self.measured.is_some_and(|measured| measured.fits())
     }
 }
+
+/// Build the request at `room`, measure it once, and while it is over the
+/// window shrink the room in proportion and build again. One count when it
+/// fits; two or three on material denser than the estimate. A backend that
+/// cannot count is measured by the estimate, which `room` already fits.
+///
+/// `room` is in the planner's estimate tokens, as [`source_room`] gives it,
+/// and `build` packs material up to that many; `build(0)` is the request
+/// with no material, the skeleton.
+pub(in crate::features::learning) async fn fit_room(
+    llm: &dyn LLMPort,
+    room: usize,
+    build: impl FnMut(usize) -> GroundedRequest,
+) -> Fit {
+    settle(llm, room, build).await.0
+}
+
+/// [`fit_room`], with the skeleton's estimate the shrinking measured from.
+async fn settle(
+    llm: &dyn LLMPort,
+    first: usize,
+    mut build: impl FnMut(usize) -> GroundedRequest,
+) -> (Fit, usize) {
+    let skeleton = build(0);
+    // The skeleton's estimate needs no round trip. Material can only be added
+    // to a skeleton the estimate leaves room beside.
+    let skeleton_tokens = match grounded_generation::estimate(llm, &skeleton) {
+        Ok(measured) if measured.estimated < measured.allowed => measured.estimated,
+        measured => {
+            let fit = Fit {
+                room: 0,
+                request: skeleton,
+                measured: measured.ok(),
+            };
+            log_fit(first, &fit, 0);
+            return (fit, 0);
+        }
+    };
+    let mut room = first;
+    let mut counts = 0;
+    loop {
+        let request = build(room);
+        let measured = match grounded_generation::measure(llm, &request).await {
+            Ok(measured) => Some(measured),
+            Err(error) => {
+                tracing::debug!(%error, room, "The planner refuses the request at this room");
+                None
+            }
+        };
+        counts += usize::from(measured.is_some_and(|measured| measured.exact));
+        let next = match measured {
+            Some(measured) if measured.fits() => None,
+            Some(measured) => Some(shrunk(room, skeleton_tokens, &measured)),
+            None => Some(room / 2),
+        };
+        // A request whose estimate is the skeleton's carries no material.
+        let empty = measured.is_some_and(|measured| measured.estimated <= skeleton_tokens);
+        match next {
+            Some(next) if room > 0 => room = next,
+            _ => {
+                let fit = Fit {
+                    room: if empty { 0 } else { room },
+                    request,
+                    measured,
+                };
+                log_fit(first, &fit, counts);
+                return (fit, skeleton_tokens);
+            }
+        }
+    }
+}
+
+/// The room to try after a request built at `room` measured over: the
+/// material it carried, scaled by the room the skeleton leaves over what the
+/// prompt beside that skeleton measured. Every token of the overflow is
+/// blamed on the material, which shrinks too far rather than too little.
+/// Always below `room`; halved when the measurement says nothing better.
+fn shrunk(room: usize, skeleton_tokens: usize, measured: &Measured) -> usize {
+    let material = measured.estimated.saturating_sub(skeleton_tokens);
+    let beside = measured.allowed.saturating_sub(skeleton_tokens);
+    let next = material
+        .saturating_mul(beside)
+        .checked_div(measured.prompt_tokens.saturating_sub(skeleton_tokens))
+        .unwrap_or(0);
+    if next < room && measured.prompt_tokens > measured.allowed {
+        next
+    } else {
+        room / 2
+    }
+}
+
+fn log_fit(first: usize, fit: &Fit, counts: usize) {
+    tracing::info!(
+        room = first,
+        shrunk_to = fit.room,
+        fits = fit.fits(),
+        exact = fit.measured.is_some_and(|measured| measured.exact),
+        prompt_tokens = fit.measured.map(|measured| measured.prompt_tokens),
+        allowed = fit.measured.map(|measured| measured.allowed),
+        counts,
+        "learning.fit"
+    );
+}
+
+/// [`fit_room`], then `call` with the request built; a size refusal from any
+/// gate or server shrinks the room and calls again. A refusal that counted
+/// the prompt exactly is the measurement for the next room; one that
+/// estimated it says only "too big", so the room is halved.
+///
+/// `Ok(None)` when no material fits: the skeleton alone does not, or the
+/// room shrank to nothing. The site then degrades; it never fails for size.
+///
+/// # Errors
+///
+/// Whatever `call` fails with, other than a size refusal.
+pub(in crate::features::learning) async fn send_fitted<T, F>(
+    llm: &dyn LLMPort,
+    room: usize,
+    mut build: impl FnMut(usize) -> GroundedRequest,
+    mut call: impl FnMut(GroundedRequest) -> F,
+) -> Result<Option<T>>
+where
+    F: Future<Output = Result<T>>,
+{
+    let mut room = room;
+    loop {
+        let (fit, skeleton_tokens) = settle(llm, room, &mut build).await;
+        if fit.room == 0 || !fit.fits() {
+            return Ok(None);
+        }
+        let sent = fit.room;
+        let measured = fit.measured;
+        room = match call(fit.request).await {
+            Err(AppError::PromptExceedsWindow {
+                prompt_tokens,
+                counted_exactly,
+                ..
+            }) => match measured.filter(|_| counted_exactly) {
+                Some(measured) => shrunk(
+                    sent,
+                    skeleton_tokens,
+                    &Measured {
+                        prompt_tokens,
+                        exact: true,
+                        ..measured
+                    },
+                ),
+                None => sent / 2,
+            },
+            result => return result.map(Some),
+        };
+        tracing::info!(
+            room = sent,
+            shrunk_to = room,
+            counted_exactly = measured.is_some_and(|measured| measured.exact),
+            "learning.fit_refused"
+        );
+        if room == 0 {
+            return Ok(None);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "model_call_tests.rs"]
+mod tests;

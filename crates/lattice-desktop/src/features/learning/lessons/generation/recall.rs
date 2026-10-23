@@ -2,21 +2,23 @@
 //! snapshots its blocks cite.
 
 use super::{
-    complete_checked, invalid, normalize, parse_json, validate_quote, validate_text, MAX_BODY,
+    invalid, normalize, parse_json, send_packed, validate_quote, validate_text, MAX_BODY,
     MAX_EXPLANATION, MAX_QUESTION, MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, MIN_TEXT,
 };
 use crate::features::learning::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
     LearningSourceDto,
 };
+use crate::features::learning::lessons::structured_call::complete_checked_request;
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
+use std::sync::{Mutex, PoisonError};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GeneratedRecallDraftResponse {
@@ -143,7 +145,7 @@ fn recall_draft_prompt(
     count: usize,
     allowed_source_ids: &HashSet<String>,
     source_data: Vec<serde_json::Value>,
-) -> Result<String> {
+) -> String {
     let blocks: Vec<_> = lesson
         .blocks
         .iter()
@@ -154,7 +156,7 @@ fn recall_draft_prompt(
             })
         })
         .collect();
-    serde_json::to_string(&json!({
+    json!({
         "task":"Create recall-card drafts from one prepared lesson",
         "count":count,"blocks":blocks,"sources":source_data,
         "requirements":[
@@ -164,8 +166,8 @@ fn recall_draft_prompt(
             "When sources are supplied, cite one or more supplied source IDs with an exact supporting quote. When there are no sources, sourceIds must be empty and quote must be an exact passage from a supplied lesson block; never invent external provenance.",
             "Do not add outside facts, answer choices, URLs, or citations beyond the sourceIds and required quote fields."
         ]
-    }))
-    .map_err(|error| AppError::InternalError(error.to_string()))
+    })
+    .to_string()
 }
 
 /// Generate recall-card drafts using only a ready lesson's blocks and the
@@ -254,7 +256,7 @@ pub async fn generate_recall_drafts(
     let all_ids: HashSet<String> = referenced_ids.iter().cloned().collect();
     let mut skeleton = GroundedRequest::new(
         system,
-        recall_draft_prompt(lesson, count, &all_ids, Vec::new())?,
+        recall_draft_prompt(lesson, count, &all_ids, Vec::new()),
     );
     skeleton.output_tokens = output_tokens;
     let room = model_call::source_room(llm, &skeleton, usize::MAX);
@@ -269,77 +271,107 @@ pub async fn generate_recall_drafts(
     let source_tokens = |source: &LearningSourceDto| {
         llm.count_tokens(&json!({"id":source.id,"title":source.title,"excerpt":""}).to_string()) + 2
     };
+    // What the passages cost, best first, summed: a source's own fields
+    // come with its first passage.
+    let costs = |passages: &[ReferencePassage]| {
+        let mut seen = HashSet::new();
+        passages
+            .iter()
+            .map(|passage| {
+                llm.count_tokens(&json!(passage.text).to_string())
+                    + 2
+                    + referenced_sources
+                        .iter()
+                        .find(|source| source.id == passage.source_id)
+                        .filter(|source| seen.insert(source.id.as_str()))
+                        .map_or(0, source_tokens)
+            })
+            .scan(0usize, |spent, cost| {
+                *spent = spent.saturating_add(cost);
+                Some(*spent)
+            })
+            .collect::<Vec<_>>()
+    };
     let passages = collection
         .retrieve_within(&query, |passages| {
-            let mut seen = HashSet::new();
-            passages
-                .iter()
-                .map(|passage| {
-                    llm.count_tokens(&json!(passage.text).to_string())
-                        + 2
-                        + referenced_sources
-                            .iter()
-                            .find(|source| source.id == passage.source_id)
-                            .filter(|source| seen.insert(source.id.as_str()))
-                            .map_or(0, source_tokens)
-                })
-                .sum::<usize>()
-                <= room
+            costs(passages).last().is_none_or(|spent| *spent <= room)
         })
         .await?;
-    let sources: Vec<LearningSourceDto> = referenced_sources
-        .iter()
-        .filter_map(|source| {
-            let mut own: Vec<&ReferencePassage> = passages
-                .iter()
-                .filter(|passage| passage.source_id == source.id)
-                .collect();
-            own.sort_by_key(|passage| passage.start_byte);
-            let excerpt = own
-                .iter()
-                .map(|passage| passage.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            (!own.is_empty()).then(|| LearningSourceDto {
-                excerpt,
-                ..source.clone()
-            })
-        })
-        .collect();
-    if sources.is_empty() && !referenced_sources.is_empty() {
-        // Nothing fitted: either no cited passage matches the lesson, or the
-        // best one is larger than the room the window leaves.
-        return Err(if collection.retrieve(&query, 1).await?.is_empty() {
-            invalid("The cited lesson sources share no passage with the lesson.")
-        } else {
-            model_call::window_too_small(
-                llm,
-                "No cited passage fits beside this lesson's recall prompt",
-            )
-        });
+    if passages.is_empty()
+        && !referenced_sources.is_empty()
+        && collection.retrieve(&query, 1).await?.is_empty()
+    {
+        return Err(invalid(
+            "The cited lesson sources share no passage with the lesson.",
+        ));
     }
-    let allowed_source_ids: HashSet<String> =
-        sources.iter().map(|source| source.id.clone()).collect();
-    let source_data: Vec<_> = sources
-        .iter()
-        .map(|source| json!({"id":source.id,"title":source.title,"excerpt":source.excerpt}))
-        .collect();
-    let prompt = recall_draft_prompt(lesson, count, &allowed_source_ids, source_data)?;
+    let spent = costs(&passages);
+    // The sources the best `held` passages come from, each with its own
+    // passages in document order.
+    let sources_of = |held: usize| -> Vec<LearningSourceDto> {
+        let held = passages.get(..held).unwrap_or_default();
+        referenced_sources
+            .iter()
+            .filter_map(|source| {
+                let mut own: Vec<&ReferencePassage> = held
+                    .iter()
+                    .filter(|passage| passage.source_id == source.id)
+                    .collect();
+                own.sort_by_key(|passage| passage.start_byte);
+                let excerpt = own
+                    .iter()
+                    .map(|passage| passage.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                (!own.is_empty()).then(|| LearningSourceDto {
+                    excerpt,
+                    ..source.clone()
+                })
+            })
+            .collect()
+    };
+    // The sources of the request last built, which is the one sent.
+    let built = Mutex::new(Vec::new());
+    let build = |room: usize| {
+        let sources = sources_of(spent.partition_point(|total| *total <= room));
+        let allowed_source_ids: HashSet<String> =
+            sources.iter().map(|source| source.id.clone()).collect();
+        let source_data: Vec<_> = sources
+            .iter()
+            .map(|source| json!({"id":source.id,"title":source.title,"excerpt":source.excerpt}))
+            .collect();
+        let request = model_call::structured(
+            system,
+            recall_draft_prompt(lesson, count, &allowed_source_ids, source_data),
+            recall_draft_schema(count, &allowed_source_ids),
+            output_tokens,
+            "low",
+        );
+        *built.lock().unwrap_or_else(PoisonError::into_inner) = sources;
+        request
+    };
     let lesson_text = lesson
         .blocks
         .iter()
         .map(|block| block.body.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    complete_checked(
+    let lesson_text = lesson_text.as_str();
+    send_packed(
         llm,
-        system,
-        prompt,
-        recall_draft_schema(count, &allowed_source_ids),
-        output_tokens,
-        None,
-        None,
-        |raw| parse_recall_drafts_with_lesson(raw, count, &sources, &lesson_text),
+        room,
+        build,
+        |request| {
+            let sources = built.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            async move {
+                complete_checked_request(llm, request, None, None, |raw| {
+                    parse_recall_drafts_with_lesson(raw, count, &sources, lesson_text)
+                })
+                .await
+            }
+        },
+        "the lesson's recall cards",
+        "This lesson and the recall instructions do not fit",
     )
     .await
 }
