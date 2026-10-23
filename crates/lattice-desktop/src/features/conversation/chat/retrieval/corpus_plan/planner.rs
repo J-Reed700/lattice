@@ -219,6 +219,17 @@ async fn plan_with(
         }
         Ok(response) => response.text,
     };
+    parse_plan(&response, &prompt.handles, catalog)
+}
+
+/// The planner's reply as a plan over `catalog`. Its `start_at_beginning` is
+/// the planner's call, kept as given: whether a request asks to read from the
+/// beginning is a judgement about intent the model makes in any language.
+fn parse_plan(
+    response: &str,
+    handles: &HashMap<String, String>,
+    catalog: &[CorpusDocument],
+) -> Result<CorpusSearchPlan> {
     let response = response
         .trim()
         .trim_start_matches("```json")
@@ -232,12 +243,47 @@ async fn plan_with(
         .opening_document_ids
         .into_iter()
         .map(|id| {
-            prompt
-                .handles
+            handles
                 .get(id.trim().to_lowercase().as_str())
                 .cloned()
                 .unwrap_or(id)
         })
         .collect();
     plan.validate(catalog)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn document(id: &str, name: &str) -> CorpusDocument {
+        CorpusDocument {
+            sections: Vec::new(),
+            source_context: None,
+            id: id.into(),
+            name: name.into(),
+            opening: String::new(),
+            chapter_number: None,
+        }
+    }
+
+    #[test]
+    fn the_planners_reading_flag_survives_a_request_worded_in_any_language() {
+        // "Wo fange ich am besten an?" matches no phrase list; the planner's
+        // judgement that it asks to start reading is what the plan keeps.
+        let catalog = vec![
+            document("doc-zellen", "Leitfaden Zellbiologie"),
+            document("doc-genetik", "Leitfaden Genetik"),
+        ];
+        let handles = HashMap::from([("d1".to_string(), "doc-zellen".to_string())]);
+        let reply = r#"```json
+{"queries":["Einführung Zellbiologie"],"opening_document_ids":["D1"],"start_at_beginning":true}
+```"#;
+
+        let plan = parse_plan(reply, &handles, &catalog).expect("plan");
+
+        assert!(plan.start_at_beginning);
+        assert_eq!(plan.opening_document_ids, ["doc-zellen"]);
+        assert_eq!(plan.queries, ["Einführung Zellbiologie"]);
+    }
 }

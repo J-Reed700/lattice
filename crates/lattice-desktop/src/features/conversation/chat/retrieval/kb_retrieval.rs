@@ -273,7 +273,7 @@ pub(super) async fn run_kb_retrieval(
     // Rerank focused searches only. Ordered document reading is intentional
     // evidence selection, not a cosine-similarity contest.
     let mut reranked = false;
-    if enable_reranking && plan.opening_document_ids.is_empty() {
+    if enable_reranking && !plan.start_at_beginning {
         let rerank_start = Instant::now();
         let (response, applied) = super::apply_rerank_stage(
             container,
@@ -293,7 +293,13 @@ pub(super) async fn run_kb_retrieval(
     // when it fails — a loop that could run twice is a loop that will run twice
     // on the turn a user is already waiting on.
     let sufficiency_start = Instant::now();
-    let mut verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
+    let mut verdict = super::assess_sufficiency(
+        &search_response.results,
+        &plan,
+        tuning,
+        reranked,
+        kb_search_limit,
+    );
     timings.kb_sufficiency_ms = super::elapsed_ms(sufficiency_start);
     recorder.note(
         TurnStepKind::Sufficiency,
@@ -352,7 +358,7 @@ pub(super) async fn run_kb_retrieval(
                 candidate_limit,
             );
             search_response.total = search_response.results.len();
-            if enable_reranking && plan.opening_document_ids.is_empty() {
+            if enable_reranking && !plan.start_at_beginning {
                 let rerank_start = Instant::now();
                 let (response, applied) = super::apply_rerank_stage(
                     container,
@@ -371,7 +377,13 @@ pub(super) async fn run_kb_retrieval(
             }
             // Judged against the original plan: the retry chose different
             // wording, but what the turn owed the user has not changed.
-            verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
+            verdict = super::assess_sufficiency(
+                &search_response.results,
+                &plan,
+                tuning,
+                reranked,
+                kb_search_limit,
+            );
             timings.kb_corrective_retries = 1;
             info!(
                 conversation_id = conversation_id,
