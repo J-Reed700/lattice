@@ -172,9 +172,6 @@ fn parse_weights(value: &str) -> Result<(f32, f32), String> {
 /// several distinct documents in the pool, so this is deliberately wider than the reported k.
 const DEFAULT_TOP_K: usize = 50;
 
-/// Extra room the chat retrieval path leaves for neighbouring-section evidence.
-const NEIGHBOR_HEADROOM: usize = 8;
-
 /// Parse a `--compression` token. `i8` alone quantizes at the model's own
 /// dimension; `mrl<DIMS>` truncates and keeps `f32`; `mrl<DIMS>-i8` does both.
 pub fn parse_compression(value: &str) -> Result<CompressionSpec, String> {
@@ -559,7 +556,6 @@ async fn run_production(
     let compression_token = compression
         .layout_token()
         .unwrap_or_else(|| "none".to_owned());
-    let evidence_limit = args.top_k + NEIGHBOR_HEADROOM;
     for query in &dataset.queries {
         let start = Instant::now();
         let production::Ranking {
@@ -568,10 +564,11 @@ async fn run_production(
             reranked,
         } = index.rank(&query.text).await?;
         // Fused (and, when enabled, reranked) ordering before section neighbours join the
-        // evidence set. Neighbours are appended context, never first-stage ranking evidence.
+        // evidence set. Neighbours are context placed after their anchors inside `top_k`,
+        // never first-stage ranking evidence.
         let (first_stage_ids, _) =
             documents_in_order(chunks.iter().map(|c| (c.document_id.as_str(), c.score)));
-        index.expand(&mut chunks, evidence_limit).await?;
+        index.expand(&mut chunks, args.top_k).await?;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         // Branch diagnostics run outside the timed region so latency stays comparable

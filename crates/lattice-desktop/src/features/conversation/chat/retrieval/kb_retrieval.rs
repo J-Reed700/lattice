@@ -398,12 +398,13 @@ pub(super) async fn run_kb_retrieval(
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
     }
     timings.kb_sufficient = Some(verdict.sufficient);
-    search_response.results.truncate(kb_search_limit);
+    // The best hits' section neighbours displace the weakest hits: evidence
+    // stays within `kb_search_limit` passages, expanded or not.
     if let Err(error) = super::corpus_plan::expand_evidence(
         repository.as_ref(),
         &mut search_response.results,
         &scope.document_ids,
-        kb_search_limit + 8,
+        kb_search_limit,
     )
     .await
     {

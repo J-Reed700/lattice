@@ -301,27 +301,37 @@ fn scoped_query(question: &str, queries: &[String], chosen_titles: &[&str]) -> O
     Some(terms.join(" "))
 }
 
-/// Read each of the first anchors' neighbours with it, until `results` holds
-/// `limit` passages.
+/// Read the best anchors' neighbours in with them, inside `limit` passages.
+///
+/// `limit` is the evidence budget counted in passages, so it alone decides
+/// how many anchors get their context: walking in rank order, each anchor's
+/// neighbours displace the weakest hits at the tail, and the walk ends at the
+/// first anchor with no room left after it.
 pub(in super::super) async fn expand_evidence(
     repository: &dyn ChatRecords,
     results: &mut Vec<SearchResultDto>,
     allowed: &HashSet<String>,
     limit: usize,
 ) -> Result<()> {
-    let anchors: Vec<_> = results.iter().take(8).map(|r| r.id.clone()).collect();
-    let mut seen: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
+    results.truncate(limit);
+    let anchors: Vec<_> = results.iter().map(|r| r.id.clone()).collect();
     for anchor in anchors {
-        if results.len() >= limit {
+        // Anchors keep their order, so none below this one has room either.
+        let room = results
+            .iter()
+            .position(|r| r.id == anchor)
+            .is_some_and(|at| at + 1 < limit);
+        if !room {
             break;
         }
         let neighbors = repository.retrieval_neighbors(&anchor, allowed).await?;
-        place_after_anchor(results, &anchor, neighbors, &mut seen, limit);
+        place_after_anchor(results, &anchor, neighbors, limit);
     }
     Ok(())
 }
 
-/// Insert `anchor`'s unseen neighbours directly after it, in the order given.
+/// Insert `anchor`'s neighbours that are not already evidence directly after
+/// it, in the order given, cutting the list back to `limit` as they go in.
 ///
 /// A neighbour belongs with its anchor: the prompt's budget fills in this
 /// order, so the anchor and its context are kept or cut together.
@@ -329,19 +339,19 @@ fn place_after_anchor(
     results: &mut Vec<SearchResultDto>,
     anchor: &str,
     neighbors: Vec<CorpusPassage>,
-    seen: &mut HashSet<String>,
     limit: usize,
 ) {
     let Some(mut at) = results.iter().position(|r| r.id == anchor) else {
         return;
     };
     for passage in neighbors {
-        if results.len() >= limit {
+        if at + 1 >= limit {
             return;
         }
-        if seen.insert(passage.id.clone()) {
+        if results.iter().all(|r| r.id != passage.id) {
             at += 1;
             results.insert(at, passage_result(passage, "section_neighbor"));
+            results.truncate(limit);
         }
     }
 }
@@ -370,6 +380,7 @@ pub(in super::super) fn fuse_passes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::conversation::repository::ConversationRepository;
 
     fn passage(id: &str, section: &str, chunk_index: usize) -> CorpusPassage {
         CorpusPassage {
@@ -407,33 +418,30 @@ mod tests {
             .collect()
     }
 
-    /// The anchors in rank order, each with its neighbours, as
-    /// `expand_evidence` walks them.
+    /// The anchors in rank order, each placing its neighbours.
     fn expanded(limit: usize) -> Vec<String> {
         let mut results = anchors();
-        let mut seen: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
         for anchor in ["a1", "a2", "a3"] {
-            place_after_anchor(&mut results, anchor, neighbors(anchor), &mut seen, limit);
+            place_after_anchor(&mut results, anchor, neighbors(anchor), limit);
         }
         results.into_iter().map(|r| r.id).collect()
     }
 
     #[test]
-    fn neighbours_follow_their_own_anchor_and_stop_at_the_limit() {
+    fn neighbours_follow_their_own_anchor_and_push_out_the_tail() {
         assert_eq!(
             expanded(usize::MAX),
             ["a1", "n1a", "n1b", "a2", "n2a", "a3", "n3a"]
         );
-        // Exactly `limit`, and no anchor is dropped to make room.
-        assert_eq!(expanded(5), ["a1", "n1a", "n1b", "a2", "a3"]);
-        assert_eq!(expanded(3), ["a1", "a2", "a3"]);
+        // Exactly `limit`, and the weakest anchors make the room.
+        assert_eq!(expanded(5), ["a1", "n1a", "n1b", "a2", "n2a"]);
+        assert_eq!(expanded(3), ["a1", "n1a", "n1b"]);
     }
 
     #[test]
     fn a_neighbour_keeps_its_own_section() {
         let mut results = anchors();
-        let mut seen: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
-        place_after_anchor(&mut results, "a3", neighbors("a3"), &mut seen, usize::MAX);
+        place_after_anchor(&mut results, "a3", neighbors("a3"), usize::MAX);
 
         let neighbour = results.last().expect("neighbour");
         assert_eq!(
@@ -444,6 +452,108 @@ mod tests {
             neighbour.metadata.get("retrievalMethod"),
             Some(&serde_json::json!("section_neighbor"))
         );
+    }
+
+    /// Eight consecutive chunks of one section, `m1`..`m8`, and three
+    /// chunks with no section, `t1`..`t3`, which have no neighbours.
+    async fn mitose() -> ConversationRepository {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT);
+            CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
+            INSERT INTO documents VALUES ('leitfaden','Leitfaden Zellbiologie','leitfaden.md');
+            INSERT INTO text_chunks(id, document_id, content, chunk_index, section) VALUES
+            ('m1','leitfaden','Interphase',1,'Zellteilung > Mitose'),
+            ('m2','leitfaden','Prophase',2,'Zellteilung > Mitose'),
+            ('m3','leitfaden','Prometaphase',3,'Zellteilung > Mitose'),
+            ('m4','leitfaden','Metaphase',4,'Zellteilung > Mitose'),
+            ('m5','leitfaden','Anaphase',5,'Zellteilung > Mitose'),
+            ('m6','leitfaden','Telophase',6,'Zellteilung > Mitose'),
+            ('m7','leitfaden','Zytokinese',7,'Zellteilung > Mitose'),
+            ('m8','leitfaden','Tochterzellen',8,'Zellteilung > Mitose'),
+            ('t1','leitfaden','Glossar A',101,NULL),
+            ('t2','leitfaden','Glossar B',102,NULL),
+            ('t3','leitfaden','Glossar C',103,NULL);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        ConversationRepository::new(pool)
+    }
+
+    /// `ranked` as `expand_evidence` leaves it for `limit` passages.
+    async fn expand(
+        repository: &ConversationRepository,
+        ranked: &[&str],
+        limit: usize,
+    ) -> Vec<String> {
+        let mut results: Vec<_> = ranked
+            .iter()
+            .map(|id| passage_result(passage(id, "Zellteilung > Mitose", 0), "hybrid"))
+            .collect();
+        let allowed = HashSet::from(["leitfaden".to_string()]);
+        expand_evidence(repository, &mut results, &allowed, limit)
+            .await
+            .expect("neighbours");
+        results.into_iter().map(|r| r.id).collect()
+    }
+
+    #[tokio::test]
+    async fn neighbours_of_the_best_anchor_displace_the_weakest_hits() {
+        let repository = mitose().await;
+        // m2's context takes two slots and m6's the last one; the tail makes room.
+        assert_eq!(
+            expand(&repository, &["m2", "m6", "t1", "t2", "t3"], 5).await,
+            ["m2", "m1", "m3", "m6", "m5"]
+        );
+    }
+
+    #[tokio::test]
+    async fn no_anchor_without_room_after_it_reads_its_neighbours() {
+        let repository = mitose().await;
+        // m2's context pushes m6 past the limit, so m6 brings none.
+        assert_eq!(
+            expand(&repository, &["m2", "m6", "t1"], 3).await,
+            ["m2", "m1", "m3"]
+        );
+        // m6 holds the last slot, with nowhere to put its context.
+        assert_eq!(
+            expand(&repository, &["t1", "t2", "m6"], 3).await,
+            ["t1", "t2", "m6"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_neighbour_already_in_the_evidence_is_not_repeated() {
+        let repository = mitose().await;
+        // m3 is m2's neighbour and a hit of its own: it keeps its place, once.
+        assert_eq!(
+            expand(&repository, &["m2", "m3", "t1"], 10).await,
+            ["m2", "m1", "m3", "m4", "t1"]
+        );
+        // A hit pushed past the limit is no longer evidence, so it can come
+        // back as a better anchor's context.
+        assert_eq!(
+            expand(&repository, &["m2", "m5", "t1", "m6"], 6).await,
+            ["m2", "m1", "m3", "m5", "m4", "m6"]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_evidence_never_exceeds_the_limit() {
+        let repository = mitose().await;
+        let ranked = ["m2", "m6", "t1", "m4", "t2", "m8", "t3"];
+        // From nothing to more room than the fixture has passages.
+        for limit in 0..=12 {
+            let evidence = expand(&repository, &ranked, limit).await;
+            assert!(evidence.len() <= limit, "{limit}: {evidence:?}");
+            let distinct: HashSet<_> = evidence.iter().collect();
+            assert_eq!(distinct.len(), evidence.len(), "{limit}: {evidence:?}");
+        }
     }
 
     /// A scoped query whose planner query only repeats the title, so what
