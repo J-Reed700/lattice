@@ -288,15 +288,18 @@ pub(super) async fn run_kb_retrieval(
         reranked = applied;
         timings.kb_rerank_ms = super::elapsed_ms(rerank_start);
     }
-    if !plan.start_at_beginning {
-        promote_entity_bridge(&mut search_response.results);
-    }
 
     // Corrective retrieval. One local verdict, and at most one replanned retry
     // when it fails — a loop that could run twice is a loop that will run twice
     // on the turn a user is already waiting on.
     let sufficiency_start = Instant::now();
-    let mut verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
+    let mut verdict = super::assess_sufficiency(
+        &search_response.results,
+        &plan,
+        tuning,
+        reranked,
+        kb_search_limit,
+    );
     timings.kb_sufficiency_ms = super::elapsed_ms(sufficiency_start);
     recorder.note(
         TurnStepKind::Sufficiency,
@@ -372,12 +375,15 @@ pub(super) async fn run_kb_retrieval(
                 reranked = applied;
                 timings.kb_rerank_ms += super::elapsed_ms(rerank_start);
             }
-            if !plan.start_at_beginning {
-                promote_entity_bridge(&mut search_response.results);
-            }
             // Judged against the original plan: the retry chose different
             // wording, but what the turn owed the user has not changed.
-            verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
+            verdict = super::assess_sufficiency(
+                &search_response.results,
+                &plan,
+                tuning,
+                reranked,
+                kb_search_limit,
+            );
             timings.kb_corrective_retries = 1;
             info!(
                 conversation_id = conversation_id,
@@ -555,7 +561,6 @@ async fn planned(
         container,
         validated_message,
         history.as_deref(),
-        catalog,
         scope,
         planner_turn,
     )
@@ -581,7 +586,6 @@ async fn shortlist_candidates(
     container: &dyn ChatRuntime,
     validated_message: &str,
     history: Option<&str>,
-    catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
 ) {
@@ -593,7 +597,6 @@ async fn shortlist_candidates(
             container.library_search().as_ref(),
             validated_message,
             history,
-            catalog,
             &scope.document_ids,
         )
         .await,
@@ -631,7 +634,6 @@ async fn corrective_pass(
         container,
         validated_message,
         history.as_deref(),
-        catalog,
         scope,
         planner_turn,
     )
@@ -768,94 +770,9 @@ async fn summary_tier(
     }
 }
 
-fn promote_entity_bridge(
-    results: &mut Vec<lattice_core::application::contracts::search::SearchResultDto>,
-) {
-    let Some(bridge) = results.iter().find(|result| {
-        result
-            .metadata
-            .get("retrievalMethod")
-            .and_then(|value| value.as_str())
-            == Some("entity_bridge")
-    }) else {
-        return;
-    };
-    let Some(source_result_id) = bridge
-        .metadata
-        .get("bridgeSourceResultId")
-        .and_then(|value| value.as_str())
-        .map(str::to_owned)
-    else {
-        return;
-    };
-    let Some(target_document_id) = bridge.document_id.clone() else {
-        return;
-    };
-    let Some(source_position) = results
-        .iter()
-        .position(|result| result.id == source_result_id)
-    else {
-        return;
-    };
-    if source_position > 0 {
-        let source = results.remove(source_position);
-        results.insert(0, source);
-    }
-
-    let mut linked = Vec::new();
-    let mut index = 1;
-    while index < results.len() {
-        if results[index].document_id.as_deref() == Some(target_document_id.as_str()) {
-            linked.push(results.remove(index));
-        } else {
-            index += 1;
-        }
-    }
-    linked.sort_by_key(|result| {
-        result
-            .position
-            .or_else(|| {
-                result
-                    .metadata
-                    .get("chunk_index")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|index| usize::try_from(index).ok())
-            })
-            .unwrap_or(usize::MAX)
-    });
-    let remainder = if linked.len() > 2 {
-        linked.split_off(2)
-    } else {
-        Vec::new()
-    };
-    for (offset, result) in linked.into_iter().enumerate() {
-        results.insert(1 + offset, result);
-    }
-    results.extend(remainder);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::application::contracts::search::SearchResultDto;
-    use std::collections::HashMap;
-
-    fn result(id: &str, document_id: &str, position: usize) -> SearchResultDto {
-        SearchResultDto {
-            id: id.into(),
-            title: document_id.into(),
-            content: String::new(),
-            score: position as f32 / 10.0,
-            path: None,
-            document_id: Some(document_id.into()),
-            position: Some(position),
-            vector_score: None,
-            bm25_score: None,
-            vector_rank: None,
-            bm25_rank: None,
-            metadata: HashMap::new(),
-        }
-    }
 
     #[test]
     fn unavailable_reason_is_clipped_to_the_trace_limit() {
@@ -863,49 +780,5 @@ mod tests {
         let reason = unavailable_reason(&long);
         assert_eq!(reason.chars().count(), UNAVAILABLE_REASON_MAX_CHARS);
         assert_eq!(unavailable_reason("index offline"), "index offline");
-    }
-
-    #[test]
-    fn an_entity_bridge_groups_its_source_and_target_without_deleting_other_results() {
-        let mut bridge = result("target-2", "target", 2);
-        bridge
-            .metadata
-            .insert("retrievalMethod".into(), serde_json::json!("entity_bridge"));
-        bridge
-            .metadata
-            .insert("bridgeSourceResultId".into(), serde_json::json!("source-0"));
-        let mut target_opening = result("target-0", "target", 0);
-        target_opening
-            .metadata
-            .insert("retrievalMethod".into(), serde_json::json!("entity_bridge"));
-        target_opening
-            .metadata
-            .insert("bridgeSourceResultId".into(), serde_json::json!("source-0"));
-        let mut target_tail = result("target-5", "target", 5);
-        target_tail
-            .metadata
-            .insert("retrievalMethod".into(), serde_json::json!("entity_bridge"));
-        target_tail
-            .metadata
-            .insert("bridgeSourceResultId".into(), serde_json::json!("source-0"));
-        let mut results = vec![
-            result("other", "similar-template", 0),
-            bridge,
-            result("source-0", "source", 0),
-            target_opening,
-            target_tail,
-        ];
-
-        promote_entity_bridge(&mut results);
-
-        assert_eq!(
-            results
-                .iter()
-                .map(|result| result.id.as_str())
-                .collect::<Vec<_>>(),
-            ["source-0", "target-0", "target-2", "other", "target-5"]
-        );
-        assert_eq!(results[1].score, 0.0);
-        assert_eq!(results[2].score, 0.2);
     }
 }

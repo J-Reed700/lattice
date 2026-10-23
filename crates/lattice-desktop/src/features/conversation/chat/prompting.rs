@@ -366,8 +366,7 @@ question, use the document search and read tools before concluding the evidence 
 const EVIDENCE_SYNTHESIS_NOTE: &str =
     "Evidence synthesis: Answer the user's intent, not only literal phrase matches. Join facts \
 across passages when one passage identifies the relevant entity or document and another states \
-the applicable rule; cite every link. When a passage explicitly links another document, do not \
-treat unlinked documents of the same general type as alternative answers. If the user's wording is broader than the source text, give \
+the applicable rule; cite every link. If the user's wording is broader than the source text, give \
 the closest supported mechanism and clearly state its narrower scope or condition. Different \
 terminology alone is not missing evidence, and a narrower mechanism must not be relabeled as a \
 broader one.";
@@ -511,24 +510,13 @@ pub(super) fn kb_passages(
         .iter()
         .filter_map(|result| {
             let citation = *citation_ids.get(&result.id)?;
-            Some((
-                citation,
-                kb_passage_with_relationship(result, citation, citation_ids),
-            ))
+            Some((citation, kb_passage(result, citation)))
         })
         .collect()
 }
 
 /// One retrieved passage under its citation number.
 pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
-    kb_passage_with_relationship(result, citation, &std::collections::HashMap::new())
-}
-
-fn kb_passage_with_relationship(
-    result: &SearchResultDto,
-    citation: u32,
-    citation_ids: &std::collections::HashMap<String, u32>,
-) -> String {
     let doc_name = result.path.as_ref().unwrap_or(&result.title);
     let doc_id_line = result
         .document_id
@@ -551,25 +539,9 @@ fn kb_passage_with_relationship(
         Some(true) => "\nText: OCR of a scanned page; odd characters may be recognition errors",
         _ => "",
     };
-    let relationship = result
-        .metadata
-        .get("bridgeSourceResultId")
-        .and_then(|value| value.as_str())
-        .filter(|source_id| *source_id != result.id)
-        .and_then(|source_id| citation_ids.get(source_id))
-        .filter(|source_citation| **source_citation != citation)
-        .map(|source_citation| {
-            format!(
-                "\nEvidence relationship: Passage [{source_citation}] establishes that this is the \
-linked document for the entity in question. Documents without such a link are not alternatives \
-merely because they have a similar type or template. Any answer applying a fact from [{citation}] \
-through this relationship must cite both [{source_citation}] and [{citation}]."
-            )
-        })
-        .unwrap_or_default();
     format!(
-        "[{}] Document: {}{}{}{}{}{}\nContent: {}",
-        citation, doc_name, doc_id_line, page, section, ocr, relationship, result.content
+        "[{}] Document: {}{}{}{}{}\nContent: {}",
+        citation, doc_name, doc_id_line, page, section, ocr, result.content
     )
 }
 

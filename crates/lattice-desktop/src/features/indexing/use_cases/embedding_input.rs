@@ -362,40 +362,53 @@ mod tests {
 
     #[test]
     fn consecutive_headings_before_body_share_one_span() {
-        let text = "# Main topic\n## Nested topic\nBody text.";
-        let spans = structure_spans(text, &[], true).unwrap();
+        for (text, breadcrumb) in [
+            (
+                "# Main topic\n## Nested topic\nBody text.",
+                "Main topic > Nested topic",
+            ),
+            (
+                "# Überblick\n## Vertragslaufzeit\nDie Laufzeit beträgt zwei Jahre.",
+                "Überblick > Vertragslaufzeit",
+            ),
+        ] {
+            let spans = structure_spans(text, &[], true).unwrap();
 
-        assert_eq!(spans.len(), 1);
-        assert_eq!(&text[spans[0].start..spans[0].end], text);
-        assert_eq!(
-            spans[0].heading.as_deref(),
-            Some("Main topic > Nested topic")
-        );
+            assert_eq!(spans.len(), 1, "{text}");
+            assert_eq!(&text[spans[0].start..spans[0].end], text);
+            assert_eq!(spans[0].heading.as_deref(), Some(breadcrumb));
+        }
     }
 
     #[test]
     fn sibling_sections_with_bodies_remain_separate_spans() {
-        let text = "# Main topic\n## First section\nFirst body.\n## Second section\nSecond body.";
-        let spans = structure_spans(text, &[], true).unwrap();
+        for (text, breadcrumbs, bodies) in [
+            (
+                "# Photosynthesis\n\n## Light reactions\nChlorophyll absorbs light.\n## Calvin cycle\nCarbon fixation follows.",
+                ["Photosynthesis > Light reactions", "Photosynthesis > Calvin cycle"],
+                ["Chlorophyll absorbs light.", "Carbon fixation follows."],
+            ),
+            (
+                "# Fotosíntesis\n## Fase luminosa\nLa clorofila absorbe la luz.\n## Ciclo de Calvin\nSigue la fijación del carbono.",
+                ["Fotosíntesis > Fase luminosa", "Fotosíntesis > Ciclo de Calvin"],
+                ["La clorofila absorbe la luz.", "Sigue la fijación del carbono."],
+            ),
+        ] {
+            let spans = structure_spans(text, &[], true).unwrap();
 
-        assert_eq!(spans.len(), 2);
-        assert_eq!(
-            spans
-                .iter()
-                .map(|span| &text[span.start..span.end])
-                .collect::<String>(),
-            text
-        );
-        assert_eq!(
-            spans[0].heading.as_deref(),
-            Some("Main topic > First section")
-        );
-        assert_eq!(
-            spans[1].heading.as_deref(),
-            Some("Main topic > Second section")
-        );
-        assert!(text[spans[0].start..spans[0].end].contains("First body."));
-        assert!(text[spans[1].start..spans[1].end].contains("Second body."));
+            assert_eq!(spans.len(), 2, "{text}");
+            assert_eq!(
+                spans
+                    .iter()
+                    .map(|span| &text[span.start..span.end])
+                    .collect::<String>(),
+                text
+            );
+            for ((span, breadcrumb), body) in spans.iter().zip(breadcrumbs).zip(bodies) {
+                assert_eq!(span.heading.as_deref(), Some(breadcrumb));
+                assert!(text[span.start..span.end].contains(body));
+            }
+        }
     }
 }
 

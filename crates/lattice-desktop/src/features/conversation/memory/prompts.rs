@@ -66,14 +66,14 @@ pub(crate) fn largest_repetition_bound(schema: &serde_json::Value) -> (u64, Stri
 }
 
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
-pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-22.15";
+pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-21.14";
 /// Identity of the semantic-review contract.
-pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-10-22.10";
+pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-10-21.9";
 /// Identity of the summariser contract.
 pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-22.3";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-10-22.10";
+pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-10-21.9";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///
@@ -464,7 +464,7 @@ fn passages(items: &[ReviewPassage<'_>]) -> Vec<serde_json::Value> {
 /// where a serialisation failure would abort a compaction that has nothing wrong
 /// with it.
 fn to_payload(value: &serde_json::Value) -> String {
-    serde_json::to_string_pretty(&sorted_keys(value)).unwrap_or_else(|_| String::from("{}"))
+    serde_json::to_string(&sorted_keys(value)).unwrap_or_else(|_| String::from("{}"))
 }
 
 /// `value` with every object's keys in byte order, at every depth.

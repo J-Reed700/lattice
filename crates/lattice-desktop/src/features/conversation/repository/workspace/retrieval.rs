@@ -178,16 +178,9 @@ impl ConversationRepository {
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
         for identifier in identifiers {
-            let mut q = QueryBuilder::<Sqlite>::new("SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
-            let mut ids: Vec<_> = allowed.iter().collect();
-            ids.sort();
-            for (i, id) in ids.into_iter().enumerate() {
-                if i > 0 {
-                    q.push(",");
-                }
-                q.push_bind(id);
-            }
-            q.push(") AND (");
+            // A breadcrumb hit is a heading the chunker detected, so it ranks
+            // ahead of a label found in body text within this identifier's share.
+            let mut q = QueryBuilder::<Sqlite>::new("SELECT id, document_id, file_name, file_path, content, chunk_index, section, page_number, from_ocr FROM (SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr, CASE WHEN ");
             for (i, prefix) in [
                 "", "§", "§ ", "Section ", "SECTION ", "section ", "Chapter ", "CHAPTER ",
                 "chapter ",
@@ -207,14 +200,29 @@ impl ConversationRepository {
                     .push_bind(format!(" > {prefix}{}. ", identifier.text))
                     .push(") > 0");
             }
+            q.push(" THEN 0 ELSE 1 END AS tier, ");
+            // A dotted label that opens a line is a numbered paragraph the
+            // chunker kept as body text. Mid-line, the same digits are prose
+            // (a pH value, a version), so only line starts count.
             if identifier.text.contains('.') {
-                q.push(" OR INSTR('\n' || c.content, ")
+                q.push("INSTR('\n' || c.content, ")
                     .push_bind(format!("\n{} ", identifier.text))
-                    .push(") > 0 OR INSTR(' ' || c.content, ")
-                    .push_bind(format!(" {} ", identifier.text))
+                    .push(") > 0 OR INSTR('\n' || c.content, ")
+                    .push_bind(format!("\n{}. ", identifier.text))
                     .push(") > 0");
+            } else {
+                q.push("0");
             }
-            q.push(") ORDER BY ROW_NUMBER() OVER (PARTITION BY c.document_id ORDER BY c.chunk_index, c.id), c.document_id LIMIT ")
+            q.push(" AS body_hit FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
+            let mut ids: Vec<_> = allowed.iter().collect();
+            ids.sort();
+            for (i, id) in ids.into_iter().enumerate() {
+                if i > 0 {
+                    q.push(",");
+                }
+                q.push_bind(id);
+            }
+            q.push(")) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
                 .push_bind(per_identifier as i64);
             let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).await?;
             passages.extend(

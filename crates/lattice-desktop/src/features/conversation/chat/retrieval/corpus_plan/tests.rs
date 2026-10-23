@@ -33,7 +33,11 @@ async fn section_fixture() -> sqlx::SqlitePool {
         ('a-other','a','Second subsection evidence',22,'Chapter 700 > Section 706.07(b) Second action',4),
         ('a-upper','a','Different uppercase subsection',23,'Chapter 700 > 706.07(A) Other action',4),
         ('b-sub','b','Other edition evidence',100,'706.07(a)',5),
-        ('body-dot','a','Index\n7.4 The notice rule follows here.',150,'Appendix',6),
+        ('body-dot-de','a','7.4 Die Kündigungsfrist beträgt drei Monate.',150,'Anhang',6),
+        ('prose-dot-de','a','Der pH-Wert im Blut liegt bei 7.4 und bleibt stabil.',151,'Anhang',6),
+        ('heading-dot-de','a','Fristen beginnen mit dem Zugang.',160,'Kapitel 7 > 7.4. Fristen',6),
+        ('body-dot-music','a','Cadences\n3.12 Dominant seventh chords resolve to the tonic.',170,'Harmony',7),
+        ('prose-dot-version','a','Python 3.12 added a faster interpreter.',171,'Release notes',7),
         ('neighbor-parent','a','Parent introduction',200,'Guide > Parent',7),
         ('neighbor-child','a','First child evidence',201,'Guide > Parent > Child',8),
         ('private-sub','private','Private evidence',0,'706.07(a) Secret',1);")
@@ -53,22 +57,36 @@ async fn section_fixture() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
-async fn dotted_body_labels_are_found_and_child_neighbors_keep_their_own_heading() {
+async fn dotted_labels_match_only_at_line_starts_with_headings_first() {
     let repo = ConversationRepository::new(section_fixture().await);
     let allowed = HashSet::from(["a".into()]);
-
-    let direct = repo
+    // The breadcrumb hit ranks first although its chunk comes later; the
+    // mid-sentence pH value is prose, not the numbered paragraph.
+    let notice = repo
         .retrieval_section_passages(&["7.4".into()], &allowed)
         .await
         .unwrap();
     assert_eq!(
-        direct
-            .iter()
-            .map(|passage| passage.id.as_str())
-            .collect::<Vec<_>>(),
-        ["body-dot"]
+        notice.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        ["heading-dot-de", "body-dot-de"]
     );
 
+    // A label after a line break counts; a version number inside a sentence
+    // does not.
+    let chords = repo
+        .retrieval_section_passages(&["3.12".into()], &allowed)
+        .await
+        .unwrap();
+    assert_eq!(
+        chords.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        ["body-dot-music"]
+    );
+}
+
+#[tokio::test]
+async fn child_neighbors_keep_their_own_heading() {
+    let repo = ConversationRepository::new(section_fixture().await);
+    let allowed = HashSet::from(["a".into()]);
     let neighbors = repo
         .retrieval_neighbors("neighbor-parent", &allowed)
         .await

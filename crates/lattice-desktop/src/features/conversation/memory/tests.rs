@@ -1038,6 +1038,26 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
     );
 }
 
+/// Memory payloads go to the model as compact JSON with sorted keys:
+/// indentation would spend window tokens on whitespace in every call.
+#[test]
+fn memory_payloads_are_compact_json() {
+    let payload = super::prompts::render_summary_shrink_prompt(
+        "Zellteilung:\n- Mitose läuft in vier Phasen ab.",
+        120,
+        80,
+    );
+    assert!(!payload.contains('\n'), "{payload}");
+    assert!(
+        payload.starts_with("{\"budget_tokens\":80,\"instructions\":"),
+        "{payload}"
+    );
+    assert!(
+        payload.contains("\"task\":\"shrink_working_summary\""),
+        "{payload}"
+    );
+}
+
 /// llama.cpp compiles the schema to a grammar and throws away the whole
 /// grammar when any `maxLength` or `maxItems` exceeds its repetition
 /// threshold. A 2048-byte quote bound did exactly that on the local sidecar:
