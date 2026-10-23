@@ -169,14 +169,23 @@ fn a_size_refusal_of_an_estimated_prompt_claims_no_lower_server_limit() {
         output_tokens: 8_192,
         ..RequestSize::default()
     };
-    let estimated = rejected(
+    let error = rejected(
         "llama.cpp",
         false,
         "(400 exceed_context_size_error) Context size has been exceeded.",
         Some((size, 131_072)),
         true,
-    )
-    .to_string();
+    );
+    // Typed with its numbers, so a caller that can send less does.
+    let AppError::PromptExceedsWindow {
+        prompt_tokens: 110_000,
+        window: 131_072,
+        counted_exactly: false,
+        message: estimated,
+    } = error
+    else {
+        panic!("an estimated prompt refused for size is PromptExceedsWindow, got {error:?}");
+    };
     for expected in [
         "a prompt of 110000 (estimated)",
         "estimated, not counted, so the request may not fit the configured context window of \

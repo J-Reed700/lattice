@@ -524,3 +524,208 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
     assert!(card("expanding").await?.0.is_some());
     Ok(())
 }
+
+/// Counts exactly at two characters a token where the estimate assumes
+/// four, as on reaction notation, and refuses, as the scheduler's gate does,
+/// a prompt its exact count says fills the window. Answers every flashcard
+/// or deck request it accepts with cards built from that request.
+struct Notation {
+    calls: std::sync::Mutex<Vec<serde_json::Value>>,
+    refusals: std::sync::atomic::AtomicUsize,
+}
+
+const NOTATION_WINDOW: usize = 8_192;
+
+fn notation() -> Notation {
+    Notation {
+        calls: std::sync::Mutex::new(Vec::new()),
+        refusals: std::sync::atomic::AtomicUsize::new(0),
+    }
+}
+
+fn exact(text: &str) -> usize {
+    text.chars().count() / 2
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Notation {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> lattice_core::shared::error::Result<
+        lattice_core::application::ports::llm_port::CompletionResponse,
+    > {
+        use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        let rendered = request
+            .input
+            .iter()
+            .flat_map(|item| match item {
+                CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if exact(&rendered) >= NOTATION_WINDOW {
+            self.refusals
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Err(lattice_core::shared::error::AppError::PromptExceedsWindow {
+                prompt_tokens: exact(&rendered),
+                window: NOTATION_WINDOW,
+                counted_exactly: true,
+                message: "over the window".into(),
+            });
+        }
+        let (_, user) = crate::features::learning::lessons::structured_call::task_messages(request);
+        let prompt: serde_json::Value = serde_json::from_str(user)?;
+        let reply = match prompt["claims"].as_array() {
+            Some(claims) => json!({"cards": (0..claims.len()).map(|i| json!({
+                "claimIndex": i,
+                "question": format!("Which condition does claim {i} state for equilibrium?"),
+                "distractors": ["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes", "Fe dissolves"],
+                "explanation": "The citation states the condition.",
+                "topic": "Equilibrium"
+            })).collect::<Vec<_>>()}),
+            None => {
+                let text = prompt["passages"][0]["text"].as_str().unwrap_or_default();
+                let quote = text.split_inclusive("zero.").next().unwrap_or_default();
+                json!({"cards":[{"question":"When does iron oxide reduction reach equilibrium?","options":["When ΔG° falls to zero","When ΔG° doubles","When Fe₂O₃ melts","When CO₂ freezes","When Fe dissolves"],"correctIndex":0,"explanation":"The passage states equilibrium is reached when ΔG° falls to zero.","sourceIndex":0,"quote":quote,"topic":"Equilibrium"}]})
+            }
+        };
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(prompt);
+        }
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "notation"
+    }
+    fn max_context_tokens(&self) -> usize {
+        NOTATION_WINDOW
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.chars().count() / 4
+    }
+    async fn count_tokens_exact(&self, text: &str) -> lattice_core::shared::error::Result<usize> {
+        Ok(exact(text))
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+}
+
+/// About 1,100 characters of reaction notation, `sentences` of them more.
+fn reaction_notes(i: usize, sentences: usize) -> String {
+    (0..sentences)
+        .map(|k| format!("In trial {i}-{k}, iron oxide reduction Fe₂O₃ + 3CO → 2Fe + 3CO₂ reaches equilibrium when ΔG° falls to zero."))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn reaction_source(i: usize, sentences: usize) -> StudySourceDto {
+    StudySourceDto {
+        chunk_id: format!("chunk-{i}"),
+        document_id: format!("run-{i}"),
+        file_name: format!("run-{i}.md"),
+        file_path: format!("/library/run-{i}.md"),
+        excerpt: reaction_notes(i, sentences),
+        url: None,
+    }
+}
+
+fn reaction_claim(i: usize, sentences: usize) -> super::study_dto::VerifiedConversationClaim {
+    super::study_dto::VerifiedConversationClaim {
+        answer: format!(
+            "Claim {i}: iron oxide reduction reaches equilibrium when ΔG° falls to zero."
+        ),
+        citations: vec![reaction_source(i, sentences)],
+    }
+}
+
+#[tokio::test]
+async fn claims_twice_as_dense_as_estimated_are_split_until_each_request_fits() {
+    let claims: Vec<_> = (0..8).map(|i| reaction_claim(i, 11)).collect();
+    let llm = notation();
+    let cards = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
+        .await
+        .unwrap();
+    // Every claim keeps its card, in order, though no request held all eight.
+    assert_eq!(cards.len(), 8);
+    assert!(cards
+        .iter()
+        .zip(&claims)
+        .all(|(card, claim)| card.answer == claim.answer && card.deck_id == "deck"));
+    let calls = llm.calls.lock().unwrap();
+    assert!(
+        calls.len() > 1,
+        "the eight claims needed more than one request"
+    );
+    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
+    // Within the window by the estimate, over it by the exact count.
+    let claims = vec![reaction_claim(0, 140)];
+    let llm = notation();
+    let error = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
+        .await
+        .err();
+    let Some(lattice_core::shared::error::AppError::InvalidConfig(message)) = error else {
+        panic!("expected the window to be named, got {error:?}");
+    };
+    assert!(
+        message.contains("notation's 8192-token context window"),
+        "{message}"
+    );
+    assert!(llm.calls.lock().unwrap().is_empty());
+}
+
+fn reaction_deck(study_goal: String) -> GenerateStudyDeckRequestDto {
+    GenerateStudyDeckRequestDto {
+        title: "Iron".into(),
+        document_ids: vec![],
+        focus: "iron oxide reduction".into(),
+        study_goal,
+        count: 2,
+    }
+}
+
+#[tokio::test]
+async fn deck_passages_twice_as_dense_as_estimated_are_fewer_but_sent() {
+    let sources: Vec<_> = (0..16).map(|i| reaction_source(i, 11)).collect();
+    let llm = notation();
+    let cards = super::study_generation::generate(
+        &llm,
+        &reaction_deck(String::new()),
+        &sources,
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cards.len(), 1);
+    let calls = llm.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let carried = calls[0]["passages"].as_array().map_or(0, Vec::len);
+    assert!(carried > 0 && carried < sources.len(), "{carried} passages");
+    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_deck_whose_questions_leave_no_room_for_a_passage_is_refused_unsent() {
+    let sources: Vec<_> = (0..4).map(|i| reaction_source(i, 11)).collect();
+    // The learner's goal is within the window by the estimate, over it by
+    // the exact count.
+    let goal = "Fe₂O₃ ⇌ 2Fe³⁺ + 3O²⁻ ".repeat(700);
+    let llm = notation();
+    let error = super::study_generation::generate(&llm, &reaction_deck(goal), &sources, "deck", 10)
+        .await
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(error.contains("Try fewer cards"), "{error}");
+    assert!(llm.calls.lock().unwrap().is_empty());
+}
