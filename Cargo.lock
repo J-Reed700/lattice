@@ -4759,6 +4759,7 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "unicode-normalization",
  "unicode-segmentation",
  "url",
  "urlencoding",
