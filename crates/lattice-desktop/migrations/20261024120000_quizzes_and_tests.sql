@@ -153,12 +153,23 @@ ALTER TABLE learning_assessment_candidates
     ADD COLUMN origin TEXT NOT NULL DEFAULT 'bank'
     CHECK(origin IN ('lesson','bank','migrated'));
 ALTER TABLE learning_assessment_candidates ADD COLUMN lesson_id TEXT;
+-- The passage the item was written from (verbatim in its lesson block or
+-- source), shown as the source line and given to the grader as reference.
+ALTER TABLE learning_assessment_candidates ADD COLUMN source_quote TEXT NOT NULL DEFAULT '';
+-- Matching's left-hand entries; options_json holds the right-hand side.
+ALTER TABLE learning_assessment_candidates ADD COLUMN left_items_json TEXT NOT NULL DEFAULT '[]';
 CREATE INDEX learning_assessment_candidates_lesson
     ON learning_assessment_candidates(program_id, lesson_id, review_status);
 
 -- Shuffled option order per form item: shown position -> authored index.
 ALTER TABLE learning_assessment_form_items
     ADD COLUMN option_order_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE learning_assessment_form_items
+    ADD COLUMN left_items_json TEXT NOT NULL DEFAULT '[]';
+
+-- Forms draw from the course's whole bank by requirement (outcome, format,
+-- difficulty), so blueprints no longer own a candidate list.
+DROP TABLE learning_assessment_blueprint_candidates;
 
 -- A form is graded or practice, and remembers the quiz it was taken for.
 ALTER TABLE learning_assessment_forms
@@ -277,8 +288,9 @@ CREATE TABLE learning_quiz_settings (
     updated_at INTEGER NOT NULL
 );
 
--- Lesson-level outcomes for every prepared lesson (module outcomes keep
--- ordinals 0..n, lesson outcomes take 100 + the lesson's ordinal).
+-- Lesson-level outcomes for every prepared lesson. They name their lesson and
+-- no module (the lesson row says where it sits), so a lesson moved between
+-- modules keeps its outcome, and module outcome lists stay the module's own.
 INSERT INTO learning_outcome_definitions(
     id, program_id, module_id, lesson_id, title, description, ordinal, created_at
 )
@@ -286,7 +298,7 @@ SELECT
     lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4'
         || substr(lower(hex(randomblob(2))), 2) || '-a'
         || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
-    l.program_id, l.module_id, l.id, l.title, l.objective, 100 + l.ordinal,
+    l.program_id, NULL, l.id, l.title, l.objective, 100 + l.ordinal,
     CAST(strftime('%s','now') AS INTEGER) * 1000
 FROM learning_lessons l
 WHERE l.preparation = 'ready'
@@ -350,7 +362,8 @@ SELECT
   AND (SELECT count(*) FROM pragma_table_info('learning_assessment_item_results')
        WHERE name IN ('criterion_results_json','artifact_quotes_json')) = 0
   AND (SELECT count(*) FROM sqlite_schema
-       WHERE type = 'table' AND name IN ('learning_questions','learning_answer_keys','learning_attempts')) = 0
+       WHERE type = 'table' AND name IN ('learning_questions','learning_answer_keys','learning_attempts',
+                                         'learning_assessment_blueprint_candidates')) = 0
   AND (SELECT count(DISTINCT id) FROM pragma_foreign_key_list('learning_assessment_grade_contests') WHERE on_delete = 'CASCADE') = 2
   AND (SELECT count(*) FROM pragma_foreign_key_list('learning_assessment_grade_contests') WHERE on_delete NOT IN ('CASCADE','SET NULL')) = 0
   AND (SELECT count(*) FROM pragma_foreign_key_list('learning_assessment_item_reports') WHERE on_delete NOT IN ('CASCADE','SET NULL')) = 0
