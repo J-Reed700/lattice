@@ -5,6 +5,8 @@ pub mod claim_reviews;
 pub(crate) mod content_verification;
 #[cfg(test)]
 pub(crate) mod course_generation_tests;
+#[cfg(test)]
+mod first_start_check;
 pub mod generation;
 pub(crate) mod generation_jobs;
 pub(crate) mod lesson_drafts;
