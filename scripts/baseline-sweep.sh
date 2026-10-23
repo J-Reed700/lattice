@@ -91,8 +91,16 @@ ONLY= DATE= LIST=0
 while (( $# > 0 )); do
   case $1 in
     -h|--help|help) usage; exit 0 ;;
-    --only) (( $# >= 2 )) || { usage >&2; exit 2 }; ONLY=$2; shift 2 ;;
-    --date) (( $# >= 2 )) || { usage >&2; exit 2 }; DATE=$2; shift 2 ;;
+    --only)
+      (( $# >= 2 )) || { usage >&2; exit 2; }
+      ONLY=$2
+      shift 2
+      ;;
+    --date)
+      (( $# >= 2 )) || { usage >&2; exit 2; }
+      DATE=$2
+      shift 2
+      ;;
     --list) LIST=1; shift ;;
     *) print -u2 "Unknown option: $1"; usage >&2; exit 2 ;;
   esac
