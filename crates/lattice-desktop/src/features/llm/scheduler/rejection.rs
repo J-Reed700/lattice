@@ -222,6 +222,11 @@ pub(crate) fn is_size_refusal(status: Option<u16>, kind: &str, message: &str) ->
 /// times. `account` is the server's side, already sanitized: its status and
 /// type, then its words. `request` carries the request's size and the
 /// configured window when they are known.
+///
+/// A size refusal of a prompt that was only estimated is
+/// [`AppError::PromptExceedsWindow`], not counted exactly; one of a counted
+/// prompt stays [`AppError::ModelRejected`], since the prompt fit the
+/// configured window and the server's real limit is lower.
 pub(crate) fn rejected(
     backend: &str,
     twice: bool,
@@ -250,6 +255,9 @@ pub(crate) fn rejected(
             ));
             return AppError::ModelRejected(text);
         }
+        // An estimated prompt the server refused as too large may simply not
+        // fit: typed with its numbers, so a caller that can send less does,
+        // as it would for a refusal before sending.
         if too_large {
             text.push_str(&format!(
                 " The server refused it as too large. The prompt's size was estimated, not \
@@ -257,7 +265,12 @@ pub(crate) fn rejected(
                  after all: shorten the request. If the server also refuses requests that fit, \
                  lower the context window in Settings to match the server."
             ));
-            return AppError::ModelRejected(text);
+            return AppError::PromptExceedsWindow {
+                prompt_tokens: size.prompt_tokens,
+                window,
+                counted_exactly: false,
+                message: text,
+            };
         }
     }
     if twice {

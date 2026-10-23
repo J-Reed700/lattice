@@ -1012,3 +1012,238 @@ async fn a_search_for_an_independent_source_never_offers_the_supports_own_origin
     assert!(offered.contains("\"needKind\":\"web\""));
     Ok(())
 }
+
+/// Counts as a tokenizer does on notation and formulas: plain text at four
+/// characters a token, as the estimate assumes, but every sign outside ASCII
+/// (♯, ♭, subscript digits, arrows) a token of its own. Refuses, as the
+/// gates do, a prompt its exact count leaves no room beside.
+struct Notation {
+    window: usize,
+    counts: std::sync::atomic::AtomicUsize,
+    refusals: std::sync::atomic::AtomicUsize,
+    prompts: Mutex<Vec<String>>,
+}
+
+fn notation(window: usize) -> Notation {
+    Notation {
+        window,
+        counts: Default::default(),
+        refusals: Default::default(),
+        prompts: Mutex::new(Vec::new()),
+    }
+}
+
+fn exact_tokens(text: &str) -> usize {
+    let wide = text.chars().filter(|c| !c.is_ascii()).count();
+    (text.chars().count() - wide) / 4 + wide
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Notation {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        use lattice_core::application::ports::llm_port::CompletionInput;
+        let rendered = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Message { role, content } => Some(format!("{role}\n{content}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt_tokens = exact_tokens(&rendered);
+        if prompt_tokens >= self.window {
+            self.refusals
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Err(AppError::PromptExceedsWindow {
+                prompt_tokens,
+                window: self.window,
+                counted_exactly: true,
+                message: "It was not sent.".into(),
+            });
+        }
+        self.prompts.lock().unwrap().push(rendered);
+        Ok(CompletionResponse::from_text(selection(&[0])))
+    }
+    fn model_name(&self) -> &str {
+        "notation"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.chars().count() / 4
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        self.counts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(exact_tokens(text))
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn reference_selection_reads_fewer_dense_results_instead_of_refusing() -> Result<()> {
+    // Music notation: the estimate reads it as prose, the tokenizer at about
+    // twice that.
+    let candidates = found(
+        (0..40)
+            .map(|i| WebSearchResult {
+                title: format!("Spelling altered chords, part {i}"),
+                url: format!("https://music.example.edu/harmony/{i}"),
+                snippet: "C♯ E♭ G♯ B♭ ".repeat(30),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
+    );
+    let (topic, query) = ("Chromatic harmony", "altered chord spelling");
+    // The smallest window whose estimate holds every candidate.
+    let total: usize = candidates
+        .iter()
+        .map(selection_cost(&notation(0), &[]))
+        .sum();
+    let mut window = 4096;
+    while selection_room(&notation(window), topic, query, &[]) < total {
+        window += 1024;
+    }
+    let llm = notation(window);
+    let all: Vec<Value> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, candidate)| shown(i, candidate, &[]))
+        .collect();
+    assert!(
+        !model_call::fits(&llm, &selection_request(topic, query, &[], &all)).await,
+        "counted exactly, every candidate is over the window"
+    );
+
+    let selected = select_references(&llm, topic, query, &[], candidates).await?;
+
+    assert_eq!(selected[0].url, "https://music.example.edu/harmony/0");
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 1, "one selection, sent once");
+    let read = prompts[0].matches("\"id\":\"result-").count();
+    assert!(read > 0 && read < 40, "read {read}");
+    assert!(exact_tokens(&prompts[0]) < window);
+    assert_eq!(
+        llm.refusals.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "measured before it was sent, never refused"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reference_selection_leaves_the_gap_open_when_no_dense_result_fits() -> Result<()> {
+    // Chemistry formulas: every subscript and arrow is a token of its own.
+    let llm = notation(8192);
+    let (topic, query) = ("Fermentation", "glucose to ethanol");
+    let room = selection_room(&llm, topic, query, &[]);
+    let formula = "C₆H₁₂O₆→2C₂H₅OH+2CO₂ ";
+    let candidates = found(vec![WebSearchResult {
+        title: "Alcoholic fermentation".into(),
+        url: "https://chemistry.example.edu/fermentation".into(),
+        snippet: formula.repeat((room * 4 * 9 / 10 - 400) / formula.chars().count()),
+        published_date: None,
+        source: None,
+    }]);
+    assert!(
+        selection_cost(&llm, &[])(&candidates[0]) <= room,
+        "the estimate holds the one result"
+    );
+
+    let selected = select_noted(&llm, topic, query, &[], candidates).await?;
+
+    assert!(selected.is_empty(), "the gap stays open");
+    assert!(llm.prompts.lock().unwrap().is_empty(), "nothing was sent");
+    assert!(llm.counts.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
+/// Fails every call as a research round can: refused for size, as the
+/// reference selection of a music theory lesson once was, or with an answer
+/// the round cannot use.
+struct Failing {
+    refused: bool,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Failing {
+    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+        Err(if self.refused {
+            AppError::PromptExceedsWindow {
+                prompt_tokens: 35_569,
+                window: 32_768,
+                counted_exactly: true,
+                message: "This request's prompt is 35569 tokens (counted exactly), which leaves \
+                          no room for an answer; the configured context window is 32768. It \
+                          was not sent."
+                    .into(),
+            }
+        } else {
+            AppError::InvalidInput(
+                "Reference selection returned invalid evidence candidates; no pages were saved."
+                    .into(),
+            )
+        })
+    }
+    fn model_name(&self) -> &str {
+        "failing"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.chars().count() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        async {
+            for refused in [true, false] {
+                let outcome = expand(
+                    &Failing { refused },
+                    &references,
+                    &[gap()],
+                    &[],
+                    &ClaimChecks::default(),
+                )
+                .await?;
+                assert!(outcome.per_claim().is_some(), "the round is still timed");
+                let Expansion::Unchanged(searched) = outcome else {
+                    panic!("research adds evidence; it never stops the lesson");
+                };
+                assert!(searched.sources_added.is_empty());
+            }
+            assert_eq!(
+                repo.verification_sources(&program.summary.id).await?.len(),
+                sources.len()
+            );
+            Ok(())
+        },
+    )
+    .await
+}

@@ -22,7 +22,7 @@ use crate::features::learning::reference_collection::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -406,32 +406,37 @@ fn coverage_call(
     }
 }
 
-fn coverage_fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
+async fn coverage_fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
     let mut request = GroundedRequest::new(COVERAGE_SYSTEM, prompt);
     request.output_tokens = output_tokens;
-    model_call::fits(llm, &request)
+    model_call::fits(llm, &request).await
 }
 
-/// Consecutive groups of `pairs` whose coverage requests fit the window,
-/// counted part by part; each passage is charged once per group.
+/// Consecutive groups of `pairs` whose coverage requests fit the window by
+/// estimate, counted part by part; each passage is charged once per group. A
+/// pair over the room alone is a group of its own, measured when it is sent.
+/// None when the check's instructions leave no room: every topic stays
+/// uncovered.
 fn coverage_groups(
     llm: &dyn LLMPort,
     topics: &[Topic],
     store: &[ReferencePassage],
     references: &ReferenceCollection<'_>,
     pairs: &[(usize, usize)],
-) -> Result<Vec<Vec<(usize, usize)>>> {
+) -> Vec<Vec<(usize, usize)>> {
     let mut skeleton = GroundedRequest::new(
         COVERAGE_SYSTEM,
         json!({"topics":[],"passages":[]}).to_string(),
     );
     skeleton.output_tokens = coverage_output(pairs);
     let room = model_call::source_room(llm, &skeleton, usize::MAX);
-    let too_large = || {
-        AppError::InvalidInput(
-            "A lesson evidence check exceeds this model's context window.".into(),
-        )
-    };
+    if room == 0 {
+        tracing::warn!(
+            pairs = pairs.len(),
+            "The lesson evidence check leaves no room for passages; its topics count as uncovered"
+        );
+        return Vec::new();
+    }
     let mut groups = Vec::new();
     let mut group: Vec<(usize, usize)> = Vec::new();
     let mut used = 0;
@@ -467,7 +472,8 @@ fn coverage_groups(
         }
         let price = cost(&group);
         if price > room {
-            return Err(too_large());
+            groups.push(vec![(topic, passage)]);
+            continue;
         }
         used += price;
         group.push((topic, passage));
@@ -475,7 +481,7 @@ fn coverage_groups(
     if !group.is_empty() {
         groups.push(group);
     }
-    Ok(groups)
+    groups
 }
 
 /// The passages the answer says cover each topic of `call`. Unknown topic or
@@ -547,17 +553,20 @@ async fn judge(
         "Checking which of {} passages cover the lesson's topics",
         pairs.len()
     ));
-    let mut groups = coverage_groups(llm, topics, store, references, &pairs)?;
+    let mut groups = coverage_groups(llm, topics, store, references, &pairs);
     groups.reverse();
     while let Some(mut group) = groups.pop() {
         let call = coverage_call(topics, store, references, &group);
         // The groups are sized part by part; a request that still overflows
-        // is halved.
-        if !coverage_fits(llm, &call.prompt, call.output_tokens) {
+        // is halved, and a passage that does not fit beside the check alone
+        // does not cover its topic.
+        if !coverage_fits(llm, &call.prompt, call.output_tokens).await {
             if group.len() == 1 {
-                return Err(AppError::InvalidInput(
-                    "A lesson evidence check exceeds this model's context window.".into(),
-                ));
+                tracing::warn!(
+                    topics = call.topics.len(),
+                    "A passage does not fit beside the lesson evidence check; it counts as not covering its topic"
+                );
+                continue;
             }
             let rest = group.split_off(group.len() / 2);
             groups.push(rest);

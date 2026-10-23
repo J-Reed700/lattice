@@ -991,7 +991,16 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
         .complete(&CompletionRequest::default())
         .await
         .unwrap_err();
-    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            AppError::PromptExceedsWindow {
+                counted_exactly: false,
+                ..
+            }
+        ),
+        "{error}"
+    );
     let told = error.to_string();
     for expected in [
         "llama.cpp rejected this request: (400 exceed_context_size_error) request (9000 tokens)",
@@ -1730,7 +1739,16 @@ async fn the_same_server_failure_twice_is_one_rejection_and_no_third_attempt() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            AppError::PromptExceedsWindow {
+                counted_exactly: false,
+                ..
+            }
+        ),
+        "{error}"
+    );
     let told = error.to_string();
     for expected in [
         "llama.cpp rejected this request twice: (500 server_error) the server exhausted its context capacity.",

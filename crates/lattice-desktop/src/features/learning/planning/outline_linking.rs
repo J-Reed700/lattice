@@ -16,7 +16,7 @@ use crate::features::learning::{
 };
 use lattice_core::{
     application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
-    shared::error::{AppError, Result},
+    shared::error::Result,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -402,10 +402,48 @@ fn request(
     (prompt, schema, 200 + 120 * group.len(), listed)
 }
 
-fn fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
+fn chooser_request(prompt: &str, output_tokens: usize) -> GroundedRequest {
     let mut request = GroundedRequest::new(LINK_SYSTEM, prompt);
     request.output_tokens = output_tokens;
-    crate::features::learning::model_call::fits(llm, &request)
+    request
+}
+
+async fn fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
+    crate::features::learning::model_call::fits(llm, &chooser_request(prompt, output_tokens)).await
+}
+
+/// Keep the best of one item's candidates that a chooser call holds beside
+/// it, measured exactly where the backend can count. False when not even the
+/// first fits, and the item is left unlinked.
+async fn fit_candidates(
+    llm: &dyn LLMPort,
+    item: &mut Pending,
+    sources: &[LearningSourceDto],
+) -> bool {
+    let offered = std::mem::take(&mut item.candidates);
+    let costs: Vec<usize> = offered
+        .iter()
+        .map(|candidate| llm.count_tokens(&json!(candidate.quote).to_string()) + 8)
+        .collect();
+    let within = |room: usize| {
+        let mut spent = 0;
+        costs
+            .iter()
+            .take_while(|cost| {
+                spent += **cost;
+                spent <= room
+            })
+            .count()
+    };
+    let mut build = |room: usize| {
+        item.candidates = offered.iter().take(within(room)).cloned().collect();
+        let (prompt, _, output_tokens, _) = request(std::slice::from_ref(item), sources);
+        chooser_request(&prompt, output_tokens)
+    };
+    let first = crate::features::learning::model_call::source_room(llm, &build(0), usize::MAX);
+    let fit = crate::features::learning::model_call::fit_room(llm, first, &mut build).await;
+    item.candidates = offered.iter().take(within(fit.room)).cloned().collect();
+    fit.fits() && !item.candidates.is_empty()
 }
 
 /// Record one chooser decision on the draft. The chosen passage, if any,
@@ -595,17 +633,34 @@ pub(in crate::features::learning) async fn link(
     let mut done = 0;
     while let Some(mut group) = groups.pop() {
         progress.check_cancelled()?;
-        let (prompt, schema, output_tokens, listed) = request(&group, sources);
-        if !fits(llm, &prompt, output_tokens) {
-            if group.len() == 1 {
-                return Err(AppError::InvalidInput(
-                    "An evidence linking call exceeds this model's context window.".into(),
-                ));
+        let (mut prompt, mut schema, output_tokens, mut listed) = request(&group, sources);
+        if !fits(llm, &prompt, output_tokens).await {
+            if group.len() > 1 {
+                let rest = group.split_off(group.len() / 2);
+                groups.push(rest);
+                groups.push(group);
+                continue;
             }
-            let rest = group.split_off(group.len() / 2);
-            groups.push(rest);
-            groups.push(group);
-            continue;
+            // One item is offered as many of its candidates as fit. With not
+            // even one, it stays unlinked, as an undecided item does.
+            let mut offered = false;
+            if let Some(item) = group.first_mut() {
+                offered = fit_candidates(llm, item, sources).await;
+            }
+            if !offered {
+                for item in &group {
+                    if item.author.is_some() {
+                        if let Some(field) = draft.candidate.pointer_mut(&item.path) {
+                            strip(field);
+                        }
+                        log.removed_unchosen += 1;
+                    }
+                    tracing::warn!(path = %item.path, "Not one candidate passage fits beside this outline item in the model's window; the item stays unlinked");
+                }
+                done += group.len();
+                continue;
+            }
+            (prompt, schema, _, listed) = request(&group, sources);
         }
         let raw = complete_reasoned_json(
             llm,
