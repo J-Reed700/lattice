@@ -160,8 +160,10 @@ fn structure_spans(
         covered = end;
         let mut segment_start = start;
         let mut offset = start;
+        let mut has_body = false;
         for line in text[start..end].split_inclusive('\n') {
             if sections && fence.track(line) {
+                has_body = true;
                 offset += line.len();
                 continue;
             }
@@ -175,23 +177,29 @@ fn structure_spans(
                         offset += line.len();
                         continue;
                     }
-                    let breadcrumb = headings
-                        .iter()
-                        .map(|(_, h)| h.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" > ");
-                    if offset > segment_start {
+                    if offset > segment_start && has_body {
+                        let breadcrumb = headings
+                            .iter()
+                            .map(|(_, h)| h.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" > ");
                         spans.push(Span {
                             start: segment_start,
                             end: offset,
                             page: (page > 0).then_some(page as u32),
                             heading: (!breadcrumb.is_empty()).then_some(breadcrumb),
                         });
+                        segment_start = offset;
+                        has_body = false;
                     }
                     headings.retain(|(parent, _)| *parent < level);
                     headings.push((level, title));
-                    segment_start = offset;
+                    offset += line.len();
+                    continue;
                 }
+            }
+            if !line.trim().is_empty() {
+                has_body = true;
             }
             offset += line.len();
         }
@@ -350,6 +358,44 @@ mod tests {
         assert_eq!(spans.last().unwrap().heading.as_deref(), Some("Chapter 700 Examination > 706 Rejection > 706.07 Actions > § 706.07(b) Second action"));
         assert!(spans.iter().any(|s| s.heading.as_deref() == Some("Chapter 700 Examination > 706 Rejection > 706.07 Actions > 706.07(a) First action > 706.07(a)(1) Exception")));
         assert!(heading("706..07 Broken heading").is_none());
+    }
+
+    #[test]
+    fn consecutive_headings_before_body_share_one_span() {
+        let text = "# Main topic\n## Nested topic\nBody text.";
+        let spans = structure_spans(text, &[], true).unwrap();
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(&text[spans[0].start..spans[0].end], text);
+        assert_eq!(
+            spans[0].heading.as_deref(),
+            Some("Main topic > Nested topic")
+        );
+    }
+
+    #[test]
+    fn sibling_sections_with_bodies_remain_separate_spans() {
+        let text = "# Main topic\n## First section\nFirst body.\n## Second section\nSecond body.";
+        let spans = structure_spans(text, &[], true).unwrap();
+
+        assert_eq!(spans.len(), 2);
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| &text[span.start..span.end])
+                .collect::<String>(),
+            text
+        );
+        assert_eq!(
+            spans[0].heading.as_deref(),
+            Some("Main topic > First section")
+        );
+        assert_eq!(
+            spans[1].heading.as_deref(),
+            Some("Main topic > Second section")
+        );
+        assert!(text[spans[0].start..spans[0].end].contains("First body."));
+        assert!(text[spans[1].start..spans[1].end].contains("Second body."));
     }
 }
 

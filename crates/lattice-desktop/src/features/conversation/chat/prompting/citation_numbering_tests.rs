@@ -145,3 +145,31 @@ fn missing_passage_never_gets_an_invented_citation() {
     let context = build_kb_context(&refs, &ids).expect("context");
     assert!(!context.contains("[1]"));
 }
+
+#[test]
+fn an_entity_bridge_explains_the_cross_passage_relationship_with_real_citations() {
+    let source = chunk(
+        "project-0",
+        "project",
+        "project.md",
+        "On-site work is performed by Northwind Services.",
+    );
+    let mut target = chunk(
+        "agreement-0",
+        "agreement",
+        "Northwind Services agreement.md",
+        "Renewal may be declined with written notice.",
+    );
+    target.metadata.insert(
+        "bridgeSourceResultId".into(),
+        serde_json::json!("project-0"),
+    );
+    let refs = [&source, &target];
+    let ids = HashMap::from([("project-0".to_string(), 3), ("agreement-0".to_string(), 7)]);
+
+    let context = build_kb_context(&refs, &ids).expect("context");
+
+    assert!(context.contains("Passage [3] establishes that this is the linked document"));
+    assert!(context.contains("must cite both [3] and [7]"));
+    assert!(!context.contains("must cite both [7] and [3]"));
+}

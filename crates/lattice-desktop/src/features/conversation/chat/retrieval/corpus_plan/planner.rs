@@ -226,6 +226,14 @@ async fn plan_with(
         .trim_end_matches("```")
         .trim();
     let mut plan = serde_json::from_str::<CorpusSearchPlan>(response)?;
+    // A provider cannot turn a focused lookup into ordered reading merely by
+    // setting the flag. Preserve genuine short follow-ups, though: the user
+    // may answer "yes, start there" after asking where a document begins.
+    let ordered_reading_requested = super::whole_document_intent(question)
+        || (super::is_short_followup_message(question) && super::whole_document_intent(&history));
+    if !ordered_reading_requested {
+        plan.start_at_beginning = false;
+    }
     // The planner names documents by the handles it was shown. Anything else
     // passes through, and validation drops what is not in the catalog.
     plan.opening_document_ids = plan

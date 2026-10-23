@@ -13,8 +13,17 @@ type PassageRow = (
 );
 
 /// One neighbouring chunk of a section: id, file name, file path, content, chunk
-/// index, page number, and whether OCR read it.
-type SectionNeighbourRow = (String, String, String, String, i64, Option<i64>, bool);
+/// index, actual section, page number, and whether OCR read it.
+type SectionNeighbourRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<i64>,
+    bool,
+);
 
 impl ConversationRepository {
     /// Read only metadata and one bounded opening per document; never load the
@@ -194,6 +203,15 @@ impl ConversationRepository {
                 // preserves case in labels such as (a) versus (A).
                 q.push("INSTR(' > ' || c.section || ' ', ")
                     .push_bind(format!(" > {prefix}{} ", identifier.text))
+                    .push(") > 0 OR INSTR(' > ' || c.section || ' ', ")
+                    .push_bind(format!(" > {prefix}{}. ", identifier.text))
+                    .push(") > 0");
+            }
+            if identifier.text.contains('.') {
+                q.push(" OR INSTR('\n' || c.content, ")
+                    .push_bind(format!("\n{} ", identifier.text))
+                    .push(") > 0 OR INSTR(' ' || c.content, ")
+                    .push_bind(format!(" {} ", identifier.text))
                     .push(") > 0");
             }
             q.push(") ORDER BY ROW_NUMBER() OVER (PARTITION BY c.document_id ORDER BY c.chunk_index, c.id), c.document_id LIMIT ")
@@ -241,23 +259,25 @@ impl ConversationRepository {
         if !allowed.contains(&doc) {
             return Ok(Vec::new());
         }
-        let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND c.section = ? AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
-            .bind(&doc).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
+        let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND (c.section = ? OR INSTR(c.section, ? || ' > ') = 1) AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
+            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
-            .map(|(id, name, path, content, index, page, from_ocr)| {
-                lattice_core::application::contracts::search::CorpusPassage {
-                    id,
-                    document_id: doc.clone(),
-                    name,
-                    path,
-                    content,
-                    chunk_index: index.max(0) as usize,
-                    section: Some(section.clone()),
-                    page_number: page.and_then(|p| p.try_into().ok()),
-                    from_ocr,
-                }
-            })
+            .map(
+                |(id, name, path, content, index, actual_section, page, from_ocr)| {
+                    lattice_core::application::contracts::search::CorpusPassage {
+                        id,
+                        document_id: doc.clone(),
+                        name,
+                        path,
+                        content,
+                        chunk_index: index.max(0) as usize,
+                        section: actual_section,
+                        page_number: page.and_then(|p| p.try_into().ok()),
+                        from_ocr,
+                    }
+                },
+            )
             .collect())
     }
 
