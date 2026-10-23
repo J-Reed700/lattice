@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
 import * as apiMock from '../lib/__mocks__/api';
+import { useDraftStore } from '../shared/drafts/drafts';
 
 // Node can expose its own experimental storage globals. Tests must use the
 // jsdom window's origin-scoped storage, just like the renderer does.
@@ -24,6 +25,9 @@ vi.mock('@/lib/api', () => apiMock);
 
 afterEach(() => {
   cleanup();
+  // Unsent text outlives components by design; it must not outlive a test.
+  useDraftStore.setState({ drafts: {} });
+  localStorage.removeItem('lattice.drafts');
 });
 
 globalThis.matchMedia = globalThis.matchMedia || function () {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, MessageSquarePlus, Square, Trash2 } from 'lucide-react';
@@ -14,23 +14,24 @@ import type { ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
+import { conversationDraftKey, useDraft } from '@/shared/drafts/drafts';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessage, ToolPreferences } from '@/types/conversation';
 
 const EMPTY_MESSAGES: ConversationMessage[] = [];
 
-export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, onPromoted }: {
+export function TangentPanel({ tangent, toolPreferences, unavailable, onPromoted }: {
   tangent: ConversationTangentDto;
   toolPreferences: ToolPreferences;
   unavailable: boolean;
-  drafts: Map<string, string>;
   onPromoted: () => void;
 }) {
   const id = tangent.conversationId;
   const base = useConversationsStore();
   const queryClient = useQueryClient();
   const { mutateAsync: promoteTangent } = usePromoteTangentMutation();
-  const [input, setInput] = useState(() => drafts.get(id) ?? '');
+  // Closing, switching or leaving a tangent keeps its unsent question.
+  const [input, saveDraft] = useDraft(conversationDraftKey(id));
   const [mutating, setMutating] = useState(false);
   const submitting = useRef(false);
   const mutationPending = useRef(false);
@@ -43,7 +44,6 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
   const persisted = messagesQuery.data ?? EMPTY_MESSAGES;
   const metadata = useMemo(() => deriveMessageMetadata(persisted), [persisted]);
   const isSending = base.inFlightGenerations.has(id);
-  const saveDraft = useCallback((value: string) => { drafts.set(id, value); setInput(value); }, [drafts, id]);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
   useEffect(() => {
@@ -99,8 +99,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
       const hasQuestion = current.some(message => message.role === 'user' && message.content === question)
         || Array.from(conversationUiStore.getState().optimisticMessages.values()).some(message => message.conversationId === id && message.role === 'user' && message.content === question);
       if (outcome === 'busy' || (outcome !== 'answered' && !hasQuestion)) {
-        drafts.set(id, question);
-        setInput(question);
+        saveDraft(question);
       }
     } catch (error) {
       saveDraft(question);
@@ -125,7 +124,6 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
         if (!await base.deleteConversation(id)) throw new Error(conversationUiStore.getState().error ?? 'Please try again.');
       }
       queryClient.setQueryData<ConversationTangentDto[]>(conversationKeys.tangents(tangent.parentConversationId), current => current?.filter(item => item.conversationId !== id));
-      drafts.delete(id);
       onPromoted();
     } catch (error) {
       toast.error(action === 'promote' ? "Couldn't make this a conversation" : "Couldn't delete the tangent", { message: error instanceof Error ? error.message : String(error) });
