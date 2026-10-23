@@ -34,17 +34,25 @@ fn decode<T: DeserializeOwned>(v: &str) -> Result<T> {
 }
 fn format_name(v: engine::LearningItemFormat) -> &'static str {
     match v {
-        engine::LearningItemFormat::MultipleChoice => "multiple_choice",
+        engine::LearningItemFormat::SingleChoice => "single_choice",
+        engine::LearningItemFormat::MultiSelect => "multi_select",
+        engine::LearningItemFormat::TrueFalse => "true_false",
         engine::LearningItemFormat::ShortAnswer => "short_answer",
-        engine::LearningItemFormat::Explanation => "explanation",
+        engine::LearningItemFormat::Cloze => "cloze",
+        engine::LearningItemFormat::Matching => "matching",
         engine::LearningItemFormat::Ordering => "ordering",
+        engine::LearningItemFormat::Explanation => "explanation",
         engine::LearningItemFormat::Artifact => "artifact",
     }
 }
 fn parse_format(v: &str) -> Result<engine::LearningItemFormat> {
     match v {
-        "multiple_choice" => Ok(engine::LearningItemFormat::MultipleChoice),
+        "single_choice" => Ok(engine::LearningItemFormat::SingleChoice),
+        "multi_select" => Ok(engine::LearningItemFormat::MultiSelect),
+        "true_false" => Ok(engine::LearningItemFormat::TrueFalse),
         "short_answer" => Ok(engine::LearningItemFormat::ShortAnswer),
+        "cloze" => Ok(engine::LearningItemFormat::Cloze),
+        "matching" => Ok(engine::LearningItemFormat::Matching),
         "explanation" => Ok(engine::LearningItemFormat::Explanation),
         "ordering" => Ok(engine::LearningItemFormat::Ordering),
         "artifact" => Ok(engine::LearningItemFormat::Artifact),
@@ -93,8 +101,27 @@ fn parse_grade(v: &str) -> Result<LearningAssessmentGradeStatus> {
         "provisional" => Ok(LearningAssessmentGradeStatus::Provisional),
         "uncertain" => Ok(LearningAssessmentGradeStatus::Uncertain),
         "needs_review" => Ok(LearningAssessmentGradeStatus::NeedsReview),
+        "pending" => Ok(LearningAssessmentGradeStatus::Pending),
         _ => Err(AppError::Database("Invalid assessment grade status".into())),
     }
+}
+fn parse_mode(v: &str) -> Result<LearningQuizMode> {
+    match v {
+        "graded" => Ok(LearningQuizMode::Graded),
+        "practice" => Ok(LearningQuizMode::Practice),
+        _ => Err(AppError::Database("Invalid assessment form mode".into())),
+    }
+}
+/// A stored `scope_kind`/`scope_id` pair; None for an unscoped legacy form.
+fn parse_scope(kind: Option<String>, id: Option<String>) -> Result<Option<LearningQuizScopeDto>> {
+    let kind = match kind.as_deref() {
+        None => return Ok(None),
+        Some("lesson") => LearningQuizScopeKind::Lesson,
+        Some("module") => LearningQuizScopeKind::Module,
+        Some("course") => LearningQuizScopeKind::Course,
+        Some(_) => return Err(AppError::Database("Invalid quiz scope".into())),
+    };
+    Ok(Some(LearningQuizScopeDto { kind, id }))
 }
 fn parse_form_status(v: &str) -> Result<LearningAssessmentFormStatus> {
     match v {
@@ -224,6 +251,7 @@ fn stronger_grade(
             LearningAssessmentGradeStatus::Provisional => 1,
             LearningAssessmentGradeStatus::Uncertain => 2,
             LearningAssessmentGradeStatus::NeedsReview => 3,
+            LearningAssessmentGradeStatus::Pending => 4,
         }
     }
     if rank(&a) >= rank(&b) {
@@ -238,6 +266,7 @@ fn grade_name(s: &LearningAssessmentGradeStatus) -> &'static str {
         LearningAssessmentGradeStatus::Provisional => "provisional",
         LearningAssessmentGradeStatus::Uncertain => "uncertain",
         LearningAssessmentGradeStatus::NeedsReview => "needs_review",
+        LearningAssessmentGradeStatus::Pending => "pending",
     }
 }
 fn dimension_for(
@@ -248,8 +277,12 @@ fn dimension_for(
         "transfer"
     } else {
         match format {
-            engine::LearningItemFormat::MultipleChoice
+            engine::LearningItemFormat::SingleChoice
+            | engine::LearningItemFormat::MultiSelect
+            | engine::LearningItemFormat::TrueFalse
             | engine::LearningItemFormat::ShortAnswer
+            | engine::LearningItemFormat::Cloze
+            | engine::LearningItemFormat::Matching
             | engine::LearningItemFormat::Ordering => "recall",
             engine::LearningItemFormat::Explanation => "explanation",
             engine::LearningItemFormat::Artifact => "application",
@@ -363,7 +396,7 @@ fn validate_response(
         return Err(invalid("Assessment response exceeds its size limit."));
     }
     match format {
-        engine::LearningItemFormat::MultipleChoice => {
+        engine::LearningItemFormat::SingleChoice => {
             if r.selected_index.is_none_or(|i| i >= options.len())
                 || r.text.is_some()
                 || !r.ordered_values.is_empty()
@@ -402,6 +435,12 @@ fn validate_response(
             {
                 return Err(invalid("Save an artifact or written response."));
             }
+        }
+        engine::LearningItemFormat::MultiSelect
+        | engine::LearningItemFormat::TrueFalse
+        | engine::LearningItemFormat::Cloze
+        | engine::LearningItemFormat::Matching => {
+            return Err(AppError::InvalidState("not built".into()));
         }
     }
     Ok(())

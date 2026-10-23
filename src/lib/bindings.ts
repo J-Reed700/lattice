@@ -1098,6 +1098,78 @@ async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promi
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningQuizOverview(programId: string) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_quiz_overview", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateLearningQuizSettings(request: UpdateLearningQuizSettingsRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_learning_quiz_settings", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningQuizBank(request: PrepareLearningQuizBankRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_quiz_bank", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningQuiz(request: StartLearningQuizRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_quiz", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumeLearningQuizGrading(request: ResumeLearningQuizGradingRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resume_learning_quiz_grading", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async contestLearningQuizGrade(request: ContestLearningQuizGradeRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|contest_learning_quiz_grade", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async overrideLearningQuizGrade(request: OverrideLearningQuizGradeRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|override_learning_quiz_grade", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reportLearningQuizItem(request: ReportLearningQuizItemRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|report_learning_quiz_item", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addLearningQuizMissesToRecall(request: AddLearningQuizMissesToRecallRequestDto) : Promise<Result<LearningQuizMissesToRecallDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_quiz_misses_to_recall", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningPracticalWorkspace(programId: string) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practical_workspace", { programId }) };
@@ -4467,6 +4539,7 @@ export type ActivityTarget = { type: "course"; course: string } | { type: "lesso
 export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
+export type AddLearningQuizMissesToRecallRequestDto = { operationId: string; programId: string; formId: string; itemIds: string[] }
 export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; title: string; publisher: string | null; text: string }
 export type AddLearningWebSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; url: string; freshnessPolicy: LearningSourcePolicy }
 export type AdoptLearningSourceVersionRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number }
@@ -5798,6 +5871,11 @@ export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto
  * Optional second unlock path. At least 8 characters when present.
  */
 passphrase?: string | null }
+export type ContestLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string;
+/**
+ * The learner's argument; may be empty.
+ */
+note: string }
 export type ContinueInNewConversationRequestDto = { conversationId: string }
 export type ContinueInNewConversationResponseDto = {
 /**
@@ -7543,16 +7621,93 @@ topK: number }
 export type LearningAnswerDto = { questionId: string; selectedIndex: number }
 export type LearningAssessmentBlueprintDto = { id: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; status: LearningBlueprintStatus; changeReason: string; createdAt: number }
 export type LearningAssessmentCriterionResultDto = { criterionId: string; score: number | null; maxPoints: number; observation: string; artifactQuote: string | null }
-export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null }
-export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[]; previouslyExposed: boolean; selectedIndex: number | null; textResponse: string | null; orderedValues: string[]; artifactJson: JsonValue | null; responseRevision: number }
+export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null;
+/**
+ * The quiz this form was taken for; None only for unscoped legacy forms.
+ */
+scope: LearningQuizScopeDto | null; mode: LearningQuizMode }
+export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[]; previouslyExposed: boolean; selectedIndex: number | null;
+/**
+ * Saved choice indices in shown order (single choice, true/false,
+ * multi-select).
+ */
+selectedIndices: number[];
+/**
+ * Saved answers per cloze blank.
+ */
+blankResponses: string[];
+/**
+ * Saved right-hand index per left-hand matching entry.
+ */
+matches: (number | null)[];
+/**
+ * Matching only: the entries to match, and what they match to (which may
+ * hold one extra distractor). Empty for every other format.
+ */
+leftItems: string[]; rightItems: string[];
+/**
+ * Cloze only: how many `{{n}}` blanks the prompt holds.
+ */
+blankCount: number; textResponse: string | null; orderedValues: string[]; artifactJson: JsonValue | null; responseRevision: number;
+/**
+ * The key and why, only once the form is submitted (or, in practice
+ * mode, once this item is answered). Never present before.
+ */
+keyReveal: LearningKeyRevealDto | null }
 export type LearningAssessmentFormStatus = "active" | "submitted" | "interrupted"
 export type LearningAssessmentFormSummaryDto = { id: string; blueprintId: string; blueprintRevision: number; title: string; purpose: LearningAssessmentPurpose; status: LearningAssessmentFormStatus; revision: number; retakeOfFormId: string | null; score: number | null; gradeStatus: LearningAssessmentGradeStatus | null; createdAt: number; submittedAt: number | null }
-export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review"
-export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string; criterionResults: LearningAssessmentCriterionResultDto[]; artifactQuotes: string[] }
+export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review" |
+/**
+ * A written answer (or short-answer near-miss) waiting for the grading
+ * job. Never a fail: no verdict is given while any item is pending.
+ */
+"pending"
+export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string; criterionResults: LearningAssessmentCriterionResultDto[]; artifactQuotes: string[];
+/**
+ * Partial credit: points this item earned out of its points.
+ */
+pointsEarned: number; pointsPossible: number;
+/**
+ * Why a keyed item lost points, in words ("2 of 3 right, 1 wrong pick").
+ */
+detail: string;
+/**
+ * The learner overrode an upheld regrade; counted as full credit.
+ */
+learnerOverride: boolean;
+/**
+ * The model grader's checked reasons (section 4.3a). None for keyed items.
+ */
+rationale: LearningGradeRationaleDto | null; contest: LearningGradeContestDto | null }
 export type LearningAssessmentKind = "practice" | "quiz" | "test"
 export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
-export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null; text: string | null; orderedValues: string[]; artifactJson: JsonValue | null }
-export type LearningAssessmentSubmissionDto = { score: number; passed: boolean; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number }
+export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null;
+/**
+ * Chosen option indices: one for single choice and true/false, several
+ * for multi-select.
+ */
+selectedIndices?: number[]; text: string | null;
+/**
+ * One answer per cloze blank, in blank order.
+ */
+blankResponses?: string[];
+/**
+ * Per left-hand matching entry, the chosen right-hand index (or none yet).
+ */
+matches?: (number | null)[]; orderedValues: string[]; artifactJson: JsonValue | null }
+export type LearningAssessmentSubmissionDto = { score: number;
+/**
+ * None while any item is pending: no verdict without every grade.
+ */
+passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number;
+/**
+ * The score before any learner override; None when nothing is overridden.
+ */
+scoreWithoutOverrides: number | null; pendingItems: number;
+/**
+ * The `quiz_grading` job grading the pending items, while one exists.
+ */
+gradingJobId: string | null }
 export type LearningAssessmentWorkspaceDto = { programId: string; outcomes: LearningOutcomeDefinitionDto[]; blueprints: LearningAssessmentBlueprintDto[]; forms: LearningAssessmentFormSummaryDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
 export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number;
 /**
@@ -7724,6 +7879,34 @@ export type LearningClaimTrustDto = {
 profile: LearningClaimProfileDto | null; supports: LearningSourceTrustEntryDto[]; bar: LearningKindBarDto | null }
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
+/**
+ * One rubric criterion's checked reason. Replaces
+ * `LearningAssessmentCriterionResultDto` (observation/artifact_quote).
+ */
+export type LearningCriterionRationaleDto = { criterionId: string; title: string; verdict: LearningCriterionVerdict;
+/**
+ * None when the criterion could not be graded.
+ */
+points: number | null; maxPoints: number;
+/**
+ * Required whenever points are lost.
+ */
+whatWasMissing: string;
+/**
+ * Verbatim spans of the learner's answer, each checked as a substring;
+ * empty when the problem is an omission.
+ */
+yourWords: string[];
+/**
+ * What a full-credit answer says: names the missing points, never a
+ * model answer to copy.
+ */
+fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null }
+/**
+ * Section 4.3a. Uncertain when a quote failed its check against the answer
+ * or the source.
+ */
+export type LearningCriterionVerdict = "met" | "partly_met" | "missed" | "uncertain"
 export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
 /**
  * Immutable before/after values make previews auditable and useful to
@@ -7813,11 +7996,45 @@ deeperEvidence: LearningDeeperEvidence | null;
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
-export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"
+export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
+/**
+ * Writes a quiz's question bank (lesson stage, or a module/course bank).
+ */
+"quiz_bank" |
+/**
+ * Grades a submitted quiz's written answers and near-miss short answers.
+ */
+"quiz_grading"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
-export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
+/**
+ * "I think I was right": the first grade and the blind regrade, side by side.
+ */
+export type LearningGradeContestDto = { id: string; status: LearningGradeContestStatus; note: string; firstScore: number; regradeScore: number | null; regradeReason: string | null; firstRationale: LearningGradeRationaleDto; regradeRationale: LearningGradeRationaleDto | null;
+/**
+ * The regrade's direct answer to the learner's note.
+ */
+responseToNote: string | null; createdAt: number; decidedAt: number | null }
+export type LearningGradeContestStatus = "open" | "revised" | "upheld" | "overridden" | "failed"
+/**
+ * Why a model-graded answer earned what it did. A grade without a checkable
+ * reason is not shown as a grade.
+ */
+export type LearningGradeRationaleDto = { summary: string; criteria: LearningCriterionRationaleDto[]; graderModel: string; rubricVersion: string; gradedAt: number }
+export type LearningItemFormat = "single_choice" | "multi_select" | "true_false" | "short_answer" | "cloze" | "matching" | "ordering" | "explanation" |
+/**
+ * Kept for the practical path; quiz blueprints never author it.
+ */
+"artifact"
+/**
+ * The key after submission, in the item's shown option order.
+ */
+export type LearningKeyRevealDto = { correctIndices: number[]; acceptedAnswer: string | null; orderedValues: string[]; matches: number[]; blanks: string[]; explanation: string;
+/**
+ * Per option, why it is wrong; empty strings for the key options.
+ */
+distractorRationales: string[] }
 /**
  * One claim kind's bar in force (§13).
  */
@@ -7889,6 +8106,7 @@ generalKnowledgeCount: number;
  */
 confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
+export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
  * One level under one kind's bar, with its verdicts.
  */
@@ -7907,6 +8125,7 @@ probabilityReliable: number;
 since: number | null }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
+export type LearningModuleQuizzesDto = { moduleId: string; test: LearningQuizStatusDto; lessons: LearningLessonQuizDto[] }
 /**
  * A module test asks about the module's prepared lessons, so it may cover
  * only some of them; such a test does not stand for the whole module.
@@ -8154,6 +8373,49 @@ export type LearningProgramSummaryDto = { id: string; title: string; goal: strin
 export type LearningProjectMilestoneDto = { title: string; brief: string; deliverables: string[]; successCriteria: string[] }
 export type LearningQuestionDto = { id: string; kind: LearningAssessmentKind; prompt: string; options: string[]; sourceIds: string[] }
 export type LearningQuestionResultDto = { questionId: string; prompt: string; options: string[]; selectedIndex: number; correctIndex: number; explanation: string; sourceIds: string[] }
+export type LearningQuizAttemptSummaryDto = { formId: string; score: number; passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; submittedAt: number; retakeOfFormId: string | null; overriddenItems: number; pendingItems: number }
+export type LearningQuizBankStatus = "not_prepared" | "preparing" | "ready" | "failed"
+/**
+ * Which of the scope's lessons the quiz covers now (module test, course exam).
+ */
+export type LearningQuizCoverageDto = { coveredLessons: number; totalLessons: number }
+export type LearningQuizMissesToRecallDto = { cardsCreated: number; deckId: string }
+/**
+ * Graded counts toward the verdict; practice is ungraded with feedback per item.
+ */
+export type LearningQuizMode = "graded" | "practice"
+export type LearningQuizOverviewDto = { programId: string; settings: LearningQuizSettingsDto; exam: LearningQuizStatusDto; modules: LearningModuleQuizzesDto[];
+/**
+ * Lesson quizzes only.
+ */
+quizzesPassed: number; quizzesTotal: number; outcomes: LearningOutcomeDefinitionDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
+export type LearningQuizScopeDto = { kind: LearningQuizScopeKind;
+/**
+ * The lesson or module id; None for the course exam.
+ */
+id: string | null }
+/**
+ * Which quiz: a lesson quiz (purpose `checkpoint`), a module test
+ * (`module_test`) or the course exam (`cumulative`).
+ */
+export type LearningQuizScopeKind = "lesson" | "module" | "course"
+/**
+ * Per course; pass marks are fractions of the points (0.7 = 70 %).
+ */
+export type LearningQuizSettingsDto = { quizPass: number; testPass: number; examPass: number; writtenAnswers: boolean }
+export type LearningQuizStatusDto = { scope: LearningQuizScopeDto; title: string; bankStatus: LearningQuizBankStatus;
+/**
+ * The bank's state in words; empty when nothing needs saying.
+ */
+bankMessage: string; bankSize: number;
+/**
+ * Items the learner has not seen yet.
+ */
+freshItems: number; formSize: number; expectedMinutes: number; passingScore: number; coverage: LearningQuizCoverageDto | null; activeFormId: string | null; verdict: LearningQuizVerdict; best: LearningQuizAttemptSummaryDto | null; latest: LearningQuizAttemptSummaryDto | null; attempts: number; preparingJobId: string | null }
+/**
+ * From the best attempt. Pending while any item of it awaits grading.
+ */
+export type LearningQuizVerdict = "not_taken" | "pending" | "passed" | "not_passed"
 export type LearningQuoteMatch = { status: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number }
 export type LearningQuoteMatchStatus = "exact" | "context_disambiguated" | "ambiguous" | "not_found"
 export type LearningRecallCardDto = { id: string; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; contentRevision: number; scheduler: LearningRecallSchedulerStateDto; versions: LearningRecallCardVersionDto[]; createdAt: number; updatedAt: number }
@@ -9014,6 +9276,7 @@ noPassage: number;
  */
 stopped: string | null }
 export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OverrideLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string }
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */
@@ -9043,6 +9306,11 @@ export type PerformanceTierDto =
  */
 "Accurate"
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
+export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
+/**
+ * Add questions to a ready bank ("Prepare more questions").
+ */
+topUp: boolean }
 /**
  * Installs an app-authored language environment. Images and commands are
  * selected by the catalog, never supplied by generated lesson content.
@@ -9189,6 +9457,7 @@ export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" }
  * something verified or waiting (claim sources design §18.5).
  */
 { outcome: "not_attempted"; reason: string }
+export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
  * A claim of one of the course's lesson reviews.
@@ -9280,6 +9549,7 @@ export type ResumeLearningLessonReviewRequestDto = { programId: string; lessonId
  * The course's revision, as `retry_learning_generation_job` takes it.
  */
 expectedRevision: number; operationId: string }
+export type ResumeLearningQuizGradingRequestDto = { operationId: string; programId: string; formId: string }
 export type RetrievalSubTimingMetrics = { kbTotalMs: number; kbScopeLoadMs: number; kbHydeInterpretationMs: number; kbSearchPlanMs: number; kbShortlistPlanningMs: number; kbQueryExecutionMs: number; kbMergeShortlistGateMs: number; kbPostFiltersMs: number; kbRerankMs: number;
 /**
  * Cost of the post-rerank sufficiency check. Local and cheap by design —
@@ -10080,6 +10350,7 @@ export type StartLearningDiagnosticRequestDto = { operationId: string; programId
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
+export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
 /**
@@ -10606,6 +10877,7 @@ export type UpdateConversationJournalRequestDto = { journalId: string; name: str
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
 export type UpdateInfoDto = { available: boolean; currentVersion: string; latestVersion: string | null; downloadUrl: string | null; releaseNotes: string | null }
+export type UpdateLearningQuizSettingsRequestDto = { operationId: string; programId: string; settings: LearningQuizSettingsDto }
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }
 export type UpdatePassageReferenceRequestDto = { id: string; title: string | null; note: string | null }
 export type UpdateSettingsRequest = { category: string | null; updates: { [key in string]: JsonValue } }

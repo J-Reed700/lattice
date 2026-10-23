@@ -4815,6 +4815,12 @@
           "markdownDescription": "Enables the add_learning_document_source command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_learning_quiz_misses_to_recall command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-add-learning-quiz-misses-to-recall",
+          "markdownDescription": "Enables the add_learning_quiz_misses_to_recall command without any pre-configured scope."
+        },
+        {
           "description": "Enables the add_learning_text_source command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-add-learning-text-source",
@@ -4897,6 +4903,12 @@
           "type": "string",
           "const": "learning:allow-complete-learning-lesson",
           "markdownDescription": "Enables the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the contest_learning_quiz_grade command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-contest-learning-quiz-grade",
+          "markdownDescription": "Enables the contest_learning_quiz_grade command without any pre-configured scope."
         },
         {
           "description": "Enables the course_index_close command without any pre-configured scope.",
@@ -5163,6 +5175,12 @@
           "markdownDescription": "Enables the get_learning_program_verifier_audit command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_learning_quiz_overview command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-quiz-overview",
+          "markdownDescription": "Enables the get_learning_quiz_overview command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_learning_recall_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-get-learning-recall-workspace",
@@ -5259,10 +5277,22 @@
           "markdownDescription": "Enables the open_learning_practice_source command without any pre-configured scope."
         },
         {
+          "description": "Enables the override_learning_quiz_grade command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-override-learning-quiz-grade",
+          "markdownDescription": "Enables the override_learning_quiz_grade command without any pre-configured scope."
+        },
+        {
           "description": "Enables the prepare_learning_lesson command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-prepare-learning-lesson",
           "markdownDescription": "Enables the prepare_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the prepare_learning_quiz_bank command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-prepare-learning-quiz-bank",
+          "markdownDescription": "Enables the prepare_learning_quiz_bank command without any pre-configured scope."
         },
         {
           "description": "Enables the prepare_learning_runtime_preset command without any pre-configured scope.",
@@ -5313,6 +5343,12 @@
           "markdownDescription": "Enables the repair_learning_outline command without any pre-configured scope."
         },
         {
+          "description": "Enables the report_learning_quiz_item command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-report-learning-quiz-item",
+          "markdownDescription": "Enables the report_learning_quiz_item command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reprofile_learning_claim command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-reprofile-learning-claim",
@@ -5341,6 +5377,12 @@
           "type": "string",
           "const": "learning:allow-resume-learning-lesson-review",
           "markdownDescription": "Enables the resume_learning_lesson_review command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume_learning_quiz_grading command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-resume-learning-quiz-grading",
+          "markdownDescription": "Enables the resume_learning_quiz_grading command without any pre-configured scope."
         },
         {
           "description": "Enables the retry_learning_generation_job command without any pre-configured scope.",
@@ -5481,6 +5523,12 @@
           "markdownDescription": "Enables the start_learning_practice_session command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_learning_quiz command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-quiz",
+          "markdownDescription": "Enables the start_learning_quiz command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_learning_simulation command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-start-learning-simulation",
@@ -5509,6 +5557,12 @@
           "type": "string",
           "const": "learning:allow-submit-learning-practice-attempt",
           "markdownDescription": "Enables the submit_learning_practice_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_learning_quiz_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-update-learning-quiz-settings",
+          "markdownDescription": "Enables the update_learning_quiz_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the update_learning_source_policy command without any pre-configured scope.",
@@ -5557,6 +5611,12 @@
           "type": "string",
           "const": "learning:deny-add-learning-document-source",
           "markdownDescription": "Denies the add_learning_document_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_learning_quiz_misses_to_recall command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-add-learning-quiz-misses-to-recall",
+          "markdownDescription": "Denies the add_learning_quiz_misses_to_recall command without any pre-configured scope."
         },
         {
           "description": "Denies the add_learning_text_source command without any pre-configured scope.",
@@ -5641,6 +5701,12 @@
           "type": "string",
           "const": "learning:deny-complete-learning-lesson",
           "markdownDescription": "Denies the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the contest_learning_quiz_grade command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-contest-learning-quiz-grade",
+          "markdownDescription": "Denies the contest_learning_quiz_grade command without any pre-configured scope."
         },
         {
           "description": "Denies the course_index_close command without any pre-configured scope.",
@@ -5907,6 +5973,12 @@
           "markdownDescription": "Denies the get_learning_program_verifier_audit command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_learning_quiz_overview command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-quiz-overview",
+          "markdownDescription": "Denies the get_learning_quiz_overview command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_learning_recall_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-get-learning-recall-workspace",
@@ -6003,10 +6075,22 @@
           "markdownDescription": "Denies the open_learning_practice_source command without any pre-configured scope."
         },
         {
+          "description": "Denies the override_learning_quiz_grade command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-override-learning-quiz-grade",
+          "markdownDescription": "Denies the override_learning_quiz_grade command without any pre-configured scope."
+        },
+        {
           "description": "Denies the prepare_learning_lesson command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-prepare-learning-lesson",
           "markdownDescription": "Denies the prepare_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_learning_quiz_bank command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-prepare-learning-quiz-bank",
+          "markdownDescription": "Denies the prepare_learning_quiz_bank command without any pre-configured scope."
         },
         {
           "description": "Denies the prepare_learning_runtime_preset command without any pre-configured scope.",
@@ -6057,6 +6141,12 @@
           "markdownDescription": "Denies the repair_learning_outline command without any pre-configured scope."
         },
         {
+          "description": "Denies the report_learning_quiz_item command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-report-learning-quiz-item",
+          "markdownDescription": "Denies the report_learning_quiz_item command without any pre-configured scope."
+        },
+        {
           "description": "Denies the reprofile_learning_claim command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-reprofile-learning-claim",
@@ -6085,6 +6175,12 @@
           "type": "string",
           "const": "learning:deny-resume-learning-lesson-review",
           "markdownDescription": "Denies the resume_learning_lesson_review command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resume_learning_quiz_grading command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-resume-learning-quiz-grading",
+          "markdownDescription": "Denies the resume_learning_quiz_grading command without any pre-configured scope."
         },
         {
           "description": "Denies the retry_learning_generation_job command without any pre-configured scope.",
@@ -6225,6 +6321,12 @@
           "markdownDescription": "Denies the start_learning_practice_session command without any pre-configured scope."
         },
         {
+          "description": "Denies the start_learning_quiz command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-quiz",
+          "markdownDescription": "Denies the start_learning_quiz command without any pre-configured scope."
+        },
+        {
           "description": "Denies the start_learning_simulation command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-start-learning-simulation",
@@ -6253,6 +6355,12 @@
           "type": "string",
           "const": "learning:deny-submit-learning-practice-attempt",
           "markdownDescription": "Denies the submit_learning_practice_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_learning_quiz_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-update-learning-quiz-settings",
+          "markdownDescription": "Denies the update_learning_quiz_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the update_learning_source_policy command without any pre-configured scope.",

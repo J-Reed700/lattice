@@ -12,10 +12,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningItemFormat {
-    MultipleChoice,
+    SingleChoice,
+    MultiSelect,
+    TrueFalse,
     ShortAnswer,
-    Explanation,
+    Cloze,
+    Matching,
     Ordering,
+    Explanation,
+    /// Kept for the practical path; quiz blueprints never author it.
     Artifact,
 }
 
@@ -128,7 +133,17 @@ pub struct LearningAssessmentForm {
 pub struct LearningAssessmentResponse {
     pub item_id: String,
     pub selected_index: Option<usize>,
+    /// Chosen option indices: one for single choice and true/false, several
+    /// for multi-select.
+    #[serde(default)]
+    pub selected_indices: Vec<usize>,
     pub text: Option<String>,
+    /// One answer per cloze blank, in blank order.
+    #[serde(default)]
+    pub blank_responses: Vec<String>,
+    /// Per left-hand matching entry, the chosen right-hand index (or none yet).
+    #[serde(default)]
+    pub matches: Vec<Option<usize>>,
     pub ordered_values: Vec<String>,
     pub artifact_json: Option<serde_json::Value>,
 }
@@ -255,7 +270,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         id(source, "source version")?;
     }
     match (&candidate.format, &candidate.key) {
-        (LearningItemFormat::MultipleChoice, LearningAssessmentKey::Choice(correct)) => {
+        (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(correct)) => {
             if !(2..=8).contains(&candidate.options.len()) || *correct >= candidate.options.len() {
                 return Err(AppError::InvalidInput(
                     "Multiple-choice items need 2–8 options and one valid key.".into(),
@@ -546,7 +561,7 @@ mod tests {
             feedback_timing: LearningFeedbackTiming::AfterSubmission,
             requirements: vec![LearningBlueprintRequirement {
                 outcome_id: id(2),
-                format: LearningItemFormat::MultipleChoice,
+                format: LearningItemFormat::SingleChoice,
                 count: 2,
                 difficulty_min: 2,
                 difficulty_max: 4,
@@ -558,7 +573,7 @@ mod tests {
         LearningAssessmentCandidate {
             id: id(seed),
             outcome_ids: vec![id(2)],
-            format: LearningItemFormat::MultipleChoice,
+            format: LearningItemFormat::SingleChoice,
             difficulty,
             prompt: format!("Which invariant holds in scenario {seed}?"),
             options: vec!["A".into(), "B".into(), "C".into()],
@@ -601,7 +616,10 @@ mod tests {
             &[LearningAssessmentResponse {
                 item_id: candidate_id,
                 selected_index: Some(1),
+                selected_indices: vec![1],
                 text: None,
+                blank_responses: vec![],
+                matches: vec![],
                 ordered_values: vec![],
                 artifact_json: None,
             }],

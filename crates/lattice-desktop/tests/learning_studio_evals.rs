@@ -47,7 +47,8 @@ use lattice::features::learning::assessment_generation;
 use lattice::features::learning::dto::{
     LearningAssessmentFormDto, LearningAssessmentFormItemDto, LearningAssessmentFormStatus,
     LearningAssessmentGradeStatus, LearningBlockDto, LearningBlockKind, LearningLessonDto,
-    LearningPreparation, LearningSourceVersionDto, LearningSourceVersionSummaryDto,
+    LearningPreparation, LearningQuizMode, LearningSourceVersionDto,
+    LearningSourceVersionSummaryDto,
 };
 use lattice::features::learning::practical_dto::LearningPracticalActivityKind;
 use lattice::features::learning::practical_generation::{self, PracticalFileRole};
@@ -221,10 +222,17 @@ fn assessment_form() -> LearningAssessmentFormDto {
             source_version_ids: vec![],
             previously_exposed: false,
             selected_index: None,
+            selected_indices: vec![],
+            blank_responses: vec![],
+            matches: vec![],
+            left_items: vec![],
+            right_items: vec![],
+            blank_count: 0,
             text_response: Some(answer.into()),
             ordered_values: vec![],
             artifact_json: None,
             response_revision: 1,
+            key_reveal: None,
         })
         .collect();
     LearningAssessmentFormDto {
@@ -250,6 +258,8 @@ fn assessment_form() -> LearningAssessmentFormDto {
         updated_at: 1,
         submitted_at: None,
         submission: None,
+        scope: None,
+        mode: LearningQuizMode::Graded,
     }
 }
 

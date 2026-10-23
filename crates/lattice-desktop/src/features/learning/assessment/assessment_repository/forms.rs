@@ -1,8 +1,8 @@
 //! Starting forms, drawing their candidate items, and saving responses while a form is open.
 use super::{
     assessment_operation, decode, format_name, invalid, item_ordinal, json, parse_form_status,
-    parse_format, parse_grade, parse_purpose, parse_timing, purpose_name, uuid, validate_response,
-    LearningAssessmentRepository, StoredCandidate, MAX_FORM_ITEMS,
+    parse_format, parse_grade, parse_mode, parse_purpose, parse_scope, parse_timing, purpose_name,
+    uuid, validate_response, LearningAssessmentRepository, StoredCandidate, MAX_FORM_ITEMS,
 };
 use crate::features::learning::assessment_engine as engine;
 use crate::features::learning::dto::*;
@@ -187,7 +187,7 @@ impl LearningAssessmentRepository {
                 let accepted: Vec<String> = decode(row.get("accepted_answers_json"))?;
                 let ordered: Vec<String> = decode(row.get("ordered_values_json"))?;
                 let key = match format {
-                    engine::LearningItemFormat::MultipleChoice => {
+                    engine::LearningItemFormat::SingleChoice => {
                         engine::LearningAssessmentKey::Choice(selected.ok_or_else(|| {
                             AppError::Database("Choice candidate has no answer key".into())
                         })? as usize)
@@ -233,13 +233,11 @@ impl LearningAssessmentRepository {
             let outcomes=sqlx::query_scalar::<_,String>("SELECT outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? AND item_ordinal=(SELECT ordinal FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?) ORDER BY outcome_id").bind(form_id).bind(form_id).bind(&id).fetch_all(&mut **tx).await.map_err(db)?;
             let format = parse_format(row.get("format"))?;
             let key = match format {
-                engine::LearningItemFormat::MultipleChoice => {
-                    engine::LearningAssessmentKey::Choice(
-                        row.get::<Option<i64>, _>("selected_index").ok_or_else(|| {
-                            AppError::Database("Choice candidate has no answer key".into())
-                        })? as usize,
-                    )
-                }
+                engine::LearningItemFormat::SingleChoice => engine::LearningAssessmentKey::Choice(
+                    row.get::<Option<i64>, _>("selected_index").ok_or_else(|| {
+                        AppError::Database("Choice candidate has no answer key".into())
+                    })? as usize,
+                ),
                 engine::LearningItemFormat::ShortAnswer => {
                     engine::LearningAssessmentKey::TextVariants(decode(
                         row.get("accepted_answers_json"),
@@ -306,6 +304,12 @@ impl LearningAssessmentRepository {
                 selected_index: r
                     .get::<Option<i64>, _>("selected_index")
                     .map(|v| v as usize),
+                selected_indices: Vec::new(),
+                blank_responses: Vec::new(),
+                matches: Vec::new(),
+                left_items: Vec::new(),
+                right_items: Vec::new(),
+                blank_count: 0,
                 text_response: r.get("text_response"),
                 ordered_values: decode(
                     r.get::<Option<String>, _>("ordered_values_json")
@@ -317,6 +321,7 @@ impl LearningAssessmentRepository {
                     .map(|s| decode(&s))
                     .transpose()?,
                 response_revision: r.get::<Option<i64>, _>("response_revision").unwrap_or(0),
+                key_reveal: None,
             });
         }
         for item in &mut items {
@@ -347,6 +352,8 @@ impl LearningAssessmentRepository {
             updated_at: h.get("updated_at"),
             submitted_at: h.get("submitted_at"),
             submission,
+            scope: parse_scope(h.get("scope_kind"), h.get("scope_id"))?,
+            mode: parse_mode(h.get("mode"))?,
         })
     }
 
@@ -373,17 +380,20 @@ impl LearningAssessmentRepository {
         for row in rows {
             let ordinal: i64 = row.get("item_ordinal");
             let outcomes=sqlx::query_scalar::<_,String>("SELECT outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? AND item_ordinal=? ORDER BY outcome_id").bind(form_id).bind(ordinal).fetch_all(&self.pool).await.map_err(db)?;
-            results.push(LearningAssessmentItemResultDto{item_id:sqlx::query_scalar("SELECT candidate_id FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?").bind(form_id).bind(ordinal).fetch_one(&self.pool).await.map_err(db)?,outcome_ids:outcomes,score:row.get("score"),correct:row.get("correct"),grade_status:parse_grade(row.get("grade_status"))?,feedback:row.get("feedback"),criterion_results:decode(row.get("criterion_results_json"))?,artifact_quotes:decode(row.get("artifact_quotes_json"))?});
+            results.push(LearningAssessmentItemResultDto{item_id:sqlx::query_scalar("SELECT candidate_id FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?").bind(form_id).bind(ordinal).fetch_one(&self.pool).await.map_err(db)?,outcome_ids:outcomes,score:row.get("score"),correct:row.get("correct"),grade_status:parse_grade(row.get("grade_status"))?,feedback:row.get("feedback"),criterion_results:decode(row.get("criterion_results_json"))?,artifact_quotes:decode(row.get("artifact_quotes_json"))?,points_earned:row.get("points_earned"),points_possible:row.get("points_possible"),detail:row.get("detail"),learner_override:row.get::<i64,_>("learner_override")!=0,rationale:None,contest:None});
         }
         Ok(Some(LearningAssessmentSubmissionDto {
             score: r.get("score"),
-            passed: r.get::<i64, _>("passed") != 0,
+            passed: r.get::<Option<i64>, _>("passed").map(|v| v != 0),
             grade_status: parse_grade(r.get("grade_status"))?,
             grader_model: r.get("grader_model"),
             grader_disagreement: decode(r.get("grader_disagreement_json"))?,
             feedback: r.get("feedback"),
             item_results: results,
             submitted_at: r.get("submitted_at"),
+            score_without_overrides: r.get("score_without_overrides"),
+            pending_items: r.get("pending_items"),
+            grading_job_id: None,
         }))
     }
 

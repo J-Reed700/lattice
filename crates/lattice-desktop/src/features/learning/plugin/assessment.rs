@@ -253,3 +253,102 @@ pub async fn dismiss_learning_follow_up(
         .await
         .map_err(ApiError::from)
 }
+
+// Quizzes and tests (docs/design/2026-10-23-quizzes-and-tests.md, section 6.3).
+// The contract is published first; each command is built behind it.
+
+fn not_built() -> ApiError {
+    ApiError::from(lattice_core::shared::error::AppError::InvalidState(
+        "not built".into(),
+    ))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_learning_quiz_overview(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<LearningQuizOverviewDto, ApiError> {
+    let _ = (program_id, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_learning_quiz_settings(
+    request: UpdateLearningQuizSettingsRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningQuizOverviewDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_learning_quiz_bank(
+    request: PrepareLearningQuizBankRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningGenerationJob, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn start_learning_quiz(
+    request: StartLearningQuizRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningAssessmentFormDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn resume_learning_quiz_grading(
+    request: ResumeLearningQuizGradingRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningAssessmentFormDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn contest_learning_quiz_grade(
+    request: ContestLearningQuizGradeRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningAssessmentFormDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn override_learning_quiz_grade(
+    request: OverrideLearningQuizGradeRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningAssessmentFormDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn report_learning_quiz_item(
+    request: ReportLearningQuizItemRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningAssessmentFormDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_learning_quiz_misses_to_recall(
+    request: AddLearningQuizMissesToRecallRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningQuizMissesToRecallDto, ApiError> {
+    let _ = (request, container);
+    Err(not_built())
+}

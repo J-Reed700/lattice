@@ -90,7 +90,7 @@ async fn generated_keyed_assessment_form_is_persisted_and_renderer_safe() -> Res
         requirements: vec![
             engine::LearningBlueprintRequirement {
                 outcome_id: outcome.clone(),
-                format: LearningItemFormat::MultipleChoice,
+                format: LearningItemFormat::SingleChoice,
                 count: 1,
                 difficulty_min: 1,
                 difficulty_max: 3,
@@ -108,7 +108,7 @@ async fn generated_keyed_assessment_form_is_persisted_and_renderer_safe() -> Res
     let candidate = LearningAssessmentCandidateWriteDto {
         id: id(),
         outcome_ids: vec![outcome],
-        format: LearningItemFormat::MultipleChoice,
+        format: LearningItemFormat::SingleChoice,
         difficulty: 1,
         prompt: "Which statement describes a system?".into(),
         options: vec![
@@ -216,7 +216,10 @@ async fn generated_keyed_assessment_form_is_persisted_and_renderer_safe() -> Res
                 response: engine::LearningAssessmentResponse {
                     item_id: choice_id.clone(),
                     selected_index: Some(0),
+                    selected_indices: vec![0],
                     text: None,
+                    blank_responses: vec![],
+                    matches: vec![],
                     ordered_values: vec![],
                     artifact_json: None,
                 },
@@ -236,6 +239,9 @@ async fn generated_keyed_assessment_form_is_persisted_and_renderer_safe() -> Res
                 response: engine::LearningAssessmentResponse {
                     item_id: open_id.clone(),
                     selected_index: None,
+                    selected_indices: vec![],
+                    blank_responses: vec![],
+                    matches: vec![],
                     text: Some(
                         "A system has interacting parts that contribute to a larger process."
                             .into(),
@@ -287,7 +293,7 @@ async fn generated_keyed_assessment_form_is_persisted_and_renderer_safe() -> Res
         result.grade_status,
         LearningAssessmentGradeStatus::Uncertain
     );
-    assert!(!result.passed);
+    assert_eq!(result.passed, Some(false));
     assert_eq!(
         result
             .item_results
@@ -385,7 +391,7 @@ async fn interrupted_assessments_cannot_be_submitted_and_retakes_mark_exposure()
     let candidate = LearningAssessmentCandidateWriteDto {
         id: id(),
         outcome_ids: vec![outcome.clone()],
-        format: LearningItemFormat::MultipleChoice,
+        format: LearningItemFormat::SingleChoice,
         difficulty: 1,
         prompt: "Which statement is supported?".into(),
         options: vec!["Parts interact.".into(), "Parts are unrelated.".into()],
@@ -414,7 +420,7 @@ async fn interrupted_assessments_cannot_be_submitted_and_retakes_mark_exposure()
         source_version_ids: vec![source_version_id],
         requirements: vec![engine::LearningBlueprintRequirement {
             outcome_id: outcome,
-            format: LearningItemFormat::MultipleChoice,
+            format: LearningItemFormat::SingleChoice,
             count: 1,
             difficulty_min: 1,
             difficulty_max: 2,

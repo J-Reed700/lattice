@@ -278,7 +278,7 @@ pub async fn generate(
             ));
         }
         let key = match requirement.format {
-            LearningItemFormat::MultipleChoice => {
+            LearningItemFormat::SingleChoice => {
                 if item.options.len() < 2
                     || item.options.len() > 8
                     || item.answer_index >= item.options.len()

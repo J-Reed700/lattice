@@ -98,7 +98,10 @@ impl LearningAssessmentRepository {
                     Some(engine::LearningAssessmentResponse {
                         item_id: id,
                         selected_index: sel,
+                        selected_indices: sel.into_iter().collect(),
                         text,
+                        blank_responses: Vec::new(),
+                        matches: Vec::new(),
                         ordered_values: order,
                         artifact_json: artifact.and_then(|s| serde_json::from_str(&s).ok()),
                     })
@@ -150,7 +153,7 @@ impl LearningAssessmentRepository {
                     .is_some_and(|s| s != "[]");
             let (item_score, correct, status, feedback, criteria, quotes) = if matches!(
                 format,
-                engine::LearningItemFormat::MultipleChoice
+                engine::LearningItemFormat::SingleChoice
                     | engine::LearningItemFormat::ShortAnswer
                     | engine::LearningItemFormat::Ordering
             ) {
@@ -260,6 +263,12 @@ impl LearningAssessmentRepository {
                 feedback,
                 criterion_results: criteria,
                 artifact_quotes: quotes,
+                points_earned: item_score * points,
+                points_possible: points,
+                detail: String::new(),
+                learner_override: false,
+                rationale: None,
+                contest: None,
             });
             let _ = candidate;
         }
@@ -289,7 +298,7 @@ impl LearningAssessmentRepository {
                     | LearningAssessmentGradeStatus::NeedsReview
             );
         let timestamp = now();
-        let feedback=match aggregate_status{LearningAssessmentGradeStatus::Uncertain|LearningAssessmentGradeStatus::NeedsReview=>"Some responses could not be graded reliably. This result remains uncertain and should be reviewed.",LearningAssessmentGradeStatus::Provisional=>"Open responses received provisional rubric feedback. This is evidence for review, not a mastery claim.",LearningAssessmentGradeStatus::Deterministic=>"Keyed responses were graded deterministically against this form."};
+        let feedback=match aggregate_status{LearningAssessmentGradeStatus::Uncertain|LearningAssessmentGradeStatus::NeedsReview=>"Some responses could not be graded reliably. This result remains uncertain and should be reviewed.",LearningAssessmentGradeStatus::Provisional=>"Open responses received provisional rubric feedback. This is evidence for review, not a mastery claim.",LearningAssessmentGradeStatus::Deterministic=>"Keyed responses were graded deterministically against this form.",LearningAssessmentGradeStatus::Pending=>"Written answers are waiting to be graded; the result follows once they are."};
         let grade_disagreement: Vec<String> = if matches!(
             aggregate_status,
             LearningAssessmentGradeStatus::Provisional
