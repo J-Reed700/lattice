@@ -104,6 +104,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 std::sync::Arc::new(generation_worker(&container, runtimes)),
                 super::curriculum_repository::lesson_job_config(),
             ))?;
+            // Quiz banks and grading resume or settle the same way.
+            let (bank_worker, grading_worker) = quiz_workers(&container);
+            tauri::async_runtime::block_on(container.jobs().register(
+                super::quiz_bank_jobs::QUIZ_BANK,
+                std::sync::Arc::new(bank_worker),
+                super::quiz_bank_jobs::quiz_job_config(),
+            ))?;
+            tauri::async_runtime::block_on(container.jobs().register(
+                super::quiz_bank_jobs::QUIZ_GRADING,
+                std::sync::Arc::new(grading_worker),
+                super::quiz_bank_jobs::quiz_job_config(),
+            ))?;
             // Course index builds the last process left running resume; the
             // indexes of courses deleted meanwhile are removed, and courses
             // whose index is not current are queued.
@@ -166,7 +178,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             accept_learning_program,
             prepare_learning_lesson,
             complete_learning_lesson,
-            submit_learning_attempt,
             delete_learning_program,
             get_learning_memory,
             ensure_learning_lesson_note,
@@ -228,9 +239,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             submit_learning_practice_attempt,
             accept_learning_practice_proposal,
             reject_learning_practice_proposal,
-            get_learning_assessment_workspace,
-            create_learning_assessment_blueprint,
-            start_learning_assessment_form,
             get_learning_assessment_form,
             save_learning_assessment_response,
             interrupt_learning_assessment_form,

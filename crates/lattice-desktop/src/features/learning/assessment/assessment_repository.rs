@@ -1,4 +1,5 @@
-//! Durable versioned assessment blueprints, immutable forms, submissions, and evidence.
+//! Durable quizzes: the item bank, immutable forms, two-phase submissions,
+//! grade contests, and the evidence they record.
 use crate::features::learning::{assessment_engine as engine, dto::*};
 use crate::features::learning::{
     operations::Operation,
@@ -6,15 +7,21 @@ use crate::features::learning::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
-use std::collections::HashSet;
+use sqlx::{sqlite::SqliteRow, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use std::collections::HashMap;
 
-mod blueprints;
+mod bank;
+mod contests;
 mod forms;
+mod overview;
+mod recall;
 mod submission;
-mod workspace;
 
-const MAX_FORM_ITEMS: usize = 64;
+pub(crate) use bank::insert_bank_items_in;
+pub use bank::BankItem;
+pub use contests::{ContestInput, Regrade};
+pub use submission::ItemGrade;
+
 const MAX_RESPONSE_CHARS: usize = 24_000;
 const STALE_EVIDENCE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
@@ -32,42 +39,6 @@ fn json<T: Serialize + ?Sized>(v: &T) -> Result<String> {
 fn decode<T: DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|e| AppError::Serialization(e.to_string()))
 }
-fn format_name(v: engine::LearningItemFormat) -> &'static str {
-    match v {
-        engine::LearningItemFormat::SingleChoice => "single_choice",
-        engine::LearningItemFormat::MultiSelect => "multi_select",
-        engine::LearningItemFormat::TrueFalse => "true_false",
-        engine::LearningItemFormat::ShortAnswer => "short_answer",
-        engine::LearningItemFormat::Cloze => "cloze",
-        engine::LearningItemFormat::Matching => "matching",
-        engine::LearningItemFormat::Ordering => "ordering",
-        engine::LearningItemFormat::Explanation => "explanation",
-        engine::LearningItemFormat::Artifact => "artifact",
-    }
-}
-fn parse_format(v: &str) -> Result<engine::LearningItemFormat> {
-    match v {
-        "single_choice" => Ok(engine::LearningItemFormat::SingleChoice),
-        "multi_select" => Ok(engine::LearningItemFormat::MultiSelect),
-        "true_false" => Ok(engine::LearningItemFormat::TrueFalse),
-        "short_answer" => Ok(engine::LearningItemFormat::ShortAnswer),
-        "cloze" => Ok(engine::LearningItemFormat::Cloze),
-        "matching" => Ok(engine::LearningItemFormat::Matching),
-        "explanation" => Ok(engine::LearningItemFormat::Explanation),
-        "ordering" => Ok(engine::LearningItemFormat::Ordering),
-        "artifact" => Ok(engine::LearningItemFormat::Artifact),
-        _ => Err(AppError::Database("Invalid assessment item format".into())),
-    }
-}
-fn purpose_name(v: engine::LearningAssessmentPurpose) -> &'static str {
-    match v {
-        engine::LearningAssessmentPurpose::Practice => "practice",
-        engine::LearningAssessmentPurpose::Checkpoint => "checkpoint",
-        engine::LearningAssessmentPurpose::ModuleTest => "module_test",
-        engine::LearningAssessmentPurpose::Cumulative => "cumulative",
-        engine::LearningAssessmentPurpose::Transfer => "transfer",
-    }
-}
 fn parse_purpose(v: &str) -> Result<engine::LearningAssessmentPurpose> {
     match v {
         "practice" => Ok(engine::LearningAssessmentPurpose::Practice),
@@ -76,13 +47,6 @@ fn parse_purpose(v: &str) -> Result<engine::LearningAssessmentPurpose> {
         "cumulative" => Ok(engine::LearningAssessmentPurpose::Cumulative),
         "transfer" => Ok(engine::LearningAssessmentPurpose::Transfer),
         _ => Err(AppError::Database("Invalid assessment purpose".into())),
-    }
-}
-fn timing_name(v: engine::LearningFeedbackTiming) -> &'static str {
-    match v {
-        engine::LearningFeedbackTiming::Immediate => "immediate",
-        engine::LearningFeedbackTiming::AfterBatch => "after_batch",
-        engine::LearningFeedbackTiming::AfterSubmission => "after_submission",
     }
 }
 fn parse_timing(v: &str) -> Result<engine::LearningFeedbackTiming> {
@@ -105,142 +69,16 @@ fn parse_grade(v: &str) -> Result<LearningAssessmentGradeStatus> {
         _ => Err(AppError::Database("Invalid assessment grade status".into())),
     }
 }
-fn parse_mode(v: &str) -> Result<LearningQuizMode> {
-    match v {
-        "graded" => Ok(LearningQuizMode::Graded),
-        "practice" => Ok(LearningQuizMode::Practice),
-        _ => Err(AppError::Database("Invalid assessment form mode".into())),
+fn grade_name(s: &LearningAssessmentGradeStatus) -> &'static str {
+    match s {
+        LearningAssessmentGradeStatus::Deterministic => "deterministic",
+        LearningAssessmentGradeStatus::Provisional => "provisional",
+        LearningAssessmentGradeStatus::Uncertain => "uncertain",
+        LearningAssessmentGradeStatus::NeedsReview => "needs_review",
+        LearningAssessmentGradeStatus::Pending => "pending",
     }
 }
-/// A stored `scope_kind`/`scope_id` pair; None for an unscoped legacy form.
-fn parse_scope(kind: Option<String>, id: Option<String>) -> Result<Option<LearningQuizScopeDto>> {
-    let kind = match kind.as_deref() {
-        None => return Ok(None),
-        Some("lesson") => LearningQuizScopeKind::Lesson,
-        Some("module") => LearningQuizScopeKind::Module,
-        Some("course") => LearningQuizScopeKind::Course,
-        Some(_) => return Err(AppError::Database("Invalid quiz scope".into())),
-    };
-    Ok(Some(LearningQuizScopeDto { kind, id }))
-}
-fn parse_form_status(v: &str) -> Result<LearningAssessmentFormStatus> {
-    match v {
-        "active" => Ok(LearningAssessmentFormStatus::Active),
-        "submitted" => Ok(LearningAssessmentFormStatus::Submitted),
-        "interrupted" => Ok(LearningAssessmentFormStatus::Interrupted),
-        _ => Err(AppError::Database("Invalid assessment form status".into())),
-    }
-}
-fn parse_blueprint_status(v: &str) -> Result<LearningBlueprintStatus> {
-    match v {
-        "draft" => Ok(LearningBlueprintStatus::Draft),
-        "accepted" => Ok(LearningBlueprintStatus::Accepted),
-        "retired" => Ok(LearningBlueprintStatus::Retired),
-        _ => Err(AppError::Database("Invalid blueprint status".into())),
-    }
-}
-fn rubric_valid(items: &[LearningRubricCriterion]) -> Result<()> {
-    if items.is_empty() || items.len() > 16 {
-        return Err(invalid("Assessment rubric needs 1–16 criteria."));
-    }
-    let mut ids = HashSet::new();
-    for c in items {
-        uuid(&c.id, "rubric criterion")?;
-        if c.title.trim().is_empty()
-            || c.title.chars().count() > 160
-            || c.description.trim().is_empty()
-            || c.description.chars().count() > 1200
-            || c.max_points == 0
-            || c.max_points > 100
-            || !ids.insert(&c.id)
-        {
-            return Err(invalid(
-                "Assessment rubric criteria must be unique and bounded.",
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone)]
-pub struct LearningAssessmentRepository {
-    pool: SqlitePool,
-}
-
-#[derive(Debug, Clone)]
-struct StoredCandidate {
-    candidate: engine::LearningAssessmentCandidate,
-    artifact_kind: Option<String>,
-}
-
-impl LearningAssessmentRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-
-    async fn active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-        let status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
-                .bind(program_id)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?;
-        if status.as_deref() != Some("active") {
-            return Err(invalid(
-                "Assessment changes require an active learning program.",
-            ));
-        }
-        Ok(())
-    }
-    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-        sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
-            .bind(program_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(db)?;
-        Ok(())
-    }
-    async fn ensure_outcomes(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-        for module in sqlx::query("SELECT id,title,outcomes_json FROM learning_modules WHERE program_id=? ORDER BY ordinal").bind(program_id).fetch_all(&mut **tx).await.map_err(db)? {
-            let module_id:String=module.get("id");let module_title:String=module.get("title");let outcomes:Vec<String>=decode(module.get("outcomes_json"))?;
-            for (ordinal,text) in outcomes.into_iter().enumerate(){let title=text.trim();if title.is_empty(){continue;}let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND ordinal=?").bind(program_id).bind(&module_id).bind(ordinal as i64).fetch_optional(&mut **tx).await.map_err(db)?;if existing.is_none(){sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,NULL,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(&module_id).bind(title).bind(format!("Outcome for {module_title}: {title}" )).bind(ordinal as i64).bind(now()).execute(&mut **tx).await.map_err(db)?;}}
-        }
-        Ok(())
-    }
-    async fn verify_sources(
-        tx: &mut Transaction<'_, Sqlite>,
-        program_id: &str,
-        ids: &[String],
-    ) -> Result<()> {
-        if ids.len() > 32 {
-            return Err(invalid(
-                "Assessments support at most 32 frozen source versions.",
-            ));
-        }
-        let mut seen = HashSet::new();
-        for id in ids {
-            uuid(id, "source version")?;
-            if !seen.insert(id) {
-                return Err(invalid("Source version IDs must be unique."));
-            }
-            let exists: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM learning_source_versions WHERE program_id=? AND id=?",
-            )
-            .bind(program_id)
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
-            if exists.is_none() {
-                return Err(invalid(
-                    "Assessment source version is not owned by this program.",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
+/// The submission's status: the least settled of its items'.
 fn stronger_grade(
     a: LearningAssessmentGradeStatus,
     b: LearningAssessmentGradeStatus,
@@ -260,33 +98,67 @@ fn stronger_grade(
         b
     }
 }
-fn grade_name(s: &LearningAssessmentGradeStatus) -> &'static str {
-    match s {
-        LearningAssessmentGradeStatus::Deterministic => "deterministic",
-        LearningAssessmentGradeStatus::Provisional => "provisional",
-        LearningAssessmentGradeStatus::Uncertain => "uncertain",
-        LearningAssessmentGradeStatus::NeedsReview => "needs_review",
-        LearningAssessmentGradeStatus::Pending => "pending",
+fn parse_mode(v: &str) -> Result<LearningQuizMode> {
+    match v {
+        "graded" => Ok(LearningQuizMode::Graded),
+        "practice" => Ok(LearningQuizMode::Practice),
+        _ => Err(AppError::Database("Invalid assessment form mode".into())),
     }
 }
+fn mode_name(mode: LearningQuizMode) -> &'static str {
+    match mode {
+        LearningQuizMode::Graded => "graded",
+        LearningQuizMode::Practice => "practice",
+    }
+}
+fn scope_kind_name(kind: LearningQuizScopeKind) -> &'static str {
+    match kind {
+        LearningQuizScopeKind::Lesson => "lesson",
+        LearningQuizScopeKind::Module => "module",
+        LearningQuizScopeKind::Course => "course",
+    }
+}
+/// A stored `scope_kind`/`scope_id` pair; None for an unscoped form.
+fn parse_scope(kind: Option<String>, id: Option<String>) -> Result<Option<LearningQuizScopeDto>> {
+    let kind = match kind.as_deref() {
+        None => return Ok(None),
+        Some("lesson") => LearningQuizScopeKind::Lesson,
+        Some("module") => LearningQuizScopeKind::Module,
+        Some("course") => LearningQuizScopeKind::Course,
+        Some(_) => return Err(AppError::Database("Invalid quiz scope".into())),
+    };
+    Ok(Some(LearningQuizScopeDto { kind, id }))
+}
+fn parse_form_status(v: &str) -> Result<LearningAssessmentFormStatus> {
+    match v {
+        "active" => Ok(LearningAssessmentFormStatus::Active),
+        "submitted" => Ok(LearningAssessmentFormStatus::Submitted),
+        "interrupted" => Ok(LearningAssessmentFormStatus::Interrupted),
+        _ => Err(AppError::Database("Invalid assessment form status".into())),
+    }
+}
+fn parse_format(v: &str) -> Result<engine::LearningItemFormat> {
+    crate::features::learning::quiz_blueprints::parse_format(v)
+}
+fn format_name(v: engine::LearningItemFormat) -> &'static str {
+    crate::features::learning::quiz_blueprints::format_name(v)
+}
+/// Section 4.6: what an item's evidence shows.
 fn dimension_for(
     format: engine::LearningItemFormat,
+    difficulty: u8,
     purpose: engine::LearningAssessmentPurpose,
 ) -> &'static str {
+    use engine::LearningItemFormat as F;
     if purpose == engine::LearningAssessmentPurpose::Transfer {
-        "transfer"
-    } else {
-        match format {
-            engine::LearningItemFormat::SingleChoice
-            | engine::LearningItemFormat::MultiSelect
-            | engine::LearningItemFormat::TrueFalse
-            | engine::LearningItemFormat::ShortAnswer
-            | engine::LearningItemFormat::Cloze
-            | engine::LearningItemFormat::Matching
-            | engine::LearningItemFormat::Ordering => "recall",
-            engine::LearningItemFormat::Explanation => "explanation",
-            engine::LearningItemFormat::Artifact => "application",
-        }
+        return "transfer";
+    }
+    match format {
+        F::Explanation => "explanation",
+        F::Artifact => "application",
+        F::ShortAnswer => "recall",
+        _ if difficulty >= 4 => "application",
+        _ => "recall",
     }
 }
 fn parse_dimension(s: &str) -> Result<LearningEvidenceDimension> {
@@ -350,7 +222,7 @@ fn parse_follow_status(s: &str) -> Result<LearningFollowUpStatus> {
 fn assessment_operation<'a>(
     operation_id: &'a str,
     program_id: &'a str,
-    form_id: Option<&'a str>,
+    subject_id: Option<&'a str>,
     kind: &'a str,
     payload_hash: &'a str,
     conflict: &'static str,
@@ -360,93 +232,169 @@ fn assessment_operation<'a>(
         scope: "assessment",
         kind,
         program_id: Some(program_id),
-        subject_id: form_id,
+        subject_id,
         payload_hash,
         conflict,
     }
 }
-async fn item_ordinal(
-    tx: &mut Transaction<'_, Sqlite>,
-    form_id: &str,
-    candidate_id: &str,
-) -> Result<i64> {
-    sqlx::query_scalar(
-        "SELECT ordinal FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?",
-    )
-    .bind(form_id)
-    .bind(candidate_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?
-    .ok_or_else(|| invalid("Response item does not belong to this form."))
+
+/// A bank item read back with what the bank keeps beside it.
+#[derive(Debug, Clone)]
+pub(crate) struct StoredCandidate {
+    pub candidate: engine::LearningAssessmentCandidate,
+    pub artifact_kind: Option<String>,
+    pub source_quote: String,
 }
-fn validate_response(
-    r: &engine::LearningAssessmentResponse,
-    format: engine::LearningItemFormat,
-    options: &[String],
-) -> Result<()> {
-    if r.text
-        .as_ref()
-        .is_some_and(|s| s.chars().count() > MAX_RESPONSE_CHARS)
-        || r.ordered_values.len() > 32
-        || r.artifact_json
-            .as_ref()
-            .is_some_and(|v| v.to_string().len() > MAX_RESPONSE_CHARS)
+
+/// Columns a candidate row must carry: `c.*` with the key's `key_json`,
+/// `explanation` and `distractor_rationales_json`.
+const CANDIDATE_COLUMNS: &str = "c.*,k.key_json,k.explanation,k.distractor_rationales_json";
+
+fn candidate_from_row(row: &SqliteRow, outcome_ids: Vec<String>) -> Result<StoredCandidate> {
+    let primary: String = row.get("outcome_id");
+    let mut outcomes = vec![primary];
+    for outcome in outcome_ids {
+        if !outcomes.contains(&outcome) {
+            outcomes.push(outcome);
+        }
+    }
+    Ok(StoredCandidate {
+        candidate: engine::LearningAssessmentCandidate {
+            id: row.get("id"),
+            outcome_ids: outcomes,
+            format: parse_format(row.get("format"))?,
+            difficulty: row.get::<i64, _>("difficulty").clamp(1, 5) as u8,
+            prompt: row.get("prompt"),
+            options: decode(row.get("options_json"))?,
+            left: decode(row.get("left_items_json"))?,
+            source_version_ids: decode(row.get("source_version_ids_json"))?,
+            rubric: decode(row.get("rubric_json"))?,
+            key: decode(row.get("key_json"))?,
+            explanation: row.get("explanation"),
+            distractor_rationales: decode(row.get("distractor_rationales_json"))?,
+        },
+        artifact_kind: row.get("artifact_kind"),
+        source_quote: row.get("source_quote"),
+    })
+}
+
+/// Every outcome each candidate of a program addresses.
+async fn candidate_outcomes_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for row in sqlx::query("SELECT co.candidate_id,co.outcome_id FROM learning_assessment_candidate_outcomes co JOIN learning_assessment_candidates c ON c.id=co.candidate_id WHERE c.program_id=? ORDER BY co.outcome_id")
+        .bind(program_id)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?
     {
-        return Err(invalid("Assessment response exceeds its size limit."));
+        map.entry(row.get("candidate_id"))
+            .or_default()
+            .push(row.get("outcome_id"));
     }
-    match format {
-        engine::LearningItemFormat::SingleChoice => {
-            if r.selected_index.is_none_or(|i| i >= options.len())
-                || r.text.is_some()
-                || !r.ordered_values.is_empty()
-                || r.artifact_json.is_some()
-            {
-                return Err(invalid("Choose one available option for this item."));
-            }
-        }
-        engine::LearningItemFormat::ShortAnswer | engine::LearningItemFormat::Explanation => {
-            if r.text.as_deref().is_none_or(|s| s.trim().is_empty())
-                || r.selected_index.is_some()
-                || !r.ordered_values.is_empty()
-                || r.artifact_json.is_some()
-            {
-                return Err(invalid("Provide a written response for this item."));
-            }
-        }
-        engine::LearningItemFormat::Ordering => {
-            if r.ordered_values.len() != options.len()
-                || r.ordered_values.iter().collect::<HashSet<_>>().len() != options.len()
-                || r.ordered_values.iter().collect::<HashSet<_>>()
-                    != options.iter().collect::<HashSet<_>>()
-                || r.selected_index.is_some()
-                || r.text.is_some()
-                || r.artifact_json.is_some()
-            {
-                return Err(invalid("Order every available value exactly once."));
-            }
-        }
-        engine::LearningItemFormat::Artifact => {
-            if r.selected_index.is_some()
-                || !r.ordered_values.is_empty()
-                || r.artifact_json.as_ref().is_some_and(|v| !v.is_object())
-                || (r.artifact_json.is_none()
-                    && r.text.as_deref().is_none_or(|s| s.trim().is_empty()))
-            {
-                return Err(invalid("Save an artifact or written response."));
-            }
-        }
-        engine::LearningItemFormat::MultiSelect
-        | engine::LearningItemFormat::TrueFalse
-        | engine::LearningItemFormat::Cloze
-        | engine::LearningItemFormat::Matching => {
-            return Err(AppError::InvalidState("not built".into()));
-        }
-    }
-    Ok(())
+    Ok(map)
 }
+
+/// One candidate of the program, whatever its review status (a form keeps
+/// the items it was drawn with).
+async fn candidate_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    candidate_id: &str,
+) -> Result<StoredCandidate> {
+    let row = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?"))
+        .bind(candidate_id)
+        .bind(program_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::InvalidState("This quiz question is no longer available.".into()))?;
+    let outcomes = sqlx::query_scalar::<_, String>(
+        "SELECT outcome_id FROM learning_assessment_candidate_outcomes WHERE candidate_id=? ORDER BY outcome_id",
+    )
+    .bind(candidate_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    candidate_from_row(&row, outcomes)
+}
+
+impl LearningAssessmentRepository {
+    /// One bank item with its key, for the grading job.
+    pub(crate) async fn stored_candidate_in(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        candidate_id: &str,
+    ) -> Result<StoredCandidate> {
+        candidate_in(connection, program_id, candidate_id).await
+    }
+}
+
+#[derive(Clone)]
+pub struct LearningAssessmentRepository {
+    pool: SqlitePool,
+}
+
+impl LearningAssessmentRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    async fn active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
+                .bind(program_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db)?;
+        if status.as_deref() != Some("active") {
+            return Err(invalid("Quizzes need an active course."));
+        }
+        Ok(())
+    }
+    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+        sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
+            .bind(program_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+    /// Module outcomes, one per line of each module's outcome list.
+    pub(crate) async fn ensure_outcomes(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+    ) -> Result<()> {
+        for module in sqlx::query("SELECT id,title,outcomes_json FROM learning_modules WHERE program_id=? ORDER BY ordinal").bind(program_id).fetch_all(&mut *connection).await.map_err(db)? {
+            let module_id: String = module.get("id");
+            let module_title: String = module.get("title");
+            let outcomes: Vec<String> = decode(module.get("outcomes_json"))?;
+            for (ordinal, text) in outcomes.into_iter().enumerate() {
+                let title = text.trim();
+                if title.is_empty() {
+                    continue;
+                }
+                let existing: Option<String> = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND ordinal=? AND lesson_id IS NULL").bind(program_id).bind(&module_id).bind(ordinal as i64).fetch_optional(&mut *connection).await.map_err(db)?;
+                if existing.is_none() {
+                    sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,NULL,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(&module_id).bind(title).bind(format!("Outcome for {module_title}: {title}")).bind(ordinal as i64).bind(now()).execute(&mut *connection).await.map_err(db)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A follow-up recommendation, unless one for the same outcome and reason is
+/// already waiting.
+#[allow(clippy::too_many_arguments)]
 async fn insert_followup(
-    tx: &mut Transaction<'_, Sqlite>,
+    connection: &mut SqliteConnection,
     program_id: &str,
     outcome_id: Option<&str>,
     reason: &str,
@@ -455,10 +403,10 @@ async fn insert_followup(
     action_ref: Option<&str>,
     evidence_ids: &[String],
 ) -> Result<()> {
-    let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_follow_up_recommendations WHERE program_id=? AND outcome_id IS ? AND reason_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(program_id).bind(outcome_id).bind(reason).fetch_optional(&mut **tx).await.map_err(db)?;
+    let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_follow_up_recommendations WHERE program_id=? AND outcome_id IS ? AND reason_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(program_id).bind(outcome_id).bind(reason).fetch_optional(&mut *connection).await.map_err(db)?;
     if existing.is_some() {
         return Ok(());
     }
-    sqlx::query("INSERT INTO learning_follow_up_recommendations(id,program_id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(outcome_id).bind(reason).bind(explanation).bind(action).bind(action_ref).bind(json(evidence_ids)?).bind(now()).execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO learning_follow_up_recommendations(id,program_id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(outcome_id).bind(reason).bind(explanation).bind(action).bind(action_ref).bind(json(evidence_ids)?).bind(now()).execute(&mut *connection).await.map_err(db)?;
     Ok(())
 }

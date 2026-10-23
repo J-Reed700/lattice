@@ -456,14 +456,6 @@ async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async submitLearningAttempt(request: SubmitLearningAttemptRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_attempt", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteLearningProgram(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|delete_learning_program", { id }) };
@@ -1026,30 +1018,6 @@ async rejectLearningPracticeProposal(request: DecideLearningPracticeProposalRequ
     else return { status: "error", error: e  as any };
 }
 },
-async getLearningAssessmentWorkspace(id: string) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_workspace", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async createLearningAssessmentBlueprint(request: CreateLearningAssessmentBlueprintRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_assessment_blueprint", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async startLearningAssessmentForm(request: StartLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_assessment_form", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getLearningAssessmentForm(id: string) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_form", { id }) };
@@ -1074,6 +1042,10 @@ async interruptLearningAssessmentForm(request: MutateLearningAssessmentFormReque
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Keyed answers are graded at once; written answers and short-answer
+ * near-misses go to the grading job, which this starts.
+ */
 async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_assessment_form", { request }) };
@@ -1082,7 +1054,7 @@ async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestD
     else return { status: "error", error: e  as any };
 }
 },
-async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_follow_up", { request }) };
 } catch (e) {
@@ -1090,7 +1062,7 @@ async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|dismiss_learning_follow_up", { request }) };
 } catch (e) {
@@ -1130,6 +1102,9 @@ async startLearningQuiz(request: StartLearningQuizRequestDto) : Promise<Result<L
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Grade the answers still pending after a stopped or failed grading job.
+ */
 async resumeLearningQuizGrading(request: ResumeLearningQuizGradingRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resume_learning_quiz_grading", { request }) };
@@ -6136,7 +6111,6 @@ conversation: ConversationDto;
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
-export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string; programId: string; blueprintId: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; changeReason: string }
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
@@ -7618,15 +7592,24 @@ topP: number;
  * Top-k sampling for the claim judge. One takes the argmax token.
  */
 topK: number }
-export type LearningAnswerDto = { questionId: string; selectedIndex: number }
-export type LearningAssessmentBlueprintDto = { id: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; status: LearningBlueprintStatus; changeReason: string; createdAt: number }
-export type LearningAssessmentCriterionResultDto = { criterionId: string; score: number | null; maxPoints: number; observation: string; artifactQuote: string | null }
-export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null;
+/**
+ * What a short-answer input may say before submission.
+ */
+export type LearningAnswerHintDto = { numeric: boolean;
+/**
+ * The key's unit, e.g. "mM", when the answer is a number with a unit.
+ */
+unitHint: string | null }
+export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null;
 /**
  * The quiz this form was taken for; None only for unscoped legacy forms.
  */
 scope: LearningQuizScopeDto | null; mode: LearningQuizMode }
-export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[]; previouslyExposed: boolean; selectedIndex: number | null;
+export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[];
+/**
+ * The passage the question was written from, for the source line.
+ */
+sourceQuote: string; previouslyExposed: boolean;
 /**
  * Saved choice indices in shown order (single choice, true/false,
  * multi-select).
@@ -7653,16 +7636,20 @@ blankCount: number; textResponse: string | null; orderedValues: string[]; artifa
  * The key and why, only once the form is submitted (or, in practice
  * mode, once this item is answered). Never present before.
  */
-keyReveal: LearningKeyRevealDto | null }
+keyReveal: LearningKeyRevealDto | null;
+/**
+ * Short answers only: whether a number is expected and in which unit.
+ * Never the answer itself.
+ */
+answerHint: LearningAnswerHintDto | null }
 export type LearningAssessmentFormStatus = "active" | "submitted" | "interrupted"
-export type LearningAssessmentFormSummaryDto = { id: string; blueprintId: string; blueprintRevision: number; title: string; purpose: LearningAssessmentPurpose; status: LearningAssessmentFormStatus; revision: number; retakeOfFormId: string | null; score: number | null; gradeStatus: LearningAssessmentGradeStatus | null; createdAt: number; submittedAt: number | null }
 export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review" |
 /**
  * A written answer (or short-answer near-miss) waiting for the grading
  * job. Never a fail: no verdict is given while any item is pending.
  */
 "pending"
-export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string; criterionResults: LearningAssessmentCriterionResultDto[]; artifactQuotes: string[];
+export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string;
 /**
  * Partial credit: points this item earned out of its points.
  */
@@ -7678,12 +7665,18 @@ learnerOverride: boolean;
 /**
  * The model grader's checked reasons (section 4.3a). None for keyed items.
  */
-rationale: LearningGradeRationaleDto | null; contest: LearningGradeContestDto | null }
-export type LearningAssessmentKind = "practice" | "quiz" | "test"
-export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
-export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null;
+rationale: LearningGradeRationaleDto | null;
 /**
- * Chosen option indices: one for single choice and true/false, several
+ * Per-part verdicts for cloze, multi-select, matching and ordering.
+ */
+partResults: LearningPartResult[]; contest: LearningGradeContestDto | null }
+export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
+/**
+ * A saved answer, in the item's shown option order.
+ */
+export type LearningAssessmentResponse = { itemId: string;
+/**
+ * Chosen shown positions: one for single choice and true/false, several
  * for multi-select.
  */
 selectedIndices?: number[]; text: string | null;
@@ -7692,9 +7685,9 @@ selectedIndices?: number[]; text: string | null;
  */
 blankResponses?: string[];
 /**
- * Per left-hand matching entry, the chosen right-hand index (or none yet).
+ * Per left-hand matching entry, the chosen shown right-hand position.
  */
-matches?: (number | null)[]; orderedValues: string[]; artifactJson: JsonValue | null }
+matches?: (number | null)[]; orderedValues?: string[]; artifactJson: JsonValue | null }
 export type LearningAssessmentSubmissionDto = { score: number;
 /**
  * None while any item is pending: no verdict without every grade.
@@ -7708,12 +7701,6 @@ scoreWithoutOverrides: number | null; pendingItems: number;
  * The `quiz_grading` job grading the pending items, while one exists.
  */
 gradingJobId: string | null }
-export type LearningAssessmentWorkspaceDto = { programId: string; outcomes: LearningOutcomeDefinitionDto[]; blueprints: LearningAssessmentBlueprintDto[]; forms: LearningAssessmentFormSummaryDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
-export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number;
-/**
- * Module tests only: the share of the module the test covered.
- */
-coverage: LearningModuleTestCoverageDto | null }
 export type LearningAuditOutcome =
 /**
  * Every claim carries a current Verifier verdict.
@@ -7767,8 +7754,6 @@ movesBar: boolean;
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
-export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
-export type LearningBlueprintStatus = "draft" | "accepted" | "retired"
 export type LearningBuiltinRuntime = "javascript" | "python"
 export type LearningBuiltinRuntimeCapability = { id: LearningBuiltinRuntime; name: string; description: string; available: boolean; reason: string | null }
 export type LearningCanvasDto = { id: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue; elementCount: number; revision: number; createdAt: number; updatedAt: number; snapshots: LearningCanvasSnapshotDto[] }
@@ -7880,8 +7865,7 @@ profile: LearningClaimProfileDto | null; supports: LearningSourceTrustEntryDto[]
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
 /**
- * One rubric criterion's checked reason. Replaces
- * `LearningAssessmentCriterionResultDto` (observation/artifact_quote).
+ * One rubric criterion's checked reason.
  */
 export type LearningCriterionRationaleDto = { criterionId: string; title: string; verdict: LearningCriterionVerdict;
 /**
@@ -8092,7 +8076,7 @@ disputes: number;
  */
 publishable: boolean; audit: LearningLessonAuditDto | null }
 export type LearningLessonAuditState = "running" | "completed" | "stopped"
-export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
+export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
 /**
  * Of `claim_count`, the claims kept as general knowledge: no saved
@@ -8126,11 +8110,6 @@ since: number | null }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningModuleQuizzesDto = { moduleId: string; test: LearningQuizStatusDto; lessons: LearningLessonQuizDto[] }
-/**
- * A module test asks about the module's prepared lessons, so it may cover
- * only some of them; such a test does not stand for the whole module.
- */
-export type LearningModuleTestCoverageDto = { coveredLessons: number; moduleLessons: number }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
 export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
 export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"
@@ -8260,19 +8239,11 @@ export type LearningPackConflictKind =
  */
 "lesson" |
 /**
- * A question another course on this computer owns.
- */
-"question" |
-/**
- * A submitted assessment another course on this computer owns.
- */
-"attempt" |
-/**
  * Any other record another course on this computer owns.
  */
 "record"
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
-export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
+export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "evidence" | "practical_activity" | "practical_artifact"
 export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
 /**
  * What an export of this course cannot carry, shown before exporting. The
@@ -8324,6 +8295,15 @@ export type LearningPackStaysBehindKind =
  * The Verifier audit consent, given on this computer only.
  */
 "verifier_consent"
+/**
+ * One part of a keyed answer: a cloze blank, a multi-select option, a
+ * matching pair or an ordering position, by its shown index.
+ */
+export type LearningPartResult = { index: number; correct: boolean;
+/**
+ * Why the part was wrong; empty when it was right.
+ */
+detail: string }
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.
@@ -8367,13 +8347,15 @@ export type LearningPracticeTaskKind = "independent" | "guided"
 export type LearningPracticeTutorTurnDto = { id: string; prompt: string; response: string; requestKind: LearningTutorRequestKind; hintLevel: LearningPracticeHintLevel | null; citations: LearningPracticeCitationDto[]; proposalIds: string[]; modelName: string; createdAt: number }
 export type LearningPracticeWorkspaceDto = { programId: string; sessions: LearningPracticeSessionSummaryDto[] }
 export type LearningPreparation = "outline" | "ready"
-export type LearningProgramDto = { outlineReview?: LearningOutlineReviewDto | null; summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[]; attempts: LearningAttemptDto[] }
+export type LearningProgramDto = { outlineReview?: LearningOutlineReviewDto | null; summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[] }
 export type LearningProgramStatus = "draft" | "active"
 export type LearningProgramSummaryDto = { id: string; title: string; goal: string; status: LearningProgramStatus; revision: number; moduleCount: number; lessonCount: number; completedLessons: number; currentLessonId: string | null; createdAt: number }
 export type LearningProjectMilestoneDto = { title: string; brief: string; deliverables: string[]; successCriteria: string[] }
-export type LearningQuestionDto = { id: string; kind: LearningAssessmentKind; prompt: string; options: string[]; sourceIds: string[] }
-export type LearningQuestionResultDto = { questionId: string; prompt: string; options: string[]; selectedIndex: number; correctIndex: number; explanation: string; sourceIds: string[] }
-export type LearningQuizAttemptSummaryDto = { formId: string; score: number; passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; submittedAt: number; retakeOfFormId: string | null; overriddenItems: number; pendingItems: number }
+export type LearningQuizAttemptSummaryDto = { formId: string; score: number; passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; submittedAt: number; retakeOfFormId: string | null; overriddenItems: number; pendingItems: number;
+/**
+ * 1 for the first graded attempt at this quiz, then 2, 3…
+ */
+attemptNumber: number }
 export type LearningQuizBankStatus = "not_prepared" | "preparing" | "ready" | "failed"
 /**
  * Which of the scope's lessons the quiz covers now (module test, course exam).
@@ -8411,7 +8393,12 @@ bankMessage: string; bankSize: number;
 /**
  * Items the learner has not seen yet.
  */
-freshItems: number; formSize: number; expectedMinutes: number; passingScore: number; coverage: LearningQuizCoverageDto | null; activeFormId: string | null; verdict: LearningQuizVerdict; best: LearningQuizAttemptSummaryDto | null; latest: LearningQuizAttemptSummaryDto | null; attempts: number; preparingJobId: string | null }
+freshItems: number; formSize: number; expectedMinutes: number; passingScore: number; coverage: LearningQuizCoverageDto | null;
+/**
+ * The open or paused form, when there is one, with when it was started
+ * and last saved, and whether it is paused.
+ */
+activeFormId: string | null; activeFormStartedAt: number | null; activeFormUpdatedAt: number | null; activeFormPaused: boolean; verdict: LearningQuizVerdict; best: LearningQuizAttemptSummaryDto | null; latest: LearningQuizAttemptSummaryDto | null; attempts: number; preparingJobId: string | null }
 /**
  * From the best attempt. Pending while any item of it awaits grading.
  */
@@ -10345,7 +10332,6 @@ title: string;
  * The heading the saved block opens with.
  */
 heading: string }
-export type StartLearningAssessmentFormRequestDto = { operationId: string; formId: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
@@ -10373,7 +10359,6 @@ export type StudySourceDto = { chunkId: string; documentId: string; fileName: st
  * External web source URL when this citation is not an indexed document.
  */
 url?: string | null }
-export type SubmitLearningAttemptRequestDto = { attemptId: string; programId: string; expectedRevision: number; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; answers: LearningAnswerDto[] }
 export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[]; saveOnly?: boolean; expectedDiagnosticRevision?: number | null }
 export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**

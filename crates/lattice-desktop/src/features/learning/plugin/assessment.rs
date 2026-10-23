@@ -1,5 +1,7 @@
 use super::*;
 
+// Quizzes and tests (docs/design/2026-10-23-quizzes-and-tests.md, section 6.3).
+
 pub(super) fn assessment_repo(
     container: &Container,
 ) -> crate::features::learning::assessment_repository::LearningAssessmentRepository {
@@ -10,119 +12,69 @@ pub(super) fn assessment_repo(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_learning_assessment_workspace(
-    id: String,
+pub async fn get_learning_quiz_overview(
+    program_id: String,
     container: State<'_, Container>,
-) -> Result<LearningAssessmentWorkspaceDto, ApiError> {
+) -> Result<LearningQuizOverviewDto, ApiError> {
     assessment_repo(&container)
-        .workspace(&id)
+        .overview(&program_id)
         .await
         .map_err(ApiError::from)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn create_learning_assessment_blueprint(
-    request: CreateLearningAssessmentBlueprintRequestDto,
+pub async fn update_learning_quiz_settings(
+    request: UpdateLearningQuizSettingsRequestDto,
     container: State<'_, Container>,
-) -> Result<LearningAssessmentWorkspaceDto, ApiError> {
-    let repo = assessment_repo(&container);
+) -> Result<LearningQuizOverviewDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
-    if let Some(workspace) = repo
-        .preflight_blueprint(&request, &hash)
-        .await
-        .map_err(ApiError::from)?
-    {
-        return Ok(workspace);
-    }
-    let assessment_workspace = repo
-        .workspace(&request.program_id)
+    let repo = assessment_repo(&container);
+    repo.update_settings(&request, &hash)
         .await
         .map_err(ApiError::from)?;
-    let source_workspace = source_library(&container)
-        .workspace(&request.program_id)
+    repo.overview(&request.program_id)
         .await
-        .map_err(ApiError::from)?;
-    let library = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-        container.db_pool().clone(),
-    );
-    let mut sources = Vec::new();
-    for version_id in &request.source_version_ids {
-        let source = source_workspace
-            .sources
-            .iter()
-            .find(|s| s.versions.iter().any(|v| &v.id == version_id))
-            .ok_or_else(|| {
-                ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
-                    "Assessment source is not part of this program.".into(),
-                ))
-            })?;
-        sources.push(
-            library
-                .get_version(&GetLearningSourceVersionRequestDto {
-                    program_id: request.program_id.clone(),
-                    source_id: source.id.clone(),
-                    version_id: version_id.clone(),
-                })
-                .await
-                .map_err(ApiError::from)?,
-        );
-    }
-    let program = LearningRepository::new(container.db_pool().clone())
-        .get(&request.program_id)
-        .await
-        .map_err(ApiError::from)?;
-    let requested_outcomes: std::collections::HashSet<_> = request
-        .requirements
-        .iter()
-        .map(|requirement| requirement.outcome_id.as_str())
-        .collect();
-    let module_ids: std::collections::HashSet<_> = assessment_workspace
-        .outcomes
-        .iter()
-        .filter(|outcome| requested_outcomes.contains(outcome.id.as_str()))
-        .filter_map(|outcome| outcome.module_id.as_deref())
-        .collect();
-    let lessons: Vec<_> = program
-        .modules
-        .iter()
-        .filter(|module| module_ids.contains(module.id.as_str()))
-        .flat_map(|module| module.lessons.iter())
-        .cloned()
-        .collect();
-    let pin = learning_model(
-        &container,
-        model_requirements::assessment(),
-        "Writing this assessment",
-    )
-    .await?;
-    let llm = &pin.llm;
-    let candidates = crate::features::learning::assessment_generation::generate(
-        llm.as_ref(),
-        &request,
-        &assessment_workspace.outcomes,
-        &sources,
-        &lessons,
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_learning_quiz_bank(
+    request: PrepareLearningQuizBankRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningGenerationJob, ApiError> {
+    let id = crate::features::learning::quiz_bank_jobs::queue_bank(
+        container.db_pool(),
+        &request.operation_id,
+        &request.program_id,
+        &request.scope,
+        request.top_up,
     )
     .await
     .map_err(ApiError::from)?;
-    repo.create_blueprint(&request, &candidates, llm.model_name(), &hash)
-        .await
-        .map_err(ApiError::from)
+    container.jobs().submitted(&id).await;
+    crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.db_pool().clone(),
+    )
+    .job(&id)
+    .await
+    .map_err(ApiError::from)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_learning_assessment_form(
-    request: StartLearningAssessmentFormRequestDto,
+pub async fn start_learning_quiz(
+    request: StartLearningQuizRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     assessment_repo(&container)
-        .start_form(&request, &hash)
+        .start_quiz(&request, &hash)
         .await
         .map_err(ApiError::from)
 }
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_assessment_form(
@@ -134,6 +86,7 @@ pub async fn get_learning_assessment_form(
         .await
         .map_err(ApiError::from)
 }
+
 #[tauri::command]
 #[specta::specta]
 pub async fn save_learning_assessment_response(
@@ -146,6 +99,7 @@ pub async fn save_learning_assessment_response(
         .await
         .map_err(ApiError::from)
 }
+
 #[tauri::command]
 #[specta::specta]
 pub async fn interrupt_learning_assessment_form(
@@ -158,159 +112,68 @@ pub async fn interrupt_learning_assessment_form(
         .await
         .map_err(ApiError::from)
 }
+
+/// Keyed answers are graded at once; written answers and short-answer
+/// near-misses go to the grading job, which this starts.
 #[tauri::command]
 #[specta::specta]
 pub async fn submit_learning_assessment_form(
     request: MutateLearningAssessmentFormRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    let repo = assessment_repo(&container);
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
-    if let Some(form) = repo
-        .preflight_submit(&request, &hash)
-        .await
-        .map_err(ApiError::from)?
-    {
-        return Ok(form);
-    }
-    let form = repo
-        .get_form(&request.form_id)
+    let (form, job) = assessment_repo(&container)
+        .submit(&request, &hash)
         .await
         .map_err(ApiError::from)?;
-    if form.items.iter().any(|item| {
-        item.selected_index.is_none()
-            && item
-                .text_response
-                .as_deref()
-                .is_none_or(|s| s.trim().is_empty())
-            && item.artifact_json.is_none()
-            && item.ordered_values.is_empty()
-    }) {
-        return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
-                "Save a response for every assessment item before submitting.".into(),
-            ),
-        ));
+    if let Some(job) = job {
+        container.jobs().submitted(&job).await;
     }
-    let (graded, model) = if form.items.iter().any(|i| {
-        matches!(
-            i.format,
-            LearningItemFormat::Explanation | LearningItemFormat::Artifact
-        )
-    }) {
-        let pin = learning_model(
-            &container,
-            model_requirements::assessment(),
-            "Grading this assessment",
-        )
-        .await?;
-        let llm = &pin.llm;
-        match crate::features::learning::assessment_generation::grade_open(llm.as_ref(), &form)
-            .await
-        {
-            Ok(v) => (v.0, Some(v.1)),
-            Err(_) => {
-                let mut out = std::collections::HashMap::new();
-                for item in form.items.iter().filter(|i| {
-                    matches!(
-                        i.format,
-                        LearningItemFormat::Explanation | LearningItemFormat::Artifact
-                    )
-                }) {
-                    out.insert(item.id.clone(),(LearningAssessmentGradeStatus::Uncertain,item.rubric.iter().map(|c|LearningAssessmentCriterionResultDto{criterion_id:c.id.clone(),score:None,max_points:c.max_points,observation:"Response could not be graded reliably; review with a person.".into(),artifact_quote:None}).collect()));
-                }
-                (out, Some(llm.model_name().into()))
-            }
-        }
-    } else {
-        (std::collections::HashMap::new(), None)
-    };
-    repo.submit(&request, &hash, graded, model)
-        .await
-        .map_err(ApiError::from)
-}
-#[tauri::command]
-#[specta::specta]
-pub async fn accept_learning_follow_up(
-    request: DecideLearningFollowUpRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningAssessmentWorkspaceDto, ApiError> {
-    let hash = source_request_hash(&(&request, true)).map_err(ApiError::from)?;
-    assessment_repo(&container)
-        .decide_follow_up(&request, true, &hash)
-        .await
-        .map_err(ApiError::from)
-}
-#[tauri::command]
-#[specta::specta]
-pub async fn dismiss_learning_follow_up(
-    request: DecideLearningFollowUpRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningAssessmentWorkspaceDto, ApiError> {
-    let hash = source_request_hash(&(&request, false)).map_err(ApiError::from)?;
-    assessment_repo(&container)
-        .decide_follow_up(&request, false, &hash)
-        .await
-        .map_err(ApiError::from)
+    Ok(form)
 }
 
-// Quizzes and tests (docs/design/2026-10-23-quizzes-and-tests.md, section 6.3).
-// The contract is published first; each command is built behind it.
-
-fn not_built() -> ApiError {
-    ApiError::from(lattice_core::shared::error::AppError::InvalidState(
-        "not built".into(),
-    ))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_learning_quiz_overview(
-    program_id: String,
-    container: State<'_, Container>,
-) -> Result<LearningQuizOverviewDto, ApiError> {
-    let _ = (program_id, container);
-    Err(not_built())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn update_learning_quiz_settings(
-    request: UpdateLearningQuizSettingsRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningQuizOverviewDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn prepare_learning_quiz_bank(
-    request: PrepareLearningQuizBankRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningGenerationJob, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn start_learning_quiz(
-    request: StartLearningQuizRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningAssessmentFormDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
-}
-
+/// Grade the answers still pending after a stopped or failed grading job.
 #[tauri::command]
 #[specta::specta]
 pub async fn resume_learning_quiz_grading(
     request: ResumeLearningQuizGradingRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
+    use crate::features::learning::persistence::db;
+    let repo = assessment_repo(&container);
+    let mut tx = container
+        .db_pool()
+        .begin()
+        .await
+        .map_err(db)
+        .map_err(ApiError::from)?;
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
+        .bind(&request.form_id)
+        .bind(&request.program_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)
+        .map_err(ApiError::from)?;
+    if pending == 0 {
+        return repo
+            .get_form(&request.form_id)
+            .await
+            .map_err(ApiError::from);
+    }
+    let job = crate::features::learning::quiz_bank_jobs::queue_grading_in(
+        &mut tx,
+        &request.program_id,
+        &request.form_id,
+        None,
+        &format!("resume:{}", request.operation_id),
+    )
+    .await
+    .map_err(ApiError::from)?;
+    tx.commit().await.map_err(db).map_err(ApiError::from)?;
+    container.jobs().submitted(&job).await;
+    repo.get_form(&request.form_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -319,8 +182,15 @@ pub async fn contest_learning_quiz_grade(
     request: ContestLearningQuizGradeRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
+    let hash = source_request_hash(&request).map_err(ApiError::from)?;
+    let (form, job) = assessment_repo(&container)
+        .contest(&request, &hash)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(job) = job {
+        container.jobs().submitted(&job).await;
+    }
+    Ok(form)
 }
 
 #[tauri::command]
@@ -329,8 +199,11 @@ pub async fn override_learning_quiz_grade(
     request: OverrideLearningQuizGradeRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
+    let hash = source_request_hash(&request).map_err(ApiError::from)?;
+    assessment_repo(&container)
+        .override_grade(&request, &hash)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -339,8 +212,11 @@ pub async fn report_learning_quiz_item(
     request: ReportLearningQuizItemRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
+    let hash = source_request_hash(&request).map_err(ApiError::from)?;
+    assessment_repo(&container)
+        .report_item(&request, &hash)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -349,6 +225,69 @@ pub async fn add_learning_quiz_misses_to_recall(
     request: AddLearningQuizMissesToRecallRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningQuizMissesToRecallDto, ApiError> {
-    let _ = (request, container);
-    Err(not_built())
+    let hash = source_request_hash(&request).map_err(ApiError::from)?;
+    assessment_repo(&container)
+        .add_misses_to_recall(&request, &hash)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn accept_learning_follow_up(
+    request: DecideLearningFollowUpRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningQuizOverviewDto, ApiError> {
+    let hash = source_request_hash(&(&request, true)).map_err(ApiError::from)?;
+    let repo = assessment_repo(&container);
+    repo.decide_follow_up(&request, true, &hash)
+        .await
+        .map_err(ApiError::from)?;
+    repo.overview(&request.program_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dismiss_learning_follow_up(
+    request: DecideLearningFollowUpRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningQuizOverviewDto, ApiError> {
+    let hash = source_request_hash(&(&request, false)).map_err(ApiError::from)?;
+    let repo = assessment_repo(&container);
+    repo.decide_follow_up(&request, false, &hash)
+        .await
+        .map_err(ApiError::from)?;
+    repo.overview(&request.program_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// The job workers for quiz banks and grading, with the Learning model.
+pub(super) fn quiz_workers(
+    container: &Container,
+) -> (
+    crate::features::learning::quiz_bank_jobs::QuizBankWorker,
+    crate::features::learning::quiz_bank_jobs::QuizGradingWorker,
+) {
+    let loader = |container: Container,
+                  requirements: lattice_core::application::ports::llm_port::ModelRequirements|
+     -> crate::features::learning::quiz_bank_jobs::ModelLoader {
+        std::sync::Arc::new(move || {
+            let container = container.clone();
+            let requirements = requirements.clone();
+            Box::pin(async move { container.learning_llm(requirements).await })
+        })
+    };
+    (
+        crate::features::learning::quiz_bank_jobs::QuizBankWorker {
+            pool: container.db_pool().clone(),
+            load_llm: loader(container.clone(), model_requirements::assessment()),
+        },
+        crate::features::learning::quiz_bank_jobs::QuizGradingWorker {
+            pool: container.db_pool().clone(),
+            load_llm: loader(container.clone(), model_requirements::assessment()),
+        },
+    )
 }
