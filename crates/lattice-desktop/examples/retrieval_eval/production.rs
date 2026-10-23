@@ -30,8 +30,9 @@
 //!
 //! - `corpus_plan::expand_evidence` and `ConversationRepository::retrieval_neighbors` are
 //!   `pub(super)` / bound to the conversation repository, so `expand` below re-implements them:
-//!   8 anchors, same document and section, `chunk_index` within ±1, at most 3 rows per anchor,
-//!   stopping at the evidence limit. The SQL is copied from the repository.
+//!   anchors in rank order, same document and section, `chunk_index` within ±1, at most 3 rows
+//!   per anchor, each placed after its anchor inside the evidence limit, displacing the tail.
+//!   The SQL is copied from the repository.
 //! - Documents are synthesised from fixture rows rather than extracted from files, so there are
 //!   no page ranges and `page_number` is always NULL.
 
@@ -63,9 +64,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::Document;
-
-/// Anchors whose section neighbours are pulled in, matching `corpus_plan::expand_evidence`.
-const EVIDENCE_ANCHORS: usize = 8;
 
 /// The columns the search services actually read, plus the FTS5 tables, copied from
 /// `migrations/20260916000000_init_schema.sql` and `20261012090000_fts_header_column.sql`.
@@ -415,7 +413,7 @@ impl ProductionIndex {
     /// pipeline's own verdict on whether that ranking was good enough to answer from.
     ///
     /// The verdict is taken where the pipeline takes it: after the rerank stage, over the
-    /// whole pool, before the cut to `top_k` and before neighbour expansion, which appends
+    /// whole pool, before the cut to `top_k` and before neighbour expansion, which places
     /// context rather than ranking evidence.
     pub async fn rank(&self, query_text: &str) -> Result<Ranking, Box<dyn std::error::Error>> {
         let mut response = self.search.execute(self.request(query_text)).await?;
@@ -529,25 +527,33 @@ impl ProductionIndex {
         branches
     }
 
-    /// Append neighbouring-section evidence, mirroring `corpus_plan::expand_evidence`.
+    /// Place neighbouring-section evidence after each anchor, mirroring
+    /// `corpus_plan::expand_evidence`: anchors in rank order, each neighbour not already
+    /// evidence inserted after its anchor, the list cut back to `limit` as it goes, and the
+    /// walk ended at the first anchor with no room after it.
     pub async fn expand(
         &self,
         ranked: &mut Vec<RankedChunk>,
         limit: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let anchors: Vec<String> = ranked
-            .iter()
-            .take(EVIDENCE_ANCHORS)
-            .map(|chunk| chunk.chunk_id.clone())
-            .collect();
-        let mut seen: HashSet<String> = ranked.iter().map(|c| c.chunk_id.clone()).collect();
+        ranked.truncate(limit);
+        let anchors: Vec<String> = ranked.iter().map(|c| c.chunk_id.clone()).collect();
         for anchor in anchors {
+            let Some(mut at) = ranked
+                .iter()
+                .position(|c| c.chunk_id == anchor)
+                .filter(|at| at + 1 < limit)
+            else {
+                break;
+            };
             for neighbor in self.neighbors(&anchor).await? {
-                if ranked.len() >= limit {
-                    return Ok(());
+                if at + 1 >= limit {
+                    break;
                 }
-                if seen.insert(neighbor.chunk_id.clone()) {
-                    ranked.push(neighbor);
+                if ranked.iter().all(|c| c.chunk_id != neighbor.chunk_id) {
+                    at += 1;
+                    ranked.insert(at, neighbor);
+                    ranked.truncate(limit);
                 }
             }
         }
