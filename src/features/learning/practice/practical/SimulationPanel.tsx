@@ -14,6 +14,7 @@ import type {
   SendLearningSimulationTurnRequestDto,
   StartLearningSimulationRequestDto,
 } from "@/lib/bindings";
+import { useDraft } from "@/shared/drafts/drafts";
 
 export function SimulationPanel({
   programId,
@@ -29,7 +30,8 @@ export function SimulationPanel({
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const [learnerRole, setLearnerRole] = useState("Incident lead");
   const [counterpartRole, setCounterpartRole] = useState("On-call engineer");
-  const [message, setMessage] = useState("");
+  // Kept per session, so leaving the simulation does not lose the reply.
+  const [message, setMessage] = useDraft(session ? `simulation:${session.id}` : null);
   const [error, setError] = useState<string | null>(null);
   const retryRef = useRef<{
     start?: StartLearningSimulationRequestDto;

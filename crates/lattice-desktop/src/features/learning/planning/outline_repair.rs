@@ -566,13 +566,16 @@ pub(in crate::features::learning) async fn repair(
         if matches!(rewrite, Rewrite::Saved) {
             outcome.changed = true;
         } else {
-            // A last attempt that changed nothing, whether its answer kept the
-            // module or could not be used, settles a plan finding: it is
-            // exhausted and stays as an advisory suggestion, like any
-            // exhausted one.
+            // An answer that kept the module declines a plan finding, as the
+            // repair prompt allows; a last attempt that could not be used
+            // gives up on it. Either settles the finding: it is exhausted and
+            // stays as an advisory suggestion, like any exhausted one.
+            let declined = matches!(rewrite, Rewrite::Unchanged);
             for id in &ids {
                 let issue = issue_mut(draft, id)?;
-                if issue.kind == LearningOutlineIssueKind::Plan && issue.attempts >= ATTEMPT_LIMIT {
+                if issue.kind == LearningOutlineIssueKind::Plan
+                    && (declined || issue.attempts >= ATTEMPT_LIMIT)
+                {
                     issue.exhausted = true;
                     tracing::info!(finding = %id, "The last rewrite left a plan finding's module unchanged; it stays as a suggestion");
                 }

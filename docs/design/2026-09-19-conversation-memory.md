@@ -682,6 +682,7 @@ Version prompts as constants/resources near the use case and record versions in 
 
 - Preserve work progress, findings, decisions in context, failed attempts, unresolved questions, and exact identifiers needed to continue.
 - Active user memory is supplied separately; do not re-author it as a new authoritative ledger.
+- Do not turn an unrequested assistant-invented rule or limit into a standing rule. Attribute it as an assistant proposal when it matters; if a later user message explicitly adopts it, preserve that source-backed adoption.
 - Distinguish proposed, attempted, completed, denied, and uncertain actions.
 - Respect the requested output budget; return structured sections if that makes validation simpler.
 - Prior summaries are fallible. New original evidence can correct them.

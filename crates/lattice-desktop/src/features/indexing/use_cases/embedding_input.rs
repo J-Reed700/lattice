@@ -160,8 +160,10 @@ fn structure_spans(
         covered = end;
         let mut segment_start = start;
         let mut offset = start;
+        let mut has_body = false;
         for line in text[start..end].split_inclusive('\n') {
             if sections && fence.track(line) {
+                has_body = true;
                 offset += line.len();
                 continue;
             }
@@ -175,23 +177,29 @@ fn structure_spans(
                         offset += line.len();
                         continue;
                     }
-                    let breadcrumb = headings
-                        .iter()
-                        .map(|(_, h)| h.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" > ");
-                    if offset > segment_start {
+                    if offset > segment_start && has_body {
+                        let breadcrumb = headings
+                            .iter()
+                            .map(|(_, h)| h.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" > ");
                         spans.push(Span {
                             start: segment_start,
                             end: offset,
                             page: (page > 0).then_some(page as u32),
                             heading: (!breadcrumb.is_empty()).then_some(breadcrumb),
                         });
+                        segment_start = offset;
+                        has_body = false;
                     }
                     headings.retain(|(parent, _)| *parent < level);
                     headings.push((level, title));
-                    segment_start = offset;
+                    offset += line.len();
+                    continue;
                 }
+            }
+            if !line.trim().is_empty() {
+                has_body = true;
             }
             offset += line.len();
         }
@@ -350,6 +358,57 @@ mod tests {
         assert_eq!(spans.last().unwrap().heading.as_deref(), Some("Chapter 700 Examination > 706 Rejection > 706.07 Actions > § 706.07(b) Second action"));
         assert!(spans.iter().any(|s| s.heading.as_deref() == Some("Chapter 700 Examination > 706 Rejection > 706.07 Actions > 706.07(a) First action > 706.07(a)(1) Exception")));
         assert!(heading("706..07 Broken heading").is_none());
+    }
+
+    #[test]
+    fn consecutive_headings_before_body_share_one_span() {
+        for (text, breadcrumb) in [
+            (
+                "# Main topic\n## Nested topic\nBody text.",
+                "Main topic > Nested topic",
+            ),
+            (
+                "# Überblick\n## Vertragslaufzeit\nDie Laufzeit beträgt zwei Jahre.",
+                "Überblick > Vertragslaufzeit",
+            ),
+        ] {
+            let spans = structure_spans(text, &[], true).unwrap();
+
+            assert_eq!(spans.len(), 1, "{text}");
+            assert_eq!(&text[spans[0].start..spans[0].end], text);
+            assert_eq!(spans[0].heading.as_deref(), Some(breadcrumb));
+        }
+    }
+
+    #[test]
+    fn sibling_sections_with_bodies_remain_separate_spans() {
+        for (text, breadcrumbs, bodies) in [
+            (
+                "# Photosynthesis\n\n## Light reactions\nChlorophyll absorbs light.\n## Calvin cycle\nCarbon fixation follows.",
+                ["Photosynthesis > Light reactions", "Photosynthesis > Calvin cycle"],
+                ["Chlorophyll absorbs light.", "Carbon fixation follows."],
+            ),
+            (
+                "# Fotosíntesis\n## Fase luminosa\nLa clorofila absorbe la luz.\n## Ciclo de Calvin\nSigue la fijación del carbono.",
+                ["Fotosíntesis > Fase luminosa", "Fotosíntesis > Ciclo de Calvin"],
+                ["La clorofila absorbe la luz.", "Sigue la fijación del carbono."],
+            ),
+        ] {
+            let spans = structure_spans(text, &[], true).unwrap();
+
+            assert_eq!(spans.len(), 2, "{text}");
+            assert_eq!(
+                spans
+                    .iter()
+                    .map(|span| &text[span.start..span.end])
+                    .collect::<String>(),
+                text
+            );
+            for ((span, breadcrumb), body) in spans.iter().zip(breadcrumbs).zip(bodies) {
+                assert_eq!(span.heading.as_deref(), Some(breadcrumb));
+                assert!(text[span.start..span.end].contains(body));
+            }
+        }
     }
 }
 

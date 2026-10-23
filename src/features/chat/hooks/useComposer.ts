@@ -17,6 +17,7 @@ import { useSpaceDocuments } from '@/features/chat/hooks/useSpaceDocuments';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { conversationDraftKey, useDraft } from '@/shared/drafts/drafts';
 import type { CustomToolSettings } from '@/types';
 
 
@@ -63,7 +64,8 @@ export function useComposer({
     [settings],
   );
 
-  const [input, setInput] = useState('');
+  // Kept per conversation, so leaving the pane or the chat does not lose it.
+  const [input, setInput] = useDraft(conversationId ? conversationDraftKey(conversationId) : null);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -322,13 +324,13 @@ export function useComposer({
     setInput(composerDraft);
     setComposerDraft(null);
     textareaRef.current?.focus();
-  }, [composerDraft, setComposerDraft]);
+  }, [composerDraft, setComposerDraft, setInput]);
 
   /** Put a question in the draft, ready to edit or send. */
   const fill = useCallback((question: string) => {
     setInput(question);
     textareaRef.current?.focus();
-  }, []);
+  }, [setInput]);
 
   return {
     input,

@@ -145,3 +145,60 @@ fn missing_passage_never_gets_an_invented_citation() {
     let context = build_kb_context(&refs, &ids).expect("context");
     assert!(!context.contains("[1]"));
 }
+
+#[test]
+fn a_passage_carries_only_its_own_source_lines() {
+    let mut cell = chunk(
+        "zelle-0",
+        "zelle",
+        "Leitfaden Zellbiologie.md",
+        "Die Mitose teilt den Zellkern in zwei identische Tochterkerne.",
+    );
+    cell.metadata.insert(
+        "section".into(),
+        serde_json::json!("Leitfaden > Zellteilung"),
+    );
+    let harmony = chunk(
+        "harmony-0",
+        "harmony",
+        "harmony notes.md",
+        "A dominant seventh chord resolves to the tonic.",
+    );
+    let refs = [&cell, &harmony];
+    let ids = HashMap::from([("zelle-0".to_string(), 3), ("harmony-0".to_string(), 7)]);
+
+    let context = build_kb_context(&refs, &ids).expect("context");
+
+    assert!(context.contains("[3] Document: Leitfaden Zellbiologie.md"));
+    assert!(context.contains("Source heading: Leitfaden > Zellteilung"));
+    assert!(context.contains("[7] Document: harmony notes.md"));
+    assert!(
+        !context.contains("Evidence relationship"),
+        "no passage may claim a link the sources do not state:\n{context}"
+    );
+}
+
+#[test]
+fn the_synthesis_note_sits_once_beside_the_passages_and_names_no_document_type() {
+    let flags = SearchFlags {
+        force_kb_search: false,
+        force_web_search: false,
+        web_fallback: false,
+        force_wiki_search: false,
+        deep_research_mode: false,
+        force_followup_mode: false,
+        closed_book: false,
+    };
+    let settings = LLMPromptSettingsDto::default();
+    let prompt = |kb: Option<&str>| {
+        PromptMessageBuilder::new(&settings, "¿Qué fase sigue a la profase?", false, flags)
+            .with_kb_context(kb.map(str::to_string))
+            .build()
+    };
+
+    let with_passages = prompt(Some("[1] La metafase sigue a la profase."));
+    assert_eq!(with_passages.matches(EVIDENCE_SYNTHESIS_NOTE).count(), 1);
+    assert!(!prompt(None).contains(EVIDENCE_SYNTHESIS_NOTE));
+    assert!(!EVIDENCE_SYNTHESIS_NOTE.contains("alternatives"));
+    assert!(!EVIDENCE_SYNTHESIS_NOTE.contains("template"));
+}

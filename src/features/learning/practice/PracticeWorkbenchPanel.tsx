@@ -22,6 +22,7 @@ import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningLessonDto, LearningPracticeHintLevel, LearningPracticeTaskKind, LearningPracticeMode, LearningPracticeSessionDto, LearningProgramDto, LearningSourceLibraryItemDto, SaveLearningPracticeArtifactRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
+import { useDraft } from '@/shared/drafts/drafts';
 
 
 type Mode = LearningPracticeMode;
@@ -96,7 +97,8 @@ export function PracticeWorkbenchPanel({ program, lesson, taskKind = 'independen
   const [modeChoice, setModeChoice] = useState<Mode>(embedded ? 'practice' : 'explore');
   const [text, setText] = useState('');
   const [savedText, setSavedText] = useState('');
-  const [composer, setComposer] = useState('');
+  // Kept per attempt, so leaving the lesson does not lose the question for the tutor.
+  const [composer, setComposer] = useDraft(sessionId ? `practice-tutor:${sessionId}` : null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [actionError, setActionError] = useState('');
   const [busyLabel, setBusyLabel] = useState('');

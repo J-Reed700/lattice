@@ -233,6 +233,7 @@ from general knowledge as though it came from the user's documents."
             ));
         }
         if let Some(context_text) = self.kb_context.as_ref() {
+            context_sections.push(EVIDENCE_SYNTHESIS_NOTE.to_string());
             context_sections.push(format!("Knowledge Base Results:\n{}", context_text));
         }
         if let Some(context_text) = self.linked_web_sources_context.as_ref() {
@@ -357,6 +358,18 @@ const EVIDENCE_CUT_NOTE: &str =
     "Context window: Lower-ranked evidence found for this turn was left \
 out because the model's context window could not hold it. If what is here does not settle the \
 question, use the document search and read tools before concluding the evidence is missing.";
+
+/// Kept beside the passages rather than only in the system prompt so smaller
+/// models apply it while reading the evidence. This is deliberately about the
+/// shape of evidence, not any domain or fixture: a practical question often
+/// names an entity in one document and finds the applicable rule in another.
+const EVIDENCE_SYNTHESIS_NOTE: &str =
+    "Evidence synthesis: Answer the user's intent, not only literal phrase matches. Join facts \
+across passages when one passage identifies the relevant entity or document and another states \
+the applicable rule; cite every link. If the user's wording is broader than the source text, give \
+the closest supported mechanism and clearly state its narrower scope or condition. Different \
+terminology alone is not missing evidence, and a narrower mechanism must not be relabeled as a \
+broader one.";
 
 /// The message an evidence-carrying turn sends with every passage taken out:
 /// the template, its standing instructions and the question.

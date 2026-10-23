@@ -13,8 +13,17 @@ type PassageRow = (
 );
 
 /// One neighbouring chunk of a section: id, file name, file path, content, chunk
-/// index, page number, and whether OCR read it.
-type SectionNeighbourRow = (String, String, String, String, i64, Option<i64>, bool);
+/// index, actual section, page number, and whether OCR read it.
+type SectionNeighbourRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<i64>,
+    bool,
+);
 
 impl ConversationRepository {
     /// Read only metadata and one bounded opening per document; never load the
@@ -169,16 +178,9 @@ impl ConversationRepository {
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
         for identifier in identifiers {
-            let mut q = QueryBuilder::<Sqlite>::new("SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
-            let mut ids: Vec<_> = allowed.iter().collect();
-            ids.sort();
-            for (i, id) in ids.into_iter().enumerate() {
-                if i > 0 {
-                    q.push(",");
-                }
-                q.push_bind(id);
-            }
-            q.push(") AND (");
+            // A breadcrumb hit is a heading the chunker detected, so it ranks
+            // ahead of a label found in body text within this identifier's share.
+            let mut q = QueryBuilder::<Sqlite>::new("SELECT id, document_id, file_name, file_path, content, chunk_index, section, page_number, from_ocr FROM (SELECT c.id, c.document_id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr, CASE WHEN ");
             for (i, prefix) in [
                 "", "§", "§ ", "Section ", "SECTION ", "section ", "Chapter ", "CHAPTER ",
                 "chapter ",
@@ -194,9 +196,33 @@ impl ConversationRepository {
                 // preserves case in labels such as (a) versus (A).
                 q.push("INSTR(' > ' || c.section || ' ', ")
                     .push_bind(format!(" > {prefix}{} ", identifier.text))
+                    .push(") > 0 OR INSTR(' > ' || c.section || ' ', ")
+                    .push_bind(format!(" > {prefix}{}. ", identifier.text))
                     .push(") > 0");
             }
-            q.push(") ORDER BY ROW_NUMBER() OVER (PARTITION BY c.document_id ORDER BY c.chunk_index, c.id), c.document_id LIMIT ")
+            q.push(" THEN 0 ELSE 1 END AS tier, ");
+            // A dotted label that opens a line is a numbered paragraph the
+            // chunker kept as body text. Mid-line, the same digits are prose
+            // (a pH value, a version), so only line starts count.
+            if identifier.text.contains('.') {
+                q.push("INSTR('\n' || c.content, ")
+                    .push_bind(format!("\n{} ", identifier.text))
+                    .push(") > 0 OR INSTR('\n' || c.content, ")
+                    .push_bind(format!("\n{}. ", identifier.text))
+                    .push(") > 0");
+            } else {
+                q.push("0");
+            }
+            q.push(" AS body_hit FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
+            let mut ids: Vec<_> = allowed.iter().collect();
+            ids.sort();
+            for (i, id) in ids.into_iter().enumerate() {
+                if i > 0 {
+                    q.push(",");
+                }
+                q.push_bind(id);
+            }
+            q.push(")) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
                 .push_bind(per_identifier as i64);
             let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).await?;
             passages.extend(
@@ -241,23 +267,25 @@ impl ConversationRepository {
         if !allowed.contains(&doc) {
             return Ok(Vec::new());
         }
-        let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND c.section = ? AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
-            .bind(&doc).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
+        let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND (c.section = ? OR INSTR(c.section, ? || ' > ') = 1) AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
+            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
-            .map(|(id, name, path, content, index, page, from_ocr)| {
-                lattice_core::application::contracts::search::CorpusPassage {
-                    id,
-                    document_id: doc.clone(),
-                    name,
-                    path,
-                    content,
-                    chunk_index: index.max(0) as usize,
-                    section: Some(section.clone()),
-                    page_number: page.and_then(|p| p.try_into().ok()),
-                    from_ocr,
-                }
-            })
+            .map(
+                |(id, name, path, content, index, actual_section, page, from_ocr)| {
+                    lattice_core::application::contracts::search::CorpusPassage {
+                        id,
+                        document_id: doc.clone(),
+                        name,
+                        path,
+                        content,
+                        chunk_index: index.max(0) as usize,
+                        section: actual_section,
+                        page_number: page.and_then(|p| p.try_into().ok()),
+                        from_ocr,
+                    }
+                },
+            )
             .collect())
     }
 

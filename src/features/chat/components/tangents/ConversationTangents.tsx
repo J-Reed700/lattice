@@ -32,8 +32,6 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
     setOpen(true);
     conversationUiStore.setState({ requestedTangent: null });
   }, [conversationId, requestedTangent]);
-  // Switching or closing a tangent preserves its unsent question.
-  const drafts = useRef(new Map<string, string>());
   const toggleRef = useRef<HTMLButtonElement>(null);
   const tangents = useConversationTangentsQuery(conversationId);
   const { mutateAsync: createTangent } = useCreateTangentMutation(conversationId);
@@ -86,7 +84,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
             <IconButton label="Close tangents" onClick={close}><X /></IconButton>
           </header>
           {selected ? <TangentPanel key={selected.conversationId} tangent={selected} toolPreferences={toolPreferences}
-            unavailable={unavailable} drafts={drafts.current} onPromoted={() => { setSelectedId(null); close(); }} /> : (
+            unavailable={unavailable} onPromoted={() => { setSelectedId(null); close(); }} /> : (
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {tangents.isPending && <p role="status" className="text-sm text-text-muted">Loading tangents…</p>}
               {tangents.isError && <div role="alert" className="text-sm"><p>Couldn’t load tangents.</p><button type="button" className="mt-2 text-accent" onClick={() => void tangents.refetch()}>Try again</button></div>}

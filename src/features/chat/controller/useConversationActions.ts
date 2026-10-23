@@ -7,6 +7,7 @@ import { VaultAPI } from '@/lib/api';
 import type { ChatModelChoice, ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { CompactionResult } from '@/shared/conversations/conversationsStore.types';
+import { clearDraft, conversationDraftKey } from '@/shared/drafts/drafts';
 import type { Conversation } from '@/types/conversation';
 
 import {
@@ -255,6 +256,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     for (const removedId of [id, ...children.map(child => child.conversationId)]) {
       lifecycle.cleanupConversation(removedId);
       forgetRequestedConversation(removedId);
+      clearDraft(conversationDraftKey(removedId));
       queryClient.removeQueries({ queryKey: conversationKeys.detail(removedId), exact: true });
       queryClient.removeQueries({ queryKey: conversationKeys.messages(removedId), exact: true });
       queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(removedId) });

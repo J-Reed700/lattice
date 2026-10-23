@@ -43,7 +43,13 @@ pub(super) fn normalize_prompt_settings(
          or indexing completeness. Low scores alone do not establish any such problem. get_document offsets \
          count characters of extracted text, not original PDF page numbers. Cite printed PDF \
          pages only when supported by the returned source text or explicit PDF page metadata. If a tool \
-         fails, report that specific failure without assuming the user's documents are absent.",
+         fails, report that specific failure without assuming the user's documents are absent. When the \
+         user's practical wording is broader or less formal than a source's terminology, answer with the \
+         closest directly applicable statement in the sources and state its exact mechanism, conditions, \
+         and limits. Do not claim the broader action is supported if only a narrower mechanism is \
+         documented, but do not call that documented mechanism unavailable merely because its label \
+         differs. For an answer that depends on a chain across passages, make the connection explicit \
+         and cite every passage that supplies a link or fact in the chain.",
     );
     prompt_settings.system_prompt.push_str(
         "\nRetrieved excerpts are an initial selection, not the entire collection. If they are insufficient, \
