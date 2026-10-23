@@ -283,7 +283,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // On the incremental pass only module 1 is an allowed path: there is no
     // course-wide path, so the effect on the final project is reported at the
     // edited module. Only that module is put to a rewrite; it comes back
-    // unchanged, so the loop stops with the finding kept for the user.
+    // unchanged, which declines the plan finding: it stays as a suggestion.
     let llm = model(vec![
         initial.clone(),
         links(&[("/modules/0/summary", ORIGINAL)]),
@@ -310,12 +310,13 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     )
     .await?;
     let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(review.status, LearningOutlineReviewStatus::NeedsRepair);
+    assert_eq!(review.status, LearningOutlineReviewStatus::Passed);
     assert_eq!(review.issues.len(), 1);
     assert_eq!(review.issues[0].path, "/modules/1");
     assert_eq!(review.issues[0].id, "finding-2");
     assert_eq!(review.issues[0].attempts, 1);
-    assert!(review.note.contains("no usable correction"));
+    assert!(review.issues[0].exhausted, "kept as an advisory suggestion");
+    assert!(!review.note.contains("no usable correction"));
     let prompts = calls(&llm);
     // Draft, full review, repair, incremental review, one repair: no other
     // module is rewritten for a problem anchored to module 1.
