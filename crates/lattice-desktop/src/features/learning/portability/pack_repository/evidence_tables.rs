@@ -34,17 +34,14 @@ pub(super) struct AggregateTableSpec {
     pub(super) filter: &'static str,
 }
 
-// Only these explicit program-scoped tables can be included in a pack. The
+// Only these explicit program-scoped tables can be included in a pack. Quiz
+// banks are course content and travel in their own section (bank_entries);
+// the forms, answers and grades taken from them are evidence here. The
 // SQL identifiers and joins are constants, never read from archive input.
 // Lesson jobs are runtime work, not learning evidence: a pack carries their
 // published lessons and curriculum revisions, and importing a queued job would
 // start it in the receiving app.
 pub(super) const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
-    AggregateTableSpec { table: "learning_assessment_blueprints", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_assessment_blueprint_slots", filter: "blueprint_id IN (SELECT id FROM learning_assessment_blueprints WHERE program_id=?)" },
-    AggregateTableSpec { table: "learning_assessment_candidates", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_assessment_candidate_outcomes", filter: "candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE program_id=?)" },
-    AggregateTableSpec { table: "learning_assessment_answer_keys", filter: "candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_assessment_forms", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_assessment_form_items", filter: "form_id IN (SELECT id FROM learning_assessment_forms WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_assessment_form_item_outcomes", filter: "form_id IN (SELECT id FROM learning_assessment_forms WHERE program_id=?)" },
@@ -53,7 +50,6 @@ pub(super) const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_assessment_item_results", filter: "form_id IN (SELECT form_id FROM learning_assessment_submissions WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_assessment_grade_contests", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_assessment_item_reports", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_quiz_settings", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_curriculum_revisions", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_curriculum_changes", filter: "revision_id IN (SELECT id FROM learning_curriculum_revisions WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_diagnostic_attempts", filter: "program_id=?" },

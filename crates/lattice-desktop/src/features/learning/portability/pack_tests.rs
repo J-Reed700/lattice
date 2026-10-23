@@ -18,6 +18,7 @@ mod evidence_entries;
 mod export_all;
 mod r#move;
 mod provenance;
+mod quiz_banks;
 mod replace;
 mod reviews;
 mod source_trust;

@@ -20,8 +20,11 @@ pub const SOURCE_HISTORY_ENTRY: &str = "sources/history.json";
 pub const SOURCE_TRUST_ENTRY: &str = "sources/trust.json";
 /// One `<table>.json` entry per program-scoped evidence table.
 pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
-/// The quiz bank's private answer keys, which travel in the evidence tables.
-pub const QUIZ_KEYS_TABLE_ENTRY: &str = "evidence/tables/learning_assessment_answer_keys.json";
+/// One `<table>.json` entry per quiz bank table: course content, carried
+/// whatever the learner-evidence choice.
+pub const BANK_TABLE_PREFIX: &str = "quiz/bank/";
+/// The quiz bank's private answer keys.
+pub const QUIZ_KEYS_TABLE_ENTRY: &str = "quiz/bank/learning_assessment_answer_keys.json";
 /// One `<table>.json` entry per lesson claim review table.
 pub const REVIEW_TABLE_PREFIX: &str = "curriculum/reviews/";
 /// One `<canvas-id>.json` entry per canvas, with its snapshots.
@@ -33,6 +36,7 @@ pub const SOURCE_BODY_PREFIX: &str = "sources/bodies/";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PackSection {
     Program,
+    QuizBank,
     Provenance,
     Outcomes,
     LessonStates,
@@ -113,6 +117,7 @@ pub const SECTIONS: &[SectionDescriptor] = &[
     ),
     entry(S::SourceHistory, SOURCE_HISTORY_ENTRY, Kind::SourceMetadata),
     entry(S::SourceTrust, SOURCE_TRUST_ENTRY, Kind::SourceMetadata),
+    folder(S::QuizBank, BANK_TABLE_PREFIX, ".json", Kind::Curriculum),
     folder(
         S::EvidenceTables,
         EVIDENCE_TABLE_PREFIX,

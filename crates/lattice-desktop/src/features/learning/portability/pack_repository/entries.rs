@@ -6,6 +6,7 @@
 //! the orchestrator. Rows run in this table's order, which is the import's
 //! insert order.
 use super::{
+    bank_entries::BANK_TABLE_ROWS,
     canvas_entries::CANVASES,
     conflicts::IdClaim,
     evidence_entries::EVIDENCE_TABLE_ROWS,
@@ -114,6 +115,7 @@ pub(super) const SECTION_ROWS: &[&dyn SectionRows] = &[
     &SourceHistory,
     &SourceSelectors,
     &SourceTrust,
+    &BANK_TABLE_ROWS,
     &EVIDENCE_TABLE_ROWS,
     &Provenance,
     &SourceBodies,

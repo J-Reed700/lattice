@@ -80,14 +80,14 @@ fn privacy(options: &LearningPackExportOptionsDto) -> LearningPackPrivacyManifes
             includes_credentials: false,
             includes_full_source_bodies: options.include_source_bodies,
             source_body_redistribution_confirmed: options.source_body_redistribution_confirmed,
-            includes_answer_keys: options.include_evidence,
+            includes_answer_keys: true,
             includes_hidden_evaluators: false,
             includes_learner_evidence: options.include_evidence || options.include_practical_artifacts,
             includes_practical_artifacts: options.include_practical_artifacts,
             omitted_items: vec![
                 "Lattice chat outside this program and credentials are never exported.".into(),
                 "Saved outline citations and lesson verification reports are included as historical course provenance, independently of learner activity. Import does not reverify them.".into(),
-                "Finished lesson claim reviews, with your notes on claims, travel with their lessons as course provenance. Unfinished lesson reviews, tangent chats and the Verifier audit consent stay on this computer.".into(),
+                "Quiz question banks, their answer keys and the course's quiz settings are included as course content. Finished lesson claim reviews, with your notes on claims, travel with their lessons as course provenance. Unfinished lesson reviews, tangent chats and the Verifier audit consent stay on this computer.".into(),
                 if !options.include_evidence {
                     "Submitted assessments, learner evidence, recall/review history, workbench history, memory, and canvas data were omitted by request.".into()
                 } else {
