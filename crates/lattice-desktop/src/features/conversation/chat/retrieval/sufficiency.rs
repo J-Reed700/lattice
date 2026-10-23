@@ -127,20 +127,15 @@ pub(super) fn assess_sufficiency(
     let (top_score, spread) = score_summary(results);
     let term_coverage = term_coverage(results, plan, evidence_depth);
 
-    // Ordered reading is deliberate evidence selection — the planner chose the
-    // introduction and first chapter on purpose. Replanning it into a keyword
-    // hunt would undo the choice, so such a plan is sufficient by construction.
-    if plan.start_at_beginning {
-        return SufficiencyVerdict {
-            sufficient: true,
-            top_score,
-            spread,
-            term_coverage,
-            reasons: vec![reason::ORDERED_READING],
-        };
-    }
-
     let mut reasons = Vec::new();
+    // Reading in order is the planner's judgement of the request, and a small
+    // planner sets it on questions whose answer sits deep in the document. It
+    // is recorded, not obeyed: coverage judges this plan like any other, and
+    // a corrective plan never reads in order, so a misread request is still
+    // searched for what it asked.
+    if plan.start_at_beginning {
+        reasons.push(reason::ORDERED_READING);
+    }
     // A reranker that separated nothing has not ranked. Its top score carries
     // no more information than the RRF rank underneath it.
     let flat = reranked && results.len() >= COVERAGE_TOP_N && spread <= FLAT_SPREAD_EPSILON;
@@ -447,17 +442,84 @@ mod tests {
         assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
     }
 
+    fn ordered(query: &str) -> CorpusSearchPlan {
+        CorpusSearchPlan {
+            opening_document_ids: vec!["doc".to_string()],
+            start_at_beginning: true,
+            ..plan(query)
+        }
+    }
+
+    fn passages(contents: &[&str]) -> Vec<SearchResultDto> {
+        contents
+            .iter()
+            .enumerate()
+            .map(|(i, content)| result(&format!("r{i}"), 0.5, content))
+            .collect()
+    }
+
+    /// Reading in order is recorded, never a verdict: openings that never
+    /// mention what was asked send the turn to the corrective pass, whose plan
+    /// searches instead of reading.
     #[test]
-    fn ordered_reading_plans_are_never_corrected() {
-        let results = vec![result("a", 0.0, "Front matter.")];
-        let mut ordered = plan("introduction foundations overview");
-        ordered.start_at_beginning = true;
-        ordered.opening_document_ids = vec!["intro".to_string()];
+    fn an_ordered_reading_plan_that_misses_the_question_is_corrected() {
+        for (query, openings) in [
+            (
+                "división celular mitosis",
+                [
+                    "Capítulo uno: la célula y sus orgánulos.",
+                    "La membrana plasmática regula el transporte.",
+                    "El núcleo guarda el material genético.",
+                ],
+            ),
+            (
+                "Lacrimosa Tonart",
+                [
+                    "Einleitung: die Entstehung des Requiems.",
+                    "Mozart erhielt den Auftrag anonym.",
+                    "Süßmayr vollendete die Partitur.",
+                ],
+            ),
+        ] {
+            let results = passages(&openings);
 
-        let verdict = assess_sufficiency(&results, &ordered, &tuning(), false, results.len());
+            let verdict =
+                assess_sufficiency(&results, &ordered(query), &tuning(), false, results.len());
 
-        assert!(verdict.sufficient);
-        assert_eq!(verdict.reasons, [reason::ORDERED_READING]);
+            assert!(!verdict.sufficient, "{query}: {:?}", verdict.reasons);
+            assert!(verdict.reasons.contains(&reason::LOW_TERM_COVERAGE));
+            assert!(verdict.reasons.contains(&reason::ORDERED_READING));
+        }
+    }
+
+    #[test]
+    fn an_ordered_reading_plan_that_covers_the_question_stands() {
+        for (query, openings) in [
+            (
+                "división celular mitosis",
+                [
+                    "Capítulo uno: la célula y sus orgánulos.",
+                    "La membrana plasmática regula el transporte.",
+                    "La división celular por mitosis produce dos células hijas.",
+                ],
+            ),
+            (
+                "Lacrimosa Tonart",
+                [
+                    "Einleitung: die Entstehung des Requiems.",
+                    "Mozart erhielt den Auftrag anonym.",
+                    "Das Lacrimosa steht in d-Moll, der Tonart des ganzen Requiems.",
+                ],
+            ),
+        ] {
+            let results = passages(&openings);
+
+            let verdict =
+                assess_sufficiency(&results, &ordered(query), &tuning(), false, results.len());
+
+            assert!(verdict.sufficient, "{query}: {:?}", verdict.reasons);
+            assert!(verdict.reasons.contains(&reason::ORDERED_READING));
+        }
     }
 
     #[test]
