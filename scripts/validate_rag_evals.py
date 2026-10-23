@@ -6,6 +6,7 @@ from rag_eval import validate_dataset
 from eval_integrity import validate_expectations
 from shipped_path_eval import validate_questions
 import terse_slice
+import course_eval_grading
 
 
 def main():
@@ -39,6 +40,11 @@ def main():
         if report['problems']:
             raise ValueError(f'{path.name}: ' + '; '.join(report['problems']))
         print(f'{path.name}: {report["queries"]} terse queries validated')
+    # The course eval's quiz grading sets: rows, bank, recomputed expected grades and frozen hashes.
+    for name, problems in course_eval_grading.validate().items():
+        if problems:
+            raise ValueError(f'{name}: ' + '; '.join(problems))
+        print(f'{name}: quiz grading set validated')
 
 
 if __name__ == '__main__':

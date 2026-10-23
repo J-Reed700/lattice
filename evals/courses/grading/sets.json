@@ -1,0 +1,12 @@
+{
+  "schema": "quiz-grading-sets/1",
+  "rules": "A set is frozen by `course_eval_grading.py freeze` once its baseline is scored and committed. After that its rows and bank never change: a new or corrected row goes into a new version (quiz-grading-v2.jsonl, registered here), and the old results keep their meaning.",
+  "sets": {
+    "quiz-grading-v1": {
+      "rows": "quiz-grading-v1.jsonl",
+      "bank": "bank-v1.json",
+      "frozen": null,
+      "notes": "Hand-written seed rows. Persona rows from course_eval_personas.py join after a person reviews them, before the baseline; then the set is frozen."
+    }
+  }
+}

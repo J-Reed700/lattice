@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import course_eval as ce
+import course_eval_quiz as cq
 import shipped_path_eval as spe
 import shipped_path_stats as sps
 from chat_rag_eval import load_jsonl
@@ -66,10 +67,52 @@ SET = {"schema": "course-eval-requests/1", "name": "course-eval-test", "items": 
 # Appendix A, copied by hand: a drift in the scorer's constants fails here.
 O1_INTRO = ("Each of the following topics must be the stated objective or outcome of at least one module or lesson, "
             "not merely mentioned in passing:")
-L5_TEXT = ("Each question tests the objective; exactly one option is defensibly correct given the lesson; the other "
-           "options are plausible to a learner who missed the point, not obviously wrong or jokes; the marked correct "
-           "answer is the correct one. Fail if any question breaks any of these.")
+# Appendix C (`lattice-course-judge/2`), copied by hand.
+Q1_TEXT = ("A learner who read only this lesson can answer the item; it needs no outside fact the lesson does not "
+           "teach.")
+Q3_TEXT = ("Each wrong option is one a learner who missed the point could pick; none is a joke, a category error, or "
+           "trivially excluded by grammar or length.")
+Q5_EXPLANATION = ("Each rubric criterion names an observable thing in the answer at incomplete, adequate and strong "
+                  "levels, without stating the answer.")
 SETTINGS = {"model": "fake-judge", "rubric": ce.RUBRIC}
+# A recorded bank for m1.l1 (`quiz-m1.l1.json`): one item per kind of case the stage must handle.
+BANK = {"schema": "course-eval-quiz-bank/1", "selector": "m1.l1", "sources": {"s1-v1": "A plan is a tree of nodes."},
+        "metrics": {"target": 6, "bank_size": 5, "validated": {"passed": 5, "total": 7},
+                    "key_review": {"agreed_first_pass": 4, "agreed_after_repair": 1, "dropped": 1},
+                    "calls": 12, "seconds": 600},
+        "items": [
+            {"id": "c1", "format": "single_choice", "prompt": "Which node reads every row of a table?",
+             "options": ["Index Scan", "Seq Scan", "Bitmap Heap Scan"], "key": [1],
+             "explanation": "A sequential scan visits each row.", "source_version_id": "s1-v1",
+             "source_quote": "A plan is a tree of nodes."},
+            {"id": "t1", "format": "true_false", "prompt": "Each node of a plan feeds its parent.",
+             "options": ["True", "False"], "key": [0], "explanation": "The lesson says so.", "lesson_block_id": "b1"},
+            {"id": "m1", "format": "matching", "prompt": "Match each node to what it does.",
+             "left": ["Seq Scan", "Sort", "Hash"], "right": ["reads every row", "orders rows", "builds a hash table",
+                                                              "joins two inputs"], "key": [0, 1, 2],
+             "explanation": "Each node does one job.", "lesson_block_id": "b1"},
+            {"id": "e1", "format": "explanation", "prompt": "Explain why a plan is read from the leaves up.",
+             "rubric": [{"id": "r1", "title": "Data flow", "max_points": 2,
+                         "levels": {"incomplete": "no direction", "adequate": "children first",
+                                    "strong": "children feed parents"}},
+                        {"id": "r2", "title": "Example", "max_points": 2,
+                         "levels": {"incomplete": "none", "adequate": "names a node", "strong": "walks a plan"}}],
+             "key_points": ["children produce rows for parents"], "lesson_block_id": "b1"},
+            {"id": "bad", "format": "single_choice", "prompt": "Broken", "options": ["only"], "key": [3]},
+        ]}
+
+
+class FakeSolver:
+    """Answers every item with its key unless told otherwise; records every prompt."""
+
+    def __init__(self, answers=None, other=()):
+        self.calls, self.answers, self.other = [], answers or {}, other
+
+    def __call__(self, messages):
+        self.calls.append(messages)
+        item = next(i for i in BANK["items"] if f"Question: {i['prompt']}\n" in messages[1]["content"])
+        return {"answer": self.answers.get(item["id"], cq.key_text(item)), "other_defensible": item["id"] in self.other,
+                "reason": "from the lesson"}
 
 
 def write(path, value):
@@ -112,7 +155,8 @@ class FakeJudge:
 
     def __call__(self, messages):
         self.calls.append(messages)
-        failed = any(ce.LESSON_CRITERIA[c][1] in messages[1]["content"] for c in self.failing)
+        texts = {**{k: v[1] for k, v in ce.LESSON_CRITERIA.items()}, **{k: v[1] for k, v in ce.QUIZ_CRITERIA.items()}}
+        failed = any(texts[c] in messages[1]["content"] for c in self.failing)
         return (not failed, "FALSE: it is wrong" if failed else "the named part meets it")
 
 
@@ -124,16 +168,25 @@ class Rendering(unittest.TestCase):
         for block in LESSON["blocks"]:
             self.assertIn(f"## [{block['kind']}] {block['title']}\n\n{block['body']}\n", text)
         self.assertIn("- Names the scan: Identifies the sequential scan (2 points)", text)
-        self.assertIn("## Questions\n\n1. Which node reads every row?\n   A. Index Scan\n   B. Seq Scan\n   C. Hash\n"
-                      "   Correct: B\n   Explanation: A sequential scan reads the whole table.", text)
         self.assertIn("Prior knowledge: Knows SQL, never tuned a database\nMinutes per session: 45", text)
+        # Under lattice-course-judge/2 the questions are quiz items: the lesson text never carries their keys.
+        self.assertNotIn("Which node reads every row?", text)
+        self.assertNotIn("Correct:", text)
 
-    def test_answer_key_from_the_lesson_file_or_marked_missing(self):
+    def test_lesson_questions_become_items_with_the_lesson_files_key(self):
         bare = {**LESSON, "questions": [{k: v for k, v in LESSON["questions"][0].items()
                                          if k not in ("correctIndex", "explanation")}]}
-        keyed = ce.render_lesson({"lesson": bare, "answer_key": {"q1": {"correct_index": 2}}}, REQUEST)
-        self.assertIn("   Correct: C", keyed)
-        self.assertIn("   Correct: (not recorded)", ce.render_lesson({"lesson": bare}, REQUEST))
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, bank = ce.load_bank(Path(tmp), "m1.l1", {"lesson": bare, "answer_key": {"q1": {"correct_index": 2}}})
+            self.assertEqual(origin, "lesson_questions")
+            self.assertEqual({k: bank["items"][0][k] for k in ("format", "key", "origin")},
+                             {"format": "single_choice", "key": [2], "origin": "prose_step"})
+            _, unkeyed = ce.load_bank(Path(tmp), "m1.l1", {"lesson": bare})
+            self.assertEqual(cq.format_problems(unkeyed["items"][0]), ["single choice needs exactly one key"])
+            self.assertEqual(ce.load_bank(Path(tmp), "m1.l1", {"lesson": {**LESSON, "questions": []}}), (None, None))
+            write(Path(tmp) / "quiz-m1.l1.json", {"schema": "other"})
+            with self.assertRaises(SystemExit):
+                ce.load_bank(Path(tmp), "m1.l1", {"lesson": LESSON})
 
     def test_outline_rendering_lists_modules_lessons_and_the_project(self):
         text = ce.render_outline(OUTLINE, REQUEST)
@@ -180,23 +233,26 @@ class Pipeline(unittest.TestCase):
     def test_collect_writes_every_results_file(self):
         names = {p.relative_to(self.out).as_posix() for p in self.out.rglob("*") if p.is_file()}
         self.assertEqual(names, {"run.json", "items.json", "answers.jsonl", "claims.items.json", "claims.jsonl",
+                                 "quiz.items.json", "quiz.jsonl",
                                  *(f"requests/pg/{n}" for n in ("request.json", "outline.json", "metrics.json",
                                                                 "web-trace-report.json", "phases.jsonl",
-                                                                "lesson-m1.l1.json", "lesson-m1.l2.json"))})
+                                                                "lesson-m1.l1.json", "lesson-m1.l2.json",
+                                                                "lesson-m1.l1.md"))})
         self.assertEqual(self.manifest["skipped_optional"], ["dotnet"])
         self.assertEqual(self.manifest["missing_requests"], [])
         self.assertEqual(len(self.manifest["calls_index_sha256"]["pg"]), 64)
-        self.assertEqual([s["slot"] for s in self.manifest["slots"]], ["pg/outline", "pg/m1.l1", "pg/m1.l2"])
-        self.assertTrue(all(s["mechanical_checks_passed"] for s in self.manifest["slots"][:2]))
-        self.assertFalse(self.manifest["slots"][2]["mechanical_checks_passed"])
+        self.assertEqual([s["slot"] for s in self.manifest["slots"]],
+                         ["pg/outline", "pg/m1.l1", "pg/m1.l2", "pg/m1.l1/quiz", "pg/m1.l2/quiz"])
+        self.assertEqual([s["mechanical_checks_passed"] for s in self.manifest["slots"]], [True, True, False, True, False])
+        self.assertEqual([s["outcome"] for s in self.manifest["slots"][3:]], ["lesson_questions", "no lesson"])
 
     def test_items_carry_appendix_lines_and_the_requests_lists(self):
         items = self.items()
-        self.assertEqual(len(items), 5 + 2 * 7)
+        self.assertEqual(len(items), 5 + 2 * 6)
+        self.assertNotIn("pg/m1.l1/L5", items)
         self.assertEqual(items["pg/outline/O1"]["turns"][0]["rubric"]["lines"],
                          [O1_INTRO, "- reading EXPLAIN output", "- choosing indexes", ce.O1_CLOSE])
         self.assertIn("- everyday SQL", items["pg/outline/O2"]["turns"][0]["rubric"]["lines"])
-        self.assertEqual(items["pg/m1.l1/L5"]["turns"][0]["rubric"]["lines"], [L5_TEXT])
         for criterion, (_, text) in ce.LESSON_CRITERIA.items():
             self.assertEqual(spe.rubric_lines(items[f"pg/m1.l2/{criterion}"]["turns"][0]["rubric"]), [text])
         self.assertTrue(items["pg/outline/O3"]["turns"][0]["ask"].startswith("Goal: Tune Postgres queries\n"))
@@ -209,8 +265,9 @@ class Pipeline(unittest.TestCase):
     def test_unprepared_lesson_is_ungraded_and_never_judged(self):
         judge = FakeJudge()
         report = ce.score(self.out, judge, SETTINGS, claims=True)
-        self.assertEqual(len(judge.calls), 5 + 7 + 3)
-        self.assertEqual(report["items"], {"graded": 12, "skipped": 0, "no_artifact": 7, "too_long": 0})
+        self.assertEqual(len(judge.calls), 5 + 6 + 3 + 3)  # outline, lesson, claims, quiz Q1/Q3/Q4 of one question
+        self.assertEqual(report["items"], {"graded": 11, "skipped": 0, "no_artifact": 6, "too_long": 0})
+        self.assertEqual(report["quiz"], {"graded": 0, "skipped": 0, "ungraded": 1})  # Q2 had no solver
         rows = {row["query_id"]: row for row in load_jsonl(self.out / "scored.jsonl")}
         for criterion in ce.LESSON_CRITERIA:
             row = rows[f"pg/m1.l2/{criterion}"]
@@ -235,8 +292,8 @@ class Pipeline(unittest.TestCase):
         ce.score(self.out, FakeJudge(failing=("L3",)), SETTINGS)
         rows = load_jsonl(self.out / "scored.jsonl")
         slots = {row["query_id"]: row for row in load_jsonl(self.out / "slots.scored.jsonl")}
-        self.assertEqual(sorted(slots), ["pg/m1.l1", "pg/m1.l2", "pg/outline"])
-        for slot, row in slots.items():
+        self.assertEqual(sorted(slots), ["pg/m1.l1", "pg/m1.l1/quiz", "pg/m1.l2", "pg/m1.l2/quiz", "pg/outline"])
+        for slot, row in ((k, v) for k, v in slots.items() if not k.endswith("/quiz")):
             members = [r for r in rows if r["slot"] == slot]
             self.assertEqual(row["judge_pass"], all(r["judge_pass"] for r in members))
             self.assertEqual(row["turn_scores"][0]["judge"]["graded"],
@@ -249,15 +306,15 @@ class Pipeline(unittest.TestCase):
         ce.score(self.out, FakeJudge(failing=("L3",)), SETTINGS)
         rows = load_jsonl(self.out / "scored.jsonl")
         report = sps.compare([rows], [rows], kind="both")
-        self.assertEqual((report["paired"], report["verdict"]), (19, "can't tell from noise"))
+        self.assertEqual((report["paired"], report["verdict"]), (17, "can't tell from noise"))
         self.assertIn("verdict", sps.compare_markdown(report))
         slots = load_jsonl(self.out / "slots.scored.jsonl")
-        self.assertEqual(sps.compare([slots], [slots], kind="both")["paired"], 3)
+        self.assertEqual(sps.compare([slots], [slots], kind="both")["paired"], 5)
         questions = json.loads((self.out / "items.json").read_text())
         labels = sps.calibration_sample(questions, load_jsonl(self.out / "answers.jsonl"), rows, half_width=0.0)
-        self.assertEqual(labels["frame"], {"judge pass": {"population": 11, "sample": 11},
+        self.assertEqual(labels["frame"], {"judge pass": {"population": 10, "sample": 10},
                                            "judge fail": {"population": 1, "sample": 1},
-                                           "unanswered": {"population": 7, "sample": 0}})
+                                           "unanswered": {"population": 6, "sample": 0}})
         first = labels["items"][0]
         self.assertEqual(first["turns"][0]["rubric"], self.items()[first["query_id"]]["turns"][0]["rubric"]["lines"])
         self.assertEqual(sps.calibration_score(rows, labels)["labelled"], 0)
@@ -273,14 +330,16 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(ce.grade(item, answer, judge, needed)["graded"])
         self.assertIn("<<<\n" + answer + "\n>>>", judge.calls[0][1]["content"])
         report = ce.score(self.out, FakeJudge(), SETTINGS, window=50)
-        self.assertEqual(report["items"], {"graded": 0, "skipped": 0, "no_artifact": 7, "too_long": 12})
+        self.assertEqual(report["items"], {"graded": 0, "skipped": 0, "no_artifact": 6, "too_long": 11})
+        quiz = load_jsonl(self.out / "quiz.scored.jsonl")[0]
+        self.assertEqual({t["judge"]["reason"] for t in quiz["turn_scores"]}, {ce.TOO_LONG})
 
     def test_score_resumes_and_refuses_another_judge(self):
         ce.score(self.out, FakeJudge(), SETTINGS)
         judge = FakeJudge()
         report = ce.score(self.out, judge, SETTINGS)
-        self.assertEqual((judge.calls, report["items"]["skipped"]), ([], 19))
-        self.assertEqual(len(load_jsonl(self.out / "scored.jsonl")), 19)
+        self.assertEqual((judge.calls, report["items"]["skipped"], report["quiz"]["skipped"]), ([], 17, 1))
+        self.assertEqual(len(load_jsonl(self.out / "scored.jsonl")), 17)
         with self.assertRaises(SystemExit):
             ce.score(self.out, judge, {**SETTINGS, "model": "another-judge"})
 
@@ -303,6 +362,8 @@ class Pipeline(unittest.TestCase):
         summary = ce.summarize(self.out)
         self.assertEqual(summary["slots"]["outline"], {"passed": 1, "mechanical": 1, "total": 1})
         self.assertEqual(summary["slots"]["lesson"], {"passed": 0, "mechanical": 1, "total": 2})
+        self.assertEqual(summary["slots"]["quiz"], {"passed": 0, "mechanical": 1, "total": 2})
+        self.assertEqual(summary["quiz"]["banks"][0]["origin"], "lesson_questions")
         self.assertEqual(summary["lessons_ready"]["failures"],
                          [{"slot": "pg/m1.l2", "outcome": "failed", "error": "evidence ran out"}])
         self.assertEqual((summary["grounding"]["supported"], summary["grounding"]["total"],
@@ -313,6 +374,138 @@ class Pipeline(unittest.TestCase):
         self.assertIn("web: 40 hits, 2 misses filled, 0 failed", page)
         self.assertIn(f"--baseline {ce.relative(earlier)}/slots.scored.jsonl", page)
         self.assertTrue((self.out / "summary.json").exists())
+
+
+
+class QuizStage(unittest.TestCase):
+    """A run whose m1.l1 has a recorded bank (`quiz-m1.l1.json`)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.run_dir = build_run(self.root)
+        write(self.run_dir / "pg" / "quiz-m1.l1.json", BANK)
+        self.out = self.root / "results" / "model" / "2026-10-23-course-eval-v1-base"
+        ce.collect(self.run_dir, self.out, self.root / "set.json")
+        self.doc = json.loads((self.out / "quiz.items.json").read_text())
+        self.items = {item["id"]: item for item in self.doc["items"]}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_criteria_follow_the_format(self):
+        turns = {i.split("/")[-1]: [t["criterion"] for t in item["turns"]] for i, item in self.items.items()}
+        self.assertEqual(turns, {"c1": ["Q1", "Q2", "Q3", "Q4"], "t1": ["Q1", "Q2", "Q4"],
+                                 "m1": ["Q1", "Q2", "Q3", "Q4"], "e1": ["Q1", "Q4", "Q5"], "bad": ["format"]})
+        self.assertEqual(self.items["pg/m1.l1/quiz/e1"]["turns"][2]["rubric"]["lines"], [Q5_EXPLANATION])
+        self.assertEqual(self.items["pg/m1.l1/quiz/c1"]["turns"][0]["rubric"]["lines"], [Q1_TEXT])
+        self.assertEqual(ce.quiz_lines("Q5", {"format": "cloze"}), [ce.Q5_TEXT["typed"]])
+        self.assertTrue((self.out / "requests/pg/quiz-m1.l1.json").exists())
+
+    def test_mechanical_checks_go_into_metrics(self):
+        quiz = json.loads((self.out / "requests/pg/metrics.json").read_text())["lessons"]["m1.l1"]["quiz"]
+        self.assertEqual((quiz["origin"], quiz["items"], quiz["passed"]), ("bank", 5, False))
+        self.assertEqual(quiz["hits"]["format_invalid"], ["bad"])
+        self.assertEqual(quiz["harness"]["target"], 6)
+        self.assertEqual(quiz["quotes_verbatim"], {"verbatim": 1, "checked": 1})
+        self.assertFalse(self.items["pg/m1.l1/quiz/bad"]["mechanical_checks_passed"])
+        self.assertTrue(self.items["pg/m1.l1/quiz/c1"]["mechanical_checks_passed"])
+
+    def test_judges_see_the_key_only_where_the_criterion_needs_it(self):
+        judge, solver = FakeJudge(), FakeSolver()
+        ce.score(self.out, judge, SETTINGS, solver=solver)
+        prompts = {}
+        for call in judge.calls + solver.calls:
+            content = call[1]["content"]
+            if "Question: Which node reads every row of a table?" in content:
+                criterion = next((c for c, (_, text) in ce.QUIZ_CRITERIA.items() if text and text in content), "Q2")
+                prompts[criterion] = (call[0]["content"], content)
+        self.assertEqual(sorted(prompts), ["Q1", "Q2", "Q3", "Q4"])
+        self.assertNotIn("Key: B", prompts["Q1"][1])
+        self.assertNotIn("Key: B", prompts["Q2"][1])
+        self.assertIn("Key: B", prompts["Q3"][1])
+        self.assertIn("Key: B", prompts["Q4"][1])
+        self.assertEqual(prompts["Q2"][0], ce.QUIZ_SOLVE_SYSTEM)
+        self.assertEqual(prompts["Q1"][0], ce.QUIZ_JUDGE_SYSTEM)
+        self.assertIn("## [explanation] What a plan is", prompts["Q1"][1])
+        self.assertNotIn("Correct:", prompts["Q1"][1])
+        self.assertFalse(any("Question: Broken" in c[1]["content"] for c in judge.calls + solver.calls))
+
+    def test_q2_is_decided_by_code(self):
+        item = BANK["items"][0]
+        self.assertTrue(ce.solve_verdict(item, {"answer": "B", "other_defensible": False, "reason": "r"})["pass"])
+        wrong = ce.solve_verdict(item, {"answer": "A", "other_defensible": False, "reason": "r"})
+        self.assertFalse(wrong["pass"])
+        self.assertIn("disagrees", wrong["reason"])
+        both = ce.solve_verdict(item, {"answer": "B", "other_defensible": True, "reason": "r"})
+        self.assertFalse(both["pass"])
+        self.assertIn("another answer is defensible", both["reason"])
+        matching = BANK["items"][2]
+        self.assertTrue(ce.solve_verdict(matching, {"answer": "1-A, 2-B, 3-C", "other_defensible": False})["pass"])
+        self.assertFalse(ce.solve_verdict(matching, {"answer": "1-A, 2-C, 3-B", "other_defensible": False})["pass"])
+        self.assertFalse(ce.solve_verdict(item, {"answer": "no idea", "other_defensible": False})["pass"])
+
+    def test_quiz_slot_needs_ninety_percent_of_items(self):
+        slot = {"slot": "r/m1.l1/quiz", "request": "r", "shape": "full", "stage": "quiz", "lesson": "m1.l1",
+                "outcome": "bank", "mechanical_checks_passed": True}
+        entries = [{"id": f"r/m1.l1/quiz/{n}", "slot": slot["slot"]} for n in range(10)]
+
+        def rows(passing):
+            return [{"query_id": e["id"], "judge_pass": n < passing, "answer_sha256": str(n), "run_id": "x",
+                     "turn_scores": [{"turn": 0, "criterion": "Q1", "judge": {"pass": n < passing, "reason": "",
+                                                                           "graded": True}}]}
+                    for n, e in enumerate(entries)]
+        for passing, expected in ((10, True), (9, True), (8, False)):
+            out, incomplete = ce.quiz_slot_rows([slot], {"items": entries}, rows(passing))
+            self.assertEqual((out[0]["judge_pass"], incomplete), (expected, []))
+            self.assertEqual(out[0]["turn_scores"][0]["judge"]["reason"],
+                             f"{passing} of 10 items pass every judged criterion")
+        out, incomplete = ce.quiz_slot_rows([slot], {"items": entries}, rows(10)[:9])
+        self.assertEqual((out, incomplete), ([], ["r/m1.l1/quiz"]))
+        empty, _ = ce.quiz_slot_rows([{**slot, "outcome": "no bank"}], {"items": []}, [])
+        self.assertEqual(empty[0]["turn_scores"][0]["judge"], {"pass": False, "reason": "no quiz items (no bank)",
+                                                               "graded": False})
+
+    def test_the_judge_must_not_be_the_bank_author(self):
+        judge = FakeJudge()
+        report = ce.score(self.out, judge, {**SETTINGS, "independent": False}, solver=FakeSolver())
+        self.assertIn("refused", report["quiz"])
+        self.assertFalse((self.out / "quiz.scored.jsonl").exists())
+        self.assertFalse(any("Question:" in c[1]["content"] for c in judge.calls))
+        allowed = {**SETTINGS, "independent": False, "self_judge_allowed": True}
+        other = self.root / "results" / "model" / "2026-10-24-course-eval-v1-self"
+        ce.collect(self.run_dir, other, self.root / "set.json")
+        report = ce.score(other, FakeJudge(), allowed, solver=FakeSolver(), allow_self_judge=True)
+        self.assertEqual(report["quiz"]["graded"], 4)
+        manifest = json.loads((other / "quiz.scored.jsonl.manifest.json").read_text())
+        self.assertEqual((manifest["settings"]["judge"]["independent"],
+                          manifest["settings"]["judge"]["self_judge_allowed"]), (False, True))
+
+    def test_rows_feed_compare_calibration_and_the_summary(self):
+        ce.score(self.out, FakeJudge(failing=("Q3",)), SETTINGS, solver=FakeSolver(answers={"t1": "B"}))
+        rows = {row["query_id"]: row for row in load_jsonl(self.out / "quiz.scored.jsonl")}
+        self.assertFalse(rows["pg/m1.l1/quiz/c1"]["judge_pass"])  # Q3 failed
+        self.assertFalse(rows["pg/m1.l1/quiz/t1"]["judge_pass"])  # the blind solve disagreed
+        self.assertFalse(rows["pg/m1.l1/quiz/m1"]["judge_pass"])  # Q3 applies: the right side has a distractor
+        self.assertTrue(rows["pg/m1.l1/quiz/e1"]["judge_pass"])
+        self.assertFalse(rows["pg/m1.l1/quiz/bad"]["turn_scores"][0]["judge"]["graded"])
+        scored = list(rows.values())
+        self.assertEqual(sps.compare([scored], [scored], kind="both")["paired"], 5)
+        labels = sps.calibration_sample(self.doc, load_jsonl(self.out / "quiz.jsonl"), scored, half_width=0.0)
+        self.assertEqual(labels["frame"]["unanswered"]["population"], 1)
+        labelled = next(i for i in labels["items"] if i["query_id"] == "pg/m1.l1/quiz/c1")
+        self.assertEqual([t["rubric"] for t in labelled["turns"]][2], [Q3_TEXT])
+        self.assertIn("Key: B", "\n".join(labelled["turns"][0]["answer"]))
+        slot = {row["query_id"]: row for row in load_jsonl(self.out / "slots.scored.jsonl")}["pg/m1.l1/quiz"]
+        self.assertEqual(slot["turn_scores"][0]["judge"]["reason"], "1 of 5 items pass every judged criterion")
+        summary = ce.summarize(self.out)
+        self.assertEqual(summary["quiz"]["items"], {"passing": 1, "total": 5, "ungraded": 1})
+        self.assertEqual(summary["quiz"]["criteria"]["Q3"], {"passed": 0, "graded": 2, "total": 2, "too_long": 0})
+        self.assertEqual(summary["quiz"]["mechanical"]["format_invalid"], 1)
+        page = (self.out / "summary.md").read_text()
+        self.assertIn("5. **Quizzes**: 1/5 items pass every judged criterion", page)
+        self.assertIn("| Q3 Plausible distractors | 0 | 2 | 2 | 0 |", page)
+        self.assertIn("| pg/m1.l1/quiz | bank | 5 | 6 | fail |", page)
 
 
 if __name__ == "__main__":
