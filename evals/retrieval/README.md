@@ -30,8 +30,8 @@ change apart from noise. See
   long drill record whose recovery phrase is one digit-transposition away from the
   first. Forty new questions target those documents, six of them unanswerable but
   phrased entirely in corpus vocabulary.
-- `synthetic-library-v3.json` is the current fixture: 379 documents, 194
-  questions, 1.61 M characters of one person's messy vault. It exists because the
+- `synthetic-library-v3.json` is the current fixture: 405 documents, 219
+  questions, 2.31 M characters of one person's messy vault. It exists because the
   production path answers v2 at Recall@5 `0.9706` and a cross-encoder reranker
   moved nothing on it. v3 adds the conditions v2 has none of: 16 documents of 28 k
   to 87 k characters with the answer buried at an arbitrary depth (some a wall of
@@ -40,7 +40,11 @@ change apart from noise. See
   instances differing by one fact, OCR-damaged scans with repeated page furniture,
   markdown and CSV tables whose answer is one cell, five languages including
   three-character CJK queries, one-line fragment notes with `[[wikilinks]]`, facts
-  that need two documents to assemble, and 21 unanswerable questions. It is
+  that need two documents to assemble, and 21 unanswerable questions. Since
+  2026-10-23 it also has the per-document cap cases: twelve questions that need six
+  passages of one long record, and thirteen around near-repetitive forms and a
+  re-quoted email thread (26 new documents; the 379 older documents and 194 older
+  questions are byte-identical). It is
   generated deterministically by `scripts/build_synthetic_library_v3.py`, which
   proves at build time that every needle occurs in exactly the documents its query
   marks relevant. Regenerate it rather than editing it.
@@ -324,7 +328,7 @@ page ranges, so `page_number` is always NULL.
 To measure what a turn adds, use the shipped-path runner
 (`crates/lattice-desktop/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
 drives the desktop's own turn, from intent through the grounding check, against
-a live llama-server and the 38-item `desktop-path-v1.json` rubric set. See
+a live llama-server and the 50-item `desktop-path-v1.json` rubric set. See
 [`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
 
 The rubric judge runs behind its own `--endpoint` and `--model`, so a stronger
@@ -350,8 +354,19 @@ from different turns together, arXiv 2609.36700):
 | `topic-shift` | a change of subject the rewrite must not drag the old topic into; and a return to the first topic past the intervening one | `dp-mt-topic-shift`, `dp-mt-shift-and-return` |
 | `cross-turn-evidence` | an answer that needs facts from two earlier turns' documents: two entities compared, and two policy versions compared | `dp-mt-combine-renewals`, `dp-mt-combine-versions` |
 
-Runs before 2026-10-19 have the first 34 items only; `shipped_path_stats.py
-compare` pairs runs on the items both have and lists the rest.
+On 2026-10-23 the set gained twelve single-turn items under a new tag, one per
+long record planted for the per-document cap
+([`docs/design/2026-10-23-per-document-cap.md`](../../docs/design/2026-10-23-per-document-cap.md)):
+
+| tag | what it exercises | conversations |
+|---|---|---|
+| `long-document` | one document holds six facts the answer needs, each in a different chunk; `must_mention` is the six facts and `expected_citations` that document, so an answer built from four of its passages fails | `dp-long-*` (12) |
+
+The `dp-multihop-*` items are the control that must keep passing.
+
+Runs before 2026-10-19 have the first 34 items only, and runs before 2026-10-23 the
+first 38; `shipped_path_stats.py compare` pairs runs on the items both have and
+lists the rest.
 
 ### Vector compression
 

@@ -557,11 +557,14 @@ async fn planned(
         Some(planner_turn.history_tokens(utility)),
     )
     .await;
-    shortlist_candidates(
-        container,
+    super::corpus_plan::shortlist_candidates(
+        container.library_search().as_ref(),
+        utility,
         validated_message,
         history.as_deref(),
-        scope,
+        catalog,
+        summaries,
+        &scope.document_ids,
         planner_turn,
     )
     .await;
@@ -579,28 +582,6 @@ async fn planned(
         warn!(%error, "Corpus planning failed; using local retrieval plan");
         super::corpus_plan::fallback_with_catalog(validated_message, catalog)
     })
-}
-
-/// Rank the documents the planner is shown, once per turn.
-async fn shortlist_candidates(
-    container: &dyn ChatRuntime,
-    validated_message: &str,
-    history: Option<&str>,
-    scope: &super::SpaceDocumentScope,
-    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
-) {
-    if planner_turn.candidates.is_some() {
-        return;
-    }
-    planner_turn.candidates = Some(
-        super::corpus_plan::candidate_documents(
-            container.library_search().as_ref(),
-            validated_message,
-            history,
-            &scope.document_ids,
-        )
-        .await,
-    );
 }
 
 /// The one replanned retry. Returns `None` whenever it cannot improve on the
@@ -630,11 +611,15 @@ async fn corrective_pass(
         Some(planner_turn.history_tokens(utility.as_ref())),
     )
     .await;
-    shortlist_candidates(
-        container,
+    // The correction's prompt carries no summaries.
+    super::corpus_plan::shortlist_candidates(
+        container.library_search().as_ref(),
+        utility.as_ref(),
         validated_message,
         history.as_deref(),
-        scope,
+        catalog,
+        &std::collections::HashMap::new(),
+        &scope.document_ids,
         planner_turn,
     )
     .await;

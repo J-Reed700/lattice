@@ -8,7 +8,7 @@ use crate::features::search::use_cases::HybridSearchUseCase;
 use async_trait::async_trait;
 use lattice_core::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-    SearchResultDto, Spread,
+    SearchResultDto,
 };
 use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
@@ -47,13 +47,8 @@ impl HybridSearchTrait for HybridSearchUseCase {
         .await
     }
 
-    fn fuse(
-        &self,
-        branches: Vec<RankedBranch>,
-        limit: usize,
-        spread: Spread,
-    ) -> Vec<SearchResultDto> {
-        HybridSearchUseCase::fuse(self, branches, limit, spread)
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+        HybridSearchUseCase::fuse(self, branches, limit)
     }
 
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
@@ -66,8 +61,8 @@ impl HybridSearchTrait for HybridSearchUseCase {
 /// Only the three stores are given: the reranker and the chunk repository
 /// are the library's and read `lattice.db`, and a passage
 /// index's rows are authoritative for its own passages. Fusion, branch
-/// depth, the vector floor and the per-document cap are the library's
-/// constants, so a folder or course is ranked the way the library is.
+/// depth and the vector floor are the library's constants, so a folder or
+/// course is ranked the way the library is.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HybridSearchUseCaseFactory;
 

@@ -675,7 +675,7 @@ mod search {
     use super::*;
     use lattice_core::application::contracts::search::{
         QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-        SearchResultDto, Spread,
+        SearchResultDto,
     };
     use std::collections::HashSet;
 
@@ -747,13 +747,8 @@ mod search {
                 .await
         }
 
-        fn fuse(
-            &self,
-            branches: Vec<RankedBranch>,
-            limit: usize,
-            spread: Spread,
-        ) -> Vec<SearchResultDto> {
-            self.inner.fuse(branches, limit, spread)
+        fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+            self.inner.fuse(branches, limit)
         }
 
         async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {

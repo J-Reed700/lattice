@@ -61,6 +61,16 @@ pub(super) fn window_room(llm: &dyn LLMPort) -> usize {
         .saturating_sub(PLANNER_OUTPUT_TOKENS as usize + TEMPLATE_FRAMING_TOKENS)
 }
 
+/// What a prompt may measure and still be sent, by how it was measured.
+fn sendable(llm: &dyn LLMPort, exact: bool) -> usize {
+    let room = window_room(llm);
+    if exact {
+        room
+    } else {
+        spendable(room)
+    }
+}
+
 /// One catalog row as the planner sees it.
 ///
 /// The document and its book are named by short handles ("d3", "g1") instead
@@ -247,6 +257,53 @@ async fn count(llm: &dyn LLMPort, user: &str) -> (usize, bool) {
     )
 }
 
+/// What `document`'s row costs on the port's estimate, the comma after it
+/// included. Costed with the widest handles a shortlist uses, so the real
+/// render is never longer than what was budgeted for it.
+fn row_cost(
+    llm: &dyn LLMPort,
+    document: &CorpusDocument,
+    summaries: &HashMap<String, String>,
+    whole: bool,
+) -> usize {
+    let group = document.source_context.as_ref().map(|_| "g99".to_string());
+    let json = serde_json::to_string(&row(document, "d99".into(), group, summaries, whole))
+        .unwrap_or_default();
+    llm.count_tokens(&json) + 1
+}
+
+/// What the prompt costs before any catalog row: the system prompt and the
+/// user turn around an empty catalog.
+fn base_tokens(
+    llm: &dyn LLMPort,
+    parts: &PromptParts<'_>,
+    catalog: &[CorpusDocument],
+) -> Result<usize> {
+    let (empty, _) = render(parts, &[], catalog, &HashSet::new())?;
+    Ok(llm.count_tokens(PLANNER_SYSTEM) + llm.count_tokens(&empty))
+}
+
+/// How many catalog rows a prompt built to `target` holds beside `parts`:
+/// the room [`build`] fills with rows, over the catalog's mean compact-row
+/// cost. The shortlist search ranks this many documents, since the prompt
+/// shows no more of them.
+pub(super) fn rows_held(
+    llm: &dyn LLMPort,
+    parts: &PromptParts<'_>,
+    catalog: &[CorpusDocument],
+    target: usize,
+) -> Result<usize> {
+    let limit = target.min(sendable(llm, llm.counts_tokens_exactly()));
+    let room = limit.saturating_sub(base_tokens(llm, parts, catalog)?);
+    let catalog_cost: usize = catalog
+        .iter()
+        .map(|document| row_cost(llm, document, parts.summaries, false))
+        .sum();
+    Ok((room * catalog.len())
+        .checked_div(catalog_cost)
+        .map_or(0, |rows| rows.min(catalog.len())))
+}
+
 /// Rows from the front of `ranked` while their scaled cost fits `room`, and
 /// their unscaled estimate. The budget alone decides how many.
 fn take_rows<'a>(
@@ -279,27 +336,14 @@ pub(super) async fn build(
     catalog: &[CorpusDocument],
     target: usize,
 ) -> Result<PlannerPrompt> {
-    let room = window_room(llm);
-    // What a prompt may measure and still be sent, by how it was measured.
-    let window = |exact: bool| if exact { room } else { spendable(room) };
+    let window = |exact: bool| sendable(llm, exact);
     let limit = target.min(window(llm.counts_tokens_exactly()));
 
-    // Estimated costs, with the widest handles a shortlist uses, so the real
-    // render is never longer than what was budgeted for it.
     let compact = HashSet::new();
-    let (empty, _) = render(parts, &[], catalog, &compact)?;
-    let base = llm.count_tokens(PLANNER_SYSTEM) + llm.count_tokens(&empty);
-    let row_cost = |document: &CorpusDocument, whole: bool| {
-        let group = document.source_context.as_ref().map(|_| "g99".to_string());
-        let json =
-            serde_json::to_string(&row(document, "d99".into(), group, parts.summaries, whole))
-                .unwrap_or_default();
-        // The comma between rows.
-        llm.count_tokens(&json) + 1
-    };
+    let base = base_tokens(llm, parts, catalog)?;
     let costs: Vec<usize> = ranked
         .iter()
-        .map(|document| row_cost(document, false))
+        .map(|document| row_cost(llm, document, parts.summaries, false))
         .collect();
 
     let mut scale = 1.0_f64;
@@ -324,7 +368,8 @@ pub(super) async fn build(
         let mut extra = 0usize;
         let mut whole: HashSet<&str> = HashSet::new();
         for (document, compact_cost) in shown_rows.iter().zip(&costs) {
-            let growth = row_cost(document, true).saturating_sub(*compact_cost);
+            let growth =
+                row_cost(llm, document, parts.summaries, true).saturating_sub(*compact_cost);
             if growth == 0 {
                 continue;
             }

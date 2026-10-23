@@ -14,22 +14,24 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
-use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::contracts::search::{
+    CorpusDocument, ReciprocalRankFusion, WeightedRanking,
+};
+use lattice_core::shared::constants::{
+    DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_RRF_K, DEFAULT_VECTOR_FUSION_WEIGHT,
+};
 
 use super::super::{select_informative_terms, tokenize_keyword_terms};
 use super::{
-    fused_search, navigation_only, numbered_series_prefix, whole_document_intent,
-    HybridSearchTrait, SearchResultDto,
+    navigation_only, numbered_series_prefix, whole_document_intent, HybridSearchTrait,
+    RankedBranch, SearchResultDto,
 };
-
-/// Passages the candidate search reads. Fusion keeps at most four passages a
-/// document, so this reaches at least ten documents and usually twenty or more.
-const CANDIDATE_SEARCH_PASSAGES: usize = 40;
 
 /// Informative terms carried from the conversation into the follow-up search.
 const CONVERSATION_TERMS: usize = 12;
 
-/// Documents a local search ranks for this request, best first.
+/// Documents a local search ranks for this request, best first: up to
+/// `rows` a query, the catalog rows the planner's prompt holds.
 ///
 /// The request alone, and, when there is conversation, the request with the
 /// conversation's informative terms: "is there any way round it?" names
@@ -41,7 +43,11 @@ pub(in super::super) async fn candidate_documents(
     question: &str,
     history: Option<&str>,
     document_ids: &HashSet<String>,
+    rows: usize,
 ) -> Vec<String> {
+    if rows == 0 {
+        return Vec::new();
+    }
     let mut queries = vec![question.to_string()];
     if let Some(history) = history.filter(|history| !history.trim().is_empty()) {
         let terms = select_informative_terms(tokenize_keyword_terms(history), CONVERSATION_TERMS);
@@ -51,14 +57,43 @@ pub(in super::super) async fn candidate_documents(
     }
     let mut rankings = Vec::new();
     for query in &queries {
-        match fused_search(hybrid, query, document_ids, CANDIDATE_SEARCH_PASSAGES).await {
-            Ok(results) => rankings.push(documents_in_rank_order(&results)),
-            Err(error) => {
-                warn!(%error, "Planner shortlist search failed; showing the catalog in its own order")
-            }
+        // The allow-list already is the space plus this chat's attachments.
+        let found = hybrid
+            .search_branches(
+                query,
+                None,
+                Some(document_ids),
+                rows,
+                DEFAULT_VECTOR_FUSION_WEIGHT,
+                DEFAULT_KEYWORD_FUSION_WEIGHT,
+            )
+            .await;
+        if found.answered == 0 {
+            warn!("Planner shortlist search failed; showing the catalog in its own order");
+            continue;
         }
+        rankings.push(rank_documents(&found.branches, rows));
     }
     interleave(rankings)
+}
+
+/// Up to `limit` documents, best first, fused at document granularity: each
+/// branch's passages collapse to their documents in the order they first
+/// appear, and those rankings fuse by weighted reciprocal rank with the
+/// library search's weights and `k`. A document that holds every top passage
+/// in both branches heads the list once, and the next documents follow by
+/// their own best evidence.
+fn rank_documents(branches: &[RankedBranch], limit: usize) -> Vec<String> {
+    let rankings = branches
+        .iter()
+        .map(|branch| WeightedRanking::new(branch.weight, documents_in_rank_order(&branch.results)))
+        .collect();
+    ReciprocalRankFusion::new(DEFAULT_RRF_K)
+        .fuse_ranked(rankings)
+        .into_iter()
+        .take(limit)
+        .map(|fused| fused.id)
+        .collect()
 }
 
 fn documents_in_rank_order(results: &[SearchResultDto]) -> Vec<String> {
@@ -195,4 +230,71 @@ pub(super) fn shortlist<'a>(
         push(document, &mut ordered);
     }
     ordered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lattice_core::application::contracts::search::BranchKind;
+
+    fn passage(id: &str, document: &str) -> SearchResultDto {
+        SearchResultDto {
+            id: id.into(),
+            title: document.into(),
+            content: id.into(),
+            score: 1.0,
+            path: None,
+            document_id: Some(document.into()),
+            position: None,
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn branch(kind: BranchKind, weight: f32, passages: &[(&str, &str)]) -> RankedBranch {
+        RankedBranch {
+            kind,
+            weight,
+            results: passages
+                .iter()
+                .map(|(id, document)| passage(id, document))
+                .collect(),
+        }
+    }
+
+    /// A long document that holds every top passage in both branches is one
+    /// row of the shortlist, not all of it.
+    #[test]
+    fn a_document_dominating_both_branches_is_ranked_once_and_the_next_follow() {
+        let branches = vec![
+            branch(
+                BranchKind::Vector,
+                0.7,
+                &[
+                    ("a0", "a"),
+                    ("a1", "a"),
+                    ("a2", "a"),
+                    ("a3", "a"),
+                    ("b0", "b"),
+                    ("c0", "c"),
+                ],
+            ),
+            branch(
+                BranchKind::Lexical,
+                0.3,
+                &[
+                    ("a4", "a"),
+                    ("a5", "a"),
+                    ("a6", "a"),
+                    ("c1", "c"),
+                    ("b1", "b"),
+                ],
+            ),
+        ];
+        assert_eq!(rank_documents(&branches, 8), ["a", "b", "c"]);
+        assert_eq!(rank_documents(&branches, 2), ["a", "b"]);
+    }
 }

@@ -42,6 +42,20 @@ pub fn normalize_whitespace(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The form under which two texts are the same text: Unicode NFKC, lower
+/// case, every whitespace run read as one space. Texts that differ in any
+/// other character keep different forms, so equal forms never hide a
+/// different fact.
+pub fn identity_form(input: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    normalize_whitespace(
+        &input
+            .nfkc()
+            .flat_map(char::to_lowercase)
+            .collect::<String>(),
+    )
+}
+
 /// Extract highlight terms from a query string.
 ///
 /// - Lowercases and de-duplicates terms
