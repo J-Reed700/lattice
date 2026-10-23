@@ -3,7 +3,7 @@
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::features::learning::{assessment_engine as engine, dto::*};
-use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::grounded_generation::{GroundedOutput, GroundedRequest};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -53,54 +53,29 @@ impl Batch {
         }
     }
 
-    /// The room this request leaves for source passages; zero when even its
-    /// prompt and answer do not fit.
-    fn room(&self, llm: &dyn LLMPort) -> usize {
-        let mut request = GroundedRequest::new(SYSTEM, self.skeleton.to_string());
-        request.output_tokens = self.output_tokens;
-        model_call::source_room(llm, &request, usize::MAX)
+    /// The request without source passages.
+    fn skeleton(&self) -> GroundedRequest {
+        model_call::structured(
+            SYSTEM,
+            self.skeleton.to_string(),
+            self.schema.clone(),
+            self.output_tokens,
+            "low",
+        )
     }
 
-    async fn author(
+    /// The request carrying as many of `passages`, best first, as `room`
+    /// tokens hold, grouped per source.
+    fn packed(
         &self,
         llm: &dyn LLMPort,
-        collection: &ReferenceCollection<'_>,
+        passages: &[ReferencePassage],
         sources: &[LearningSourceVersionDto],
-    ) -> Result<Vec<Item>> {
-        let room = self.room(llm);
-        if room == 0 {
-            return Err(AppError::InvalidInput(
-                "Assessment authoring request exceeds the model context window.".into(),
-            ));
-        }
-        let entry = |source_index: usize, passages: &[&str]| {
-            let title = sources.get(source_index).map(|s| s.version.title.as_str());
-            serde_json::json!({"sourceIndex":source_index,"title":title,"passages":passages})
-        };
-        let index_of = |passage: &ReferencePassage| {
-            sources
-                .iter()
-                .position(|source| source.version.id == passage.source_id)
-        };
-        let passages = collection
-            .retrieve_within(&self.query, |passages| {
-                passages
-                    .iter()
-                    .map(|p| llm.count_tokens(&serde_json::json!(p.text).to_string()) + 2)
-                    .sum::<usize>()
-                    + passages
-                        .iter()
-                        .filter_map(index_of)
-                        .collect::<HashSet<_>>()
-                        .into_iter()
-                        .map(|index| llm.count_tokens(&entry(index, &[]).to_string()) + 2)
-                        .sum::<usize>()
-                    <= room
-            })
-            .await?;
+        room: usize,
+    ) -> GroundedRequest {
         let mut grouped: Vec<(usize, Vec<&str>)> = Vec::new();
-        for passage in &passages {
-            let Some(index) = index_of(passage) else {
+        for passage in passages.iter().take(within(llm, passages, sources, room)) {
+            let Some(index) = source_index(sources, passage) else {
                 continue;
             };
             match grouped.iter_mut().find(|(known, _)| *known == index) {
@@ -114,24 +89,79 @@ impl Batch {
                 "sources".into(),
                 grouped
                     .iter()
-                    .map(|(index, texts)| entry(*index, texts))
+                    .map(|(index, texts)| source_entry(sources, *index, texts))
                     .collect(),
             );
         }
-        let prompt = prompt.to_string();
-        let response = model_call::send(
+        let mut request = self.skeleton();
+        request.task = prompt.to_string();
+        request
+    }
+
+    /// Send this request with the passages its requirement retrieves, as many
+    /// as the window holds, and return the prompt sent with the answer.
+    /// `None` when the instructions and answer leave no room, or not one
+    /// passage fits beside them.
+    async fn send(
+        &self,
+        llm: &dyn LLMPort,
+        collection: &ReferenceCollection<'_>,
+        sources: &[LearningSourceVersionDto],
+    ) -> Result<Option<(String, GroundedOutput)>> {
+        const TOO_LARGE: &str = "This assessment's instructions and its answer do not fit";
+        let skeleton = self.skeleton();
+        let room = model_call::source_room(llm, &skeleton, usize::MAX);
+        if room == 0 {
+            return Ok(None);
+        }
+        let passages = collection
+            .retrieve_within(&self.query, |passages| {
+                within(llm, passages, sources, room) == passages.len()
+            })
+            .await?;
+        if passages.is_empty() {
+            // Nothing to pack: the instructions alone go, if they fit.
+            if !model_call::fits(llm, &skeleton).await {
+                return Ok(None);
+            }
+            let prompt = skeleton.task.clone();
+            let response =
+                model_call::send(llm, skeleton, None, model_call::TooLarge::Window(TOO_LARGE))
+                    .await?;
+            return Ok(Some((prompt, response)));
+        }
+        model_call::send_fitted(
             llm,
-            model_call::structured(
-                SYSTEM,
-                prompt.clone(),
-                self.schema.clone(),
-                self.output_tokens,
-                "low",
-            ),
-            None,
-            "Assessment authoring request exceeds the model context window.",
+            room,
+            |room| self.packed(llm, &passages, sources, room),
+            |request| {
+                let prompt = request.task.clone();
+                async move {
+                    let response = model_call::send(
+                        llm,
+                        request,
+                        None,
+                        model_call::TooLarge::Window(TOO_LARGE),
+                    )
+                    .await?;
+                    Ok((prompt, response))
+                }
+            },
         )
-        .await?;
+        .await
+    }
+
+    /// The items of this request, or `None` when its window holds no
+    /// request for them: see [`Batch::send`].
+    async fn author(
+        &self,
+        llm: &dyn LLMPort,
+        collection: &ReferenceCollection<'_>,
+        sources: &[LearningSourceVersionDto],
+    ) -> Result<Option<Vec<Item>>> {
+        let Some((prompt, response)) = self.send(llm, collection, sources).await? else {
+            return Ok(None);
+        };
         if ["length", "max_tokens", "incomplete", "content_filter"]
             .iter()
             .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
@@ -169,8 +199,45 @@ impl Batch {
                 "Assessment authoring did not satisfy the requested item count.".into(),
             ));
         }
-        Ok(parsed.items)
+        Ok(Some(parsed.items))
     }
+}
+
+fn source_index(sources: &[LearningSourceVersionDto], passage: &ReferencePassage) -> Option<usize> {
+    sources
+        .iter()
+        .position(|source| source.version.id == passage.source_id)
+}
+
+fn source_entry(
+    sources: &[LearningSourceVersionDto],
+    source_index: usize,
+    passages: &[&str],
+) -> serde_json::Value {
+    let title = sources.get(source_index).map(|s| s.version.title.as_str());
+    serde_json::json!({"sourceIndex":source_index,"title":title,"passages":passages})
+}
+
+/// How many of `passages`, best first, `room` tokens hold: each passage's
+/// text, and each source's entry once.
+fn within(
+    llm: &dyn LLMPort,
+    passages: &[ReferencePassage],
+    sources: &[LearningSourceVersionDto],
+    room: usize,
+) -> usize {
+    let mut entered = HashSet::new();
+    let mut spent = 0;
+    passages
+        .iter()
+        .take_while(|passage| {
+            spent += llm.count_tokens(&serde_json::json!(passage.text).to_string()) + 2;
+            if let Some(index) = source_index(sources, passage).filter(|i| entered.insert(*i)) {
+                spent += llm.count_tokens(&source_entry(sources, index, &[]).to_string()) + 2;
+            }
+            spent <= room
+        })
+        .count()
 }
 
 #[derive(Deserialize)]
@@ -222,16 +289,25 @@ pub async fn generate(
     for (index, requirement) in request.requirements.iter().enumerate() {
         let mut remaining = requirement.count;
         while remaining > 0 {
-            // As many of this requirement's items as one request holds.
+            // As many of this requirement's items as one request holds: fewer
+            // items leave their answers' room to the passages.
             let mut count = remaining;
-            while count > 1
-                && Batch::new(request, outcomes, lessons, index, count, sources.len()).room(llm)
-                    == 0
-            {
-                count = count.div_ceil(2);
+            loop {
+                let batch = Batch::new(request, outcomes, lessons, index, count, sources.len());
+                match batch.author(llm, &collection, sources).await? {
+                    Some(authored) => {
+                        items.extend(authored);
+                        break;
+                    }
+                    None if count > 1 => count = count.div_ceil(2),
+                    None => {
+                        return Err(model_call::window_too_small(
+                            llm,
+                            "This assessment's instructions, one item's answer and a passage of its sources do not fit",
+                        ))
+                    }
+                }
             }
-            let batch = Batch::new(request, outcomes, lessons, index, count, sources.len());
-            items.extend(batch.author(llm, &collection, sources).await?);
             remaining -= count;
         }
     }
@@ -513,3 +589,6 @@ pub async fn grade_open(
     }
     Ok((out, llm.model_name().into()))
 }
+
+#[cfg(test)]
+mod tests;

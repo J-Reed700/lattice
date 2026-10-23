@@ -176,11 +176,66 @@ fn repair_request(system: &str, local: &Value, output_tokens: usize) -> Grounded
     request
 }
 
+/// The ids of the passages a one-claim repair request `local` can carry, in
+/// recorded order: as many as the window holds, measured where the backend
+/// can count. Empty when none fits beside the section.
+async fn fitted_passages(
+    llm: &dyn LLMPort,
+    system: &str,
+    local: &Value,
+    output_tokens: usize,
+) -> Vec<String> {
+    let passages: Vec<Value> = local
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let spent: Vec<usize> = passages
+        .iter()
+        .scan(0usize, |spent, passage| {
+            *spent = spent.saturating_add(llm.count_tokens(&passage.to_string()) + 1);
+            Some(*spent)
+        })
+        .collect();
+    let held = |room: usize| {
+        passages
+            .get(..spent.partition_point(|total| *total <= room))
+            .unwrap_or_default()
+    };
+    let build = |room: usize| {
+        let kept = held(room);
+        let mut local = local.clone();
+        if let Some(claim) = local
+            .pointer_mut("/failedClaims/0")
+            .and_then(Value::as_object_mut)
+        {
+            let ids: Vec<Value> = kept
+                .iter()
+                .filter_map(|passage| passage.get("id").cloned())
+                .collect();
+            claim.insert("evidence".into(), Value::Array(ids));
+        }
+        if let Some(fields) = local.as_object_mut() {
+            fields.insert("evidence".into(), json!(kept));
+        }
+        repair_request(system, &local, output_tokens)
+    };
+    let room = crate::features::learning::model_call::source_room(llm, &build(0), usize::MAX);
+    let fit = crate::features::learning::model_call::fit_room(llm, room, build).await;
+    if !fit.fits() {
+        return Vec::new();
+    }
+    held(fit.room)
+        .iter()
+        .filter_map(|passage| Some(passage.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
 /// Split one section's failed claims into consecutive groups whose repair
-/// request fits the model, each passage counted once per group. A claim
-/// whose own evidence cannot fit even alone is sent with the passages that
-/// fit, in recorded order; one that cannot carry a single passage is an
-/// error.
+/// request fits the model by estimate, each passage counted once per group.
+/// A claim whose own evidence cannot fit even alone is a group of its own;
+/// its passages are packed when it is sent. Only a section that leaves no
+/// room for any claim is an error.
 fn claim_groups(
     llm: &dyn LLMPort,
     system: &str,
@@ -195,9 +250,11 @@ fn claim_groups(
         &repair_request(system, &base, output_tokens),
         usize::MAX,
     );
-    let too_large = || invalid("A section repair does not fit in this model's context window.");
+    // The section and its instructions alone: no claim can be repaired here.
     if room == 0 {
-        return Err(too_large());
+        return Err(invalid(
+            "A section repair does not fit in this model's context window.",
+        ));
     }
     let table: HashMap<&str, usize> = context
         .get("evidence")
@@ -226,44 +283,17 @@ fn claim_groups(
     let mut group: Vec<Value> = Vec::new();
     let mut listed: HashSet<String> = HashSet::new();
     let mut used = 0;
-    for mut failure in failures {
+    for failure in failures {
         if used + price(&failure, &listed) > room && !group.is_empty() {
             groups.push(std::mem::take(&mut group));
             listed.clear();
             used = 0;
         }
         if price(&failure, &listed) > room {
-            // Only this claim's own evidence is over budget: keep its
-            // passages in recorded order while they fit.
-            let ids: Vec<String> = evidence_ids(&failure)
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            let mut spent = llm.count_tokens(&failure.to_string()) + 1;
-            let mut kept = Vec::new();
-            for id in &ids {
-                let cost = table.get(id.as_str()).copied().unwrap_or_default();
-                if spent + cost > room {
-                    break;
-                }
-                spent += cost;
-                kept.push(id.clone());
-            }
-            if kept.is_empty() {
-                return Err(invalid(
-                    "A failed claim's evidence passage does not fit in this model's context window.",
-                ));
-            }
-            tracing::warn!(
-                unit,
-                kept = kept.len(),
-                recorded = ids.len(),
-                room,
-                "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
-            );
-            if let Some(fields) = failure.as_object_mut() {
-                fields.insert("evidence".into(), json!(kept));
-            }
+            // Only this claim's own evidence is over the room: it goes
+            // alone, with the passages that fit.
+            groups.push(vec![failure]);
+            continue;
         }
         used += price(&failure, &listed);
         listed.extend(evidence_ids(&failure).into_iter().map(str::to_owned));
@@ -432,24 +462,24 @@ async fn repair_sections(
             };
         let mut part = 0;
         while let Some(mut group) = groups.pop_front() {
-            let local = section_context(&context, unit, &group)?;
             // Groups are sized part by part; a request that still does not
-            // fit is split again, down to one claim with fewer passages.
+            // fit is split again, down to one claim with the passages that fit.
+            let mut local = section_context(&context, unit, &group)?;
             if !crate::features::learning::model_call::fits(
                 llm,
                 &repair_request(&system, &local, output_tokens),
-            ) {
+            )
+            .await
+            {
                 if group.len() > 1 {
                     let rest = group.split_off(group.len() / 2);
                     groups.push_front(rest);
                     groups.push_front(group);
                     continue;
                 }
-                let trimmed = group.first_mut().and_then(|failure| {
-                    let evidence = failure.get_mut("evidence")?.as_array_mut()?;
-                    (evidence.len() > 1).then(|| evidence.pop())
-                });
-                if trimmed.is_none() {
+                let kept = fitted_passages(llm, &system, &local, output_tokens).await;
+                if kept.is_empty() {
+                    // Nothing to repair it from: the claim stays held for review.
                     let reason = "A failed claim's evidence passage does not fit in this model's context window.";
                     ledger.reject(&claim_ids(&group), reason).await?;
                     drop_group(&mut context, unit, group.len(), false);
@@ -457,10 +487,14 @@ async fn repair_sections(
                 }
                 tracing::warn!(
                     unit,
-                    "A failed claim's evidence exceeds the repair budget; sending one passage fewer"
+                    kept = kept.len(),
+                    recorded = group.first().map_or(0, |failure| evidence_ids(failure).len()),
+                    "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
                 );
-                groups.push_front(group);
-                continue;
+                if let Some(fields) = group.first_mut().and_then(Value::as_object_mut) {
+                    fields.insert("evidence".into(), json!(kept));
+                }
+                local = section_context(&context, unit, &group)?;
             }
             part += 1;
             let parts = part + groups.len();
