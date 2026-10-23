@@ -11,6 +11,15 @@ Line numbers are main (`/Users/josh/Code/lattice-temp`, HEAD c694fc79) unless ma
 > the eval cases) and `fix/neighbour-budget` (3.3). One change from section 2: eval cases A
 > and B go in **new** documents, so every existing v3 document and query stays byte-identical
 > and per-query comparisons with earlier runs still hold.
+>
+> **Measured, 2026-10-23.** v3 at `--top-k 10` (the sweep's recipe, not the `--top-k 50`
+> section 5 names): passage recall@10 0.782 → 0.822, many passages from one document
+> 0.778 → 0.944, repetitive document 0.615 → 1.000, buried needle 0.667 → 0.722; 14
+> queries better and none worse (p = 0.0001); document recall@5, nDCG@5 and MRR@5
+> identical, so risk 1 did not show. Section 3.3 as written here (neighbours placed after
+> their anchor inside the budget) lost on v3 and was redesigned in
+> `2026-10-23-neighbour-context.md`. Numbers and runs: `evals/retrieval/README.md`,
+> "Per-document cap removed".
 
 
 ## 1. Verdict: harmful, and never justified by a measurement

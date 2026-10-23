@@ -90,7 +90,8 @@ harness had also stopped running at all once vault-wide search began reading
 `HybridSearchUseCase` is now the one library search orchestrator: chat's first pass,
 its follow-up `semantic_search` calls, the tool executor, the search page and this
 harness all run it, including chat's branch depth (three candidates per result), its
-0.15 vector floor, its per-document cap of four, and its cross-encoder stage.
+0.15 vector floor, its per-document cap of four (removed on 2026-10-23, below), and its
+cross-encoder stage.
 `HybridSearchService` is deleted. A production-mode run now measures chat's search for
 one planned query; see [Production mode](#production-mode) for what a turn adds around it.
 
@@ -238,6 +239,36 @@ topical hard negatives (0.76 → 0.82) improve. Results:
 `results/2026-10-19-v3-TERSE-metrics.json`, `results/2026-10-19-v3-TERSE-v3-run.jsonl`,
 `results/2026-10-19-v3-TERSE-terse-run.jsonl`.
 
+## Per-document cap removed (2026-10-23)
+
+Fusion used to defer each document's fifth and later passages behind every other
+document's and then truncate, so a long document's further passages never reached
+the reranker or the prompt (`PER_DOCUMENT_CAP = 4`, a literal from the first commit
+that no run had measured). It now ranks on relevance alone and drops only a passage
+whose text is identical to one already placed. v3 had no question that needed more
+than two passages of one document, so the cap was invisible to it; the 2026-10-23
+cases above are the ones that see it.
+
+v3, Qwen3-Embedding-0.6B through llama.cpp, production mode, `--top-k 10`, main
+(c05a48f2) against the branch without the cap:
+
+| passage recall@10 | main | no cap |
+|---|---|---|
+| overall | 0.782 | 0.822 |
+| many passages from one document | 0.778 | 0.944 |
+| repetitive document | 0.615 | 1.000 |
+| buried needle in long document | 0.667 | 0.722 |
+| long-context tail facts | 0.583 | 0.667 |
+| semantic paraphrase | 0.500 | 0.521 |
+
+Every other dimension is unchanged. Per query, passage recall rose on 14 and fell on
+none at k = 10 (exact two-sided sign test p = 0.0001), and rose on 11 and fell on none
+at k = 5. Document recall@5, nDCG@5 and MRR@5 are identical (paired bootstrap delta
+0.0), so the multi-document watch (`multi-hop composition`, `graded and multi-document
+relevance`) holds. Results: `results/2026-10-23-v3-PER-DOC-CAP-metrics.json`,
+`results/2026-10-23-v3-PER-DOC-CAP-main-run.jsonl`,
+`results/2026-10-23-v3-PER-DOC-CAP-nocap-run.jsonl`.
+
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
@@ -303,7 +334,7 @@ executor and the search page share, composed as `features::search::di::build`
 composes it — the USearch index, `SqliteTextSearch`, the chunk repository — and
 asked exactly what chat's first pass asks for one planned query: the vector and
 BM25 branches at three candidates per result, weighted reciprocal-rank fusion at
-k = 10 with chat's per-document cap, and, with a reranker, chat's own
+k = 10 with exact repeats dropped, and, with a reranker, chat's own
 cross-encoder stage. Finally, section-neighbour evidence expansion is applied.
 
 `--top-k` (default 50) sets how many chunk candidates each query retrieves before
