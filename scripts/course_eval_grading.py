@@ -56,6 +56,12 @@ SEEDS = 3               # section 7.2: across three seeds
 # enough to copy its substance into a retake.
 COPY_NGRAM, COPY_SHARE = 3, 0.5
 EPSILON = 1e-6
+# Section 7.2's predeclared bar on reasons (proposed; the owner confirms it before the baseline runs): no reason a
+# person labels fabricated, and at least 80 % of marked-down answers' reasons accepted. A set may declare its own
+# in sets.json ("reason_bar"), and `score` may override it before any label exists; either way the bar a run is
+# judged by is fixed in its manifest when it is scored, never chosen after the labels are in.
+REASON_BAR = {"max_fabricated": 0, "min_accepted_share": 0.8}
+ALPHA = 0.05
 LABEL_RULE = ("Pass when the answer earns every point it can earn; fail when it should lose any. Set human_points to "
               "the points you would award.")
 SHORT_ANSWER_RULE = ("Pass when the answer means the same as an accepted answer; fail when it does not. Set "
@@ -346,7 +352,16 @@ def chat_row(row, item, grade, checks, run_id):
             "answer_sha256": digest([row["item"], row["response"]]), "run_id": run_id}
 
 
-def score(name, grades_path, out, registry_path=REGISTRY):
+def reason_bar(entry, override=None):
+    bar = {**REASON_BAR, **(entry.get("reason_bar") or {}), **{k: v for k, v in (override or {}).items()
+                                                                if v is not None}}
+    if set(bar) != set(REASON_BAR) or not isinstance(bar["max_fabricated"], int) or bar["max_fabricated"] < 0 \
+            or not 0 <= bar["min_accepted_share"] <= 1:
+        raise SystemExit(f"a reason bar holds max_fabricated (an integer >= 0) and min_accepted_share (0 to 1): {bar}")
+    return bar
+
+
+def score(name, grades_path, out, registry_path=REGISTRY, bar=None):
     out = Path(out)
     if out.exists():
         raise SystemExit(f"{out} exists; a results directory is never overwritten")
@@ -362,7 +377,7 @@ def score(name, grades_path, out, registry_path=REGISTRY):
     identity = {"schema_version": SCHEMA_VERSION, "dataset_sha256": digest({"rows": rows, "bank": bank}),
                 "expectations_sha256": digest(None), "retrieval_sha256": digest(None),
                 "settings": {"harness": "quiz_grading", "set": name, "frozen": bool(entry.get("frozen")),
-                             "grader": grades.get("grader")},
+                             "grader": grades.get("grader"), "reason_bar": reason_bar(entry, bar)},
                 "harness_sha256": digest({"scorer": sha256_file(__file__), "items": sha256_file(cq.__file__)})}
     manifest = {**identity, "run_id": digest(identity)}
     scored, checked, chat_items, answers = [], [], [], []
@@ -405,6 +420,7 @@ def score(name, grades_path, out, registry_path=REGISTRY):
                                   "rows_sha256": sha256_file(entry["rows_path"]),
                                   "bank_sha256": sha256_file(entry["bank_path"]), "grades": relative(grades_path),
                                   "grades_sha256": sha256_file(grades_path), "grader": grades.get("grader"),
+                                  "reason_bar": manifest["settings"]["reason_bar"],
                                   "model_rows": len(model_rows), "deterministic_rows": len(exact),
                                   "regraded_rows": len(regrades)})
     return {"model_rows": len(model_rows), "deterministic_rows": len(exact), "regraded_rows": len(regrades)}
@@ -496,6 +512,33 @@ def share(part, whole):
     return part / whole if whole else None
 
 
+def binomial_tail(k, n, p, upper):
+    """P(X >= k) when upper, else P(X <= k), for X ~ Binomial(n, p)."""
+    terms = range(k, n + 1) if upper else range(0, k + 1)
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in terms)
+
+
+def exact_interval(k, n, alpha=ALPHA):
+    """The Clopper-Pearson interval for k successes in n, by bisection; None for n = 0."""
+    if not n:
+        return None
+
+    def solve(target, upper):
+        low, high = 0.0, 1.0
+        for _ in range(60):
+            middle = (low + high) / 2
+            tail = binomial_tail(k, n, middle, upper)
+            # upper tail rises with p; lower tail falls with p
+            if (tail < target) == upper:
+                low = middle
+            else:
+                high = middle
+        return (low + high) / 2
+    lower = 0.0 if k == 0 else solve(alpha / 2, True)
+    upper = 1.0 if k == n else solve(alpha / 2, False)
+    return [lower, upper]
+
+
 def calibration(results, scored, labels_file):
     """calibration_score unchanged; the labels may have been drawn from another run of the same set."""
     labels = read_json(labels_file)
@@ -557,7 +600,9 @@ def rationale_quality(checked):
             "shown_unexplained": sum(c["shown_unexplained"] for c in graded), "counts": total}
 
 
-def reason_quality(results):
+def reason_quality(results, bar=None):
+    """The person's reason labels against the run's predeclared bar."""
+    bar = bar or REASON_BAR
     document = read_json(Path(results) / "reason-labels.json")
     if document is None:
         return None
@@ -568,10 +613,16 @@ def reason_quality(results):
                 raise SystemExit(f"{row['query_id']}: human_reason must be one of {', '.join(REASON_LABELS)}")
             counts[row["human_reason"]] += 1
     labelled = sum(counts.values())
+    accepted = share(counts["right"], labelled)
+    fabricated = counts["reason_fabricated"] > bar["max_fabricated"]
+    short = accepted is not None and accepted < bar["min_accepted_share"]
     return {"marked_down": len(document["items"]), "labelled": labelled, "counts": counts,
-            "accepted_share": share(counts["right"], labelled), "accepted_wilson95": wilson(counts["right"], labelled),
-            "waiting_for_blind_labels": document.get("waiting_for_blind_labels", 0),
-            "fails": counts["reason_fabricated"] > 0}
+            "accepted_share": accepted, "accepted_exact95": exact_interval(counts["right"], labelled),
+            "waiting_for_blind_labels": document.get("waiting_for_blind_labels", 0), "bar": bar,
+            "fails": fabricated or short, "fails_because": [why for why, hit in (
+                (f"{counts['reason_fabricated']} fabricated (bar: at most {bar['max_fabricated']})", fabricated),
+                (f"accepted {accepted:.0%} (bar: at least {bar['min_accepted_share']:.0%})" if accepted is not None
+                 else "", short)) if hit]}
 
 
 def full_credit(grade, possible):
@@ -622,7 +673,8 @@ def report(results, labels=None):
         "grader_pass_rate": share(sum(r["judge_pass"] for r in scored), len(scored)),
         "calibration": calibrated, "points": point_error(scored, label_doc),
         "rationale": rationale_quality(load_jsonl(results / "rationale.jsonl")),
-        "reasons": reason_quality(results), "contest": contest_stability(results, label_doc),
+        "reasons": reason_quality(results, read_json(results / "scored.jsonl.manifest.json")["settings"]["reason_bar"]),
+        "contest": contest_stability(results, label_doc),
         "deterministic": {k: exact[k] for k in ("recorded", "mismatches")} | {"rows": len(exact["rows"])},
     }
     write_json(results / "summary.json", summary)
@@ -666,11 +718,13 @@ def markdown(summary):
                  f"{copies['of']}, marked down without a reason {rat['unexplained_markdowns']} (shown to the learner: "
                  f"{rat['shown_unexplained']}); {rat['rows_passing']} of {rat['rows']} rows pass every check.")
     if why and why["labelled"]:
-        counts = why["counts"]
-        lines.append(f"4. **Reasons a person accepts**: {counts['right']}/{why['labelled']} ({pct(why['accepted_share'])}) "
-                     f"of marked-down answers; {counts['verdict_right_reason_wrong']} verdict right but reason wrong, "
-                     f"{counts['reason_fabricated']} fabricated." + (" The grader fails this eval on its reasons."
-                                                                     if why["fails"] else ""))
+        counts, bar, interval = why["counts"], why["bar"], why["accepted_exact95"]
+        lines.append(f"4. **Reasons a person accepts**: {counts['right']}/{why['labelled']} ({pct(why['accepted_share'])}, "
+                     f"exact 95 % [{interval[0]:.1%}, {interval[1]:.1%}]) of marked-down answers; "
+                     f"{counts['verdict_right_reason_wrong']} verdict right but reason wrong, "
+                     f"{counts['reason_fabricated']} fabricated. Bar: at most {bar['max_fabricated']} fabricated, at "
+                     f"least {bar['min_accepted_share']:.0%} accepted: "
+                     + ("**fails** (" + "; ".join(why["fails_because"]) + ")." if why["fails"] else "meets it."))
     else:
         lines.append("4. **Reasons a person accepts**: not labelled yet (run `reasons` after the blind labels).")
     if contest["regrades"]:
@@ -707,6 +761,10 @@ def main(argv=None):
     run.add_argument("name")
     run.add_argument("grades", type=Path)
     run.add_argument("--out", type=Path, required=True)
+    run.add_argument("--max-fabricated", type=int, help=f"override the set's reason bar (default "
+                     f"{REASON_BAR['max_fabricated']}); recorded in the manifest")
+    run.add_argument("--min-accepted-share", type=float, help=f"override the set's reason bar (default "
+                     f"{REASON_BAR['min_accepted_share']}); recorded in the manifest")
     draw = sub.add_parser("label")
     draw.add_argument("results", type=Path)
     draw.add_argument("--seed", type=int, default=sps.DEFAULT_SEED)
@@ -728,7 +786,8 @@ def main(argv=None):
         if any(problems.values()):
             raise SystemExit(1)
     elif args.command == "score":
-        print(json.dumps(score(args.name, args.grades, args.out, args.registry)))
+        bar = {"max_fabricated": args.max_fabricated, "min_accepted_share": args.min_accepted_share}
+        print(json.dumps(score(args.name, args.grades, args.out, args.registry, bar)))
     elif args.command == "label":
         labels = label(args.results, args.seed)
         print(f"{len(labels['items'])} rows to label, about {labels['estimated_minutes']} minutes")

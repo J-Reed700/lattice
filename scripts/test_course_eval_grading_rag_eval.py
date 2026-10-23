@@ -3,9 +3,12 @@ rationale checks of section 4.3a, the blind labels, reasons, contest stability a
 fixture bank is biology, history and chemistry; no model is called."""
 import copy
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import course_eval_grading as g
 import course_eval_personas as personas
@@ -53,7 +56,8 @@ ROWS = [
                                                        "Km goes up but Vmax stays the same."}, MODEL),
     row("bio-partial", "bio.expl", "partial", {"text": "It binds the active site of the enzyme."}, MODEL),
     row("bio-wrong", "bio.expl", "wrong", {"text": "It destroys the enzyme so Vmax drops to zero."}, MODEL),
-    row("bio-empty", "bio.expl", "empty", {"text": ""}, MODEL),
+    row("bio-empty", "bio.expl", "empty", {"text": ""}, {"path": "deterministic", "points": 0.0}),
+    row("bio-terse", "bio.expl", "near_miss", {"text": "Km changes."}, MODEL),
     row("bio-copy", "bio.expl", "near_miss", {"text": "It binds the enzyme and Km rises."}, MODEL),
     row("bio-contest", "bio.expl", "contesting", {"text": "It blocks where the substrate goes, so you need more "
                                                           "substrate for half speed; top speed is the same."}, MODEL,
@@ -117,7 +121,7 @@ def grades_doc(rows_path, bank_path, extra=()):
     entries = [
         grade("bio-correct", 4, 4, GOOD_FULL), grade("bio-partial", 2, 4, PARTIAL),
         grade("bio-wrong", 0, 4, WRONG_SHOWN, raw=WRONG_RAW),
-        grade("bio-empty", None, 4, {}, status="couldnt_grade", error="the model didn't explain this grade"),
+        grade("bio-terse", None, 4, {}, status="couldnt_grade", error="the model didn't explain this grade"),
         grade("bio-copy", 2, 4, COPYING), grade("bio-contest", 2, 4, CONTEST),
         grade("chem-paraphrase", 1, 1, EQUIVALENT), grade("chem-contest", 0, 1, NOT_EQUIVALENT),
         grade("chem-variant", 1.0, 1, {}), grade("hist-tf-wrong", 0.0, 1, {}), grade("chem-ms-partial", 0.5, 1, {}),
@@ -168,7 +172,7 @@ class SetValidation(Fixture):
         def problems(rows=ROWS, bank=BANK):
             return "; ".join(g.set_problems(rows, bank))
         bad = copy.deepcopy(ROWS)
-        bad[9]["expected"]["points"] = 0.5
+        next(r for r in bad if r["id"] == "bio-sc-right")["expected"]["points"] = 0.5
         self.assertIn("bio-sc-right: expected", problems(bad))
         cases = [
             ({"persona": "angry"}, "persona must be one of"),
@@ -220,7 +224,8 @@ class Scoring(Fixture):
         self.assertEqual(sorted(scored), sorted(r["id"] for r in ROWS if r["expected"]["path"] == "model"))
         self.assertTrue(scored["bio-correct"]["judge_pass"])
         self.assertFalse(scored["bio-partial"]["judge_pass"])
-        self.assertEqual(scored["bio-empty"]["turn_scores"][0]["judge"],
+        self.assertNotIn("bio-empty", scored)  # an empty answer scores 0 in code, never at the model
+        self.assertEqual(scored["bio-terse"]["turn_scores"][0]["judge"],
                          {"pass": False, "reason": "couldn't grade: the model didn't explain this grade", "graded": False})
         self.assertEqual((scored["bio-partial"]["points_earned"], scored["bio-partial"]["points_possible"]), (2, 4.0))
         report = sps.compare([list(scored.values())], [list(scored.values())], kind="both")
@@ -309,7 +314,7 @@ class Labels(Fixture):
         out = self.scored()
         labels = g.label(out)
         self.assertEqual(labels["schema"], sps.LABELS_SCHEMA)
-        self.assertEqual(labels["frame"]["unanswered"]["population"], 1)  # bio-empty couldn't be graded
+        self.assertEqual(labels["frame"]["unanswered"]["population"], 1)  # bio-terse couldn't be graded
         self.assertEqual(len(labels["items"]), 7)
         first = labels["items"][0]
         self.assertEqual(set(first), {"query_id", "turns", "human_verdict", "human_note", "max_points", "human_points"})
@@ -355,10 +360,41 @@ class Labels(Fixture):
                                                   "items": list(redrawn.values())})
         quality = g.reason_quality(out)
         self.assertEqual((quality["labelled"], quality["accepted_share"], quality["fails"]), (3, 1 / 3, True))
+        self.assertEqual(quality["fails_because"], ["1 fabricated (bar: at most 0)", "accepted 33% (bar: at least 80%)"])
+        lenient = g.reason_quality(out, {"max_fabricated": 1, "min_accepted_share": 0.3})
+        self.assertEqual((lenient["fails"], lenient["fails_because"]), (False, []))
         redrawn["bio-wrong"]["human_reason"] = "wrong word"
         g.write_json(out / "reason-labels.json", {"items": list(redrawn.values())})
         with self.assertRaises(SystemExit):
             g.reason_quality(out)
+
+
+class ReasonBar(Fixture):
+    def test_the_bar_is_fixed_when_the_run_is_scored(self):
+        out = self.scored()
+        manifest = json.loads((out / "scored.jsonl.manifest.json").read_text())
+        self.assertEqual(manifest["settings"]["reason_bar"], g.REASON_BAR)
+        self.assertEqual(json.loads((out / "run.json").read_text())["reason_bar"], g.REASON_BAR)
+        strict = self.root / "results" / "strict"
+        g.score("test-v1", self.root / "grades.json", strict, self.registry, {"min_accepted_share": 0.9})
+        bar = json.loads((strict / "scored.jsonl.manifest.json").read_text())["settings"]["reason_bar"]
+        self.assertEqual(bar, {"max_fabricated": 0, "min_accepted_share": 0.9})
+        self.assertNotEqual(json.loads((strict / "scored.jsonl.manifest.json").read_text())["run_id"], manifest["run_id"])
+        with self.assertRaises(SystemExit):
+            g.score("test-v1", self.root / "grades.json", self.root / "bad", self.registry, {"min_accepted_share": 2})
+        self.assertEqual(g.reason_bar({"reason_bar": {"max_fabricated": 2}}), {"max_fabricated": 2,
+                                                                             "min_accepted_share": 0.8})
+        self.assertEqual(g.validate()["quiz-grading-v1"], [])
+        committed = g.load_registry()["sets"]["quiz-grading-v1"]
+        self.assertEqual(g.reason_bar(committed), g.REASON_BAR)
+
+    def test_exact_interval(self):
+        self.assertEqual(g.exact_interval(0, 0), None)
+        low, high = g.exact_interval(8, 10)
+        self.assertAlmostEqual(low, 0.4439, places=3)
+        self.assertAlmostEqual(high, 0.9748, places=3)
+        self.assertEqual(g.exact_interval(10, 10)[1], 1.0)
+        self.assertEqual(g.exact_interval(0, 10)[0], 0.0)
 
 
 class Contests(Fixture):
@@ -399,7 +435,7 @@ class Report(Fixture):
         self.assertIn("# Quiz grading: test-v1 (draft set: not frozen, not quotable)", page)
         self.assertIn("1. **Agreement with a person**: not labelled yet", page)
         self.assertIn("5. **Contest stability**: 1/5 regrades changed the verdict (20.0%, limit 10%): unstable", page)
-        self.assertIn("6. **Deterministic rows**: 3 of 7 graded by the app, 1 differ", page)
+        self.assertIn("6. **Deterministic rows**: 3 of 8 graded by the app, 1 differ", page)
 
     def test_labels_from_another_run_of_the_set(self):
         baseline = self.scored()

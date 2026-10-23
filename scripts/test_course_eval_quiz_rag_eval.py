@@ -1,6 +1,10 @@
 """Offline tests for the quiz items of the course eval: normalisation, the reference grader, format validity, the
 mechanical checks and the renderings. Fixtures span biology, history, chemistry and languages."""
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import course_eval_quiz as cq
 
@@ -55,7 +59,18 @@ class Normalisation(unittest.TestCase):
         self.assertFalse(cq.text_matches("2.06", [], SHORT["numeric"]))
         self.assertTrue(cq.text_matches("PH 2", SHORT["variants"]))
         self.assertTrue(cq.text_matches("Bibliotheque", WORD["variants"]))
-        self.assertFalse(cq.text_matches("", ["", "x"]))
+        self.assertFalse(cq.text_matches("", ["x"]))
+        # As the engine: any comma between digits is a separator, fractions count, spaces group thousands.
+        self.assertEqual(cq.normalise("3,5"), "35")
+        self.assertEqual(cq.parse_number("1/2"), 0.5)
+        self.assertEqual(cq.parse_number("1 200"), 1200.0)
+        self.assertIsNone(cq.parse_number("1/0"))
+        self.assertIsNone(cq.parse_number("inf"))
+        # A number is always decided in code: against the numeric key, else against the variants.
+        self.assertIs(cq.text_match("5", ["7", "seven"], {"value": 7, "tolerance": 0.5}), False)
+        self.assertIs(cq.text_match("7.0", ["7", "seven"]), True)
+        self.assertIs(cq.text_match("8", ["7", "seven"]), False)
+        self.assertIsNone(cq.text_match("seven-ish", ["7", "seven"]))
 
 
 class ReferenceGrader(unittest.TestCase):
@@ -77,7 +92,8 @@ class ReferenceGrader(unittest.TestCase):
     def test_short_answer_goes_to_the_model_only_on_a_non_empty_miss(self):
         self.assertEqual(cq.grade_keyed(SHORT, {"text": "2.0"})["path"], "deterministic")
         self.assertEqual(cq.grade_keyed(SHORT, {"text": "two units"})["path"], "model")
-        self.assertEqual(cq.grade_keyed(SHORT, {"text": "3"})["path"], "model")
+        self.assertEqual(cq.grade_keyed(SHORT, {"text": "3"}), {"path": "deterministic", "earned": 0.0, "possible": 1.0,
+                                                               "share": 0.0})  # a wrong number is wrong in code
         self.assertEqual(cq.grade_keyed(SHORT, {"text": "  "}), {"path": "deterministic", "earned": 0.0,
                                                                   "possible": 1.0, "share": 0.0})
 
@@ -93,6 +109,7 @@ class ReferenceGrader(unittest.TestCase):
     def test_explanations_are_model_graded_and_worth_their_rubric(self):
         self.assertEqual(cq.grade_keyed(EXPLAIN, {"text": "anything"}),
                          {"path": "model", "earned": None, "possible": 5.0, "share": None})
+        self.assertEqual(cq.grade_keyed(EXPLAIN, {"text": "  "})["path"], "deterministic")  # "No answer given"
 
 
 class FormatValidity(unittest.TestCase):
@@ -101,6 +118,12 @@ class FormatValidity(unittest.TestCase):
             self.assertEqual(cq.format_problems(item), [], item["id"])
         self.assertEqual({i["format"] for i in ALL}, set(cq.FORMATS))
 
+    def test_an_engine_rubric_with_descriptions_is_valid(self):
+        recorded = with_(EXPLAIN, rubric=[{"id": "c1", "title": "Binding site", "max_points": 2,
+                                           "description": "Names the active site"}])
+        self.assertEqual(cq.format_problems(recorded), [])
+        self.assertIn("- Binding site: Names the active site", cq.render_item(recorded, key=True))
+
     def test_each_format_rule(self):
         cases = [
             (with_(SINGLE, key=[1, 2]), "single choice needs exactly one key"),
@@ -108,19 +131,21 @@ class FormatValidity(unittest.TestCase):
             (with_(TRUE_FALSE, options=["Yes", "No"]), "true/false options must be exactly True, False"),
             (with_(MULTI, key=[0]), "multi-select needs 2-3 keys"),
             (with_(MULTI, options=["Neon", "Argon", "Helium"], key=[0, 1]), "multi-select needs 4-6 options"),
-            (with_(SHORT, variants=["2"]), "short answer needs 3-12 accepted variants"),
+            (with_(SHORT, variants=[]), "short answer needs 1-12 accepted variants"),
+            (with_(SINGLE, options=[f"o{n}" for n in range(9)]), "single choice needs 2-8 options"),
+            (with_(CLOZE, prompt="{{2}} then {{1}}"), "cloze blanks must be {{1}}..{{n}}, each once and in order, at most 8"),
             (with_(SHORT, numeric={"value": float("nan"), "tolerance": 0}),
              "numeric key needs a finite value and a tolerance >= 0"),
-            (with_(CLOZE, prompt="{{1}} and {{3}}"), "cloze blanks must be {{1}}..{{n}}, each once"),
+            (with_(CLOZE, prompt="{{1}} and {{3}}"), "cloze blanks must be {{1}}..{{n}}, each once and in order, at most 8"),
             (with_(CLOZE, blanks=[["soy"]]), "cloze needs one non-empty variant list per blank"),
             (with_(MATCHING, right=["1648", "1713", "1919", "1815", "1789"]),
              "matching's right side holds the pairs and at most one distractor"),
             (with_(MATCHING, key=[0, 0, 2]), "matching key repeats a right item"),
             (with_(ORDERING, values=["a", "A", "b"]), "ordering values must be distinct"),
-            (with_(ORDERING, values=["a", "b"]), "ordering needs 3 or more values"),
-            (with_(EXPLAIN, rubric=EXPLAIN["rubric"][:1]), "explanation needs 2-4 rubric criteria"),
+            (with_(ORDERING, values=["a", "b"]), "ordering needs 3-12 values"),
+            (with_(EXPLAIN, rubric=[]), "explanation needs 1-12 rubric criteria"),
             (with_(EXPLAIN, rubric=[EXPLAIN["rubric"][0], {**EXPLAIN["rubric"][1], "levels": {"strong": "x"}}]),
-             "criterion c2: needs incomplete, adequate and strong levels"),
+             "criterion c2: needs a description, or incomplete, adequate and strong levels"),
             (with_(SINGLE, prompt=" "), "empty prompt"),
             (with_(SINGLE, format="essay"), "unknown format 'essay'"),
         ]
@@ -129,21 +154,41 @@ class FormatValidity(unittest.TestCase):
 
 
 class MechanicalChecks(unittest.TestCase):
-    def test_leaks(self):
+    def test_leaks_are_the_key_in_the_stem(self):
         self.assertEqual(cq.leak_hits(SINGLE), [])
         leaked = with_(SINGLE, prompt="The mitochondrion makes ATP. Which organelle makes most of a cell's ATP?")
         self.assertEqual(cq.leak_hits(leaked), ["the stem contains the key 'Mitochondrion'"])
+        # A comparison question names the key beside another option; an option alone in the stem is fine.
+        self.assertEqual(cq.leak_hits(with_(SINGLE, prompt="Which makes ATP: the ribosome or the mitochondrion?")), [])
+        self.assertEqual(cq.leak_hits(with_(SINGLE, prompt="Is it the ribosome that makes most ATP?")), [])
         long_key = with_(SINGLE, options=["It binds the active site of the enzyme", "It denatures it", "It adds heat"],
                          key=[0], prompt="Why does it bind the active site of an enzyme so tightly?")
-        self.assertIn("4-word run", cq.leak_hits(long_key)[0])
-        named = with_(SINGLE, prompt="Is it the ribosome that makes ATP?")
-        self.assertEqual(cq.leak_hits(named), ["option A appears verbatim in the stem"])
+        self.assertEqual(cq.leak_hits(long_key), ["the stem contains the key 'It binds the active site of the enzyme'"])
         self.assertEqual(cq.leak_hits(with_(CLOZE, prompt="Soy means 'I am': {{1}} for a trait and {{2}} for a state.")),
                          ["the stem contains the key 'soy'"])
-        self.assertEqual(cq.leak_hits(with_(MATCHING, left=["Treaty of 1648", "Treaty of Utrecht", "Versailles"])),
-                         ["pair 1 names its match"])
-        self.assertEqual(cq.leak_hits(with_(SHORT, prompt="Is the pH of 0.01 M HCl equal to 2?")),
-                         ["the stem contains the key '2'"])
+        self.assertEqual(cq.leak_hits(with_(SHORT, prompt="Is the pH of 0.01 M HCl equal to pH 2?")),
+                         ["the stem contains the key 'pH 2'"])
+        self.assertEqual(cq.leak_hits(with_(SHORT, prompt="Is the pH of 0.01 M HCl 2?")), [])  # too short to check
+        self.assertEqual(cq.leak_hits(with_(MATCHING, left=["Treaty of 1648", "Treaty of Utrecht", "Versailles"])), [])
+        self.assertEqual(cq.leak_hits(with_(MULTI, prompt="Neon and which others are noble gases?")),
+                         ["the stem contains the key 'Neon'"])
+
+    def test_key_positions_flag_a_bank_keyed_at_one_place(self):
+        all_b = [with_(SINGLE, id=f"q{n}", key=[1]) for n in range(6)]
+        report = cq.key_positions(all_b)["choice"]
+        self.assertEqual(report["counts"], {"A": 0, "B": 6, "C": 0, "D": 0})
+        self.assertAlmostEqual(report["p_value"], 4 * 0.25 ** 6)
+        self.assertTrue(report["skewed"])
+        self.assertFalse(cq.bank_checks(all_b + [ORDERING])["passed"])
+        spread = [with_(SINGLE, id=f"q{n}", key=[n % 4]) for n in range(8)]
+        self.assertFalse(cq.key_positions(spread)["choice"]["skewed"])
+        self.assertFalse(cq.key_positions(all_b[:2])["choice"]["skewed"])  # two items cannot show a skew
+        self.assertEqual(cq.key_positions([MULTI])["choice"]["shapes"], [[5, 3]])
+        true_only = [with_(TRUE_FALSE, id=f"t{n}") for n in range(9)]
+        truth = cq.key_positions(true_only)["true_false"]
+        self.assertEqual((truth["true"], truth["false"], truth["skewed"]), (9, 0, True))
+        self.assertAlmostEqual(cq.upper_tail([0.5, 0.5], 1), 0.75)
+        self.assertIsNone(cq.key_positions([ORDERING])["choice"]["p_value"])
 
     def test_length_bias_needs_a_margin(self):
         self.assertEqual(cq.length_bias(SINGLE), (False, False))  # the longest option is a distractor

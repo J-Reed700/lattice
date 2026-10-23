@@ -433,12 +433,13 @@ def quiz_stage(source, rid, set_item, lesson_slot_row, document, request, metric
     origin, bank = load_bank(source, sel, document) if prepared else (None, None)
     items = list((bank or {}).get("items") or [])
     checks = cq.bank_checks(items, cq.lesson_plain(document), bank.get("sources"), bank.get("metrics")) if bank else None
+    stage = metrics.setdefault("lessons", {}).setdefault(sel, {}) if prepared else {}
     if prepared:
-        metrics.setdefault("lessons", {}).setdefault(sel, {})["quiz"] = (
-            {"origin": origin, **checks} if checks else {"origin": None, "items": 0, "passed": False})
+        stage["quiz"] = ({"origin": origin, **checks} if checks else
+                         {"origin": None, "items": 0, "passed": False, "error": stage.get("quiz_error")})
     slot_id = f"{rid}/{sel}/quiz"
     slot = {"slot": slot_id, "request": rid, "shape": set_item.get("shape"), "stage": "quiz", "lesson": sel,
-            "outcome": origin or ("no bank" if prepared else "no lesson"), "error": None,
+            "outcome": origin or ("no bank" if prepared else "no lesson"), "error": stage.get("quiz_error"),
             "mechanical_checks_passed": bool(checks and checks["passed"]), "resumed": False,
             "answer": lesson_slot_row["answer"] if items else None}
     ask = "\n".join([*request_lines(request)[:2], f"Lesson: requests/{rid}/lesson-{sel}.md (read it once)"])
@@ -892,6 +893,7 @@ def quiz_summary(slots, scored, quiz_metrics):
     banks, totals = [], {name: 0 for name in (*cq.GATING_CHECKS, "duplicate_items", "near_duplicate_items",
                                                "letter_references")}
     longest, anchors = {"items": 0, "of": 0, "chance_sum": 0.0}, {"items": 0, "of": 0}
+    shapes, counts, truth = [], {}, [0, 0]
     for slot in slots:
         own = quiz_metrics(slot)
         if not own.get("items"):
@@ -908,9 +910,16 @@ def quiz_summary(slots, scored, quiz_metrics):
         longest["chance_sum"] += (key.get("chance") or 0) * key.get("of", 0)
         anchors["items"] += own["anchored"]["items"]
         anchors["of"] += own["anchored"]["of"]
+        positions = own.get("key_positions") or {}
+        shapes += (positions.get("choice") or {}).get("shapes") or []
+        for letter, n in ((positions.get("choice") or {}).get("counts") or {}).items():
+            counts[letter] = counts.get(letter, 0) + n
+        truth[0] += (positions.get("true_false") or {}).get("true", 0)
+        truth[1] += (positions.get("true_false") or {}).get("false", 0)
         banks.append({"slot": slot["slot"], "origin": own.get("origin"), "items": own["items"],
                       "passed": own["passed"], "hits": hits, "format_mix": own.get("format_mix"),
-                      "key_longest": key, "anchored": own["anchored"], "harness": own.get("harness") or {}})
+                      "key_longest": key, "anchored": own["anchored"], "harness": own.get("harness") or {},
+                      "key_positions": positions})
     return {
         "items": {"passing": sum(bool(r["judge_pass"]) for r in scored), "total": len(scored),
                   "ungraded": sum(not all(t["judge"]["graded"] for t in r["turn_scores"]) for r in scored)},
@@ -919,6 +928,15 @@ def quiz_summary(slots, scored, quiz_metrics):
                         "share": longest["items"] / longest["of"] if longest["of"] else None,
                         "chance": longest["chance_sum"] / longest["of"] if longest["of"] else None},
         "anchored": anchors, "banks": banks,
+        # Pooled over every bank of the run: a shuffle that leans one way shows here before any one bank flags.
+        "key_positions": {"counts": counts, "p_value": cq.position_test(shapes, [counts.get(l, 0) for l in
+                                                                                 cq.LETTERS[:len(counts)]]),
+                          "true": truth[0], "false": truth[1],
+                          "true_false_p_value": cq.position_test([[2, 1]] * sum(truth), truth),
+                          "skewed_banks": sum(bool((b.get("key_positions") or {}).get("choice", {}).get("skewed")
+                                                   or (b.get("key_positions") or {}).get("true_false", {}).get("skewed"))
+                                              for b in banks if b["items"]),
+                          "alpha": cq.POSITION_ALPHA},
     }
 
 
@@ -1032,7 +1050,15 @@ def quiz_headline(quiz):
             f"duplicate options {hits['duplicate_options']}, key/explanation conflicts "
             f"{hits['key_explanation_conflict']}, invalid format {hits['format_invalid']}, unstated absolutes "
             f"{hits['absolute_unstated']}, duplicate items {hits['duplicate_items']}, near-duplicates "
-            f"{hits['near_duplicate_items']}; {longest}; anchored {share(quiz['anchored']['items'], quiz['anchored']['of'])}."]
+            f"{hits['near_duplicate_items']}; {longest}; anchored {share(quiz['anchored']['items'], quiz['anchored']['of'])}; "
+            f"{positions_line(quiz['key_positions'])}."]
+
+
+def positions_line(positions):
+    counts = ", ".join(f"{letter} {n}" for letter, n in positions["counts"].items())
+    pooled = f"pooled exact p {positions['p_value']:.3g}" if positions["p_value"] is not None else "no choice items"
+    return (f"key positions {counts or '—'} ({pooled}; True {positions['true']}, False {positions['false']}), "
+            f"{positions['skewed_banks']} banks skewed at p < {positions['alpha']}")
 
 
 def quiz_tables(quiz):
@@ -1042,12 +1068,12 @@ def quiz_tables(quiz):
     lines += [f"| {c} {TITLES.get(c, c)} | {e['passed']} | {e['graded']} | {e['total']} | {e['too_long']} |"
               for c, e in quiz["criteria"].items()]
     lines += ["", "## Quiz banks", "",
-              "| slot | origin | items | target | mechanical | gating hits | key longest | validated | key review "
-              "(agreed first, after repair, dropped) | calls | minutes |",
-              "|---|---|---:|---:|---|---:|---:|---:|---|---:|---:|"]
+              "| slot | origin | items | target | mechanical | gating hits | key longest | key positions | written of "
+              "authored | key review | calls | minutes |",
+              "|---|---|---:|---:|---|---:|---:|---|---:|---|---:|---:|"]
     for bank in quiz["banks"]:
         if not bank["items"]:
-            lines.append(f"| {bank['slot']} | {bank['origin'] or 'none'} | 0 | — | fail | — | — | — | — | — | — |")
+            lines.append(f"| {bank['slot']} | {bank['origin'] or 'none'} | 0 | — | fail | — | — | — | — | — | — | — |")
             continue
         harness, key = bank["harness"], bank["key_longest"]
         validated, review = harness.get("validated") or {}, harness.get("key_review") or {}
@@ -1056,12 +1082,19 @@ def quiz_tables(quiz):
         lines.append(
             f"| {bank['slot']} | {bank['origin']} | {bank['items']} | {number(harness.get('target'))} | "
             f"{'pass' if bank['passed'] else 'fail'} | {gating} | {key.get('items', 0)}/{key.get('of', 0)} | "
+            + bank_positions(bank.get("key_positions") or {}) + " | "
             + (f"{validated.get('passed')}/{validated.get('total')}" if validated else "—") + " | "
-            + (f"{review.get('agreed_first_pass')}, {review.get('agreed_after_repair')}, {review.get('dropped')}"
-               if review else "—")
+            + (", ".join(f"{k} {v}" for k, v in review.items()) if review else "—")
             + f" | {number(harness.get('calls'))} | "
             + (number(harness['seconds'] / 60) if harness.get("seconds") is not None else "—") + " |")
     return lines
+
+
+def bank_positions(positions):
+    choice = positions.get("choice") or {}
+    counts = " ".join(f"{letter}{n}" for letter, n in (choice.get("counts") or {}).items())
+    flag = " **skewed**" if choice.get("skewed") or (positions.get("true_false") or {}).get("skewed") else ""
+    return (counts or "—") + flag
 
 
 def markdown(summary, here):

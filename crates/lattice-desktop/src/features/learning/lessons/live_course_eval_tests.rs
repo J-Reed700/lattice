@@ -1,5 +1,10 @@
 use super::stages::{lesson_metrics, phase_metrics};
 use super::*;
+use crate::features::learning::assessment_engine::{
+    self as engine, KeyedOutcome, LearningAssessmentCandidate, LearningAssessmentKey,
+    LearningNumericKey, LearningTextKey,
+};
+use crate::features::learning::assessment_repository::StoredCandidate;
 
 fn recipe(server: Value, settings: Value) -> Result<CourseRecipe> {
     CourseRecipe::parse(
@@ -175,23 +180,20 @@ fn lesson_selectors_count_from_one() {
     assert!(CourseRecipe::parse(&bad_lessons.to_string()).is_err());
 }
 
-fn lesson(blocks: Value, questions: Value) -> LearningLessonDto {
+fn lesson(blocks: Value) -> LearningLessonDto {
     serde_json::from_value(json!({
         "id": "lesson-1", "title": "Reading plans", "objective": "Read a plan", "estimatedMinutes": 30,
-        "preparation": "ready", "blocks": blocks, "questions": questions, "completed": false,
+        "preparation": "ready", "blocks": blocks, "completed": false,
     }))
     .unwrap()
 }
 
 #[test]
 fn lesson_metrics_count_the_report_and_catch_what_its_gates_should_have() {
-    let lesson = lesson(
-        json!([
-            {"kind": "explanation", "title": "a", "body": "b", "sourceIds": ["s1", "s9"]},
-            {"kind": "worked_example", "title": "c", "body": "d", "sourceIds": ["s1"]},
-        ]),
-        json!([{"id": "q1", "kind": "quiz", "prompt": "p", "options": ["x", "y"], "sourceIds": ["s1"]}]),
-    );
+    let lesson = lesson(json!([
+        {"kind": "explanation", "title": "a", "body": "b", "sourceIds": ["s1", "s9"]},
+        {"kind": "worked_example", "title": "c", "body": "d", "sourceIds": ["s1"]},
+    ]));
     let passage = |text: &str| json!({"source_id": "s1", "text": text, "start_byte": 0, "end_byte": 1, "retrieval_kind": "lexical", "score": 1.0});
     let report = json!({
         "findings": [
@@ -223,7 +225,7 @@ fn lesson_metrics_count_the_report_and_catch_what_its_gates_should_have() {
     );
     assert_eq!(
         metrics["shape"],
-        json!({"blocks": 2, "kinds": ["explanation", "worked_example"], "questions": 1})
+        json!({"blocks": 2, "kinds": ["explanation", "worked_example"]})
     );
     let unreported = lesson_metrics(&lesson, None, &known);
     assert!(unreported["claims"].is_null() && unreported["examples"].is_null());
@@ -316,4 +318,167 @@ fn a_lesson_resumes_from_its_job() {
     for status in [Status::Failed, Status::Completed, Status::Cancelled] {
         assert_eq!(lesson_step(false, Some((status, None))), LessonStep::Record);
     }
+}
+
+// --- the quiz hooks ----------------------------------------------------------
+
+/// The grading set's deterministic rows are the engine's own arithmetic: the
+/// Python reference grader that wrote `expected` and `grade_keyed` agree on
+/// every row, and every model row is one the engine sends to a model.
+#[test]
+fn grading_set_rows_grade_as_the_engine_grades_them() {
+    let (rows, bank, _, _) = super::quiz::grading_set("quiz-grading-v1").unwrap();
+    let items: BTreeMap<String, Value> = bank["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| (item["id"].as_str().unwrap().to_owned(), item.clone()))
+        .collect();
+    for row in &rows {
+        let id = row["id"].as_str().unwrap();
+        let item = &items[row["item"].as_str().unwrap()];
+        let candidate = super::quiz::eval_candidate(item).unwrap();
+        let response = super::quiz::eval_response(&candidate.id, &row["response"]);
+        let written = candidate.format == LearningItemFormat::Explanation;
+        let outcome = (!written).then(|| engine::grade_keyed(&candidate, &response).unwrap());
+        match row["expected"]["path"].as_str() {
+            Some("deterministic") => {
+                let fraction = match outcome {
+                    None => {
+                        assert!(
+                            !response.is_answered(),
+                            "{id}: a written answer in code must be empty"
+                        );
+                        0.0
+                    }
+                    Some(KeyedOutcome::Graded(grade)) => grade.fraction,
+                    Some(KeyedOutcome::NeedsJudge) => {
+                        panic!("{id}: the engine sends it to the judge")
+                    }
+                };
+                let points = fraction * super::quiz::possible_points(&candidate, item);
+                let expected = row["expected"]["points"].as_f64().unwrap();
+                assert!(
+                    (points - expected).abs() < 1e-6,
+                    "{id}: engine {points}, set {expected}"
+                );
+            }
+            _ => match outcome {
+                None => assert!(
+                    response.is_answered(),
+                    "{id}: an empty written answer never reaches a model"
+                ),
+                Some(outcome) => assert_eq!(outcome, KeyedOutcome::NeedsJudge, "{id}"),
+            },
+        }
+    }
+}
+
+/// A bank item recorded by the quiz stage reads back as the same candidate.
+#[test]
+fn recorded_bank_items_keep_their_keys() {
+    let text = |variants: &[&str], numeric: Option<f64>| LearningTextKey {
+        variants: variants.iter().map(|v| v.to_string()).collect(),
+        numeric: numeric.map(|value| LearningNumericKey {
+            value,
+            tolerance: 0.5,
+            unit_variants: vec!["kg".into()],
+        }),
+    };
+    let base = LearningAssessmentCandidate {
+        id: "item-1".into(),
+        outcome_ids: vec!["outcome-1".into()],
+        format: LearningItemFormat::SingleChoice,
+        difficulty: 3,
+        prompt: "Which treaty ended the Thirty Years War?".into(),
+        options: vec!["Westphalia".into(), "Utrecht".into(), "Versailles".into()],
+        left: vec![],
+        source_version_ids: vec!["s1".into()],
+        rubric: vec![],
+        key: LearningAssessmentKey::Choice(0),
+        explanation: "Westphalia, 1648.".into(),
+        distractor_rationales: vec![String::new(), "1713".into(), "1919".into()],
+    };
+    let cases = vec![
+        base.clone(),
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::MultiSelect,
+            options: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            key: LearningAssessmentKey::Choices([1, 3].into_iter().collect()),
+            ..base.clone()
+        },
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::ShortAnswer,
+            options: vec![],
+            key: LearningAssessmentKey::Text(text(&["70", "seventy"], Some(70.0))),
+            ..base.clone()
+        },
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::Cloze,
+            prompt: "{{1}} then {{2}}".into(),
+            options: vec![],
+            key: LearningAssessmentKey::Cloze(vec![text(&["ser"], None), text(&["2"], Some(2.0))]),
+            ..base.clone()
+        },
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::Matching,
+            left: vec!["x".into(), "y".into(), "z".into()],
+            key: LearningAssessmentKey::Matching(vec![2, 0, 1]),
+            ..base.clone()
+        },
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::Ordering,
+            key: LearningAssessmentKey::Ordering(vec![
+                "Utrecht".into(),
+                "Westphalia".into(),
+                "Versailles".into(),
+            ]),
+            ..base.clone()
+        },
+        LearningAssessmentCandidate {
+            format: LearningItemFormat::Explanation,
+            options: vec![],
+            rubric: vec![engine::LearningRubricCriterion {
+                id: "c1".into(),
+                title: "Cause".into(),
+                description: "Names the war's end".into(),
+                max_points: 3,
+            }],
+            key: LearningAssessmentKey::Rubric,
+            ..base.clone()
+        },
+    ];
+    let mut sources = BTreeMap::new();
+    sources.insert(
+        "lesson:l1".to_owned(),
+        "The Peace of Westphalia, 1648, ended it.".to_owned(),
+    );
+    sources.insert("s1".to_owned(), "Utrecht came later.".to_owned());
+    for candidate in cases {
+        let stored = StoredCandidate {
+            candidate: candidate.clone(),
+            artifact_kind: None,
+            source_quote: "Westphalia, 1648".into(),
+        };
+        let item = super::quiz::eval_item(&stored, "bank", "l1", &sources);
+        assert_eq!(item["source_version_id"], "lesson:l1");
+        let back = super::quiz::eval_candidate(&item).unwrap();
+        assert_eq!(back.key, candidate.key, "{:?}", candidate.format);
+        assert_eq!(back.rubric, candidate.rubric);
+        if candidate.format == LearningItemFormat::Matching {
+            assert_eq!(
+                (back.left, back.options),
+                (candidate.left, candidate.options)
+            );
+        }
+    }
+    let unquoted = StoredCandidate {
+        candidate: base,
+        artifact_kind: None,
+        source_quote: "not in any source".into(),
+    };
+    assert_eq!(
+        super::quiz::eval_item(&unquoted, "lesson", "l1", &sources)["source_version_id"],
+        "s1"
+    );
 }

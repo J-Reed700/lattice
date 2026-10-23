@@ -39,43 +39,55 @@ RESPONSE_FIELD = {"single_choice": "selected_indices", "true_false": "selected_i
                   "multi_select": "selected_indices", "short_answer": "text", "explanation": "text",
                   "cloze": "blank_responses", "matching": "matches", "ordering": "ordered_values"}
 
-# Section 5.2's validation rules, as numbers the eval re-checks.
-LEAK_NGRAM = 4                  # a key sharing a word 4-gram with the stem gives it away
+# Section 5.2's validation rules, as numbers the eval re-checks; sizes are the engine's `validate_candidate`.
+LEAK_NGRAM = 4                  # a key of four or more words leaks on any shared run of four
+LEAK_MIN_CHARS = 3              # a key shorter than this ("B", "7") is not checked, as in the engine
 LENGTH_BIAS_SHARE = 0.6         # the key may not be the unique longest option by more than 60 % of the median
 NEAR_DUPLICATE_JACCARD = 0.8    # normalised stem token sets this similar are one item asked twice
 ABSOLUTES = ("always", "never")  # true/false absolutes the lesson must itself state
-SIZES = {"multi_select_options": (4, 6), "multi_select_keys": (2, 3), "short_answer_variants": (3, 12),
-         "matching_pairs": (3, 5), "ordering_values": (3, None), "rubric_criteria": (2, 4)}
+# The answer-position check: a bank whose keys sit at one position more often than a fair shuffle would put
+# them there, at this significance (exact, Bonferroni over positions). At 0.01 a fair shuffle false-flags at
+# most one bank in a hundred, so a seven-lesson run sees a false flag in under 7 % of runs.
+POSITION_ALPHA = 0.01
+SIZES = {"single_choice_options": (2, 8), "multi_select_options": (4, 6), "multi_select_keys": (2, 3),
+         "short_answer_variants": (1, 12), "cloze_blanks": (1, 8), "matching_pairs": (3, 5),
+         "ordering_values": (3, 12), "rubric_criteria": (1, 12)}
 LEVELS = ("incomplete", "adequate", "strong")
 
 # Checks that decide the quiz slot's mechanical pass. The rest are reported only.
 GATING_CHECKS = ("format_invalid", "leak", "length_bias", "duplicate_options", "key_explanation_conflict",
                  "absolute_unstated")
+# The bank-level gate beside them: the key-position skew of `key_positions`.
 
 
-# --- normalisation (section 3, short answer) ---------------------------------
-
-THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
-DECIMAL = re.compile(r"(?<=\d)\.(?=\d)")
-NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?")
-
+# --- normalisation (section 3, short answer), as the engine's `normalize_answer` and `parse_number` -------
 
 def fold(text):
-    """Case and diacritics folded, compatibility forms unified ("℃" is "°C")."""
+    """Diacritics removed (NFKD, combining marks dropped) and lowercased, as the engine's `folded`."""
     text = unicodedata.normalize("NFKD", str(text or ""))
-    return "".join(c for c in text if not unicodedata.combining(c)).casefold()
+    return "".join(c for c in text if not unicodedata.combining(c)).lower()
+
+
+def _between_digits(chars, index):
+    before = chars[index - 1] if index else ""
+    after = chars[index + 1] if index + 1 < len(chars) else ""
+    return before.isascii() and before.isdigit() and after.isascii() and after.isdigit()
 
 
 def normalise(text):
-    """The app's answer normalisation: trim, case, whitespace, punctuation, diacritics, a leading article and
-    thousands separators. A decimal point between digits is kept, so "3.5" stays a number."""
-    text = THOUSANDS.sub("", fold(text).replace("−", "-"))
-    text = DECIMAL.sub("\0", text)
-    text = "".join(" " if unicodedata.category(c)[0] in "PS" else c for c in text).replace("\0", ".")
-    words = text.split()
-    if len(words) > 1 and words[0] in ARTICLES:
-        words = words[1:]
-    return " ".join(words)
+    """The engine's answer normalisation: case, diacritics, punctuation, whitespace, a leading English article
+    and thousands separators (",", thin space, "_" between digits) do not matter; a decimal point between digits
+    is kept."""
+    chars, kept = list(fold(text)), []
+    for index, c in enumerate(chars):
+        digits = _between_digits(chars, index)
+        if c in (",", "\u2009", "_") and digits:
+            continue
+        kept.append("." if c == "." and digits else c if c.isalnum() else " ")
+    found = "".join(kept).split()
+    if len(found) > 1 and found[0] in ARTICLES:
+        found = found[1:]
+    return " ".join(found)
 
 
 def words(text):
@@ -93,23 +105,48 @@ def ngrams(tokens, n):
 
 
 def parse_number(text, unit_variants=()):
-    """A number in `text`, allowing one trailing unit from `unit_variants`; None when the text is not a number."""
-    text = THOUSANDS.sub("", fold(text).replace("−", "-")).strip()
-    for unit in sorted((fold(u).strip() for u in unit_variants or ()), key=len, reverse=True):
+    """The number a typed answer states, with one accepted unit removed (the first that matches, in the key's
+    order); a fraction "a/b" counts. None when the answer is not a number or carries a unit the key does not
+    accept."""
+    text = fold(text).strip().replace("\u2212", "-").replace("\u2013", "-")
+    for unit in (fold(u).strip() for u in unit_variants or ()):
         if unit and text.endswith(unit):
             text = text[:-len(unit)].strip()
             break
-    return float(text) if NUMBER.fullmatch(text) else None
+    chars = list(text)
+    cleaned = "".join(c for i, c in enumerate(chars)
+                      if not (c in (",", " ", "\u2009", "_") and _between_digits(chars, i))).strip().lstrip("+")
+    if not cleaned:
+        return None
+    try:
+        if "/" in cleaned:
+            numerator, denominator = (float(part.strip()) for part in cleaned.split("/", 1))
+            value = numerator / denominator if denominator else None
+        elif all((c.isascii() and c.isdigit()) or c in ".-e" for c in cleaned):
+            value = float(cleaned)
+        else:
+            return None
+    except ValueError:
+        return None
+    return value if value is not None and math.isfinite(value) else None
+
+
+def text_match(answer, variants, numeric=None):
+    """The engine's `text_matches`: True or False when code decides, None when only the model can. An answer that
+    parses as a number is always decided in code, against the numeric key within its absolute tolerance, or
+    else against the variants."""
+    given = parse_number(answer, (numeric or {}).get("unit_variants") or ())
+    if given is not None:
+        if numeric:
+            value = float(numeric["value"])
+            return abs(given - value) <= float(numeric.get("tolerance") or 0) + 1e-9 * max(abs(value), 1.0)
+        return any((parse_number(v) is not None and abs(parse_number(v) - given) <= 1e-9)
+                   or normalise(v) == normalise(answer) for v in variants or ())
+    return True if normalise(answer) in {normalise(v) for v in variants or ()} else None
 
 
 def text_matches(answer, variants, numeric=None):
-    """Whether a typed answer matches an accepted variant, or the numeric key within its tolerance."""
-    if numeric:
-        value = parse_number(answer, numeric.get("unit_variants") or ())
-        if value is not None and abs(value - float(numeric["value"])) <= float(numeric.get("tolerance") or 0):
-            return True
-    target = normalise(answer)
-    return bool(target) and target in {normalise(v) for v in variants or ()}
+    return text_match(answer, variants, numeric) is True
 
 
 # --- the reference grader (section 3) ------------------------------------------
@@ -135,6 +172,8 @@ def grade_keyed(item, response):
     key = item.get("key") or []
     model = {"path": "model", "earned": None, "possible": possible, "share": None}
     if fmt == "explanation":
+        if not str(response.get("text") or "").strip():
+            return {"path": "deterministic", "earned": 0.0, "possible": possible, "share": 0.0}
         return model
     if fmt in ("single_choice", "true_false"):
         share = float(sorted(response.get("selected_indices") or []) == sorted(key[:1]))
@@ -142,16 +181,16 @@ def grade_keyed(item, response):
         picked, wanted = set(response.get("selected_indices") or []), set(key)
         share = max(0, len(picked & wanted) - len(picked - wanted)) / len(wanted) if wanted else 0.0
     elif fmt == "short_answer":
-        text = response.get("text") or ""
-        if text_matches(text, item.get("variants"), item.get("numeric")):
-            share = 1.0
-        elif text.strip():
+        text = (response.get("text") or "").strip()
+        decided = text_match(text, item.get("variants"), item.get("numeric")) if text else False
+        if decided is None:
             return model
-        else:
-            share = 0.0
+        share = float(decided)
     elif fmt == "cloze":
         blanks, given = item.get("blanks") or [], response.get("blank_responses") or []
-        right = sum(i < len(given) and text_matches(given[i], variants) for i, variants in enumerate(blanks))
+        numeric = item.get("blank_numeric") or [None] * len(blanks)
+        right = sum(i < len(given) and bool(given[i].strip()) and text_matches(given[i].strip(), variants, numeric[i])
+                    for i, variants in enumerate(blanks))
         share = right / len(blanks) if blanks else 0.0
     elif fmt == "matching":
         given = response.get("matches") or []
@@ -198,7 +237,7 @@ def format_problems(item):
         if not _indices(key, len(options)) or len(set(key)) != len(key):
             return problems + ["key indices must be distinct and in range"]
     if fmt == "single_choice":
-        problems += [] if len(options) >= 2 else ["fewer than two options"]
+        problems += [] if _within(len(options), SIZES["single_choice_options"]) else ["single choice needs 2-8 options"]
         problems += [] if len(key) == 1 else ["single choice needs exactly one key"]
     elif fmt == "true_false":
         problems += [] if options == TRUE_FALSE else ["true/false options must be exactly True, False"]
@@ -209,7 +248,7 @@ def format_problems(item):
     elif fmt == "short_answer":
         variants, numeric = item.get("variants"), item.get("numeric")
         if not _strings(variants) or not _within(len(variants), SIZES["short_answer_variants"]):
-            problems.append("short answer needs 3-12 accepted variants")
+            problems.append("short answer needs 1-12 accepted variants")
         if numeric is not None:
             value, tolerance = numeric.get("value"), numeric.get("tolerance", 0)
             if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
@@ -220,8 +259,8 @@ def format_problems(item):
     elif fmt == "cloze":
         numbers = [int(n) for n in BLANK.findall(item.get("prompt") or "")]
         blanks = item.get("blanks")
-        if not numbers or sorted(numbers) != list(range(1, len(numbers) + 1)):
-            problems.append("cloze blanks must be {{1}}..{{n}}, each once")
+        if not numbers or numbers != list(range(1, len(numbers) + 1)) or len(numbers) > SIZES["cloze_blanks"][1]:
+            problems.append("cloze blanks must be {{1}}..{{n}}, each once and in order, at most 8")
         if not isinstance(blanks, list) or len(blanks) != len(numbers) or not all(_strings(b) and b for b in blanks):
             problems.append("cloze needs one non-empty variant list per blank")
     elif fmt == "matching":
@@ -239,63 +278,64 @@ def format_problems(item):
     elif fmt == "ordering":
         values = item.get("values")
         if not _strings(values) or not _within(len(values), SIZES["ordering_values"]):
-            problems.append("ordering needs 3 or more values")
+            problems.append("ordering needs 3-12 values")
         elif len({normalise(v) for v in values}) != len(values):
             problems.append("ordering values must be distinct")
     elif fmt == "explanation":
         rubric = item.get("rubric")
         if not isinstance(rubric, list) or not _within(len(rubric), SIZES["rubric_criteria"]):
-            return problems + ["explanation needs 2-4 rubric criteria"]
+            return problems + ["explanation needs 1-12 rubric criteria"]
         for criterion in rubric:
             points = criterion.get("max_points")
             if not criterion.get("id") or not str(criterion.get("title", "")).strip():
                 problems.append("a rubric criterion needs an id and a title")
-            if isinstance(points, bool) or not isinstance(points, (int, float)) or not points > 0:
-                problems.append(f"criterion {criterion.get('id')}: max_points must be > 0")
+            if isinstance(points, bool) or not isinstance(points, (int, float)) or not 0 < points <= 100:
+                problems.append(f"criterion {criterion.get('id')}: max_points must be 1-100")
             levels = criterion.get("levels") or {}
-            if not all(str(levels.get(level, "")).strip() for level in LEVELS):
-                problems.append(f"criterion {criterion.get('id')}: needs incomplete, adequate and strong levels")
+            if not str(criterion.get("description") or "").strip() and not all(
+                    str(levels.get(level, "")).strip() for level in LEVELS):
+                problems.append(f"criterion {criterion.get('id')}: needs a description, or incomplete, adequate "
+                                f"and strong levels")
     return problems
 
 
 # --- mechanical item checks (sections 5.2 and 7.1) ------------------------------
 
-def key_texts(item):
-    """The texts a leak would give away: key options, accepted variants, blank answers, matched rights."""
-    fmt, key = item.get("format"), item.get("key") or []
-    if fmt in ("single_choice", "multi_select"):
-        return [item["options"][i] for i in key if i < len(item.get("options") or [])]
-    if fmt == "short_answer":
-        numeric = item.get("numeric")
-        return list(item.get("variants") or []) + ([f"{float(numeric['value']):g}"] if numeric else [])
-    if fmt == "cloze":
-        return [v for blank in item.get("blanks") or [] for v in blank]
-    return []
+def key_leaks(stem, key_text, other_options=()):
+    """The engine's leak check: the key's own text in the stem, as whole words. A key of four or more words
+    leaks on any shared run of four; a shorter key leaks only when it is the one option the stem names, since a
+    comparison question names several; a key under LEAK_MIN_CHARS characters is not checked."""
+    stem, key = normalise(stem), normalise(key_text)
+    if len(key) < LEAK_MIN_CHARS:
+        return False
+    tokens = key.split()
+    if len(tokens) >= LEAK_NGRAM:
+        return any(f" {' '.join(gram)} " in f" {stem} " for gram in
+                   (tokens[i:i + LEAK_NGRAM] for i in range(len(tokens) - LEAK_NGRAM + 1)))
+    others = (normalise(o) for o in other_options)
+    return f" {key} " in f" {stem} " and not any(len(o) >= LEAK_MIN_CHARS and f" {o} " in f" {stem} " for o in others)
 
 
 def leak_hits(item):
-    """Ways the stem gives the answer away (section 5.2's leak check)."""
-    fmt, stem, hits = item.get("format"), item.get("prompt") or "", []
-    if fmt == "cloze":
-        stem = BLANK.sub(" ", stem)
-    if fmt == "matching":
-        left, right, key = item.get("left") or [], item.get("right") or [], item.get("key") or []
-        hits += [f"pair {i + 1} names its match" for i, r in enumerate(key)
-                 if i < len(left) and r < len(right) and contains_words(left[i], right[r])]
-        return hits
-    stem_words, seen = words(stem), set()
-    for text in key_texts(item):
-        if normalise(text) in seen:
-            continue
-        seen.add(normalise(text))
-        key_words = words(text)
-        if contains_words(stem, text):
-            hits.append(f"the stem contains the key {text!r}")
-        elif len(key_words) >= LEAK_NGRAM and ngrams(key_words, LEAK_NGRAM) & ngrams(stem_words, LEAK_NGRAM):
-            hits.append(f"the stem shares a {LEAK_NGRAM}-word run with the key {text!r}")
+    """Keys or accepted variants found verbatim in the stem (section 7.1's leak rule). Other options in the stem
+    are fine: comparison questions name them."""
+    fmt, stem, key = item.get("format"), item.get("prompt") or "", item.get("key") or []
     if fmt in ("single_choice", "multi_select"):
-        hits += [f"option {LETTERS[i]} appears verbatim in the stem" for i, option in enumerate(item["options"])
-                 if i not in (item.get("key") or []) and contains_words(stem, option)]
+        options = item.get("options") or []
+        others = [o for i, o in enumerate(options) if i not in key]
+        texts = [(options[i], others) for i in key if i < len(options)]
+    elif fmt == "short_answer":
+        texts = [(v, ()) for v in item.get("variants") or []]
+    elif fmt == "cloze":
+        stem = BLANK.sub(" ", stem)
+        texts = [(v, ()) for blank in item.get("blanks") or [] for v in blank]
+    else:
+        texts = []
+    hits, seen = [], set()
+    for text, others in texts:
+        if normalise(text) not in seen and key_leaks(stem, text, others):
+            hits.append(f"the stem contains the key {text!r}")
+        seen.add(normalise(text))
     return hits
 
 
@@ -418,6 +458,43 @@ def item_checks(item, lesson_text=None, sources=None):
             "gating_failures": [f"{name}: {p}" for name in GATING_CHECKS for p in checks[name]]}
 
 
+def upper_tail(probabilities, observed):
+    """P(X >= observed) for a sum of independent Bernoulli(p) draws (exact, by convolution)."""
+    distribution = [1.0]
+    for p in probabilities:
+        distribution = [a * (1 - p) + b * p for a, b in zip(distribution + [0.0], [0.0] + distribution)]
+    return min(1.0, sum(distribution[observed:]))
+
+
+def position_test(shapes, counts):
+    """Bonferroni-corrected exact p-value that some position holds more keys than a fair shuffle gives:
+    `shapes` is one (option count, key count) per item, `counts` the keys found at each position."""
+    if not shapes:
+        return None
+    positions = max(n for n, _ in shapes)
+    tails = [upper_tail([k / n if j < n else 0.0 for n, k in shapes], counts[j]) for j in range(positions)]
+    return min(1.0, positions * min(tails))
+
+
+def key_positions(items):
+    """Where the keys sit. The authoring path shuffles options, so in a bank of any size each position should
+    hold about its share; a bank keyed mostly at one position (six questions all keyed B) is flagged. True/false
+    is tested apart, on True against False."""
+    choice = [i for i in items if i.get("format") in ("single_choice", "multi_select") and not format_problems(i)]
+    shapes = [[len(i["options"]), len(i["key"])] for i in choice]
+    width = max((n for n, _ in shapes), default=0)
+    counts = [sum(j in i["key"] for i in choice) for j in range(width)]
+    p_choice = position_test(shapes, counts)
+    truth = [i["key"][0] for i in items if i.get("format") == "true_false" and not format_problems(i)]
+    tf_counts = [truth.count(0), truth.count(1)]
+    p_truth = position_test([[2, 1]] * len(truth), tf_counts)
+    return {"choice": {"items": len(choice), "counts": dict(zip(LETTERS, counts)), "shapes": shapes,
+                       "p_value": p_choice, "skewed": p_choice is not None and p_choice < POSITION_ALPHA},
+            "true_false": {"items": len(truth), "true": tf_counts[0], "false": tf_counts[1], "p_value": p_truth,
+                           "skewed": p_truth is not None and p_truth < POSITION_ALPHA},
+            "alpha": POSITION_ALPHA}
+
+
 def bank_checks(items, lesson_text=None, sources=None, metrics=None):
     """The bank's mechanical report for metrics.json: per-check hits, duplicate and near-duplicate items, the
     format mix, the key-longest share against chance, anchors, and whether the bank passes the gating checks.
@@ -452,10 +529,13 @@ def bank_checks(items, lesson_text=None, sources=None, metrics=None):
         "letter_references": sorted(i for i, r in per_item.items() if r["letter_refs"]),
         "anchored": {"items": sum(r["anchored"] for r in per_item.values()), "of": len(items)},
         "quotes_verbatim": {"verbatim": sum(verbatim), "checked": len(verbatim)},
+        "key_positions": key_positions(items),
         "harness": metrics or None,
         "problems": {i: r["gating_failures"] for i, r in per_item.items() if r["gating_failures"]},
     }
-    report["passed"] = bool(items) and not any(hits.values()) and not duplicates and not near
+    skew = report["key_positions"]
+    report["passed"] = (bool(items) and not any(hits.values()) and not duplicates and not near
+                        and not skew["choice"]["skewed"] and not skew["true_false"]["skewed"])
     return report
 
 
@@ -516,7 +596,8 @@ def render_item(item, key=False):
         lines += ["Rubric levels:"]
         for c in item.get("rubric") or []:
             levels = c.get("levels") or {}
-            lines += [f"- {c.get('title', '')}: " + "; ".join(f"{level}: {levels.get(level, '')}" for level in LEVELS)]
+            described = "; ".join(f"{level}: {levels[level]}" for level in LEVELS if levels.get(level))
+            lines += [f"- {c.get('title', '')}: {described or c.get('description', '')}"]
         lines += ["Key points:", *[f"- {p}" for p in item.get("key_points") or []]]
     else:
         lines.append(f"Key: {key_text(item)}")

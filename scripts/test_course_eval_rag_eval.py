@@ -1,7 +1,10 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import course_eval as ce
 import course_eval_quiz as cq
@@ -506,6 +509,10 @@ class QuizStage(unittest.TestCase):
         self.assertIn("5. **Quizzes**: 1/5 items pass every judged criterion", page)
         self.assertIn("| Q3 Plausible distractors | 0 | 2 | 2 | 0 |", page)
         self.assertIn("| pg/m1.l1/quiz | bank | 5 | 6 | fail |", page)
+        positions = summary["quiz"]["key_positions"]
+        self.assertEqual((positions["counts"], positions["true"], positions["skewed_banks"]),
+                         ({"A": 0, "B": 1, "C": 0}, 1, 0))
+        self.assertIn("key positions A 0, B 1, C 0 (pooled exact p 1;", page)
 
 
 if __name__ == "__main__":
