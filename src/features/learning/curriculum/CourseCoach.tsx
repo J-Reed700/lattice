@@ -1,15 +1,15 @@
 import { ArrowRight, Info } from 'lucide-react';
 
 
-import { useLearningAssessmentWorkspace } from '@/features/learning/assessment/useLearningAssessment';
 import { nextCourseStep, type CourseStep } from '@/features/learning/curriculum/courseProgress';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { useLearningPracticeWorkspace } from '@/features/learning/practice/useLearningPractice';
+import { useQuizOverview } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningProgramDto } from '@/lib/bindings';
 
 export function CourseCoach({ program, dueCount, disabled, onStep }: { program: LearningProgramDto; dueCount: number; disabled: boolean; onStep: (step: CourseStep) => void }) {
   const practice = useLearningPracticeWorkspace(program.summary.id);
-  const assessment = useLearningAssessmentWorkspace(program.summary.id);
+  const assessment = useQuizOverview(program.summary.id);
   const plan = useLearningPlan(program.summary.id);
   const step = nextCourseStep(program, practice.data, assessment.data, plan.data, dueCount);
   const learning = practice.isLoading || assessment.isLoading || plan.isLoading;

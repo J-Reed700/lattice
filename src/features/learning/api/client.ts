@@ -267,11 +267,6 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
     learningCall('complete_learning_lesson', { request }),
 
-  submitLearningAttempt: (
-    request: Wire.SubmitLearningAttemptRequestDto,
-  ): Promise<ApiResult<Wire.LearningProgramDto>> =>
-    learningCall('submit_learning_attempt', { request }),
-
   deleteLearningProgram: (id: string): Promise<ApiResult<void>> =>
     learningCall('delete_learning_program', { id }),
 
@@ -443,29 +438,6 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningPracticeWorkspaceDto>> =>
     learningCall('reject_learning_practice_proposal', { request }),
 
-  getLearningAssessmentWorkspace: (
-    id: string,
-  ): Promise<ApiResult<Wire.LearningAssessmentWorkspaceDto>> =>
-    learningCall<Wire.LearningAssessmentWorkspaceDto>(
-      'get_learning_assessment_workspace',
-      { id },
-    ),
-
-  createLearningAssessmentBlueprint: (
-    request: Wire.CreateLearningAssessmentBlueprintRequestDto,
-  ): Promise<ApiResult<Wire.LearningAssessmentWorkspaceDto>> =>
-    learningCall<Wire.LearningAssessmentWorkspaceDto>(
-      'create_learning_assessment_blueprint',
-      { request },
-    ),
-
-  startLearningAssessmentForm: (
-    request: Wire.StartLearningAssessmentFormRequestDto,
-  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('start_learning_assessment_form', {
-      request,
-    }),
-
   getLearningAssessmentForm: (
     id: string,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
@@ -496,19 +468,62 @@ export const learningApi = {
       request,
     }),
 
+  // Follow-up decisions answer with the course's evidence; the Quizzes
+  // overview is read again afterwards, so the shape is not relied on here.
   acceptLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
-  ): Promise<ApiResult<Wire.LearningAssessmentWorkspaceDto>> =>
-    learningCall<Wire.LearningAssessmentWorkspaceDto>('accept_learning_follow_up', {
-      request,
-    }),
+  ): Promise<ApiResult<unknown>> =>
+    learningCall<unknown>('accept_learning_follow_up', { request }),
 
   dismissLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
-  ): Promise<ApiResult<Wire.LearningAssessmentWorkspaceDto>> =>
-    learningCall<Wire.LearningAssessmentWorkspaceDto>('dismiss_learning_follow_up', {
-      request,
-    }),
+  ): Promise<ApiResult<unknown>> =>
+    learningCall<unknown>('dismiss_learning_follow_up', { request }),
+
+  getLearningQuizOverview: (
+    programId: string,
+  ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
+    learningCall<Wire.LearningQuizOverviewDto>('get_learning_quiz_overview', { programId }),
+
+  updateLearningQuizSettings: (
+    request: Wire.UpdateLearningQuizSettingsRequestDto,
+  ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
+    learningCall<Wire.LearningQuizOverviewDto>('update_learning_quiz_settings', { request }),
+
+  prepareLearningQuizBank: (
+    request: Wire.PrepareLearningQuizBankRequestDto,
+  ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
+    learningCall<Wire.LearningGenerationJob>('prepare_learning_quiz_bank', { request }),
+
+  startLearningQuiz: (
+    request: Wire.StartLearningQuizRequestDto,
+  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
+    learningCall<Wire.LearningAssessmentFormDto>('start_learning_quiz', { request }),
+
+  resumeLearningQuizGrading: (
+    request: Wire.ResumeLearningQuizGradingRequestDto,
+  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
+    learningCall<Wire.LearningAssessmentFormDto>('resume_learning_quiz_grading', { request }),
+
+  contestLearningQuizGrade: (
+    request: Wire.ContestLearningQuizGradeRequestDto,
+  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
+    learningCall<Wire.LearningAssessmentFormDto>('contest_learning_quiz_grade', { request }),
+
+  overrideLearningQuizGrade: (
+    request: Wire.OverrideLearningQuizGradeRequestDto,
+  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
+    learningCall<Wire.LearningAssessmentFormDto>('override_learning_quiz_grade', { request }),
+
+  reportLearningQuizItem: (
+    request: Wire.ReportLearningQuizItemRequestDto,
+  ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
+    learningCall<Wire.LearningAssessmentFormDto>('report_learning_quiz_item', { request }),
+
+  addLearningQuizMissesToRecall: (
+    request: Wire.AddLearningQuizMissesToRecallRequestDto,
+  ): Promise<ApiResult<Wire.LearningQuizMissesToRecallDto>> =>
+    learningCall<Wire.LearningQuizMissesToRecallDto>('add_learning_quiz_misses_to_recall', { request }),
 
   getLearningPracticalWorkspace: (
     programId: string,
