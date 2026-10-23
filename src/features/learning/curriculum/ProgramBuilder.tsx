@@ -3,8 +3,10 @@ import { type FormEvent, useState } from 'react';
 import { ArrowRight, BookOpen, Check, Clock3, Layers3, Link2, Sparkles } from 'lucide-react';
 
 import { OutlineGenerationProgress } from '@/features/learning/curriculum/OutlineGenerationProgress';
+import { programBuilderDraftKeys } from '@/features/learning/curriculum/programBuilderDraft';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import type { GenerateLearningProgramRequestDto, LearningCourseDepth, LearningOutlineProgressDto } from '@/lib/bindings';
+import { useDraft } from '@/shared/drafts/drafts';
 
 
 const depths: { id: LearningCourseDepth; title: string; modules: string; lessons: string; description: string }[] = [
@@ -17,11 +19,12 @@ export function ProgramBuilder({ pending, error, onGenerate, onCancel, progress,
   progress?: LearningOutlineProgressDto | null; onStop?: () => void; onOpenDraft?: () => void; cancelling?: boolean; cancelError?: string;
   pending: boolean; error?: string; onGenerate: (request: GenerateLearningProgramRequestDto) => void; onCancel: () => void;
 }) {
-  const [goal, setGoal] = useState('');
-  const [prior, setPrior] = useState('');
+  // The text survives leaving the builder; it clears once a course is made from it.
+  const [goal, setGoal] = useDraft(programBuilderDraftKeys.goal);
+  const [prior, setPrior] = useDraft(programBuilderDraftKeys.prior);
   const [minutes, setMinutes] = useState(30);
   const [depth, setDepth] = useState<LearningCourseDepth>('course');
-  const [urls, setUrls] = useState('');
+  const [urls, setUrls] = useDraft(programBuilderDraftKeys.urls);
   const [documents, setDocuments] = useState<LearningDocumentSelection[]>([]);
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [formError, setFormError] = useState('');

@@ -7,6 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 
 import { type FormSnapshot } from '@/features/learning/assessment/AssessmentPanel';
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
+import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { ExportAllCourses } from '@/features/learning/portability/ExportAllCourses';
@@ -192,7 +193,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
   };
   const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request, {
-    onSuccess: (program) => { setSelectedId(program.summary.id); setScreen('programs'); },
+    onSuccess: (program) => { clearProgramBuilderDraft(); setSelectedId(program.summary.id); setScreen('programs'); },
   });
 
   const handleSelectDestination = (next: StudyDestination) => {
