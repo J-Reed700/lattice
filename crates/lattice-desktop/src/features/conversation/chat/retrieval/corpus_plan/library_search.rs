@@ -1,5 +1,5 @@
-//! Searching the library with a plan: the fused first-pass search, evidence
-//! expansion around its hits, and fusing a corrective pass into the first.
+//! Searching the library with a plan: the fused first-pass search, section
+//! context appended after its hits, and fusing a corrective pass into the first.
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -304,59 +304,34 @@ fn scoped_query(question: &str, queries: &[String], chosen_titles: &[&str]) -> O
     Some(terms.join(" "))
 }
 
-/// Read the best anchors' neighbours in with them, inside `limit` passages.
+/// Cut the results to the `limit` hits, then append every hit's unseen section
+/// neighbours after all of them as context.
 ///
-/// `limit` is the evidence budget counted in passages, so it alone decides
-/// how many anchors get their context: walking in rank order, each anchor's
-/// neighbours displace the weakest hits at the tail, and the walk ends at the
-/// first anchor with no room left after it.
-pub(in super::super) async fn expand_evidence(
+/// The hits are the evidence, in rank order, and nothing is placed among them.
+/// Context follows hit by hit in rank order, each neighbourhood in the order
+/// the section reads. How much of it reaches the prompt is the evidence
+/// budget's call: it walks hits before context and keeps what fits, so a
+/// neighbour only ever uses room no hit could, and is never fetched in place
+/// of one.
+pub(in super::super) async fn append_context(
     repository: &dyn ChatRecords,
     results: &mut Vec<SearchResultDto>,
     allowed: &HashSet<String>,
     limit: usize,
 ) -> Result<()> {
     results.truncate(limit);
-    let anchors: Vec<_> = results.iter().map(|r| r.id.clone()).collect();
-    for anchor in anchors {
-        // Anchors keep their order, so none below this one has room either.
-        let room = results
-            .iter()
-            .position(|r| r.id == anchor)
-            .is_some_and(|at| at + 1 < limit);
-        if !room {
-            break;
+    let hits: Vec<_> = results.iter().map(|r| r.id.clone()).collect();
+    // A neighbour that is itself a hit keeps its rank; one shared by two hits
+    // follows the first.
+    let mut present: HashSet<_> = hits.iter().cloned().collect();
+    for hit in &hits {
+        for passage in repository.retrieval_neighbors(hit, allowed).await? {
+            if present.insert(passage.id.clone()) {
+                results.push(passage_result(passage, "section_neighbor"));
+            }
         }
-        let neighbors = repository.retrieval_neighbors(&anchor, allowed).await?;
-        place_after_anchor(results, &anchor, neighbors, limit);
     }
     Ok(())
-}
-
-/// Insert `anchor`'s neighbours that are not already evidence directly after
-/// it, in the order given, cutting the list back to `limit` as they go in.
-///
-/// A neighbour belongs with its anchor: the prompt's budget fills in this
-/// order, so the anchor and its context are kept or cut together.
-fn place_after_anchor(
-    results: &mut Vec<SearchResultDto>,
-    anchor: &str,
-    neighbors: Vec<CorpusPassage>,
-    limit: usize,
-) {
-    let Some(mut at) = results.iter().position(|r| r.id == anchor) else {
-        return;
-    };
-    for passage in neighbors {
-        if at + 1 >= limit {
-            return;
-        }
-        if results.iter().all(|r| r.id != passage.id) {
-            at += 1;
-            results.insert(at, passage_result(passage, "section_neighbor"));
-            results.truncate(limit);
-        }
-    }
 }
 
 /// Union two retrieval passes by chunk id and re-rank them by RRF over both.
@@ -388,82 +363,151 @@ pub(in super::super) fn fuse_passes(
 mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
 
-    fn passage(id: &str, section: &str, chunk_index: usize) -> CorpusPassage {
-        CorpusPassage {
-            id: id.into(),
-            document_id: "leitfaden".into(),
-            name: "Leitfaden Zellbiologie".into(),
-            path: "leitfaden.md".into(),
-            content: format!("{id}: Während der Mitose teilt sich der Zellkern."),
-            chunk_index,
-            section: Some(section.into()),
-            page_number: None,
-            from_ocr: false,
-        }
-    }
+    /// One chunk of a fixture library: id, document, chunk index, section, text.
+    type Chunk = (
+        &'static str,
+        &'static str,
+        i64,
+        Option<&'static str>,
+        &'static str,
+    );
 
-    fn anchors() -> Vec<SearchResultDto> {
-        ["a1", "a2", "a3"]
-            .iter()
-            .enumerate()
-            .map(|(index, id)| {
-                passage_result(passage(id, "Leitfaden > Zellteilung", index * 10), "hybrid")
-            })
-            .collect()
-    }
+    /// A cell-biology handbook: eight consecutive chunks of one section,
+    /// `m1`..`m8`, and three glossary chunks with no section, `t1`..`t3`,
+    /// which have no neighbours.
+    const MITOSE: &[Chunk] = &[
+        (
+            "m1",
+            "leitfaden",
+            1,
+            Some("Zellteilung > Mitose"),
+            "Interphase",
+        ),
+        (
+            "m2",
+            "leitfaden",
+            2,
+            Some("Zellteilung > Mitose"),
+            "Prophase",
+        ),
+        (
+            "m3",
+            "leitfaden",
+            3,
+            Some("Zellteilung > Mitose"),
+            "Prometaphase",
+        ),
+        (
+            "m4",
+            "leitfaden",
+            4,
+            Some("Zellteilung > Mitose"),
+            "Metaphase",
+        ),
+        (
+            "m5",
+            "leitfaden",
+            5,
+            Some("Zellteilung > Mitose"),
+            "Anaphase",
+        ),
+        (
+            "m6",
+            "leitfaden",
+            6,
+            Some("Zellteilung > Mitose"),
+            "Telophase",
+        ),
+        (
+            "m7",
+            "leitfaden",
+            7,
+            Some("Zellteilung > Mitose"),
+            "Zytokinese",
+        ),
+        (
+            "m8",
+            "leitfaden",
+            8,
+            Some("Zellteilung > Mitose"),
+            "Tochterzellen",
+        ),
+        ("t1", "leitfaden", 101, None, "Glossar A"),
+        ("t2", "leitfaden", 102, None, "Glossar B"),
+        ("t3", "leitfaden", 103, None, "Glossar C"),
+    ];
 
-    fn neighbors(anchor: &str) -> Vec<CorpusPassage> {
-        let ids: &[&str] = match anchor {
-            "a1" => &["n1a", "n1b"],
-            "a2" => &["n2a", "a1"],
-            "a3" => &["n3a"],
-            _ => &[],
-        };
-        ids.iter()
-            .map(|id| passage(id, "Leitfaden > Zellteilung > Mitose", 1))
-            .collect()
-    }
+    /// A parish chronicle: 1911 in six chunks, its harvest subsection in two
+    /// more, then the first chunk of 1912.
+    const CRONICA: &[Chunk] = &[
+        (
+            "c1",
+            "cronica",
+            1,
+            Some("Crónica parroquial > 1911"),
+            "Enero: se bendice la campana nueva.",
+        ),
+        (
+            "c2",
+            "cronica",
+            2,
+            Some("Crónica parroquial > 1911"),
+            "Febrero: el párroco visita las aldeas.",
+        ),
+        (
+            "c3",
+            "cronica",
+            3,
+            Some("Crónica parroquial > 1911"),
+            "Marzo: misiones de Cuaresma.",
+        ),
+        (
+            "c4",
+            "cronica",
+            4,
+            Some("Crónica parroquial > 1911"),
+            "Abril: procesión bajo la lluvia.",
+        ),
+        (
+            "c5",
+            "cronica",
+            5,
+            Some("Crónica parroquial > 1911"),
+            "Mayo: se reparan las tejas del pórtico.",
+        ),
+        (
+            "c6",
+            "cronica",
+            6,
+            Some("Crónica parroquial > 1911"),
+            "Junio: las cuentas de la cosecha, como se detalla a continuación.",
+        ),
+        (
+            "c7",
+            "cronica",
+            7,
+            Some("Crónica parroquial > 1911 > Cosecha"),
+            "La vendimia empieza tarde por las lluvias.",
+        ),
+        (
+            "c8",
+            "cronica",
+            8,
+            Some("Crónica parroquial > 1911 > Cosecha"),
+            "Se recogen doscientas cargas de uva.",
+        ),
+        (
+            "c9",
+            "cronica",
+            9,
+            Some("Crónica parroquial > 1912"),
+            "Enero de 1912: gran nevada.",
+        ),
+    ];
 
-    /// The anchors in rank order, each placing its neighbours.
-    fn expanded(limit: usize) -> Vec<String> {
-        let mut results = anchors();
-        for anchor in ["a1", "a2", "a3"] {
-            place_after_anchor(&mut results, anchor, neighbors(anchor), limit);
-        }
-        results.into_iter().map(|r| r.id).collect()
-    }
-
-    #[test]
-    fn neighbours_follow_their_own_anchor_and_push_out_the_tail() {
-        assert_eq!(
-            expanded(usize::MAX),
-            ["a1", "n1a", "n1b", "a2", "n2a", "a3", "n3a"]
-        );
-        // Exactly `limit`, and the weakest anchors make the room.
-        assert_eq!(expanded(5), ["a1", "n1a", "n1b", "a2", "n2a"]);
-        assert_eq!(expanded(3), ["a1", "n1a", "n1b"]);
-    }
-
-    #[test]
-    fn a_neighbour_keeps_its_own_section() {
-        let mut results = anchors();
-        place_after_anchor(&mut results, "a3", neighbors("a3"), usize::MAX);
-
-        let neighbour = results.last().expect("neighbour");
-        assert_eq!(
-            neighbour.metadata.get("section"),
-            Some(&serde_json::json!("Leitfaden > Zellteilung > Mitose"))
-        );
-        assert_eq!(
-            neighbour.metadata.get("retrievalMethod"),
-            Some(&serde_json::json!("section_neighbor"))
-        );
-    }
-
-    /// Eight consecutive chunks of one section, `m1`..`m8`, and three
-    /// chunks with no section, `t1`..`t3`, which have no neighbours.
-    async fn mitose() -> ConversationRepository {
+    async fn library(chunks: &[Chunk]) -> ConversationRepository {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -471,96 +515,155 @@ mod tests {
             .unwrap();
         sqlx::raw_sql(
             "CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT);
-            CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
-            INSERT INTO documents VALUES ('leitfaden','Leitfaden Zellbiologie','leitfaden.md');
-            INSERT INTO text_chunks(id, document_id, content, chunk_index, section) VALUES
-            ('m1','leitfaden','Interphase',1,'Zellteilung > Mitose'),
-            ('m2','leitfaden','Prophase',2,'Zellteilung > Mitose'),
-            ('m3','leitfaden','Prometaphase',3,'Zellteilung > Mitose'),
-            ('m4','leitfaden','Metaphase',4,'Zellteilung > Mitose'),
-            ('m5','leitfaden','Anaphase',5,'Zellteilung > Mitose'),
-            ('m6','leitfaden','Telophase',6,'Zellteilung > Mitose'),
-            ('m7','leitfaden','Zytokinese',7,'Zellteilung > Mitose'),
-            ('m8','leitfaden','Tochterzellen',8,'Zellteilung > Mitose'),
-            ('t1','leitfaden','Glossar A',101,NULL),
-            ('t2','leitfaden','Glossar B',102,NULL),
-            ('t3','leitfaden','Glossar C',103,NULL);",
+            CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);",
         )
         .execute(&pool)
         .await
         .unwrap();
+        let documents: HashSet<_> = chunks.iter().map(|chunk| chunk.1).collect();
+        for document in documents {
+            sqlx::query("INSERT INTO documents VALUES (?, ?, ?)")
+                .bind(document)
+                .bind(document)
+                .bind(format!("{document}.md"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for &(id, document, chunk_index, section, content) in chunks {
+            sqlx::query(
+                "INSERT INTO text_chunks(id, document_id, content, chunk_index, section) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(document)
+            .bind(content)
+            .bind(chunk_index)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
         ConversationRepository::new(pool)
     }
 
-    /// `ranked` as `expand_evidence` leaves it for `limit` passages.
-    async fn expand(
+    /// `hits` in the order search ranked them, as `append_context` leaves them
+    /// for `limit` hits.
+    async fn appended(
         repository: &ConversationRepository,
-        ranked: &[&str],
+        chunks: &[Chunk],
+        hits: &[&str],
         limit: usize,
-    ) -> Vec<String> {
-        let mut results: Vec<_> = ranked
+    ) -> Vec<SearchResultDto> {
+        let mut results: Vec<_> = hits
             .iter()
-            .map(|id| passage_result(passage(id, "Zellteilung > Mitose", 0), "hybrid"))
+            .map(|hit| {
+                let &(id, document, chunk_index, section, content) = chunks
+                    .iter()
+                    .find(|chunk| chunk.0 == *hit)
+                    .expect("fixture chunk");
+                let passage = CorpusPassage {
+                    id: id.into(),
+                    document_id: document.into(),
+                    name: document.into(),
+                    path: format!("{document}.md"),
+                    content: content.into(),
+                    chunk_index: chunk_index as usize,
+                    section: section.map(Into::into),
+                    page_number: None,
+                    from_ocr: false,
+                };
+                passage_result(passage, "hybrid")
+            })
             .collect();
-        let allowed = HashSet::from(["leitfaden".to_string()]);
-        expand_evidence(repository, &mut results, &allowed, limit)
+        let allowed = chunks.iter().map(|chunk| chunk.1.to_string()).collect();
+        append_context(repository, &mut results, &allowed, limit)
             .await
-            .expect("neighbours");
-        results.into_iter().map(|r| r.id).collect()
+            .expect("context");
+        results
+    }
+
+    fn ids(results: &[SearchResultDto]) -> Vec<&str> {
+        results.iter().map(|r| r.id.as_str()).collect()
     }
 
     #[tokio::test]
-    async fn neighbours_of_the_best_anchor_displace_the_weakest_hits() {
-        let repository = mitose().await;
-        // m2's context takes two slots and m6's the last one; the tail makes room.
-        assert_eq!(
-            expand(&repository, &["m2", "m6", "t1", "t2", "t3"], 5).await,
-            ["m2", "m1", "m3", "m6", "m5"]
-        );
+    async fn context_follows_every_hit_in_rank_order() {
+        let repository = library(MITOSE).await;
+        let results = appended(&repository, MITOSE, &["m2", "m6", "t1"], 10).await;
+        // The hits as ranked, then m2's neighbourhood, then m6's.
+        assert_eq!(ids(&results), ["m2", "m6", "t1", "m1", "m3", "m5", "m7"]);
     }
 
     #[tokio::test]
-    async fn no_anchor_without_room_after_it_reads_its_neighbours() {
-        let repository = mitose().await;
-        // m2's context pushes m6 past the limit, so m6 brings none.
-        assert_eq!(
-            expand(&repository, &["m2", "m6", "t1"], 3).await,
-            ["m2", "m1", "m3"]
-        );
-        // m6 holds the last slot, with nowhere to put its context.
-        assert_eq!(
-            expand(&repository, &["t1", "t2", "m6"], 3).await,
-            ["t1", "t2", "m6"]
-        );
+    async fn a_hit_that_is_also_a_neighbour_keeps_its_rank_once() {
+        let repository = library(MITOSE).await;
+        let results = appended(&repository, MITOSE, &["m3", "m2"], 10).await;
+        assert_eq!(ids(&results), ["m3", "m2", "m4", "m1"]);
     }
 
     #[tokio::test]
-    async fn a_neighbour_already_in_the_evidence_is_not_repeated() {
-        let repository = mitose().await;
-        // m3 is m2's neighbour and a hit of its own: it keeps its place, once.
-        assert_eq!(
-            expand(&repository, &["m2", "m3", "t1"], 10).await,
-            ["m2", "m1", "m3", "m4", "t1"]
-        );
-        // A hit pushed past the limit is no longer evidence, so it can come
-        // back as a better anchor's context.
-        assert_eq!(
-            expand(&repository, &["m2", "m5", "t1", "m6"], 6).await,
-            ["m2", "m1", "m3", "m5", "m4", "m6"]
-        );
+    async fn hits_past_the_limit_are_cut_before_context_is_read() {
+        let repository = library(MITOSE).await;
+        // m8 is not evidence, so its neighbourhood is not read either.
+        let results = appended(&repository, MITOSE, &["m1", "m5", "m8"], 2).await;
+        assert_eq!(ids(&results), ["m1", "m5", "m2", "m4", "m6"]);
     }
 
     #[tokio::test]
-    async fn the_evidence_never_exceeds_the_limit() {
-        let repository = mitose().await;
-        let ranked = ["m2", "m6", "t1", "m4", "t2", "m8", "t3"];
-        // From nothing to more room than the fixture has passages.
-        for limit in 0..=12 {
-            let evidence = expand(&repository, &ranked, limit).await;
-            assert!(evidence.len() <= limit, "{limit}: {evidence:?}");
-            let distinct: HashSet<_> = evidence.iter().collect();
-            assert_eq!(distinct.len(), evidence.len(), "{limit}: {evidence:?}");
+    async fn a_subsection_is_its_sections_context() {
+        let repository = library(CRONICA).await;
+        let results = appended(&repository, CRONICA, &["c6"], 1).await;
+        assert_eq!(ids(&results), ["c6", "c5", "c7"]);
+        // The neighbour keeps its own heading, so the prompt names the
+        // subsection it comes from.
+        assert_eq!(
+            results[2].metadata.get("section"),
+            Some(&serde_json::json!("Crónica parroquial > 1911 > Cosecha"))
+        );
+        assert_eq!(
+            results[2].metadata.get("retrievalMethod"),
+            Some(&serde_json::json!("section_neighbor"))
+        );
+        // The next year is another section, not the harvest's continuation.
+        let results = appended(&repository, CRONICA, &["c8"], 1).await;
+        assert_eq!(ids(&results), ["c8", "c7"]);
+    }
+
+    #[tokio::test]
+    async fn context_never_takes_a_hits_room() {
+        let repository = library(MITOSE).await;
+        let results = appended(&repository, MITOSE, &["m2", "m6", "t1"], 10).await;
+        let chars = |r: &SearchResultDto| r.content.chars().count();
+        let carried = |budget: usize| -> Vec<String> {
+            EvidenceBudget::new(budget)
+                .select(&results, chars)
+                .into_iter()
+                .map(|r| r.id.clone())
+                .collect()
+        };
+        let hits: usize = results[..3].iter().map(chars).sum();
+
+        assert_eq!(carried(hits), ["m2", "m6", "t1"]);
+        assert_eq!(carried(hits + chars(&results[3])), ["m2", "m6", "t1", "m1"]);
+        // t1 does not fit what m2 and m6 leave. That room goes to context
+        // short enough for it, behind the hits, as it would to a shorter hit.
+        assert_eq!(carried(hits - 1), ["m2", "m6", "m5"]);
+        // At every budget the hits carried are the ones the hits alone carry.
+        for budget in 0..=results.iter().map(chars).sum::<usize>() {
+            let alone: Vec<_> = EvidenceBudget::new(budget)
+                .select(&results[..3], chars)
+                .into_iter()
+                .map(|r| r.id.clone())
+                .collect();
+            assert_eq!(carried(budget)[..alone.len()], alone[..], "{budget}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_chunk_without_a_section_has_no_context() {
+        let repository = library(MITOSE).await;
+        let results = appended(&repository, MITOSE, &["t2"], 10).await;
+        assert_eq!(ids(&results), ["t2"]);
     }
 
     /// A scoped query whose planner query only repeats the title, so what

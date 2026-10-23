@@ -23,7 +23,12 @@
 //! USearch HNSW index, an in-memory SQLite FTS5 table, and `HybridSearchUseCase` — the one
 //! orchestrator chat, the tool executor and the search page run — with its reciprocal-rank
 //! fusion (k = 10), chat's cross-encoder stage when a reranker is given, and the chat feature's
-//! neighbouring-section evidence expansion.
+//! section-neighbour context. The prompt carries passages by budget, not by count, so the
+//! harness derives a budget the way the app derives its hit count, inverted: `top_k` passages of
+//! the fixture's mean length. The `top_k` hits keep their ranks, and each hit's unseen neighbours
+//! follow them only as far as the room the hits leave. `chunk_ranked_ids` lists the hits, then
+//! the carried context, so passage recall at `top_k` measures the hits and at twice `top_k` what
+//! the prompt would see; each row also records `budget_chars` and `carried_neighbors`.
 //!
 //! `--fts-header` and `--fts-header-weight` choose where the chunk's context prefix sits in the
 //! lexical index and how `bm25()` weighs it; `concat` reproduces the index before the header had
@@ -556,6 +561,7 @@ async fn run_production(
     let compression_token = compression
         .layout_token()
         .unwrap_or_else(|| "none".to_owned());
+    let budget_chars = args.top_k * index.mean_chunk_chars().await?;
     for query in &dataset.queries {
         let start = Instant::now();
         let production::Ranking {
@@ -563,12 +569,12 @@ async fn run_production(
             sufficiency,
             reranked,
         } = index.rank(&query.text).await?;
-        // Fused (and, when enabled, reranked) ordering before section neighbours join the
-        // evidence set. Neighbours are context placed after their anchors inside `top_k`,
-        // never first-stage ranking evidence.
+        // Fused (and, when enabled, reranked) ordering before section neighbours are carried.
+        // Neighbours are context after all the hits, inside the room they leave, never
+        // first-stage ranking evidence.
         let (first_stage_ids, _) =
             documents_in_order(chunks.iter().map(|c| (c.document_id.as_str(), c.score)));
-        index.expand(&mut chunks, args.top_k).await?;
+        let carried_neighbors = index.carry_context(&mut chunks, budget_chars).await?;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         // Branch diagnostics run outside the timed region so latency stays comparable
@@ -586,6 +592,8 @@ async fn run_production(
             "first_stage_ranked_ids": first_stage_ids,
             "chunk_ranked_ids": chunks.iter().map(production::RankedChunk::locator).collect::<Vec<_>>(),
             "chunk_spans": index.spans_for(&chunks),
+            "budget_chars": budget_chars,
+            "carried_neighbors": carried_neighbors,
             "branch_ranked_ids": branches,
             "top_score": top_score,
             "score_spread": score_spread,
