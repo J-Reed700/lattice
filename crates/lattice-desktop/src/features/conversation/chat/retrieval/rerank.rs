@@ -74,7 +74,7 @@ fn restore_leading_structural_results(
     leading
 }
 
-fn is_structural_result(result: &SearchResultDto) -> bool {
+pub(super) fn is_structural_result(result: &SearchResultDto) -> bool {
     matches!(
         result
             .metadata
@@ -205,6 +205,95 @@ mod tests {
         assert!(restored.results[..2]
             .iter()
             .all(|result| result.score < 0.85));
+    }
+
+    /// Ordered reading leads the pool with at most `share` openings, the
+    /// planner's half of the even split. Only that leading run is pinned:
+    /// every result behind it, an opening among them, keeps the
+    /// cross-encoder's order.
+    #[test]
+    fn only_the_leading_openings_stay_pinned_ahead_of_the_reranked_results() {
+        let cases: [(&[&str], &[&str], &str); 2] = [
+            (
+                &[
+                    "有機化学ノート 第1章",
+                    "有機化学ノート 第2章",
+                    "有機化学ノート 第3章",
+                ],
+                &[
+                    "酸化と還元",
+                    "電気陰性度",
+                    "共有結合",
+                    "イオン結合",
+                    "水素結合",
+                ],
+                "無機化学ノート 第1章",
+            ),
+            (
+                &[
+                    "Requiem programme notes: Introitus",
+                    "Requiem programme notes: Kyrie",
+                    "Requiem programme notes: Sequentia",
+                ],
+                &[
+                    "Lacrimosa",
+                    "Süssmayr's completion",
+                    "Dies irae",
+                    "Tuba mirum",
+                    "Rex tremendae",
+                ],
+                "Requiem programme notes: Offertorium",
+            ),
+        ];
+
+        for (openings, searches, late_opening) in cases {
+            let method = |id: &str| {
+                (openings.contains(&id) || id == late_opening).then_some("document_opening")
+            };
+            let pool = |ids: &[&str]| {
+                response(
+                    ids.iter()
+                        .enumerate()
+                        .map(|(rank, id)| result(id, 1.0 / (rank as f32 + 1.0), method(id)))
+                        .collect(),
+                )
+            };
+            let original: Vec<&str> = openings
+                .iter()
+                .chain(searches)
+                .copied()
+                .chain([late_opening])
+                .collect();
+            let share = original.len().div_ceil(2);
+            let leading = original.iter().take_while(|id| method(id).is_some());
+            assert!(leading.count() <= share);
+
+            // The cross-encoder reverses the search results, ranks the late
+            // opening second and the leading openings last.
+            let reversed: Vec<&str> = searches.iter().rev().copied().collect();
+            let (best, others) = reversed.split_first().unwrap();
+            let ranked: Vec<&str> = [*best, late_opening]
+                .into_iter()
+                .chain(others.iter().copied())
+                .collect();
+            let reranked: Vec<&str> = ranked
+                .iter()
+                .copied()
+                .chain(openings.iter().rev().copied())
+                .collect();
+
+            let (restored, applied) = finalize_rerank(
+                pool(&original),
+                Reranked {
+                    response: pool(&reranked),
+                    applied: true,
+                },
+            );
+
+            assert!(applied);
+            let expected: Vec<&str> = openings.iter().copied().chain(ranked).collect();
+            assert_eq!(ids(&restored.results), expected);
+        }
     }
 
     #[test]

@@ -59,13 +59,10 @@ pub(in super::super) async fn retrieve(
         .filter(|id| scope.document_ids.contains(*id))
         .cloned()
         .collect();
-    let search_ids = if plan.start_at_beginning && !reading_ids.is_empty() {
-        &reading_ids
-    } else {
-        &scope.document_ids
-    };
     // Independent lexical and vector branches: a query/model failure cannot
-    // silently discard successful retrieval from the other branch.
+    // silently discard successful retrieval from the other branch. Every query
+    // searches the whole space, whatever the plan reads in order: these are the
+    // only route to a document the planner did not choose.
     for query in &plan.queries {
         // The allow-list is the space plus this chat's attachments; see
         // `fused_search`.
@@ -73,7 +70,7 @@ pub(in super::super) async fn retrieve(
             .search_branches(
                 query,
                 None,
-                Some(search_ids),
+                Some(&scope.document_ids),
                 limit,
                 lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
                 lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
@@ -83,13 +80,14 @@ pub(in super::super) async fn retrieve(
         branches.extend(query_branches.branches);
     }
 
-    // A focused question about documents the planner named: one more search
-    // inside just those documents, for what the question asks of them. Their
-    // titles already put them on the shortlist, so title words would only
-    // rank the passages that repeat the name; the rest of the question is what
-    // finds the passage that answers it.
+    // The documents the planner named: one more search inside just those, for
+    // what the question asks of them, whether or not the plan also reads them
+    // from the start. Their titles already put them on the shortlist, so title
+    // words would only rank the passages that repeat the name; the rest of the
+    // question and the planner's rewrites are what find the passage that
+    // answers it.
     let mut scoped = Vec::new();
-    if !plan.start_at_beginning && !reading_ids.is_empty() {
+    if !reading_ids.is_empty() {
         let chosen_titles: Vec<&str> = catalog
             .iter()
             .filter(|document| reading_ids.contains(&document.id))
@@ -118,69 +116,55 @@ pub(in super::super) async fn retrieve(
     // Keep exact references from the user's request even if a planner rewrite
     // omits them. Rewrites can add follow-up references but cannot replace these.
     let identifiers = section_identifiers(&format!("{} {}", question, plan.queries.join(" ")));
-
-    if !plan.start_at_beginning {
-        if !identifiers.is_empty() {
-            results.extend(
-                repository
-                    .retrieval_section_passages(&identifiers, &scope.document_ids)
-                    .await?
-                    .into_iter()
-                    .map(|p| passage_result(p, "section_lookup")),
-            );
-        }
-        if !opening_ids.is_empty() && results.len() < limit {
-            // Each chosen document's opening, and only that: reading further
-            // into it is ordered reading, which is the other branch.
-            let openings = repository
-                .retrieval_openings(opening_ids, &scope.document_ids, 1)
-                .await?;
-            let remaining = limit.saturating_sub(results.len());
-            append_openings(&mut results, openings, opening_ids, remaining);
-        }
-        // The named documents and the whole space split the pool evenly:
-        // neither has a prior claim on what answers the question.
-        let share = limit.div_ceil(2);
-        let mut seen_ids: HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
+    // The named documents and the whole space split the pool evenly: neither
+    // has a prior claim on what answers the question. The named half holds the
+    // exact section references, then the openings, then the scoped search; the
+    // whole-space fusion follows it.
+    let share = limit.div_ceil(2);
+    if !identifiers.is_empty() {
         results.extend(
-            scoped
+            repository
+                .retrieval_section_passages(&identifiers, &scope.document_ids)
+                .await?
                 .into_iter()
-                .filter(|r| seen_ids.insert(r.id.clone()))
-                .take(share),
+                .map(|p| passage_result(p, "section_lookup")),
         );
-    } else {
-        if !opening_ids.is_empty() && results.len() < limit {
-            let openings = repository
-                .retrieval_openings(opening_ids, &scope.document_ids, limit)
-                .await?;
-            // `limit` is the reading depth for each selected document here,
-            // not a cap shared across all of them. Round-robin order lets the
-            // later evidence budget cut the tail fairly between documents.
-            append_openings(&mut results, openings, opening_ids, usize::MAX);
-        }
-        if !identifiers.is_empty() {
-            results.extend(
-                repository
-                    .retrieval_section_passages(&identifiers, &scope.document_ids)
-                    .await?
-                    .into_iter()
-                    .map(|p| passage_result(p, "section_lookup")),
-            );
-        }
     }
+    if !reading_ids.is_empty() && results.len() < share {
+        // Reading in order is one source, never the whole pool: a plan that
+        // starts at the beginning reads each named document to an even part of
+        // the half, any other plan reads each opening only. Round-robin order
+        // lets the later evidence budget cut the tail fairly between documents.
+        let depth = if plan.start_at_beginning {
+            share.div_ceil(reading_ids.len())
+        } else {
+            1
+        };
+        let openings = repository
+            .retrieval_openings(opening_ids, &scope.document_ids, depth)
+            .await?;
+        let remaining = share.saturating_sub(results.len());
+        append_openings(&mut results, openings, opening_ids, remaining);
+    }
+    let mut seen_ids = HashSet::new();
+    results.retain(|result| seen_ids.insert(result.id.clone()));
+    let remaining = share.saturating_sub(results.len());
+    results.extend(
+        scoped
+            .into_iter()
+            .filter(|r| seen_ids.insert(r.id.clone()))
+            .take(remaining),
+    );
     if successful_branches == 0 && results.is_empty() {
         return Err(AppError::ServiceNotAvailable(
             "Document search failed in both vector and keyword retrieval".into(),
         ));
     }
-    let mut seen = HashSet::new();
-    results.retain(|result| seen.insert(result.id.clone()));
-    let existing_ids: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
     results.extend(
         hybrid
             .fuse(branches, limit, Spread::AcrossDocuments)
             .into_iter()
-            .filter(|r| !existing_ids.contains(&r.id)),
+            .filter(|r| seen_ids.insert(r.id.clone())),
     );
 
     // Opening evidence is bounded separately; it must not be thrown away by
@@ -290,26 +274,29 @@ pub(super) fn section_identifiers(question: &str) -> Vec<String> {
         .collect()
 }
 
-/// What a focused question asks of the documents the planner chose: its
-/// informative terms, in its own order, without the words of those documents'
-/// titles. `None` only when there is nothing to search with at all; a question
-/// made of nothing but the titles searches with the planner's first query.
+/// What a focused question asks of the documents the planner chose: the
+/// informative terms of the question and then of the planner's queries, in
+/// that order, without the words of those documents' titles. The queries
+/// carry the paraphrase the user's own words may lack. `None` only when there
+/// is nothing to search with at all; when nothing but title words remains,
+/// the planner's first query is searched as it is.
 fn scoped_query(question: &str, queries: &[String], chosen_titles: &[&str]) -> Option<String> {
     let title_terms: HashSet<String> = chosen_titles
         .iter()
         .flat_map(|title| tokenize_keyword_terms(title))
         .collect();
-    let remaining: Vec<String> = tokenize_keyword_terms(question)
-        .into_iter()
-        .filter(|term| !title_terms.contains(term))
+    let mut seen = HashSet::new();
+    let remaining: Vec<String> = std::iter::once(question)
+        .chain(queries.iter().map(String::as_str))
+        .flat_map(tokenize_keyword_terms)
+        .filter(|term| !title_terms.contains(term) && seen.insert(term.clone()))
         .collect();
     let informative: HashSet<String> = select_informative_terms(remaining.clone(), MAX_QUERY_WORDS)
         .into_iter()
         .collect();
-    let mut seen = HashSet::new();
     let terms: Vec<String> = remaining
         .into_iter()
-        .filter(|term| informative.contains(term) && seen.insert(term.clone()))
+        .filter(|term| informative.contains(term))
         .collect();
     if terms.is_empty() {
         return queries.first().cloned();
@@ -466,8 +453,10 @@ mod tests {
         );
     }
 
+    /// A scoped query whose planner query only repeats the title, so what
+    /// remains is the question's own.
     fn query(question: &str, title: &str) -> String {
-        scoped_query(question, &["planner query".to_string()], &[title]).expect("query")
+        scoped_query(question, &[title.to_string()], &[title]).expect("query")
     }
 
     #[test]
@@ -506,15 +495,282 @@ mod tests {
     #[test]
     fn a_question_made_only_of_the_title_searches_with_the_planners_query() {
         assert_eq!(
-            query(
+            scoped_query(
                 "Mozart Requiem programme notes?",
-                "Mozart Requiem programme notes"
+                &["Mozart Requiem".to_string()],
+                &["Mozart Requiem programme notes"]
             ),
-            "planner query"
+            Some("Mozart Requiem".to_string())
         );
         assert_eq!(
             scoped_query("Leitfaden Zellbiologie", &[], &["Leitfaden Zellbiologie"]),
             None
         );
+    }
+
+    /// The terms of the scoped query for `question`, a planner `rewrite` and
+    /// the chosen document's `title`.
+    fn scoped_terms(question: &str, rewrite: &str, title: &str) -> Vec<String> {
+        query_terms(&scoped_query(question, &[rewrite.to_string()], &[title]).expect("query"))
+    }
+
+    fn query_terms(query: &str) -> Vec<String> {
+        query.split(' ').map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_scoped_query_adds_the_planners_rewrite_without_the_title() {
+        let transcript = scoped_terms(
+            "In the release call transcript, what do we roll back to if the deploy fails?",
+            "release rollback strategy previous build",
+            "Release call transcript",
+        );
+        assert!(
+            transcript.contains(&"rollback".to_string()),
+            "{transcript:?}"
+        );
+        for title_word in ["release", "call", "transcript"] {
+            assert!(
+                !transcript.contains(&title_word.to_string()),
+                "{transcript:?}"
+            );
+        }
+
+        let minutes = scoped_terms(
+            "Im Protokoll der Quartalsbesprechung: worauf setzen wir zurück?",
+            "Rollback-Ziel Version",
+            "Protokoll der Quartalsbesprechung",
+        );
+        assert!(minutes.contains(&"rollback".to_string()), "{minutes:?}");
+        for title_word in ["protokoll", "quartalsbesprechung"] {
+            assert!(!minutes.contains(&title_word.to_string()), "{minutes:?}");
+        }
+
+        let music = scoped_terms(
+            "In the Mozart Requiem programme notes, what key is the Lacrimosa in?",
+            "Lacrimosa key signature D minor",
+            "Mozart Requiem programme notes",
+        );
+        for term in ["lacrimosa", "signature", "minor"] {
+            assert!(music.contains(&term.to_string()), "{music:?}");
+        }
+        for title_word in ["requiem", "notes"] {
+            assert!(!music.contains(&title_word.to_string()), "{music:?}");
+        }
+    }
+
+    /// Chunks `0..count` of each document, in reading order.
+    fn chunks_of(documents: &[&str], text: &str, count: usize) -> Vec<CorpusPassage> {
+        documents
+            .iter()
+            .flat_map(|document| {
+                (0..count).map(move |index| CorpusPassage {
+                    id: format!("{document}c{index}"),
+                    document_id: (*document).into(),
+                    name: format!("{document}.md"),
+                    path: format!("/vault/{document}.md"),
+                    content: format!("{text} {}", index + 1),
+                    chunk_index: index,
+                    section: None,
+                    page_number: None,
+                    from_ocr: false,
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn openings_stop_at_their_share_and_take_turns_between_documents() {
+        for (documents, text) in [
+            (["vertrag", "anhang", "nachtrag"], "Kapitel"),
+            (
+                ["mitosis", "meiosis", "apoptosis"],
+                "Capítulo: el ciclo celular",
+            ),
+        ] {
+            let ids = documents.map(String::from).to_vec();
+            let mut results = Vec::new();
+            append_openings(&mut results, chunks_of(&documents, text, 10), &ids, 5);
+
+            let [first, second, third] = documents;
+            assert_eq!(
+                results.into_iter().map(|r| r.id).collect::<Vec<_>>(),
+                [
+                    format!("{first}c0"),
+                    format!("{second}c0"),
+                    format!("{third}c0"),
+                    format!("{first}c1"),
+                    format!("{second}c1"),
+                ]
+            );
+        }
+    }
+
+    /// Finds `hits` for every query and records the documents each search
+    /// was confined to.
+    struct RecordingLibrary {
+        hits: Vec<SearchResultDto>,
+        searched: std::sync::Mutex<Vec<HashSet<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HybridSearchTrait for RecordingLibrary {
+        async fn execute_scoped(
+            &self,
+            _request: SearchRequestDto,
+            _space_id: Option<&str>,
+            _allowed_document_ids: Option<&HashSet<String>>,
+        ) -> Result<SearchResponseDto> {
+            Ok(SearchResponseDto {
+                total: self.hits.len(),
+                results: self.hits.clone(),
+                query_time_ms: 0,
+            })
+        }
+        async fn search_branches(
+            &self,
+            _query: &str,
+            _space_id: Option<&str>,
+            allowed_document_ids: Option<&HashSet<String>>,
+            _limit: usize,
+            _vector_weight: f32,
+            _bm25_weight: f32,
+        ) -> lattice_core::application::contracts::search::QueryBranches {
+            self.searched
+                .lock()
+                .expect("searches")
+                .push(allowed_document_ids.cloned().unwrap_or_default());
+            lattice_core::application::contracts::search::QueryBranches {
+                branches: Vec::new(),
+                answered: 2,
+            }
+        }
+        fn fuse(
+            &self,
+            _branches: Vec<RankedBranch>,
+            limit: usize,
+            _spread: Spread,
+        ) -> Vec<SearchResultDto> {
+            self.hits.iter().take(limit).cloned().collect()
+        }
+        async fn rerank(
+            &self,
+            response: SearchResponseDto,
+            _options: &lattice_core::application::contracts::search::RerankOptions,
+        ) -> lattice_core::application::contracts::search::Reranked {
+            lattice_core::application::contracts::search::Reranked {
+                response,
+                applied: false,
+            }
+        }
+    }
+
+    /// Twenty chunks of each document, numbered `{text} 1` to `{text} 20`.
+    async fn records(
+        documents: &[&str],
+        text: &str,
+    ) -> crate::features::conversation::repository::ConversationRepository {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("pool");
+        sqlx::raw_sql(
+            "CREATE TABLE documents (id TEXT PRIMARY KEY, file_name TEXT, file_path TEXT, source_context TEXT,
+                 owner_conversation_id TEXT);
+             CREATE TABLE text_chunks (id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER,
+                 section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);",
+        )
+        .execute(&pool)
+        .await
+        .expect("schema");
+        for passage in chunks_of(documents, text, 20) {
+            sqlx::query("INSERT OR IGNORE INTO documents VALUES (?, ?, ?, NULL, NULL)")
+                .bind(&passage.document_id)
+                .bind(&passage.name)
+                .bind(&passage.path)
+                .execute(&pool)
+                .await
+                .expect("document");
+            sqlx::query(
+                "INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
+            )
+            .bind(&passage.id)
+            .bind(&passage.document_id)
+            .bind(&passage.content)
+            .bind(i64::try_from(passage.chunk_index).expect("index"))
+            .execute(&pool)
+            .await
+            .expect("chunk");
+        }
+        crate::features::conversation::repository::ConversationRepository::new(pool)
+    }
+
+    #[tokio::test]
+    async fn reading_from_the_start_is_one_source_not_the_whole_pool() {
+        for (question, rewrite, [chosen, other], text) in [
+            (
+                "Welche Frist gilt für die Kündigung?",
+                "Kündigungsfrist Rahmenvertrag",
+                ["vertrag", "anhang"],
+                "Kapitel",
+            ),
+            (
+                "¿Cuánto dura la fase S del ciclo celular?",
+                "duración fase S interfase",
+                ["biologia", "genetica"],
+                "Capítulo: el ciclo celular",
+            ),
+        ] {
+            let records = records(&[chosen, other], text).await;
+            let hit = chunks_of(&[chosen], text, 20)
+                .into_iter()
+                .nth(17)
+                .map(|p| passage_result(p, "hybrid"))
+                .expect("chunk 17");
+            let library = RecordingLibrary {
+                hits: vec![hit],
+                searched: Default::default(),
+            };
+            let scope = super::super::super::SpaceDocumentScope {
+                space_id: "space_general".into(),
+                document_ids: HashSet::from([chosen.to_string(), other.to_string()]),
+            };
+            let plan = CorpusSearchPlan {
+                queries: vec![rewrite.into()],
+                opening_document_ids: vec![chosen.into()],
+                start_at_beginning: true,
+            };
+
+            let results = retrieve(&records, &library, question, &plan, &scope, 10)
+                .await
+                .expect("retrieve")
+                .results;
+
+            let openings: Vec<_> = results
+                .iter()
+                .filter(|r| {
+                    r.metadata.get("retrievalMethod")
+                        == Some(&serde_json::json!("document_opening"))
+                })
+                .map(|r| r.id.clone())
+                .collect();
+            assert_eq!(
+                openings,
+                (0..5).map(|i| format!("{chosen}c{i}")).collect::<Vec<_>>(),
+                "{question}"
+            );
+            assert!(
+                results.iter().any(|r| r.id == format!("{chosen}c17")),
+                "{question}"
+            );
+            let searched = library.searched.lock().expect("searches").clone();
+            assert_eq!(searched.first(), Some(&scope.document_ids), "{question}");
+            // The search inside the chosen document still ran.
+            assert!(
+                searched.contains(&HashSet::from([chosen.to_string()])),
+                "{question}"
+            );
+        }
     }
 }
