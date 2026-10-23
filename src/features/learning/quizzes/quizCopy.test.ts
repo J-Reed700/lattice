@@ -4,7 +4,7 @@ import { freshnessWords, itemVerdict, passMarkWords, percent, quizStatusWords, s
 import { itemResult, quizForm, quizStatus, submission } from '@/features/learning/quizzes/quizTestData';
 
 const attempt = (score: number, extra: Partial<{ formId: string; overriddenItems: number; pendingItems: number }> = {}) => ({
-  formId: 'f', score, passed: score >= 0.7, gradeStatus: 'deterministic' as const, submittedAt: 0, retakeOfFormId: null, overriddenItems: 0, pendingItems: 0, ...extra,
+  formId: 'f', score, passed: score >= 0.7, gradeStatus: 'deterministic' as const, submittedAt: 0, retakeOfFormId: null, overriddenItems: 0, pendingItems: 0, attemptNumber: 1, ...extra,
 });
 
 describe('quiz status in words', () => {
@@ -12,7 +12,8 @@ describe('quiz status in words', () => {
     expect(quizStatusWords(quizStatus()).label).toBe('Not taken');
     expect(quizStatusWords(quizStatus({ verdict: 'passed', best: attempt(0.85), attempts: 1 })).label).toBe(`Passed · ${percent(0.85)}`);
     expect(quizStatusWords(quizStatus({ verdict: 'not_passed', best: attempt(0.63), attempts: 2 })).label).toBe(`Not passed yet · best ${percent(0.63)}`);
-    expect(quizStatusWords(quizStatus({ activeFormId: 'form' })).label).toBe('Paused · resume or start fresh');
+    expect(quizStatusWords(quizStatus({ activeFormId: 'form', activeFormPaused: true }))).toMatchObject({ label: 'Paused · Resume', tone: 'paused' });
+    expect(quizStatusWords(quizStatus({ activeFormId: 'form' })).label).toBe('In progress · Resume');
     expect(quizStatusWords(quizStatus({ bankStatus: 'not_prepared' })).label).toBe('Questions not prepared yet');
   });
 

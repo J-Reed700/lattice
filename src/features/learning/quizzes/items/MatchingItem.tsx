@@ -1,5 +1,5 @@
 import type { EditorProps, ReviewProps } from '@/features/learning/quizzes/items/itemTypes';
-import { KeyExplanation, PartMark } from '@/features/learning/quizzes/items/ReviewParts';
+import { KeyExplanation, PartMark, partAt, PartWhy } from '@/features/learning/quizzes/items/ReviewParts';
 
 /** One native select per entry: fully keyboard operable, no dragging. */
 export function MatchingEditor({ item, draft, disabled, promptId, onChange }: EditorProps) {
@@ -26,12 +26,13 @@ export function MatchingEditor({ item, draft, disabled, promptId, onChange }: Ed
 }
 
 /** Each pair: your match against the key, said in words. */
-export function MatchingReview({ item, draft, reveal }: ReviewProps) {
+export function MatchingReview({ item, draft, reveal, result }: ReviewProps) {
   return <div>
     <ul className="space-y-2">{item.leftItems.map((left, index) => {
       const yours = draft.matches[index];
       const key = reveal.matches[index];
-      const right = yours !== null && yours !== undefined && yours === key;
+      const part = partAt(result, index);
+      const right = part ? part.correct : yours !== null && yours !== undefined && yours === key;
       return <li key={`${index}-${left}`} className="rounded-xl border border-border px-4 py-2.5 text-sm leading-6">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="font-semibold text-text-primary">Pair {index + 1}</span>
@@ -41,6 +42,7 @@ export function MatchingReview({ item, draft, reveal }: ReviewProps) {
           <span className="font-medium text-text-primary">{left}</span> matches <span className="font-medium text-text-primary">{key !== undefined ? item.rightItems[key] : '—'}</span>
           {!right && (yours === null || yours === undefined ? '; you left it unmatched' : <>, not <span className="italic">{item.rightItems[yours]}</span></>)}.
         </p>
+        {!right && <PartWhy text={part?.detail} />}
       </li>;
     })}</ul>
     <KeyExplanation text={reveal.explanation} />

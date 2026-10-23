@@ -51,19 +51,17 @@ export function isAnswered(item: FormItem, draft: ItemDraft): boolean {
 
 /** The saved response for one item. Only the fields its format uses are filled. */
 export function responseOf(item: FormItem, draft: ItemDraft): LearningAssessmentResponse {
-  const single = item.format === 'single_choice' || item.format === 'true_false';
-  const choice = single || item.format === 'multi_select';
+  const choice = item.format === 'single_choice' || item.format === 'true_false' || item.format === 'multi_select';
   const written = item.format === 'short_answer' || item.format === 'explanation';
   return {
     itemId: item.id,
-    selectedIndex: single ? (draft.selectedIndices[0] ?? null) : null,
     selectedIndices: choice ? [...draft.selectedIndices].sort((a, b) => a - b) : [],
     text: written ? draft.textResponse : null,
     blankResponses: item.format === 'cloze' ? draft.blankResponses : [],
     matches: item.format === 'matching' ? draft.matches : [],
     orderedValues: item.format === 'ordering' ? draft.orderedValues : [],
     artifactJson: null,
-  } as LearningAssessmentResponse;
+  };
 }
 
 /** Equal fingerprints mean nothing new to save. */

@@ -37,9 +37,9 @@ function GradingBanner({ form, grading, onStop, onResume, stopping, resuming, er
  * The result: a verdict in words, the score with its pass mark, what graded
  * it, then every question with its key and reasons. Rewarding, never inflated.
  */
-export function QuizResult({ form, sources, programRevision, onBack, onRetake, retakePending, retakeError, completion }: {
+export function QuizResult({ form, sources, programRevision, onBack, onRetake, retakePending, retakeError, attemptNumber, completion }: {
   form: LearningAssessmentFormDto; sources: LearningSourceDto[]; programRevision: number; onBack: () => void;
-  onRetake?: (mode: 'graded' | 'practice') => void; retakePending: boolean; retakeError?: string; completion?: LessonCompletion;
+  onRetake?: (mode: 'graded' | 'practice') => void; retakePending: boolean; retakeError?: string; attemptNumber?: number; completion?: LessonCompletion;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const operations = useOperationIds();
@@ -114,7 +114,7 @@ export function QuizResult({ form, sources, programRevision, onBack, onRetake, r
           </div>
           <dl className="grid shrink-0 gap-1 text-sm text-text-secondary sm:text-right">
             {!practice && <div><dt className="inline">Pass mark </dt><dd className="inline font-semibold text-text-primary">{percent(form.passingScore)}</dd></div>}
-            <div><dt className="sr-only">Attempt</dt><dd>{form.retakeOfFormId ? 'Retake' : 'First attempt'} · {shortDate(form.submittedAt)}</dd></div>
+            <div><dt className="sr-only">Attempt</dt><dd>{attemptNumber ? `Attempt ${attemptNumber}` : form.retakeOfFormId ? 'Retake' : 'First attempt'} · {shortDate(form.submittedAt)}</dd></div>
           </dl>
         </div>
         <p className="mt-4 max-w-3xl text-xs leading-5 text-text-muted">

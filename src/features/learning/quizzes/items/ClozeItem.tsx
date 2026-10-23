@@ -1,10 +1,9 @@
-import { Fragment } from 'react';
-
-import { blankStates } from '@/features/learning/quizzes/items/answerMatch';
+import { TiptapViewer } from '@/components/TiptapEditor';
 import type { EditorProps, ReviewProps } from '@/features/learning/quizzes/items/itemTypes';
-import { KeyExplanation, PartMark } from '@/features/learning/quizzes/items/ReviewParts';
+import { KeyExplanation, PartMark, partAt, PartWhy } from '@/features/learning/quizzes/items/ReviewParts';
 
 const BLANK = /\{\{\s*(\d+)\s*\}\}/g;
+const MATH = /\$[^$]+\$/;
 
 type Segment = { text: string } | { blank: number };
 
@@ -19,6 +18,18 @@ export function clozeSegments(prompt: string): Segment[] {
   }
   if (last < prompt.length) segments.push({ text: prompt.slice(last) });
   return segments;
+}
+
+/** Prompt text between blanks. Maths goes through the viewer so KaTeX renders it, laid out inline. */
+export function ClozeText({ text }: { text: string }) {
+  if (!MATH.test(text)) return <>{text}</>;
+  return <>
+    {/^\s/.test(text) && ' '}
+    <span className="[&_div]:inline [&_p]:inline">
+      <TiptapViewer content={text.trim()} />
+    </span>
+    {/\s$/.test(text) && ' '}
+  </>;
 }
 
 function blankCount(item: EditorProps['item'], segments: Segment[]) {
@@ -39,30 +50,31 @@ export function ClozeEditor({ item, draft, disabled, promptId, onChange }: Edito
     className="mx-1 inline-block min-h-11 w-40 max-w-full rounded-lg border-0 border-b-2 border-accent/50 bg-accent/5 px-2 align-baseline font-sans text-base text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-60" />;
   const inline = segments.some((segment) => 'blank' in segment);
   return <div>
-    <p id={promptId} className="max-w-3xl font-serif text-[1.35rem] leading-[2.6rem] text-text-primary">
-      {segments.map((segment, index) => ('blank' in segment ? input(segment.blank) : <Fragment key={index}>{segment.text}</Fragment>))}
-    </p>
+    <div id={promptId} className="max-w-3xl font-serif text-[1.35rem] leading-[2.6rem] text-text-primary">
+      {segments.map((segment, index) => ('blank' in segment ? input(segment.blank) : <ClozeText key={index} text={segment.text} />))}
+    </div>
     {!inline && <div className="mt-4 flex flex-wrap gap-3">{Array.from({ length: total }, (_, index) => input(index))}</div>}
     <p className="mt-3 text-xs text-text-muted">Fill each blank. Capitals, spacing and punctuation don&apos;t matter.</p>
   </div>;
 }
 
-/** Each blank: what you wrote, the accepted answer, and a verdict when the score allows one. */
+/** Each blank: what you wrote and the accepted answer, with the grader's verdict and reason once graded. */
 export function ClozeReview({ item, draft, reveal, result }: ReviewProps) {
-  const share = result && result.gradeStatus !== 'pending' && result.pointsPossible > 0 ? result.pointsEarned / result.pointsPossible : null;
-  const states = blankStates(draft.blankResponses, reveal.blanks, share);
   return <div>
-    <p className="text-sm leading-7 text-text-secondary">{clozeSegments(item.prompt).map((segment, index) => ('blank' in segment
+    <div className="text-sm leading-7 text-text-secondary">{clozeSegments(item.prompt).map((segment, index) => ('blank' in segment
       ? <span key={index} className="mx-0.5 rounded bg-background px-1.5 font-semibold text-text-primary">[{segment.blank + 1}]</span>
-      : <Fragment key={index}>{segment.text}</Fragment>))}</p>
+      : <ClozeText key={index} text={segment.text} />))}</div>
     <ul className="mt-3 space-y-2">{reveal.blanks.map((key, index) => {
       const yours = draft.blankResponses[index]?.trim();
-      return <li key={index} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border px-4 py-2.5 text-sm">
-        <span className="font-semibold text-text-primary">Blank {index + 1}</span>
-        {states[index] === 'right' && <PartMark state="right">Correct</PartMark>}
-        {states[index] === 'wrong' && <PartMark state="wrong">Not correct</PartMark>}
-        <span className="text-text-secondary">You wrote {yours ? `“${yours}”` : 'nothing'}</span>
-        {states[index] !== 'right' && <span className="text-text-secondary">· accepted: <span className="font-medium text-text-primary">{key}</span></span>}
+      const part = partAt(result, index);
+      return <li key={index} className="rounded-xl border border-border px-4 py-2.5 text-sm">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="font-semibold text-text-primary">Blank {index + 1}</span>
+          {part && <PartMark state={part.correct ? 'right' : 'wrong'}>{part.correct ? 'Correct' : 'Not correct'}</PartMark>}
+          <span className="text-text-secondary">You wrote {yours ? `“${yours}”` : 'nothing'}</span>
+          {!part?.correct && <span className="text-text-secondary">· accepted: <span className="font-medium text-text-primary">{key}</span></span>}
+        </div>
+        {part && !part.correct && <PartWhy text={part.detail} />}
       </li>;
     })}</ul>
     <KeyExplanation text={reveal.explanation} />

@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react';
 
 import { shownOrder } from '@/features/learning/quizzes/items/itemResponse';
 import type { EditorProps, ReviewProps } from '@/features/learning/quizzes/items/itemTypes';
-import { KeyExplanation, PartMark } from '@/features/learning/quizzes/items/ReviewParts';
+import { KeyExplanation, PartMark, partAt, PartWhy } from '@/features/learning/quizzes/items/ReviewParts';
 
 const smallButton = 'grid h-11 w-11 place-items-center rounded-lg border border-border text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35';
 
@@ -45,15 +45,22 @@ export function OrderingEditor({ item, draft, disabled, promptId, onChange }: Ed
 }
 
 /** Your order beside the correct one, each position said in words. */
-export function OrderingReview({ item, draft, reveal }: ReviewProps) {
+export function OrderingReview({ item, draft, reveal, result }: ReviewProps) {
   const yours = shownOrder(item, draft);
   return <div>
     <div className="grid gap-4 sm:grid-cols-2">
       <section aria-label="Your order"><h5 className="text-[10px] font-semibold uppercase tracking-[.15em] text-text-muted">Your order</h5>
-        <ol className="mt-2 space-y-1.5">{yours.map((value, index) => <li key={value} className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-          <span className="w-4 font-serif tabular-nums text-text-muted">{index + 1}</span><span className="min-w-0 flex-1 text-text-secondary">{value}</span>
-          <PartMark state={reveal.orderedValues[index] === value ? 'right' : 'wrong'}>{reveal.orderedValues[index] === value ? 'In place' : `Belongs at ${reveal.orderedValues.indexOf(value) + 1}`}</PartMark>
-        </li>)}</ol>
+        <ol className="mt-2 space-y-1.5">{yours.map((value, index) => {
+          const part = partAt(result, index);
+          const inPlace = part ? part.correct : reveal.orderedValues[index] === value;
+          return <li key={value} className="rounded-lg border border-border px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-4 font-serif tabular-nums text-text-muted">{index + 1}</span><span className="min-w-0 flex-1 text-text-secondary">{value}</span>
+              <PartMark state={inPlace ? 'right' : 'wrong'}>{inPlace ? 'In place' : `Belongs at ${reveal.orderedValues.indexOf(value) + 1}`}</PartMark>
+            </div>
+            {!inPlace && <PartWhy text={part?.detail} />}
+          </li>;
+        })}</ol>
       </section>
       <section aria-label="Correct order"><h5 className="text-[10px] font-semibold uppercase tracking-[.15em] text-text-muted">Correct order</h5>
         <ol className="mt-2 space-y-1.5">{reveal.orderedValues.map((value, index) => <li key={value} className="flex gap-2 rounded-lg bg-emerald-500/5 px-3 py-2 text-sm">

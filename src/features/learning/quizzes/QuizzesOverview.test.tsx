@@ -24,7 +24,7 @@ const program = {
   summary: { id: 'program-1', status: 'active', revision: 1 }, sources: [],
   modules: [{ id: 'module-1', title: 'Foundations', summary: '', outcomes: [], lessons: [lesson('lesson-1', 'Enzyme kinetics', true), lesson('lesson-2', 'Inhibition', false)] }],
 } as unknown as LearningProgramDto;
-const attempt = (score: number) => ({ formId: 'best', score, passed: score >= 0.7, gradeStatus: 'deterministic' as const, submittedAt: 0, retakeOfFormId: null, overriddenItems: 0, pendingItems: 0 });
+const attempt = (score: number) => ({ formId: 'best', score, passed: score >= 0.7, gradeStatus: 'deterministic' as const, submittedAt: 0, retakeOfFormId: null, overriddenItems: 0, pendingItems: 0, attemptNumber: 1 });
 
 function wrap(ui: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -102,10 +102,10 @@ describe('lesson quiz callout', () => {
   it('resumes a paused quiz by its form', async () => {
     const user = userEvent.setup();
     const onOpenForm = vi.fn();
-    api.overview.mockResolvedValue(ok(withLesson({ activeFormId: 'paused-form' })));
+    api.overview.mockResolvedValue(ok(withLesson({ activeFormId: 'paused-form', activeFormPaused: true })));
     wrap(<LessonQuizCallout program={program} lesson={enzyme} onOpenForm={onOpenForm} onViewResult={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Resume' }));
     expect(onOpenForm).toHaveBeenCalledWith('paused-form');
-    expect(screen.getByText('Paused · resume or start fresh')).toBeVisible();
+    expect(screen.getByText('Paused · Resume')).toBeVisible();
   });
 });

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
-import { useInterruptQuiz, useOperationIds, usePrepareQuizBank, useStartQuiz } from '@/features/learning/quizzes/useQuizzes';
-import VaultAPI from '@/lib/api';
+import { useOperationIds, usePrepareQuizBank, useStartQuiz } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningQuizMode, LearningQuizScopeDto, LearningQuizStatusDto } from '@/lib/bindings';
 
 export const scopeKey = (scope: LearningQuizScopeDto) => `${scope.kind}:${scope.id ?? 'course'}`;
@@ -15,7 +14,6 @@ const message = (error: unknown) => (error instanceof Error ? error.message : 'T
  */
 export function useQuizLauncher(programId: string, onOpen: (formId: string) => void) {
   const start = useStartQuiz();
-  const interrupt = useInterruptQuiz();
   const prepare = usePrepareQuizBank();
   const operations = useOperationIds();
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,17 +34,8 @@ export function useQuizLauncher(programId: string, onOpen: (formId: string) => v
     onOpen(form.id);
   });
 
-  /** Close the paused attempt (it stays in history, ungraded) and start a new one. */
+  /** A new attempt beside the open one; the open one stays as it is, ungraded. */
   const startFresh = (status: LearningQuizStatusDto) => run(status, async () => {
-    if (status.activeFormId) {
-      const current = await VaultAPI.getLearningAssessmentForm(status.activeFormId);
-      if (!current.ok) throw new Error(current.error);
-      if (current.data.status === 'active') {
-        const key = `interrupt:${current.data.id}:${current.data.revision}`;
-        await interrupt.mutateAsync({ operationId: operations.take(key), programId, formId: current.data.id, expectedRevision: current.data.revision });
-        operations.done(key);
-      }
-    }
     const key = `start:${scopeKey(status.scope)}:graded:fresh`;
     const form = await start.mutateAsync({ operationId: operations.take(key), formId: operations.take(`${key}:form`), programId, scope: status.scope, mode: 'graded', retakeOfFormId: status.latest?.formId ?? null });
     operations.done(key);

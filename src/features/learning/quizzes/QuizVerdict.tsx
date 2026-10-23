@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { Check, Circle, CircleDot, LoaderCircle, Sparkles, TriangleAlert, UserCheck, X } from 'lucide-react';
+import { Check, Circle, CircleDot, CirclePause, LoaderCircle, Sparkles, TriangleAlert, UserCheck, X } from 'lucide-react';
 
 import type { Tone, Words } from '@/features/learning/quizzes/quizCopy';
 
@@ -10,6 +10,7 @@ const toneStyle: Record<Tone, { icon: ReactNode; chip: string; text: string }> =
   partial: { icon: <CircleDot size={14} />, chip: 'bg-amber-500/14 text-amber-900 dark:text-amber-200', text: 'text-amber-900 dark:text-amber-200' },
   provisional: { icon: <Sparkles size={14} />, chip: 'bg-sky-500/12 text-sky-900 dark:text-sky-200', text: 'text-sky-900 dark:text-sky-200' },
   pending: { icon: <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" />, chip: 'bg-accent/10 text-accent', text: 'text-accent' },
+  paused: { icon: <CirclePause size={14} />, chip: 'bg-accent/10 text-accent', text: 'text-accent' },
   warning: { icon: <TriangleAlert size={14} />, chip: 'bg-amber-500/14 text-amber-900 dark:text-amber-200', text: 'text-amber-900 dark:text-amber-200' },
   override: { icon: <UserCheck size={14} />, chip: 'bg-violet-500/12 text-violet-900 dark:text-violet-200', text: 'text-violet-900 dark:text-violet-200' },
   neutral: { icon: <Circle size={14} />, chip: 'bg-background text-text-secondary', text: 'text-text-secondary' },

@@ -14,8 +14,14 @@ describe('course next steps', () => {
     expect(nextCourseStep(program, practice, assessment)).toMatchObject({ kind: 'guided', sessionId: 'attempt', lessonId: 'l' });
   });
   it('resumes a paused quiz by its exact form ID', () => {
-    const paused = { ...assessment, modules: [{ moduleId: 'm', test: quizStatus({ scope: { kind: 'module', id: 'm' } }), lessons: [{ lessonId: 'l', quiz: quizStatus({ scope: { kind: 'lesson', id: 'l' }, activeFormId: 'form' }) }] }] };
+    const paused = { ...assessment, modules: [{ moduleId: 'm', test: quizStatus({ scope: { kind: 'module', id: 'm' } }), lessons: [{ lessonId: 'l', quiz: quizStatus({ scope: { kind: 'lesson', id: 'l' }, activeFormId: 'form', activeFormPaused: true, activeFormUpdatedAt: 30 }) }] }] };
     expect(nextCourseStep(program, undefined, paused)).toMatchObject({ kind: 'assessment', formId: 'form', title: 'Resume your quiz' });
+  });
+  it('resumes whichever of a paused quiz and a saved response was touched last', () => {
+    const quiz = (updatedAt: number) => ({ ...assessment, modules: [{ moduleId: 'm', test: quizStatus({ scope: { kind: 'module', id: 'm' } }), lessons: [{ lessonId: 'l', quiz: quizStatus({ scope: { kind: 'lesson', id: 'l' }, activeFormId: 'form', activeFormPaused: true, activeFormUpdatedAt: updatedAt }) }] }] });
+    const practice = { sessions: [{ id: 'attempt', lessonId: 'l', lessonTitle: 'Saved task', taskKind: 'guided', status: 'active', updatedAt: 20 }] } as LearningPracticeWorkspaceDto;
+    expect(nextCourseStep(program, practice, quiz(30))).toMatchObject({ kind: 'assessment', formId: 'form' });
+    expect(nextCourseStep(program, practice, quiz(10))).toMatchObject({ kind: 'guided', sessionId: 'attempt' });
   });
   it('suggests the lesson quiz after independent practice, until it is passed, and never completes the lesson', () => {
     const practice = { sessions: [{ lessonId: 'l', taskKind: 'guided', status: 'submitted' }, { lessonId: 'l', taskKind: 'independent', status: 'submitted' }] } as LearningPracticeWorkspaceDto;

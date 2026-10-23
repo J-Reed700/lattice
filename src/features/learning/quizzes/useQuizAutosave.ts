@@ -40,6 +40,8 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   const requestsRef = useRef(new Map<string, SaveLearningAssessmentResponseRequestDto>());
   const retryRef = useRef<SaveLearningAssessmentResponseRequestDto | null>(null);
   const flightRef = useRef<Promise<boolean> | null>(null);
+  // The status after the last save: answering a paused form resumes it.
+  const statusRef = useRef(form.status);
 
   useEffect(() => {
     // A new immutable form is the only reason to replace the local answers.
@@ -47,6 +49,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
     setDrafts(initial);
     draftsRef.current = initial;
     revisionRef.current = form.revision;
+    statusRef.current = form.status;
     confirmedRef.current = confirmedOf(form);
     requestsRef.current.clear();
     retryRef.current = null;
@@ -63,6 +66,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
         return false;
       }
       revisionRef.current = saved.revision;
+      statusRef.current = saved.status;
       confirmedRef.current.set(request.response.itemId, fingerprint);
       for (const key of [...requestsRef.current.keys()]) if (key.startsWith(`${request.response.itemId}:`)) requestsRef.current.delete(key);
       retryRef.current = null;
@@ -78,7 +82,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   }, [save]);
 
   const flush = useCallback(async () => {
-    if (form.status !== 'active') return true;
+    if (form.status === 'submitted') return true;
     if (flightRef.current) return flightRef.current;
     const flight = (async () => {
       for (const item of form.items) {
@@ -107,7 +111,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   useEffect(() => registerPendingSave(() => flushRef.current()), [form.id]);
 
   useEffect(() => {
-    if (form.status !== 'active') return;
+    if (form.status === 'submitted') return;
     const timer = setTimeout(() => { void flushRef.current(); }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [drafts, form.status, form.id]);
@@ -133,6 +137,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
     const fresh = await reload();
     if (!fresh) return;
     revisionRef.current = fresh.revision;
+    statusRef.current = fresh.status;
     confirmedRef.current = confirmedOf(fresh);
     requestsRef.current.clear();
     retryRef.current = null;
@@ -143,5 +148,5 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
 
   const unsaved = form.items.some((item) => confirmedRef.current.get(item.id) !== fingerprintOf(item, drafts[item.id] ?? draftOf(item)));
   const state: SaveState = saveError ? 'error' : save.isPending ? 'saving' : unsaved ? 'unsaved' : 'saved';
-  return { drafts, update, flush, retry, reloadKeepingAnswers, state, saveError, conflict, revision: () => revisionRef.current };
+  return { drafts, update, flush, retry, reloadKeepingAnswers, state, saveError, conflict, revision: () => revisionRef.current, status: () => statusRef.current };
 }

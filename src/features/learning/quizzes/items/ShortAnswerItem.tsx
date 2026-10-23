@@ -1,14 +1,21 @@
 import type { EditorProps, ReviewProps } from '@/features/learning/quizzes/items/itemTypes';
 import { KeyExplanation, PartMark } from '@/features/learning/quizzes/items/ReviewParts';
+import type { LearningAnswerHintDto } from '@/lib/bindings';
+
+/** What the input may say before submission: the key's kind and unit, never the key. */
+export function answerHintWords(hint: LearningAnswerHintDto | null): string {
+  if (hint?.numeric) return hint.unitHint ? `A number, in ${hint.unitHint}. Writing the unit is optional.` : 'A number.';
+  return 'A word or a short phrase. Capitals, spacing and punctuation don\u2019t matter.';
+}
 
 export function ShortAnswerEditor({ item, draft, disabled, promptId, onChange }: EditorProps) {
   const inputId = `${item.id}-answer`;
   return <div className="max-w-xl">
     <label htmlFor={inputId} className="text-xs font-semibold text-text-secondary">Your answer</label>
-    <input id={inputId} type="text" autoComplete="off" spellCheck value={draft.textResponse} disabled={disabled}
+    <input id={inputId} type="text" inputMode={item.answerHint?.numeric && !item.answerHint.unitHint ? 'decimal' : undefined} autoComplete="off" spellCheck value={draft.textResponse} disabled={disabled}
       aria-describedby={`${promptId} ${inputId}-hint`} onChange={(event) => onChange({ textResponse: event.target.value })}
       className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-background px-4 text-base text-text-primary outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-60" />
-    <p id={`${inputId}-hint`} className="mt-2 text-xs leading-5 text-text-muted">A word, a phrase or a number. Capitals, spacing and punctuation don&apos;t matter, and a number may carry its unit.</p>
+    <p id={`${inputId}-hint`} className="mt-2 text-xs leading-5 text-text-muted">{answerHintWords(item.answerHint)}</p>
   </div>;
 }
 

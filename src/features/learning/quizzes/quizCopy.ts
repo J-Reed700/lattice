@@ -9,7 +9,7 @@ import type {
 } from '@/lib/bindings';
 
 /** How a verdict looks. Every tone is always paired with words and an icon. */
-export type Tone = 'passed' | 'notPassed' | 'partial' | 'provisional' | 'pending' | 'warning' | 'override' | 'neutral';
+export type Tone = 'passed' | 'notPassed' | 'partial' | 'provisional' | 'pending' | 'paused' | 'warning' | 'override' | 'neutral';
 
 export type Words = { label: string; detail?: string; tone: Tone };
 
@@ -64,7 +64,11 @@ function attemptScore(attempt: LearningQuizAttemptSummaryDto): string {
 /** One quiz's state in words, for rows and callouts. Pending is never a fail. */
 export function quizStatusWords(status: LearningQuizStatusDto): Words {
   const preparing = status.bankStatus === 'preparing' ? (status.bankMessage || 'Preparing more questions…') : undefined;
-  if (status.activeFormId) return { label: 'Paused · resume or start fresh', detail: 'Your answers are saved.', tone: 'pending' };
+  if (status.activeFormId) {
+    return status.activeFormPaused
+      ? { label: 'Paused · Resume', detail: 'Your answers are saved; answering any question picks up where you left off.', tone: 'paused' }
+      : { label: 'In progress · Resume', detail: 'Your answers are saved as you go.', tone: 'paused' };
+  }
   const best = status.best;
   if (status.verdict === 'pending') {
     const waiting = Math.max(status.latest?.pendingItems ?? 0, best?.pendingItems ?? 0);

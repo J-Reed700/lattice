@@ -112,7 +112,7 @@ test("take a lesson quiz, learn why points were lost, retake with fresh question
   await page.getByLabel("Your explanation").fill("Watching each pond for the same hour removes time as a cause; a second pond watched longer would show more.");
   await submit(page);
   await expect(verdict).toHaveText(/Passed/, { timeout: 10_000 });
-  await expect(page.getByText(/Retake · /)).toBeVisible();
+  await expect(page.getByText(/Attempt 2 · /)).toBeVisible();
 
   // Passing never completes the lesson by itself.
   const complete = page.getByRole("button", { name: "Mark lesson complete" });
@@ -127,11 +127,20 @@ test("take a lesson quiz, learn why points were lost, retake with fresh question
   expect(await unsupported(page)).toEqual([]);
 });
 
-test("contest a written grade, read both grades, and override an upheld regrade", async ({ page }) => {
+test("pause and resume a quiz, contest a written grade, and override an upheld regrade", async ({ page }) => {
   await openCourse(page);
   await page.getByRole("tablist", { name: "Program workspace" }).getByRole("tab", { name: "Quizzes", exact: true }).click();
-  await page.locator("#quiz-lesson-lesson-observation").getByRole("button", { name: /Start quiz/ }).click();
+  const row = page.locator("#quiz-lesson-lesson-observation");
+  await row.getByRole("button", { name: /Start quiz/ }).click();
+
+  // Pause marks the attempt paused; the next answer resumes it.
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await page.getByRole("alertdialog", { name: "Pause this quiz?" }).getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(row.getByText("Paused · Resume", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(page.getByText(/Paused · answer any question to pick up where you left off/)).toBeVisible();
   await answerFirstForm(page);
+  await expect(page.getByText(/Paused · answer any question/)).toHaveCount(0);
   await submit(page);
   const why = page.locator("details").filter({ hasText: "Why this lost points" });
   await expect(why).toBeVisible({ timeout: 10_000 });

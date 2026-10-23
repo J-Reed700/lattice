@@ -1,9 +1,9 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { blankStates, normaliseAnswer } from '@/features/learning/quizzes/items/answerMatch';
 import { itemRegistry } from '@/features/learning/quizzes/items/itemRegistry';
 import { draftOf } from '@/features/learning/quizzes/items/itemResponse';
+import { answerHintWords } from '@/features/learning/quizzes/items/ShortAnswerItem';
 import { formItem, itemResult, reveal } from '@/features/learning/quizzes/quizTestData';
 import type { LearningAssessmentFormItemDto, LearningAssessmentItemResultDto, LearningKeyRevealDto } from '@/lib/bindings';
 
@@ -58,26 +58,40 @@ describe('every wrong part says why, in words', () => {
   });
 });
 
-describe('cloze blanks', () => {
-  it('normalises the way the grader does', () => {
-    expect(normaliseAnswer('  The Café, ')).toBe('cafe');
-    expect(normaliseAnswer('1,000 mM')).toBe('1000 mm');
-    expect(normaliseAnswer('3.2')).toBe('3.2');
-  });
-
-  it('never calls a blank wrong when another accepted spelling might have matched', () => {
-    // One of two blanks earned a point, but neither matches the shown key: which one is unknown.
-    expect(blankStates(['colour', 'enzym'], ['color', 'enzyme'], 0.5)).toEqual(['unknown', 'unknown']);
-    // The matched blank accounts for the earned share, so the other is wrong.
-    expect(blankStates(['color', 'enzym'], ['color', 'enzyme'], 0.5)).toEqual(['right', 'wrong']);
-    expect(blankStates(['colour', 'x'], ['color', 'enzyme'], 1)).toEqual(['right', 'right']);
-  });
-
-  it('reviews each blank with its verdict', () => {
+describe('graded parts', () => {
+  it('cloze says each blank right or wrong from the grader, with its reason', () => {
     review(formItem('cloze', { prompt: 'The {{1}} binds the {{2}}.', blankCount: 2, blankResponses: ['inhibitor', 'substrate'] }),
-      reveal({ blanks: ['inhibitor', 'enzyme'] }), itemResult({ pointsEarned: 0.5, pointsPossible: 1, gradeStatus: 'deterministic' }));
+      reveal({ blanks: ['inhibitor', 'enzyme'] }),
+      itemResult({ pointsEarned: 0.5, pointsPossible: 1, partResults: [{ index: 0, correct: true, detail: '' }, { index: 1, correct: false, detail: 'The inhibitor binds the enzyme, not the substrate.' }] }));
     expect(screen.getByText('Correct')).toBeVisible();
     expect(screen.getByText('Not correct')).toBeVisible();
+    expect(screen.getByText('The inhibitor binds the enzyme, not the substrate.')).toBeVisible();
     expect(screen.getByText(/accepted:/)).toHaveTextContent('· accepted: enzyme');
+  });
+
+  it('cloze gives no verdict before grading, only the accepted answer', () => {
+    review(formItem('cloze', { prompt: 'The {{1}} binds.', blankCount: 1, blankResponses: ['colour'] }), reveal({ blanks: ['color'] }));
+    expect(screen.queryByText('Correct')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not correct')).not.toBeInTheDocument();
+    expect(screen.getByText(/accepted:/)).toHaveTextContent('· accepted: color');
+  });
+
+  it('matching and ordering name the wrong part and say why', () => {
+    review(formItem('matching', { leftItems: ['ATP', 'Enzyme'], rightItems: ['Catalyst', 'Energy currency'], matches: [1, 1] }), reveal({ matches: [1, 0] }),
+      itemResult({ pointsEarned: 0.5, partResults: [{ index: 0, correct: true, detail: '' }, { index: 1, correct: false, detail: 'An enzyme speeds a reaction; it is not spent.' }] }));
+    expect(screen.getByText('An enzyme speeds a reaction; it is not spent.')).toBeVisible();
+  });
+
+  it('cloze prompts send maths through the viewer so it renders', () => {
+    review(formItem('cloze', { prompt: 'When $[S] = K_m$, the rate is {{1}} of Vmax.', blankCount: 1 }), reveal({ blanks: ['half'] }));
+    expect(screen.getByText('When $[S] = K_m$, the rate is')).toBeInTheDocument();
+  });
+});
+
+describe('short answer hints', () => {
+  it('says a number and its unit before submission, never the key', () => {
+    expect(answerHintWords({ numeric: true, unitHint: 'mM' })).toBe('A number, in mM. Writing the unit is optional.');
+    expect(answerHintWords({ numeric: true, unitHint: null })).toBe('A number.');
+    expect(answerHintWords(null)).toMatch(/^A word or a short phrase/);
   });
 });

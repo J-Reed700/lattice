@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react';
 
 import { optionLetter, type EditorProps, type ReviewProps } from '@/features/learning/quizzes/items/itemTypes';
-import { KeyExplanation, PartMark, type PartState } from '@/features/learning/quizzes/items/ReviewParts';
+import { KeyExplanation, PartMark, partAt, PartWhy, type PartState } from '@/features/learning/quizzes/items/ReviewParts';
 
 /** A checkbox group: Tab moves between options, Space or Enter ticks one. */
 export function MultiSelectEditor({ item, draft, disabled, promptId, onChange }: EditorProps) {
@@ -30,17 +30,19 @@ function pickState(picked: boolean, key: boolean): { state: PartState; words: st
 }
 
 /** Each option says whether you picked it and whether the key holds it, with the reason for a wrong pick. */
-export function MultiSelectReview({ item, draft, reveal }: ReviewProps) {
+export function MultiSelectReview({ item, draft, reveal, result }: ReviewProps) {
   return <div>
     <ul className="space-y-2">{item.options.map((option, index) => {
       const mark = pickState(draft.selectedIndices.includes(index), reveal.correctIndices.includes(index));
-      const why = mark?.state === 'wrong' ? reveal.distractorRationales[index]?.trim() : '';
+      // The grader's reason for this option first; the option's own rationale when it gives none.
+      const part = partAt(result, index);
+      const why = part && !part.correct ? part.detail || reveal.distractorRationales[index] : mark?.state === 'wrong' ? reveal.distractorRationales[index] : '';
       return <li key={`${index}-${option}`} className="rounded-xl border border-border px-4 py-2.5 text-sm leading-6">
         <div className="flex flex-wrap items-start gap-3">
           <span className="min-w-0 flex-1 text-text-secondary"><span className="mr-1.5 font-semibold text-text-muted">{optionLetter(index)}.</span>{option}</span>
           {mark && <PartMark state={mark.state}>{mark.words}</PartMark>}
         </div>
-        {why && <p className="mt-1 text-xs leading-5 text-text-secondary">{why}</p>}
+        <PartWhy text={why} />
       </li>;
     })}</ul>
     <KeyExplanation text={reveal.explanation} />

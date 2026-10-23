@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Check, CircleDashed, X } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
+import type { LearningAssessmentItemResultDto } from '@/lib/bindings';
 
 export type PartState = 'right' | 'wrong' | 'missed' | 'unknown';
 
@@ -36,4 +37,15 @@ export function ReasonLine({ children }: { children: ReactNode }) {
 /** Practical tasks never appear in a quiz; if one does, it says where it belongs. */
 export function ArtifactNotice() {
   return <p className="rounded-xl bg-background px-4 py-3 text-sm text-text-secondary">This task is answered in Practice › Code &amp; simulations.</p>;
+}
+
+/** The grader's verdict on one part (blank, option, pair, position), when the item was graded. */
+export function partAt(result: LearningAssessmentItemResultDto | null, index: number) {
+  return result?.partResults.find((part) => part.index === index);
+}
+
+/** Why one part was wrong, in the grader's words. */
+export function PartWhy({ text }: { text?: string }) {
+  if (!text?.trim()) return null;
+  return <p className="mt-1 text-xs leading-5 text-text-secondary">{text}</p>;
 }

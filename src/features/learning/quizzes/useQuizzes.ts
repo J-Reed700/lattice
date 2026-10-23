@@ -176,14 +176,13 @@ export function useAddQuizMissesToRecall() {
   });
 }
 
-function useFollowUpDecision(call: (request: DecideLearningFollowUpRequestDto) => Promise<Result<unknown>>) {
+function useFollowUpDecision(call: (request: DecideLearningFollowUpRequestDto) => Promise<Result<LearningQuizOverviewDto>>) {
   const client = useQueryClient();
   return useMutation({
     retry: false,
     mutationFn: async (request: DecideLearningFollowUpRequestDto) => unwrap(await call(request)),
-    onSuccess: async (_result, request) => {
-      await client.invalidateQueries({ queryKey: learningQuizOverviewKey(request.programId) });
-    },
+    // A decision answers with the whole overview, follow-ups included.
+    onSuccess: (overview) => client.setQueryData(learningQuizOverviewKey(overview.programId), overview),
   });
 }
 

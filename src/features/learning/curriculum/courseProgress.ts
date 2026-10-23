@@ -15,10 +15,12 @@ function lessonQuiz(quizzes: LearningQuizOverviewDto | undefined, lessonId: stri
 export function nextCourseStep(program: LearningProgramDto, practice?: LearningPracticeWorkspaceDto, assessment?: LearningQuizOverviewDto, plan?: LearningPlanDto, dueCount = 0): CourseStep {
   const lessons = program.modules.flatMap((module) => module.lessons);
   const activeSession = [...(practice?.sessions ?? [])].filter((s) => s.status === 'active' && lessons.some((l) => l.id === s.lessonId)).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  // The open quiz and the saved response compete on when each was last touched.
+  const openQuiz = quizStatuses(assessment).filter((status) => status.activeFormId).sort((a, b) => (b.activeFormUpdatedAt ?? 0) - (a.activeFormUpdatedAt ?? 0))[0];
+  const quizStep: CourseStep | null = openQuiz?.activeFormId ? { kind: 'assessment', title: 'Resume your quiz', reason: openQuiz.title, formId: openQuiz.activeFormId } : null;
+  if (quizStep && (!activeSession || (openQuiz.activeFormUpdatedAt ?? 0) > activeSession.updatedAt)) return quizStep;
   if (activeSession) return { kind: activeSession.taskKind === 'guided' ? 'guided' : 'assignment', title: 'Continue your saved response', reason: activeSession.lessonTitle, lessonId: activeSession.lessonId, sessionId: activeSession.id };
-  // A paused quiz resumes by its exact form. The overview has no start times, so saved practice goes first.
-  const paused = quizStatuses(assessment).find((status) => status.activeFormId);
-  if (paused?.activeFormId) return { kind: 'assessment', title: 'Resume your quiz', reason: paused.title, formId: paused.activeFormId };
+  if (quizStep) return quizStep;
   const followup = [...(assessment?.followUps ?? [])].filter((f) => f.status === 'accepted' || f.status === 'pending').sort((a, b) => b.createdAt - a.createdAt).find((f) => {
     const outcome = assessment?.outcomes.find((o) => o.id === f.outcomeId);
     const module = program.modules.find((m) => m.id === outcome?.moduleId);

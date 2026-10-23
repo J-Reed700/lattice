@@ -7,6 +7,7 @@ import type {
   LearningGenerationJob,
   LearningGradeRationaleDto,
   LearningKeyRevealDto,
+  LearningPartResult,
   LearningQuizAttemptSummaryDto,
   LearningQuizOverviewDto,
   LearningQuizScopeDto,
@@ -78,11 +79,18 @@ export function quizBackend() {
       calls: [] as string[],
     };
     const request = <T>(args: unknown) => (args as { request: T }).request;
+    // The open form: active or paused, the one touched last.
+    const openForm = (forms: LearningAssessmentFormDto[]) => {
+      const open = forms.filter((form) => form.status === "active" || form.status === "interrupted").sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      return { activeFormId: open?.id ?? null, activeFormStartedAt: open?.createdAt ?? null, activeFormUpdatedAt: open?.updatedAt ?? null, activeFormPaused: open?.status === "interrupted" };
+    };
     const statusOf = (scope: LearningQuizScopeDto): LearningQuizStatusDto => {
       const key = scopeKey(scope);
       const forms = [...state.forms.values()].filter((form) => form.scope && scopeKey(form.scope) === key && form.mode === "graded");
       const done = forms.filter((form) => form.status === "submitted" && form.submission);
+      const chronological = [...done].sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0));
       const summary = (form: LearningAssessmentFormDto): LearningQuizAttemptSummaryDto => ({
+        attemptNumber: chronological.indexOf(form) + 1,
         formId: form.id, score: form.submission!.score, passed: form.submission!.passed, gradeStatus: form.submission!.gradeStatus,
         submittedAt: form.submittedAt ?? 0, retakeOfFormId: form.retakeOfFormId, pendingItems: form.submission!.pendingItems,
         overriddenItems: form.submission!.itemResults.filter((result) => result.learnerOverride).length,
@@ -97,7 +105,7 @@ export function quizBackend() {
         scope, title: scope.kind === "lesson" ? context.lessonTitle : scope.kind === "module" ? "Module test" : "Course exam",
         bankStatus: bank, bankMessage: "", bankSize: bank === "ready" ? 18 : 0, freshItems: drawn === 0 ? 6 : drawn === 1 ? 3 : 0, formSize: drawn === 0 ? 6 : 3,
         expectedMinutes: 12, passingScore: pass, coverage: scope.kind === "lesson" ? null : { coveredLessons: 1, totalLessons: 1 },
-        activeFormId: forms.find((form) => form.status === "active")?.id ?? null,
+        ...openForm(forms),
         verdict: latest?.submission!.passed === null ? "pending" : best ? (best.submission!.passed ? "passed" : "not_passed") : "not_taken",
         best: best ? summary(best) : latest ? summary(latest) : null, latest: latest ? summary(latest) : null, attempts: done.length, preparingJobId: null,
       };
@@ -113,7 +121,7 @@ export function quizBackend() {
     const blankItem = (authored: Authored, scope: LearningQuizScopeDto, repeat: boolean): LearningAssessmentFormItemDto => ({
       outcomeIds: ["outcome-1"], difficulty: 2, options: [], artifactKind: null, rubric: [], points: 1, sourceVersionIds: [], selectedIndices: [], blankResponses: [],
       matches: (authored.item.leftItems ?? []).map(() => null), leftItems: [], rightItems: [], blankCount: 0, textResponse: null, orderedValues: [], artifactJson: null,
-      responseRevision: 0, keyReveal: null, ...authored.item, id: `${scopeKey(scope)}:${authored.item.id}`, previouslyExposed: repeat,
+      responseRevision: 0, keyReveal: null, sourceQuote: "", answerHint: authored.key.kind === "text" ? { numeric: false, unitHint: null } : null, ...authored.item, id: `${scopeKey(scope)}:${authored.item.id}`, previouslyExposed: repeat,
     } as LearningAssessmentFormItemDto);
     const reveal = (authored: Authored, item: LearningAssessmentFormItemDto): LearningKeyRevealDto => ({
       correctIndices: authored.key.kind === "choice" ? authored.key.indices : [], acceptedAnswer: authored.key.kind === "text" ? authored.key.variants[0] : null,
@@ -121,12 +129,16 @@ export function quizBackend() {
       blanks: authored.key.kind === "cloze" ? authored.key.blanks : [], explanation: authored.explanation,
       distractorRationales: authored.rationales ?? item.options.map(() => ""),
     });
-    const keyed = (authored: Authored, item: LearningAssessmentFormItemDto): { earned: number; detail: string } => {
+    type Keyed = { earned: number; detail: string; parts?: LearningPartResult[] };
+    const part = (index: number, correct: boolean, why: string): LearningPartResult => ({ index, correct, detail: correct ? "" : why });
+    const keyed = (authored: Authored, item: LearningAssessmentFormItemDto): Keyed => {
       const key = authored.key;
       if (key.kind === "choice" && item.format === "multi_select") {
         const hits = item.selectedIndices.filter((index) => key.indices.includes(index)).length;
         const wrong = item.selectedIndices.length - hits;
-        return { earned: Math.max(0, hits - wrong) / key.indices.length, detail: `${hits} of ${key.indices.length} right${wrong ? `, ${wrong} wrong ${wrong === 1 ? "pick" : "picks"}` : ""}` };
+        const parts = item.options.map((_, index) => part(index, item.selectedIndices.includes(index) === key.indices.includes(index),
+          key.indices.includes(index) ? "This belongs in the record." : (authored.rationales?.[index] ?? "")));
+        return { earned: Math.max(0, hits - wrong) / key.indices.length, detail: `${hits} of ${key.indices.length} right${wrong ? `, ${wrong} wrong ${wrong === 1 ? "pick" : "picks"}` : ""}`, parts };
       }
       if (key.kind === "choice") return { earned: item.selectedIndices[0] === key.indices[0] ? 1 : 0, detail: "" };
       if (key.kind === "text") {
@@ -136,11 +148,13 @@ export function quizBackend() {
       }
       if (key.kind === "cloze") {
         const right = key.blanks.filter((blank, index) => normalise(blank) === normalise(item.blankResponses[index] ?? "")).length;
-        return { earned: right / key.blanks.length, detail: `${right} of ${key.blanks.length} blanks right` };
+        const parts = key.blanks.map((blank, index) => part(index, normalise(blank) === normalise(item.blankResponses[index] ?? ""), `The record needs the ${blank} here.`));
+        return { earned: right / key.blanks.length, detail: `${right} of ${key.blanks.length} blanks right`, parts };
       }
       if (key.kind === "matching") {
         const right = key.matches.filter((match, index) => item.matches[index] === match).length;
-        return { earned: right / key.matches.length, detail: `${right} of ${key.matches.length} pairs matched` };
+        const parts = key.matches.map((match, index) => part(index, item.matches[index] === match, `${item.leftItems[index]} goes with "${item.rightItems[match]}".`));
+        return { earned: right / key.matches.length, detail: `${right} of ${key.matches.length} pairs matched`, parts };
       }
       if (key.kind === "ordering") {
         const order = item.orderedValues.length ? item.orderedValues : item.options;
@@ -149,7 +163,8 @@ export function quizBackend() {
           pairs += 1;
           if (order.indexOf(key.order[i]) < order.indexOf(key.order[j])) right += 1;
         }
-        return { earned: right / pairs, detail: `${right} of ${pairs} pairs in order` };
+        const parts = order.map((value, index) => part(index, key.order[index] === value, `${value} comes at step ${key.order.indexOf(value) + 1}.`));
+        return { earned: right / pairs, detail: `${right} of ${pairs} pairs in order`, parts };
       }
       return { earned: 0, detail: "" };
     };
@@ -224,9 +239,9 @@ export function quizBackend() {
         });
         const form: LearningAssessmentFormDto = {
           id: formId, programId: context.programId, blueprintId: `blueprint-${scopeKey(scope)}`, blueprintRevision: 1, retakeOfFormId, status: "active", revision: 0,
-          title: scope.kind === "lesson" ? context.lessonTitle : scope.kind === "module" ? context.moduleTitle : "Course exam", instructions: "", expectedMinutes: 12, allowedAids: [],
+          title: scope.kind === "lesson" ? context.lessonTitle : scope.kind === "module" ? context.moduleTitle : "Course exam", instructions: "", expectedMinutes: 12,
           purpose: scope.kind === "lesson" ? "checkpoint" : scope.kind === "module" ? "module_test" : "cumulative",
-          passingScore: scope.kind === "lesson" ? state.settings.quizPass : state.settings.testPass, feedbackTiming: "after_submission", rubric: [], sourceVersionIds: [],
+          passingScore: scope.kind === "lesson" ? state.settings.quizPass : state.settings.testPass, feedbackTiming: "after_submission", sourceVersionIds: [],
           modelName: null, items, createdAt: Date.now(), updatedAt: Date.now(), submittedAt: null, submission: null, scope, mode,
         } as LearningAssessmentFormDto;
         state.forms.set(formId, form);
@@ -236,7 +251,7 @@ export function quizBackend() {
       save_learning_assessment_response: (args: unknown) => {
         const { expectedRevision, response } = request<{ expectedRevision: number; response: Record<string, unknown> }>(args);
         const form = formOf(args);
-        if (form.status !== "active") throw new Error("This quiz is no longer open.");
+        if (form.status === "submitted") throw new Error("This quiz is already submitted.");
         if (form.revision !== expectedRevision) throw new Error("This quiz changed; reload and retry.");
         const item = form.items.find((entry) => entry.id === response.itemId);
         if (!item) throw new Error("Question not found.");
@@ -246,10 +261,18 @@ export function quizBackend() {
           responseRevision: item.responseRevision + 1,
         });
         if (form.mode === "practice") item.keyReveal = reveal(state.keys.get(item.id)!, item);
+        // Answering a paused quiz resumes it.
+        form.status = "active";
         form.revision += 1;
+        form.updatedAt = Date.now();
         return form;
       },
-      interrupt_learning_assessment_form: (args: unknown) => { const form = formOf(args); form.status = "interrupted"; form.revision += 1; return form; },
+      interrupt_learning_assessment_form: (args: unknown) => {
+        const form = formOf(args);
+        if (form.status !== "active") throw new Error("Only an open quiz can be paused.");
+        form.status = "interrupted"; form.revision += 1; form.updatedAt = Date.now();
+        return form;
+      },
       submit_learning_assessment_form: (args: unknown) => {
         const form = formOf(args);
         if (form.status === "submitted") return form;
@@ -259,10 +282,10 @@ export function quizBackend() {
         const itemResults: LearningAssessmentItemResultDto[] = form.items.map((item) => {
           const authored = state.keys.get(item.id)!;
           item.keyReveal = reveal(authored, item);
-          const base = { itemId: item.id, outcomeIds: item.outcomeIds, feedback: "", criterionResults: [], artifactQuotes: [], learnerOverride: false, rationale: null, contest: null, pointsPossible: item.points };
+          const base = { itemId: item.id, outcomeIds: item.outcomeIds, feedback: "", learnerOverride: false, rationale: null, contest: null, partResults: [] as LearningPartResult[], pointsPossible: item.points };
           if (item.format === "explanation") return { ...base, score: 0, correct: null, gradeStatus: "pending", pointsEarned: 0, detail: "" } as LearningAssessmentItemResultDto;
-          const { earned, detail } = keyed(authored, item);
-          return { ...base, score: earned, correct: earned >= 1, gradeStatus: "deterministic", pointsEarned: earned * item.points, detail } as LearningAssessmentItemResultDto;
+          const { earned, detail, parts } = keyed(authored, item);
+          return { ...base, score: earned, correct: earned >= 1, gradeStatus: "deterministic", pointsEarned: earned * item.points, detail, partResults: parts ?? [] } as LearningAssessmentItemResultDto;
         });
         form.submission = { score: 0, passed: null, gradeStatus: "deterministic", graderModel: null, graderDisagreement: [], feedback: "", itemResults, submittedAt: form.submittedAt,
           scoreWithoutOverrides: null, pendingItems: 0, gradingJobId: null } as LearningAssessmentFormDto["submission"];

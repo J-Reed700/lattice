@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 
-import { ArrowLeft, ArrowRight, Eye, RotateCcw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CirclePause, Eye, RotateCcw, Send } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { itemRegistry } from '@/features/learning/quizzes/items/itemRegistry';
@@ -9,7 +9,7 @@ import { coverageWords, formScopeKind, points, scopeHeadline, scopeKindLabel } f
 import { QuizSourceLine } from '@/features/learning/quizzes/QuizSourceLine';
 import { BackLink, ConfirmDialog, eyebrow, parchmentBand, primaryPill, QuestionRail, quietPill, SaveStatus } from '@/features/learning/quizzes/RunnerParts';
 import { useQuizAutosave } from '@/features/learning/quizzes/useQuizAutosave';
-import { useOperationIds, useSubmitQuiz } from '@/features/learning/quizzes/useQuizzes';
+import { useInterruptQuiz, useOperationIds, useSubmitQuiz } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningAssessmentFormDto, LearningQuizCoverageDto, LearningSourceDto } from '@/lib/bindings';
 
 function errorText(error: unknown) {
@@ -36,7 +36,7 @@ function RunnerItem({ item, index, draft, practice, disabled, sources, onChange,
       <div className="mt-3"><Review item={item} draft={draft} reveal={item.keyReveal} result={null} /></div>
     </section>}
     {practice && !item.keyReveal && isAnswered(item, draft) && item.format !== 'explanation' && <button type="button" onClick={onCheck} className={`${quietPill} mt-5`}><Eye size={15} aria-hidden="true" /> Check my answer</button>}
-    {practice && item.format === 'explanation' && <p className="mt-4 text-xs text-text-muted">Written answers get their feedback when you finish the round.</p>}
+    {practice && item.format === 'explanation' && <p className="mt-4 rounded-xl bg-background/70 px-4 py-2.5 text-xs leading-5 text-text-secondary">Written answers are graded when you finish the round, all together, so this one has no feedback until then.</p>}
     <QuizSourceLine ids={item.sourceVersionIds} sources={sources} />
   </article>;
 }
@@ -51,6 +51,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
 }) {
   const autosave = useQuizAutosave(form, form.programId, reload);
   const submit = useSubmitQuiz();
+  const interrupt = useInterruptQuiz();
   const operations = useOperationIds();
   const [index, setIndex] = useState(() => Math.max(0, form.items.findIndex((item) => !isAnswered(item, autosave.drafts[item.id]))));
   const [confirm, setConfirm] = useState<'submit' | 'pause' | null>(null);
@@ -60,9 +61,23 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
   const total = form.items.length;
   const answered = form.items.filter((item) => isAnswered(item, autosave.drafts[item.id])).length;
   const item = form.items[Math.min(index, total - 1)];
-  const busy = submit.isPending;
+  const busy = submit.isPending || interrupt.isPending;
+  const paused = form.status === 'interrupted';
 
   const leave = async () => { if (await autosave.flush()) onExit(); };
+  /** Pause marks the attempt paused; the next answer saved resumes it. */
+  const pause = async () => {
+    setActionError(null);
+    if (!(await autosave.flush())) { setConfirm(null); return; }
+    if (autosave.status() === 'interrupted') { setConfirm(null); onExit(); return; }
+    const key = `pause:${form.id}:${autosave.revision()}`;
+    try {
+      await interrupt.mutateAsync({ operationId: operations.take(key), programId: form.programId, formId: form.id, expectedRevision: autosave.revision() });
+      operations.done(key);
+      setConfirm(null);
+      onExit();
+    } catch (error) { setActionError(errorText(error)); setConfirm(null); }
+  };
   const doSubmit = async () => {
     setActionError(null);
     if (!(await autosave.flush())) { setConfirm(null); return; }
@@ -87,6 +102,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
             <p className="mt-1.5 max-w-2xl text-sm leading-6 text-text-secondary">{practice
               ? 'Ungraded. Check each answer as you go; nothing here counts toward your result.'
               : 'Keys are shown after you submit. You can pause and resume any time.'}</p>
+            {paused && <p role="status" className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1 text-xs font-semibold text-accent"><CirclePause size={14} aria-hidden="true" /> Paused · answer any question to pick up where you left off</p>}
             {coverage && kind !== 'lesson' && <p className="mt-1 text-xs font-medium text-text-secondary">{coverageWords(coverage, kind)}.</p>}
           </div>
           <div className="shrink-0 text-right">
@@ -125,7 +141,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
     <ConfirmDialog open={confirm === 'submit'} pending={busy} onCancel={() => setConfirm(null)} onConfirm={() => void doSubmit()}
       title={practice ? 'Finish this practice round?' : 'Submit your answers?'} confirmLabel={practice ? 'Finish' : 'Submit now'}
       body={practice ? 'You will see every answer with its key. Nothing here counts toward your result.' : 'Your responses will be frozen and graded. You can start a clearly labelled retake later.'} />
-    <ConfirmDialog open={confirm === 'pause'} pending={false} onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); void leave(); }}
-      title="Pause this quiz?" confirmLabel="Pause" body="Your answers are saved. Resume any time from the lesson or the Quizzes tab; nothing is graded until you submit." />
+    <ConfirmDialog open={confirm === 'pause'} pending={interrupt.isPending} onCancel={() => setConfirm(null)} onConfirm={() => void pause()}
+      title="Pause this quiz?" confirmLabel="Pause" body="Your answers are saved and the quiz is marked paused. Resume any time from the lesson or the Quizzes tab; nothing is graded until you submit." />
   </div>;
 }

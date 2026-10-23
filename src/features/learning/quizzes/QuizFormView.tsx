@@ -23,17 +23,14 @@ export function QuizFormView({ formId, program, overview, onBack, onOpenForm, co
       <button type="button" onClick={() => void query.refetch()} className={`${quietPill} mt-4`}>Try again</button>
     </section></div>;
   const status = form.scope && overview ? allQuizStatuses(overview).find((entry) => scopeKey(entry.scope) === scopeKey(form.scope!)) : undefined;
-  if (form.status === 'active') {
+  // A paused form opens in the runner too; the next answer saved resumes it.
+  if (form.status === 'active' || form.status === 'interrupted') {
     return <QuizRunner form={form} sources={program.sources} coverage={status?.coverage} onExit={onBack}
       onSubmitted={(submitted) => onOpenForm(submitted.id)} reload={async () => (await query.refetch()).data} />;
   }
-  if (form.status === 'interrupted') return <div className="space-y-3"><BackLink label="Quizzes" onClick={onBack} />
-    <section className="rounded-2xl border border-border bg-surface p-6">
-      <h3 className="font-serif text-xl text-text-primary">This attempt was paused and set aside</h3>
-      <p className="mt-2 text-sm text-text-secondary">It was not graded and counts for nothing either way. Start a fresh attempt whenever you like.</p>
-    </section></div>;
   const lessonId = form.scope?.kind === 'lesson' ? form.scope.id : null;
+  const attemptNumber = [status?.latest, status?.best].find((attempt) => attempt?.formId === form.id)?.attemptNumber;
   return <QuizResult form={form} sources={program.sources} programRevision={program.summary.revision} onBack={onBack}
     onRetake={status ? (mode) => void launcher.retake(status, mode) : undefined} retakePending={status ? launcher.isBusy(status) : false}
-    retakeError={status ? launcher.errorFor(status) : undefined} completion={lessonId ? completionFor?.(lessonId) : undefined} />;
+    retakeError={status ? launcher.errorFor(status) : undefined} attemptNumber={attemptNumber} completion={lessonId ? completionFor?.(lessonId) : undefined} />;
 }

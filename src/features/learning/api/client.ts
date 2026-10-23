@@ -468,17 +468,15 @@ export const learningApi = {
       request,
     }),
 
-  // Follow-up decisions answer with the course's evidence; the Quizzes
-  // overview is read again afterwards, so the shape is not relied on here.
   acceptLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
-  ): Promise<ApiResult<unknown>> =>
-    learningCall<unknown>('accept_learning_follow_up', { request }),
+  ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
+    learningCall<Wire.LearningQuizOverviewDto>('accept_learning_follow_up', { request }),
 
   dismissLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
-  ): Promise<ApiResult<unknown>> =>
-    learningCall<unknown>('dismiss_learning_follow_up', { request }),
+  ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
+    learningCall<Wire.LearningQuizOverviewDto>('dismiss_learning_follow_up', { request }),
 
   getLearningQuizOverview: (
     programId: string,

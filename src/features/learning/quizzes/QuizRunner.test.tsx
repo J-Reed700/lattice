@@ -74,14 +74,27 @@ describe('quiz runner', () => {
     expect(api.submit).toHaveBeenCalledWith(expect.objectContaining({ formId: 'form-1', expectedRevision: 3 }));
   });
 
-  it('pauses by saving and leaving; the attempt stays open to resume', async () => {
+  it('pauses by saving, then marking the attempt paused', async () => {
+    api.interrupt.mockResolvedValue(ok(quizForm({ items, status: 'interrupted', revision: 3 })));
     const { user, onExit } = run(quizForm({ items }));
     await user.click(screen.getByRole('radio', { name: /Release/ }));
     await user.click(screen.getByRole('button', { name: 'Pause' }));
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(onExit).toHaveBeenCalled());
     expect(api.save).toHaveBeenCalledTimes(1);
-    expect(api.interrupt).not.toHaveBeenCalled();
+    expect(api.interrupt).toHaveBeenCalledWith(expect.objectContaining({ formId: 'form-1', expectedRevision: 2 }));
+  });
+
+  it('says a paused attempt is paused, and resumes it with the next answer', async () => {
+    api.submit.mockResolvedValue(ok(quizForm({ items, status: 'submitted' })));
+    const { user } = run(quizForm({ items, status: 'interrupted' }));
+    expect(screen.getByText(/Paused · answer any question to pick up where you left off/)).toBeVisible();
+    await user.click(screen.getByRole('radio', { name: /Binding/ }));
+    await user.click(screen.getByRole('button', { name: /Next/ }));
+    await user.click(screen.getByRole('radio', { name: /False/ }));
+    await user.click(screen.getByRole('button', { name: 'Submit answers' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Submit now' }));
+    await waitFor(() => expect(api.save).toHaveBeenCalled());
   });
 
   it('keeps answers and offers a retry when a save fails', async () => {
