@@ -596,6 +596,40 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
     Ok(())
 }
 
+/// The 2026-10-22 baseline's three stuck outlines: the first rewrite kept the
+/// module, and the plan finding still blocked the course.
+#[tokio::test]
+async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advisory_and_passes(
+) -> Result<()> {
+    let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        // The first attempt returns the module unchanged.
+        json!({"module":initial["modules"][0].clone()}),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    assert!(!review.note.contains("no usable correction"));
+    assert!(review.issues[0].exhausted, "kept as an advisory suggestion");
+    assert_eq!(llm.prompts.lock().unwrap().len(), 3);
+    Ok(())
+}
+
 /// Module 1's correction with module 2's title: the outline refuses it.
 fn clashing_correction(initial: &Value) -> Value {
     let mut clashing = module_with_objective(initial, 0, "Measure the first comparison.");
