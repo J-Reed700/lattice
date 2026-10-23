@@ -24,7 +24,7 @@ pub(crate) use health::PlannerHealth;
 pub(super) use health::PlannerTurn;
 pub(in crate::features::conversation::chat) use library_search::fused_search;
 use library_search::section_identifiers;
-pub(super) use library_search::{expand_evidence, fuse_passes, retrieve};
+pub(super) use library_search::{append_context, fuse_passes, retrieve};
 pub(super) use planner::{plan, plan_correction, shortlist_candidates, CorrectionRequest};
 
 /// Appended to the planner's **user** turn, never to `PLANNER_SYSTEM`. The task

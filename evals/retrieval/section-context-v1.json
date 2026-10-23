@@ -1,0 +1,506 @@
+{
+  "name": "lattice-section-context-v1",
+  "description": "Two long non-English, non-software documents, a German cell-biology course handbook and a Spanish parish chronicle, whose pointing needles name a topic in one passage and defer its values to the next (\"siehe nächster Abschnitt\", \"como se detalla a continuación\"); each document also states plain facts whole inside one passage, as controls. Passage placement was checked against the indexer's chunker (800 tokens, 120 overlap, sentence boundaries) under the Qwen3-Embedding-0.6B tokenizer: a pointing clause lies in exactly one passage and its answer in exactly the next. Answerable queries carry `answer_spans`, the UTF-8 byte range of the answering paragraph. It measures whether section-neighbour context carried after the hits holds answers the hits alone miss: compare passage recall at top_k with twice top_k. See SECTION_CONTEXT_V1.md.",
+  "dimensions": [
+    "answer in the following passage",
+    "answer in the same passage",
+    "German cell-biology handbook",
+    "Spanish parish chronicle"
+  ],
+  "documents": [
+    {
+      "id": "kurshandbuch-zellbiologie",
+      "title": "Kurshandbuch Zellbiologie: Mitose und Zellzyklus",
+      "language": "de",
+      "text": "# Kurshandbuch Zellbiologie: Mitose und Zellzyklus\n\nPräparat 1 (Gruppe C): Knoblauchwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 283 Zellen, davon 43 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 2 (Gruppe C): Weizenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 585 Zellen, davon 22 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nHinweis zur Ordnung: Benutzte Objektträger kommen in die Glasbox, nicht in den Restmüll.\n\nHinweis zur Ordnung: Benutzte Objektträger kommen in die Glasbox, nicht in den Restmüll.\n\nFür die Lebendfärbung der Spindelfasern mit SiR-Tubulin hat sich im Kurs ein eigenes Vorgehen bewährt, das von der Herstellerangabe abweicht. Konzentration, Einwirkzeit und Temperatur siehe nächster Abschnitt.\n\nPräparat 3 (Gruppe B): Lilienanthere, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 485 Zellen, davon 33 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 4 (Gruppe C): Weizenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 611 Zellen, davon 58 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 5 (Gruppe B): Knoblauchwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 601 Zellen, davon 57 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nHinweis zur Zusammenarbeit: Zwei Personen zählen dasselbe Gesichtsfeld unabhängig, Abweichungen werden besprochen.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 6 (Gruppe E): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 198 Zellen, davon 29 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nArbeitswerte zum zuvor genannten Farbstoff: 100 nanomolar im Kulturmedium, 90 Minuten einwirken lassen, bei 37 Grad Celsius; vor der Aufnahme nicht waschen.\n\nPräparat 7 (Gruppe B): Weizenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 222 Zellen, davon 50 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 8 (Gruppe D): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 381 Zellen, davon 41 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 9 (Gruppe E): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 398 Zellen, davon 42 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 10 (Gruppe A): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 300 Zellen, davon 27 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 11 (Gruppe B): Weizenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 219 Zellen, davon 44 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 12 (Gruppe A): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 495 Zellen, davon 49 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nHinweis zur Ordnung: Benutzte Objektträger kommen in die Glasbox, nicht in den Restmüll.\n\nPräparat 13 (Gruppe C): Knoblauchwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 468 Zellen, davon 11 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 14 (Gruppe A): Weizenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 367 Zellen, davon 16 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 15 (Gruppe A): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 537 Zellen, davon 47 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nKarminessigsäure für Quetschpräparate wird zweiprozentig in 45-prozentiger Essigsäure angesetzt und vor Gebrauch filtriert.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nPräparat 16 (Gruppe A): Ackerbohnenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 193 Zellen, davon 58 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 17 (Gruppe E): Knoblauchwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 208 Zellen, davon 31 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 18 (Gruppe E): Lilienanthere, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 333 Zellen, davon 44 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 19 (Gruppe D): Roggenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 628 Zellen, davon 37 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 20 (Gruppe B): Lilienanthere, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 498 Zellen, davon 32 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 21 (Gruppe E): Hyazinthenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 475 Zellen, davon 41 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 22 (Gruppe C): Roggenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 519 Zellen, davon 25 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nHinweis zum Protokollbogen: Unklare Stadien werden als unklar notiert, nicht geschätzt.\n\nPräparat 23 (Gruppe B): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 506 Zellen, davon 55 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nUm Zellen in der Prometaphase zu sammeln, arretieren wir sie mit Nocodazol, das die Polymerisation der Mikrotubuli hemmt. Die Dosierung und den Zeitplan siehe nächster Abschnitt.\n\nPräparat 24 (Gruppe D): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 629 Zellen, davon 53 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 25 (Gruppe A): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 182 Zellen, davon 47 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 26 (Gruppe A): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 240 Zellen, davon 26 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 27 (Gruppe A): Weizenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 373 Zellen, davon 15 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 28 (Gruppe B): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 410 Zellen, davon 19 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 29 (Gruppe D): Knoblauchwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 394 Zellen, davon 16 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nDosierung für den Arrest: 50 Nanogramm pro Milliliter über 16 Stunden; nach dem Auswaschen erreichen die Zellen nach etwa 45 Minuten die Anaphase.\n\nPräparat 30 (Gruppe D): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 503 Zellen, davon 13 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nHinweis zur Arbeitsweise: Pipettenspitzen werden nach jedem Reagenz gewechselt, auch wenn die Flasche gleich aussieht.\n\nPräparat 31 (Gruppe B): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 630 Zellen, davon 26 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 32 (Gruppe C): Knoblauchwurzel, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 309 Zellen, davon 49 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 33 (Gruppe A): Zwiebelwurzelspitze, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 335 Zellen, davon 55 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 34 (Gruppe A): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 486 Zellen, davon 32 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 35 (Gruppe C): Roggenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 482 Zellen, davon 9 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 36 (Gruppe D): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 552 Zellen, davon 55 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 37 (Gruppe E): Zwiebelwurzelspitze, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 444 Zellen, davon 45 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 38 (Gruppe A): Roggenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 239 Zellen, davon 22 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nDie Mikroskope im Kursraum 2.14 kalibriert jeden Freitag Frau Dr. Henrike Albers mit dem Objektmikrometer.\n\nPräparat 39 (Gruppe C): Ackerbohnenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 458 Zellen, davon 43 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nHinweis zur Zusammenarbeit: Zwei Personen zählen dasselbe Gesichtsfeld unabhängig, Abweichungen werden besprochen.\n\nPräparat 40 (Gruppe B): Ackerbohnenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 415 Zellen, davon 32 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 41 (Gruppe C): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 180 Zellen, davon 58 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 42 (Gruppe B): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 581 Zellen, davon 12 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 43 (Gruppe C): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 248 Zellen, davon 33 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 44 (Gruppe C): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 328 Zellen, davon 20 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nPräparat 45 (Gruppe E): Roggenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 480 Zellen, davon 48 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 46 (Gruppe A): Erbsenkeimling, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 211 Zellen, davon 39 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nFür Chromosomenpräparate aus Zwiebelwurzelspitzen werden die Wurzeln vorher mit Kolchizin behandelt, damit sich mehr Zellen in der Metaphase ansammeln. Wie lange und in welcher Stärke, siehe nächster Abschnitt.\n\nPräparat 47 (Gruppe D): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 252 Zellen, davon 13 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 48 (Gruppe C): Hyazinthenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 211 Zellen, davon 33 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 49 (Gruppe A): Lilienanthere, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 561 Zellen, davon 10 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 50 (Gruppe E): Zwiebelwurzelspitze, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 630 Zellen, davon 52 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 51 (Gruppe B): Erbsenkeimling, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 295 Zellen, davon 51 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nVorbehandlung: 0,05-prozentige Lösung, vier Stunden im Dunkeln; anschließend zehn Minuten in einmolarer Salzsäure bei 60 Grad hydrolysieren.\n\nPräparat 52 (Gruppe E): Knoblauchwurzel, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 374 Zellen, davon 31 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 53 (Gruppe C): Lilienanthere, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 559 Zellen, davon 34 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nPräparat 54 (Gruppe A): Hyazinthenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 220 Zellen, davon 38 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 55 (Gruppe D): Weizenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 585 Zellen, davon 17 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 56 (Gruppe D): Knoblauchwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 557 Zellen, davon 21 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 57 (Gruppe A): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 258 Zellen, davon 52 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 58 (Gruppe C): Lilienanthere, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 531 Zellen, davon 52 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 59 (Gruppe D): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 516 Zellen, davon 25 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 60 (Gruppe B): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 340 Zellen, davon 29 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 61 (Gruppe E): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 506 Zellen, davon 33 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 62 (Gruppe E): Knoblauchwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 601 Zellen, davon 39 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nEine HeLa-Zelle braucht in unserer Kultur rund 22 Stunden für die Interphase, die Mitose selbst dauert etwa 50 Minuten.\n\nPräparat 63 (Gruppe E): Erbsenkeimling, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 281 Zellen, davon 36 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nHinweis zum Protokollbogen: Unklare Stadien werden als unklar notiert, nicht geschätzt.\n\nPräparat 64 (Gruppe D): Erbsenkeimling, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 267 Zellen, davon 23 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 65 (Gruppe C): Zwiebelwurzelspitze, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 618 Zellen, davon 38 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 66 (Gruppe A): Hyazinthenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 358 Zellen, davon 17 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nHinweis zur Arbeitsweise: Pipettenspitzen werden nach jedem Reagenz gewechselt, auch wenn die Flasche gleich aussieht.\n\nPräparat 67 (Gruppe B): Zwiebelwurzelspitze, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 352 Zellen, davon 31 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 68 (Gruppe D): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 209 Zellen, davon 30 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nHinweis zur Zusammenarbeit: Zwei Personen zählen dasselbe Gesichtsfeld unabhängig, Abweichungen werden besprochen.\n\nPräparat 69 (Gruppe A): Ackerbohnenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 473 Zellen, davon 40 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 70 (Gruppe B): Ackerbohnenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 523 Zellen, davon 10 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 71 (Gruppe C): Hyazinthenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 313 Zellen, davon 59 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nFür den Teilungsindex der Wurzelspitze gilt im Kurs eine verbindliche Zählregel, damit die Werte der Gruppen vergleichbar bleiben. Die Regel selbst siehe nächster Abschnitt.\n\nPräparat 72 (Gruppe A): Ackerbohnenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 247 Zellen, davon 54 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 73 (Gruppe B): Zwiebelwurzelspitze, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 338 Zellen, davon 26 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nZählregel: mindestens 1000 Zellen aus fünf Gesichtsfeldern; eine Prophase zählt erst, wenn die Chromosomen als Fäden sichtbar sind.\n\nHinweis zum Protokollbogen: Unklare Stadien werden als unklar notiert, nicht geschätzt.\n\nPräparat 74 (Gruppe E): Knoblauchwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 304 Zellen, davon 59 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 75 (Gruppe B): Ackerbohnenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 218 Zellen, davon 26 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nPräparat 76 (Gruppe B): Ackerbohnenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 584 Zellen, davon 52 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 77 (Gruppe E): Erbsenkeimling, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 366 Zellen, davon 32 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nDer Brutschrank B für die Zellkulturen läuft mit fünf Prozent Kohlendioxid und 95 Prozent Luftfeuchte.\n\nPräparat 78 (Gruppe D): Weizenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 321 Zellen, davon 36 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 79 (Gruppe D): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 410 Zellen, davon 21 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nHinweis zur Arbeitsweise: Pipettenspitzen werden nach jedem Reagenz gewechselt, auch wenn die Flasche gleich aussieht.\n\nPräparat 80 (Gruppe A): Lilienanthere, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 371 Zellen, davon 18 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 81 (Gruppe D): Weizenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 477 Zellen, davon 38 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nHinweis zur Arbeitsweise: Pipettenspitzen werden nach jedem Reagenz gewechselt, auch wenn die Flasche gleich aussieht.\n\nPräparat 82 (Gruppe C): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 626 Zellen, davon 47 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 83 (Gruppe E): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 349 Zellen, davon 59 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nHinweis zum Protokollbogen: Unklare Stadien werden als unklar notiert, nicht geschätzt.\n\nPräparat 84 (Gruppe D): Knoblauchwurzel, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 271 Zellen, davon 24 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 85 (Gruppe C): Erbsenkeimling, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 540 Zellen, davon 21 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nFür die Messung des DNA-Gehalts im Durchflusszytometer werden die fixierten Zellen mit Propidiumiodid gefärbt, das in die Doppelhelix interkaliert. Ansatz und Einwirkzeit siehe nächster Abschnitt.\n\nPräparat 86 (Gruppe C): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 567 Zellen, davon 32 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 87 (Gruppe E): Lilienanthere, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 264 Zellen, davon 57 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 88 (Gruppe C): Hyazinthenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 292 Zellen, davon 53 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 89 (Gruppe E): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 225 Zellen, davon 28 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nFärbelösung: 20 Mikrogramm pro Milliliter mit RNase A; 30 Minuten bei Raumtemperatur und lichtgeschützt, dann ohne Waschen messen.\n\nHinweis zur Arbeitsweise: Pipettenspitzen werden nach jedem Reagenz gewechselt, auch wenn die Flasche gleich aussieht.\n\nPräparat 90 (Gruppe C): Hyazinthenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 465 Zellen, davon 49 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 91 (Gruppe E): Ackerbohnenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 463 Zellen, davon 53 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 92 (Gruppe E): Roggenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 413 Zellen, davon 56 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 93 (Gruppe B): Lilienanthere, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 349 Zellen, davon 55 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 94 (Gruppe D): Weizenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Orcein. Gezählt wurden 247 Zellen, davon 20 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 95 (Gruppe E): Lilienanthere, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 363 Zellen, davon 53 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 96 (Gruppe A): Zwiebelwurzelspitze, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 263 Zellen, davon 31 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 97 (Gruppe E): Hyazinthenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 506 Zellen, davon 46 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nHinweis zum Protokollbogen: Unklare Stadien werden als unklar notiert, nicht geschätzt.\n\nAbfälle mit Ethidiumbromid gehören in den roten Sammelbehälter neben Abzug 3, nie in den Ausguss.\n\nPräparat 98 (Gruppe B): Weizenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 181 Zellen, davon 42 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 99 (Gruppe D): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 430 Zellen, davon 18 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 100 (Gruppe C): Hyazinthenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 379 Zellen, davon 26 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 101 (Gruppe D): Lilienanthere, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 190 Zellen, davon 10 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 102 (Gruppe A): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 609 Zellen, davon 22 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nHinweis zum Mikroskopieren: Zuerst mit dem schwächsten Objektiv scharf stellen, erst dann zum Ölimmersionsobjektiv wechseln.\n\nPräparat 103 (Gruppe B): Knoblauchwurzel, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 557 Zellen, davon 29 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 104 (Gruppe C): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 457 Zellen, davon 11 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 105 (Gruppe D): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 577 Zellen, davon 52 in Teilung. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 106 (Gruppe C): Hyazinthenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 272 Zellen, davon 23 in Teilung. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nHinweis zur Ordnung: Benutzte Objektträger kommen in die Glasbox, nicht in den Restmüll.\n\nPräparat 107 (Gruppe A): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 376 Zellen, davon 28 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nDie erste Furchungsteilung befruchteter Seeigeleier lässt sich im Kurs unter dem Mikroskop direkt verfolgen. Den Zeitplan nach der Befruchtung siehe nächster Abschnitt.\n\nPräparat 108 (Gruppe D): Weizenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 254 Zellen, davon 12 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 109 (Gruppe D): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Toluidinblau. Gezählt wurden 437 Zellen, davon 16 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar.\n\nPräparat 110 (Gruppe E): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 435 Zellen, davon 12 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 111 (Gruppe A): Hyazinthenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 327 Zellen, davon 51 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nPräparat 112 (Gruppe D): Erbsenkeimling, fixiert in Ethanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 305 Zellen, davon 25 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nBei 18 Grad Celsius hebt sich die Befruchtungsmembran nach zwei Minuten ab; die erste Teilung folgt nach 85 Minuten, die zweite nach weiteren 40.\n\nPräparat 113 (Gruppe A): Weizenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 279 Zellen, davon 14 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Mehrere Zellen zeigten verklumpte Chromosomen, vermutlich ein Fixierungsfehler.\n\nHinweis zur Zusammenarbeit: Zwei Personen zählen dasselbe Gesichtsfeld unabhängig, Abweichungen werden besprochen.\n\nPräparat 114 (Gruppe E): Erbsenkeimling, fixiert in gepuffertem Formalin, gefärbt mit Giemsa-Lösung. Gezählt wurden 448 Zellen, davon 16 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 115 (Gruppe B): Hyazinthenwurzel, fixiert in Ethanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 495 Zellen, davon 45 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nHinweis zur Dokumentation: Jedes Präparat erhält eine fortlaufende Nummer, die auf dem Objektträger und im Protokollbogen übereinstimmen muss.\n\nPräparat 116 (Gruppe E): Knoblauchwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 572 Zellen, davon 33 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 117 (Gruppe D): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Feulgen-Reagenz. Gezählt wurden 412 Zellen, davon 31 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 118 (Gruppe C): Lilienanthere, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 494 Zellen, davon 20 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 119 (Gruppe A): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 454 Zellen, davon 14 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nEin Quetschpräparat der Wurzelspitze gilt als auswertbar, wenn mindestens drei Metaphasen im selben Gesichtsfeld liegen.\n\nPräparat 120 (Gruppe A): Knoblauchwurzel, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 429 Zellen, davon 20 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 121 (Gruppe E): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 275 Zellen, davon 37 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 122 (Gruppe B): Roggenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 609 Zellen, davon 51 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 123 (Gruppe C): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 283 Zellen, davon 31 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 124 (Gruppe E): Ackerbohnenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 267 Zellen, davon 45 in Teilung. Die Färbung fiel blass aus, die Chromosomen waren aber noch erkennbar. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar.\n\nPräparat 125 (Gruppe B): Weizenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 268 Zellen, davon 14 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos.\n\nPräparat 126 (Gruppe A): Lilienanthere, fixiert in Carnoy-Lösung, gefärbt mit Orcein. Gezählt wurden 621 Zellen, davon 23 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen.\n\nPräparat 127 (Gruppe D): Ackerbohnenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 239 Zellen, davon 23 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds.\n\nPräparat 128 (Gruppe C): Roggenwurzel, fixiert in gepuffertem Formalin, gefärbt mit Feulgen-Reagenz. Gezählt wurden 468 Zellen, davon 52 in Teilung. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 129 (Gruppe D): Zwiebelwurzelspitze, fixiert in Ethanol-Eisessig, gefärbt mit Feulgen-Reagenz. Gezählt wurden 554 Zellen, davon 58 in Teilung. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 130 (Gruppe C): Zwiebelwurzelspitze, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 273 Zellen, davon 19 in Teilung. Die Zellwände traten deutlich hervor, das Cytoplasma blieb fast farblos. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 131 (Gruppe A): Lilienanthere, fixiert in Ethanol-Eisessig, gefärbt mit Orcein. Gezählt wurden 259 Zellen, davon 24 in Teilung. Das Präparat war stellenweise zu dick gequetscht; nur der Rand war auswertbar. Anaphasen waren selten, Telophasen dagegen auffällig häufig.\n\nPräparat 132 (Gruppe E): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Giemsa-Lösung. Gezählt wurden 469 Zellen, davon 24 in Teilung. Luftblasen unter dem Deckglas verdeckten etwa ein Drittel des Gesichtsfelds. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n\nPräparat 133 (Gruppe C): Ackerbohnenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Toluidinblau. Gezählt wurden 434 Zellen, davon 17 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Die Gruppe hat das Präparat zur Kontrolle ein zweites Mal angefertigt.\n\nPräparat 134 (Gruppe D): Roggenwurzel, fixiert in Carnoy-Lösung, gefärbt mit Toluidinblau. Gezählt wurden 248 Zellen, davon 50 in Teilung. Die Metaphaseplatten lagen gut gespreizt und ließen sich einzeln zählen. Im Zentrum der Wurzelspitze lagen die meisten Teilungsstadien dicht beieinander.\n\nPräparat 135 (Gruppe A): Hyazinthenwurzel, fixiert in Methanol-Eisessig, gefärbt mit Giemsa-Lösung. Gezählt wurden 405 Zellen, davon 58 in Teilung. Anaphasen waren selten, Telophasen dagegen auffällig häufig. Prophasen ließen sich nur schwer von Interphasekernen unterscheiden.\n"
+    },
+    {
+      "id": "cronica-san-bartolome",
+      "title": "Crónica parroquial de San Bartolomé de Villanueva",
+      "language": "es",
+      "text": "# Crónica parroquial de San Bartolomé de Villanueva\n\n## 1911\n\n3 de enero. Bautizo de Cipriano Barrientos Alonso, hijo de Hilario Lobato Prieto y de Jacinta Turienzo Otero, vecinos de la cuesta de San Roque; fueron padrinos Pascual Nistal Alonso y Tomasa Lobato Fidalgo.\n\n9 de enero. Se dio sepultura a Eladio Turienzo Alonso, de 3 años, vecino de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n12 de enero. Se dio sepultura a Isidoro Lobato Herrero, de 18 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de segunda clase.\n\nEl señor obispo aprobó por fin la refundición de la campana mayor, rajada desde la helada de enero, y la junta de fábrica cerró el trato con el fundidor, como se detalla a continuación.\n\n14 de enero. Bautizo de Dionisio Herrero Turienzo, hijo de Hilario Herrero Gallego y de Tomasa Fidalgo Santos, vecinos de la Corredera; fueron padrinos Pascual Barrientos Turienzo y Catalina Del Río Turienzo.\n\n18 de enero. Llovió casi toda la semana y los caminos de la vega quedaron intransitables. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n20 de enero. Se dio sepultura a Catalina Cuesta Gallego, de 67 años, vecina de la plaza del Moral; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n24 de enero. Bautizo de Cipriano Prieto Herrero, hijo de Agapito Rabanal Gallego y de Manuela Mielgo Rabanal, vecinos de las casas del Ejido; fueron padrinos Tomás Gallego Turienzo y Manuela Gallego Otero.\n\n27 de enero. Se dio sepultura a Jacinta Mielgo Lobato, de 23 años, vecina de la plaza del Moral; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n1 de febrero. Bautizo de Leocadia Lobato Del Río, hija de Remigio Nistal Gallego y de Gregoria Cuesta Mielgo, vecinos de la plaza del Moral; fueron padrinos Remigio Del Río Fidalgo y Agustina Cuesta Del Río.\n\n7 de febrero. Llovió casi toda la semana y los caminos de la vega quedaron intransitables. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n11 de febrero. Se dio sepultura a Eulalia Gallego Herrero, de 78 años, vecina de la cuesta de San Roque; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n13 de febrero. Bautizo de Isidoro Santos Rabanal, hijo de Leandro Cuesta Rabanal y de Dominga Cuesta Santos, vecinos de la Corredera; fueron padrinos Baldomero Del Río Barrientos y Petra Del Río Santos.\n\n19 de febrero. Se dio sepultura a Gumersindo Prieto Prieto, de 26 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de primera clase.\n\nAjuste de la obra: mil ochocientas cuarenta pesetas en dos plazos; la fundición corre a cargo del maestro Anselmo Garrido, de Palencia.\n\n21 de febrero. Se dio sepultura a Dominga Lobato Mielgo, de 6 años, vecina de la Corredera; recibió los sacramentos y se le hizo oficio de primera clase.\n\n25 de febrero. Bautizo de Fermín Fidalgo Barrientos, hijo de Baldomero Otero Rabanal y de Vicenta Mielgo Nistal, vecinos de la calle Real; fueron padrinos Hilario Barrientos Rabanal y Leocadia Del Río Fidalgo.\n\n28 de febrero. Bautizo de Jacinta Fidalgo Cuesta, hija de Pascual Nistal Mielgo y de Rufina Cuesta Otero, vecinos de la calle de la Fuente; fueron padrinos Baldomero Barrientos Fidalgo y Bernarda Herrero Turienzo.\n\n3 de marzo. Bautizo de Sinforosa Prieto Herrero, hija de Remigio Mielgo Fidalgo y de Felisa Herrero Santos, vecinos de la calle de la Fuente; fueron padrinos Pascual Lobato Rabanal y Gregoria Nistal Barrientos.\n\n5 de marzo. Se dio sepultura a Rufina Gallego Cuesta, de 85 años, vecina de las casas del Ejido; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n7 de marzo. Se dio sepultura a Eladio Del Río Lobato, de 16 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n13 de marzo. Se dio sepultura a Sinforosa Turienzo Alonso, de 28 años, vecina de la plaza del Moral; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n19 de marzo. Bautizo de Dominga Turienzo Cuesta, hija de Leandro Prieto Mielgo y de Agustina Alonso Santos, vecinos de las casas del Ejido; fueron padrinos Baldomero Barrientos Alonso y Agustina Fidalgo Rabanal.\n\n24 de marzo. Bautizo de Hilario Otero Otero, hijo de Dionisio Santos Fidalgo y de Agustina Barrientos Rabanal, vecinos de la plaza del Moral; fueron padrinos Remigio Alonso Nistal y Vicenta Gallego Prieto.\n\n27 de marzo. Casamiento de Cipriano Del Río Lobato con Dominga Barrientos Otero; fueron testigos Baldomero Prieto Lobato y Remigio Cuesta Cuesta. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n1 de abril. Bautizo de Sinforosa Herrero Nistal, hija de Agapito Otero Nistal y de Rufina Cuesta Otero, vecinos de las casas del Ejido; fueron padrinos Fermín Herrero Turienzo y Petra Del Río Herrero.\n\nSe inauguró la luz eléctrica en la iglesia, costeada por don Facundo Rebollo, indiano vuelto de Cuba.\n\n7 de abril. Bautizo de Petra Mielgo Prieto, hija de Fermín Alonso Santos y de Jacinta Barrientos Barrientos, vecinos de la calle Real; fueron padrinos Gumersindo Rabanal Herrero y Dominga Mielgo Nistal.\n\n11 de abril. Casamiento de Gumersindo Otero Fidalgo con Vicenta Nistal Prieto; fueron testigos Isidoro Fidalgo Del Río y Eladio Otero Herrero. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n14 de abril. Casamiento de Remigio Otero Del Río con Agustina Mielgo Rabanal; fueron testigos Cipriano Otero Fidalgo y Matías Del Río Cuesta. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n18 de abril. Bautizo de Nicasio Mielgo Alonso, hijo de Eladio Herrero Nistal y de Gregoria Nistal Otero, vecinos de la calle Real; fueron padrinos Fermín Santos Santos y Catalina Otero Barrientos.\n\n21 de abril. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Cayó granizo en la parte alta del término, sin grandes daños.\n\n23 de abril. Nevó lo bastante para que los niños no acudieran a la escuela dos días. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n28 de abril. Casamiento de Leandro Del Río Rabanal con Petra Barrientos Turienzo; fueron testigos Remigio Del Río Turienzo y Fermín Mielgo Prieto. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n3 de mayo. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n6 de mayo. Se dio sepultura a Pascual Alonso Otero, de 42 años, vecino de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n8 de mayo. Bautizo de Leandro Nistal Santos, hijo de Isidoro Lobato Cuesta y de Manuela Otero Lobato, vecinos de la calle Real; fueron padrinos Tomás Barrientos Rabanal y Dominga Barrientos Del Río.\n\nLa plaga de langosta entró en los trigos de la vega a primeros de mes; se hicieron rogativas y la cofradía socorrió a los labradores perjudicados, como se detalla a continuación.\n\n14 de mayo. Bautizo de Jacinta Gallego Prieto, hija de Fermín Lobato Herrero y de Leocadia Gallego Rabanal, vecinos de la cuesta de San Roque; fueron padrinos Cipriano Nistal Herrero y Eulalia Turienzo Otero.\n\n16 de mayo. Bautizo de Dominga Prieto Del Río, hija de Nicasio Turienzo Otero y de Sinforosa Santos Prieto, vecinos de la cuesta de San Roque; fueron padrinos Matías Alonso Santos y Agustina Rabanal Cuesta.\n\n22 de mayo. Casamiento de Eladio Alonso Barrientos con Leocadia Herrero Herrero; fueron testigos Tomás Prieto Herrero y Dionisio Rabanal Turienzo. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n28 de mayo. Bautizo de Leocadia Del Río Mielgo, hija de Gumersindo Mielgo Nistal y de Leocadia Prieto Del Río, vecinos de la cuesta de San Roque; fueron padrinos Remigio Prieto Prieto y Sinforosa Del Río Mielgo.\n\n4 de junio. Bautizo de Pascual Gallego Prieto, hijo de Baldomero Lobato Nistal y de Rufina Cuesta Herrero, vecinos de la calle Real; fueron padrinos Tomás Rabanal Turienzo y Bernarda Alonso Santos.\n\n9 de junio. Se dio sepultura a Catalina Turienzo Prieto, de 5 años, vecina de la cuesta de San Roque; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n13 de junio. Bautizo de Remigio Prieto Prieto, hijo de Dionisio Barrientos Gallego y de Felisa Gallego Gallego, vecinos de la Corredera; fueron padrinos Remigio Lobato Fidalgo y Felisa Lobato Herrero.\n\n18 de junio. Bautizo de Isidoro Herrero Fidalgo, hijo de Eladio Nistal Santos y de Rufina Barrientos Fidalgo, vecinos de la plaza del Moral; fueron padrinos Fermín Herrero Herrero y Felisa Del Río Lobato.\n\n21 de junio. Bautizo de Leandro Cuesta Otero, hijo de Cipriano Del Río Otero y de Catalina Santos Cuesta, vecinos de la cuesta de San Roque; fueron padrinos Agapito Rabanal Otero y Dominga Lobato Nistal.\n\n26 de junio. Se dio sepultura a Baldomero Mielgo Cuesta, de 46 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de segunda clase.\n\nDaños y socorro: se perdió la tercera parte del trigo sembrado, y la cofradía repartió sesenta y cuatro fanegas de grano entre veintidós familias.\n\n1 de julio. Casamiento de Dionisio Alonso Lobato con Vicenta Prieto Barrientos; fueron testigos Baldomero Herrero Gallego y Hilario Nistal Del Río. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n5 de julio. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n9 de julio. Casamiento de Dionisio Cuesta Fidalgo con Dominga Cuesta Lobato; fueron testigos Matías Turienzo Cuesta y Nicasio Santos Del Río. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n12 de julio. Bautizo de Rufina Santos Turienzo, hija de Eladio Prieto Rabanal y de Jacinta Cuesta Rabanal, vecinos de la Corredera; fueron padrinos Gumersindo Alonso Cuesta y Vicenta Barrientos Alonso.\n\n15 de julio. Bautizo de Catalina Gallego Gallego, hija de Cipriano Gallego Barrientos y de Jacinta Del Río Prieto, vecinos de la calle de la Fuente; fueron padrinos Remigio Gallego Turienzo y Catalina Herrero Otero.\n\n21 de julio. Bautizo de Manuela Del Río Barrientos, hija de Leandro Nistal Cuesta y de Catalina Rabanal Santos, vecinos de la Corredera; fueron padrinos Gumersindo Otero Turienzo y Rufina Turienzo Cuesta.\n\n27 de julio. Se dio sepultura a Catalina Lobato Gallego, de 8 años, vecina de la calle Real; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n2 de agosto. Bautizo de Vicenta Nistal Rabanal, hija de Tomás Otero Nistal y de Petra Lobato Lobato, vecinos de la Corredera; fueron padrinos Fermín Fidalgo Turienzo y Dominga Alonso Gallego.\n\n8 de agosto. Bautizo de Pascual Rabanal Alonso, hijo de Remigio Prieto Barrientos y de Dominga Mielgo Fidalgo, vecinos de la calle Real; fueron padrinos Eladio Alonso Del Río y Manuela Santos Turienzo.\n\n14 de agosto. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n20 de agosto. Se dio sepultura a Bernarda Cuesta Alonso, de 3 años, vecina de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n24 de agosto. Llovió casi toda la semana y los caminos de la vega quedaron intransitables. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n27 de agosto. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\nTomó posesión de la parroquia el nuevo párroco, don Eusebio Carracedo, natural de Astorga.\n\n3 de septiembre. Se dio sepultura a Eladio Mielgo Lobato, de 49 años, vecino de la calle Real; recibió los sacramentos y se le hizo oficio de primera clase.\n\n6 de septiembre. Bautizo de Nicasio Nistal Herrero, hijo de Leandro Prieto Santos y de Felisa Nistal Prieto, vecinos de la calle de la Fuente; fueron padrinos Dionisio Rabanal Lobato y Vicenta Mielgo Fidalgo.\n\n12 de septiembre. Nevó lo bastante para que los niños no acudieran a la escuela dos días. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n16 de septiembre. Casamiento de Hilario Herrero Gallego con Petra Barrientos Nistal; fueron testigos Remigio Prieto Mielgo y Matías Fidalgo Rabanal. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n22 de septiembre. Se dio sepultura a Vicenta Gallego Cuesta, de 57 años, vecina de la calle Real; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n26 de septiembre. Casamiento de Isidoro Prieto Santos con Vicenta Nistal Gallego; fueron testigos Hilario Santos Herrero y Tomás Fidalgo Barrientos. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n4 de octubre. Bautizo de Bernarda Turienzo Rabanal, hija de Leandro Cuesta Turienzo y de Manuela Barrientos Nistal, vecinos de la plaza del Moral; fueron padrinos Remigio Otero Turienzo y Catalina Barrientos Barrientos.\n\n7 de octubre. Se dio sepultura a Isidoro Del Río Rabanal, de 59 años, vecino de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n13 de octubre. Se dio sepultura a Catalina Turienzo Santos, de 87 años, vecina de las casas del Ejido; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n16 de octubre. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n21 de octubre. Bautizo de Tomasa Nistal Mielgo, hija de Fermín Santos Herrero y de Catalina Cuesta Alonso, vecinos de la calle Real; fueron padrinos Baldomero Fidalgo Otero y Leocadia Alonso Herrero.\n\nLa fiesta del patrón San Bartolomé se celebró este año con más solemnidad que nunca, con predicador forastero y música traída de fuera, como se detalla a continuación.\n\n27 de octubre. Casamiento de Fermín Herrero Nistal con Petra Santos Otero; fueron testigos Leandro Fidalgo Fidalgo y Pascual Turienzo Gallego. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n3 de noviembre. Nevó lo bastante para que los niños no acudieran a la escuela dos días. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n6 de noviembre. Casamiento de Hilario Barrientos Turienzo con Petra Mielgo Del Río; fueron testigos Pascual Alonso Prieto y Hilario Otero Santos. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n12 de noviembre. Bautizo de Petra Herrero Fidalgo, hija de Tomás Turienzo Mielgo y de Gregoria Rabanal Del Río, vecinos de la calle Real; fueron padrinos Gumersindo Alonso Rabanal y Leocadia Cuesta Santos.\n\n16 de noviembre. Bautizo de Isidoro Gallego Alonso, hijo de Fermín Prieto Lobato y de Jacinta Del Río Herrero, vecinos de la plaza del Moral; fueron padrinos Gumersindo Nistal Santos y Manuela Turienzo Otero.\n\n19 de noviembre. Bautizo de Eulalia Nistal Del Río, hija de Cipriano Alonso Santos y de Petra Nistal Nistal, vecinos de la plaza del Moral; fueron padrinos Agapito Gallego Herrero y Bernarda Gallego Otero.\n\n22 de noviembre. Bautizo de Nicasio Santos Santos, hijo de Pascual Alonso Cuesta y de Catalina Prieto Cuesta, vecinos de la calle Real; fueron padrinos Gumersindo Gallego Prieto y Rufina Lobato Prieto.\n\n28 de noviembre. Bautizo de Tomasa Gallego Nistal, hija de Agapito Prieto Rabanal y de Gregoria Santos Fidalgo, vecinos de la calle de la Fuente; fueron padrinos Gumersindo Rabanal Rabanal y Bernarda Rabanal Nistal.\n\nPredicó el padre Lucio Escribano, franciscano de Zamora; tocó la banda de Benavente, y la limosna del día sumó trescientas doce pesetas.\n\n2 de diciembre. Bautizo de Sinforosa Alonso Otero, hija de Tomás Barrientos Gallego y de Jacinta Turienzo Rabanal, vecinos de la calle de la Fuente; fueron padrinos Pascual Gallego Turienzo y Eulalia Gallego Alonso.\n\n7 de diciembre. Se dio sepultura a Hilario Fidalgo Santos, de 87 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de primera clase.\n\n13 de diciembre. Se dio sepultura a Felisa Lobato Barrientos, de 69 años, vecina de las casas del Ejido; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n18 de diciembre. Se dio sepultura a Cipriano Alonso Alonso, de 21 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n21 de diciembre. Bautizo de Sinforosa Mielgo Gallego, hija de Leandro Barrientos Herrero y de Vicenta Mielgo Lobato, vecinos de la calle de la Fuente; fueron padrinos Hilario Nistal Fidalgo y Bernarda Fidalgo Otero.\n\n26 de diciembre. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n28 de diciembre. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n## 1912\n\n6 de enero. Bautizo de Eladio Mielgo Nistal, hijo de Isidoro Lobato Lobato y de Sinforosa Gallego Fidalgo, vecinos de la calle Real; fueron padrinos Isidoro Fidalgo Lobato y Jacinta Herrero Gallego.\n\n9 de enero. Bautizo de Catalina Herrero Fidalgo, hija de Isidoro Rabanal Barrientos y de Manuela Gallego Prieto, vecinos de la cuesta de San Roque; fueron padrinos Leandro Cuesta Herrero y Felisa Turienzo Alonso.\n\n12 de enero. Casamiento de Gumersindo Alonso Otero con Petra Turienzo Barrientos; fueron testigos Hilario Lobato Otero y Isidoro Otero Fidalgo. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\nPor la sequía se sacó en rogativa la imagen de la Virgen del Castillo hasta la ermita de los Remedios.\n\n17 de enero. Se dio sepultura a Dominga Nistal Otero, de 61 años, vecina de las casas del Ejido; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n20 de enero. Se dio sepultura a Cipriano Prieto Gallego, de 10 años, vecino de la Corredera; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n24 de enero. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n3 de febrero. Casamiento de Matías Barrientos Herrero con Dominga Alonso Fidalgo; fueron testigos Gumersindo Prieto Otero y Eladio Cuesta Alonso. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n6 de febrero. Bautizo de Agustina Turienzo Prieto, hija de Nicasio Cuesta Turienzo y de Jacinta Santos Lobato, vecinos de la Corredera; fueron padrinos Isidoro Lobato Prieto y Leocadia Cuesta Rabanal.\n\n9 de febrero. Llovió casi toda la semana y los caminos de la vega quedaron intransitables. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n15 de febrero. Bautizo de Petra Nistal Lobato, hija de Fermín Nistal Turienzo y de Dominga Mielgo Nistal, vecinos de la calle Real; fueron padrinos Baldomero Fidalgo Cuesta y Leocadia Del Río Gallego.\n\n20 de febrero. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros. Cayó granizo en la parte alta del término, sin grandes daños.\n\n23 de febrero. Bautizo de Cipriano Fidalgo Mielgo, hijo de Isidoro Gallego Santos y de Catalina Herrero Prieto, vecinos de la plaza del Moral; fueron padrinos Hilario Prieto Herrero y Felisa Gallego Gallego.\n\n3 de marzo. Casamiento de Gumersindo Santos Rabanal con Agustina Santos Santos; fueron testigos Agapito Otero Herrero y Cipriano Prieto Lobato. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n5 de marzo. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\nHubo un brote de sarampión entre los niños de la escuela, y el médico titular ordenó cerrar las aulas, como se detalla a continuación.\n\n11 de marzo. Casamiento de Eladio Mielgo Del Río con Manuela Lobato Lobato; fueron testigos Gumersindo Cuesta Otero y Matías Mielgo Alonso. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n13 de marzo. Bautizo de Tomás Barrientos Nistal, hijo de Dionisio Rabanal Mielgo y de Felisa Alonso Nistal, vecinos de las casas del Ejido; fueron padrinos Matías Gallego Del Río y Tomasa Mielgo Del Río.\n\n17 de marzo. Casamiento de Baldomero Rabanal Mielgo con Catalina Otero Turienzo; fueron testigos Gumersindo Nistal Herrero y Matías Herrero Gallego. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n20 de marzo. Casamiento de Remigio Rabanal Mielgo con Dominga Santos Rabanal; fueron testigos Eladio Nistal Mielgo y Dionisio Del Río Lobato. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n26 de marzo. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n2 de abril. Bautizo de Remigio Del Río Turienzo, hijo de Cipriano Cuesta Cuesta y de Gregoria Barrientos Prieto, vecinos de la calle de la Fuente; fueron padrinos Tomás Turienzo Del Río y Leocadia Otero Herrero.\n\n5 de abril. Nevó lo bastante para que los niños no acudieran a la escuela dos días. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n7 de abril. Se dio sepultura a Eladio Lobato Nistal, de 68 años, vecino de la calle Real; recibió los sacramentos y se le hizo oficio de primera clase.\n\n13 de abril. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n15 de abril. Cayó granizo en la parte alta del término, sin grandes daños. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n17 de abril. Casamiento de Baldomero Cuesta Mielgo con Dominga Alonso Gallego; fueron testigos Tomás Del Río Gallego y Dionisio Barrientos Lobato. Cayó granizo en la parte alta del término, sin grandes daños.\n\nLas aulas estuvieron cerradas del nueve al treinta de noviembre; enfermaron cuarenta y siete niños y fallecieron tres.\n\n19 de abril. Llovió casi toda la semana y los caminos de la vega quedaron intransitables. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n25 de abril. Casamiento de Nicasio Del Río Nistal con Rufina Gallego Del Río; fueron testigos Gumersindo Prieto Del Río y Matías Herrero Turienzo. Cayó granizo en la parte alta del término, sin grandes daños.\n\n2 de mayo. Casamiento de Matías Nistal Fidalgo con Gregoria Santos Rabanal; fueron testigos Leandro Prieto Rabanal y Eladio Alonso Fidalgo. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n4 de mayo. Se dio sepultura a Catalina Prieto Cuesta, de 66 años, vecina de la calle Real; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n7 de mayo. Casamiento de Hilario Turienzo Fidalgo con Sinforosa Rabanal Prieto; fueron testigos Leandro Lobato Alonso y Nicasio Mielgo Lobato. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n10 de mayo. Bautizo de Jacinta Gallego Del Río, hija de Gumersindo Fidalgo Rabanal y de Catalina Del Río Barrientos, vecinos de la cuesta de San Roque; fueron padrinos Leandro Del Río Herrero y Gregoria Prieto Nistal.\n\n12 de mayo. Casamiento de Baldomero Barrientos Gallego con Petra Del Río Alonso; fueron testigos Isidoro Alonso Otero y Leandro Gallego Santos. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n18 de mayo. Casamiento de Agapito Cuesta Del Río con Bernarda Turienzo Lobato; fueron testigos Gumersindo Lobato Gallego y Nicasio Nistal Barrientos. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n24 de mayo. Casamiento de Cipriano Nistal Alonso con Felisa Alonso Del Río; fueron testigos Tomás Prieto Mielgo y Tomás Fidalgo Mielgo. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n4 de junio. Cayó granizo en la parte alta del término, sin grandes daños. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n6 de junio. Bautizo de Vicenta Otero Otero, hija de Tomás Lobato Nistal y de Bernarda Fidalgo Fidalgo, vecinos de la Corredera; fueron padrinos Remigio Santos Del Río y Dominga Otero Prieto.\n\n9 de junio. Bautizo de Remigio Fidalgo Fidalgo, hijo de Gumersindo Turienzo Nistal y de Sinforosa Alonso Del Río, vecinos de la plaza del Moral; fueron padrinos Tomás Herrero Prieto y Rufina Lobato Lobato.\n\nSe estrenó el reloj de la torre, regalo de los emigrantes del pueblo en Buenos Aires.\n\n13 de junio. Bautizo de Hilario Herrero Fidalgo, hijo de Fermín Turienzo Fidalgo y de Rufina Mielgo Del Río, vecinos de la plaza del Moral; fueron padrinos Remigio Prieto Alonso y Manuela Prieto Lobato.\n\n19 de junio. Bautizo de Remigio Herrero Barrientos, hijo de Fermín Otero Barrientos y de Gregoria Nistal Prieto, vecinos de la calle Real; fueron padrinos Nicasio Lobato Barrientos y Felisa Barrientos Cuesta.\n\n22 de junio. Casamiento de Fermín Alonso Cuesta con Leocadia Barrientos Mielgo; fueron testigos Matías Fidalgo Gallego y Tomás Del Río Mielgo. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n25 de junio. Casamiento de Isidoro Turienzo Alonso con Vicenta Gallego Otero; fueron testigos Dionisio Herrero Otero y Gumersindo Otero Otero. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n27 de junio. Se dio sepultura a Eladio Nistal Otero, de 31 años, vecino de la cuesta de San Roque; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n1 de julio. Cayó granizo en la parte alta del término, sin grandes daños. Llovió casi toda la semana y los caminos de la vega quedaron intransitables.\n\n4 de julio. Bautizo de Nicasio Mielgo Lobato, hijo de Gumersindo Gallego Fidalgo y de Jacinta Nistal Prieto, vecinos de la plaza del Moral; fueron padrinos Dionisio Otero Otero y Manuela Santos Herrero.\n\n6 de julio. Bautizo de Dionisio Nistal Gallego, hijo de Pascual Del Río Del Río y de Tomasa Turienzo Fidalgo, vecinos de la calle de la Fuente; fueron padrinos Matías Herrero Lobato y Tomasa Del Río Turienzo.\n\n10 de julio. Bautizo de Dionisio Herrero Turienzo, hijo de Gumersindo Cuesta Del Río y de Rufina Prieto Mielgo, vecinos de la calle Real; fueron padrinos Matías Del Río Gallego y Felisa Del Río Santos.\n\n15 de julio. Bautizo de Nicasio Otero Rabanal, hijo de Gumersindo Santos Turienzo y de Eulalia Lobato Gallego, vecinos de la Corredera; fueron padrinos Cipriano Rabanal Prieto y Gregoria Otero Otero.\n\n18 de julio. Se dio sepultura a Tomás Prieto Mielgo, de 14 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de segunda clase.\n\nEl ayuntamiento cedió terreno para ampliar el cementerio, que ya no daba abasto, y el arcipreste vino a bendecirlo, como se detalla a continuación.\n\n24 de julio. Casamiento de Baldomero Alonso Cuesta con Rufina Herrero Rabanal; fueron testigos Nicasio Cuesta Rabanal y Leandro Otero Nistal. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n2 de agosto. Bautizo de Leandro Mielgo Fidalgo, hijo de Agapito Turienzo Rabanal y de Bernarda Barrientos Cuesta, vecinos de la plaza del Moral; fueron padrinos Agapito Barrientos Rabanal y Agustina Mielgo Rabanal.\n\n4 de agosto. Bautizo de Isidoro Cuesta Santos, hijo de Eladio Herrero Fidalgo y de Rufina Rabanal Gallego, vecinos de la cuesta de San Roque; fueron padrinos Agapito Del Río Del Río y Catalina Barrientos Cuesta.\n\n10 de agosto. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n12 de agosto. Se dio sepultura a Dominga Fidalgo Prieto, de 68 años, vecina de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n16 de agosto. Casamiento de Cipriano Herrero Mielgo con Felisa Nistal Gallego; fueron testigos Tomás Santos Gallego y Fermín Otero Prieto. Cayó granizo en la parte alta del término, sin grandes daños.\n\n20 de agosto. Se dio sepultura a Catalina Barrientos Prieto, de 40 años, vecina de la Corredera; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n22 de agosto. Bautizo de Dominga Del Río Barrientos, hija de Gumersindo Del Río Turienzo y de Catalina Santos Gallego, vecinos de las casas del Ejido; fueron padrinos Gumersindo Barrientos Gallego y Gregoria Nistal Gallego.\n\nSe cedieron mil doscientos cincuenta metros cuadrados en el pago de Las Eras; los bendijo don Saturnino Pozo el catorce de abril.\n\n26 de agosto. Casamiento de Leandro Nistal Barrientos con Manuela Cuesta Turienzo; fueron testigos Remigio Del Río Rabanal y Cipriano Rabanal Mielgo. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\n28 de agosto. Casamiento de Cipriano Otero Prieto con Petra Otero Prieto; fueron testigos Dionisio Del Río Mielgo y Matías Barrientos Lobato. Cayó granizo en la parte alta del término, sin grandes daños.\n\n4 de septiembre. Bautizo de Pascual Cuesta Fidalgo, hijo de Hilario Cuesta Gallego y de Sinforosa Cuesta Otero, vecinos de la calle de la Fuente; fueron padrinos Cipriano Nistal Del Río y Catalina Lobato Cuesta.\n\n6 de septiembre. Casamiento de Tomás Gallego Prieto con Vicenta Mielgo Turienzo; fueron testigos Dionisio Mielgo Lobato y Eladio Lobato Nistal. Cayó granizo en la parte alta del término, sin grandes daños.\n\n9 de septiembre. Se dio sepultura a Tomás Rabanal Fidalgo, de 34 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n14 de septiembre. Se dio sepultura a Gumersindo Turienzo Del Río, de 12 años, vecino de la calle de la Fuente; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n19 de septiembre. Bautizo de Rufina Mielgo Alonso, hija de Gumersindo Santos Cuesta y de Vicenta Prieto Lobato, vecinos de la cuesta de San Roque; fueron padrinos Baldomero Otero Otero y Jacinta Prieto Lobato.\n\n21 de septiembre. Bautizo de Petra Barrientos Mielgo, hija de Agapito Turienzo Alonso y de Eulalia Lobato Prieto, vecinos de la plaza del Moral; fueron padrinos Remigio Alonso Rabanal y Petra Prieto Otero.\n\n25 de septiembre. Bautizo de Cipriano Rabanal Otero, hijo de Fermín Herrero Turienzo y de Catalina Del Río Turienzo, vecinos de la plaza del Moral; fueron padrinos Nicasio Alonso Rabanal y Dominga Herrero Del Río.\n\n4 de octubre. Bautizo de Tomasa Otero Lobato, hija de Fermín Lobato Lobato y de Catalina Santos Herrero, vecinos de la calle Real; fueron padrinos Leandro Santos Gallego y Rufina Prieto Alonso.\n\n10 de octubre. Bautizo de Sinforosa Barrientos Del Río, hija de Fermín Alonso Gallego y de Sinforosa Herrero Otero, vecinos de la calle de la Fuente; fueron padrinos Gumersindo Otero Otero y Manuela Turienzo Nistal.\n\n13 de octubre. Casamiento de Nicasio Nistal Prieto con Dominga Gallego Mielgo; fueron testigos Cipriano Lobato Fidalgo y Eladio Rabanal Nistal. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n15 de octubre. Bautizo de Dionisio Rabanal Cuesta, hijo de Matías Rabanal Rabanal y de Gregoria Rabanal Santos, vecinos de la cuesta de San Roque; fueron padrinos Isidoro Rabanal Barrientos y Felisa Gallego Del Río.\n\nLa cofradía de las Ánimas eligió mayordomo a Teodoro Villafáñez en su junta ordinaria.\n\n19 de octubre. Se dio sepultura a Hilario Santos Cuesta, de 47 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de primera clase.\n\n23 de octubre. Bautizo de Petra Barrientos Otero, hija de Gumersindo Barrientos Nistal y de Petra Santos Lobato, vecinos de la calle de la Fuente; fueron padrinos Cipriano Gallego Lobato y Catalina Prieto Santos.\n\n26 de octubre. Se dio sepultura a Agapito Alonso Del Río, de 5 años, vecino de la cuesta de San Roque; recibió los sacramentos y se le hizo oficio de primera clase.\n\n28 de octubre. Bautizo de Rufina Cuesta Mielgo, hija de Pascual Nistal Cuesta y de Felisa Alonso Del Río, vecinos de las casas del Ejido; fueron padrinos Nicasio Mielgo Fidalgo y Agustina Lobato Nistal.\n\n4 de noviembre. Bautizo de Dominga Turienzo Turienzo, hija de Dionisio Barrientos Santos y de Eulalia Prieto Turienzo, vecinos de la Corredera; fueron padrinos Isidoro Santos Gallego y Sinforosa Otero Santos.\n\n8 de noviembre. Bautizo de Felisa Prieto Del Río, hija de Hilario Herrero Lobato y de Leocadia Cuesta Nistal, vecinos de la plaza del Moral; fueron padrinos Agapito Cuesta Otero y Rufina Herrero Cuesta.\n\n12 de noviembre. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n16 de noviembre. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Hizo un calor impropio de la estación y los pozos bajaron de nivel.\n\n18 de noviembre. Bautizo de Leocadia Gallego Cuesta, hija de Nicasio Herrero Gallego y de Rufina Nistal Nistal, vecinos de la calle de la Fuente; fueron padrinos Eladio Del Río Turienzo y Jacinta Nistal Barrientos.\n\n21 de noviembre. Bautizo de Sinforosa Fidalgo Fidalgo, hija de Matías Mielgo Nistal y de Bernarda Prieto Cuesta, vecinos de la calle de la Fuente; fueron padrinos Baldomero Alonso Barrientos y Vicenta Turienzo Alonso.\n\n25 de noviembre. Casamiento de Cipriano Herrero Barrientos con Jacinta Turienzo Rabanal; fueron testigos Dionisio Lobato Turienzo y Hilario Nistal Cuesta. Nevó lo bastante para que los niños no acudieran a la escuela dos días.\n\nEl órgano de la parroquia, mudo desde hacía años, volvió a sonar tras una reparación completa, como se detalla a continuación.\n\n2 de diciembre. Bautizo de Agustina Otero Gallego, hija de Tomás Turienzo Prieto y de Gregoria Gallego Barrientos, vecinos de la calle de la Fuente; fueron padrinos Hilario Lobato Del Río y Petra Alonso Nistal.\n\n4 de diciembre. Hizo un calor impropio de la estación y los pozos bajaron de nivel. Cayó granizo en la parte alta del término, sin grandes daños.\n\n8 de diciembre. Bautizo de Gumersindo Turienzo Rabanal, hijo de Baldomero Del Río Rabanal y de Bernarda Nistal Rabanal, vecinos de la calle de la Fuente; fueron padrinos Leandro Barrientos Santos y Vicenta Gallego Del Río.\n\n11 de diciembre. Bautizo de Remigio Cuesta Mielgo, hijo de Matías Turienzo Turienzo y de Tomasa Barrientos Barrientos, vecinos de la calle de la Fuente; fueron padrinos Leandro Del Río Mielgo y Tomasa Otero Fidalgo.\n\n16 de diciembre. Se dio sepultura a Tomás Rabanal Del Río, de 3 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n18 de diciembre. Se dio sepultura a Isidoro Mielgo Turienzo, de 29 años, vecino de la Corredera; recibió los sacramentos y se le hizo oficio de primera clase.\n\n22 de diciembre. Casamiento de Nicasio Turienzo Lobato con Felisa Gallego Rabanal; fueron testigos Gumersindo Alonso Alonso y Fermín Otero Lobato. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\nHizo el trabajo el organero Valentín Reguera, de Valladolid; duró veintitrés días y costó novecientas sesenta pesetas.\n\n26 de diciembre. Bautizo de Eladio Herrero Turienzo, hijo de Agapito Mielgo Alonso y de Sinforosa Mielgo Rabanal, vecinos de la Corredera; fueron padrinos Fermín Otero Nistal y Bernarda Fidalgo Fidalgo.\n\n## 1913\n\n7 de enero. Bautizo de Vicenta Gallego Turienzo, hija de Isidoro Prieto Santos y de Sinforosa Gallego Fidalgo, vecinos de las casas del Ejido; fueron padrinos Nicasio Otero Fidalgo y Bernarda Fidalgo Rabanal.\n\n13 de enero. Bautizo de Petra Alonso Turienzo, hija de Isidoro Nistal Fidalgo y de Leocadia Cuesta Barrientos, vecinos de la calle Real; fueron padrinos Agapito Santos Nistal y Leocadia Cuesta Santos.\n\n15 de enero. Se dio sepultura a Sinforosa Turienzo Mielgo, de 28 años, vecina de la calle Real; recibió los sacramentos y se le hizo oficio de tercera clase.\n\n20 de enero. Casamiento de Matías Fidalgo Prieto con Jacinta Alonso Alonso; fueron testigos Agapito Herrero Alonso y Matías Otero Del Río. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n22 de enero. Se dio sepultura a Agapito Turienzo Herrero, de 52 años, vecino de las casas del Ejido; recibió los sacramentos y se le hizo oficio de primera clase.\n\n27 de enero. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\n1 de febrero. Bautizo de Dominga Barrientos Prieto, hija de Eladio Turienzo Santos y de Eulalia Prieto Santos, vecinos de la Corredera; fueron padrinos Isidoro Fidalgo Lobato y Eulalia Otero Nistal.\n\n3 de febrero. Casamiento de Baldomero Rabanal Santos con Tomasa Herrero Cuesta; fueron testigos Eladio Fidalgo Mielgo y Baldomero Fidalgo Fidalgo. Cayó granizo en la parte alta del término, sin grandes daños.\n\n6 de febrero. Cayó granizo en la parte alta del término, sin grandes daños. Sopló cierzo durante días y hubo que asegurar las tejas del pórtico.\n\nLlegó al pueblo la nueva maestra, doña Ramona Cifuentes, con plaza en propiedad para la escuela de niñas.\n\n10 de febrero. Bautizo de Felisa Santos Herrero, hija de Baldomero Alonso Santos y de Vicenta Mielgo Santos, vecinos de la plaza del Moral; fueron padrinos Fermín Lobato Del Río y Bernarda Herrero Fidalgo.\n\n12 de febrero. Bautizo de Manuela Barrientos Cuesta, hija de Agapito Prieto Alonso y de Eulalia Herrero Fidalgo, vecinos de las casas del Ejido; fueron padrinos Fermín Lobato Turienzo y Bernarda Lobato Herrero.\n\n17 de febrero. Se dio sepultura a Rufina Santos Rabanal, de 27 años, vecina de la cuesta de San Roque; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n23 de febrero. Bautizo de Remigio Alonso Gallego, hijo de Isidoro Alonso Prieto y de Tomasa Nistal Cuesta, vecinos de la cuesta de San Roque; fueron padrinos Pascual Del Río Rabanal y Rufina Gallego Nistal.\n\n27 de febrero. Cayó granizo en la parte alta del término, sin grandes daños. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n3 de marzo. Casamiento de Nicasio Cuesta Lobato con Bernarda Rabanal Del Río; fueron testigos Cipriano Nistal Nistal y Fermín Herrero Rabanal. Heló varias noches seguidas y se perdió buena parte de la flor de los almendros.\n\n5 de marzo. Bautizo de Vicenta Cuesta Rabanal, hija de Matías Barrientos Nistal y de Felisa Fidalgo Barrientos, vecinos de la Corredera; fueron padrinos Cipriano Del Río Herrero y Jacinta Otero Otero.\n\n8 de marzo. Bautizo de Vicenta Del Río Gallego, hija de Nicasio Fidalgo Cuesta y de Petra Nistal Turienzo, vecinos de la plaza del Moral; fueron padrinos Remigio Herrero Barrientos y Agustina Otero Del Río.\n\n14 de marzo. Bautizo de Pascual Santos Prieto, hijo de Baldomero Prieto Cuesta y de Eulalia Lobato Del Río, vecinos de la cuesta de San Roque; fueron padrinos Nicasio Herrero Prieto y Petra Mielgo Herrero.\n\n20 de marzo. Bautizo de Dionisio Lobato Alonso, hijo de Dionisio Turienzo Rabanal y de Felisa Herrero Barrientos, vecinos de la Corredera; fueron padrinos Matías Gallego Rabanal y Leocadia Turienzo Fidalgo.\n\n25 de marzo. Bautizo de Isidoro Lobato Del Río, hijo de Remigio Alonso Alonso y de Sinforosa Cuesta Cuesta, vecinos de la calle de la Fuente; fueron padrinos Matías Rabanal Mielgo y Rufina Santos Turienzo.\n\n3 de abril. Se dio sepultura a Cipriano Del Río Nistal, de 4 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de primera clase.\n\n6 de abril. Se dio sepultura a Gumersindo Turienzo Otero, de 84 años, vecino de la plaza del Moral; recibió los sacramentos y se le hizo oficio de segunda clase.\n\n9 de abril. Bautizo de Dominga Otero Alonso, hija de Matías Otero Lobato y de Agustina Rabanal Del Río, vecinos de la calle Real; fueron padrinos Hilario Gallego Alonso y Manuela Mielgo Fidalgo.\n\n15 de abril. Bautizo de Dominga Barrientos Herrero, hija de Nicasio Fidalgo Prieto y de Jacinta Alonso Fidalgo, vecinos de la Corredera; fueron padrinos Nicasio Turienzo Turienzo y Gregoria Gallego Prieto.\n"
+    }
+  ],
+  "queries": [
+    {
+      "id": "sc-de-next-sir-tubulin",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wie lange und bei welcher Temperatur färbt man die Spindelfasern mit SiR-Tubulin?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            2484,
+            2640
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-next-nocodazol",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Welche Nocodazol-Konzentration nimmt man für den Arrest in der Prometaphase?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            10195,
+            10343
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-next-kolchizin",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wie lange werden Zwiebelwurzelspitzen mit Kolchizin vorbehandelt?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            17925,
+            18068
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-next-teilungsindex",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wie viele Zellen muss man für den Teilungsindex der Wurzelspitze mindestens auszählen?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            25398,
+            25533
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-next-propidiumiodid",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "In welcher Konzentration setzt man Propidiumiodid für die DNA-Gehaltsmessung ein?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            31549,
+            31682
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-next-seeigel",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Nach wie vielen Minuten teilen sich befruchtete Seeigeleier zum ersten Mal?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            39390,
+            39535
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-karmin",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wie wird Karminessigsäure für Quetschpräparate angesetzt?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            5371,
+            5498
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-kalibrierung",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wer kalibriert die Mikroskope im Kursraum?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            13453,
+            13559
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-hela",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wie lange dauert die Mitose einer HeLa-Zelle in der Kurskultur?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            21499,
+            21619
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-brutschrank",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Mit wie viel Kohlendioxid läuft der Brutschrank für die Zellkulturen?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            27200,
+            27305
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-ethidium",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wohin gehören Abfälle mit Ethidiumbromid?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            34408,
+            34508
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-de-same-auswertbar",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "German cell-biology handbook"
+      ],
+      "text": "Wann gilt ein Quetschpräparat der Wurzelspitze als auswertbar?",
+      "relevance": {
+        "kurshandbuch-zellbiologie": 3
+      },
+      "answer_spans": {
+        "kurshandbuch-zellbiologie": [
+          [
+            41892,
+            42013
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-campana",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Cuánto costó refundir la campana mayor y quién hizo la fundición?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            2630,
+            2766
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-langosta",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Cuántas fanegas repartió la cofradía tras la plaga de langosta?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            9106,
+            9257
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-patron",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Quién predicó en la fiesta de San Bartolomé?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            15727,
+            15867
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-sarampion",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Cuántos niños murieron en el brote de sarampión de la escuela?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            22170,
+            22289
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-cementerio",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Cuántos metros cuadrados se cedieron para ampliar el cementerio?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            28671,
+            28800
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-next-organo",
+      "category": "pointing clause",
+      "dimensions": [
+        "answer in the following passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Quién reparó el órgano de la parroquia y cuánto costó?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            35262,
+            35385
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-luz",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Quién costeó la luz eléctrica de la iglesia?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            4897,
+            5000
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-parroco",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿De dónde era natural el párroco Eusebio Carracedo?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            11717,
+            11810
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-sequia",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Qué imagen se sacó en rogativa por la sequía?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            17806,
+            17910
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-reloj",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Quién regaló el reloj de la torre?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            24710,
+            24796
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-animas",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿A quién eligió mayordomo la cofradía de las Ánimas?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            31506,
+            31597
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sc-es-same-escuela",
+      "category": "plain fact",
+      "dimensions": [
+        "answer in the same passage",
+        "Spanish parish chronicle"
+      ],
+      "text": "¿Cómo se llamaba la nueva maestra de la escuela de niñas?",
+      "relevance": {
+        "cronica-san-bartolome": 3
+      },
+      "answer_spans": {
+        "cronica-san-bartolome": [
+          [
+            37289,
+            37397
+          ]
+        ]
+      }
+    }
+  ]
+}
