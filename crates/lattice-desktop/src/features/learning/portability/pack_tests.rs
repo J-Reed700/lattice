@@ -417,7 +417,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await
         .expect("assessment blueprint");
     let candidate_id = id();
-    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'multiple_choice',2,'Which claim is supported?','[\"A\",\"B\"]',NULL,'[]','[]','person',NULL,'candidate-content-hash',12)")
+    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'single_choice',2,'Which claim is supported?','[\"A\",\"B\"]',NULL,'[]','[]','person',NULL,'candidate-content-hash',12)")
         .bind(&candidate_id)
         .bind(program_id)
         .bind(&outcome_id)
@@ -432,24 +432,17 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
     .execute(&pool)
     .await
     .expect("candidate outcome");
-    sqlx::query("INSERT INTO learning_assessment_answer_keys(candidate_id,selected_index,accepted_answers_json,ordered_values_json,explanation) VALUES(?,1,'[]','[]','The second claim follows from the passage.')")
+    sqlx::query("INSERT INTO learning_assessment_answer_keys(candidate_id,key_json,explanation) VALUES(?,'{\"kind\":\"choice\",\"value\":1}','The second claim follows from the passage.')")
         .bind(&candidate_id)
         .execute(&pool)
         .await
         .expect("private assessment key");
-    sqlx::query("INSERT INTO learning_assessment_blueprint_slots(blueprint_id,blueprint_revision,ordinal,outcome_id,format,difficulty,difficulty_max,points) VALUES(?,1,0,?,'multiple_choice',2,3,2.0)")
+    sqlx::query("INSERT INTO learning_assessment_blueprint_slots(blueprint_id,blueprint_revision,ordinal,outcome_id,format,difficulty,difficulty_max,points) VALUES(?,1,0,?,'single_choice',2,3,2.0)")
         .bind(&blueprint_id)
         .bind(&outcome_id)
         .execute(&pool)
         .await
         .expect("blueprint slot");
-    sqlx::query("INSERT INTO learning_assessment_blueprint_candidates(program_id,blueprint_id,blueprint_revision,candidate_id) VALUES(?,?,1,?)")
-        .bind(program_id)
-        .bind(&blueprint_id)
-        .bind(&candidate_id)
-        .execute(&pool)
-        .await
-        .expect("blueprint candidate");
 
     let form_id = id();
     sqlx::query("INSERT INTO learning_assessment_forms(id,program_id,blueprint_id,blueprint_revision,retake_of_form_id,status,revision,title,instructions,expected_minutes,allowed_aids_json,purpose,passing_score,rubric_json,feedback_timing,source_version_ids_json,model_name,created_at,updated_at,submitted_at) VALUES(?,?,?,1,NULL,'submitted',2,'Evidence check form','Answer each item',15,'[]','checkpoint',0.7,'[]','after_submission','[]',NULL,13,14,15)")
@@ -459,7 +452,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .execute(&pool)
         .await
         .expect("assessment form");
-    sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed) VALUES(?,0,?,?,'multiple_choice',2,'Which claim is supported?','[\"A\",\"B\"]',NULL,'[]',2.0,0)")
+    sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed) VALUES(?,0,?,?,'single_choice',2,'Which claim is supported?','[\"A\",\"B\"]',NULL,'[]',2.0,0)")
         .bind(&form_id)
         .bind(&candidate_id)
         .bind(&outcome_id)
@@ -473,7 +466,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await
         .expect("form item outcome");
     let response_operation_id = id();
-    sqlx::query("INSERT INTO learning_assessment_response_revisions(form_id,item_ordinal,revision,operation_id,payload_hash,selected_index,text_response,ordered_values_json,artifact_json,assistance_json,created_at) VALUES(?,0,1,?,'response-hash',1,NULL,'[]',NULL,'[]',16)")
+    sqlx::query("INSERT INTO learning_assessment_response_revisions(form_id,item_ordinal,revision,operation_id,payload_hash,selected_indices_json,text_response,ordered_values_json,artifact_json,assistance_json,created_at) VALUES(?,0,1,?,'response-hash','[1]',NULL,'[]',NULL,'[]',16)")
         .bind(&form_id)
         .bind(&response_operation_id)
         .execute(&pool)
@@ -487,7 +480,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .execute(&pool)
         .await
         .expect("assessment submission");
-    sqlx::query("INSERT INTO learning_assessment_item_results(form_id,item_ordinal,score,correct,grade_status,feedback,criterion_results_json,artifact_quotes_json) VALUES(?,0,0.8,1,'deterministic','Supported','[]','[]')")
+    sqlx::query("INSERT INTO learning_assessment_item_results(form_id,item_ordinal,score,correct,grade_status,feedback,points_earned,points_possible) VALUES(?,0,0.8,1,'deterministic','Supported',1.6,2.0)")
         .bind(&form_id)
         .execute(&pool)
         .await
@@ -647,7 +640,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
             .await
             .expect("assessment form restored");
     assert_ne!(imported_form, form_id);
-    let assessment = sqlx::query("SELECT f.title,f.status,i.prompt,r.selected_index,r.operation_id,s.score,s.passed,k.selected_index AS key_index,ir.feedback FROM learning_assessment_forms f JOIN learning_assessment_form_items i ON i.form_id=f.id JOIN learning_assessment_response_revisions r ON r.form_id=f.id JOIN learning_assessment_submissions s ON s.form_id=f.id JOIN learning_assessment_item_results ir ON ir.form_id=f.id AND ir.item_ordinal=i.ordinal JOIN learning_assessment_form_items fi ON fi.form_id=f.id JOIN learning_assessment_candidates c ON c.id=fi.candidate_id JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE f.program_id=?")
+    let assessment = sqlx::query("SELECT f.title,f.status,i.prompt,r.selected_indices_json,r.operation_id,s.score,s.passed,k.key_json,ir.feedback FROM learning_assessment_forms f JOIN learning_assessment_form_items i ON i.form_id=f.id JOIN learning_assessment_response_revisions r ON r.form_id=f.id JOIN learning_assessment_submissions s ON s.form_id=f.id JOIN learning_assessment_item_results ir ON ir.form_id=f.id AND ir.item_ordinal=i.ordinal JOIN learning_assessment_form_items fi ON fi.form_id=f.id JOIN learning_assessment_candidates c ON c.id=fi.candidate_id JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE f.program_id=?")
         .bind(&copy_id)
         .fetch_one(&pool)
         .await
@@ -659,14 +652,16 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         assessment.get::<String, _>("prompt"),
         "Which claim is supported?"
     );
-    assert_eq!(assessment.get::<i64, _>("selected_index"), 1);
+    assert_eq!(assessment.get::<String, _>("selected_indices_json"), "[1]");
     assert_ne!(
         assessment.get::<String, _>("operation_id"),
         response_operation_id
     );
     assert_eq!(assessment.get::<f64, _>("score"), 0.8);
     assert_eq!(assessment.get::<i64, _>("passed"), 1);
-    assert_eq!(assessment.get::<i64, _>("key_index"), 1);
+    assert!(assessment
+        .get::<String, _>("key_json")
+        .contains("\"choice\""));
     assert_eq!(assessment.get::<String, _>("feedback"), "Supported");
 
     let curriculum: (i64, String, String, String) = sqlx::query_as("SELECT current.revision,current.status,current.predecessor_id,prior.id FROM learning_curriculum_revisions current JOIN learning_curriculum_revisions prior ON prior.program_id=current.program_id AND prior.revision=1 WHERE current.program_id=? AND current.revision=2")

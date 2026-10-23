@@ -7,9 +7,9 @@ use super::{
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
 };
 use crate::features::learning::dto::{
-    LearningAnswerKey, LearningAssessmentKind, LearningBlockDto, LearningBlockKind,
-    LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
-    LearningSourceDto, PreparedLearningLesson,
+    LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningPreparation,
+    LearningProgramDto, LearningSourceDto, LessonAnswerKey, LessonQuestion, LessonQuestionKind,
+    PreparedLearningLesson,
 };
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
@@ -59,7 +59,7 @@ struct GeneratedBlock {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedQuestion {
-    kind: LearningAssessmentKind,
+    kind: LessonQuestionKind,
     prompt: String,
     options: Vec<String>,
     correct_index: usize,
@@ -524,7 +524,7 @@ fn assemble(
             ));
         }
         let question_id = uuid::Uuid::new_v4().to_string();
-        questions.push(LearningQuestionDto {
+        questions.push(LessonQuestion {
             id: question_id.clone(),
             kind: question.kind,
             prompt: question.prompt.trim().to_owned(),
@@ -535,7 +535,7 @@ fn assemble(
                 .collect(),
             source_ids,
         });
-        keys.push(LearningAnswerKey {
+        keys.push(LessonAnswerKey {
             question_id,
             correct_index: question.correct_index,
             explanation: question.explanation.trim().to_owned(),

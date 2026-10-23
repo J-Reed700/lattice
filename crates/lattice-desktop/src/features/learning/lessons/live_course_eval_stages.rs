@@ -80,7 +80,6 @@ pub(super) fn lesson_metrics(
         .blocks
         .iter()
         .flat_map(|b| &b.source_ids)
-        .chain(lesson.questions.iter().flat_map(|q| &q.source_ids))
         .map(String::as_str)
         .collect();
     let kinds: BTreeSet<String> = lesson
@@ -132,7 +131,7 @@ pub(super) fn lesson_metrics(
         json!({"run": ran, "failed": failed})
     });
     json!({
-        "shape": {"blocks": lesson.blocks.len(), "kinds": kinds, "questions": lesson.questions.len()},
+        "shape": {"blocks": lesson.blocks.len(), "kinds": kinds},
         "citations": {"source_ids": cited.len(), "unresolved": cited.iter().filter(|id| !known_sources.contains(**id)).count()},
         "claims": claims,
         "examples": examples,

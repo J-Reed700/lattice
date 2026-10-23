@@ -38,9 +38,7 @@ impl LearningPackConflictKind {
                 Self::ProgramHistory | Self::ProgramJobs => {
                     policy.on_existing() == ExistingAction::Keep
                 }
-                Self::Module | Self::Lesson | Self::Question | Self::Attempt | Self::Record => {
-                    policy.remaps_ids()
-                }
+                Self::Module | Self::Lesson | Self::Record => policy.remaps_ids(),
             })
             .collect()
     }

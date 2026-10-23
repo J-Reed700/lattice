@@ -40,19 +40,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lattice::features::learning::assessment_engine::{
-    LearningAssessmentPurpose, LearningFeedbackTiming, LearningItemFormat, LearningRubricCriterion,
-};
-use lattice::features::learning::assessment_generation;
+use lattice::features::learning::assessment_engine::LearningRubricCriterion;
+use lattice::features::learning::assessment_generation::WrittenAnswer;
 use lattice::features::learning::dto::{
-    LearningAssessmentFormDto, LearningAssessmentFormItemDto, LearningAssessmentFormStatus,
-    LearningAssessmentGradeStatus, LearningBlockDto, LearningBlockKind, LearningLessonDto,
-    LearningPreparation, LearningQuizMode, LearningSourceVersionDto,
-    LearningSourceVersionSummaryDto,
+    LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningPreparation,
+    LearningSourceVersionDto, LearningSourceVersionSummaryDto,
 };
+use lattice::features::learning::grade_rationale::Checked;
 use lattice::features::learning::practical_dto::LearningPracticalActivityKind;
 use lattice::features::learning::practical_generation::{self, PracticalFileRole};
+use lattice::features::learning::quiz_bank_jobs;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
+use lattice_core::application::ports::LLMPort;
 use serde_json::{json, Value};
 use sysinfo::{Pid, System};
 
@@ -190,77 +189,38 @@ fn criterion() -> LearningRubricCriterion {
     }
 }
 
-fn assessment_form() -> LearningAssessmentFormDto {
-    let responses = [
+/// The grading matrix: one written answer per case, against one rubric.
+fn grading_cases() -> Vec<(&'static str, WrittenAnswer)> {
+    [
         (
+            "correct",
             "00000000-0000-4000-8000-000000000101",
             "Retrying the same idempotent request has the same intended effect, so a client may safely retry after losing the response.",
         ),
         (
+            "incorrect",
             "00000000-0000-4000-8000-000000000102",
             "Every retry must create an additional resource, so repeating the request is always unsafe.",
         ),
+        ("ambiguous", "00000000-0000-4000-8000-000000000103", "It depends on what happens."),
+        ("incomplete", "00000000-0000-4000-8000-000000000104", "I am not sure."),
+    ]
+    .into_iter()
+    .map(|(case, id, answer)| {
         (
-            "00000000-0000-4000-8000-000000000103",
-            "It depends on what happens.",
-        ),
-        ("00000000-0000-4000-8000-000000000104", "I am not sure."),
-    ];
-    let items = responses
-        .into_iter()
-        .map(|(id, answer)| LearningAssessmentFormItemDto {
-            id: id.into(),
-            outcome_ids: vec!["00000000-0000-4000-8000-000000000010".into()],
-            format: LearningItemFormat::Explanation,
-            difficulty: 3,
-            prompt: "Explain why idempotency matters when retrying a request after the response is lost."
-                .into(),
-            options: vec![],
-            artifact_kind: None,
-            rubric: vec![criterion()],
-            points: 4.0,
-            source_version_ids: vec![],
-            previously_exposed: false,
-            selected_index: None,
-            selected_indices: vec![],
-            blank_responses: vec![],
-            matches: vec![],
-            left_items: vec![],
-            right_items: vec![],
-            blank_count: 0,
-            text_response: Some(answer.into()),
-            ordered_values: vec![],
-            artifact_json: None,
-            response_revision: 1,
-            key_reveal: None,
-        })
-        .collect();
-    LearningAssessmentFormDto {
-        id: "00000000-0000-4000-8000-000000000001".into(),
-        program_id: "00000000-0000-4000-8000-000000000002".into(),
-        blueprint_id: "00000000-0000-4000-8000-000000000003".into(),
-        blueprint_revision: 1,
-        retake_of_form_id: None,
-        status: LearningAssessmentFormStatus::Active,
-        revision: 1,
-        title: "Synthetic grading matrix".into(),
-        instructions: "Grade only the submitted response against the rubric.".into(),
-        expected_minutes: 5,
-        allowed_aids: vec![],
-        purpose: LearningAssessmentPurpose::Checkpoint,
-        passing_score: 0.75,
-        feedback_timing: LearningFeedbackTiming::AfterSubmission,
-        rubric: vec![criterion()],
-        source_version_ids: vec![],
-        model_name: None,
-        items,
-        created_at: 1,
-        updated_at: 1,
-        submitted_at: None,
-        submission: None,
-        scope: None,
-        mode: LearningQuizMode::Graded,
-    }
+            case,
+            WrittenAnswer {
+                item_id: id.into(),
+                prompt: "Explain why idempotency matters when retrying a request after the response is lost."
+                    .into(),
+                rubric: vec![criterion()],
+                answer: answer.into(),
+                reference: String::new(),
+                learner_note: None,
+            },
+        )
+    })
+    .collect()
 }
 
 fn practical_fixture() -> (LearningLessonDto, LearningSourceVersionDto) {
@@ -277,7 +237,6 @@ fn practical_fixture() -> (LearningLessonDto, LearningSourceVersionDto) {
             body: "A quoted comma belongs to its field; doubled quotes encode one quote.".into(),
             source_ids: vec!["00000000-0000-4000-8000-000000000202".into()],
         }],
-        questions: vec![],
         completed: false,
     };
     let source = LearningSourceVersionDto {
@@ -316,17 +275,11 @@ fn activity_text(activity: &practical_generation::GeneratedPracticalActivity) ->
 
 #[test]
 fn assessment_matrix_covers_correct_incorrect_ambiguous_and_incomplete_attempts() {
-    let form = assessment_form();
-    assert_eq!(form.items.len(), 4);
-    assert!(form
-        .items
+    let cases = grading_cases();
+    assert_eq!(cases.len(), 4);
+    assert!(cases
         .iter()
-        .all(|item| item.rubric == vec![criterion()]));
-    assert!(form.items.iter().all(|item| {
-        item.text_response
-            .as_deref()
-            .is_some_and(|answer| !answer.trim().is_empty())
-    }));
+        .all(|(_, answer)| answer.rubric == vec![criterion()] && !answer.answer.trim().is_empty()));
 }
 
 #[test]
@@ -343,78 +296,68 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
     let config = EvalConfig::from_env();
     let client = config.client();
 
-    let form = assessment_form();
     let started = Instant::now();
     let sampler = MemorySampler::start();
-    let graded = assessment_generation::grade_open(&client, &form).await;
+    let mut graded = Vec::new();
+    for (case, answer) in grading_cases() {
+        match quiz_bank_jobs::grade_written_answer(&client, &answer, None).await {
+            Ok(checked) => graded.push((case, checked)),
+            Err(error) => {
+                append_trace(
+                    &config,
+                    json!({"kind": "assessment_matrix", "passed": false, "case": case, "error": error.to_string()}),
+                );
+                panic!("live assessment grading failed: {error}");
+            }
+        }
+    }
     let peak_rss_bytes = sampler.finish().await;
     let latency_ms = started.elapsed().as_millis();
-    let (results, grader_model) = match graded {
-        Ok(value) => value,
-        Err(error) => {
-            append_trace(
-                &config,
-                json!({
-                    "kind": "assessment_matrix",
-                    "passed": false,
-                    "latencyMs": latency_ms,
-                    "peakObservedRssBytes": peak_rss_bytes,
-                    "error": error.to_string(),
-                }),
-            );
-            panic!("live assessment grading failed: {error}");
-        }
+    let fraction = |wanted: &str| {
+        graded
+            .iter()
+            .find(|(case, _)| *case == wanted)
+            .and_then(|(_, checked)| match checked {
+                Checked::Graded { fraction, .. } => Some(*fraction),
+                Checked::Unexplained(_) => None,
+            })
     };
-
-    let case_ids = [
-        ("correct", "00000000-0000-4000-8000-000000000101"),
-        ("incorrect", "00000000-0000-4000-8000-000000000102"),
-        ("ambiguous", "00000000-0000-4000-8000-000000000103"),
-        ("incomplete", "00000000-0000-4000-8000-000000000104"),
-    ];
-    let mut scored = Vec::new();
-    let mut supported_numeric_scores = 0usize;
-    for (case, id) in case_ids {
-        let (status, criteria) = results.get(id).expect("grader returned every matrix case");
-        let result = criteria.first().expect("matrix case has one criterion");
-        if result.score.is_some() && result.artifact_quote.is_some() {
-            supported_numeric_scores += 1;
-        }
-        scored.push(json!({
-            "case": case,
-            "status": status,
-            "score": result.score,
-            "maxPoints": result.max_points,
-            "observation": result.observation,
-            "artifactQuote": result.artifact_quote,
-        }));
-    }
-    let correct = results["00000000-0000-4000-8000-000000000101"].1[0].score;
-    let incorrect = results["00000000-0000-4000-8000-000000000102"].1[0].score;
-    let ambiguous = &results["00000000-0000-4000-8000-000000000103"];
-    let incomplete = &results["00000000-0000-4000-8000-000000000104"];
-    let rubric_agreement =
-        correct.is_some_and(|score| score >= 3) && incorrect.is_some_and(|score| score <= 1);
-    let false_confidence_count = [ambiguous, incomplete]
+    let rubric_agreement = fraction("correct").is_some_and(|f| f >= 0.75)
+        && fraction("incorrect").is_some_and(|f| f <= 0.25);
+    // Full credit for an answer that says nothing is false confidence.
+    let false_confidence_count = ["ambiguous", "incomplete"]
         .into_iter()
-        .filter(|(status, criteria)| {
-            *status != LearningAssessmentGradeStatus::Uncertain
-                || criteria.iter().any(|criterion| criterion.score.is_some())
+        .filter(|case| fraction(case).is_some_and(|f| f >= 0.75))
+        .count();
+    let explained = graded
+        .iter()
+        .filter(|(_, checked)| {
+            matches!(checked, Checked::Graded { rationale, .. } if !rationale.summary.is_empty())
         })
         .count();
-    let assessment_passed =
-        rubric_agreement && false_confidence_count == 0 && supported_numeric_scores == 2;
+    let scored: Vec<_> = graded
+        .iter()
+        .map(|(case, checked)| match checked {
+            Checked::Graded {
+                rationale,
+                fraction,
+                status,
+            } => json!({"case": case, "status": status, "fraction": fraction, "rationale": rationale}),
+            Checked::Unexplained(reason) => json!({"case": case, "unexplained": reason}),
+        })
+        .collect();
+    let assessment_passed = rubric_agreement && false_confidence_count == 0;
     append_trace(
         &config,
         json!({
             "kind": "assessment_matrix",
             "passed": assessment_passed,
-            "graderModel": grader_model,
+            "graderModel": client.model_name(),
             "latencyMs": latency_ms,
             "peakObservedRssBytes": peak_rss_bytes,
             "rubricAgreement": rubric_agreement,
             "falseConfidenceCount": false_confidence_count,
-            "supportedNumericScores": supported_numeric_scores,
+            "explainedGrades": explained,
             "cases": scored,
         }),
     );

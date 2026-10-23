@@ -180,7 +180,7 @@ impl LearningSourceLibraryRepository {
                 reference_title: r.get("ref_title"),
             });
         }
-        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,q.prompt ref_title FROM learning_questions q JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=? AND EXISTS(SELECT 1 FROM json_each(q.source_ids_json) WHERE value=?) ORDER BY l.ordinal,q.ordinal")
+        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.prompt ref_title FROM learning_assessment_candidates c JOIN learning_lessons l ON l.id=c.lesson_id WHERE c.program_id=? AND c.review_status='agreed' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=?) ORDER BY l.ordinal,c.rowid")
             .bind(program_id).bind(version_id).fetch_all(&self.pool).await.map_err(db)?;
         for r in rows {
             out.push(LearningSourceUsageDto {

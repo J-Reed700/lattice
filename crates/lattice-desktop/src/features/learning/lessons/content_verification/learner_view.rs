@@ -44,8 +44,7 @@ impl LessonVerificationReport {
             || self.content_sha256.is_empty()
             || self.checker_model.is_empty()
             || self.findings.iter().any(|finding| {
-                finding.unit >= lesson.blocks.len() + lesson.questions.len()
-                    || finding.quote.trim().is_empty()
+                finding.quote.trim().is_empty()
                     || finding.statement.trim().is_empty()
                     || lesson.blocks.get(finding.unit).is_some_and(|block| {
                         !block.body.contains(&finding.quote)

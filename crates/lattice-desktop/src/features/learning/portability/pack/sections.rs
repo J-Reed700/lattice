@@ -6,8 +6,6 @@ use super::LearningPackEntryKind;
 use sha2::{Digest, Sha256};
 
 pub const PROGRAM_ENTRY: &str = "program/program.json";
-pub const ATTEMPTS_ENTRY: &str = "program/attempts.json";
-pub const KEYS_ENTRY: &str = "program/answer-keys.json";
 pub const PROVENANCE_ENTRY: &str = "program/provenance.json";
 pub const OUTCOMES_ENTRY: &str = "program/outcomes.json";
 pub const LESSON_STATE_ENTRY: &str = "curriculum/lesson-state.json";
@@ -22,6 +20,8 @@ pub const SOURCE_HISTORY_ENTRY: &str = "sources/history.json";
 pub const SOURCE_TRUST_ENTRY: &str = "sources/trust.json";
 /// One `<table>.json` entry per program-scoped evidence table.
 pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
+/// The quiz bank's private answer keys, which travel in the evidence tables.
+pub const QUIZ_KEYS_TABLE_ENTRY: &str = "evidence/tables/learning_assessment_answer_keys.json";
 /// One `<table>.json` entry per lesson claim review table.
 pub const REVIEW_TABLE_PREFIX: &str = "curriculum/reviews/";
 /// One `<canvas-id>.json` entry per canvas, with its snapshots.
@@ -33,8 +33,6 @@ pub const SOURCE_BODY_PREFIX: &str = "sources/bodies/";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PackSection {
     Program,
-    Attempts,
-    AnswerKeys,
     Provenance,
     Outcomes,
     LessonStates,
@@ -101,8 +99,6 @@ use PackSection as S;
 /// behaviour row in the repository.
 pub const SECTIONS: &[SectionDescriptor] = &[
     entry(S::Program, PROGRAM_ENTRY, Kind::Program),
-    entry(S::Attempts, ATTEMPTS_ENTRY, Kind::Attempt),
-    entry(S::AnswerKeys, KEYS_ENTRY, Kind::Curriculum),
     entry(S::Provenance, PROVENANCE_ENTRY, Kind::Curriculum),
     entry(S::Outcomes, OUTCOMES_ENTRY, Kind::Curriculum),
     entry(S::LessonStates, LESSON_STATE_ENTRY, Kind::Curriculum),

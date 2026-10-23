@@ -36,7 +36,6 @@ pub(super) fn fixture() -> LearningProgramDto {
                 estimated_minutes: 20,
                 preparation: LearningPreparation::Outline,
                 blocks: vec![],
-                questions: vec![],
                 completed: false,
             });
         }
@@ -76,26 +75,25 @@ pub(super) fn fixture() -> LearningProgramDto {
             excerpt: "A bounded passage used by this generic course.".into(),
             acquired_at: 1,
         }],
-        attempts: vec![],
     }
 }
 pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     let mut questions = Vec::new();
     let mut keys = Vec::new();
     for kind in [
-        LearningAssessmentKind::Practice,
-        LearningAssessmentKind::Quiz,
-        LearningAssessmentKind::Test,
+        LessonQuestionKind::Practice,
+        LessonQuestionKind::Quiz,
+        LessonQuestionKind::Test,
     ] {
         let qid = id();
-        questions.push(LearningQuestionDto {
+        questions.push(LessonQuestion {
             id: qid.clone(),
             kind,
             prompt: "Which option is supported?".into(),
             options: vec!["Supported".into(), "Unsupported".into()],
             source_ids: vec![],
         });
-        keys.push(LearningAnswerKey {
+        keys.push(LessonAnswerKey {
             question_id: qid,
             correct_index: 0,
             explanation: "The source supports the first option.".into(),
@@ -446,109 +444,6 @@ async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Resu
     assert!(!wire.contains("explanation\":\"The source supports"));
     second.close().await;
     let _ = std::fs::remove_file(path);
-    Ok(())
-}
-
-#[tokio::test]
-async fn revision_conflicts_and_attempt_validation_are_transactional() -> Result<()> {
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let p = ready_program(&repo).await?;
-    let module = &p.modules[0];
-    let lesson = &module.lessons[0];
-    let q = lesson
-        .questions
-        .iter()
-        .find(|q| q.kind == LearningAssessmentKind::Practice)
-        .unwrap();
-    let revision = p.summary.revision;
-    let conflict = repo
-        .complete(&CompleteLearningLessonRequestDto {
-            program_id: p.summary.id.clone(),
-            lesson_id: lesson.id.clone(),
-            expected_revision: revision - 1,
-        })
-        .await;
-    assert!(conflict.is_err());
-    let base = SubmitLearningAttemptRequestDto {
-        attempt_id: id(),
-        program_id: p.summary.id.clone(),
-        expected_revision: revision,
-        module_id: module.id.clone(),
-        lesson_id: Some(lesson.id.clone()),
-        kind: LearningAssessmentKind::Practice,
-        answers: vec![LearningAnswerDto {
-            question_id: q.id.clone(),
-            selected_index: 0,
-        }],
-    };
-    let mut partial = base.clone();
-    partial.answers.clear();
-    assert!(repo.submit(&partial).await.is_err());
-    let mut duplicate = base.clone();
-    duplicate.answers.push(duplicate.answers[0].clone());
-    assert!(repo.submit(&duplicate).await.is_err());
-    let mut out_of_bounds = base.clone();
-    out_of_bounds.answers[0].selected_index = 2;
-    assert!(repo.submit(&out_of_bounds).await.is_err());
-    let submitted = repo.submit(&base).await?;
-    assert_eq!(submitted.total, 1);
-    assert_eq!(submitted.correct, 1);
-    let retry = repo.submit(&base).await?;
-    assert_eq!(retry.id, submitted.id);
-    assert_eq!(
-        serde_json::to_value(&retry.results).unwrap(),
-        serde_json::to_value(&submitted.results).unwrap()
-    );
-    let mut replay_after_refetch = base.clone();
-    replay_after_refetch.expected_revision += 17;
-    assert_eq!(repo.submit(&replay_after_refetch).await?.id, submitted.id);
-    let mut changed = base.clone();
-    changed.answers[0].selected_index = 1;
-    assert!(repo.submit(&changed).await.is_err());
-    let saved = repo.get(&p.summary.id).await?;
-    assert_eq!(saved.attempts.len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn module_test_requires_every_ready_lesson_question() -> Result<()> {
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool);
-    let p = ready_program(&repo).await?;
-    let module = &p.modules[0];
-    let test_questions: Vec<_> = module
-        .lessons
-        .iter()
-        .flat_map(|l| l.questions.iter())
-        .filter(|q| q.kind == LearningAssessmentKind::Test)
-        .collect();
-    assert_eq!(test_questions.len(), 2);
-    let req = SubmitLearningAttemptRequestDto {
-        attempt_id: id(),
-        program_id: p.summary.id.clone(),
-        expected_revision: p.summary.revision,
-        module_id: module.id.clone(),
-        lesson_id: None,
-        kind: LearningAssessmentKind::Test,
-        answers: vec![LearningAnswerDto {
-            question_id: test_questions[0].id.clone(),
-            selected_index: 0,
-        }],
-    };
-    assert!(repo.submit(&req).await.is_err());
-    let mut complete = req.clone();
-    complete.answers = test_questions
-        .iter()
-        .map(|q| LearningAnswerDto {
-            question_id: q.id.clone(),
-            selected_index: 0,
-        })
-        .collect();
-    let submitted = repo.submit(&complete).await?;
-    complete.answers.reverse();
-    complete.expected_revision += 1;
-    assert_eq!(repo.submit(&complete).await?.id, submitted.id);
     Ok(())
 }
 

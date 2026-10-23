@@ -259,19 +259,6 @@ pub async fn complete_learning_lesson(
 }
 #[tauri::command]
 #[specta::specta]
-pub async fn submit_learning_attempt(
-    request: SubmitLearningAttemptRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningProgramDto, ApiError> {
-    service::submit(
-        &LearningRepository::new(container.db_pool().clone()),
-        request,
-    )
-    .await
-    .map_err(ApiError::from)
-}
-#[tauri::command]
-#[specta::specta]
 pub async fn delete_learning_program(
     id: String,
     container: State<'_, Container>,

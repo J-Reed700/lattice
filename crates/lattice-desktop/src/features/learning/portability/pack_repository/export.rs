@@ -3,7 +3,7 @@
 //! encoders below read the sections whose rows live in `entries`.
 use super::{
     db,
-    entries::{ExportScope, PracticalPackSnapshot, PrivateAnswerKey, SECTION_ROWS},
+    entries::{ExportScope, PracticalPackSnapshot, SECTION_ROWS},
     guards, invalid, json, now,
     source_entries::SourceHistorySnapshot,
 };
@@ -11,9 +11,9 @@ use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
     pack::{
         sections::{
-            source_body_path, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY,
-            OUTCOMES_ENTRY, PRACTICAL_ENTRY, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY,
-            SOURCE_SELECTORS_ENTRY, SOURCE_TRUST_ENTRY,
+            source_body_path, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, LESSON_STATE_ENTRY, OUTCOMES_ENTRY,
+            PRACTICAL_ENTRY, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY, SOURCE_SELECTORS_ENTRY,
+            SOURCE_TRUST_ENTRY,
         },
         LearningPackEntry, LearningPackEntryKind, LearningPackInput, LearningPackPrivacyManifest,
     },
@@ -80,7 +80,7 @@ fn privacy(options: &LearningPackExportOptionsDto) -> LearningPackPrivacyManifes
             includes_credentials: false,
             includes_full_source_bodies: options.include_source_bodies,
             source_body_redistribution_confirmed: options.source_body_redistribution_confirmed,
-            includes_answer_keys: true,
+            includes_answer_keys: options.include_evidence,
             includes_hidden_evaluators: false,
             includes_learner_evidence: options.include_evidence || options.include_practical_artifacts,
             includes_practical_artifacts: options.include_practical_artifacts,
@@ -133,28 +133,6 @@ pub(super) async fn lesson_states(
         LESSON_STATE_ENTRY,
         LearningPackEntryKind::Curriculum,
         &lesson_states,
-    )?])
-}
-
-/// The private answer keys, which only an import may read.
-pub(super) async fn answer_keys(
-    tx: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<Vec<LearningPackEntry>> {
-    let keys=sqlx::query("SELECT q.id question_id,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=? ORDER BY q.id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
-    let private_keys = keys
-        .into_iter()
-        .map(|r| PrivateAnswerKey {
-            question_id: r.get("question_id"),
-            correct_index: r.get::<i64, _>("correct_index") as usize,
-            explanation: r.get("explanation"),
-        })
-        .collect::<Vec<_>>();
-    Ok(vec![entry(
-        KEYS_ENTRY,
-        LearningPackEntryKind::Curriculum,
-        &private_keys,
     )?])
 }
 

@@ -331,7 +331,6 @@ pub(in crate::features::learning) fn decode_outline(
                 estimated_minutes: lesson.estimated_minutes,
                 preparation: LearningPreparation::Outline,
                 blocks: Vec::new(),
-                questions: Vec::new(),
                 completed: false,
             });
         }
