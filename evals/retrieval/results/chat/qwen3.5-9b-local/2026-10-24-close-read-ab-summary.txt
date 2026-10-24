@@ -1,0 +1,70 @@
+STAGE 1 — 51 readings with every arm (C0R0, C1R1, C2R1, C1R0)
+subset          arm     n   facts nonfact+ whole sent  req prompt_new    out   secs take@1st later p0took
+all             C0R0   51 281/281       66    13   53  435     490300  15315   2699       36    46     18
+all             C1R1   51 280/281       38     0   38  125     235437   8225   1026       11    42     18
+all             C2R1   51 280/281       50     0   50  125     234740   8432   1030       12    53     18
+all             C1R0   51 281/281       31     0   31  494     264502   8859   4457       27    20     18
+missed facts    C0R0   15  90/90        26     0   26  186     313571   7134   1524       21    21     15
+missed facts    C1R1   15  89/90        11     0   11   37      73638   2672    324        8    18     14
+missed facts    C2R1   15  89/90        23     0   23   37      73487   2867    330        9    29     14
+missed facts    C1R0   15  90/90        14     0   14  112      79964   3386    700       14    16     15
+missed nothing  C0R0   36 191/191       40    13   27  249     176729   8181   1175       15    25      3
+missed nothing  C1R1   36 191/191       27     0   27   88     161799   5553    702        3    24      4
+missed nothing  C2R1   36 191/191       27     0   27   88     161253   5565    701        3    24      4
+missed nothing  C1R0   36 191/191       17     0   17  382     184538   5473   3757       13     4      3
+short6          C0R0    5   5/5         16    13    3   19      20390   2919    261        2    14      1
+short6          C1R1    5   5/5          6     0    6   12      20140    508     83        1     5      1
+short6          C2R1    5   5/5          6     0    6   12      20092    515     83        1     5      1
+short6          C1R0    5   5/5          4     0    4   28      21692    668   2043        1     3      1
+long            C0R0   46 276/276       50     0   50  416     469910  12396   2438       34    32     17
+long            C1R1   46 275/276       32     0   32  113     215297   7717    943       10    37     17
+long            C2R1   46 275/276       44     0   44  113     214648   7917    947       11    48     17
+long            C1R0   46 276/276       27     0   27  466     242810   8191   2414       26    17     17
+old A/B         C0R0   25 140/140       28     0   28  259     322522   7304   1444       26    12     10
+old A/B         C1R1   25 139/140       24     0   24   60     113186   4110    506        6    27     10
+old A/B         C2R1   25 139/140       29     0   29   60     112752   4209    507        7    31     10
+old A/B         C1R0   25 140/140       14     0   14  204     124541   4387    676       16     8     10
+e2e             C0R0   26 141/141       38    13   25  176     167778   8011   1255       10    34      8
+e2e             C1R1   26 141/141       14     0   14   65     122251   4115    520        5    15      8
+e2e             C2R1   26 141/141       21     0   21   65     121988   4223    524        5    22      8
+e2e             C1R0   26 141/141       17     0   17  290     139961   4472   3781       11    12      8
+  (facts = fact passages noted after the close read; nonfact+ = non-fact lines the close read accepted, split whole passage / sentence; take@1st/later = lines taken at the first vs a later position of their request; C0R0 positions from A3 records are reply order)
+
+Per reading that missed facts (facts after; C0R0 is the bar):
+  long8-r1|dp-long-hall-transcript              before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r1|dp-long-conservation-record          before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r1|dp-long-family-history               before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r2|dp-long-household-log                before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6]  C2R1 [2, 3, 4, 5, 6]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r2|dp-long-hall-transcript              before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r2|dp-long-choir-minutes                before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r2|dp-long-conservation-record          before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r3|dp-long-conservation-record          before 4/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  long8-r3|dp-long-family-history               before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  e2e-long8-r1|dp-long-choir-minutes            before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  e2e-long8-r1|dp-long-conservation-record      before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  e2e-long8-r2|dp-long-hall-transcript          before 5/6  C0R0 [2, 3, 4, 5, 6, 8]  C1R1 [2, 3, 4, 5, 6, 8]  C2R1 [2, 3, 4, 5, 6, 8]  C1R0 [2, 3, 4, 5, 6, 8]
+  e2e-long8-r2|dp-long-family-history           before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  e2e-long8-r3|dp-long-hall-transcript          before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+  e2e-long8-r3|dp-long-conservation-record      before 5/6  C0R0 [2, 3, 4, 5, 6, 7]  C1R1 [2, 3, 4, 5, 6, 7]  C2R1 [2, 3, 4, 5, 6, 7]  C1R0 [2, 3, 4, 5, 6, 7]
+
+STAGE 2 — 102 writes per arm (notes from ['C1R0'], seeds [1, 2])
+subset          arm     n pass abst repeat conts skip len-fin   chars cites dist nf-cit nf-dist   secs
+all             W0K0  102  101    0      2     3    0       0   73658   728  723    163     161   1130
+all             W1K1  102  101    0      2     7    0       0   73117   726  724    163     162   2341
+missed facts    W0K0   30   30    0      1     0    0       0   22176   217  214     34      34    377
+missed facts    W1K1   30   30    0      0     1    0       0   21830   220  219     40      39    382
+missed nothing  W0K0   72   71    0      1     3    0       0   51482   511  509    129     127    753
+missed nothing  W1K1   72   71    0      2     6    0       0   51287   506  505    123     123   1959
+short6          W0K0   10   10    0      1     1    0       0    3543    73   73     63      63     43
+short6          W1K1   10   10    0      1     2    0       0    3403    72   72     62      62     45
+long            W0K0   92   91    0      1     2    0       0   70115   655  650    100      98   1087
+long            W1K1   92   91    0      1     5    0       0   69714   654  652    101     100   2296
+old A/B         W0K0   50   49    0      0     2    0       0   36138   373  369     91      89    598
+old A/B         W1K1   50   50    0      1     4    0       0   36597   370  370     90      90   1815
+e2e             W0K0   52   52    0      2     1    0       0   37520   355  354     72      72    532
+e2e             W1K1   52   51    0      1     3    0       0   36520   356  354     73      72    526
+  (repeat = answers with a sentence of >30 chars written twice; len-fin = answers with a continuation finished by `length`; skip = continuations skipped for room / nothing fitting)
+
+DECISION (§3.4, lexicographic)
+  stage 1: qualifying ['C1R0'] -> pick C1R0  [C1R0 qualifies where C1R1 does not: the room change cost recall and ships separately]
+  stage 2: {'writes_each': 102, 'pass': {'W0K0': 101, 'W1K1': 101}, 'repeated': {'W0K0': 2, 'W1K1': 2}, 'cont_length': {'W0K0': 0, 'W1K1': 0}} -> W1K1 ships

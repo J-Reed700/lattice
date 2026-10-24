@@ -288,6 +288,9 @@ impl LlamaCppLlm {
                 body.insert("tool_choice".into(), json!(choice.as_str()));
             }
         }
+        if !request.stop.is_empty() {
+            body.insert("stop".into(), json!(request.stop));
+        }
         if request.want_logprobs {
             body.insert("logprobs".into(), json!(true));
             body.insert(

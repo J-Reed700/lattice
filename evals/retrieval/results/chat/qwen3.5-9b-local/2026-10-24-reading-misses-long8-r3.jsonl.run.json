@@ -1,0 +1,280 @@
+{
+  "schema": "lattice-shipped-path-answers/1",
+  "name": "reading-fix-qwen3.5-9b-local-long8",
+  "server_launch": "/Users/josh/Code/lattice-cap/crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 -np 1 --jinja",
+  "recipe_path": "/private/tmp/claude-501/-Users-josh-Code-lattice-temp/76b0ab5a-3922-4635-beac-5377f75e5f57/scratchpad/evals/readfix/recipe-long8.json",
+  "recipe_sha256": "d59c036f5d2922d50050379c73070ae4cc7278cafb3fd394085889fa72ce5c8c",
+  "recipe": {
+    "name": "reading-fix-qwen3.5-9b-local-long8",
+    "corpus": "/Users/josh/Code/lattice-coverage/evals/retrieval/synthetic-library-v3.json",
+    "questions": "/private/tmp/claude-501/-Users-josh-Code-lattice-temp/76b0ab5a-3922-4635-beac-5377f75e5f57/scratchpad/evals/final/long8.json",
+    "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
+    "embedding_model_id": "qwen3-embedding-0.6b",
+    "utility_role": {
+      "model_id": "qwen3.5-9b-q4_k_m",
+      "served_as": "Qwen3.5-9B-Q4_K_M.gguf"
+    },
+    "server": {
+      "url": "http://127.0.0.1:8089",
+      "model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "gguf": "~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      "launch": "/Users/josh/Code/lattice-cap/crates/lattice-desktop/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 -np 1 --jinja",
+      "expected_ctx": 16384,
+      "expected_slots": 1,
+      "thinking": "off"
+    },
+    "index": {
+      "chunk_tokens": 800
+    },
+    "settings": {
+      "llm": {
+        "contextWindow": 16384
+      }
+    },
+    "wait": {
+      "verification_secs": 300,
+      "quiet_ms": 3000,
+      "quiet_cap_secs": 600
+    }
+  },
+  "corpus_sha256": "a7efeeff89da754e1ce7e13d197d07690aab454ca2634234f84efc66d6df023c",
+  "questions_sha256": "686ce5c9c4d4a55924484e0ba188cdd18d47bcbb0b3f77ab4accd527ff5427b2",
+  "questions_path": "/private/tmp/claude-501/-Users-josh-Code-lattice-temp/76b0ab5a-3922-4635-beac-5377f75e5f57/scratchpad/evals/final/long8.json",
+  "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "server": {
+    "n_ctx": 16384,
+    "total_slots": 1,
+    "model_path": "/Users/josh/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+    "build_info": "b11669-620d2225c",
+    "modalities": {
+      "vision": false,
+      "video": false,
+      "audio": false
+    }
+  },
+  "thinking": "off",
+  "only": null,
+  "commit": "7503dcc8f1286b3a71899e287af88a424e75e6f3",
+  "dirty_files": 1,
+  "harness_sha256": {
+    "crates/lattice-desktop/examples/shipped_path_eval/main.rs": "3f46b482a21fbb6ffbd41fcd75428776ee8dbff94135f66adfdba8ccb47862c6",
+    "crates/lattice-desktop/examples/shipped_path_eval/app.rs": "59fe5caf02abeaaf4693f3e1dfd199770258854c436931cdb5070442c8c8f268",
+    "crates/lattice-desktop/examples/shipped_path_eval/proxy.rs": "93b28d741ad28c458f0b17a54d1afbcd647ca8b440411c90b1681954c6efc521",
+    "crates/lattice-desktop/examples/shipped_path_eval/recipe.rs": "f67383f6e3889e09dd670a3dbc53e3cd2675324b89665e658614830b48e94108",
+    "crates/lattice-desktop/examples/shipped_path_eval/record.rs": "b89e6d3f158b4659dc9897c93dc14317bae3fcba3b22a8db625cb095402019d9",
+    "crates/lattice-desktop/src/features/conversation/chat/headless.rs": "77a715e32c1a4503de4a57bd505f825e2926f0523a966b102f175d7d032579a1"
+  },
+  "settings": {
+    "indexing": {
+      "chunkSize": 800,
+      "chunkOverlap": 120,
+      "batchSize": 100,
+      "autoIndexNewFiles": true,
+      "fileTypes": [
+        "txt",
+        "md",
+        "pdf",
+        "docx"
+      ],
+      "indexedPaths": [],
+      "excludePatterns": [
+        "*.tmp",
+        "*.log",
+        "node_modules",
+        ".git"
+      ]
+    },
+    "search": {
+      "maxResults": 10,
+      "similarityThreshold": 0.699999988079071,
+      "enableReranking": false,
+      "hybridSearchAlpha": 0.5,
+      "retrievalTuning": {
+        "docShortlistCandidateMin": 48,
+        "docShortlistCandidateMax": 192,
+        "docShortlistDocMin": 10,
+        "docShortlistDocMax": 32,
+        "shortlistGateMinCandidates": 8,
+        "shortlistGateMinDocs": 4,
+        "wikiSearchMaxResults": 5,
+        "webSearchMaxResults": 5,
+        "readWebPages": true,
+        "webPageFetchTimeoutSecs": 12,
+        "deepResearchDepth": 3,
+        "deepResearchBranchQueries": 3,
+        "externalSearchMaxWikiTerms": 8,
+        "externalSearchMaxWebTerms": 10,
+        "externalSearchQueryMaxChars": 1200,
+        "rerankMaxCandidates": 48,
+        "rerankQueryMaxChars": 6000,
+        "sufficiencyMinTopScore": 0.3499999940395355,
+        "sufficiencyMinTermCoverage": 0.4000000059604645,
+        "sufficiencyRetryEnabled": true,
+        "overlapMinHitsForMultiTerm": 2,
+        "docSupportMultiHitRatioFactor": 0.3499999940395355,
+        "docSupportSingleHitRatioFactor": 0.6499999761581421,
+        "docSupportMultiHitRatioMin": 0.18000000715255737,
+        "docSupportMultiHitRatioMax": 0.4000000059604645,
+        "docSupportSingleHitRatioMin": 0.30000001192092896,
+        "docSupportSingleHitRatioMax": 0.550000011920929
+      },
+      "vectorIndexCompression": {
+        "mode": "none",
+        "dims": 256,
+        "quantization": "i8"
+      },
+      "summaryIndexEnabled": false
+    },
+    "llm": {
+      "provider": "llamacpp",
+      "model": "llama3.2:latest",
+      "temperature": 0.699999988079071,
+      "topP": 0.800000011920929,
+      "topK": 20,
+      "repeatPenalty": 1.0,
+      "presencePenalty": 1.5,
+      "answerThinking": false,
+      "thinkingOverride": "auto",
+      "thinkingSampling": {
+        "temperature": 1.0,
+        "topP": 0.949999988079071,
+        "topK": 20,
+        "presencePenalty": 1.5,
+        "repeatPenalty": 1.0
+      },
+      "maxTokens": 131072,
+      "contextWindow": 16384,
+      "localContextWindow": null,
+      "localModelConfigs": {},
+      "visionDeclarations": {},
+      "speculativeDecoding": {
+        "mode": "off"
+      },
+      "ollamaUrl": "http://localhost:11434",
+      "ollamaConfigured": false,
+      "ollamaUtilityModel": "Qwen3.5-9B-Q4_K_M.gguf",
+      "ollamaAuthHeaderName": "",
+      "ollamaAuthHeaderValue": "",
+      "llamaCpp": {
+        "url": "http://127.0.0.1:59469",
+        "model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "authHeaderName": "",
+        "authHeaderValue": ""
+      },
+      "timeoutSeconds": 30,
+      "streamResponses": true,
+      "prompts": {
+        "systemPrompt": "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.",
+        "greetingPromptTemplate": "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.",
+        "ragPromptTemplate": "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
+        "noContextPromptTemplate": "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice."
+      },
+      "verification": {
+        "enabled": true,
+        "temperature": 0.0,
+        "topP": 1.0,
+        "topK": 1
+      },
+      "toolOutput": {
+        "excerptChars": 4000,
+        "highlightTermsMax": 8,
+        "templates": {
+          "defaultTemplate": "Tool output:\n{json}",
+          "getDocumentTemplate": "Document ID: {document_id}\nTitle: {title}\nChunks: {chunk_count}\nExcerpt: {excerpt}{truncated}",
+          "semanticSearchTemplate": "Search results (showing {shown} of {total_found}):\n{results}"
+        }
+      },
+      "router": {
+        "enabled": false,
+        "model": "qwen3.5-4b-q4_k_m",
+        "timeoutMs": 350,
+        "maxTokens": 120,
+        "temperature": 0.10000000149011612,
+        "ambiguityThreshold": 0.6200000047683716,
+        "preferLastDocument": true,
+        "promptTemplate": "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:",
+        "clarifyPromptTemplate": "Are you asking about the recent document ({recent_document_title}), or should I search for something else?"
+      },
+      "learningModel": null,
+      "verifierModel": null,
+      "utilityModel": null,
+      "externalModelDirectories": [],
+      "customTools": [],
+      "boundedConversationMemory": true
+    },
+    "ui": {
+      "theme": "system",
+      "fontSize": 14,
+      "showPreview": true,
+      "resultsPerPage": 10,
+      "enableAnimations": true
+    },
+    "sync": {
+      "syncEnabled": false,
+      "syncUrl": "",
+      "syncIntervalMinutes": 30,
+      "autoSync": false,
+      "syncOnStartup": false
+    },
+    "backup": {
+      "autoBackupEnabled": false,
+      "backupFrequency": "daily",
+      "backupRetentionDays": 30,
+      "backupPath": "",
+      "compressBackups": true
+    },
+    "privacy": {
+      "telemetryEnabled": false,
+      "crashReporting": false
+    },
+    "vault": {
+      "vaultPath": "",
+      "enabled": false,
+      "watchExternalChanges": false
+    },
+    "onboarding": {
+      "firstRunDismissed": false
+    },
+    "sourcing": {
+      "finders": {},
+      "searxngUrl": null,
+      "contact": null,
+      "archiveFallback": true,
+      "finderConcurrency": 4
+    }
+  },
+  "tool_preferences": {
+    "knowledgeBase": false,
+    "webSearch": false,
+    "deepResearchMode": false,
+    "followupMode": false,
+    "turnMode": "auto",
+    "enabledTools": [],
+    "focusDocumentIds": null,
+    "explorerFocus": null
+  },
+  "embedding": {
+    "model_id": "qwen3-embedding-0.6b",
+    "model_identity": "sha256:421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340",
+    "dimension": 1024,
+    "activation_ms": 11882
+  },
+  "utility_role": {
+    "model_id": "qwen3.5-9b-q4_k_m",
+    "served_as": "Qwen3.5-9B-Q4_K_M.gguf"
+  },
+  "index": {
+    "documents": 405,
+    "lattice_documents": 405,
+    "chunks": 2785,
+    "duplicates": [],
+    "chunk_tokens": 800,
+    "index_ms": 174931
+  },
+  "items": 8,
+  "failed": [],
+  "started_at": "2026-10-24T10:19:10.654531+00:00",
+  "finished_at": "2026-10-24T10:54:46.584440+00:00",
+  "run_ms": 2135870
+}

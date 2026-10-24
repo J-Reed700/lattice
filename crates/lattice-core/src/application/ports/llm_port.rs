@@ -455,6 +455,12 @@ pub struct CompletionRequest {
     /// window, the answer gets the room left. No request is refused for its
     /// answer's size, only for a prompt that leaves no room at all.
     pub max_output_tokens: Option<u32>,
+    /// Text that ends the answer where the model writes it, sent as the
+    /// provider's stop sequences; the answer stops before the first one. A
+    /// bound the caller can name in the output itself, such as the first label
+    /// past the end of a numbered list. Empty sends none.
+    #[serde(default)]
+    pub stop: Vec<String>,
     /// Caps wall-clock time across all attempts. Stalls are detected separately,
     /// so this only needs to exceed the longest legitimate generation.
     #[serde(skip)]
