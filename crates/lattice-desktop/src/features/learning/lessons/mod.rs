@@ -1,6 +1,5 @@
 //! Lessons capabilities owned by Learning Studio.
 
-pub(crate) mod answer_review;
 pub mod claim_reviews;
 pub(crate) mod content_verification;
 #[cfg(test)]

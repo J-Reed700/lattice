@@ -150,6 +150,10 @@ Yes, in Explorer (⌘6). Choose a folder and it stays open as the scope until yo
 
 Explorer never changes your files. Its search index lives in Lattice's app data, not in the folder.
 
+### Why did a quiz answer lose points?
+
+Open the result. A choice answer says which option you picked, which is right, and why yours isn't. A written answer has a **Why this lost points** panel with the grader's summary, your own words that it rests on (highlighted and numbered), what was missing for each criterion and what full credit includes. A grade the model can't explain is shown as **Couldn't grade yet**, never as wrong. If you still disagree, choose **I think I was right** for a fresh grade.
+
 ### Can I use my own models?
 
 Yes:

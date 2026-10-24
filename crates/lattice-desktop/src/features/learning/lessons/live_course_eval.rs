@@ -381,6 +381,9 @@ pub(super) fn transient_text(error: &str) -> bool {
 mod stages;
 use stages::run_stages;
 
+#[path = "live_course_eval_quiz.rs"]
+mod quiz;
+
 #[cfg(test)]
 #[path = "live_course_eval_tests.rs"]
 mod tests;
@@ -446,6 +449,22 @@ fn write_json(path: &Path, value: &Value) -> Result<()> {
     std::fs::write(&partial, serde_json::to_vec_pretty(value)?)?;
     std::fs::rename(&partial, path)?;
     Ok(())
+}
+
+/// The next `call-N.json` number in a run directory: a resumed run never
+/// overwrites a call record.
+fn next_call(dir: &Path) -> Result<usize> {
+    Ok(std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("call-"))
+                .and_then(|name| name.strip_suffix(".json"))
+                .and_then(|name| name.parse::<usize>().ok())
+        })
+        .max()
+        .map_or(0, |n| n + 1))
 }
 
 fn now_ms() -> i64 {
@@ -626,18 +645,7 @@ async fn live_course_eval() -> Result<()> {
     };
     let embedder = load_embedder(&recipe).await?;
     let identity = probe(&settings, recipe.server.expected_slots).await?;
-    let next_call = std::fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            e.file_name()
-                .to_str()
-                .and_then(|name| name.strip_prefix("call-"))
-                .and_then(|name| name.strip_suffix(".json"))
-                .and_then(|name| name.parse::<usize>().ok())
-        })
-        .max()
-        .map_or(0, |n| n + 1);
-    let model = Arc::new(ObservedModel::new(&settings, dir.clone(), next_call).await?);
+    let model = Arc::new(ObservedModel::new(&settings, dir.clone(), next_call(&dir)?).await?);
     let web_cache = dir.join("web");
     std::fs::create_dir_all(&web_cache)?;
     let web = Arc::new(TracedWeb::new(

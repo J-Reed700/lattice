@@ -147,6 +147,10 @@ pub enum LearningGenerationJobKind {
     AssessmentVariant,
     AdaptiveFollowUp,
     PracticalActivity,
+    /// Writes a quiz's question bank (lesson stage, or a module/course bank).
+    QuizBank,
+    /// Grades a submitted quiz's written answers and near-miss short answers.
+    QuizGrading,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

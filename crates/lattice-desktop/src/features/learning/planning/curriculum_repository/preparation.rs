@@ -109,7 +109,7 @@ impl LearningCurriculumRepository {
             crate::features::learning::dto::PreparedLearningLesson,
         )],
     ) -> Result<()> {
-        self.publish_prepared(id, expected_revision, lessons, &[])
+        self.publish_prepared(id, expected_revision, lessons, &[], &[])
             .await
     }
 
@@ -125,6 +125,10 @@ impl LearningCurriculumRepository {
             crate::features::learning::dto::PreparedLearningLesson,
         )],
         held: &[crate::features::learning::content_verification::HeldForReview],
+        banks: &[(
+            String,
+            crate::features::learning::quiz_bank_jobs::LessonBank,
+        )],
     ) -> Result<()> {
         if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
@@ -202,13 +206,49 @@ impl LearningCurriculumRepository {
             for (ordinal, b) in prepared.blocks.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(crate::features::learning::repository::block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
             }
-            for (ordinal, q) in prepared.questions.iter().enumerate() {
-                sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) SELECT ?,?,module_id,?,?,?,?,? FROM learning_lessons WHERE id=?").bind(&q.id).bind(lesson_id).bind(crate::features::learning::repository::assessment(q.kind.clone())).bind(&q.prompt).bind(encode(&q.options)?).bind(encode(&q.source_ids)?).bind(ordinal as i64).bind(lesson_id).execute(&mut *tx).await.map_err(db)?;
-            }
-            for key in &prepared.keys {
-                sqlx::query("INSERT INTO learning_answer_keys(question_id,correct_index,explanation) VALUES(?,?,?)").bind(&key.question_id).bind(key.correct_index as i64).bind(&key.explanation).execute(&mut *tx).await.map_err(db)?;
-            }
             sqlx::query("UPDATE learning_lessons SET preparation='ready',curriculum_state='ready' WHERE id=? AND program_id=?").bind(lesson_id).bind(&program_id).execute(&mut *tx).await.map_err(db)?;
+            // The lesson's quiz (section 5.4): its outcome, its own reviewed
+            // questions and the bank its stage wrote, then its blueprint.
+            let bank = banks.iter().find(|(id, _)| id == lesson_id).map(|(_, b)| b);
+            let outcome_id = crate::features::learning::quiz_blueprints::ensure_lesson_outcome_in(
+                &mut tx,
+                &program_id,
+                lesson_id,
+                bank.map(|b| b.outcome_id.as_str()),
+            )
+            .await?;
+            let mut items = crate::features::learning::quiz_bank_jobs::lesson_seed_items(
+                lesson_id,
+                &outcome_id,
+                &prepared.questions,
+                &prepared.keys,
+            );
+            for authored in bank.map(|b| b.items.as_slice()).unwrap_or_default() {
+                let mut item = authored.candidate.clone();
+                item.outcome_ids = vec![outcome_id.clone()];
+                items.push(crate::features::learning::assessment_repository::BankItem {
+                    item,
+                    source_quote: authored.source_quote.clone(),
+                    lesson_id: Some(lesson_id.clone()),
+                    origin: "bank",
+                });
+            }
+            crate::features::learning::assessment_repository::insert_bank_items_in(
+                &mut tx,
+                &program_id,
+                &items,
+                bank.and_then(|b| b.author_model.as_deref()),
+            )
+            .await?;
+            crate::features::learning::quiz_blueprints::ensure_blueprint_in(
+                &mut tx,
+                &program_id,
+                &crate::features::learning::dto::LearningQuizScopeDto {
+                    kind: crate::features::learning::dto::LearningQuizScopeKind::Lesson,
+                    id: Some(lesson_id.clone()),
+                },
+            )
+            .await?;
         }
         // Publish a new immutable accepted snapshot together with the prepared
         // lesson records and the program revision. The old accepted snapshot

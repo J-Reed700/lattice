@@ -868,3 +868,90 @@ Terse twin example, `2t-postgres-performance-terse.json`:
   "courseDepth": "course"
 }
 ```
+
+## Appendix C: rubric texts (`lattice-course-judge/2`)
+
+Added 2026-10-23 for the quiz stage of
+[the quizzes design](2026-10-23-quizzes-and-tests.md) §7.1. Everything in
+Appendix A stands except as follows.
+
+**Changed from `/1`.**
+
+- **L5 is retired.** The lesson's questions are quiz items now, so Q2 to Q4
+  judge each of them on its own. A lesson slot is L1 to L4, L6 and L7.
+- **The lesson rendering (6.3) leaves out the questions,** so no judge
+  reading the lesson sees an item's key in it.
+- **A third slot per lesson,** `<r>/<lesson>/quiz`, passes when the bank's
+  mechanical checks pass (the quizzes design's §7.1, listed in
+  `evals/courses/README.md`) and at least 90 % of its items pass every
+  judged criterion that applies. A lesson
+  that is not Ready has no items, and its quiz slot fails ungraded.
+
+**The bank.** The harness records each Ready lesson's bank with its keys as
+`quiz-<sel>.json` (`course-eval-quiz-bank/1`, the item shape at the top of
+`scripts/course_eval_quiz.py`). When none is recorded, the lesson's own
+reviewed questions are the bank, as single-choice items. The quiz judge must
+be another model than the one that wrote the bank: `score` refuses the stage
+otherwise, unless `--allow-self-judge` is passed, which the manifest records
+next to `independent`.
+
+**System prompt for Q1, Q3, Q4 and Q5** (`QUIZ_JUDGE_SYSTEM`):
+
+> You grade one quiz item of a learning app against one criterion written by
+> the person who built the test. The lesson the item belongs to is given.
+> Judge only the criterion you are given, from the lesson and the item.
+> Return JSON with verdict "pass" or "fail" and a one-sentence reason that
+> names the part of the item that decided it.
+
+User message: `Criterion:` (the lines below), `Lesson:` between `<<<` and
+`>>>` (the 6.3 rendering), `Item:` between markers. Q1 sees the item as a
+learner does: the format, the question and its options, pairs or items.
+Q3, Q4 and Q5 also see the key, the explanation, the distractor rationales
+and the source quote, because judging a distractor, a leak or a key requires
+knowing the answer.
+
+**System prompt for Q2** (`QUIZ_SOLVE_SYSTEM`), schema `answer` (string),
+`other_defensible` (boolean), `reason` (string):
+
+> You are a careful learner who has read only the lesson given. Answer the
+> quiz item from the lesson alone. Return JSON with answer in the format
+> asked for, other_defensible true when a different answer would also be
+> defensible given the lesson, and a one-sentence reason.
+
+User message: `Lesson:`, `Item:` (as a learner sees it), then `Answer with`
+the format's answer form ("the letter of the one correct option, such as
+"B"", "each left number with its right letter, such as "1-B, 2-A, 3-C"",
+and so on). Code parses the answer and grades it with the deterministic
+grader. Q2 passes when the answer earns the key's full credit and
+`other_defensible` is false. An ordering item is shown in a fixed shuffle
+by item id that never matches the answer order.
+
+**Criteria**, one call each, applied by format:
+
+- **Q1 Answerable from the lesson** (every format). "A learner who read only
+  this lesson can answer the item; it needs no outside fact the lesson does
+  not teach."
+- **Q2 Exactly one correct key** (every format except explanation). Labeller's
+  line: "Solve the item from the lesson alone, without the key. Pass when
+  your answer is the key and no other answer is defensible given the
+  lesson."
+- **Q3 Plausible distractors** (single choice, multi-select, and matching
+  when its right side holds a distractor). "Each wrong option is one a
+  learner who missed the point could pick; none is a joke, a category
+  error, or trivially excluded by grammar or length."
+- **Q4 No leak** (every format). "The stem, the other options, and the
+  lesson's own phrasing of the item do not give the answer away."
+- **Q5 Keyed fairly**. Short answer and cloze: "The accepted variants cover
+  the reasonable ways a correct learner would phrase this; the numeric
+  tolerance is neither trivial nor forgiving of a wrong answer."
+  Explanation: "Each rubric criterion names an observable thing in the
+  answer at incomplete, adequate and strong levels, without stating the
+  answer."
+
+An item that fails its format's validity check gets no judge call: it is
+one ungraded failed turn ("invalid item: …").
+
+**Calibration.** A quiz item is one labelling row with one turn per
+criterion; the person passes it when every criterion holds.
+`calibration-sample` and `calibration-score` read `quiz.items.json`,
+`quiz.jsonl` and `quiz.scored.jsonl` unchanged.

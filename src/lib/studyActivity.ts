@@ -3,7 +3,7 @@ import type { ApiResult } from '@/types';
 
 import { queryClient } from './queryClient';
 
-export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
+export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quizzes' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
 export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string;
   /** Open the lesson's claim review screen (`?review=claims`). */
   review?: 'claims' };
@@ -28,8 +28,7 @@ const descriptions: Record<string, TaskDescription> = {
   request_learning_tutor_response: model('Preparing tutor feedback', 'workbench', 'Read your question and current work', 'Prepare guidance for this practice session'),
   reveal_learning_practice_solution: model('Preparing the worked solution', 'workbench', 'Read the assignment and references', 'Explain a solution you can compare with your work'),
   submit_learning_practice_attempt: model('Reviewing your practice work', 'workbench', 'Assess your submitted work', 'Save feedback and suggested next steps'),
-  create_learning_assessment_blueprint: model('Preparing your assessment', 'assess-evidence', 'Build questions from the learning objectives', 'Review the questions and answer keys'),
-  submit_learning_assessment_form: model('Reviewing your assessment', 'assess-evidence', 'Evaluate the submitted responses', 'Save the assessment evidence and follow-up suggestions'),
+  submit_learning_assessment_form: model('Grading your quiz', 'quizzes', 'Grade the keyed answers', 'Queue your written answers for your model', 'Save the result and its evidence'),
   generate_learning_practical_activity: model('Building your practical activity', 'practical', 'Design an activity for this lesson', 'Prepare the instructions and evaluation criteria'),
   send_learning_simulation_turn: model('Preparing the next simulation turn', 'practical', 'Read your response and the simulation history', 'Generate the next turn'),
   finish_learning_simulation: model('Reviewing your simulation', 'practical', 'Evaluate the completed conversation', 'Save feedback on your performance'),
@@ -55,6 +54,7 @@ const dedicatedProgress = new Set([
   'generate_learning_program', 'repair_learning_outline', 'cancel_learning_outline',
   'prepare_learning_lesson', 'start_learning_generation_job', 'retry_learning_generation_job',
   'cancel_learning_generation_job', 'start_learning_practical_run', 'cancel_learning_practical_run',
+  'prepare_learning_quiz_bank', 'resume_learning_quiz_grading',
 ]);
 
 function describe(command: string): TaskDescription {
@@ -63,11 +63,11 @@ function describe(command: string): TaskDescription {
   const tab: StudyTab | undefined = command.includes('source') ? 'sources'
     : command.includes('canvas') ? 'canvas' : command.includes('recall') || command.includes('card') ? 'recall'
       : command.includes('practical') || command.includes('runtime') || command.includes('simulation') ? 'practical'
-        : command.includes('assessment') ? 'assess-evidence' : command.includes('practice') ? 'workbench'
+        : command.includes('assessment') || command.includes('quiz') ? 'quizzes' : command.includes('practice') ? 'workbench'
           : command.includes('diagnostic') ? 'starting_point' : command.includes('curriculum') || command.includes('plan') ? 'plan'
             : command.includes('pack') || command.includes('portability') ? 'portability'
               : command.includes('memory') || command.includes('note') ? 'notebook' : 'lessons';
-  const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', 'quick-checks': 'quick checks', 'assess-evidence': 'assessment', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course' };
+  const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', quizzes: 'quizzes', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course' };
   return {
     title: `${read ? 'Loading' : 'Updating'} your ${command.includes('study_deck') ? 'flashcards' : names[tab]}`,
     tab, detail: read ? 'This is taking longer than usual. The request is still waiting for a response.' : 'Waiting for the app to finish this change.',

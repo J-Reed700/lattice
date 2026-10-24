@@ -312,7 +312,11 @@ impl SectionRows for ReviewTableRows {
 
 /// The row as it is written here: in this course, and for a copy with every
 /// mapped identifier replaced.
-fn rewrite(object: &mut Map<String, Value>, program_id: &str, ids: &HashMap<String, String>) {
+pub(super) fn rewrite(
+    object: &mut Map<String, Value>,
+    program_id: &str,
+    ids: &HashMap<String, String>,
+) {
     for (column, value) in object.iter_mut() {
         if column == "program_id" {
             *value = Value::String(program_id.to_owned());

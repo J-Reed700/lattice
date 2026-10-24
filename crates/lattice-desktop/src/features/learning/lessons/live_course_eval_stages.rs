@@ -80,7 +80,6 @@ pub(super) fn lesson_metrics(
         .blocks
         .iter()
         .flat_map(|b| &b.source_ids)
-        .chain(lesson.questions.iter().flat_map(|q| &q.source_ids))
         .map(String::as_str)
         .collect();
     let kinds: BTreeSet<String> = lesson
@@ -132,7 +131,7 @@ pub(super) fn lesson_metrics(
         json!({"run": ran, "failed": failed})
     });
     json!({
-        "shape": {"blocks": lesson.blocks.len(), "kinds": kinds, "questions": lesson.questions.len()},
+        "shape": {"blocks": lesson.blocks.len(), "kinds": kinds},
         "citations": {"source_ids": cited.len(), "unresolved": cited.iter().filter(|id| !known_sources.contains(**id)).count()},
         "claims": claims,
         "examples": examples,
@@ -177,7 +176,7 @@ pub(super) fn phase_metrics(lines: &[Value], selector: &str) -> Value {
 
 /// Calls in `calls` and their tokens, from the `call-N.json` files the
 /// observed model wrote (a failed call writes none).
-fn stage_cost(run: &Path, calls: std::ops::Range<usize>, seconds: f64) -> Result<Value> {
+pub(super) fn stage_cost(run: &Path, calls: std::ops::Range<usize>, seconds: f64) -> Result<Value> {
     let (mut count, mut input, mut output, mut peak) = (0u64, 0u64, 0u64, 0u64);
     for call in calls.clone() {
         let Some(record) = read_json(&run.join(format!("call-{call}.json")))? else {
@@ -212,7 +211,12 @@ pub(super) async fn run_stages(
     for selector in selectors {
         let outcome = match &accepted {
             Some(program) => {
-                lesson_stage(run, pool, options, &program.summary.id, selector).await?
+                let outcome =
+                    lesson_stage(run, pool, options, &program.summary.id, selector).await?;
+                if outcome == "ready" {
+                    super::quiz::quiz_stage(run, pool, &program.summary.id, selector).await?;
+                }
+                outcome
             }
             // No lesson of an outline that did not pass can be prepared.
             None => "not_run".to_owned(),
@@ -592,14 +596,7 @@ async fn lesson_stage(
     .await
     .map_err(db)?;
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;
-    // Answer keys are kept apart from learner DTOs.
-    let keys: Vec<(String, i64, String)> = sqlx::query_as(
-        "SELECT k.question_id,k.correct_index,k.explanation FROM learning_answer_keys k JOIN learning_questions q ON q.id=k.question_id WHERE q.lesson_id=?",
-    )
-    .bind(&lesson.id)
-    .fetch_all(&reopened)
-    .await
-    .map_err(db)?;
+    // The lesson's questions are bank items now; the quiz stage records them with their keys.
     let sources = library.verification_sources(program_id).await?;
     reopened.close().await;
 
@@ -637,13 +634,7 @@ async fn lesson_stage(
     run.metrics["lessons"][selector] = metrics;
     run.save()?;
 
-    let mut published = serde_json::to_value(&lesson)?;
-    for question in published["questions"].as_array_mut().into_iter().flatten() {
-        let id = question["id"].as_str().unwrap_or_default().to_owned();
-        let key = keys.iter().find(|(question_id, ..)| *question_id == id);
-        question["correctIndex"] = json!(key.map(|(_, index, _)| index));
-        question["explanation"] = json!(key.map(|(.., explanation)| explanation));
-    }
+    let published = serde_json::to_value(&lesson)?;
     // Written last: its presence is what marks the lesson recorded.
     write_json(
         &lesson_file,

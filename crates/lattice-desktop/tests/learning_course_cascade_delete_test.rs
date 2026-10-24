@@ -289,7 +289,7 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     // 1. Blueprint slot
     sqlx::query(
         "INSERT INTO learning_assessment_blueprint_slots (blueprint_id, blueprint_revision, ordinal, outcome_id, format, difficulty, difficulty_max, points) \
-         VALUES (?, 1, 0, ?, 'multiple_choice', 1, 2, 5.0);"
+         VALUES (?, 1, 0, ?, 'single_choice', 1, 2, 5.0);"
     )
     .bind(&bp_id)
     .bind(&outcome_id)
@@ -300,7 +300,7 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     let cand_id = format!("cand_{}", course_id);
     sqlx::query(
         "INSERT INTO learning_assessment_candidates (id, program_id, outcome_id, format, difficulty, prompt, options_json, rubric_json, source_version_ids_json, authored_by, content_sha256, created_at) \
-         VALUES (?, ?, ?, 'multiple_choice', 1, 'Prompt', '[]', '{}', '[]', 'model', ?, 1000);"
+         VALUES (?, ?, ?, 'single_choice', 1, 'Prompt', '[]', '{}', '[]', 'model', ?, 1000);"
     )
     .bind(&cand_id)
     .bind(course_id)
@@ -334,7 +334,7 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     // 5. Form item
     sqlx::query(
         "INSERT INTO learning_assessment_form_items (form_id, ordinal, candidate_id, outcome_id, format, difficulty, prompt, options_json, rubric_json, points, previously_exposed) \
-         VALUES (?, 0, ?, ?, 'multiple_choice', 1, 'Prompt', '[]', '{}', 1.0, 0);"
+         VALUES (?, 0, ?, ?, 'single_choice', 1, 'Prompt', '[]', '{}', 1.0, 0);"
     )
     .bind(&form_id)
     .bind(&cand_id)
@@ -366,8 +366,8 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
 
     // 7. Item result
     sqlx::query(
-        "INSERT INTO learning_assessment_item_results (form_id, item_ordinal, score, correct, grade_status, feedback, criterion_results_json, artifact_quotes_json) \
-         VALUES (?, 0, 1.0, 1, 'deterministic', 'Good', '[]', '[]');"
+        "INSERT INTO learning_assessment_item_results (form_id, item_ordinal, score, correct, grade_status, feedback) \
+         VALUES (?, 0, 1.0, 1, 'deterministic', 'Good');"
     )
     .bind(&form_id)
     .execute(pool)
@@ -423,16 +423,16 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
 
     // Children of the candidate and form-item rows.
     sqlx::query(
-        "INSERT INTO learning_assessment_answer_keys (candidate_id, selected_index, accepted_answers_json, ordered_values_json, explanation) \
-         VALUES (?, 0, '[]', '[]', 'Because');",
+        "INSERT INTO learning_assessment_answer_keys (candidate_id, key_json, explanation) \
+         VALUES (?, '{\"kind\":\"choice\",\"value\":0}', 'Because');",
     )
     .bind(&cand_id)
     .execute(pool)
     .await?;
 
     sqlx::query(
-        "INSERT INTO learning_assessment_response_revisions (form_id, item_ordinal, revision, operation_id, payload_hash, selected_index, ordered_values_json, created_at) \
-         VALUES (?, 0, 1, ?, 'hash', 0, '[]', 1000);",
+        "INSERT INTO learning_assessment_response_revisions (form_id, item_ordinal, revision, operation_id, payload_hash, selected_indices_json, ordered_values_json, created_at) \
+         VALUES (?, 0, 1, ?, 'hash', '[0]', '[]', 1000);",
     )
     .bind(&form_id)
     .bind(format!("resp_{course_id}"))

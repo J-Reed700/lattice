@@ -532,7 +532,7 @@ async fn review_material(
                 "Checking assessment answer keys",
             );
             let answer_issues =
-                crate::features::learning::answer_review::check(llm, &candidate_value).await?;
+                crate::features::learning::key_review::check(llm, &candidate_value).await?;
             crate::features::learning::lesson_progress::phase(
                 crate::features::learning::lesson_progress::Phase::Review,
                 if attempt == 0 {

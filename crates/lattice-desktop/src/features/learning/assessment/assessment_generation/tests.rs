@@ -83,63 +83,41 @@ fn reaction_notes(i: usize) -> String {
         .join(" ")
 }
 
-fn version(i: usize) -> LearningSourceVersionDto {
-    LearningSourceVersionDto {
-        source_id: format!("source-{i}"),
-        version: LearningSourceVersionSummaryDto {
-            id: format!("version-{i}"),
-            version_number: 1,
-            title: format!("Run {i}"),
-            publisher: None,
-            resolved_url: None,
-            excerpt: reaction_notes(i),
-            content_sha256: String::new(),
-            word_count: 0,
-            truncated: false,
-            extraction_version: "fixture".into(),
-            acquired_at: 1,
-            snapshot_hash: None,
-        },
-        full_text: reaction_notes(i),
-        usage: vec![],
-    }
-}
-
-fn blueprint(instructions: String) -> CreateLearningAssessmentBlueprintRequestDto {
-    CreateLearningAssessmentBlueprintRequestDto {
-        operation_id: "op".into(),
-        program_id: "program".into(),
-        blueprint_id: "blueprint".into(),
-        revision: 1,
-        predecessor_revision: None,
-        purpose: LearningAssessmentPurpose::ModuleTest,
-        title: "Iron oxide reduction".into(),
-        instructions,
-        expected_minutes: 30,
-        allowed_aids: vec![],
-        passing_score: 0.7,
-        feedback_timing: LearningFeedbackTiming::AfterSubmission,
-        rubric: vec![],
-        source_version_ids: vec![],
-        requirements: vec![LearningBlueprintRequirement {
+fn need(description: String, blocks: usize) -> AuthoringNeed {
+    AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
             outcome_id: "reduction".into(),
             format: LearningItemFormat::Explanation,
             count: 1,
             difficulty_min: 2,
             difficulty_max: 3,
-        }],
-        change_reason: "Initial".into(),
+        },
+        outcome_title: "Iron oxide reduction".into(),
+        outcome_description: description,
+        lesson_id: Some("lesson".into()),
+        count: 1,
+        material: (0..blocks)
+            .map(|i| MaterialPassage {
+                lesson_title: "Reduction".into(),
+                title: format!("Run {i}"),
+                text: reaction_notes(i),
+                source_version_ids: vec![],
+            })
+            .collect(),
+        existing_prompts: vec![],
     }
 }
 
-fn documents(sources: &[LearningSourceVersionDto]) -> Vec<LearningSourceDto> {
-    sources
+/// The lesson blocks as the collection `author_items` searches.
+fn documents(need: &AuthoringNeed) -> Vec<LearningSourceDto> {
+    need.material
         .iter()
-        .map(|source| LearningSourceDto {
-            id: source.version.id.clone(),
-            title: source.version.title.clone(),
+        .enumerate()
+        .map(|(index, m)| LearningSourceDto {
+            id: format!("block:{index}"),
+            title: m.title.clone(),
             url: None,
-            excerpt: source.full_text.clone(),
+            excerpt: m.text.clone(),
             acquired_at: 0,
         })
         .collect()
@@ -147,45 +125,50 @@ fn documents(sources: &[LearningSourceVersionDto]) -> Vec<LearningSourceDto> {
 
 #[tokio::test]
 async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits() -> Result<()> {
-    let sources: Vec<_> = (0..16).map(version).collect();
-    let documents = documents(&sources);
+    let need = need(
+        "Explain iron oxide reduction and its equilibrium.".into(),
+        16,
+    );
+    let documents = documents(&need);
     let collection = ReferenceCollection::lexical(&documents)?;
-    let request = blueprint("Explain iron oxide reduction and its equilibrium.".into());
-    let batch = Batch::new(&request, &[], &[], 0, 1, sources.len());
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
     let llm = notation();
 
-    let sent = batch.send(&llm, &collection, &sources).await?;
+    let sent = batch.send(&llm, &collection).await?;
 
-    assert!(sent.is_some());
+    let Some((_, _, carried)) = sent else {
+        panic!("expected the request to be sent with the passages that fit");
+    };
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);
     let prompts = llm
         .prompts
         .lock()
         .map_err(|_| AppError::InternalError("lock".into()))?;
     assert_eq!(prompts.len(), 1);
-    let carried: usize = prompts
+    let shown = prompts
         .first()
-        .and_then(|prompt| prompt["sources"].as_array())
-        .into_iter()
-        .flatten()
-        .map(|source| source["passages"].as_array().map_or(0, Vec::len))
-        .sum();
-    assert!(carried > 0 && carried < sources.len(), "{carried} passages");
+        .and_then(|prompt| prompt["passages"].as_array())
+        .map_or(0, Vec::len);
+    assert!(shown > 0 && shown < need.material.len(), "{shown} passages");
+    // Quotes are checked against exactly the passages the model saw.
+    assert_eq!(carried.len(), shown);
     Ok(())
 }
 
 #[tokio::test]
 async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
-    let sources: Vec<_> = (0..4).map(version).collect();
     // Within the window by the estimate, twice over it by the exact count.
-    let instructions = format!(
+    let description = format!(
         "Explain iron oxide reduction. {}",
         "Fe₂O₃ ⇌ 2Fe³⁺ + 3O²⁻ ".repeat(800)
     );
     let llm = notation();
-    let error = generate(&llm, &blueprint(instructions), &[], &sources, &[])
-        .await
-        .err();
+    let error = author_items(&llm, &need(description, 4)).await.err();
     let Some(AppError::InvalidConfig(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };

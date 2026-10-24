@@ -346,14 +346,12 @@ mod tests {
                     estimated_minutes: 30,
                     preparation: LearningPreparation::Outline,
                     blocks: vec![],
-                    questions: vec![],
                     completed: false,
                 }],
                 prerequisite_module_ids: vec![],
                 project: None,
             }],
             sources,
-            attempts: vec![],
         };
         (program, draft)
     }

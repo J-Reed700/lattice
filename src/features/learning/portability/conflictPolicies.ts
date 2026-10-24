@@ -41,8 +41,6 @@ export const CONFLICT_KINDS: Record<LearningPackConflictKind, { label: string; r
   }),
   module: owned('Module'),
   lesson: owned('Lesson'),
-  question: owned('Question'),
-  attempt: owned('Attempt'),
   record: owned('Record'),
 };
 

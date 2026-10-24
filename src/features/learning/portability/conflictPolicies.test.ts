@@ -6,7 +6,7 @@ import type { LearningPackConflictDto, LearningPackConflictKind, LearningPackCon
 // The choices the backend says clear each kind.
 const CLEARS_WITH: Record<LearningPackConflictKind, LearningPackConflictPolicy[]> = {
   pack_schema: [], program: ['replace_after_backup', 'create_copy'], program_history: ['create_copy'], program_jobs: ['create_copy'],
-  module: ['create_copy'], lesson: ['create_copy'], question: ['create_copy'], attempt: ['create_copy'], record: ['create_copy'],
+  module: ['create_copy'], lesson: ['create_copy'], record: ['create_copy'],
 };
 const conflict = (kind: LearningPackConflictKind, overrides: Partial<LearningPackConflictDto> = {}): LearningPackConflictDto => ({ kind, existingId: 'course-1', existingTitle: 'Field biology', reason: null, clearsWith: CLEARS_WITH[kind], ...overrides });
 const preview = (conflictPolicy: LearningPackConflictPolicy, conflicts: LearningPackConflictDto[]) => ({ conflictPolicy, conflicts });
@@ -44,7 +44,7 @@ describe('Import choices', () => {
   it('names a record another course owns by its own title, or by its kind alone', () => {
     expect(blockedReason(conflict('lesson', { existingTitle: 'Reading a transect' }))).toBe('Lesson “Reading a transect” already belongs to another course on this computer.');
     expect(blockedReason(conflict('record', { existingTitle: null }))).toBe('A record in this file already belongs to another course on this computer.');
-    expect(blockedReason(conflict('question', { existingTitle: ' ' }))).toBe('A question in this file already belongs to another course on this computer.');
+    expect(blockedReason(conflict('module', { existingTitle: ' ' }))).toBe('A module in this file already belongs to another course on this computer.');
   });
 
   it("uses the backend's own reason when it gives one, with the kind's wording as the fallback", () => {

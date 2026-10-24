@@ -9,7 +9,7 @@ const program = {
   summary: { id: 'program', title: 'Evidence course', status: 'draft' },
   modules: [{
     id: 'module', title: 'Foundations', summary: 'A sourced summary.', outcomes: ['Trace a claim.'], prerequisiteModuleIds: [], project: null,
-    lessons: [{ id: 'lesson', title: 'Read closely', objective: 'Connect a claim to its passage.', estimatedMinutes: 30, preparation: 'outline', blocks: [], questions: [], completed: false }],
+    lessons: [{ id: 'lesson', title: 'Read closely', objective: 'Connect a claim to its passage.', estimatedMinutes: 30, preparation: 'outline', blocks: [], completed: false }],
   }],
 } as unknown as LearningProgramDto;
 

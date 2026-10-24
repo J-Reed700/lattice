@@ -211,8 +211,8 @@ async fn the_starting_point_check_covers_every_module() -> Result<()> {
     Ok(())
 }
 
-/// Answers each assessment request with items for the one requirement it
-/// names, quoting the first passage it carries.
+/// Answers each quiz authoring request with items for the one requirement
+/// it names, quoting the first passage it carries.
 struct PerRequirement {
     inner: Model,
     prompts: Mutex<Vec<Value>>,
@@ -223,28 +223,25 @@ impl LLMPort for PerRequirement {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) =
             crate::features::learning::lessons::structured_call::task_messages(request);
-        if !system.starts_with("Author source-grounded assessment items.") {
+        if !system.starts_with("Write quiz questions") {
             return self.inner.complete(request).await;
         }
         let context: Value = serde_json::from_str(user)?;
         self.prompts.lock().unwrap().push(context.clone());
-        let source = &context["sources"][0];
-        let quote: String = source["passages"][0]
+        let quote: String = context["passages"][0]["text"]
             .as_str()
             .unwrap()
             .chars()
             .take(60)
             .collect();
         let items: Vec<_> = (0..context["returnCount"].as_u64().unwrap()).map(|i| json!({
-            "requirementIndex":context["requirements"][0]["requirementIndex"],
-            "prompt":format!("Explain how partition pruning changes this query plan, case {}.{i}.", context["requirements"][0]["requirementIndex"]),
-            "explanation":"A strong answer ties pruning to the predicate.",
-            "options":[],"answerIndex":0,"acceptedAnswers":[],"orderedValues":[],
-            "sourceIndex":source["sourceIndex"],"quote":quote,
+            "prompt":format!("Explain how partition pruning changes this query plan for {}, case {i}.", context["outcome"].as_str().unwrap()),
             "rubric":[
                 {"title":"Mechanism","description":"Explains which partitions the predicate excludes and why.","dimension":"explanation"},
                 {"title":"Evidence","description":"Connects the explanation to the stated query plan.","dimension":"application"}
-            ]
+            ],
+            "explanation":"A strong answer ties pruning to the predicate.",
+            "blockIndex":0,"quote":quote,"difficulty":3
         })).collect();
         Ok(CompletionResponse::from_text(
             json!({ "items": items }).to_string(),
@@ -265,56 +262,45 @@ impl LLMPort for PerRequirement {
 }
 
 #[tokio::test]
-async fn assessment_items_are_authored_per_requirement_from_retrieved_passages() -> Result<()> {
-    use crate::features::learning::assessment_engine::LearningBlueprintRequirement;
-    use crate::features::learning::dto::*;
-    let needle = "Partition pruning skips partitions that cannot match the predicate.";
-    let sources = vec![version(&uuid::Uuid::new_v4().to_string(), deep(needle))];
-    let requirement = |outcome: &str| LearningBlueprintRequirement {
-        outcome_id: outcome.into(),
-        format: LearningItemFormat::Explanation,
-        count: 1,
-        difficulty_min: 2,
-        difficulty_max: 3,
+async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Result<()> {
+    use crate::features::learning::assessment_engine::{
+        LearningBlueprintRequirement, LearningItemFormat,
     };
-    let request = CreateLearningAssessmentBlueprintRequestDto {
-        operation_id: "op".into(),
-        program_id: "program".into(),
-        blueprint_id: "blueprint".into(),
-        revision: 1,
-        predecessor_revision: None,
-        purpose: LearningAssessmentPurpose::ModuleTest,
-        title: "Partition pruning".into(),
-        instructions: "Explain partition pruning against a predicate.".into(),
-        expected_minutes: 30,
-        allowed_aids: vec![],
-        passing_score: 0.7,
-        feedback_timing: LearningFeedbackTiming::AfterSubmission,
-        rubric: vec![],
-        source_version_ids: vec![],
-        requirements: vec![
-            requirement(&uuid::Uuid::new_v4().to_string()),
-            requirement(&uuid::Uuid::new_v4().to_string()),
-        ],
-        change_reason: "Initial".into(),
+    use crate::features::learning::assessment_generation::{
+        author_items, AuthoringNeed, MaterialPassage,
+    };
+    let needle = "Partition pruning skips partitions that cannot match the predicate.";
+    let need = |title: &str| AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::new_v4().to_string(),
+            format: LearningItemFormat::Explanation,
+            count: 1,
+            difficulty_min: 2,
+            difficulty_max: 3,
+        },
+        outcome_title: title.into(),
+        outcome_description: "Explain partition pruning against a predicate.".into(),
+        lesson_id: None,
+        count: 1,
+        material: vec![MaterialPassage {
+            lesson_title: "Query plans".into(),
+            title: "Pruning".into(),
+            text: deep(needle),
+            source_version_ids: vec![],
+        }],
+        existing_prompts: vec![],
     };
     let model = PerRequirement {
         inner: Model(json!({"issues":[]}).to_string()),
         prompts: Mutex::new(Vec::new()),
     };
-    let items = crate::features::learning::assessment_generation::generate(
-        &model,
-        &request,
-        &[],
-        &sources,
-        &[],
-    )
-    .await?;
-    assert_eq!(items.len(), 2);
+    let first = author_items(&model, &need("Partition pruning")).await?;
+    let second = author_items(&model, &need("Predicate pushdown and pruning")).await?;
+    assert_eq!(first.items.len() + second.items.len(), 2);
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2, "one request per requirement");
     // The passage past the former 8,000-character prefix reached the model.
-    assert!(prompts[0]["sources"][0]["passages"][0]
+    assert!(prompts[0]["passages"][0]["text"]
         .as_str()
         .unwrap()
         .contains(needle));

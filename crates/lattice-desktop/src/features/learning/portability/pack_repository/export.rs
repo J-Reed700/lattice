@@ -3,7 +3,7 @@
 //! encoders below read the sections whose rows live in `entries`.
 use super::{
     db,
-    entries::{ExportScope, PracticalPackSnapshot, PrivateAnswerKey, SECTION_ROWS},
+    entries::{ExportScope, PracticalPackSnapshot, SECTION_ROWS},
     guards, invalid, json, now,
     source_entries::SourceHistorySnapshot,
 };
@@ -11,9 +11,9 @@ use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
     pack::{
         sections::{
-            source_body_path, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY,
-            OUTCOMES_ENTRY, PRACTICAL_ENTRY, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY,
-            SOURCE_SELECTORS_ENTRY, SOURCE_TRUST_ENTRY,
+            source_body_path, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, LESSON_STATE_ENTRY, OUTCOMES_ENTRY,
+            PRACTICAL_ENTRY, SOURCE_HISTORY_ENTRY, SOURCE_LIBRARY_ENTRY, SOURCE_SELECTORS_ENTRY,
+            SOURCE_TRUST_ENTRY,
         },
         LearningPackEntry, LearningPackEntryKind, LearningPackInput, LearningPackPrivacyManifest,
     },
@@ -87,7 +87,7 @@ fn privacy(options: &LearningPackExportOptionsDto) -> LearningPackPrivacyManifes
             omitted_items: vec![
                 "Lattice chat outside this program and credentials are never exported.".into(),
                 "Saved outline citations and lesson verification reports are included as historical course provenance, independently of learner activity. Import does not reverify them.".into(),
-                "Finished lesson claim reviews, with your notes on claims, travel with their lessons as course provenance. Unfinished lesson reviews, tangent chats and the Verifier audit consent stay on this computer.".into(),
+                "Quiz question banks, their answer keys and the course's quiz settings are included as course content. Finished lesson claim reviews, with your notes on claims, travel with their lessons as course provenance. Unfinished lesson reviews, tangent chats and the Verifier audit consent stay on this computer.".into(),
                 if !options.include_evidence {
                     "Submitted assessments, learner evidence, recall/review history, workbench history, memory, and canvas data were omitted by request.".into()
                 } else {
@@ -133,28 +133,6 @@ pub(super) async fn lesson_states(
         LESSON_STATE_ENTRY,
         LearningPackEntryKind::Curriculum,
         &lesson_states,
-    )?])
-}
-
-/// The private answer keys, which only an import may read.
-pub(super) async fn answer_keys(
-    tx: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<Vec<LearningPackEntry>> {
-    let keys=sqlx::query("SELECT q.id question_id,k.correct_index,k.explanation FROM learning_questions q JOIN learning_answer_keys k ON k.question_id=q.id JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=? ORDER BY q.id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
-    let private_keys = keys
-        .into_iter()
-        .map(|r| PrivateAnswerKey {
-            question_id: r.get("question_id"),
-            correct_index: r.get::<i64, _>("correct_index") as usize,
-            explanation: r.get("explanation"),
-        })
-        .collect::<Vec<_>>();
-    Ok(vec![entry(
-        KEYS_ENTRY,
-        LearningPackEntryKind::Curriculum,
-        &private_keys,
     )?])
 }
 

@@ -368,7 +368,7 @@ async fn validate_draft_sources(
             ));
         }
         if generated {
-            let references: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM learning_blocks WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_blocks.source_ids_json) WHERE value=?)) + (SELECT count(*) FROM learning_questions WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_questions.source_ids_json) WHERE value=?))")
+            let references: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM learning_blocks WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_blocks.source_ids_json) WHERE value=?)) + (SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_assessment_candidates.source_version_ids_json) WHERE value=?))")
                 .bind(lesson_id).bind(source_id).bind(lesson_id).bind(source_id).fetch_one(&mut **tx).await.map_err(db)?;
             if references == 0 {
                 return Err(AppError::InvalidInput(

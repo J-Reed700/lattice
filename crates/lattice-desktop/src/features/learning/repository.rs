@@ -38,13 +38,6 @@ pub(super) fn block_kind(v: LearningBlockKind) -> &'static str {
         LearningBlockKind::Recap => "recap",
     }
 }
-pub(super) fn assessment(v: LearningAssessmentKind) -> &'static str {
-    match v {
-        LearningAssessmentKind::Practice => "practice",
-        LearningAssessmentKind::Quiz => "quiz",
-        LearningAssessmentKind::Test => "test",
-    }
-}
 fn parse_status(s: &str) -> Result<LearningProgramStatus> {
     match s {
         "draft" => Ok(LearningProgramStatus::Draft),
@@ -71,34 +64,6 @@ fn parse_block(s: &str) -> Result<LearningBlockKind> {
         "recap" => Ok(LearningBlockKind::Recap),
         _ => Err(AppError::Database("Invalid learning block kind".into())),
     }
-}
-fn parse_assessment(s: &str) -> Result<LearningAssessmentKind> {
-    match s {
-        "practice" => Ok(LearningAssessmentKind::Practice),
-        "quiz" => Ok(LearningAssessmentKind::Quiz),
-        "test" => Ok(LearningAssessmentKind::Test),
-        _ => Err(AppError::Database("Invalid assessment kind".into())),
-    }
-}
-fn attempt_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<LearningAttemptDto> {
-    let coverage = match (r.get("covered_lessons"), r.get("module_lessons")) {
-        (Some(covered_lessons), Some(module_lessons)) => Some(LearningModuleTestCoverageDto {
-            covered_lessons,
-            module_lessons,
-        }),
-        _ => None,
-    };
-    Ok(LearningAttemptDto {
-        id: r.get("id"),
-        module_id: r.get("module_id"),
-        lesson_id: r.get("lesson_id"),
-        kind: parse_assessment(r.get("kind"))?,
-        correct: r.get("correct"),
-        total: r.get("total"),
-        results: decode(r.get("results_json"))?,
-        submitted_at: r.get("submitted_at"),
-        coverage,
-    })
 }
 
 #[derive(Clone)]
@@ -234,17 +199,6 @@ impl LearningRepository {
                 rubric: decode(b.get("rubric_json"))?,
             });
         }
-        let mut questions_by_lesson: HashMap<String, Vec<LearningQuestionDto>> = HashMap::new();
-        for q in sqlx::query("SELECT q.* FROM learning_questions q JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=? ORDER BY q.lesson_id,q.kind,q.ordinal")
-            .bind(id).fetch_all(&mut *connection).await.map_err(db)? {
-            questions_by_lesson.entry(q.get("lesson_id")).or_default().push(LearningQuestionDto {
-                id: q.get("id"),
-                kind: parse_assessment(q.get("kind"))?,
-                prompt: q.get("prompt"),
-                options: decode(q.get("options_json"))?,
-                source_ids: decode(q.get("source_ids_json"))?,
-            });
-        }
         let mut modules = Vec::new();
         for m in sqlx::query("SELECT * FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(id)
@@ -260,7 +214,6 @@ impl LearningRepository {
             {
                 let lid: String = l.get("id");
                 let block_vec = blocks_by_lesson.remove(&lid).unwrap_or_default();
-                let qvec = questions_by_lesson.remove(&lid).unwrap_or_default();
                 ls.push(LearningLessonDto {
                     id: lid,
                     title: l.get("title"),
@@ -268,7 +221,6 @@ impl LearningRepository {
                     estimated_minutes: l.get("estimated_minutes"),
                     preparation: parse_prep(l.get("preparation"))?,
                     blocks: block_vec,
-                    questions: qvec,
                     completed: l.get::<i64, _>("completed") != 0,
                 });
             }
@@ -285,8 +237,7 @@ impl LearningRepository {
         let sources = sqlx::query("SELECT s.* FROM learning_sources s WHERE s.program_id=? AND (
                 EXISTS(SELECT 1 FROM learning_source_library l WHERE l.program_id=s.program_id AND l.active_version_id=s.id AND l.deleted_at IS NULL)
                 OR EXISTS(SELECT 1 FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=s.id))
-                OR EXISTS(SELECT 1 FROM learning_questions q JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(q.source_ids_json) WHERE value=s.id))
-                OR EXISTS(SELECT 1 FROM learning_attempts a,json_each(a.results_json) r,json_each(r.value,'$.sourceIds') src WHERE a.program_id=s.program_id AND src.value=s.id)
+                OR EXISTS(SELECT 1 FROM learning_assessment_candidates c WHERE c.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_drafts d WHERE d.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_origins o WHERE o.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=s.id))
             ) ORDER BY s.rowid")
@@ -299,16 +250,6 @@ impl LearningRepository {
                     acquired_at: r.get("acquired_at"),
                 })
                 .collect();
-        let attempts = sqlx::query(
-            "SELECT * FROM learning_attempts WHERE program_id=? ORDER BY submitted_at,id",
-        )
-        .bind(id)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
-        .iter()
-        .map(attempt_from_row)
-        .collect::<Result<Vec<_>>>()?;
         let module_count: i64 = modules.len() as i64;
         let lesson_count = modules.iter().map(|m| m.lessons.len() as i64).sum();
         let completed = modules
@@ -337,7 +278,6 @@ impl LearningRepository {
             model_name: p.get("model_name"),
             modules,
             sources,
-            attempts,
         })
     }
 

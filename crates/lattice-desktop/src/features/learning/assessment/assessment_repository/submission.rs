@@ -1,30 +1,187 @@
-//! Grading a submitted form into evidence, and deciding the follow-ups it recommends.
+//! Two-phase submission (section 4.1): keyed answers are graded in the submit
+//! transaction; written answers and short-answer near-misses wait as
+//! `pending` for the grading job, and the verdict waits for them.
 use super::{
-    assessment_operation, decode, dimension_for, grade_name, insert_followup, invalid, json,
-    parse_format, parse_purpose, stronger_grade, uuid, LearningAssessmentRepository,
-    STALE_EVIDENCE_MS,
+    assessment_operation, candidate_in, decode, dimension_for, grade_name, insert_followup,
+    invalid, json, parse_format, parse_grade, parse_mode, parse_purpose, stronger_grade, uuid,
+    LearningAssessmentRepository, STALE_EVIDENCE_MS,
 };
 use crate::features::learning::assessment_engine as engine;
 use crate::features::learning::dto::*;
 use crate::features::learning::persistence::{db, now};
+use crate::features::learning::quiz_bank_jobs;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::Row;
-use std::collections::{HashMap, HashSet};
+use sqlx::{Row, SqliteConnection};
+
+/// What grading decided for one pending item.
+#[derive(Debug, Clone)]
+pub enum ItemGrade {
+    Graded {
+        ordinal: i64,
+        fraction: f64,
+        correct: Option<bool>,
+        status: LearningAssessmentGradeStatus,
+        detail: String,
+        rationale: Option<LearningGradeRationaleDto>,
+    },
+    /// "Couldn't grade yet": the item stays pending, with the reason.
+    Unexplained { ordinal: i64, reason: String },
+}
+
+/// The form facts evidence needs.
+struct FormFacts {
+    program_id: String,
+    purpose: engine::LearningAssessmentPurpose,
+    practice: bool,
+    allowed_aids: Vec<String>,
+}
+
+async fn form_facts(connection: &mut SqliteConnection, form_id: &str) -> Result<FormFacts> {
+    let h = sqlx::query("SELECT program_id,purpose,mode,allowed_aids_json FROM learning_assessment_forms WHERE id=?")
+        .bind(form_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
+    Ok(FormFacts {
+        program_id: h.get("program_id"),
+        purpose: parse_purpose(h.get("purpose"))?,
+        practice: parse_mode(h.get("mode"))? == LearningQuizMode::Practice,
+        allowed_aids: decode(h.get("allowed_aids_json")).unwrap_or_default(),
+    })
+}
+
+/// Evidence for one graded item, and the follow-ups it suggests.
+#[allow(clippy::too_many_arguments)]
+async fn record_evidence(
+    connection: &mut SqliteConnection,
+    facts: &FormFacts,
+    form_id: &str,
+    ordinal: i64,
+    fraction: f64,
+    status: &LearningAssessmentGradeStatus,
+    observation: &str,
+    quote: Option<&str>,
+    overridden: bool,
+) -> Result<()> {
+    let item = sqlx::query("SELECT format,difficulty FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
+        .bind(form_id)
+        .bind(ordinal)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(db)?;
+    let format = parse_format(item.get("format"))?;
+    let difficulty = item.get::<i64, _>("difficulty").clamp(1, 5) as u8;
+    let assistance: Option<String> = sqlx::query_scalar("SELECT assistance_json FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=? ORDER BY revision DESC LIMIT 1")
+        .bind(form_id)
+        .bind(ordinal)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?;
+    let used: Vec<String> = assistance
+        .as_deref()
+        .map(|a| decode(a).unwrap_or_default())
+        .unwrap_or_default();
+    let outcomes = sqlx::query("SELECT fio.outcome_id,o.lesson_id FROM learning_assessment_form_item_outcomes fio LEFT JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE fio.form_id=? AND fio.item_ordinal=? ORDER BY fio.outcome_id")
+        .bind(form_id)
+        .bind(ordinal)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
+    let uncertain = overridden
+        || matches!(
+            status,
+            LearningAssessmentGradeStatus::Uncertain | LearningAssessmentGradeStatus::NeedsReview
+        );
+    let result = if uncertain {
+        "uncertain"
+    } else if fraction >= 0.5 {
+        "observed"
+    } else {
+        "not_observed"
+    };
+    let dimension = dimension_for(format, difficulty, facts.purpose);
+    let source_kind = if facts.practice {
+        "practice"
+    } else {
+        "assessment"
+    };
+    let assistance_json = serde_json::json!({"allowedAids": facts.allowed_aids, "used": used});
+    for outcome in outcomes {
+        let outcome_id: String = outcome.get("outcome_id");
+        let lesson_id: Option<String> = outcome.get("lesson_id");
+        let event = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(&event)
+            .bind(&facts.program_id)
+            .bind(&outcome_id)
+            .bind(source_kind)
+            .bind(form_id)
+            .bind(dimension)
+            .bind(result)
+            .bind((!uncertain).then_some(fraction))
+            .bind(observation.chars().take(2_000).collect::<String>())
+            .bind(quote)
+            .bind(json(&assistance_json)?)
+            .bind(now())
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
+        let events = std::slice::from_ref(&event);
+        if result == "not_observed" {
+            let latest: Option<i64> = sqlx::query_scalar("SELECT max(observed_at) FROM learning_evidence_events WHERE program_id=? AND outcome_id=? AND source_id<>?")
+                .bind(&facts.program_id)
+                .bind(&outcome_id)
+                .bind(form_id)
+                .fetch_one(&mut *connection)
+                .await
+                .map_err(db)?;
+            if latest.is_some_and(|date| now() - date > STALE_EVIDENCE_MS) {
+                insert_followup(connection, &facts.program_id, Some(&outcome_id), "stale_evidence", "Earlier evidence for this outcome is old enough to benefit from a fresh check.", "assessment", Some(form_id), events).await?;
+            }
+        }
+        if result == "observed" && !used.is_empty() {
+            insert_followup(
+                connection,
+                &facts.program_id,
+                Some(&outcome_id),
+                "assisted_success",
+                "This answer used recorded help; consider a short check without it.",
+                "assessment",
+                Some(form_id),
+                events,
+            )
+            .await?;
+        }
+        if uncertain && !overridden {
+            insert_followup(connection, &facts.program_id, Some(&outcome_id), "uncertain_grade", "This answer could not be graded with confidence; review it or answer another question on the same point.", "assessment", Some(form_id), events).await?;
+        } else if result == "not_observed" && dimension == "transfer" {
+            insert_followup(connection, &facts.program_id, Some(&outcome_id), "low_transfer", "The changed-context answer did not yet show this outcome; try a new transfer example.", "practice", Some(&outcome_id), events).await?;
+        } else if result == "not_observed" {
+            insert_followup(
+                connection,
+                &facts.program_id,
+                Some(&outcome_id),
+                "missed_outcome",
+                "This answer did not yet show this outcome; revisit the lesson and try again.",
+                "lesson",
+                lesson_id.as_deref(),
+                events,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
 
 impl LearningAssessmentRepository {
+    /// Freeze the answers and grade every keyed item now. Returns the form
+    /// and, when items wait for the model, the grading job to start.
     pub async fn submit(
         &self,
         req: &MutateLearningAssessmentFormRequestDto,
         hash: &str,
-        open_results: HashMap<
-            String,
-            (
-                LearningAssessmentGradeStatus,
-                Vec<LearningAssessmentCriterionResultDto>,
-            ),
-        >,
-        grader_model: Option<String>,
-    ) -> Result<LearningAssessmentFormDto> {
+    ) -> Result<(LearningAssessmentFormDto, Option<String>)> {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
@@ -36,327 +193,338 @@ impl LearningAssessmentRepository {
             Some(&req.form_id),
             "submit",
             hash,
-            "Operation ID was reused with different assessment data.",
+            "Operation ID was reused with different quiz data.",
         );
         if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok((self.get_form(&req.form_id).await?, None));
         }
         Self::active_program(&mut tx, &req.program_id).await?;
-        let h = sqlx::query("SELECT * FROM learning_assessment_forms WHERE id=? AND program_id=?")
-            .bind(&req.form_id)
-            .bind(&req.program_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Assessment form not found".into()))?;
-        if h.get::<String, _>("status") != "active" {
-            return Err(invalid("Only active forms can be submitted."));
+        let h = sqlx::query(
+            "SELECT status,revision FROM learning_assessment_forms WHERE id=? AND program_id=?",
+        )
+        .bind(&req.form_id)
+        .bind(&req.program_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
+        if h.get::<String, _>("status") == "submitted" {
+            return Err(invalid("This quiz was already submitted."));
         }
         if h.get::<i64, _>("revision") != req.expected_revision {
-            return Err(invalid("Assessment form changed; reload and retry."));
+            return Err(invalid("This quiz changed; reload and retry."));
         }
-        let rows=sqlx::query("SELECT i.*,r.selected_index,r.text_response,r.ordered_values_json,r.artifact_json,r.assistance_json FROM learning_assessment_form_items i LEFT JOIN learning_assessment_response_revisions r ON r.form_id=i.form_id AND r.item_ordinal=i.ordinal AND r.revision=(SELECT max(x.revision) FROM learning_assessment_response_revisions x WHERE x.form_id=i.form_id AND x.item_ordinal=i.ordinal) WHERE i.form_id=? ORDER BY i.ordinal").bind(&req.form_id).fetch_all(&mut *tx).await.map_err(db)?;
-        for row in &rows {
-            let answered = row.get::<Option<i64>, _>("selected_index").is_some()
-                || row
-                    .get::<Option<String>, _>("text_response")
-                    .as_deref()
-                    .is_some_and(|x| !x.trim().is_empty())
-                || row.get::<Option<String>, _>("artifact_json").is_some()
-                || row
-                    .get::<Option<String>, _>("ordered_values_json")
-                    .as_deref()
-                    .is_some_and(|x| x != "[]");
-            if !answered {
-                return Err(invalid(
-                    "Save a response for every assessment item before submitting.",
-                ));
-            }
-        }
-        let candidates = self
-            .candidate_rows_for_form(&mut tx, &req.form_id, &req.program_id)
-            .await?;
-        let answers = rows
-            .iter()
-            .filter_map(|r| {
-                let id: String = r.get("candidate_id");
-                let sel = r
-                    .get::<Option<i64>, _>("selected_index")
-                    .map(|x| x as usize);
-                let text: Option<String> = r.get("text_response");
-                let order: Vec<String> = decode(
-                    r.get::<Option<String>, _>("ordered_values_json")
-                        .as_deref()
-                        .unwrap_or("[]"),
-                )
-                .unwrap_or_default();
-                let artifact: Option<String> = r.get("artifact_json");
-                if sel.is_none() && text.is_none() && order.is_empty() && artifact.is_none() {
-                    None
-                } else {
-                    Some(engine::LearningAssessmentResponse {
-                        item_id: id,
-                        selected_index: sel,
-                        text,
-                        ordered_values: order,
-                        artifact_json: artifact.and_then(|s| serde_json::from_str(&s).ok()),
-                    })
-                }
-            })
-            .collect::<Vec<_>>();
-        let keyed_candidates = candidates
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c.candidate.key,
-                    engine::LearningAssessmentKey::Choice(_)
-                        | engine::LearningAssessmentKey::TextVariants(_)
-                        | engine::LearningAssessmentKey::Ordering(_)
-                )
-            })
-            .map(|c| c.candidate.clone())
-            .collect::<Vec<_>>();
-        let keyed_answers = answers
-            .iter()
-            .filter(|a| keyed_candidates.iter().any(|c| c.id == a.item_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        let deterministic =
-            engine::grade_deterministic_responses(&keyed_candidates, &keyed_answers)?;
-        let det: HashMap<String, bool> = deterministic
-            .into_iter()
-            .map(|r| (r.item_id, r.correct))
-            .collect();
-        let mut item_results = Vec::new();
-        let mut score_n = 0.0;
-        let mut score_d = 0.0;
-        let mut aggregate_status = LearningAssessmentGradeStatus::Deterministic;
-        let mut event_ids = Vec::<String>::new();
-        let mut stale_outcomes = HashSet::new();
-        for row in &rows {
-            let id: String = row.get("candidate_id");
-            let format = parse_format(row.get("format"))?;
-            let points: f64 = row.get("points");
-            let candidate = candidates
-                .iter()
-                .find(|c| c.candidate.id == id)
-                .ok_or_else(|| AppError::InvalidState("Form candidate disappeared.".into()))?;
-            let response_present = row.get::<Option<i64>, _>("selected_index").is_some()
-                || row.get::<Option<String>, _>("text_response").is_some()
-                || row.get::<Option<String>, _>("artifact_json").is_some()
-                || row
-                    .get::<Option<String>, _>("ordered_values_json")
-                    .is_some_and(|s| s != "[]");
-            let (item_score, correct, status, feedback, criteria, quotes) = if matches!(
-                format,
-                engine::LearningItemFormat::MultipleChoice
-                    | engine::LearningItemFormat::ShortAnswer
-                    | engine::LearningItemFormat::Ordering
-            ) {
-                let correct = det.get(&id).copied().unwrap_or(false);
-                (
-                    if correct { 1.0 } else { 0.0 },
-                    Some(correct),
-                    LearningAssessmentGradeStatus::Deterministic,
-                    if correct {
-                        sqlx::query_scalar::<_,String>("SELECT explanation FROM learning_assessment_answer_keys WHERE candidate_id=?").bind(&id).fetch_one(&mut *tx).await.map_err(db)?
-                    } else if response_present {
-                        "Review the item rationale and compare it with the saved source.".into()
-                    } else {
-                        "Not answered.".into()
-                    },
-                    vec![],
-                    vec![],
-                )
-            } else {
-                let (status, results) = open_results
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or((LearningAssessmentGradeStatus::Uncertain, vec![]));
-                aggregate_status = stronger_grade(aggregate_status, status.clone());
-                let max_total = results.iter().map(|r| r.max_points).sum::<u32>();
-                let scored = results.iter().filter_map(|r| r.score).sum::<u32>();
-                let ratio = if max_total == 0 {
-                    0.0
-                } else {
-                    f64::from(scored) / f64::from(max_total)
-                };
-                let quotes = results
-                    .iter()
-                    .filter_map(|r| r.artifact_quote.clone())
-                    .collect::<Vec<_>>();
-                (
-                    ratio,
-                    None,
-                    status,
-                    results
-                        .iter()
-                        .map(|r| r.observation.clone())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    results,
-                    quotes,
-                )
-            };
-            score_n += item_score * points;
-            score_d += points;
-            let outcomes:Vec<String>=sqlx::query_scalar("SELECT outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? AND item_ordinal=? ORDER BY outcome_id").bind(&req.form_id).bind(row.get::<i64,_>("ordinal")).fetch_all(&mut *tx).await.map_err(db)?;
-            for outcome in &outcomes {
-                let dimension = dimension_for(format, parse_purpose(h.get("purpose"))?);
-                let ev_id = uuid::Uuid::new_v4().to_string();
-                let evidence_result = if status == LearningAssessmentGradeStatus::Uncertain
-                    || status == LearningAssessmentGradeStatus::NeedsReview
-                {
-                    "uncertain"
-                } else if item_score > 0.0 {
-                    "observed"
-                } else {
-                    "not_observed"
-                };
-                let assistance_json: Option<String> = row.get("assistance_json");
-                let assistance = assistance_json.as_deref().unwrap_or("[]");
-                let evidence_assistance = serde_json::json!({"allowedAids":decode::<Vec<String>>(h.get("allowed_aids_json")).unwrap_or_default(),"used":decode::<Vec<String>>(assistance).unwrap_or_default()});
-                let evidence_score = if matches!(
-                    status,
-                    LearningAssessmentGradeStatus::Uncertain
-                        | LearningAssessmentGradeStatus::NeedsReview
-                ) {
-                    None
-                } else {
-                    Some(item_score)
-                };
-                sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,'assessment',?,?,?,?,?,?,?,?)").bind(&ev_id).bind(&req.program_id).bind(outcome).bind(&req.form_id).bind(dimension).bind(evidence_result).bind(evidence_score).bind(&feedback).bind(quotes.first()).bind(json(&evidence_assistance)?).bind(now()).execute(&mut *tx).await.map_err(db)?;
-                event_ids.push(ev_id.clone());
-                if evidence_result == "not_observed" {
-                    let latest:Option<i64>=sqlx::query_scalar("SELECT max(observed_at) FROM learning_evidence_events WHERE program_id=? AND outcome_id=? AND source_id<>?").bind(&req.program_id).bind(outcome).bind(&req.form_id).fetch_one(&mut *tx).await.map_err(db)?;
-                    if latest.is_some_and(|date| now() - date > STALE_EVIDENCE_MS) {
-                        stale_outcomes.insert(outcome.clone());
-                    }
-                }
-                if item_score > 0.0
-                    && !decode::<Vec<String>>(assistance)
-                        .unwrap_or_default()
-                        .is_empty()
-                {
-                    insert_followup(&mut tx,&req.program_id,Some(outcome),"assisted_success","Successful evidence included recorded assistance; consider a short independent recheck.","assessment",Some(&req.form_id),std::slice::from_ref(&ev_id)).await?;
-                }
-                if status == LearningAssessmentGradeStatus::Uncertain
-                    || status == LearningAssessmentGradeStatus::NeedsReview
-                {
-                    insert_followup(&mut tx,&req.program_id,Some(outcome),"uncertain_grade","This response could not be graded reliably; review it or collect another clear example.","assessment",Some(&req.form_id),std::slice::from_ref(&ev_id)).await?;
-                } else if item_score <= 0.0 && dimension == "transfer" {
-                    insert_followup(&mut tx,&req.program_id,Some(outcome),"low_transfer","The changed-context response did not yet show the target outcome; try a new transfer example.","practice",Some(outcome),std::slice::from_ref(&ev_id)).await?;
-                } else if item_score <= 0.0 {
-                    insert_followup(&mut tx,&req.program_id,Some(outcome),"missed_outcome","This response did not yet show the target outcome; revisit the material and try another example.","lesson",None,std::slice::from_ref(&ev_id)).await?;
-                }
-            }
-            item_results.push(LearningAssessmentItemResultDto {
-                item_id: id,
-                outcome_ids: outcomes,
-                score: item_score,
-                correct,
-                grade_status: status,
-                feedback,
-                criterion_results: criteria,
-                artifact_quotes: quotes,
-            });
-            let _ = candidate;
-        }
-        for outcome in stale_outcomes {
-            insert_followup(
-                &mut tx,
-                &req.program_id,
-                Some(&outcome),
-                "stale_evidence",
-                "Earlier evidence for this outcome is old enough to benefit from a fresh check.",
-                "assessment",
-                Some(&req.form_id),
-                &event_ids,
-            )
-            .await?;
-        }
-        let total = if score_d == 0.0 {
-            0.0
-        } else {
-            score_n / score_d
-        };
-        let passing: f64 = h.get("passing_score");
-        let passed = total >= passing
-            && !matches!(
-                aggregate_status,
-                LearningAssessmentGradeStatus::Uncertain
-                    | LearningAssessmentGradeStatus::NeedsReview
-            );
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         let timestamp = now();
-        let feedback=match aggregate_status{LearningAssessmentGradeStatus::Uncertain|LearningAssessmentGradeStatus::NeedsReview=>"Some responses could not be graded reliably. This result remains uncertain and should be reviewed.",LearningAssessmentGradeStatus::Provisional=>"Open responses received provisional rubric feedback. This is evidence for review, not a mastery claim.",LearningAssessmentGradeStatus::Deterministic=>"Keyed responses were graded deterministically against this form."};
-        let grade_disagreement: Vec<String> = if matches!(
-            aggregate_status,
-            LearningAssessmentGradeStatus::Provisional
-                | LearningAssessmentGradeStatus::Uncertain
-                | LearningAssessmentGradeStatus::NeedsReview
-        ) {
-            vec!["Open-response grading is model-generated and has not been independently calibrated.".into()]
-        } else {
-            vec![]
-        };
-        sqlx::query("INSERT INTO learning_assessment_submissions(form_id,program_id,operation_id,payload_hash,score,passed,grade_status,grader_model,grader_disagreement_json,feedback,submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(&req.form_id).bind(&req.program_id).bind(&req.operation_id).bind(hash).bind(total).bind(passed as i64).bind(grade_name(&aggregate_status)).bind(grader_model).bind(json(&grade_disagreement)?).bind(feedback).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
-        // Item results reference the submission row, so publish the immutable
-        // submission first and its per-item result rows second, in this same
-        // transaction.
-        for result in &item_results {
-            let ordinal: i64 = sqlx::query_scalar(
-                "SELECT ordinal FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?",
-            )
+        sqlx::query("INSERT INTO learning_assessment_submissions(form_id,program_id,operation_id,payload_hash,score,passed,grade_status,grader_model,grader_disagreement_json,feedback,submitted_at,pending_items) VALUES(?,?,?,?,0,NULL,'deterministic',NULL,'[]','',?,0)")
             .bind(&req.form_id)
-            .bind(&result.item_id)
-            .fetch_one(&mut *tx)
+            .bind(&req.program_id)
+            .bind(&req.operation_id)
+            .bind(hash)
+            .bind(timestamp)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
-            sqlx::query("INSERT INTO learning_assessment_item_results(form_id,item_ordinal,score,correct,grade_status,feedback,criterion_results_json,artifact_quotes_json) VALUES(?,?,?,?,?,?,?,?)")
-                .bind(&req.form_id)
-                .bind(ordinal)
-                .bind(result.score)
-                .bind(result.correct.map(i64::from))
-                .bind(grade_name(&result.grade_status))
-                .bind(&result.feedback)
-                .bind(json(&result.criterion_results)?)
-                .bind(json(&result.artifact_quotes)?)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+        let facts = form_facts(&mut tx, &req.form_id).await?;
+        let mut pending = 0usize;
+        for (ordinal, item) in form.items.iter().enumerate() {
+            let ordinal = ordinal as i64;
+            let stored = candidate_in(&mut tx, &req.program_id, &item.id).await?;
+            let order: Vec<usize> = decode(
+                &sqlx::query_scalar::<_, String>("SELECT option_order_json FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
+                    .bind(&req.form_id)
+                    .bind(ordinal)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db)?,
+            )?;
+            let response = engine::LearningAssessmentResponse {
+                item_id: item.id.clone(),
+                selected_indices: item.selected_indices.clone(),
+                text: item.text_response.clone(),
+                blank_responses: item.blank_responses.clone(),
+                matches: item.matches.clone(),
+                ordered_values: item.ordered_values.clone(),
+                artifact_json: item.artifact_json.clone(),
+            };
+            let graded = if item.format.is_keyed() {
+                match engine::grade_keyed(
+                    &stored.candidate,
+                    &engine::to_authored(&response, &order),
+                )? {
+                    engine::KeyedOutcome::Graded(grade) => Some(grade),
+                    engine::KeyedOutcome::NeedsJudge => None,
+                }
+            } else if !response.is_answered() {
+                Some(engine::KeyedGrade {
+                    fraction: 0.0,
+                    correct: false,
+                    detail: engine::NO_ANSWER.into(),
+                })
+            } else {
+                None
+            };
+            match graded {
+                Some(grade) => {
+                    sqlx::query("INSERT INTO learning_assessment_item_results(form_id,item_ordinal,score,correct,grade_status,feedback,points_earned,points_possible,detail,rationale_json) VALUES(?,?,?,?,'deterministic',?,?,?,?,'{}')")
+                        .bind(&req.form_id)
+                        .bind(ordinal)
+                        .bind(grade.fraction)
+                        .bind(item.format.is_keyed().then_some(i64::from(grade.correct)))
+                        .bind(&grade.detail)
+                        .bind(grade.fraction * item.points)
+                        .bind(item.points)
+                        .bind(&grade.detail)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                    record_evidence(
+                        &mut tx,
+                        &facts,
+                        &req.form_id,
+                        ordinal,
+                        grade.fraction,
+                        &LearningAssessmentGradeStatus::Deterministic,
+                        if grade.detail.is_empty() {
+                            "Answered correctly."
+                        } else {
+                            &grade.detail
+                        },
+                        None,
+                        false,
+                    )
+                    .await?;
+                }
+                None => {
+                    pending += 1;
+                    sqlx::query("INSERT INTO learning_assessment_item_results(form_id,item_ordinal,score,correct,grade_status,feedback,points_earned,points_possible,detail,rationale_json) VALUES(?,?,0,NULL,'pending','',0,?,'','{}')")
+                        .bind(&req.form_id)
+                        .bind(ordinal)
+                        .bind(item.points)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                }
+            }
         }
-        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(timestamp).bind(timestamp).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(timestamp).bind(timestamp).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("Assessment form changed; reload and retry."));
+            return Err(invalid("This quiz changed; reload and retry."));
         }
+        Self::finalize_in(&mut tx, &req.form_id).await?;
+        let job = if pending > 0 {
+            Some(
+                quiz_bank_jobs::queue_grading_in(
+                    &mut tx,
+                    &req.program_id,
+                    &req.form_id,
+                    None,
+                    &format!("submit:{}", req.operation_id),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         operation.record(&mut *tx, &()).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok((self.get_form(&req.form_id).await?, job))
     }
 
-    pub async fn preflight_submit(
+    /// Write the grading job's results for pending items, with their evidence,
+    /// and settle the score and verdict when nothing is left pending.
+    pub async fn apply_grades(
         &self,
-        req: &MutateLearningAssessmentFormRequestDto,
-        hash: &str,
-    ) -> Result<Option<LearningAssessmentFormDto>> {
+        form_id: &str,
+        grades: &[ItemGrade],
+        grader_model: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let facts = form_facts(&mut tx, form_id).await?;
+        Self::writer_lock(&mut tx, &facts.program_id).await?;
+        for grade in grades {
+            match grade {
+                ItemGrade::Graded {
+                    ordinal,
+                    fraction,
+                    correct,
+                    status,
+                    detail,
+                    rationale,
+                } => {
+                    let changed = sqlx::query("UPDATE learning_assessment_item_results SET score=?,correct=?,grade_status=?,feedback=?,points_earned=?*points_possible,detail=?,rationale_json=? WHERE form_id=? AND item_ordinal=? AND grade_status='pending'")
+                        .bind(fraction)
+                        .bind(correct.map(i64::from))
+                        .bind(grade_name(status))
+                        .bind(rationale.as_ref().map(|r| r.summary.clone()).unwrap_or_default())
+                        .bind(fraction)
+                        .bind(detail)
+                        .bind(match rationale {
+                            Some(r) => json(r)?,
+                            None => "{}".into(),
+                        })
+                        .bind(form_id)
+                        .bind(ordinal)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                    if changed.rows_affected() == 1 {
+                        let quote = rationale
+                            .as_ref()
+                            .and_then(|r| {
+                                r.criteria.iter().flat_map(|c| c.your_words.first()).next()
+                            })
+                            .cloned();
+                        let observation = rationale
+                            .as_ref()
+                            .map(|r| r.summary.clone())
+                            .unwrap_or_else(|| detail.clone());
+                        record_evidence(
+                            &mut tx,
+                            &facts,
+                            form_id,
+                            *ordinal,
+                            *fraction,
+                            status,
+                            &observation,
+                            quote.as_deref(),
+                            false,
+                        )
+                        .await?;
+                    }
+                }
+                ItemGrade::Unexplained { ordinal, reason } => {
+                    sqlx::query("UPDATE learning_assessment_item_results SET detail=?,feedback=? WHERE form_id=? AND item_ordinal=? AND grade_status='pending'")
+                        .bind(reason)
+                        .bind(reason)
+                        .bind(form_id)
+                        .bind(ordinal)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                }
+            }
+        }
+        sqlx::query("UPDATE learning_assessment_submissions SET grader_model=? WHERE form_id=?")
+            .bind(grader_model)
+            .bind(form_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        Self::finalize_in(&mut tx, form_id).await?;
+        tx.commit().await.map_err(db)
+    }
+
+    /// Recompute a submission from its item results: score (an overridden
+    /// item counts as full credit), pending count, status and verdict.
+    pub(crate) async fn finalize_in(
+        connection: &mut SqliteConnection,
+        form_id: &str,
+    ) -> Result<()> {
+        let rows = sqlx::query("SELECT grade_status,points_earned,points_possible,learner_override FROM learning_assessment_item_results WHERE form_id=?")
+            .bind(form_id)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(db)?;
+        let passing: f64 =
+            sqlx::query_scalar("SELECT passing_score FROM learning_assessment_forms WHERE id=?")
+                .bind(form_id)
+                .fetch_one(&mut *connection)
+                .await
+                .map_err(db)?;
+        let mut earned = 0.0;
+        let mut earned_without = 0.0;
+        let mut possible = 0.0;
+        let mut pending = 0i64;
+        let mut overridden = false;
+        let mut status = LearningAssessmentGradeStatus::Deterministic;
+        for row in &rows {
+            let item_status = parse_grade(row.get("grade_status"))?;
+            let points_possible: f64 = row.get("points_possible");
+            let points_earned: f64 = row.get("points_earned");
+            let override_ = row.get::<i64, _>("learner_override") != 0;
+            if item_status == LearningAssessmentGradeStatus::Pending {
+                pending += 1;
+            }
+            overridden |= override_;
+            possible += points_possible;
+            earned_without += points_earned;
+            earned += if override_ {
+                points_possible
+            } else {
+                points_earned
+            };
+            status = stronger_grade(status, item_status);
+        }
+        let ratio = |e: f64| {
+            if possible > 0.0 {
+                ((e / possible) * 10_000.0).round() / 10_000.0
+            } else {
+                0.0
+            }
+        };
+        let score = ratio(earned).clamp(0.0, 1.0);
+        let passed = (pending == 0).then_some(score + 1e-9 >= passing);
+        let feedback = match status {
+            LearningAssessmentGradeStatus::Pending => "Written answers are waiting to be graded; the result follows once they are.",
+            LearningAssessmentGradeStatus::Uncertain | LearningAssessmentGradeStatus::NeedsReview => "Some answers were graded with doubts the grader could not resolve; you can ask for a regrade.",
+            LearningAssessmentGradeStatus::Provisional => "Written answers were graded by the model against their rubrics, with the reasons shown.",
+            LearningAssessmentGradeStatus::Deterministic => "Every answer was checked against its key.",
+        };
+        let disagreement: Vec<String> =
+            if matches!(status, LearningAssessmentGradeStatus::Deterministic) {
+                vec![]
+            } else {
+                vec![
+                    "Written-answer grades are the model's and have not been checked by a person."
+                        .into(),
+                ]
+            };
+        sqlx::query("UPDATE learning_assessment_submissions SET score=?,passed=?,grade_status=?,pending_items=?,score_without_overrides=?,feedback=?,grader_disagreement_json=? WHERE form_id=?")
+            .bind(score)
+            .bind(passed.map(i64::from))
+            .bind(grade_name(&status))
+            .bind(pending)
+            .bind(overridden.then(|| ratio(earned_without).clamp(0.0, 1.0)))
+            .bind(feedback)
+            .bind(json(&disagreement)?)
+            .bind(form_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+
+    /// Queue grading again for the answers still pending after a stopped or
+    /// failed grading job. None when nothing is waiting.
+    pub async fn resume_grading(
+        &self,
+        req: &ResumeLearningQuizGradingRequestDto,
+    ) -> Result<Option<String>> {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if assessment_operation(
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.form_id),
-            "submit",
-            hash,
-            "Operation ID was already used for different assessment data.",
-        )
-        .seen(&self.pool)
-        .await?
-        {
-            return self.get_form(&req.form_id).await.map(Some);
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
+            .bind(&req.form_id)
+            .bind(&req.program_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+        if pending == 0 {
+            return Ok(None);
         }
-        Ok(None)
+        let job = quiz_bank_jobs::queue_grading_in(
+            &mut tx,
+            &req.program_id,
+            &req.form_id,
+            None,
+            &format!("resume:{}", req.operation_id),
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(Some(job))
     }
 
     pub async fn decide_follow_up(
@@ -364,7 +532,7 @@ impl LearningAssessmentRepository {
         req: &DecideLearningFollowUpRequestDto,
         accept: bool,
         hash: &str,
-    ) -> Result<LearningAssessmentWorkspaceDto> {
+    ) -> Result<()> {
         uuid(&req.program_id, "program")?;
         uuid(&req.follow_up_id, "follow-up")?;
         uuid(&req.operation_id, "operation")?;
@@ -379,17 +547,36 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with different follow-up data.",
         );
         if operation.seen(&mut *tx).await? {
-            tx.commit().await.map_err(db)?;
-            return self.workspace(&req.program_id).await;
+            return tx.commit().await.map_err(db);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let status = if accept { "accepted" } else { "dismissed" };
-        let result=sqlx::query("UPDATE learning_follow_up_recommendations SET status=?,decided_at=? WHERE id=? AND program_id=? AND status='pending'").bind(status).bind(now()).bind(&req.follow_up_id).bind(&req.program_id).execute(&mut *tx).await.map_err(db)?;
+        let result = sqlx::query("UPDATE learning_follow_up_recommendations SET status=?,decided_at=? WHERE id=? AND program_id=? AND status='pending'").bind(status).bind(now()).bind(&req.follow_up_id).bind(&req.program_id).execute(&mut *tx).await.map_err(db)?;
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound("Pending follow-up not found".into()));
         }
         operation.record(&mut *tx, &req.follow_up_id).await?;
-        tx.commit().await.map_err(db)?;
-        self.workspace(&req.program_id).await
+        tx.commit().await.map_err(db)
+    }
+
+    /// Evidence for an item the learner overrode: never `observed`.
+    pub(crate) async fn record_override_evidence_in(
+        connection: &mut SqliteConnection,
+        form_id: &str,
+        ordinal: i64,
+    ) -> Result<()> {
+        let facts = form_facts(connection, form_id).await?;
+        record_evidence(
+            connection,
+            &facts,
+            form_id,
+            ordinal,
+            1.0,
+            &LearningAssessmentGradeStatus::Uncertain,
+            "Counted as right by the learner's override after an upheld regrade.",
+            None,
+            true,
+        )
+        .await
     }
 }

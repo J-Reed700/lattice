@@ -375,8 +375,29 @@ Studio (⌘7) builds learning programs from material you trust.
 - **Programs.** Describe what you want to learn and what you already know,
   choose up to eight library documents or add reference URLs, and Studio drafts
   an outline for you to review before it prepares any lessons. Each program has
-  lessons, practice, assessments, recall cards, a notebook and a canvas, and
+  lessons, practice, quizzes, recall cards, a notebook and a canvas, and
   your progress is saved on this device.
+- **Quizzes and tests.** Every lesson has a quiz, every module a test and the
+  course an exam, all on the **Quizzes** tab and at the end of each lesson.
+  Nothing is locked: take any of them in any order. Questions come in eight
+  kinds (single choice, choose all that apply, true or false, short answer,
+  fill the blanks, matching, ordering and a written explanation), and every
+  one works from the keyboard. Answers save as you go, so you can pause and
+  resume. Keys are shown after you submit; **Practice first** gives feedback on
+  each answer instead and counts for nothing. Choice and fill-in answers are
+  marked at once. Written answers are graded by your model against a rubric
+  you can see, and every answer that loses points says why: the panel **Why
+  this lost points** quotes your own words, says what was missing and what full
+  credit includes. While a written answer is grading the result says
+  **Result pending**, never a fail; if the model can't explain a grade it says
+  **Couldn't grade yet** with **Retry grading**. If you disagree, **I think I
+  was right** asks for a fresh grade that answers your note; after an upheld
+  regrade you can override it, and the score says it includes your override.
+  **Add missed questions to Recall** turns misses into recall cards, and a
+  retake uses fresh questions, labelling any repeat. Passing a lesson quiz
+  offers **Mark lesson complete**; it never completes the lesson for you. Pass
+  marks (70 % for a quiz, 75 % for a test and the exam) can be changed under
+  **Settings** on the Quizzes tab.
 - **Flashcards.** Make a deck from up to three documents, optionally with a
   topic and a learning goal. Lattice writes the questions from your documents,
   each with its source. Review them as flashcards; your results and next review
