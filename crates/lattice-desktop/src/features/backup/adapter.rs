@@ -1,17 +1,4 @@
-//! Backup Adapter Implementation
-//!
 //! Implements BackupPort for SQLite database backup and restore.
-//!
-//! # Features
-//! - Create backups using SQLite's backup API
-//! - Restore from backup files
-//! - List backups in a directory
-//! - Include metadata (version, file count, size)
-//!
-//! # Safety
-//! - Uses online backup (database remains available during backup)
-//! - Validates backup integrity before restore
-//! - Creates timestamped backup files
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -36,19 +23,6 @@ impl Drop for TemporarySnapshot {
 }
 
 /// Validate that a filename is safe (no directory traversal patterns).
-///
-/// This function checks for directory traversal patterns including:
-/// - Literal `..` sequences
-/// - URL-encoded patterns like `%2e%2e`, `%2f`
-/// - Absolute paths (starts with `/` or `\`)
-///
-/// # Arguments
-///
-/// * `filename` - The filename to validate
-///
-/// # Returns
-///
-/// `Ok(())` if filename is safe, `Err(AppError::Security)` if dangerous patterns detected
 fn validate_safe_filename(filename: &str) -> Result<()> {
     if filename.contains("..") {
         return Err(AppError::Security(
@@ -81,38 +55,7 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate that a path is safe for use in SQL queries.
-///
-/// This function provides defense-in-depth protection against SQL injection
-/// in VACUUM INTO commands, which cannot use parameterized queries.
-///
-/// # Security
-///
-/// Checks for SQL injection patterns:
-/// - Semicolons (statement terminators)
-/// - Single quotes (string delimiters)
-/// - Double quotes (identifier delimiters)
-/// - SQL keywords (DROP, DELETE, INSERT, etc.)
-/// - Comment sequences (-- and /* */)
-/// - Null bytes
-///
-/// # Arguments
-///
-/// * `path` - The file path to validate
-///
-/// # Returns
-///
-/// `Ok(())` if path is safe, `Err(AppError::Security)` if dangerous patterns detected
-///
-/// # Example
-///
-/// ```
-/// let safe_path = "/backup/file.db";
-/// validate_sql_safe_path(safe_path)?; // OK
-///
-/// let unsafe_path = "/backup'; DROP TABLE users; --";
-/// validate_sql_safe_path(unsafe_path)?; // Error
-/// ```
+/// Validate that a path is safe for use in SQL queries (defense-in-depth for VACUUM INTO).
 fn validate_sql_safe_path(path: &str) -> Result<()> {
     // SQL keywords are valid in paths and are not rejected here.
     // that would block legitimate paths like "Dropbox", "update_v2", etc.

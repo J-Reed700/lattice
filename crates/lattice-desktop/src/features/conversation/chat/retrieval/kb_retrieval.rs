@@ -18,14 +18,11 @@ pub(super) async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
     search_flags: super::SearchFlags,
-    // The turn's evidence budget in tokens, and the answering model's
-    // characters per token: together, how deep the search reads.
     evidence_tokens: usize,
     chars_per_token: f64,
     enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
-    // The turn's stop button, which the planner's model calls carry.
     cancel: &tokio_util::sync::CancellationToken,
 ) -> super::KbRetrievalOutcome {
     let ChatTurn {
@@ -41,101 +38,53 @@ pub(super) async fn run_kb_retrieval(
     let mut timings = super::RetrievalSubTimingMetrics::default();
 
     let scope_load_start = Instant::now();
+    let empty_outcome = |reason: Option<String>, linked: bool, timings: super::RetrievalSubTimingMetrics| super::KbRetrievalOutcome {
+        interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+            validated_message.to_string(),
+            QueryType::Question,
+        ),
+        search_response: super::empty_search_response(),
+        sources: Vec::new(),
+        low_confidence: true,
+        kb_unavailable_reason: reason,
+        timings,
+        searched_documents: 0,
+        scope_is_linked: linked,
+        sufficiency: None,
+    };
     let scope = match super::load_space_document_scope(container, conversation_id).await {
         Some(scope) => scope,
         None => {
             timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
             timings.kb_total_ms = super::elapsed_ms(kb_start);
-            warn!(
-                conversation_id = conversation_id,
-                "Unable to resolve hard space scope; failing closed before retrieval"
-            );
-            return super::KbRetrievalOutcome {
-                interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                    validated_message.to_string(),
-                    QueryType::Question,
-                ),
-                search_response: super::empty_search_response(),
-                sources: Vec::new(),
-                low_confidence: true,
-                kb_unavailable_reason: Some(
-                    "the conversation scope could not be resolved".to_string(),
-                ),
-                timings,
-                searched_documents: 0,
-                scope_is_linked: false,
-                sufficiency: None,
-            };
+            warn!(conversation_id = conversation_id, "Unable to resolve hard space scope; failing closed before retrieval");
+            return empty_outcome(Some("the conversation scope could not be resolved".to_string()), false, timings);
         }
     };
-    // A chat pinned to particular documents searches those and no others. The
-    // focus was already intersected with this same space scope, so this can
-    // only ever remove ids; when it removes all of them the request named
-    // nothing this chat can reach, and the turn searches nothing rather than
-    // falling back to the whole space.
     let mut scope = scope;
     focus.confine(&mut scope.document_ids);
     timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
-    // The exact set the hard filter allows. Reported to the UI verbatim so
-    // "Searched N documents" is a fact, not a corpus-sized guess.
     let searched_documents = scope.document_ids.len();
     let scope_is_linked = scope.space_id != super::DEFAULT_SPACE_ID;
 
     if focus.blocks_everything() {
         timings.kb_total_ms = super::elapsed_ms(kb_start);
-        warn!(
-            conversation_id = conversation_id,
-            space_id = scope.space_id.as_str(),
-            "Focus documents are outside this conversation's space; searching nothing"
-        );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(focus.unavailable_reason().to_string()),
-            timings,
-            searched_documents: 0,
-            scope_is_linked,
-            sufficiency: None,
-        };
+        warn!(conversation_id = conversation_id, space_id = scope.space_id.as_str(), "Focus documents are outside this conversation's space; searching nothing");
+        return empty_outcome(Some(focus.unavailable_reason().to_string()), scope_is_linked, timings);
     }
 
     if scope.document_ids.is_empty() {
         timings.kb_total_ms = super::elapsed_ms(kb_start);
-        info!(
-            conversation_id = conversation_id,
-            space_id = scope.space_id.as_str(),
-            "Space scope contains no indexed documents; skipping KB retrieval"
-        );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(if scope.space_id == super::DEFAULT_SPACE_ID {
-                "the vault has no indexed documents yet".to_string()
-            } else {
-                "no indexed documents are assigned to this conversation’s space".to_string()
-            }),
-            timings,
-            searched_documents: 0,
-            scope_is_linked: scope.space_id != super::DEFAULT_SPACE_ID,
-            sufficiency: None,
+        info!(conversation_id = conversation_id, space_id = scope.space_id.as_str(), "Space scope contains no indexed documents; skipping KB retrieval");
+        let reason = if scope.space_id == super::DEFAULT_SPACE_ID {
+            "the vault has no indexed documents yet".to_string()
+        } else {
+            "no indexed documents are assigned to this conversation’s space".to_string()
         };
+        return empty_outcome(Some(reason), scope_is_linked, timings);
     }
 
     let repository = container.chat_records();
-    // How deep to read: as many passages as the evidence budget can carry, at
-    // what a passage of this library actually measures. The prompt's
-    // best-first fill decides what goes in; this only stops the search from
-    // handing it less than the budget could hold.
     let passage_chars = match repository
         .retrieval_mean_chunk_chars(&scope.document_ids)
         .await
@@ -158,8 +107,6 @@ pub(super) async fn run_kb_retrieval(
         },
         None,
     );
-    // One turn's use of the planner: the shortlist search runs once however
-    // many times the turn plans.
     let planner_health = container.planner_health();
     let mut planner_turn = super::corpus_plan::PlannerTurn::with_health(&planner_health);
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
@@ -180,7 +127,6 @@ pub(super) async fn run_kb_retrieval(
                 );
                 plan
             } else if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
-                // The planner runs only when a utility model is assigned.
                 planned(
                     container,
                     conv_service,
@@ -210,7 +156,6 @@ pub(super) async fn run_kb_retrieval(
     };
     summaries.apply(&mut plan, validated_message, &catalog);
     timings.kb_hyde_interpretation_ms = super::elapsed_ms(planning_start);
-    // The queries themselves: the one thing a reader can judge a search by.
     plan_step.done(Some(plan.queries.join(" · ")));
     info!(queries = ?plan.queries, opening_documents = ?plan.opening_document_ids, "Corpus retrieval plan");
     let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
@@ -238,8 +183,6 @@ pub(super) async fn run_kb_retrieval(
             }
         )),
     );
-    // The shortlist a reranker gets to see. The corrective pass reuses it so
-    // both passes contribute the same number of candidates to the fusion.
     let candidate_limit = if enable_reranking && !plan.start_at_beginning {
         RerankOptions::candidate_pool(kb_search_limit)
     } else {
@@ -270,10 +213,8 @@ pub(super) async fn run_kb_retrieval(
             )
         }
     };
-    // Rerank focused searches only. Ordered document reading is intentional
-    // evidence selection, not a cosine-similarity contest.
     let mut reranked = false;
-    if enable_reranking && plan.opening_document_ids.is_empty() {
+    if enable_reranking && !plan.start_at_beginning {
         let rerank_start = Instant::now();
         let (response, applied) = super::apply_rerank_stage(
             container,
@@ -288,10 +229,10 @@ pub(super) async fn run_kb_retrieval(
         reranked = applied;
         timings.kb_rerank_ms = super::elapsed_ms(rerank_start);
     }
+    if !plan.start_at_beginning {
+        promote_entity_bridge(&mut search_response.results);
+    }
 
-    // Corrective retrieval. One local verdict, and at most one replanned retry
-    // when it fails — a loop that could run twice is a loop that will run twice
-    // on the turn a user is already waiting on.
     let sufficiency_start = Instant::now();
     let mut verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
     timings.kb_sufficiency_ms = super::elapsed_ms(sufficiency_start);
@@ -312,8 +253,6 @@ pub(super) async fn run_kb_retrieval(
         reasons = ?verdict.reasons,
         "retrieval: sufficiency verdict"
     );
-    // A first pass that errored outright failed in the search engine, not in the
-    // query. Replanning the words would not reach a vector index that is down.
     let can_retry =
         tuning.sufficiency_retry_enabled && kb_unavailable_reason.is_none() && !catalog.is_empty();
     if !verdict.sufficient && can_retry {
@@ -352,7 +291,7 @@ pub(super) async fn run_kb_retrieval(
                 candidate_limit,
             );
             search_response.total = search_response.results.len();
-            if enable_reranking && plan.opening_document_ids.is_empty() {
+            if enable_reranking && !plan.start_at_beginning {
                 let rerank_start = Instant::now();
                 let (response, applied) = super::apply_rerank_stage(
                     container,
@@ -369,8 +308,9 @@ pub(super) async fn run_kb_retrieval(
                 reranked = applied;
                 timings.kb_rerank_ms += super::elapsed_ms(rerank_start);
             }
-            // Judged against the original plan: the retry chose different
-            // wording, but what the turn owed the user has not changed.
+            if !plan.start_at_beginning {
+                promote_entity_bridge(&mut search_response.results);
+            }
             verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
             timings.kb_corrective_retries = 1;
             info!(
@@ -393,9 +333,6 @@ pub(super) async fn run_kb_retrieval(
                 sufficiency_line(&verdict)
             )));
         } else {
-            // No planner, or a plan that only repeated what had already failed.
-            // The first pass's evidence stands, which is not a failure of the
-            // corrective step so much as its honest outcome.
             corrective_step.done(Some("no better plan to try".to_string()));
         }
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
@@ -413,8 +350,7 @@ pub(super) async fn run_kb_retrieval(
         warn!(%error, "Could not expand neighboring section evidence");
     }
     search_response.total = search_response.results.len();
-    // RRF scores are ranks, not probabilities. A cosine cutoff must never be
-    // applied to them or used to claim the documents are unavailable.
+    // RRF scores are ranks, not probabilities.
     let low_confidence = search_response.results.is_empty();
 
     let build_sources_start = Instant::now();
@@ -454,15 +390,8 @@ pub(super) async fn run_kb_retrieval(
     }
 }
 
-/// What a search pass came back with, counted the way the trace counts it:
-/// passages, and the documents they came from.
-/// The retrieval trace carries at most this many characters of the search
-/// failure; the frontend schema caps `unavailableReason` at the same length.
 const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
 
-/// Clip a search failure for the retrieval trace. A longer reason would fail
-/// the frontend's trace schema and drop the "search unavailable" notice on
-/// exactly the turn that needs it.
 fn unavailable_reason(error: &str) -> String {
     lattice_core::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
@@ -490,11 +419,6 @@ fn passage_count_line(results: &[SearchResultDto]) -> String {
     )
 }
 
-/// The sufficiency verdict in one line.
-///
-/// A plain sufficient verdict is the expected case and says so in three words;
-/// an insufficient one carries its reasons, which are the only thing that makes
-/// the verdict checkable. In words: this line is persisted and read by people.
 fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
     if verdict.sufficient {
         return "enough support".to_string();
@@ -510,10 +434,6 @@ fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
     format!("not enough support: {}", reasons.join(", "))
 }
 
-/// Titles the first pass surfaced, deduplicated and best first, so the
-/// corrective planner can see what it already reached and steer somewhere
-/// else. All of them: the planner's prompt shows what its room holds and
-/// counts the rest.
 fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
     let mut seen = HashSet::new();
     results
@@ -523,8 +443,6 @@ fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
         .collect()
 }
 
-/// The planner's plan for the first pass, or the local plan when the planner
-/// should not be asked or does not answer.
 async fn planned(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -549,6 +467,7 @@ async fn planned(
         container,
         validated_message,
         history.as_deref(),
+        catalog,
         scope,
         planner_turn,
     )
@@ -569,11 +488,11 @@ async fn planned(
     })
 }
 
-/// Rank the documents the planner is shown, once per turn.
 async fn shortlist_candidates(
     container: &dyn ChatRuntime,
     validated_message: &str,
     history: Option<&str>,
+    catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
 ) {
@@ -585,15 +504,13 @@ async fn shortlist_candidates(
             container.library_search().as_ref(),
             validated_message,
             history,
+            catalog,
             &scope.document_ids,
         )
         .await,
     );
 }
 
-/// The one replanned retry. Returns `None` whenever it cannot improve on the
-/// first pass — no planner, a plan that only repeats failed queries, or a
-/// failed search — so the caller keeps the evidence it already has.
 async fn corrective_pass(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
@@ -622,6 +539,7 @@ async fn corrective_pass(
         container,
         validated_message,
         history.as_deref(),
+        catalog,
         scope,
         planner_turn,
     )
@@ -661,16 +579,12 @@ async fn corrective_pass(
     }
 }
 
-/// The plan a skipped planner would have produced, when the message is short
-/// and still on the previous turn's topic.
 async fn planner_skip_plan(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
     catalog: &[CorpusDocument],
 ) -> Option<(super::corpus_plan::CorpusSearchPlan, Vec<String>)> {
-    // Cheap test first: the anchor terms cost a conversation read, and a long
-    // message can never qualify.
     if !super::corpus_plan::is_short_followup_message(validated_message) {
         return None;
     }
@@ -678,27 +592,15 @@ async fn planner_skip_plan(
     super::corpus_plan::followup_plan(validated_message, &anchors, catalog)
 }
 
-/// How many documents the summary tier may nominate to open with. Matches the
-/// planner's own `opening_document_ids` cap, which the plan validator enforces.
 const SUMMARY_OPENING_DOCUMENTS: usize = 4;
 
-/// The collection-level summary tier for one turn.
-///
-/// Empty — and free — whenever summaries are off, which is the default:
-/// `Container::summary_search` returns `None` after one indexed `COUNT` and
-/// nothing else runs. Everything here is additive; a failure anywhere leaves
-/// the turn with exactly the retrieval it would have had without the tier.
 #[derive(Default)]
 struct SummaryTier {
-    /// Document-level summary text keyed by document id, for the planner
-    /// catalog.
     summaries: std::collections::HashMap<String, String>,
-    /// Documents the tier would open with, best first.
     openings: Vec<String>,
 }
 
 impl SummaryTier {
-    /// Hand the tier's opening documents to a finished plan.
     fn apply(
         &self,
         plan: &mut super::corpus_plan::CorpusSearchPlan,
@@ -714,7 +616,6 @@ impl SummaryTier {
     }
 }
 
-/// Load the summary tier for this turn.
 async fn summary_tier(
     container: &dyn ChatRuntime,
     message: &str,
@@ -730,8 +631,6 @@ async fn summary_tier(
             std::collections::HashMap::new()
         }
     };
-    // Only pay for a summary search when the request is about documents as
-    // wholes; a focused question keeps the planner's own opening selection.
     if !super::corpus_plan::whole_document_intent(message) {
         return SummaryTier {
             summaries,
@@ -758,9 +657,94 @@ async fn summary_tier(
     }
 }
 
+fn promote_entity_bridge(
+    results: &mut Vec<lattice_core::application::contracts::search::SearchResultDto>,
+) {
+    let Some(bridge) = results.iter().find(|result| {
+        result
+            .metadata
+            .get("retrievalMethod")
+            .and_then(|value| value.as_str())
+            == Some("entity_bridge")
+    }) else {
+        return;
+    };
+    let Some(source_result_id) = bridge
+        .metadata
+        .get("bridgeSourceResultId")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let Some(target_document_id) = bridge.document_id.clone() else {
+        return;
+    };
+    let Some(source_position) = results
+        .iter()
+        .position(|result| result.id == source_result_id)
+    else {
+        return;
+    };
+    if source_position > 0 {
+        let source = results.remove(source_position);
+        results.insert(0, source);
+    }
+
+    let mut linked = Vec::new();
+    let mut index = 1;
+    while index < results.len() {
+        if results[index].document_id.as_deref() == Some(target_document_id.as_str()) {
+            linked.push(results.remove(index));
+        } else {
+            index += 1;
+        }
+    }
+    linked.sort_by_key(|result| {
+        result
+            .position
+            .or_else(|| {
+                result
+                    .metadata
+                    .get("chunk_index")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|index| usize::try_from(index).ok())
+            })
+            .unwrap_or(usize::MAX)
+    });
+    let remainder = if linked.len() > 2 {
+        linked.split_off(2)
+    } else {
+        Vec::new()
+    };
+    for (offset, result) in linked.into_iter().enumerate() {
+        results.insert(1 + offset, result);
+    }
+    results.extend(remainder);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::application::contracts::search::SearchResultDto;
+    use std::collections::HashMap;
+
+    fn result(id: &str, document_id: &str, position: usize) -> SearchResultDto {
+        SearchResultDto {
+            id: id.into(),
+            title: document_id.into(),
+            content: String::new(),
+            score: position as f32 / 10.0,
+            path: None,
+            document_id: Some(document_id.into()),
+            position: Some(position),
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: HashMap::new(),
+        }
+    }
 
     #[test]
     fn unavailable_reason_is_clipped_to_the_trace_limit() {
@@ -768,5 +752,34 @@ mod tests {
         let reason = unavailable_reason(&long);
         assert_eq!(reason.chars().count(), UNAVAILABLE_REASON_MAX_CHARS);
         assert_eq!(unavailable_reason("index offline"), "index offline");
+    }
+
+    #[test]
+    fn an_entity_bridge_groups_its_source_and_target_without_deleting_other_results() {
+        let bridge_result = |id: &str, doc_id: &str, pos: usize| {
+            let mut r = result(id, doc_id, pos);
+            r.metadata.insert("retrievalMethod".into(), serde_json::json!("entity_bridge"));
+            r.metadata.insert("bridgeSourceResultId".into(), serde_json::json!("source-0"));
+            r
+        };
+        let mut results = vec![
+            result("other", "similar-template", 0),
+            bridge_result("target-2", "target", 2),
+            result("source-0", "source", 0),
+            bridge_result("target-0", "target", 0),
+            bridge_result("target-5", "target", 5),
+        ];
+
+        promote_entity_bridge(&mut results);
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.id.as_str())
+                .collect::<Vec<_>>(),
+            ["source-0", "target-0", "target-2", "other", "target-5"]
+        );
+        assert_eq!(results[1].score, 0.0);
+        assert_eq!(results[2].score, 0.2);
     }
 }

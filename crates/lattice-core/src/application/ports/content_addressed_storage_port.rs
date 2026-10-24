@@ -1,16 +1,4 @@
-//! Content-addressed storage port.
-//!
-//! This port defines the interface for the library of imported files: the
-//! copy that Lattice owns and is therefore allowed to delete.
-//!
-//! # Purpose
-//!
-//! - Import files to library storage (`~/.lattice/files/{hash}/filename`)
-//! - Detect duplicates by content hash (not file path)
-//! - Preserve original filenames for UX
-//! - Decide ownership: only files under the library root may be removed, and
-//!   only by hash, never by an arbitrary path handed in from a row
-//! - Keep an import and a concurrent delete of the same content from racing
+//! Content-addressed storage port for managing imported library files.
 //!
 //! # Ownership rule
 //!
@@ -19,10 +7,6 @@
 //! the caller's [`BlobReferenceCheck`] still finds a document pointing at it.
 //! The hash is validated as 64 lowercase hex characters before any filesystem
 //! call, so a removal can never reach outside `{library_root}/{hash}`.
-//!
-//! # Infrastructure Implementations
-//!
-//! - `ContentAddressedStorage` - SHA-256 based storage in `~/.lattice/files/`
 
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -219,12 +203,6 @@ pub trait BlobReferenceCheck: Send + Sync {
 }
 
 /// Port for content-addressed file storage.
-///
-/// Implementations must:
-/// - Store files in content-addressed layout (hash-based directories)
-/// - Detect duplicates by content hash (not file path)
-/// - Preserve original filenames for UX
-/// - Be thread-safe (`Send + Sync`)
 #[async_trait]
 pub trait ContentAddressedStoragePort: Send + Sync {
     /// Import a file into the library and lease the blob.
@@ -233,30 +211,15 @@ pub trait ContentAddressedStoragePort: Send + Sync {
     /// that is already in the library is not copied again; either way the
     /// returned [`ImportedBlob`] carries a lease that keeps the blob alive
     /// until the caller has committed the row referencing it.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::FileNotFound` if source file doesn't exist
-    /// - `AppError::PermissionDenied` if cannot read source or write to library
-    /// - `AppError::FileRead` if cannot read source file
-    /// - `AppError::FileStorage` if cannot write to library
     async fn import_file(&self, source_path: &Path) -> Result<ImportedBlob>;
 
     /// Check if content with this hash is in the library.
     ///
     /// A hash that is not a well-formed blob hash is simply absent; no
     /// filesystem call is made for it.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::FileStorage` if library directory cannot be accessed
     async fn exists_by_hash(&self, hash: &str) -> Result<bool>;
 
     /// Get the library path of the file stored under `hash`.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::FileStorage` if library directory cannot be accessed
     async fn get_path_by_hash(&self, hash: &str) -> Result<Option<PathBuf>>;
 
     /// True when `path` is inside the library root.
@@ -268,12 +231,7 @@ pub trait ContentAddressedStoragePort: Send + Sync {
 
     /// Every blob hash directory currently on disk.
     ///
-    /// Entries that are not 64 lowercase hex characters are skipped: whatever
-    /// they are, they are not blobs this storage wrote.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::FileStorage` if the library root cannot be listed
+    /// Entries that are not 64 lowercase hex characters are skipped.
     async fn list_hashes(&self) -> Result<Vec<String>>;
 
     /// Remove `{root}/{hash}` unless something still needs it.
@@ -281,12 +239,6 @@ pub trait ContentAddressedStoragePort: Send + Sync {
     /// Under the per-hash lock: refuse if an import holds a lease, refuse if
     /// `refs` says the hash is still referenced, otherwise remove the whole
     /// blob directory.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if `hash` is not a library blob hash
-    /// - `AppError::FileStorage` if the directory cannot be removed
-    /// - whatever `refs` returns
     async fn remove_if_unreferenced(
         &self,
         hash: &str,

@@ -1,10 +1,3 @@
-/**
- * RootErrorBoundary Component
- *
- * Top-level error boundary that catches all uncaught errors in the application.
- * Displays FullPageError component with recovery options.
- */
-
 import React from 'react';
 
 import { ErrorBoundary, type ErrorBoundaryProps } from './ErrorBoundary';
@@ -22,13 +15,8 @@ export function RootErrorBoundary({
   onReset,
 }: RootErrorBoundaryProps) {
   const handleError: ErrorBoundaryProps['onError'] = (error, errorInfo) => {
-    // Log to console in development
-    const isDev = import.meta.env.DEV;
-    if (isDev) {
-      console.error('=== ROOT ERROR BOUNDARY ===');
-      console.error('Error:', error);
-      console.error('Error Info:', errorInfo);
-      console.error('=========================');
+    if (import.meta.env.DEV) {
+      console.error('RootErrorBoundary caught error:', error, errorInfo);
     }
 
     if (onError) {
@@ -37,14 +25,11 @@ export function RootErrorBoundary({
   };
 
   const handleReset = () => {
-    // Clear any cached state
     try {
-      // Clear React Query cache if present
       if ('queryClient' in window && typeof (window as { queryClient?: { clear: () => void } }).queryClient?.clear === 'function') {
         (window as { queryClient: { clear: () => void } }).queryClient.clear();
       }
 
-      // Clear any application state
       sessionStorage.removeItem('app-state');
     } catch (e) {
       console.warn('Failed to clear state on reset:', e);

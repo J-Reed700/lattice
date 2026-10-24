@@ -6,111 +6,7 @@ use lattice_core::domain::ConversationMessage;
 use lattice_core::shared::error::{AppError, Result};
 use tauri::State;
 
-/// Retrieves all messages for a conversation
-///
-/// Fetches the complete message history for a conversation in chronological order.
-/// Messages include both user questions and assistant responses with timestamps,
-/// token counts, and metadata. Use this to display conversation history in the UI
-/// or to understand the full context of a conversation.
-///
-/// # Arguments
-///
-/// * `container` - Service container with conversation service and security context
-/// * `conversation_id` - Unique identifier of the conversation
-///
-/// # Returns
-///
-/// * `Ok(Vec<ConversationMessage>)` - List of messages in chronological order
-/// * `Err(AppError)` - If conversation not found or query fails
-///
-/// # Errors
-///
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Database query failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface ConversationMessage {
-///   id: string;
-///   conversationId: string;
-///   role: 'user' | 'assistant' | 'system';
-///   content: string;
-///   tokens: number;
-///   createdAt: string;
-///   metadata?: Record<string, any>;
-/// }
-///
-/// // Get all messages for a conversation
-/// const messages = await invoke<ConversationMessage[]>('get_conversation_messages', {
-///   conversationId: 'conv_abc123'
-/// });
-///
-/// console.log(`Conversation has ${messages.length} messages`);
-///
-/// // Display conversation history
-/// messages.forEach(msg => {
-///   if (msg.role === 'user') {
-///     console.log(`User: ${msg.content}`);
-///   } else if (msg.role === 'assistant') {
-///     console.log(`Assistant: ${msg.content} (${msg.tokens} tokens)`);
-///   }
-/// });
-///
-/// // Calculate total tokens
-/// const totalTokens = messages.reduce((sum, msg) => sum + msg.tokens, 0);
-/// console.log(`Total tokens: ${totalTokens}`);
-/// ```
-///
-/// # Message Ordering
-///
-/// Messages are returned in chronological order (oldest first):
-/// 1. Initial user question
-/// 2. Assistant response
-/// 3. Follow-up user question
-/// 4. Assistant response
-///
-/// The sequence continues in the same alternating order.
-///
-/// This ordering makes it easy to reconstruct the conversation flow for display.
-///
-/// # Performance Considerations
-///
-/// For very long conversations (hundreds of messages):
-/// - Consider implementing message pagination in the UI
-/// - Load recent messages first, older messages on demand
-/// - Cache messages to avoid repeated fetches
-///
-/// # Use Cases
-///
-/// - **Conversation Display**: Show full message history in chat UI
-/// - **Context Window**: Provide context for follow-up questions
-/// - **Export**: Save conversation history to file
-/// - **Analysis**: Analyze conversation patterns and token usage
-/// - **Debugging**: Inspect LLM responses and context flow
-///
-/// # Message Roles
-///
-/// - **user**: Human-written questions/prompts
-/// - **assistant**: LLM-generated responses
-/// - **system**: System-level instructions (e.g., system prompt)
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Delegates to `ConversationService.get_conversation()`
-/// 2. Extracts messages from conversation aggregate
-///
-/// # Command Flow
-///
-/// 1. Execute ConversationService.get_conversation()
-/// 2. If conversation not found, return NotFound error
-/// 3. Extract messages from aggregate
-/// 4. Return messages in chronological order
-///
-/// Implementation function (Pure Rust - No Tauri)
+/// Retrieves all messages for a conversation in chronological order with hydrated metadata.
 pub async fn get_conversation_messages_impl(
     runtime: &dyn ChatRuntime,
     conversation_id: String,
@@ -123,7 +19,6 @@ pub async fn get_conversation_messages_impl(
             AppError::NotFound(format!("Conversation not found: {}", conversation_id))
         })?;
 
-    // 3. Return messages from aggregate
     let mut messages = aggregate.messages().to_vec();
     for message in &mut messages {
         message.metadata =
@@ -137,7 +32,6 @@ pub async fn get_conversation_messages_impl(
     Ok(messages)
 }
 
-/// Tauri command wrapper
 #[tracing::instrument(skip(container), fields(conversation_id = %conversation_id))]
 pub async fn get_conversation_messages(
     container: State<'_, Container>,

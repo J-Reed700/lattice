@@ -16,6 +16,7 @@ import type { LearningTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
+import { conversationDraftKey, useDraft } from '@/shared/drafts/drafts';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessage } from '@/types/conversation';
 
@@ -48,7 +49,8 @@ export function CourseTangentChat({
   const navigate = useNavigate();
   const base = useConversationsStore();
   const queryClient = useQueryClient();
-  const [input, setInput] = useState('');
+  // Kept with the conversation, so leaving the lesson or the course keeps it.
+  const [input, setInput] = useDraft(conversationDraftKey(id));
   const [mutating, setMutating] = useState(false);
   const submitting = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -133,7 +135,7 @@ export function CourseTangentChat({
         return outcome;
       },
     }),
-    [base, bookmarksQuery.data, detailQuery.data, id, metadata, persisted],
+    [base, bookmarksQuery.data, detailQuery.data, id, metadata, persisted, setInput],
   );
 
   const send = useCallback(
@@ -176,7 +178,7 @@ export function CourseTangentChat({
         });
       }
     },
-    [base, detailQuery.data, id, input, isSending, messagesQuery.isSuccess, queryClient, tangent.contextMessageCount, tangent.programId],
+    [base, detailQuery.data, id, input, isSending, messagesQuery.isSuccess, queryClient, setInput, tangent.contextMessageCount, tangent.programId],
   );
 
   const handleOpenInChat = async () => {

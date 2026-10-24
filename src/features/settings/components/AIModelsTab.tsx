@@ -1,18 +1,3 @@
-/**
- * AIModelsTab — "Downloaded models".
- *
- * Every row in the `models` table (local downloads + the synthetic Ollama
- * server row) is eligible for one or more roles (Chat, Utility, Embedding,
- * Learning). Chat selection also updates the LLM provider, which takes
- * precedence over the stored local model assignment; this is the app-wide
- * default every chat on the default follows. Learning is a model reference
- * in Settings. llama.cpp uses its saved connection. Each connected or cloud
- * model also carries its vision declaration.
- *
- * Layout: hairline rows. {@link ROLES} drives the toggles;
- * `ModelRolesContext` holds the shared state and mutations.
- */
-
 import { useMemo, useState } from 'react';
 
 import { ArrowUpRight, HardDrive, Network } from 'lucide-react';

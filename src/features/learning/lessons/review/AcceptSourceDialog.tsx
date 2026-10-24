@@ -36,7 +36,7 @@ function AcceptSourceBody({ programId, support, sharing, onClose, onTrusted }: P
 
   const count = impact ?? sharing;
   return (
-    <DialogContent className="max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-sheet">
+    <DialogContent className="max-w-lg rounded-2xl border border-border-default bg-surface p-5 shadow-sheet">
       <DialogTitle className="font-serif text-xl text-text-primary">Accept this source for the course</DialogTitle>
       <DialogDescription className="mt-1 text-sm leading-6 text-text-secondary">
         <span className="font-medium text-text-primary">{support.source.title}</span>, {kindWithArticle(support.kind)}{support.site ? ` from ${support.site}` : ''}.
@@ -52,7 +52,7 @@ function AcceptSourceBody({ programId, support, sharing, onClose, onTrusted }: P
         ))}
       </fieldset>
       <label htmlFor={`${id}-note`} className="mt-4 block text-xs font-medium text-text-secondary">Note (optional)</label>
-      <textarea id={`${id}-note`} value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+      <textarea id={`${id}-note`} value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-hidden" />
       {set.error && <p role="alert" className="mt-2 text-xs text-danger-fg">{set.error.message}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
@@ -63,7 +63,7 @@ function AcceptSourceBody({ programId, support, sharing, onClose, onTrusted }: P
 }
 
 /**
- * "Accept this source for all N" (§3.5): trust the source for this course at
+ * "Accept this source for all N" : trust the source for this course at
  * a level the user picks, so every claim it states is decided again. The
  * impact count comes from the trust read; one Undo clears the override.
  */

@@ -40,11 +40,6 @@ const isUserInitiatedCancellation = (requestId: string, errorCode?: string): boo
   pendingCancellationRequests.has(requestId)
   && (errorCode === ErrorCode.INVALID_STATE || errorCode === ErrorCode.INTERNAL_ERROR);
 
-/**
- * A turn from an Explorer thread carries what the Explorer shows: the open
- * file and the selected lines. Only while the Explorer is on that thread's
- * folder, since the paths are relative to it.
- */
 const withExplorerFocus = (
   conversation: Conversation | undefined,
   toolPreferences: ToolPreferences | undefined
@@ -52,8 +47,6 @@ const withExplorerFocus = (
   const root = conversation?.explorerRoot;
   const focus = root ? folderFocusFor(root) : null;
   if (!focus) return toolPreferences;
-  // Every switch is optional on the wire: a turn sent without preferences
-  // (a regenerate from the message menu) keeps the backend's defaults.
   return { ...toolPreferences, explorerFocus: focus } as ToolPreferences;
 };
 
@@ -554,17 +547,6 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     });
   }, [runGeneration]);
 
-  /**
-   * Re-run the last user message.
-   *
-   * The backend lifts the question off the thread and re-persists it, so no
-   * user bubble is pushed here. If generation fails it hands the question back
-   * through `onFailure` so the caller can put it in the composer — a
-   * regenerate must never cost the user their question.
-   *
-   * Returns how the turn ended, so callers announce neither an answer that
-   * never arrived nor a failure that never happened.
-   */
   const regenerateResponse = useCallback(async (
     conversationId: string,
     { toolPreferences, model }: RegenerateOptions = {}
@@ -592,10 +574,6 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     });
   }, [conversations, queryClient, runGeneration]);
 
-  /**
-   * Drop every message after `messageId` (and it too when `inclusive`).
-   * Replaces the message cache with what the server says survived.
-   */
   const cancelGeneration = useCallback(async (conversationId?: string | null) => {
     const state = conversationUiStore.getState();
     const id = conversationId ?? state.activeConversationId;

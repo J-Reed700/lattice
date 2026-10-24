@@ -1,13 +1,3 @@
-/**
- * Enhanced ErrorBoundary Component
- *
- * A robust error boundary with:
- * - Reset keys for automatic error recovery
- * - Custom fallback support
- * - Error logging integration
- * - Lifecycle callbacks
- */
-
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import { logComponentError } from '../../utils/errorLogger';
@@ -67,7 +57,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       errorCount: prevState.errorCount + 1,
     }));
 
-    // Log error
     logComponentError(error, errorInfo, name);
 
     if (onError) {
@@ -78,7 +67,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
     }
 
-    // Prevent infinite error loops
     if (this.state.errorCount > 5) {
       console.error(
         'ErrorBoundary: Too many errors detected. Preventing further resets to avoid infinite loop.'
@@ -90,7 +78,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const { resetKeys, resetOnPropsChange } = this.props;
     const { hasError } = this.state;
 
-    // Auto-reset on resetKeys change
     if (hasError && resetKeys) {
       const hasResetKeysChanged = resetKeys.some(
         (key, index) => key !== this.previousResetKeys[index]
@@ -102,7 +89,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
     }
 
-    // Auto-reset on any props change
     if (hasError && resetOnPropsChange && prevProps !== this.props) {
       this.reset();
     }
@@ -118,7 +104,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const { onReset } = this.props;
     const { errorCount } = this.state;
 
-    // Prevent infinite reset loops
     if (errorCount > 5) {
       console.warn('ErrorBoundary: Maximum error count reached. Not resetting.');
       return;
@@ -139,9 +124,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     });
   };
 
-  /**
-   * Automatically retry after a delay
-   */
   scheduleReset(delayMs: number = 3000): void {
     if (this.resetTimeoutId) {
       clearTimeout(this.resetTimeoutId);
@@ -159,7 +141,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (hasError) {
       const fallbackError = error ?? new Error('Unknown error');
 
-      // Use custom fallback if provided
       if (FallbackComponent) {
         return (
           <FallbackComponent
@@ -170,7 +151,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         );
       }
 
-      // Default fallback with isolation option
       if (isolate) {
         return (
           <div className="p-4 bg-[hsl(var(--danger-muted))] border-l-4 border-[hsl(var(--danger-fg))] rounded">
@@ -190,7 +170,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         );
       }
 
-      // Fallback to minimal error display
       return null;
     }
 
@@ -198,9 +177,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 }
 
-/**
- * Hook-based error boundary wrapper
- */
 export function withErrorBoundary<P extends object>(
   Component: React.ComponentType<P>,
   errorBoundaryProps?: Omit<ErrorBoundaryProps, 'children'>

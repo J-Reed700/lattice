@@ -101,21 +101,8 @@ function unwrapSearchResults(
     ? { ok: false, error: `${fallbackError}: invalid search response` }
     : { ok: true, data };
 }
+
 export const searchApi = {
-  /**
-   * Searches indexed documents using configurable search options.
-   * Supports semantic search via embeddings, with optional filters and ranking.
-   *
-   * @param options - Search configuration including query, limit, filters, and mode
-   * @returns Array of search results with content, metadata, and similarity scores
-   *
-   * @example
-   * const result = await VaultAPI.searchDocuments({
-   *   query: 'machine learning',
-   *   limit: 10,
-   *   filters: { tags: ['ai'] }
-   * });
-   */
   searchDocuments: async (
     options: SearchOptions,
   ): Promise<ApiResult<SearchResult[]>> => {
@@ -123,21 +110,6 @@ export const searchApi = {
     return unwrapSearchResults(raw, 'Document search failed');
   },
 
-  /**
-   * Performs recency-aware search that boosts recent documents.
-   * Combines relevance scoring with time-based weighting.
-   *
-   * @param options - Recency search options with query, limit, weights
-   * @returns Search results with recency boost applied
-   *
-   * @example
-   * const result = await VaultAPI.searchWithRecency({
-   *   query: 'recent updates',
-   *   limit: 10,
-   *   recencyWeight: 0.3,
-   *   maxAgeDays: 30
-   * });
-   */
   searchWithRecency: async (options: {
     query: string;
     limit?: number;
@@ -151,25 +123,6 @@ export const searchApi = {
     return unwrapSearchResults(result, 'Recency search failed');
   },
 
-  /**
-   * Performs batch search for multiple queries efficiently.
-   * Processes all queries in parallel and returns results in order.
-   *
-   * @param queries - Array of search query strings
-   * @param limit - Maximum results per query (default: 10)
-   * @param searchMode - Search algorithm: 'vector', 'keyword', or 'hybrid'
-   * @returns Array of result arrays, one for each query
-   *
-   * @example
-   * const results = await VaultAPI.batchSearch(
-   *   ['machine learning', 'neural networks', 'deep learning'],
-   *   5,
-   *   'hybrid'
-   * );
-   * // results[0] = results for 'machine learning'
-   * // results[1] = results for 'neural networks'
-   * // results[2] = results for 'deep learning'
-   */
   batchSearch: async (
     queries: string[],
     limit?: number,
@@ -193,14 +146,6 @@ export const searchApi = {
     return { ok: true, data: groups };
   },
 
-  /**
-   * Performs fast full-text search without semantic embeddings.
-   * Uses SQLite FTS5 for keyword matching. Ideal for simple queries.
-   *
-   * @param query - Search query text
-   * @param limit - Maximum number of results to return (optional)
-   * @returns Array of matching documents ranked by relevance
-   */
   searchFast: async (
     query: string,
     limit?: number,
@@ -212,15 +157,6 @@ export const searchApi = {
     return unwrapSearchResults(raw, 'Keyword search failed');
   },
 
-  /**
-   * Executes hybrid search combining semantic and keyword matching.
-   * Merges results from embeddings and FTS5, reranked by combined score.
-   *
-   * @param query - Search query text
-   * @param limit - Maximum number of results to return (optional)
-   * @param searchMode - Search strategy: 'semantic', 'keyword', or 'hybrid' (default)
-   * @returns Unified array of search results with combined relevance scores
-   */
   searchHybrid: async (
     query: string,
     limit?: number,
@@ -252,14 +188,6 @@ export const searchApi = {
     return unwrapSearchResults(fallbackRaw, 'Hybrid search failed');
   },
 
-  /**
-   * Performs pure semantic vector similarity search.
-   * Uses embeddings to find semantically similar documents without keyword matching.
-   *
-   * @param query - Search query text
-   * @param limit - Maximum number of results to return (default: 10)
-   * @returns Array of search results ranked by semantic similarity
-   */
   searchSemantic: async (
     query: string,
     limit?: number,
@@ -286,14 +214,6 @@ export const searchApi = {
     return unwrapSearchResults(fallbackRaw, 'Semantic search failed');
   },
 
-  /**
-   * Finds documents similar to a given document by chunk ID.
-   * Uses vector similarity to find related content.
-   *
-   * @param chunkId - ID of the chunk to find similar documents for
-   * @param limit - Maximum number of results to return (optional)
-   * @returns Array of similar documents ranked by similarity score
-   */
   findSimilar: async (
     chunkId: string,
     limit?: number,
@@ -305,16 +225,7 @@ export const searchApi = {
     return unwrapSearchResults(result, 'Similar document search failed');
   },
 
-  /**
-   * Finds documents whose content is closest to a given document.
-   *
-   * Document-shaped where `findSimilar` is chunk-shaped: the backend picks a
-   * representative chunk, searches, and collapses the hits to one row per
-   * document, so the caller never has to know a document's chunk ids.
-   *
-   * @param documentId - The document to find neighbours for
-   * @param limit - Maximum number of documents to return (default 6)
-   */
+  /** Finds documents whose content is closest to a given document ID. */
   findSimilarDocuments: async (
     documentId: string,
     limit?: number,
@@ -324,20 +235,11 @@ export const searchApi = {
       limit,
     }),
 
-  /**
-   * Whether reranking is switched on, and whether its model is on disk.
-   *
-   * The two are independent: the setting can be on with nothing installed, in
-   * which case search silently returns its unreranked shortlist. `active` is
-   * the only field that says what will actually happen.
-   */
+  /** Whether reranking is enabled and its model is downloaded. */
   getRerankerStatus: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall<Wire.RerankerStatusDto>('reranker_status'),
 
-  /**
-   * Fetches the reranker model. Does not switch reranking on — acquiring the
-   * model and choosing to use it stay separate decisions.
-   */
+  /** Downloads the reranker model without changing the enabled setting. */
   downloadReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall<Wire.RerankerStatusDto>('download_reranker'),
 };

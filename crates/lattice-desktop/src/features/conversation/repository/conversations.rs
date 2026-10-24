@@ -13,41 +13,17 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ConversationId;
 
 impl ConversationRepository {
-    /// Alias for create_conversation
-    ///
-    /// # Arguments
-    /// * `title` - Conversation title
-    /// * `system_prompt` - Optional system prompt
-    ///
-    /// # Returns
-    /// Newly created conversation entity, following the Settings default model
+    /// Create a new conversation entity using the Settings default model.
     pub async fn create(&self, title: &str, system_prompt: Option<&str>) -> Result<Conversation> {
         self.create_conversation(title, system_prompt).await
     }
 
-    /// List all conversations with pagination
-    ///
-    /// # Arguments
-    /// * `limit` - Maximum number of conversations to return
-    /// * `offset` - Number of conversations to skip
-    ///
-    /// # Returns
-    /// Vector of conversation entities ordered by updated_at DESC
+    /// List all conversations with pagination ordered by updated_at DESC.
     pub async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Conversation>> {
         self.find_all(limit, offset).await
     }
 
-    /// Update conversation metadata
-    ///
-    /// # Arguments
-    /// * `id` - Conversation ID
-    /// * `title` - Optional new title
-    /// * `system_prompt` - Optional new system prompt (Some(None) to clear)
-    /// * `message_count` - Optional new message count
-    /// * `total_tokens` - Optional new total tokens
-    ///
-    /// # Returns
-    /// Updated conversation or error if not found
+    /// Update conversation metadata.
     pub async fn update(
         &self,
         id: &str,
@@ -67,13 +43,7 @@ impl ConversationRepository {
         Ok(())
     }
 
-    /// Load full conversation aggregate
-    ///
-    /// # Arguments
-    /// * `id` - Conversation ID
-    ///
-    /// # Returns
-    /// Full aggregate with messages and document references
+    /// Load full conversation aggregate with messages and document references.
     pub async fn load_aggregate(&self, id: &str) -> Result<Option<ConversationAggregate>> {
         self.find_aggregate_by_id(id).await
     }

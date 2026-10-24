@@ -1,25 +1,6 @@
-/**
- * Centralized Tauri Event Type System
- *
- * This file provides a type-safe, namespaced system for all Tauri IPC events.
- * All event listeners MUST use types from this file to ensure consistency.
- *
- * Architecture: Operation Bedrock
- * - Namespaced domains (Downloads, Models, Vault)
- * - Type-safe event names via TauriEventNames constant
- * - Runtime validation via Zod schemas
- * - Use `listen<TauriEvents.Namespace.EventType>()` from '@tauri-apps/api/event' for listening
- */
-
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 
-
-/**
- * Zod schemas for runtime validation of event payloads
- * Use these to validate events at the IPC boundary to catch
- * backend/frontend schema mismatches
- */
 export namespace EventSchemas {
   export namespace Downloads {
     export const FileSnapshot = z.object({
@@ -81,7 +62,7 @@ export namespace EventSchemas {
   }
 
   export namespace Models {
-    /// Phases: `started → ready | skipped | failed`.
+    // Phases: started → ready | skipped | failed
     export const WarmupStatus = z.object({
       role: z.enum(['chat', 'utility', 'embedding', 'learning']),
       phase: z.enum(['started', 'ready', 'skipped', 'failed']),
@@ -90,21 +71,21 @@ export namespace EventSchemas {
   }
 
   export namespace Vault {
-    /// SQL save succeeded but markdown mirror failed.
+    // SQL save succeeded but markdown mirror failed.
     export const WriteError = z.object({
       noteId: z.string().nullable().optional(),
       target: z.string(),
       error: z.string(),
     });
 
-    /// External `.md` edit imported into SQLite by the watcher.
+    // External .md edit imported into SQLite by the watcher.
     export const NoteImported = z.object({
       noteId: z.string(),
     });
   }
 
   export namespace WebPageSnapshot {
-    /// One frozen copy of a cited page, as `WebPageSnapshotDto` in the bindings.
+    // One frozen copy of a cited page, as WebPageSnapshotDto in the bindings.
     export const Snapshot = z.object({
       id: z.string(),
       conversationId: z.string(),
@@ -129,14 +110,14 @@ export namespace EventSchemas {
       readerText: z.string().nullable().optional(),
     });
 
-    /// Every status flip and progress step of a capture, debounced by the backend.
+    // Every status flip and progress step of a capture, debounced by the backend.
     export const Changed = z.object({
       conversationId: z.string(),
       url: z.string(),
       snapshot: Snapshot,
     });
 
-    /// A link clicked inside a frozen page. The page itself never navigates.
+    // A link clicked inside a frozen page. The page itself never navigates.
     export const Link = z.object({
       snapshotId: z.string(),
       url: z.string(),
@@ -147,19 +128,10 @@ export namespace EventSchemas {
 
 export namespace TauriEvents {
   export namespace Downloads {
-    /**
-     * Download status for both single and batch downloads
-     */
     export type DownloadStatus = 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
 
-    /**
-     * Per-file status for multi-file downloads
-     */
     export type FileStatus = 'pending' | 'downloading' | 'completed' | 'error';
 
-    /**
-     * Per-file progress information for batch downloads
-     */
     export interface FileSnapshot {
       id: string;
       filename: string;
@@ -168,12 +140,6 @@ export namespace TauriEvents {
       status: FileStatus;
     }
 
-    /**
-     * Single file download snapshot
-     *
-     * Represents simple downloads with one file (PDFs, images, documents).
-     * Architecturally distinct from Batch which handles multi-file model downloads.
-     */
     export interface Single {
       kind: 'single';
       id: string;
@@ -186,12 +152,6 @@ export namespace TauriEvents {
       status: DownloadStatus;
     }
 
-    /**
-     * Multi-file download batch snapshot
-     *
-     * Represents complex downloads with multiple files (LLM models with tokenizer, config, weights).
-     * Provides aggregate metrics across all files in the batch.
-     */
     export interface Batch {
       kind: 'batch';
       id: string;
@@ -207,16 +167,8 @@ export namespace TauriEvents {
       status: DownloadStatus;
     }
 
-    /**
-     * Discriminated union of download snapshots
-     */
     export type StateSnapshot = Single | Batch;
 
-    /**
-     * Download completed event
-     * Emitted when a download is fully written and ready.
-     * Note: uses camelCase to match Rust serialization.
-     */
     export interface Completed {
       modelId: string;
       modelName: string;
@@ -225,10 +177,6 @@ export namespace TauriEvents {
       timestamp: string;
     }
 
-    /**
-     * Download failed event
-     * Emitted when a download fails
-     */
     export interface Failed {
       id: string;
       error: string;
@@ -242,26 +190,17 @@ export namespace TauriEvents {
   }
 }
 
-
-/**
- * Type-safe event name constants
- * Use these instead of string literals for event names
- */
 export const TauriEventNames = {
   Downloads: {
-    // Progress snapshots for every download, discriminated by payload.kind and payload.status
     Event: 'download:progress' as const,
-    // Terminal events, emitted alongside the final progress snapshot
     Completed: 'download:completed' as const,
     Failed: 'download:failed' as const,
   },
   Indexing: {
-    // Single event name for all indexing events (discriminated by payload.type)
     Event: 'indexing-progress' as const,
   },
   Models: {
-    /// Boot-time pre-warm status for chat/utility/embedding model roles.
-    /// Backend fires `started → ready|skipped|failed` per role.
+    // Boot-time pre-warm status for chat/utility/embedding model roles (started → ready|skipped|failed).
     WarmupStatus: 'model:warmup-status' as const,
   },
   LLM: {
@@ -288,7 +227,6 @@ export const TauriEventNames = {
   },
 } as const;
 
-
 /**
  * `status` values on `llm-stream` events that carry something other than text.
  * `Captured` and `Verification` arrive after the turn has returned, in that
@@ -303,28 +241,9 @@ export const ChatStreamStatus = {
   Verification: 'verification' as const,
 } as const;
 
-
 /**
- * Listen to a Tauri event with runtime validation of the payload
- *
- * This catches backend/frontend schema mismatches at runtime by validating
- * the event payload against a Zod schema before calling the handler.
- *
- * @example
- * ```typescript
- * const unlisten = await listenValidated(
- *   TauriEventNames.Downloads.Event,
- *   EventSchemas.Downloads.StateSnapshot,
- *   (event) => {
- *     // event.payload is guaranteed to match the schema
- *     console.log('Progress:', event.payload.bytes_downloaded);
- *   },
- *   (error) => {
- *     // Handle validation errors
- *     console.error('Invalid event payload:', error);
- *   }
- * );
- * ```
+ * Listen to a Tauri event with runtime validation of the payload.
+ * Catches backend/frontend schema mismatches by validating against a Zod schema.
  */
 export async function listenValidated<T>(
   eventName: string,

@@ -1,7 +1,3 @@
-/**
- * Vault settings — the plain-markdown mirror of your notes on disk.
- */
-
 import { useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';

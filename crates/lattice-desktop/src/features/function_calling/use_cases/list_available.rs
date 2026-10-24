@@ -1,31 +1,6 @@
 //! List Available Functions Use Case
 //!
 //! Returns all registered LLM-callable functions with their schemas.
-//!
-//! # Purpose
-//!
-//! Provides the LLM with a complete catalog of available tools it can invoke.
-//! Functions are returned in OpenAI-compatible format for tool calling.
-//!
-//! # Business Logic
-//!
-//! 1. Retrieve all registered tools from function registry
-//! 2. Transform domain models (ToolDefinition) to DTOs
-//! 3. Return function definitions in OpenAI tool format
-//!
-//! # Example
-//!
-//! ```rust
-//! let use_case = ListAvailableFunctionsUseCase::new(registry);
-//! let response = use_case.execute().await?;
-//!
-//! // response.functions contains all 5 registered tools:
-//! // - semantic_search
-//! // - get_document
-//! // - list_documents
-//! // - web_search
-//! // - fetch_url_content
-//! ```
 
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::ToolDefinition;
@@ -81,24 +56,11 @@ pub struct ListAvailableFunctionsUseCase {
 
 impl ListAvailableFunctionsUseCase {
     /// Create a new instance of the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `function_registry` - Function registry port for retrieving registered tools
     pub fn new(function_registry: Arc<dyn FunctionRegistryTrait>) -> Self {
         Self { function_registry }
     }
 
     /// Execute the use case.
-    ///
-    /// # Returns
-    ///
-    /// Available functions DTO with all registered tools.
-    ///
-    /// # Errors
-    ///
-    /// This use case should not fail under normal circumstances.
-    /// Returns empty list if no functions are registered.
     pub async fn execute(&self) -> Result<AvailableFunctionsDto> {
         // 1. Get all registered functions from registry
         let tools = self.function_registry.list_tools();

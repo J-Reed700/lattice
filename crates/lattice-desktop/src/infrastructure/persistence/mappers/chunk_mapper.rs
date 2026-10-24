@@ -1,25 +1,4 @@
-//! # Chunk Mapper
-//!
 //! Maps between database models and domain entities for chunks.
-//!
-//! This mapper implements the transformation layer between the anemic
-//! database model (used by SQLx) and the rich domain entity.
-//!
-//! ## Architecture
-//!
-//! - **Domain Entity** (`domain::entities::Chunk`) - Rich model with business logic
-//! - **DB Model** (defined here) - Anemic struct for database persistence
-//! - **Mapper** - Converts between the two
-//!
-//! ## Field Mapping
-//!
-//! The database model contains additional fields not present in the domain entity:
-//! - `contextualized_content` - Used for retrieval augmentation (infrastructure concern)
-//! - `context_prefix` - Context for the chunk (infrastructure concern)
-//! - `start_char`, `end_char` - Character positions (infrastructure concern)
-//!
-//! Citation provenance and retrieval context survive both mapping directions.
-//! Original content stays separate from embedding/lexical context.
 
 use lattice_core::domain::entities::chunk::Chunk as DomainChunk;
 use lattice_core::domain::entities::document::Language;
@@ -27,12 +6,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::{ChunkId, DocumentId};
 use serde::{Deserialize, Serialize};
 
-/// Database model for chunks.
-///
-/// This is an anemic data structure that mirrors the database schema.
-/// It contains no business logic - only data transfer.
-///
-/// **Important**: This type should NEVER leak outside the infrastructure layer.
+/// Database model for chunks (SQLx persistence).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunkModel {
@@ -40,17 +14,14 @@ pub struct ChunkModel {
     pub document_id: String,
     pub content: String,
     pub chunk_index: i64,
-    // Infrastructure-only fields (not in domain entity)
     pub contextualized_content: Option<String>,
     pub context_prefix: Option<String>,
     pub start_char: Option<i64>,
     pub end_char: Option<i64>,
-    // Extended metadata
-    // SQLite types: TEXT, INTEGER (i64)
     pub language: String,
-    pub token_count: i64, // SQLite INTEGER = i64
+    pub token_count: i64,
     pub word_count: i64,
-    pub has_code: i64, // SQLite BOOLEAN = INTEGER (0/1)
+    pub has_code: i64,
     pub section: Option<String>,
     #[sqlx(default)]
     pub page_number: Option<i64>,
@@ -59,48 +30,22 @@ pub struct ChunkModel {
 }
 
 /// Mapper for Chunk entity and database model.
-///
-/// Provides bidirectional conversion between domain entities and database models.
 pub struct ChunkMapper;
 
 impl ChunkMapper {
-    /// Convert domain entity to database model.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain chunk entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
-    ///
-    /// # Note
-    ///
-    /// Preserves contextual indexing text and exact source provenance.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
-    /// use lattice_core::domain::entities::chunk::Chunk;
-    ///
-    /// let entity = Chunk::new(/* ... */);
-    /// let db_model = ChunkMapper::to_model(&entity);
-    /// ```
+    /// Convert domain entity to database model, preserving provenance and contextual text.
     pub fn to_model(entity: &DomainChunk) -> ChunkModel {
         ChunkModel {
             id: entity.id().as_str().to_string(),
             document_id: entity.document_id().as_str().to_string(),
             content: entity.content().to_string(),
             chunk_index: entity.index() as i64,
-            // Infrastructure-only fields - not in domain entity
             contextualized_content: entity.context_prefix().map(|_| entity.embedding_text()),
             context_prefix: entity.context_prefix().map(str::to_owned),
             start_char: entity.start_char().map(|v| v as i64),
             end_char: entity.end_char().map(|v| v as i64),
-            // Rich metadata fields (convert to SQLite types)
             language: entity.language().to_string(),
-            token_count: entity.token_count() as i64, // Convert i32 -> i64 for SQLite
+            token_count: entity.token_count() as i64,
             word_count: entity.word_count() as i64,
             has_code: if entity.has_code() { 1 } else { 0 },
             section: entity.section().map(|s| s.to_string()),
@@ -109,34 +54,7 @@ impl ChunkMapper {
         }
     }
 
-    /// Convert database model to domain entity.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidData` if chunk ID is invalid
-    /// - `AppError::InvalidData` if document ID is invalid
-    /// - `AppError::InvalidData` if chunk_index is negative
-    ///
-    /// # Note
-    ///
-    /// Restores contextual prefix and source offsets/page without changing text.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
-    ///
-    /// let db_model = /* from database */;
-    /// let entity = ChunkMapper::to_entity(&db_model)?;
-    /// ```
+    /// Convert database model to domain entity, restoring provenance and offsets.
     pub fn to_entity(model: &ChunkModel) -> Result<DomainChunk> {
         let id = ChunkId::from_string(model.id.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
@@ -156,8 +74,6 @@ impl ChunkMapper {
             .parse::<Language>()
             .unwrap_or(Language::Unknown);
 
-        // Create domain entity (convert SQLite types back to domain types)
-        // Note: Infrastructure-only fields are not passed to domain entity
         use lattice_core::domain::entities::chunk::ChunkParams;
         let mut chunk = DomainChunk::with_id(ChunkParams {
             id,
@@ -165,9 +81,9 @@ impl ChunkMapper {
             content: model.content.clone(),
             index: model.chunk_index as usize,
             language,
-            token_count: model.token_count as i32, // Convert i64 -> i32 for domain
+            token_count: model.token_count as i32,
             word_count: model.word_count as usize,
-            has_code: model.has_code != 0, // Convert SQLite INTEGER (0/1) to bool
+            has_code: model.has_code != 0,
             section: model.section.clone(),
         });
         chunk.set_provenance(
@@ -180,17 +96,7 @@ impl ChunkMapper {
         Ok(chunk)
     }
 
-    /// Convert a batch of database models to domain entities.
-    ///
-    /// Continues processing on errors, collecting all successful conversions.
-    ///
-    /// # Arguments
-    ///
-    /// * `models` - Vector of database models
-    ///
-    /// # Returns
-    ///
-    /// Vector of domain entities (may be shorter than input if some conversions failed).
+    /// Convert a batch of database models to domain entities, skipping invalid records.
     pub fn to_entities(models: &[ChunkModel]) -> Vec<DomainChunk> {
         models
             .iter()
@@ -199,14 +105,6 @@ impl ChunkMapper {
     }
 
     /// Convert a batch of domain entities to database models.
-    ///
-    /// # Arguments
-    ///
-    /// * `entities` - Vector of domain entities
-    ///
-    /// # Returns
-    ///
-    /// Vector of database models ready for persistence.
     pub fn to_models(entities: &[DomainChunk]) -> Vec<ChunkModel> {
         entities.iter().map(Self::to_model).collect()
     }

@@ -8,11 +8,11 @@ export function ActivityBrief({
   activeActivity: LearningPracticalActivityDto;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
+    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-6 shadow-xs">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-accent">
+            <span className="rounded-full bg-accent-muted px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-accent">
               {activeActivity.kind.replace("_", " ")}
             </span>
             <span className="text-xs text-text-muted">
@@ -28,17 +28,17 @@ export function ActivityBrief({
           </div>
         </div>
         <span
-          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${activeActivity.runtimeAvailable ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" : "bg-amber-500/10 text-amber-900 dark:text-amber-100"}`}
+          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${activeActivity.runtimeAvailable ? "bg-success-muted text-success-fg" : "bg-warning-muted text-warning-fg"}`}
         >
           {activeActivity.runtimeKind === "none" ? "Review activity" : activeActivity.runtimeAvailable
             ? "Ready to run"
             : "Execution unavailable"}
         </span>
       </div>
-      <details className="mt-4 border-t border-border pt-3">
+      <details className="mt-4 border-t border-border-subtle pt-3">
         <summary className="cursor-pointer text-sm font-medium text-text-secondary">Success criteria &amp; allowed help</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-border bg-background/45 p-4">
+        <div className="rounded-xl border border-border-default bg-surface-sunken p-4">
           <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
             Help available · {activeActivity.practiceMode}
           </div>
@@ -62,7 +62,7 @@ export function ActivityBrief({
             )}
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-background/45 p-4">
+        <div className="rounded-xl border border-border-default bg-surface-sunken p-4">
           <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
             What to notice
           </div>

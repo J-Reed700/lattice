@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 
-
 import { hasWebResearch } from '@/features/chat/components/turn/research';
 import { ResearchDeck } from '@/features/chat/components/turn/ResearchDeck';
 import { roundCount, roundOf } from '@/features/chat/components/turn/rounds';
@@ -18,55 +17,14 @@ import '@/features/chat/components/turn/turn-record.css';
 
 export { formatDuration };
 
-/**
- * What a turn did, above the answer it produced.
- *
- * One line at rest — what was searched, how much of the answer is backed, which
- * model wrote it, how long it took — and a timeline when opened. While the turn
- * runs it is the same list, live: steps tick off as they finish and the running
- * one carries a clock, so a round that produces no text for minutes is visibly
- * working rather than indistinguishable from a hang.
- *
- * A model with tools can go back for more after reading what retrieval found.
- * Each trip is a named round, and a round that starts after the record has
- * folded still shows on the one line, so the second and third look are as
- * visible as the first. A trip to the web is more than a row: it opens as a
- * card naming what was searched and every page that came back (`ResearchDeck`).
- *
- * It replaces `RetrievalTrace` and `ActivityNote` and keeps their honesty
- * rules. Chiefly: a turn that did not search did not search *zero* documents,
- * so it says nothing rather than "Searched 0 documents"; and a plain sufficient
- * verdict is the expected case, so it draws nothing. A badge on every ordinary
- * answer is noise, not disclosure.
- */
-
 interface TurnRecordProps {
-  /** The retrieval trace, live or persisted. Unchanged source. */
   trace: RetrievalTrace | null;
-  /** `null` on every turn persisted before the record existed. */
   record: TurnRecordData | null;
-  /** Only while the turn is in flight. */
   liveSteps: TurnStep[] | null;
-  /**
-   * The model the in-flight turn is pinned to, from the moment it is pinned:
-   * the reader knows what is answering before the first token arrives.
-   */
   liveModel?: TurnModel | null;
-  /**
-   * When the in-flight turn began, as a wall clock, for the running steps'
-   * clocks. A step knows only its offset from the turn's start, so without
-   * this a running step can only be timed from when its row was drawn — and a
-   * reader who folded the record and opened it again would watch every clock
-   * start over. `null` once the turn is over.
-   */
   turnStartedAt?: number | null;
   isPending: boolean;
-  /**
-   * The answer has text on screen. A generation step alone does not mean that:
-   * a tool round generates for minutes and writes nothing.
-   */
   isWriting: boolean;
-  /** For "4 of 5 claims backed". */
   verification: MessageVerificationSummary | null;
 }
 
@@ -81,17 +39,10 @@ export function TurnRecord({
   verification,
 }: TurnRecordProps) {
   const steps = (isPending ? liveSteps : record?.steps) ?? record?.steps ?? [];
-  // Pages are read side by side, so several steps run at once; the newest is
-  // the one that says where the turn has got to.
   const runningStep = isPending
     ? ([...steps].reverse().find(step => step.state === 'running') ?? null)
     : null;
 
-  // The turn opens itself and then gets out of the way: once the answer has
-  // text, the answer is the progress indicator and the timeline folds. Until
-  // then it stays open through every round — folding at the first generation
-  // step hid exactly the rounds worth watching, since a tool round generates
-  // without writing. A reader who opened it by hand keeps it open.
   const [manuallyOpen, setManuallyOpen] = useState<boolean | null>(null);
   const hasStartedWriting = useRef(false);
   const wasPending = useRef(isPending);
@@ -106,7 +57,6 @@ export function TurnRecord({
   const answeringWith = isPending ? liveModel : null;
   const summary = summaryLine({ trace, record, answeringWith, verification, rounds: roundCount(steps) });
   const runningRound = runningStep ? roundOf(steps, runningStep.id) : null;
-  // Nothing to say and nothing happening: draw nothing at all.
   if (!summary && steps.length === 0) return null;
 
   return (
@@ -123,7 +73,6 @@ export function TurnRecord({
           title={answeringWith?.degraded ? runningOnCpuSentence(answeringWith.name, answeringWith.degraded) : undefined}
         >
           {runningStep ? (
-            // Folded or not, a running turn says what it is doing right now.
             <>
               <span className="turn-record-live">
                 {runningRound !== null && runningRound > 1 && `Round ${runningRound} · `}
@@ -138,7 +87,6 @@ export function TurnRecord({
       </button>
       {open && (
         <TurnClockContext.Provider value={isPending ? turnStartedAt : null}>
-          {/* Cards float; a sunken box around them would pin them back down. */}
           <div className="turn-record-body" data-deck={hasWebResearch(steps)}>
             <TurnNote trace={trace} />
             <ResearchDeck steps={steps} live={isPending} />
@@ -173,13 +121,6 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-/**
- * The second line, when retrieval did something worth saying out loud.
- *
- * Only three things qualify: a corrective pass, a skipped planner, and an
- * insufficient verdict with its reasons. A plain sufficient verdict is the
- * expected case and says nothing.
- */
 function TurnNote({ trace }: { trace: RetrievalTrace | null }) {
   if (!trace) return null;
   const notes: string[] = [];
@@ -214,12 +155,6 @@ function TurnNote({ trace }: { trace: RetrievalTrace | null }) {
   );
 }
 
-/**
- * The one line at rest.
- *
- * Built out of facts the turn actually recorded, each dropped when it has none.
- * Returns null when there is nothing honest to say.
- */
 function summaryLine({
   trace,
   record,
@@ -234,15 +169,11 @@ function summaryLine({
   rounds: number;
 }): string | null {
   const parts: string[] = [];
-  // While the turn runs, what is answering comes first; the record names it
-  // once the answer is saved.
   if (answeringWith) {
     parts.push(`Answering with ${answeringWith.name}${answeringWith.degraded ? ' · on CPU' : ''}`);
   }
   const retrieval = retrievalSummary(trace);
   if (retrieval) parts.push(retrieval);
-  // Only worth a clause when the model went back: every turn that retrieves
-  // has one round, and saying so would be noise.
   if (rounds >= 2) parts.push(`${rounds} rounds`);
   if (typeof trace?.focusedDocuments === 'number') {
     parts.push(
@@ -260,14 +191,6 @@ function summaryLine({
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/**
- * What the trace says, in the words `RetrievalTrace` used.
- *
- * The backend still sends a trace when it could not search at all — that is how
- * the composer learns *why* — but "Searched 0 documents" reads as a search that
- * came up empty, which is a different and untrue claim. So a trace of nothing
- * contributes nothing here.
- */
 function retrievalSummary(trace: RetrievalTrace | null): string | null {
   if (!trace) return null;
   if (
@@ -300,18 +223,11 @@ function retrievalSummary(trace: RetrievalTrace | null): string | null {
   }
   const [first, ...rest] = parts;
   if (first === undefined) return null;
-  // With no search to report, the line still needs its verb: "10 web pages"
-  // alone does not say whether they were found, read or merely linked.
   const lead = trace.searchedDocuments > 0 ? first : `Retrieved ${first}`;
   if (trace.scope === 'linked') rest.push('this space');
   return [lead, ...rest].join(' · ');
 }
 
-/**
- * Which model wrote the answer and why that one: "Qwen3.5-27B · chosen for
- * this chat", and "· ran on CPU: <reason>" when it fell back. A turn recorded
- * before turns said why gives the name alone.
- */
 function modelSummary(model: TurnModel): string {
   const origin = model.origin ? ORIGIN_LABELS[model.origin] : null;
   const degraded = model.degraded ? `ran on CPU: ${model.degraded}` : null;
@@ -325,7 +241,6 @@ const ORIGIN_LABELS: Record<NonNullable<TurnModel['origin']>, string> = {
   learning_role: 'Learning model',
 };
 
-/** "4 of 5 claims backed", or nothing when nothing was checked. */
 function claimsSummary(verification: MessageVerificationSummary | null): string | null {
   if (!verification?.enabled) return null;
   const evaluated = verification.claimsEvaluated ?? 0;
@@ -334,7 +249,6 @@ function claimsSummary(verification: MessageVerificationSummary | null): string 
   return `${supported} of ${evaluated} ${evaluated === 1 ? 'claim' : 'claims'} backed`;
 }
 
-/** The router's stable code as a sentence. */
 function routerActionLabel(action: string): string {
   switch (action) {
     case 'use_last_document':
@@ -348,10 +262,8 @@ function routerActionLabel(action: string): string {
   }
 }
 
-/** Sufficiency reason codes as something a reader can act on. */
 function readableReason(code: string): string {
   switch (code) {
-    // The backend's codes (`retrieval/sufficiency.rs`), in its own words.
     case 'no_results':
       return 'nothing came back';
     case 'low_top_score':

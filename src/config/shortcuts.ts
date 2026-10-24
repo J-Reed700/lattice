@@ -9,9 +9,6 @@
  * - Ctrl on Windows/Linux
  */
 
-/**
- * Get platform name
- */
 export function getPlatform(): 'mac' | 'windows' | 'linux' {
   if (typeof navigator === 'undefined') return 'windows';
 
@@ -21,16 +18,10 @@ export function getPlatform(): 'mac' | 'windows' | 'linux' {
   return 'linux';
 }
 
-/**
- * Check if running on macOS
- */
 export function isMacOS(): boolean {
   return getPlatform() === 'mac';
 }
 
-/**
- * Parse shortcut string into modifier keys and key
- */
 export function parseShortcut(shortcut: string): {
   modifiers: Set<string>;
   key: string;
@@ -39,7 +30,6 @@ export function parseShortcut(shortcut: string): {
   const key = parts[parts.length - 1];
   const modifiers = new Set(parts.slice(0, -1).map(m => m.toLowerCase()));
 
-  // Normalize 'Mod' to platform-specific key
   if (modifiers.has('mod')) {
     modifiers.delete('mod');
     modifiers.add(isMacOS() ? 'meta' : 'ctrl');
@@ -48,9 +38,6 @@ export function parseShortcut(shortcut: string): {
   return { modifiers, key: key.toLowerCase() };
 }
 
-/**
- * Check if event matches shortcut
- */
 export function matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {
   const { modifiers, key } = parseShortcut(shortcut);
 

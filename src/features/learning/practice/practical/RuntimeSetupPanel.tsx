@@ -180,7 +180,7 @@ export function RuntimeSetupPanel({
   return (
     <section
       id="learning-runtime-setup"
-      className="rounded-2xl border border-border bg-surface p-4 outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+      className="rounded-2xl border border-border-default bg-surface p-4 shadow-xs outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
       aria-labelledby="runtime-setup-title"
     >
       <button
@@ -205,7 +205,7 @@ export function RuntimeSetupPanel({
             Python and JavaScript are included. Add C#, Rust, or React when you need them.
           </span>
         </span>
-        <span className="rounded-full bg-background px-2.5 py-1 text-xs text-text-muted">
+        <span className="rounded-full bg-surface-sunken px-2.5 py-1 text-xs text-text-muted">
           {readyBuiltinCount} included · {enabledProfileCount} prepared
         </span>
         <ChevronDown
@@ -217,7 +217,7 @@ export function RuntimeSetupPanel({
       {expanded && (
         <div
           id="runtime-setup-content"
-          className="mt-4 space-y-4 border-t border-border pt-4"
+          className="mt-4 space-y-4 border-t border-border-default pt-4"
         >
           <div>
             <div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">
@@ -234,14 +234,14 @@ export function RuntimeSetupPanel({
                 return (
                   <div
                     key={runtimeId}
-                    className="rounded-xl border border-border bg-background/45 p-3"
+                    className="rounded-xl border border-border-default bg-surface-sunken p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="text-sm font-medium text-text-primary">
                         {runtime?.name ?? label}
                       </h3>
                       <span
-                        className={`text-xs ${runtime?.available ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                        className={`text-xs ${runtime?.available ? "text-success-fg" : "text-text-muted"}`}
                       >
                         {runtime?.available ? "Ready" : "Unavailable"}
                       </span>
@@ -261,14 +261,14 @@ export function RuntimeSetupPanel({
             </div>
           </div>
 
-          <div className="rounded-xl border border-border bg-background/50 p-3">
+          <div className="rounded-xl border border-border-default bg-surface-sunken p-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-text-muted">
               <ShieldCheck size={13} /> Container runtime
               <button
                 type="button"
                 disabled={refreshAvailability.isPending}
                 onClick={() => refreshAvailability.mutate()}
-                className="ml-auto inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs font-medium normal-case tracking-normal text-text-secondary disabled:opacity-50"
+                className="ml-auto inline-flex items-center gap-1 rounded-full border border-border-default px-2 py-1 text-xs font-medium normal-case tracking-normal text-text-secondary disabled:opacity-50"
               >
                 <RefreshCw
                   size={10}
@@ -299,7 +299,7 @@ export function RuntimeSetupPanel({
                       <span
                         className={
                           capability.available
-                            ? "text-emerald-700 dark:text-emerald-300"
+                            ? "text-success-fg"
                             : "text-text-muted"
                         }
                       >
@@ -357,10 +357,10 @@ export function RuntimeSetupPanel({
                 {workspace.runtimeProfiles.map((profile) => (
                   <li
                     key={profile.id}
-                    className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
+                    className="flex items-center gap-2 rounded-lg border border-border-default bg-surface-sunken px-3 py-2"
                   >
                     <span
-                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700"}`}
+                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-success-muted text-success-fg" : "bg-warning-muted text-warning-fg"}`}
                     >
                       {profile.enabled ? (
                         <Check size={12} />
@@ -375,7 +375,7 @@ export function RuntimeSetupPanel({
                       {profile.engine}
                     </span>
                     <span
-                      className={`text-xs ${profile.enabled ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                      className={`text-xs ${profile.enabled ? "text-success-fg" : "text-text-muted"}`}
                     >
                       {profile.enabled ? "Ready" : "Disabled"}
                     </span>
@@ -392,21 +392,21 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {catalog.isError && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
-              <p role="alert" className="text-xs leading-5 text-rose-700 dark:text-rose-300">
+            <div className="rounded-lg border border-danger-muted bg-danger-muted/10 p-3">
+              <p role="alert" className="text-xs leading-5 text-danger-fg">
                 {errorText(catalog.error)}
               </p>
               <button
                 type="button"
                 onClick={() => void catalog.refetch()}
-                className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-text-secondary"
+                className="mt-2 rounded-full border border-border-default px-3 py-1.5 text-xs font-medium text-text-secondary"
               >
                 Retry loading environments
               </button>
             </div>
           )}
           {catalog.isSuccess && orderedPresets.length === 0 && (
-            <p className="rounded-lg bg-background p-3 text-xs leading-5 text-text-muted">
+            <p className="rounded-lg bg-surface-sunken p-3 text-xs leading-5 text-text-muted">
               No language environments are available right now.
             </p>
           )}
@@ -420,7 +420,7 @@ export function RuntimeSetupPanel({
                     onChange={(event) =>
                       setEngine(event.target.value as LearningContainerEngine)
                     }
-                    className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    className="mt-1 block w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-xs"
                   >
                     {availableEngines.map((availableEngine) => (
                       <option key={availableEngine} value={availableEngine}>
@@ -446,7 +446,7 @@ export function RuntimeSetupPanel({
                   return (
                     <article
                       key={preset.id}
-                      className="flex min-w-0 flex-col rounded-xl border border-border bg-background/45 p-3"
+                      className="flex min-w-0 flex-col rounded-xl border border-border-default bg-surface-sunken p-3"
                     >
                       <h3 className="text-sm font-medium text-text-primary">
                         {preset.name || label}
@@ -455,7 +455,7 @@ export function RuntimeSetupPanel({
                         {preset.description}
                       </p>
                       {matchingProfile ? (
-                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-success-fg">
                           <Check size={12} /> Environment ready
                         </div>
                       ) : (
@@ -482,7 +482,7 @@ export function RuntimeSetupPanel({
           {setupError && (
             <p
               role="alert"
-              className="rounded-lg bg-rose-500/10 p-3 text-xs leading-5 text-rose-700 dark:text-rose-300"
+              className="rounded-lg border border-danger-muted bg-danger-muted/15 p-3 text-xs leading-5 text-danger-fg"
             >
               {setupError}{" "}
               <button
@@ -499,12 +499,12 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {refreshAvailability.error && (
-            <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">
+            <p role="alert" className="text-xs text-danger-fg">
               {errorText(refreshAvailability.error)}
             </p>
           )}
           {!availableEngines.length && catalog.isSuccess && (
-            <p className="rounded-lg bg-amber-500/10 p-3 text-xs leading-4 text-text-secondary">
+            <p className="rounded-lg border border-warning-muted bg-warning-muted/15 p-3 text-xs leading-4 text-warning-fg">
               Start Docker Desktop or another supported local container engine
               to prepare these environments.
             </p>

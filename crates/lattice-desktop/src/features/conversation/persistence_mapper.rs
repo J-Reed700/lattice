@@ -89,18 +89,6 @@ pub struct ConversationRowMapper;
 
 impl ConversationRowMapper {
     /// Convert domain entity to database model.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain conversation entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::Serialization` if the model choice cannot be written
     pub fn to_model(entity: &Conversation) -> Result<ConversationModel> {
         Ok(ConversationModel {
             id: entity.id.to_string(),
@@ -115,20 +103,6 @@ impl ConversationRowMapper {
     }
 
     /// Convert database model to domain entity.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidData` if timestamps cannot be parsed
-    /// - `AppError::InvalidData` if conversation ID is invalid
-    /// - `AppError::Database` if the model choice is unreadable
     pub fn to_entity(model: &ConversationModel) -> Result<Conversation> {
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
@@ -153,16 +127,6 @@ impl ConversationRowMapper {
     }
 
     /// Convert a batch of database models to domain entities.
-    ///
-    /// Continues processing on errors, collecting all successful conversions.
-    ///
-    /// # Arguments
-    ///
-    /// * `models` - Slice of database models
-    ///
-    /// # Returns
-    ///
-    /// Vector of successfully converted entities.
     pub fn to_entities(models: &[ConversationModel]) -> Vec<Conversation> {
         models
             .iter()
@@ -190,12 +154,6 @@ impl ConversationMessageMapper {
     }
 
     /// Convert database model to domain entity.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidData` if timestamps cannot be parsed
-    /// - `AppError::InvalidData` if conversation ID is invalid
-    /// - `AppError::InvalidInput` if message role is invalid
     pub fn to_entity(model: &ConversationMessageModel) -> Result<ConversationMessage> {
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
@@ -240,10 +198,6 @@ impl DocumentReferenceMapper {
     }
 
     /// Convert database model to domain entity.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidData` if timestamp cannot be parsed
     pub fn to_entity(model: &DocumentReferenceModel) -> Result<DocumentReference> {
         let added_at = DateTime::parse_from_rfc3339(&model.added_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid added_at timestamp: {}", e)))?
@@ -286,11 +240,6 @@ impl ConversationSummaryMapper {
     }
 
     /// Convert database model to domain entity.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidData` if the timestamp cannot be parsed
-    /// - `AppError::InvalidData` if the conversation ID is invalid
     pub fn to_entity(model: &ConversationSummaryModel) -> Result<CompactionRecord> {
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?

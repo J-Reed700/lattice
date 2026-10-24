@@ -33,21 +33,7 @@ impl GetFileMetadataUseCase {
         }
     }
 
-    /// Execute the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path
-    ///
-    /// # Returns
-    ///
-    /// File metadata DTO.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::NotFound` if file does not exist
-    /// - `AppError::InvalidInput` if path is invalid
-    /// - `AppError::Io` if metadata cannot be read
+    /// Execute the use case to retrieve file metadata.
     pub async fn execute(&self, request: GetFileMetadataRequestDto) -> Result<FileMetadataDto> {
         // CRITICAL: Validate path FIRST to prevent directory traversal (CWE-22)
         let validated_path = self

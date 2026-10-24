@@ -46,15 +46,8 @@ function normalizeBatchSummary(raw: Wire.BatchJobSummaryDto): BatchJobSummary {
     ),
   };
 }
+
 export const batchApi = {
-  /**
-   * Lists all batch jobs with pagination support.
-   * Returns batch job history ordered by creation date (newest first).
-   *
-   * @param limit - Max jobs to return (default: 20)
-   * @param offset - Skip N jobs for pagination (default: 0)
-   * @returns Array of batch job summaries
-   */
   listBatchJobs: async (
     limit?: number,
     offset?: number,
@@ -72,13 +65,6 @@ export const batchApi = {
     };
   },
 
-  /**
-   * Deletes a batch job and all its associated items.
-   * Permanent operation - cannot be undone.
-   *
-   * @param jobId - ID of batch job to delete
-   * @returns Void on success
-   */
   deleteBatchJob: async (jobId: string): Promise<ApiResult<void>> => {
     const result = await apiCall<Wire.DeleteBatchJobResponseDto>(
       'delete_batch_job',
@@ -93,14 +79,6 @@ export const batchApi = {
     return { ok: true, data: undefined };
   },
 
-  /**
-   * Retries failed items as a new attempt of the import, which takes over
-   * its files; history lists the import once, as that attempt. An optional
-   * path replaces one selected failed file.
-   *
-   * @param jobId - ID of job with failed items
-   * @returns The new attempt's job ID
-   */
   retryFailedBatchItems: async (
     jobId: string,
     itemId?: string,
@@ -116,13 +94,6 @@ export const batchApi = {
     return { ok: true, data: result.data.newJobId };
   },
 
-  /**
-   * Gets detailed status of a batch job including all items.
-   * Returns comprehensive information about job progress and item statuses.
-   *
-   * @param jobId - ID of batch job to query
-   * @returns Detailed batch job status with all items
-   */
   getBatchJobStatus: async (
     jobId: string,
   ): Promise<ApiResult<BatchJobStatus>> => {
@@ -135,13 +106,6 @@ export const batchApi = {
     return { ok: true, data: normalizeBatchStatus(result.data) };
   },
 
-  /**
-   * Cancels an ongoing batch job.
-   * Stops processing and marks job as cancelled.
-   *
-   * @param jobId - ID of batch job to cancel
-   * @returns Number of items cancelled
-   */
   cancelBatchJob: async (jobId: string): Promise<ApiResult<number>> => {
     const result = await apiCall<Wire.CancelBatchJobResponseDto>(
       'cancel_batch',
@@ -153,18 +117,6 @@ export const batchApi = {
     return { ok: true, data: result.data.cancelledCount };
   },
 
-  /**
-   * Starts a batch import of files from disk.
-   * Indexes multiple files in a single batch operation with progress tracking.
-   *
-   * @param filePaths - Array of absolute file paths to import
-   * @param ownerConversationId - Set when these files were attached to a chat
-   *   rather than added to the library. Files this job imports then belong to
-   *   that conversation: they stay out of the library and out of every other
-   *   chat's searches, and they are deleted with it. Leave it out for a real
-   *   library import.
-   * @returns Batch job ID for tracking progress
-   */
   startBatchFileImport: async (
     filePaths: string[],
     ownerConversationId?: string,
@@ -181,13 +133,6 @@ export const batchApi = {
     return { ok: true, data: result.data.jobId };
   },
 
-  /**
-   * Starts a batch import of URLs.
-   * Fetches and indexes multiple URLs in a single batch operation with progress tracking.
-   *
-   * @param urls - Array of URLs to import
-   * @returns Batch job ID for tracking progress
-   */
   startBatchUrlImport: async (
     urls: string[],
     options?: { extractArticle?: boolean },
@@ -207,11 +152,6 @@ export const batchApi = {
     return { ok: true, data: result.data.jobId };
   },
 
-  /**
-   * Starts a batch file import operation for indexing multiple files
-   * @param filePaths - Array of absolute file paths to index
-   * @returns Operation ID for tracking progress
-   */
   batchFileImport: async (
     filePaths: string[],
     spaceId?: string,

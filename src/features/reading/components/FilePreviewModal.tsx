@@ -7,36 +7,18 @@ import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody
 import { focusReturnTarget } from '@/lib/focusReturn';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
-
-/**
- * The source reader as an overlay.
- *
- * Two shapes: `dialog` is the full-screen reader the Library, Compare and the
- * reference inbox open, and `reading-pane` is the sheet on the right edge —
- * what chat falls back to when the window is too narrow to dock the reader
- * beside the thread. Everything inside is `SourceReaderBody`, shared with the
- * docked pane, so there is one reader and not three.
- */
-
 interface FilePreviewModalProps {
   isOpen: boolean;
   presentation?: 'dialog' | 'reading-pane';
   onClose: () => void;
   source: SourceWithMetadata | null;
-  /** Where in the file to land. Omit for "open the whole file". */
   initialLocator?: PassageLocator | null;
-  /** Every citation on the message, for `[` / `]` travel. */
   citations?: SourceWithMetadata[];
-  /** Index of `source` within `citations`. */
   citationIndex?: number;
   onCitationIndexChange?: (_index: number) => void;
-  /** Called when a viewer resolves a real location (e.g. a PDF page). */
   onLocationResolved?: (_chunkId: string, _label: string) => void;
-  /** The message these citations belong to, where they came from one. */
   ownerKey?: string;
-  /** Citation-bearing text when the source belongs to a journal page. */
   citationContent?: string;
-  /** Which of the answer's marks for this source was clicked, if one was. */
   occurrence?: number | null;
 }
 
@@ -59,10 +41,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const isReadingPane = presentation === 'reading-pane';
 
-  // Capture the element to return focus to during the commit phase, before
-  // Radix's passive auto-focus effect moves focus into the reader. A passive
-  // useEffect here would run after that and capture a soon-unmounted element
-  // inside the reader instead of the trigger, so closing would drop focus.
+  // Capture trigger element before auto-focus moves focus into the reader.
   useLayoutEffect(() => {
     if (isOpen) returnFocusRef.current = focusReturnTarget();
   }, [isOpen]);
@@ -79,40 +58,26 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   return (
     <Dialog
       open={isOpen}
-      // The reading pane is a sheet, not a modal: the page underneath stays
-      // interactive (so it can be read or minimized away), and a click outside
-      // it dismisses it. The full-screen dialog keeps its modal overlay.
       modal={!isReadingPane}
       onOpenChange={(open) => { if (!open) onClose(); }}
     >
-      {/* A non-modal dialog draws no overlay. */}
       <DialogContent
         unstyled
         hideClose
         overlayClassName="fixed inset-0 z-50 bg-[hsl(var(--overlay))]"
         aria-describedby={undefined}
-        // The reading pane is a sheet, not a modal: a click anywhere outside it
-        // (or Escape) dismisses it, so the page underneath is always one click
-        // away. The full-screen dialog keeps its own overlay for that job.
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // preventScroll: the refocused element (often the journal editor's
-          // scroller) must not be scrolled into view, or closing the reader
-          // would yank the page back to the top.
+          // Avoid scrolling container when returning focus.
           if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus({ preventScroll: true });
         }}
         onInteractOutside={(event) => {
-          // The minimized pill is sticky: reading the page underneath (clicks,
-          // selection, focus) must not dismiss it, or there would be no point
-          // in minimizing to keep reading. Only the pill's own buttons or
-          // Escape close it. Expanded, a click outside dismisses as usual.
+          // Do not dismiss when interacting outside while minimized as a pill.
           if (isReadingPane && isMinimized) event.preventDefault();
         }}
         className={`source-reader ${isReadingPane ? 'source-reader--pane' : 'source-reader--dialog'} ${isFocused ? 'source-reader--focused' : ''} ${isReadingPane && isMinimized ? 'source-reader--pill' : ''}`}
       >
         {isReadingPane && isMinimized ? (
-          // Minimized to a pill in the corner: the page is fully readable
-          // underneath, and the pill is the only thing left of the reader.
           <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2">
             <DialogTitle asChild>
               <h2 className="min-w-0 flex-1 truncate font-serif text-sm text-[hsl(var(--text-primary))]">
@@ -150,11 +115,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             citationContent={citationContent}
             occurrence={occurrence}
             isFocused={isFocused}
-            // Only the pane has somewhere to expand into; the dialog already
-            // fills the window.
             onToggleFocus={isReadingPane ? () => setIsFocused((value) => !value) : undefined}
-            // Only the pane can be tucked away to a pill; the dialog already
-            // fills the window and the docked pane is the reader's home.
             onMinimize={isReadingPane ? () => setIsMinimized(true) : undefined}
           />
         )}

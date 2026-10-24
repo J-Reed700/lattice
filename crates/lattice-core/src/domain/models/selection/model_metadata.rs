@@ -2,41 +2,6 @@
 use super::*;
 
 /// Complete metadata for an AI model.
-///
-/// This value object contains all information needed for:
-/// - Compatibility scoring
-/// - Download management
-/// - Performance estimation
-/// - User presentation
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
-///
-/// let phi3 = ModelMetadata {
-///     id: "phi-3-mini-4k-instruct-q4".into(),
-///     name: "Phi-3 Mini (4K context)".into(),
-///     category: ModelCategory::LLM,
-///     description: "Microsoft's compact 3.8B parameter model".into(),
-///     size_gb: 1.8,
-///     minimum_ram_gb: 4.0,
-///     recommended_ram_gb: 8.0,
-///     context_length: 4096,
-///     performance_tier: PerformanceTier::Fast,
-///     supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into()],
-///     capabilities: vec!["chat".into(), "code".into()],
-///     download_url: Some("https://huggingface.co/...".into()),
-///     license: "MIT".into(),
-///     requires_auth: false,
-///     model_id: Some("microsoft/Phi-3-mini-4k-instruct-gguf".into()),
-///     default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
-///     files: vec![],
-///     total_size_bytes: 0,
-///     embedding_dimensions: None,
-///     embedding_compatibility: None,
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
     /// Unique model identifier (e.g., "phi-3-mini-4k-instruct-q4")
@@ -110,53 +75,6 @@ pub struct ModelMetadata {
 
 impl ModelMetadata {
     /// Build HuggingFace download URL from model_id and default_filename.
-    ///
-    /// Constructs a direct download URL in the format:
-    /// `https://huggingface.co/{model_id}/resolve/main/{filename}`
-    ///
-    /// # Security
-    /// - Validates model_id format (must be "org/repo", no path traversal)
-    /// - Validates filename (no path traversal or directory separators)
-    /// - URL-encodes components to prevent injection attacks
-    ///
-    /// # Returns
-    /// - Ok(url) if model_id and default_filename are valid
-    /// - Ok(download_url) if `model_id` and `default_filename` are not both set
-    /// - Err if validation fails
-    ///
-    /// # Example
-    /// ```
-    /// use lattice_core::domain::models::selection::ModelMetadata;
-    /// use lattice_core::domain::models::selection::{ModelCategory, PerformanceTier};
-    ///
-    /// let model = ModelMetadata {
-    ///     id: "phi-3-mini".into(),
-    ///     name: "Phi-3 Mini".into(),
-    ///     category: ModelCategory::LLM,
-    ///     description: "Test".into(),
-    ///     size_gb: 1.8,
-    ///     minimum_ram_gb: 4.0,
-    ///     recommended_ram_gb: 8.0,
-    ///     context_length: 4096,
-    ///     performance_tier: PerformanceTier::Fast,
-    ///     supported_quantizations: vec![],
-    ///     capabilities: vec![],
-    ///     download_url: None,
-    ///     license: "MIT".into(),
-    ///     requires_auth: false,
-    ///     model_id: Some("microsoft/Phi-3-mini-4k-instruct-gguf".into()),
-    ///     default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
-    ///     files: vec![],
-    ///     total_size_bytes: 0,
-    ///     embedding_dimensions: None,
-    ///     embedding_compatibility: None,
-    /// };
-    ///
-    /// assert_eq!(
-    ///     model.build_download_url().unwrap(),
-    ///     "https://huggingface.co/microsoft%2FPhi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf"
-    /// );
-    /// ```
     pub fn build_download_url(&self) -> Result<String> {
         if let (Some(model_id), Some(filename)) = (&self.model_id, &self.default_filename) {
             if !model_id.contains('/') || model_id.contains("..") {

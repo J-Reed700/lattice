@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3efe8">
+  <meta name="description" content="Lattice is a local-first desktop knowledge base. Index the files on your computer, search by keyword and meaning, and ask questions answered with source citations.">
+  <title>Lattice — Local-first desktop knowledge base</title>
+  <link rel="canonical" href="https://lattice.lambdaaudio.com/">
+  <meta property="og:title" content="Lattice — Local-first desktop knowledge base">
+  <meta property="og:description" content="Search local files by keyword and meaning, get answers with clickable citations, and build study programs offline. An open-source project by Lambda Audio.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://lattice.lambdaaudio.com/">
+  <meta property="og:site_name" content="Lattice">
+  <meta property="og:image" content="https://lattice.lambdaaudio.com/assets/explorer.png">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+  <link rel="stylesheet" href="./styles.css?v=20261023">
+  <script src="./script.js?v=20261023" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="wordmark" href="#top" aria-label="Lattice, back to top">
+      <img class="wordmark-icon" src="./assets/favicon.svg" alt="" width="34" height="34">
+      <span class="wordmark-text">
+        <span>LATTICE</span>
+        <span class="wordmark-sub">BY LAMBDA AUDIO</span>
+      </span>
+    </a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a href="#interface">Interface <span class="nav-count">04</span></a>
+      <a href="#capabilities">Capabilities <span class="nav-count">06</span></a>
+      <a href="#privacy">Privacy</a>
+      <a href="#download">Download</a>
+    </nav>
+    <div class="header-actions">
+      <a class="header-link" href="https://github.com/J-Reed700/lattice" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      <a class="header-cta" href="#download">Download .dmg <span aria-hidden="true">↓</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-topline">
+        <span>Lattice / Desktop Knowledge Base</span>
+        <span>Open Source · MIT License</span>
+        <span>Pre-release · 2026</span>
+      </div>
+
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="hero-kicker"><span class="status-dot" aria-hidden="true"></span> Local-first · Rust + Tauri + SQLite</p>
+          <h1 id="hero-title">Your files,<br><em>cited</em><br>answers.</h1>
+          <p class="hero-lede">
+            Lattice indexes the documents and code on your machine, searches them by keyword and meaning, and answers questions with local language models — every answer cites the passages it came from.
+          </p>
+          <div class="hero-actions">
+            <a class="primary-button" href="./downloads/Lattice_1.0.0_aarch64.dmg" download>
+              <span>Download Mac pre-release</span>
+              <span aria-hidden="true">↓</span>
+            </a>
+            <a class="secondary-link" href="https://github.com/J-Reed700/lattice" target="_blank" rel="noopener noreferrer">
+              <span>View source on GitHub</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <p class="hero-meta-note">
+            macOS 13.3+ (Apple Silicon <code>.dmg</code>) · <a href="#download">First-launch note &amp; SHA-256</a> · Windows 11 &amp; Ubuntu 24.04 from source
+          </p>
+        </div>
+
+        <div class="hero-stage">
+          <div class="hero-stage-top">
+            <span>LATTICE / EXPLORER + CITED CHAT</span>
+            <span>01 · RUNNING ON MACOS</span>
+          </div>
+          <a class="stage-preview" href="./assets/explorer.png" data-zoom data-caption="Explorer: folder tree, Rust source viewer, and a grounded chat pointing at exact lines." aria-label="Open the Lattice Explorer screenshot at full resolution">
+            <img src="./assets/explorer.png" alt="Lattice Explorer showing a folder tree, a Rust source file, and a chat conversation with inline source citations" width="3456" height="2164" fetchpriority="high" decoding="async">
+          </a>
+          <div class="hero-stage-caption">
+            <strong>Ask a folder on disk,<br>inspect the exact lines.</strong>
+            <span class="preview-hint">CLICK IMAGE<br>FOR FULL SIZE ↗</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-bottom">
+        <span>NO ACCOUNT OR TELEMETRY · WORKS OFFLINE AFTER MODEL SETUP</span>
+        <span class="hero-line" aria-hidden="true"></span>
+        <span>AN OPEN-SOURCE PROJECT BY <a href="https://lambdaaudio.com/">LAMBDA AUDIO ↗</a></span>
+      </div>
+    </section>
+
+    <section class="section-block" id="interface" aria-labelledby="interface-title">
+      <div class="section-kicker">
+        <span>REAL PRODUCT CAPTURES</span>
+        <span>01 / INSIDE THE APP</span>
+      </div>
+      <div class="section-heading">
+        <h2 id="interface-title">Four views.<br><em>One local index.</em></h2>
+        <p>Every screenshot is captured directly from the running macOS build. Switch views below or open any capture at native Retina resolution.</p>
+      </div>
+
+      <div class="showcase-shell" data-gallery>
+        <div class="showcase-bar">
+          <div class="showcase-tabs" role="group" aria-label="Choose a Lattice view">
+            <button
+              type="button"
+              aria-pressed="true"
+              data-image="explorer"
+              data-meta="EXPLORER / 3456 × 2164"
+              data-alt="Lattice Explorer with a folder tree, Rust source file, and a chat about the code"
+              data-caption="Explorer: open any folder on disk beside a chat. Browse the tree, read files in the code viewer, and ask questions answered with exact file and line references."
+              data-width="3456"
+              data-height="2164">
+              01 · Explorer &amp; Chat
+            </button>
+            <button
+              type="button"
+              aria-pressed="false"
+              data-image="dashboard"
+              data-meta="DASHBOARD / 3456 × 2168"
+              data-alt="Lattice home dashboard with library statistics and recent conversations"
+              data-caption="Home dashboard: reports what is actually in your library — document counts, storage used, recent files, and conversations worth picking back up."
+              data-width="3456"
+              data-height="2168">
+              02 · Home Dashboard
+            </button>
+            <button
+              type="button"
+              aria-pressed="false"
+              data-image="journal"
+              data-meta="JOURNAL & SOURCES / 3456 × 2168"
+              data-alt="Lattice journal entry with inline citations and the sources panel open"
+              data-caption="Journal &amp; sources: write notes and keep passages with inline footnoted citations and an inspectable sources drawer alongside your writing."
+              data-width="3456"
+              data-height="2168">
+              03 · Journal &amp; Sources
+            </button>
+            <button
+              type="button"
+              aria-pressed="false"
+              data-image="studio"
+              data-meta="LEARNING STUDIO / 3450 × 2140"
+              data-alt="Lattice Learning Studio with options to build a program and create a flashcard deck"
+              data-caption="Learning Studio: build a verified curriculum, sandboxed hands-on labs, assessments, and spaced-repetition flashcard decks backed by source citations."
+              data-width="3450"
+              data-height="2140">
+              04 · Learning Studio
+            </button>
+          </div>
+          <span class="showcase-meta">EXPLORER / 3456 × 2164</span>
+        </div>
+
+        <figure class="showcase-figure">
+          <a class="showcase-zoom" href="./assets/explorer.png" data-zoom data-caption="Explorer: open any folder on disk beside a chat." aria-label="Open Explorer screenshot at full resolution">
+            <img class="showcase-image" src="./assets/explorer.png" alt="Lattice Explorer with a folder tree, Rust source file, and a chat about the code" width="3456" height="2164" loading="lazy" decoding="async">
+            <span class="zoom-badge" aria-hidden="true">View full size ↗</span>
+          </a>
+          <div class="showcase-caption-row">
+            <figcaption class="showcase-caption" aria-live="polite">
+              Explorer: open any folder on disk beside a chat. Browse the tree, read files in the code viewer, and ask questions answered with exact file and line references.
+            </figcaption>
+            <div class="showcase-tags">
+              <span>Hybrid Retrieval</span>
+              <span>Inline Citations</span>
+              <span>Bundled llama.cpp</span>
+            </div>
+          </div>
+        </figure>
+      </div>
+
+      <div class="screen-grid" aria-label="All screenshots">
+        <article class="screen-card">
+          <div class="screen-card-top"><span>01 / EXPLORER</span><span>3456×2164</span></div>
+          <a href="./assets/explorer.png" data-zoom data-caption="Explorer: folder tree, code viewer, and grounded chat." aria-label="Enlarge Explorer screenshot">
+            <img src="./assets/explorer.png" alt="Lattice Explorer screenshot" width="3456" height="2164" loading="lazy" decoding="async">
+          </a>
+          <h3>Explorer &amp; code chat</h3>
+          <p>Each opened folder gets its own isolated search index beside a grounded chat.</p>
+        </article>
+        <article class="screen-card">
+          <div class="screen-card-top"><span>02 / DASHBOARD</span><span>3456×2168</span></div>
+          <a href="./assets/dashboard.png" data-zoom data-caption="Home dashboard: library statistics, storage, and recent conversations." aria-label="Enlarge Home dashboard screenshot">
+            <img src="./assets/dashboard.png" alt="Lattice home dashboard screenshot" width="3456" height="2168" loading="lazy" decoding="async">
+          </a>
+          <h3>Honest home dashboard</h3>
+          <p>Shows real library counts, index footprint, recent documents, and active threads.</p>
+        </article>
+        <article class="screen-card">
+          <div class="screen-card-top"><span>03 / JOURNAL</span><span>3456×2168</span></div>
+          <a href="./assets/journal.png" data-zoom data-caption="Journal: notes with inline citations and the sources panel open." aria-label="Enlarge Journal screenshot">
+            <img src="./assets/journal.png" alt="Lattice journal and sources panel screenshot" width="3456" height="2168" loading="lazy" decoding="async">
+          </a>
+          <h3>Journal &amp; reference inbox</h3>
+          <p>Draft notes with footnoted sources and quick-capture passages from anywhere.</p>
+        </article>
+        <article class="screen-card">
+          <div class="screen-card-top"><span>04 / STUDIO</span><span>3450×2140</span></div>
+          <a href="./assets/studio.png" data-zoom data-caption="Learning Studio: structured courses, labs, and cited flashcard decks." aria-label="Enlarge Learning Studio screenshot">
+            <img src="./assets/studio.png" alt="Lattice Learning Studio screenshot" width="3450" height="2140" loading="lazy" decoding="async">
+          </a>
+          <h3>Learning Studio</h3>
+          <p>Generate claim-checked courses, sandboxed coding labs, and FSRS flashcards.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section-block" id="capabilities" aria-labelledby="capabilities-title">
+      <div class="section-kicker">
+        <span>WHAT IT DOES</span>
+        <span>02 / CORE CAPABILITIES</span>
+      </div>
+      <div class="section-heading">
+        <h2 id="capabilities-title">Search by meaning.<br><em>Check every source.</em></h2>
+        <p>Built in Rust and TypeScript on top of SQLite, USearch vector indices, and a bundled <code>llama.cpp</code> server.</p>
+      </div>
+
+      <div class="capability-grid">
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>01 / RETRIEVAL</span><span>SQLITE + USEARCH</span></div>
+            <h3>Search that understands meaning</h3>
+            <p>Text is extracted, chunked, and embedded on-device with Qwen3-Embedding-0.6B. Search blends exact keyword matching with vector similarity, finding the right document even when your query uses different phrasing.</p>
+          </div>
+          <div class="capability-foot">HYBRID LEXICAL + VECTOR RANKING</div>
+        </article>
+
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>02 / GROUNDING</span><span>FOOTNOTED RECEIPTS</span></div>
+            <h3>Chat with clickable citations</h3>
+            <p>Ask questions against your library and get answers with footnoted citations that open the exact source passage. Every response includes a retrieval trace showing which files were pulled in and why.</p>
+          </div>
+          <div class="capability-foot">RETRIEVAL TRACE + PASSAGE INSPECTOR</div>
+        </article>
+
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>03 / LEARNING STUDIO</span><span>COURSES + FSRS</span></div>
+            <h3>Checked courses &amp; flashcards</h3>
+            <p>Build a study program from your sources: curriculum, practice, hands-on sandboxed labs, and spaced-repetition flashcards. Course generation checks each claim against its citation and flags doubtful claims for review.</p>
+          </div>
+          <div class="capability-foot">CLAIM VERIFICATION + PORTABLE PACKAGES</div>
+        </article>
+
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>04 / EXPLORER</span><span>ISOLATED WORKSPACES</span></div>
+            <h3>Point chat at a folder on disk</h3>
+            <p>Open any repository or project directory beside a chat. Browse the file tree, read files in a syntax-highlighted viewer, and ask questions answered with exact line references. Each folder keeps its own index apart from your library.</p>
+          </div>
+          <div class="capability-foot">SEPARATE PER-FOLDER INDEX</div>
+        </article>
+
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>05 / KNOWLEDGE GRAPH</span><span>NEIGHBORS + LINKS</span></div>
+            <h3>Documents that know their neighbors</h3>
+            <p>Open any document and the related panel shows what links to it, which files are semantically similar, and every conversation or journal entry that cites it. Cited web pages are frozen as local snapshots so links never rot.</p>
+          </div>
+          <div class="capability-foot">BACKLINKS + LOCAL WEB SNAPSHOTS</div>
+        </article>
+
+        <article class="capability-card">
+          <div>
+            <div class="capability-top"><span>06 / LOCAL INFERENCE</span><span>METAL · VULKAN · CPU</span></div>
+            <h3>Bundled local model engine</h3>
+            <p>First launch recommends a model bundle for your hardware run by a bundled <code>llama-server</code> sidecar. Optional catalog models add local reranking, Whisper audio transcription, and PaddleOCR-VL scanned-PDF OCR.</p>
+          </div>
+          <div class="capability-foot">OPTIONAL OLLAMA &amp; CLOUD PROVIDERS</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section-block" id="privacy" aria-labelledby="privacy-title">
+      <div class="section-kicker">
+        <span>PRIVACY BOUNDARY</span>
+        <span>03 / WHAT LEAVES YOUR COMPUTER</span>
+      </div>
+      <div class="section-heading">
+        <h2 id="privacy-title">Local by default.<br><em>Network is opt-in.</em></h2>
+        <p>Lattice needs no account or cloud service, and sends no product telemetry. You control every connection that leaves your machine.</p>
+      </div>
+
+      <div class="privacy-grid">
+        <article class="privacy-panel panel-local">
+          <div class="privacy-kicker"><span>DEFAULT OPERATION</span><span>100% ON-DEVICE</span></div>
+          <h3>What stays on your machine</h3>
+          <p>After your chosen local models finish downloading, indexing, search, grounded chat, journaling, and Learning Studio run completely offline.</p>
+          <ul class="privacy-list">
+            <li><strong>No accounts</strong><span>No sign-up, login wall, or cloud sync requirement to use the app.</span></li>
+            <li><strong>No telemetry</strong><span>This version sends zero analytics, crash reports, or usage beacons.</span></li>
+            <li><strong>Local storage</strong><span>Documents, embeddings, chat history, and journal entries live in local SQLite on your disk.</span></li>
+            <li><strong>Encrypted backup</strong><span>Create local database backups or optional encrypted off-device archives to a folder you choose.</span></li>
+          </ul>
+        </article>
+
+        <article class="privacy-panel">
+          <div class="privacy-kicker"><span>EXPLICIT OPT-IN</span><span>USER-CONFIGURED ONLY</span></div>
+          <h3>When network requests happen</h3>
+          <p>Lattice only makes network requests when downloading models from the catalog or when you explicitly enable an external service.</p>
+          <ul class="privacy-list">
+            <li><strong>Model catalog</strong><span>Downloading GGUF embedding, chat, Whisper, or OCR models from Hugging Face on first setup.</span></li>
+            <li><strong>Chat providers</strong><span>Optional connections to Ollama, a remote <code>llama.cpp</code> server, OpenAI, Anthropic, or Google.</span></li>
+            <li><strong>Web finders</strong><span>Optional web search and source finders in <code>Settings → Sources</code> (keyless or Brave, Tavily, Exa) for research and claim checking.</span></li>
+            <li><strong>Auditability</strong><span>The full codebase and <a href="https://github.com/J-Reed700/lattice/blob/main/docs/user/faq.md#what-leaves-my-computer" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">privacy FAQ ↗</a> document every networked path.</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="downloads-section" id="download" aria-labelledby="download-title">
+      <div class="section-kicker">
+        <span>DOWNLOAD &amp; SOURCE</span>
+        <span>04 / PRE-RELEASE BUILD · 23 OCTOBER 2026</span>
+      </div>
+      <div class="download-heading">
+        <h2 id="download-title">Download the<br><em>Mac pre-release.</em></h2>
+        <p>Or clone the repository to run and package Lattice on macOS, Windows 11, or Ubuntu 24.04 LTS.</p>
+      </div>
+
+      <div class="download-split">
+        <article class="installer-card" aria-labelledby="installer-title">
+          <div>
+            <div class="installer-meta">
+              <span>MACOS 13.3+ · APPLE SILICON (ARM64)</span>
+              <span>PRE-RELEASE 1.0.0</span>
+            </div>
+            <h3 id="installer-title">Lattice for Mac</h3>
+            <p class="installer-specs" id="dmg-specs">
+              macOS 13.3+ · Apple Silicon · 70.7 MB DMG · Bundled <code>llama-server</code> (Metal) &amp; learning Python runtime<br>
+              SHA-256: <code>b857484f8adc32067103535ebe561bdd25259de78c119520fab1009c8abc1c74</code>
+            </p>
+            <div class="installer-cta-row">
+              <a class="download-button" href="./downloads/Lattice_1.0.0_aarch64.dmg" download>
+                <span>Download Lattice_1.0.0_aarch64.dmg</span>
+                <span aria-hidden="true">↓</span>
+              </a>
+              <a class="checksum-link" href="./downloads/Lattice_1.0.0_aarch64.dmg.sha256">SHA-256 checksum ↗</a>
+            </div>
+          </div>
+
+          <div class="gatekeeper-box">
+            <strong>Pre-release note · Ad-hoc signed build (not Apple-notarized yet)</strong>
+            This pre-release DMG is ad-hoc signed rather than notarized with an Apple Developer ID. After dragging <b>Lattice.app</b> to <b>Applications</b>, macOS Gatekeeper will pause the first launch. Either Control-click <b>Lattice.app</b> in Applications and choose <b>Open</b> (or approve it in <b>System Settings → Privacy &amp; Security → Open Anyway</b>), or clear the quarantine attribute in Terminal:
+            <code>xattr -dr com.apple.quarantine /Applications/Lattice.app</code>
+          </div>
+        </article>
+
+        <article class="source-card" aria-labelledby="source-title">
+          <div>
+            <div class="source-card-meta">
+              <span>OPEN SOURCE · MIT LICENSE</span>
+              <span>MACOS · WINDOWS 11 · UBUNTU 24.04</span>
+            </div>
+            <h3 id="source-title">Build from source</h3>
+            <p>
+              Lattice is open source under the MIT License. Building from source requires Node.js 22.22+ (or 24+), a current Rust toolchain, and the Tauri v2 platform prerequisites.
+            </p>
+            <pre class="code-block"><code><span>$ </span>git clone https://github.com/J-Reed700/lattice.git
+<span>$ </span>cd lattice
+<span>$ </span>npm ci
+<span>$ </span>bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
+<span>$ </span>npm run tauri:dev     <span># or: npm run tauri:build</span></code></pre>
+          </div>
+
+          <div class="source-links">
+            <a class="secondary-link" href="https://github.com/J-Reed700/lattice" target="_blank" rel="noopener noreferrer">
+              <span>GitHub repository (J-Reed700/lattice)</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a class="secondary-link" href="https://github.com/J-Reed700/lattice/tree/main/docs/user" target="_blank" rel="noopener noreferrer">
+              <span>User manual &amp; FAQ</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="closing" aria-labelledby="closing-title">
+      <div class="closing-meta">
+        <span>AN OPEN-SOURCE PROJECT BY LAMBDA AUDIO</span>
+        <span>CHICAGO / 2026</span>
+      </div>
+      <div class="closing-main">
+        <h2 id="closing-title">Built in the open.<br><em>Yours to inspect.</em></h2>
+        <div>
+          <p>
+            Lattice is designed and built by Josh Reed through Lambda Audio LLC. Read the architecture docs, inspect the retrieval evals, or build your own copy from source.
+          </p>
+          <div class="closing-links">
+            <a class="closing-link" href="https://github.com/J-Reed700/lattice" target="_blank" rel="noopener noreferrer">
+              <span>GitHub repository</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a class="closing-link" href="https://lambdaaudio.com/">
+              <span>Lambda Audio</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </div>
+      </div>
+      <div class="closing-index">
+        <a href="https://github.com/J-Reed700/lattice" target="_blank" rel="noopener noreferrer">GITHUB</a>
+        <a href="https://lambdaaudio.com/">LAMBDA AUDIO</a>
+        <a href="https://headroommusic.app/">HEADROOM</a>
+        <a href="https://downsample.app/">DOWNSAMPLE</a>
+        <a href="https://joshreed.net/">JOSH REED</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>© 2026 LAMBDA AUDIO LLC · MIT LICENSE</span>
+    <span>AN OPEN-SOURCE PROJECT BY LAMBDA AUDIO</span>
+    <a href="#top">BACK TO TOP ↑</a>
+  </footer>
+
+  <dialog class="image-dialog" aria-labelledby="image-dialog-title">
+    <div class="dialog-toolbar">
+      <p id="image-dialog-title">Lattice screenshot</p>
+      <button type="button" class="dialog-close" autofocus>Close <span aria-hidden="true">×</span></button>
+    </div>
+    <img class="dialog-image" alt="">
+  </dialog>
+</body>
+</html>

@@ -1,20 +1,8 @@
-/**
- * Conversation Types
- *
- * Type definitions for conversational LLM interactions
- */
-
 import { z } from 'zod';
 
 import type { SearchResult } from './searchResult';
 import type { ChatModelChoice, ExplorerFocusDto } from '../lib/bindings';
 
-/**
- * SourceWithMetadata - Rich source metadata for citations
- *
- * Contains all metadata needed to render citation tooltips and
- * enable click-to-view functionality.
- */
 export interface SourceWithMetadata {
   documentId: string;
   chunkId: string;
@@ -103,14 +91,11 @@ export const SourceWithMetadataSchema = z.object({
   })).optional(),
   score: z.number().finite().min(0),
   fileSizeBytes: z.number().min(0),
-  modifiedAt: z.string(), // ISO 8601
+  modifiedAt: z.string(),
   citationId: z.number().int().min(1).optional(),
   conversationId: z.string().optional(),
-}).strict(); // Reject unknown properties
+}).strict();
 
-/**
- * Validate an array of sources.
- */
 export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
 
 /**
@@ -198,14 +183,8 @@ export const MessageVerificationSummarySchema = z.object({
 
 export type MessageVerificationSummary = z.infer<typeof MessageVerificationSummarySchema>;
 
-/**
- * Type inference from validated schema
- */
 export type ValidatedSources = z.infer<typeof SourcesArraySchema>;
 
-/**
- * Message status for optimistic UI
- */
 export type MessageStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export type TurnMode = 'auto' | 'followup' | 'query';
@@ -375,28 +354,15 @@ export interface StreamChunk {
   isComplete: boolean;
 }
 
-/**
- * Optimistic message for immediate UI feedback
- *
- * Temporary message shown to user while backend processes the request.
- * Replaced by real ConversationMessage when backend responds.
- */
 export interface OptimisticMessage {
   /** Identifies this turn when reconciling a persisted failed question. */
   requestId?: string;
-  /** Temporary ID (crypto.randomUUID()) */
   tempId: string;
-  /** Conversation ID this message belongs to */
   conversationId: string;
-  /** Message content */
   content: string;
-  /** Message role */
   role: 'user' | 'assistant';
-  /** Current status */
   status: MessageStatus;
-  /** Creation timestamp */
   createdAt: string;
-  /** Error message if status='failed' */
   error?: string;
   /** Pictures found for this answer while it streams, merged by `ref`. */
   images?: ChatImage[];
@@ -409,16 +375,10 @@ export interface OptimisticMessage {
   };
 }
 
-/**
- * Type guard to check if message is optimistic (temporary)
- */
 export function isOptimistic(message: DisplayMessage): message is OptimisticMessage {
   return 'tempId' in message;
 }
 
-/**
- * Union type for displaying messages (real or optimistic)
- */
 export type DisplayMessage = ConversationMessage | OptimisticMessage;
 
 /**

@@ -62,7 +62,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
       <ul role="list" className="space-y-2">
         {findings.map((finding) => (
           <li key={finding.findingKey}>
-            <article aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}`} className="rounded-xl border border-border bg-background p-4">
+            <article aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}`} className="rounded-xl border border-border-default bg-surface-sunken/40 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-text-muted">{KIND_LABELS[finding.kind]}</p>
               <p className="mt-1 text-sm font-medium text-text-primary">
                 {lessonAnchor && finding.site === 'section' && finding.unitIndex != null
@@ -75,11 +75,11 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {isTeachingWaiting(finding)
                   ? <button type="button" disabled={acting !== null} onClick={() => void keepAsWritten(finding)}
-                    className="min-h-9 rounded-full border border-accent/50 px-3 text-xs font-medium text-accent disabled:opacity-50">Keep as written</button>
-                  : <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">Kept as written</span>}
+                    className="min-h-9 rounded-full border border-border-default bg-surface px-3 text-xs font-medium text-accent hover:bg-surface-sunken disabled:opacity-50">Keep as written</button>
+                  : <span className="rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success-fg">Kept as written</span>}
                 {acting === finding.findingKey && <span role="status" className="inline-flex items-center gap-1 text-xs text-text-muted"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</span>}
               </div>
-              {errors[finding.findingKey] && <p role="alert" className="mt-2 text-xs leading-5 text-rose-700">{errors[finding.findingKey]}</p>}
+              {errors[finding.findingKey] && <p role="alert" className="mt-2 text-xs leading-5 text-danger-fg">{errors[finding.findingKey]}</p>}
             </article>
           </li>
         ))}

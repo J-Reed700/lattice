@@ -1,47 +1,15 @@
-//! # Checksum Factory
-//!
-//! Application layer factory for computing checksums with file system and cryptography operations.
-//!
-//! This factory isolates file I/O and cryptography dependencies from the domain layer,
-//! maintaining domain purity as per Clean Architecture principles.
-//!
-//! **Architecture Note**: Moved from infrastructure to application layer because it creates
-//! domain value objects (Checksum). Factories that create domain objects belong in the
-//! application layer, not infrastructure.
+//! Factory for computing SHA-256 checksums from file paths or byte slices.
 
 use crate::domain::value_objects::checksum::Checksum;
 use crate::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// Factory for computing checksums with infrastructure dependencies.
-///
-/// This is the proper way to compute checksums from files or content, keeping
-/// cryptography and file I/O in the infrastructure layer.
+/// Factory for computing and verifying checksums.
 pub struct ChecksumFactory;
 
 impl ChecksumFactory {
-    /// Compute SHA-256 checksum from file path (with file I/O).
-    ///
-    /// This method performs file system operations, keeping file I/O out of the
-    /// domain layer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::checksum_factory::ChecksumFactory;
-    /// use std::path::Path;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let checksum = ChecksumFactory::from_path(Path::new("/path/to/file.txt"))?;
-    /// println!("Checksum: {}", checksum.as_str());
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Compute SHA-256 checksum from file path.
     pub fn from_path(path: &Path) -> Result<Checksum> {
         let content = std::fs::read(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file for checksum: {}", e),
@@ -52,26 +20,6 @@ impl ChecksumFactory {
     }
 
     /// Compute SHA-256 checksum from byte content.
-    ///
-    /// This method uses the sha2 cryptography library, keeping cryptography out of
-    /// the domain layer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if checksum validation fails (should not happen with SHA-256).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::checksum_factory::ChecksumFactory;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = b"Hello, world!";
-    /// let checksum = ChecksumFactory::from_bytes(content)?;
-    /// println!("Checksum: {}", checksum.as_str());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn from_bytes(content: &[u8]) -> Result<Checksum> {
         let hash = Sha256::digest(content);
         let checksum_str = format!("{:x}", hash);
@@ -80,25 +28,6 @@ impl ChecksumFactory {
     }
 
     /// Verify that content matches the expected checksum.
-    ///
-    /// This method computes the checksum of the provided content and compares it
-    /// with the expected checksum.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::checksum_factory::ChecksumFactory;
-    /// use lattice_core::domain::value_objects::checksum::Checksum;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = b"test content";
-    /// let expected = ChecksumFactory::from_bytes(content)?;
-    ///
-    /// assert!(ChecksumFactory::verify(&expected, content));
-    /// assert!(!ChecksumFactory::verify(&expected, b"different content"));
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn verify(expected: &Checksum, content: &[u8]) -> bool {
         match Self::from_bytes(content) {
             Ok(computed) => expected.matches(&computed),
@@ -107,28 +36,6 @@ impl ChecksumFactory {
     }
 
     /// Verify that a file's content matches the expected checksum.
-    ///
-    /// This method reads the file and compares its checksum with the expected value.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::checksum_factory::ChecksumFactory;
-    /// use std::path::Path;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let path = Path::new("/path/to/file.txt");
-    /// let expected = ChecksumFactory::from_path(path)?;
-    ///
-    /// let is_valid = ChecksumFactory::verify_file(&expected, path)?;
-    /// assert!(is_valid);
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn verify_file(expected: &Checksum, path: &Path) -> Result<bool> {
         let computed = Self::from_path(path)?;
         Ok(expected.matches(&computed))

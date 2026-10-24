@@ -1,27 +1,3 @@
-/**
- * What bounded conversation memory holds for one chat, read-only.
- *
- * Scope and correction controls preserve source evidence; the existing ledger
- * view keeps generated labels distinct from the original quotations.
- *
- * Three things this view has to get right, each guarding a specific
- * misreading:
- *   - A generated `label` must never look like something the user wrote, so
- *     labels are UI chrome and quotations are quotations.
- *   - `evidence[].text === null` means the source message was edited or
- *     deleted. It is rendered as an absence; there is no cached text to fall
- *     back to and hiding the row would quietly turn an unsourced item into a
- *     sourced one.
- *   - `mode` and `featureEnabled` decide whether any of this is in the prompt
- *     at all, so neither may be summarized as "memory is working".
- *
- * Every surviving quotation is also a way back to where it came from: selecting
- * it closes the panel, scrolls the original message into view and marks the
- * validated span inside it. That path is only offered for quotations whose
- * source still resolves — offering it for a lost one would promise a message
- * that may no longer exist.
- */
-
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ArrowUpRight, X } from 'lucide-react';
@@ -47,21 +23,9 @@ interface ConversationMemoryPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenConversation?: (id: string) => void;
-  /**
-   * Stored content of the messages currently in the thread, by message id.
-   *
-   * Needed because `startByte`/`endByte` index the raw message content while the
-   * DOM holds rendered markdown; without the original text there is nothing to
-   * resolve a span against, and the panel scrolls without a highlight.
-   */
   messageContentById?: ReadonlyMap<string, string>;
 }
 
-/**
- * The one sentence at the top that says whether anything here reaches the
- * model. Order matters: the rollout switch outranks `mode`, because a `ready`
- * store that is switched off is still not memory.
- */
 function describeStatus(details: ConversationMemoryDetailsDto): {
   tone: 'off' | 'waiting' | 'blocked' | 'active';
   heading: string;
@@ -99,8 +63,6 @@ function describeStatus(details: ConversationMemoryDetailsDto): {
           'This memory layout cannot be read by this build, so nothing is being added to prompts. Update the app to read it.',
       };
     default:
-      // An unknown mode is still not a working one — say so rather than
-      // guessing, or a future state silently reads as "ready".
       return {
         tone: 'blocked',
         heading: 'Memory state not recognized',
@@ -123,7 +85,6 @@ function readableKind(kind: string): string {
 interface MemoryEvidenceProps {
   quote: MemoryEvidenceDto;
   onOpenSource: (_quote: MemoryEvidenceDto) => void;
-  /** True once a jump to this quotation's message failed to find it. */
   isUnreachable: boolean;
 }
 
@@ -131,10 +92,6 @@ function MemoryEvidence({ quote, onOpenSource, isUnreachable }: MemoryEvidencePr
   const attribution = `${quote.role} · message ${quote.sequence} · ${readableKind(quote.purpose)}`;
 
   if (quote.text === null) {
-    // No cached copy is shown and the row is not dropped: an item whose source
-    // is gone has to look different from one that never had a source. It is
-    // also not a link — the message it named may not exist any more, and a
-    // control that leads nowhere reads as a bug in the thread, not as deletion.
     return (
       <li className="mt-2" data-testid="memory-evidence-missing">
         <p className="text-xs italic text-text-muted">
@@ -259,8 +216,6 @@ export function ConversationMemoryPanel({
     if (isOpen) {
       returnFocusRef.current = focusReturnTarget();
     } else {
-      // A fresh open re-reads rather than showing the previous conversation's
-      // items while the request is in flight.
       setIncludeHistory(false);
       setUnreachableMessageId(null);
     }
@@ -271,17 +226,8 @@ export function ConversationMemoryPanel({
   const error = memoryQuery.error?.message ?? null;
   const isLoading = memoryQuery.isFetching;
 
-  /**
-   * Take the reader to the message a quotation came from and mark the span.
-   *
-   * The thread is checked before the panel closes: if the message is not on
-   * screen the panel stays open and says so under that quotation, because
-   * closing and scrolling nowhere looks like a dead control.
-   */
   const openSource = useCallback(
     (quote: MemoryEvidenceDto) => {
-      // Defensive: no control is rendered for a lost source, and following one
-      // would lead to a message that may since have been deleted.
       if (quote.text === null) return;
 
       if (!findMessageElement(quote.messageId)) {
@@ -298,10 +244,6 @@ export function ConversationMemoryPanel({
               startByte: quote.startByte,
               endByte: quote.endByte,
             });
-      // Mark only what the backend validated. `quote.text` is that exact byte
-      // range resolved against the stored message, so a decode that does not
-      // reproduce it means our copy of the message has moved on — scroll there
-      // and mark nothing rather than highlighting words that are not evidence.
       const span = decoded?.text === quote.text ? decoded : null;
 
       setUnreachableMessageId(null);

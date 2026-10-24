@@ -15,17 +15,6 @@ pub struct TagMapper;
 
 impl TagMapper {
     /// Create a TagDto from basic components.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Tag identifier
-    /// * `name` - Tag name
-    /// * `color` - Optional color hex code
-    /// * `description` - Optional description
-    ///
-    /// # Returns
-    ///
-    /// Tag DTO for JSON serialization
     pub fn create_dto(
         id: TagId,
         name: String,
@@ -41,45 +30,17 @@ impl TagMapper {
     }
 
     /// Convert TagId to string for DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `tag_id` - Domain tag identifier
-    ///
-    /// # Returns
-    ///
-    /// String representation for JSON serialization
     pub fn id_to_string(tag_id: &TagId) -> String {
         tag_id.to_string()
     }
 
     /// Convert string to TagId.
-    ///
-    /// # Arguments
-    ///
-    /// * `id_str` - String tag ID from DTO
-    ///
-    /// # Returns
-    ///
-    /// Domain TagId value object
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the string is not a valid UUID
     pub fn string_to_id(id_str: &str) -> lattice_core::shared::error::Result<TagId> {
         TagId::from_string(id_str.to_string())
             .map_err(|e| AppError::ValidationFailed(format!("Invalid tag ID: {}", e)))
     }
 
     /// Extract data from create request DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Create tag request DTO
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (name, color, description) for domain model creation
     pub fn from_create_request(
         request: CreateTagRequestDto,
     ) -> (String, Option<String>, Option<String>) {

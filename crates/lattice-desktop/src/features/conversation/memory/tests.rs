@@ -829,16 +829,19 @@ impl FakeLlm {
     }
 
     fn reply(&self, prompt: &str) -> Result<String> {
-        let task = if prompt.contains("\"task\":\"extract_memory\"") {
-            Task::Extract
-        } else if prompt.contains("\"task\":\"repair_memory_patch\"") {
-            Task::Repair
-        } else if prompt.contains("\"task\":\"review_memory_changes\"") {
-            Task::Review
-        } else if prompt.contains("\"task\":\"shrink_working_summary\"") {
-            Task::Shrink
-        } else {
-            Task::Summarize
+        let parsed_task = serde_json::from_str::<serde_json::Value>(prompt)
+            .ok()
+            .and_then(|v| v.get("task").and_then(|t| t.as_str()).map(str::to_string));
+        let task = match parsed_task.as_deref() {
+            Some("extract_memory") => Task::Extract,
+            Some("repair_memory_patch") => Task::Repair,
+            Some("review_memory_changes") => Task::Review,
+            Some("shrink_working_summary") => Task::Shrink,
+            _ if prompt.contains("\"extract_memory\"") => Task::Extract,
+            _ if prompt.contains("\"repair_memory_patch\"") => Task::Repair,
+            _ if prompt.contains("\"review_memory_changes\"") => Task::Review,
+            _ if prompt.contains("\"shrink_working_summary\"") => Task::Shrink,
+            _ => Task::Summarize,
         };
         self.calls.lock().push(task);
         self.prompts.lock().push(prompt.to_string());
@@ -1008,6 +1011,8 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
     for required in [
         "attempts that failed",
         "stored separately",
+        "unrequested assistant proposal",
+        "explicitly adopts that proposal",
         "what was denied or refused",
         "Respect the requested budget",
         "fallible",

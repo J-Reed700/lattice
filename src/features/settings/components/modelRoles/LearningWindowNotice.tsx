@@ -1,18 +1,8 @@
-/**
- * LearningWindowNotice
- *
- * The line a row holding the Learning role shows when the last learning work
- * refused needed a larger context window than this model has, with both
- * numbers, so the fix is made where the window is set.
- */
-
 import { learningWindowShortfallText, useLearningWindowShortfall } from '@/features/model/hooks/useLearningWindowShortfall';
 import type { ModelRef } from '@/lib/bindings';
 
 interface Props {
-  /** The row's model, as the Learning role names it. */
   model: ModelRef | null;
-  /** The window saved for it in Settings → Models; null for its trained length or a server's own. */
   savedWindow: number | null;
 }
 

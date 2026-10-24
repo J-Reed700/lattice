@@ -113,9 +113,6 @@ impl SystemCapabilities {
 /// - CPU (cores, threads, model)
 /// - GPU (vendor, model, VRAM)
 /// - Platform (OS type and version)
-///
-/// # Returns
-/// A `SystemCapabilities` struct with detected hardware information.
 pub async fn detect_capabilities() -> SystemCapabilities {
     detect_capabilities_inner(None).await
 }

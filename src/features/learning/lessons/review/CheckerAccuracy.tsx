@@ -14,7 +14,7 @@ function unwrap<T>(result: ApiResult<T>): T {
 
 const percent = (rate: number) => `${(rate * 100).toFixed(1)}%`;
 
-/** One checker model's record on the user's own labelled claims (§15); data, no verdict. */
+/** One checker model's record on the user's own labelled claims ; data, no verdict. */
 export function accuracyLine(row: CheckerAccuracyDto): string {
   return [
     `${row.labelled} labelled ${row.labelled === 1 ? 'claim' : 'claims'}`,
@@ -45,7 +45,7 @@ export function CheckerAccuracy({ programId }: { programId: string }) {
       <summary className="cursor-pointer font-medium text-text-secondary">Checker accuracy on your lessons</summary>
       <div className="mt-2 space-y-1.5 leading-5 text-text-secondary">
         {accuracy.isFetching && <p role="status" className="text-text-muted">Loading…</p>}
-        {accuracy.error && <p role="alert" className="text-rose-700">{accuracy.error.message}</p>}
+        {accuracy.error && <p role="alert" className="text-danger-fg">{accuracy.error.message}</p>}
         {accuracy.data?.length === 0 && <p>No labelled claims yet. Each confirmation, removal, edit or added source labels one.</p>}
         {accuracy.data?.map((row) => <p key={row.checkerModel}><span className="font-medium text-text-primary">{row.checkerModel}: </span>{accuracyLine(row)}</p>)}
         <button type="button" disabled={exported.isPending} onClick={() => exported.mutate()} className="min-h-8 rounded-full border border-border px-3 font-medium text-text-primary disabled:opacity-50">
@@ -53,7 +53,7 @@ export function CheckerAccuracy({ programId }: { programId: string }) {
         </button>
         {exported.data && <p role="status">Saved {exported.data.pairs} claim {exported.data.pairs === 1 ? 'pair' : 'pairs'} to {exported.data.path}.</p>}
         {exported.isSuccess && exported.data === null && <p role="status">Export cancelled.</p>}
-        {exported.error && <p role="alert" className="text-rose-700">{exported.error.message}</p>}
+        {exported.error && <p role="alert" className="text-danger-fg">{exported.error.message}</p>}
       </div>
     </details>
   );

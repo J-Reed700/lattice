@@ -1,11 +1,5 @@
 /**
- * Bringing a chat message into view — the one implementation of it.
- *
- * Three near-copies of this existed (the sidebar reference list, the
- * conversation spotlight, and the deep-link effect in `ChatView`), each with its
- * own retry budget and its own idea of how long the highlight lasts. They had
- * already drifted apart, and memory evidence would have made a fourth. Every
- * caller that jumps to a message goes through `scrollToMessage`.
+ * Bringing a chat message into view.
  *
  * The retry loop is not defensive padding: the target is routinely absent when
  * the click lands, because the caller has just switched conversations or closed

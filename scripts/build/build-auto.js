@@ -41,10 +41,10 @@ function runBuild() {
       break;
 
     default:
-      // Fallback to Node.js script
-      console.log(`⚠️  Unknown platform: ${platform} - using Node.js build script`);
-      command = 'node';
-      scriptArgs = [path.join(__dirname, 'build.js'), ...args];
+      // Fallback to the Bash script on other Unix-like platforms
+      console.log(`⚠️  Unknown platform: ${platform} - trying Bash build script`);
+      command = 'bash';
+      scriptArgs = [path.join(__dirname, 'build.sh'), ...args];
       break;
   }
 
@@ -103,7 +103,7 @@ This script automatically detects your OS and runs the appropriate build script:
   - Windows  → build.ps1 (PowerShell)
   - macOS    → build.sh (Bash)
   - Linux    → build.sh (Bash)
-  - Other    → build.js (Node.js)
+  - Other    → build.sh (Bash)
 
 Usage:
   node scripts/build/build-auto.js [options]
@@ -118,7 +118,6 @@ Examples:
 For detailed help on available options:
   - Windows:  Get-Help .\\scripts\\build\\build.ps1 -Full
   - Unix:     ./scripts/build/build.sh --help
-  - Node.js:  node scripts/build/build.js --help
 `);
   process.exit(0);
 }

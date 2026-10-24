@@ -7,21 +7,6 @@
 //! 2. Chunk count retrieval
 //! 3. Tag count retrieval
 //! 4. Storage size calculation
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
-//!
-//! # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let stats = use_case.execute().await?;
-//! println!("Documents: {}", stats.total_documents);
-//! println!("Chunks: {}", stats.total_chunks);
-//! println!("Tags: {}", stats.total_tags);
-//! println!("Storage: {} bytes", stats.storage_size_bytes);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -38,12 +23,6 @@ use lattice_core::shared::error::Result;
 /// - Total number of chunks created
 /// - Total number of tags
 /// - Total storage size (database file size)
-///
-/// ## Dependencies
-///
-/// - `document_repo` - Document repository for counting documents
-/// - `chunk_repo` - Chunk repository for counting chunks
-/// - `tag_repo` - Tag repository for counting tags
 pub struct GetSystemStatsUseCase {
     document_repo: Arc<dyn RepositoryPort<DocumentEntity>>,
     chunk_repo: Arc<dyn RepositoryPort<ChunkEntity>>,
@@ -53,30 +32,6 @@ pub struct GetSystemStatsUseCase {
 
 impl GetSystemStatsUseCase {
     /// Create a new get system stats use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repo` - Repository for document operations
-    /// * `chunk_repo` - Repository for chunk operations
-    /// * `tag_repo` - Repository for tag operations
-    /// * `database_stats` - Port for database size retrieval
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
-    /// # use std::sync::Arc;
-    /// # use lattice_core::application::ports::RepositoryPort;
-    /// # use lattice_core::domain::entities::{Document, Chunk, Tag};
-    ///
-    /// # async fn example(
-    /// #     doc_repo: Arc<dyn RepositoryPort<Document>>,
-    /// #     chunk_repo: Arc<dyn RepositoryPort<Chunk>>,
-    /// #     tag_repo: Arc<dyn RepositoryPort<Tag>>
-    /// # ) {
-    /// let use_case = GetSystemStatsUseCase::new(doc_repo, chunk_repo, tag_repo, db_stats);
-    /// # }
-    /// ```
     pub fn new(
         document_repo: Arc<dyn RepositoryPort<DocumentEntity>>,
         chunk_repo: Arc<dyn RepositoryPort<ChunkEntity>>,
@@ -92,32 +47,6 @@ impl GetSystemStatsUseCase {
     }
 
     /// Execute stats retrieval.
-    ///
-    /// # Returns
-    ///
-    /// System stats with document, chunk, and tag counts
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Repository count queries fail
-    /// - Storage size calculation fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::stats::GetSystemStatsUseCase;
-    /// # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let stats = use_case.execute().await?;
-    ///
-    /// if stats.total_documents > 0 {
-    ///     println!("Average chunks per document: {}",
-    ///         stats.total_chunks as f64 / stats.total_documents as f64
-    ///     );
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(&self) -> Result<SystemStatsDto> {
         // 1. Count total documents
         let total_documents = self.document_repo.count().await? as i64;

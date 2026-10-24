@@ -386,12 +386,6 @@ impl DownloadManager for DownloadManagerService {
     }
 
     /// Subscribe to download events.
-    ///
-    /// Returns the shared receiver Arc. Caller is responsible for managing
-    /// event forwarding in their own async context.
-    ///
-    /// # Returns
-    /// Arc<RwLock<Option<Receiver<DownloadEvent>>>> - Shared receiver for download events
     fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>> {
         Arc::clone(&self.event_rx)
     }

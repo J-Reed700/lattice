@@ -5,11 +5,13 @@ behavioral changes, and avoid committing local reports or work-session notes.
 
 ## Setup
 
-Install Node.js 20.19+ or 22.12+ (CI uses 24), a current Rust toolchain, and
-the platform prerequisites listed by Tauri. Then run:
+Install Node.js 22.22.2+, 24.15+ or 26+ (CI uses 24; see `.nvmrc`), a current Rust
+toolchain, and the platform prerequisites listed by Tauri. Then fetch the
+pinned `llama-server` sidecar and start the app:
 
 ```bash
 npm ci
+bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run tauri:dev
 ```
 
@@ -54,9 +56,12 @@ Do not recreate a generic `shared/utils/` folder or a second `Result` alias.
 `domain/error.rs` and `shared/constants.rs` remain small, explicit module roots.
 
 The npm entry points remain the supported shortcuts: `npm run dev`,
-`npm run build`, and `npm run build:node`. For direct invocation, use paths such
+`npm run build`, and `npm run tauri:build`. For direct invocation, use paths such
 as `bash scripts/dev/dev.sh help` or `bash scripts/build/build.sh --help`.
 Run the base-schema smoke check with `bash crates/lattice-desktop/scripts/test-migrations.sh`.
+After changing a `sqlx::query!` macro or the schema, refresh the offline query
+cache with `bash crates/lattice-desktop/scripts/update-sqlx-cache.sh` (needs
+`sqlx-cli`) and commit `crates/lattice-desktop/.sqlx/`.
 
 ## Architecture conventions
 
@@ -152,23 +157,35 @@ For all test layers, use `npm run test:all` after installing the desktop test
 prerequisites. It includes renderer coverage, all non-ignored Rust tests,
 Chromium/WebKit journeys and the isolated packaged desktop suite. See the
 [testing guide](e2e/README.md) for individual commands, coverage boundaries and
-failure artifacts. Use `npm run test:unit` for a non-interactive Vitest run.
+failure artifacts. Use `npm run test:unit` for a non-interactive Vitest run;
+CI runs `npm run test:coverage`, which also enforces the coverage floors.
+Cargo needs `dist/` (`npx vite build`) and the sidecar files to exist first.
 
 ```bash
 npm run type-check
 npm run type-check:e2e
 npm run lint
 npm run contracts:check
-npm run test:unit
+npm run test:coverage
+npm run learning:runtime:verify
 (cd crates/lattice-desktop && cargo fmt --all -- --check)
 (cd crates/lattice-desktop && cargo clippy --workspace --all-targets)
-(cd crates/lattice-desktop && cargo test --workspace --lib)
+npm run bindings:check
+npm run test:rust
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
 python3 scripts/check-sql-contracts.py
 python3 scripts/check-tauri-command-inventory.py
+python3 -m unittest scripts/test_tauri_command_inventory.py
+```
+
+If you change `evals/` or the eval scripts, run the eval-integrity checks:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_*rag_eval.py'
+python3 scripts/validate_rag_evals.py
 ```
 
 If you add a dependency or a route to the startup path, build the renderer
@@ -183,6 +200,7 @@ If an IPC contract changes, also run:
 
 ```bash
 npm run bindings:generate
+npm run bindings:check
 npm run contracts:check
 ```
 

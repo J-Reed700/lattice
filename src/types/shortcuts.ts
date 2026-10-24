@@ -1,10 +1,4 @@
-/**
- * Keyboard Shortcuts Type Definitions
- *
- * Purpose: Type definitions for the keyboard shortcuts system
- */
-
-export type KeyCombination = string; // e.g., "Mod+K", "Shift+Alt+N"
+export type KeyCombination = string;
 
 export interface KeyboardShortcut {
   id: string;

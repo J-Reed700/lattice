@@ -15,11 +15,6 @@ function useClient() {
   return useContext(QueryClientContext) ?? fallbackQueryClient;
 }
 
-/**
- * Settings → Sources: every source finder with its need, privacy line,
- * switch, gate and health, and which key services have a key stored. Health
- * moves as searches run, so it is read fresh whenever the tab opens.
- */
 export function useSourcesStatus() {
   const queryClient = useClient();
   return useQuery<SourcesStatusDto>(
@@ -36,16 +31,11 @@ export function useSourcesStatus() {
   );
 }
 
-/** Re-reads the status after a settings write re-registered the finders. */
 export function useRefreshSourcesStatus() {
   const queryClient = useClient();
   return () => queryClient.invalidateQueries({ queryKey: SOURCES_STATUS_QUERY_KEY });
 }
 
-/**
- * Saves or removes a source-finding key in the system keychain. Each answers
- * with the new status, which says only whether a key is stored.
- */
 export function useSourceKeyMutations() {
   const queryClient = useClient();
   const settle = (status: SourcesStatusDto) =>

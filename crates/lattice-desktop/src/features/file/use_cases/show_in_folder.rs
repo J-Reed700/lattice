@@ -12,19 +12,7 @@ use std::sync::Arc;
 ///
 /// This use case:
 /// 1. Validates the file path (security: CWE-22)
-/// 2. Checks file existence
-/// 3. Opens the file manager with the file highlighted
-///
-/// # Platform Behavior
-///
-/// - **Windows**: Opens Explorer with file selected
-/// - **macOS**: Opens Finder with file selected
-/// - **Linux**: Opens file manager (directory only, selection not guaranteed)
-///
-/// # Security
-///
-/// - Path validation prevents directory traversal (CWE-22)
-/// - Uses secure system commands via FileSystemPort (prevents CWE-78)
+/// Opens the system file manager with the file selected.
 pub struct ShowInFolderUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,
@@ -45,21 +33,7 @@ impl ShowInFolderUseCase {
         }
     }
 
-    /// Execute the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path to reveal
-    ///
-    /// # Returns
-    ///
-    /// Success DTO if file was revealed successfully.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::NotFound` if file does not exist
-    /// - `AppError::InvalidInput` if path is invalid
-    /// - `AppError::Io` if file manager cannot be opened
+    /// Execute the use case to reveal a file in the system file manager.
     pub async fn execute(
         &self,
         request: ShowInFolderRequestDto,

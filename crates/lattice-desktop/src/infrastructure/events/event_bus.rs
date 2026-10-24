@@ -81,10 +81,8 @@ impl<T: Clone> EventBus<T> {
     /// fresh `event_enqueued` tracing span. Publisher code does not
     /// need to know about envelopes or spans.
     ///
-    /// # Returns
-    ///
-    /// - `Ok(usize)` — number of receivers that received the event.
-    /// - `Err(SendError)` — no active receivers.
+    /// # Errors
+    /// Returns `Err(SendError)` if there are no active receivers.
     pub fn publish(&self, event: T) -> Result<usize, broadcast::error::SendError<T>> {
         // info_span! parents under whatever span is current in the
         // publisher's task — typically a #[tracing::instrument]

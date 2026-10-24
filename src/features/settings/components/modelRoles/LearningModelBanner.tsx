@@ -1,12 +1,3 @@
-/**
- * LearningModelBanner
- *
- * The line above the roles grid that says when learning work cannot run:
- * no Learning model is set, or the one set cannot be used any more. Learning
- * never borrows the chat model by itself, so the fix is offered as one
- * explicit click, and the saved setting is never cleared for the user.
- */
-
 import { TriangleAlert } from 'lucide-react';
 
 import { useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';

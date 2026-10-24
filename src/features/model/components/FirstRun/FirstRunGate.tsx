@@ -1,12 +1,3 @@
-/**
- * Decides whether the first-run model bundle is offered.
- *
- * Two questions, two sources: "has the user already dismissed this?" comes
- * from the settings repository, "does this machine still need models?" from
- * the backend's own check. The status call only runs when the first answer is
- * no, so a returning user never pays for it.
- */
-
 import { useEffect, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
@@ -18,9 +9,6 @@ import { ModelSetupModal } from './ModelSetupModal';
 
 export function FirstRunGate() {
   const { dismissed, isPending, dismiss } = useFirstRunDismissal();
-  // `undefined` means the settings read hasn't landed (or failed). Staying
-  // quiet is the right failure mode — the catalog is in Settings either way,
-  // and so is a failed status check.
   const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: !isPending && dismissed === false });
   const statusError = statusQuery.error;
   useEffect(() => {

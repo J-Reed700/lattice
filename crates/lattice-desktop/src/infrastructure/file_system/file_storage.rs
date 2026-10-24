@@ -60,28 +60,12 @@ use tokio::fs;
 /// # Thread Safety
 ///
 /// All operations are async and use Tokio's thread-safe file I/O.
-///
-/// # Performance
-///
-/// - Read: ~50-500 MB/s depending on disk
-/// - Write: ~50-500 MB/s with atomic guarantees
-/// - Hash: ~100-500 MB/s using SHA-256
 pub struct SecureFileStorage {
     // Future: Add allowed_paths for path validation
 }
 
 impl SecureFileStorage {
     /// Create a new secure file storage instance.
-    ///
-    /// # Returns
-    ///
-    /// A new `SecureFileStorage` instance.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let storage = SecureFileStorage::new();
-    /// ```
     pub fn new() -> Self {
         Self {}
     }

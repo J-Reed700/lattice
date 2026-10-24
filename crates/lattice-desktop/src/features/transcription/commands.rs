@@ -19,11 +19,7 @@ use crate::interfaces::di::Container;
 use lattice_core::shared::error::{AppError, Result};
 
 /// Transcribes an audio file on-device and returns timestamped segments.
-///
-/// # Security
-///
-/// - **Path Validation (CWE-22)**: the path is confined to the configured
-///   file-access roots before anything is opened.
+/// Confines path to configured file-access roots (CWE-22) before opening.
 pub async fn transcribe_file_impl(container: &Container, path: &str) -> Result<TranscriptDto> {
     let validated_path: PathBuf = container
         .file_access_config()

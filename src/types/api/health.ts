@@ -1,10 +1,3 @@
-/**
- * Health Check API Types
- *
- * Type definitions for system health monitoring.
- * These types match the Rust backend structures from commands/health.rs
- */
-
 export type HealthStatus = import('../../lib/bindings').HealthStatus;
 
 export interface ComponentHealth {

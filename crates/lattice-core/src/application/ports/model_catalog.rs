@@ -1,31 +1,3 @@
-//! # External model catalog port
-//!
-//! Port for accessing external model catalogs (e.g., Hugging Face).
-//!
-//! ## Purpose
-//!
-//! Provides an abstraction for querying external model repositories
-//! to dynamically discover models beyond the curated catalog.
-//!
-//! ## Implementations
-//!
-//! - **Production**: HTTP client to Hugging Face API
-//! - **Mock**: Configurable mock for testing
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use crate::application::ports::ModelCatalogPort;
-//!
-//! async fn search_models(catalog: &dyn ModelCatalogPort) -> Result<()> {
-//!     let models = catalog.search_models("llama", 10).await?;
-//!     for model in models {
-//!         println!("{}: {}", model.id, model.name);
-//!     }
-//!     Ok(())
-//! }
-//! ```
-
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -214,15 +186,6 @@ impl ExternalModelMetadata {
     }
 
     /// Map external metadata to domain ModelMetadata.
-    ///
-    /// This performs inference and estimation:
-    /// - Category: Inferred from tags
-    /// - Size: Estimated from model name or defaults
-    /// - RAM requirements: Heuristic based on estimated size
-    /// - Quantization: Extracted from model ID/tags
-    ///
-    /// # Returns
-    /// Domain ModelMetadata or error if mapping fails.
     pub fn to_domain_model(&self) -> Result<ModelMetadata, AppError> {
         // Infer category from tags
         let category = self.infer_category()?;
@@ -574,30 +537,12 @@ pub trait ModelCatalogPort: Send + Sync {
         Ok(self.get_model_by_id(model_id).await?.into_iter().collect())
     }
 
-    /// Search for models by query.
-    ///
-    /// # Arguments
-    /// - `query` - Search query (model name, keywords)
-    /// - `limit` - Maximum number of results
-    ///
-    /// # Returns
-    /// - `Ok(Vec<ExternalModelMetadata>)` - List of matching models
-    /// - `Err(AppError)` - Network error, API error, or parsing error
     async fn search_models(
         &self,
         query: &str,
         limit: usize,
     ) -> Result<Vec<ExternalModelMetadata>, AppError>;
 
-    /// Get model by ID.
-    ///
-    /// # Arguments
-    /// - `model_id` - Model identifier (e.g., "meta-llama/Llama-3.2-7B")
-    ///
-    /// # Returns
-    /// - `Ok(Some(ExternalModelMetadata))` - Model found
-    /// - `Ok(None)` - Model not found
-    /// - `Err(AppError)` - Network error or API error
     async fn get_model_by_id(
         &self,
         model_id: &str,

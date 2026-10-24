@@ -23,7 +23,7 @@ function startOfDay(date: Date): Date {
  * Small calendar popover anchored to an icon in the sidebar top rail.
  * Dates with at least one entry are marked; clicking jumps to the first
  * entry from that date.
- * Spec §7.
+ * Spec 
  */
 export function JournalCalendarPopover({ entries, onJumpToEntry }: JournalCalendarPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);

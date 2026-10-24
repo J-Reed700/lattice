@@ -2,22 +2,6 @@ import { forwardRef, type InputHTMLAttributes } from 'react';
 
 import { Check } from 'lucide-react';
 
-/**
- * Checkbox
- *
- * Purpose: Multi-select control for toggling individual options
- *
- * Features:
- * - Custom styled checkbox with smooth transitions
- * - Label and description support
- * - Indeterminate state support
- * - Error state handling
- * - Dark mode support
- *
- * States: default, hover, focus, checked, indeterminate, disabled
- * Accessibility: WCAG AA, keyboard navigation, proper labels
- */
-
 interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
   description?: string;

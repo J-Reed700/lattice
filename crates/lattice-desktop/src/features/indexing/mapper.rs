@@ -1,9 +1,6 @@
-//! # Indexing Mapper
+//! Indexing Mapper
 //!
 //! Converts between domain indexing models and DTOs.
-//!
-//! This mapper handles conversion between:
-//! - `ChunkingStrategy` (domain) ↔ `ChunkingStrategyDto` (DTO)
 
 use crate::features::indexing::dto::ChunkingStrategyDto;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
@@ -13,14 +10,6 @@ pub struct IndexingMapper;
 
 impl IndexingMapper {
     /// Convert ChunkingStrategyDto to domain.
-    ///
-    /// # Arguments
-    ///
-    /// * `dto` - DTO chunking strategy
-    ///
-    /// # Returns
-    ///
-    /// Domain ChunkingStrategy value object
     pub fn chunking_strategy_to_domain(dto: ChunkingStrategyDto) -> ChunkingStrategy {
         match dto {
             ChunkingStrategyDto::FixedSize { size } => ChunkingStrategy::FixedSize { size },
@@ -39,14 +28,6 @@ impl IndexingMapper {
     }
 
     /// Convert domain ChunkingStrategy to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `strategy` - Domain chunking strategy
-    ///
-    /// # Returns
-    ///
-    /// DTO representation of chunking strategy
     pub fn chunking_strategy_to_dto(strategy: ChunkingStrategy) -> ChunkingStrategyDto {
         match strategy {
             ChunkingStrategy::FixedSize { size } => ChunkingStrategyDto::FixedSize { size },

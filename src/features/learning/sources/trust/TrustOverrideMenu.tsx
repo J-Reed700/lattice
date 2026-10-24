@@ -26,7 +26,7 @@ import type {
 
 type Scope = 'source' | 'site' | 'site_subject';
 
-const FIELD = 'mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-text-primary';
+const FIELD = 'mt-1 w-full rounded-lg border border-border-default bg-surface px-2.5 py-2 text-xs text-text-primary focus:border-accent focus:outline-hidden';
 
 export function scopeOf(entry: LearningTrustOverrideDto): LearningTrustOverrideScopeDto {
   if (entry.scope === 'source') return { scope: 'source', programId: entry.programId, sourceId: entry.sourceId };
@@ -39,7 +39,7 @@ function unique(values: string[]) {
 }
 
 /**
- * Overrides for one source (§19, decision 4): this source in this course
+ * Overrides for one source , decision 4): this source in this course
  * (any level), its site everywhere (a standing only, never primary), or its
  * site for chosen subject classes (any level, primary included). Before
  * applying, it says how many waiting claims the change sends back to be
@@ -147,12 +147,12 @@ export function TrustOverrideMenu({
         aria-expanded={open}
         aria-controls={`${id}-menu`}
         onClick={() => (open ? close() : setOpen(true))}
-        className="inline-flex min-h-8 items-center gap-1 rounded-full border border-border px-3 font-medium text-text-primary hover:border-accent/50"
+        className="inline-flex min-h-8 items-center gap-1 rounded-full border border-border-default bg-surface px-3 font-medium text-text-primary hover:border-accent/50"
       >
         Change trust… <ChevronDown size={13} aria-hidden="true" className={open ? 'rotate-180' : ''} />
       </button>
       {open && (
-        <form id={`${id}-menu`} aria-label={`Trust for ${sourceTitle}`} onSubmit={(event) => void apply(event)} className="mt-2 space-y-3 rounded-xl border border-border bg-background p-3">
+        <form id={`${id}-menu`} aria-label={`Trust for ${sourceTitle}`} onSubmit={(event) => void apply(event)} className="mt-2 space-y-3 rounded-xl border border-border-default bg-surface-sunken/40 p-3">
           {entry.overrides.length > 0 && (
             <section aria-label="Overrides in force">
               <h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">In force</h4>
@@ -214,11 +214,11 @@ export function TrustOverrideMenu({
           {impact
             ? <p role="status">{impactLine(impact, scope === 'source' ? 'source' : 'site')}</p>
             : fetched.isFetching && <p role="status" className="text-text-muted">Counting the claims this would re-decide…</p>}
-          {error && <p role="alert" className="text-rose-700">{error}</p>}
+          {error && <p role="alert" className="text-danger-fg">{error}</p>}
           {done && <p role="status" className="text-text-primary">{done}</p>}
           <div className="flex flex-wrap gap-2">
             <button type="submit" disabled={busy} className="min-h-8 rounded-full bg-accent px-3 font-semibold text-accent-fg disabled:opacity-50">{busy ? 'Saving…' : applyLabel}</button>
-            <button type="button" onClick={close} className="min-h-8 rounded-full border border-border px-3 text-text-primary">Close</button>
+            <button type="button" onClick={close} className="min-h-8 rounded-full border border-border-default bg-surface px-3 text-text-primary hover:bg-surface-sunken">Close</button>
           </div>
         </form>
       )}

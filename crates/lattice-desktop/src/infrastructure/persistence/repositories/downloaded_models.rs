@@ -33,11 +33,7 @@ impl DownloadedModelRepository {
         Self { pool }
     }
 
-    /// Save a downloaded model (insert or update)
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - The downloaded model to save
+    /// Save a downloaded model (insert or update).
     ///
     /// # Business Logic
     ///
@@ -230,14 +226,6 @@ impl DownloadedModelRepository {
     }
 
     /// Find a downloaded model by its record ID
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The unique record ID
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if found, None otherwise
     pub async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.id = ?1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
@@ -256,14 +244,6 @@ impl DownloadedModelRepository {
     }
 
     /// Find a downloaded model by its model_id
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The unique model identifier
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if found, None otherwise
     pub async fn find_by_model_id(&self, model_id: &str) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.model_id = ?1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
@@ -281,11 +261,7 @@ impl DownloadedModelRepository {
         }
     }
 
-    /// List all downloaded models
-    ///
-    /// # Returns
-    ///
-    /// Vector of all downloaded models, ordered by download date (newest first)
+    /// List all downloaded models, ordered by download date (newest first).
     pub async fn list_all(&self) -> Result<Vec<DownloadedModel>> {
         let query = build_model_select_query(
             "WHERE m.status = 'completed' ORDER BY m.downloaded_at DESC, m.created_at DESC",
@@ -318,23 +294,10 @@ impl DownloadedModelRepository {
         Ok(models)
     }
 
-    /// Atomically deletes a model ONLY if it is NOT active
+    /// Atomically deletes a model ONLY if it is NOT active.
     ///
-    /// # Arguments
-    ///
-    /// * `id` - The unique model_id (NOT record ID)
-    ///
-    /// # Returns
-    ///
-    /// - Ok(DownloadedModel) if model was deleted (was not active)
-    /// - Err(NotFound) if model doesn't exist
-    /// - Err(InvalidInput) if model is currently active (chat or embedding)
-    ///
-    /// # Security
-    ///
-    /// This method fixes CWE-367 (TOCTOU race condition) by using a single
-    /// atomic DELETE query with WHERE guard. The check and deletion happen
-    /// in one database operation, eliminating the race window.
+    /// Fixes CWE-367 (TOCTOU race condition) by using a single atomic DELETE query
+    /// with WHERE guard (`is_active_for_chat = 0 AND is_active_for_embedding = 0`).
     ///
     /// # Business Logic
     ///
@@ -406,14 +369,6 @@ impl DownloadedModelRepository {
     }
 
     /// Check if model exists by id (primary key) (helper for error handling)
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The unique record ID to check
-    ///
-    /// # Returns
-    ///
-    /// true if model exists, false otherwise
     async fn exists_by_id(&self, id: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
             .bind(id)
@@ -427,20 +382,9 @@ impl DownloadedModelRepository {
         Ok(count > 0)
     }
 
-    /// Delete a downloaded model by ID
+    /// Delete a downloaded model by ID.
     ///
-    /// # Arguments
-    ///
-    /// * `id` - The unique record ID
-    ///
-    /// # Business Logic
-    ///
-    /// - Removes the record from database
-    /// - Does NOT delete the file from filesystem (caller's responsibility)
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) if deleted or if ID doesn't exist
+    /// Removes the record from database (does NOT delete files from filesystem).
     pub async fn delete_by_id(&self, id: &str) -> Result<()> {
         sqlx::query!(
             r#"
@@ -461,14 +405,6 @@ impl DownloadedModelRepository {
     }
 
     /// Check if a model is already downloaded
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model identifier to check
-    ///
-    /// # Returns
-    ///
-    /// true if model exists in database, false otherwise
     pub async fn is_downloaded(&self, model_id: &str) -> Result<bool> {
         let model_status = sqlx::query_scalar::<_, String>(
             "SELECT status FROM models WHERE model_id = ?1 LIMIT 1",

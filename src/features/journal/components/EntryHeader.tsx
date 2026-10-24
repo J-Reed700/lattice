@@ -43,7 +43,7 @@ function formatRelativeEdit(iso: string): string {
  * Page header: one quiet line of facts, then the title — which is the page's
  * name and is edited right here. Every page is the same kind of thing, so every
  * page gets the same header; an unnamed one simply reads "Untitled page".
- * Spec §5.2.
+ * Spec 
  */
 export function EntryHeader({
   date,

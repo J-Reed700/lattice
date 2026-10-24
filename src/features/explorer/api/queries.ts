@@ -19,7 +19,6 @@ import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
 
-/** The job kind of a folder index build; its activity is a `FolderIndexStatusDto`. */
 export const FOLDER_INDEX_JOB = 'explorer.folder_index';
 const FOLDER_INDEX_JOBS = [FOLDER_INDEX_JOB] as const;
 
@@ -36,25 +35,15 @@ export const explorerFoldersQueryOptions = () =>
     staleTime: 15_000,
   });
 
-/** "Your folders": pinned first, then the most recently opened. */
 export function useExplorerFoldersQuery() {
   return useQuery(explorerFoldersQueryOptions());
 }
 
-/** Canonicalises a folder the user picked; it must be an existing directory. */
 export const resolveExplorerRoot = (path: string) => VaultAPI.explorerResolveRoot(path);
 
-/**
- * Binds a conversation to a folder and files it in the folder's space. The
- * caller updates the conversation's cached detail and lists.
- */
 export const bindThreadToFolder = (conversationId: string, root: string) =>
   VaultAPI.setConversationExplorerRoot(conversationId, root);
 
-/**
- * The folders list's writes. Each refreshes the list; the ones that move or
- * delete threads refresh the conversation lists too.
- */
 export function useExplorerFolderMutations() {
   const client = useQueryClient();
   const refreshFolders = () => client.invalidateQueries({ queryKey: explorerKeys.folders });
@@ -66,7 +55,6 @@ export function useExplorerFolderMutations() {
   const setPinned = useMutation({
     mutationFn: async ({ root, pinned }: { root: string; pinned: boolean }) =>
       unwrapApiResult(await VaultAPI.explorerFolderSetPinned(root, pinned)),
-    // Moves at once; the refresh confirms it.
     onMutate: ({ root, pinned }) => {
       client.setQueryData<ExplorerFolderListDto>(explorerKeys.folders, (list) => list && {
         ...list,
@@ -79,7 +67,6 @@ export function useExplorerFolderMutations() {
     mutationFn: async ({ root, instructions, spaceId }: { root: string; instructions: string; spaceId: string }) =>
       unwrapApiResult(await VaultAPI.explorerFolderSetSettings(root, instructions, spaceId)),
     onSuccess: async (moved) => {
-      // Moved threads change space in the Chat sidebar and the thread bar.
       if (moved > 0) await client.invalidateQueries({ queryKey: conversationKeys.all });
       await refreshFolders();
     },
@@ -111,7 +98,6 @@ export function useExplorerFolderMutations() {
           folders: list.folders.map((folder) => (folder.root === root ? { ...folder, lastThreadId: conversationId } : folder)),
         });
       } else {
-        // Remembering a thread lists a folder that was not listed yet.
         await refreshFolders();
       }
     },
@@ -119,49 +105,30 @@ export function useExplorerFolderMutations() {
   return { rename, setPinned, setSettings, deleteIndex, remove, setLastThread };
 }
 
-/** Pinned first, then the most recently opened: the backend's order. */
 export function sortFolders<T extends { root: string; pinned: boolean; lastOpenedAt: string }>(folders: T[]): T[] {
   return [...folders].sort(
     (a, b) => Number(b.pinned) - Number(a.pinned) || b.lastOpenedAt.localeCompare(a.lastOpenedAt) || a.root.localeCompare(b.root)
   );
 }
 
-/** The status a folder build last saved, when it is running or has ended with one. */
 export function buildStatus(job: JobDto): FolderIndexStatus | null {
   if (job.kind !== FOLDER_INDEX_JOB || job.status === 'pending' || job.status === 'cancelled') return null;
   const status = job.activity as FolderIndexStatus | null;
   return status && typeof status.root === 'string' ? status : null;
 }
 
-/** The folder a build walks, whatever its state. */
 function buildRoot(job: JobDto): string | null {
   const root = (job.activity as { root?: unknown } | null)?.root;
   return typeof root === 'string' ? root : null;
 }
 
-/**
- * Carries the open folder's `FolderIndexStatusDto` when the watcher's updates
- * move it, after its build is done. Builds report through their jobs.
- */
 export const FOLDER_CHANGED_EVENT = 'explorer://folder-changed';
 
-/**
- * Puts a watcher update into the cache: the folder's status, and the folders
- * list, whose counts it changed.
- */
 export function applyFolderChange(client: QueryClient, status: FolderIndexStatus): void {
   client.setQueryData(explorerKeys.indexStatus(status.root), status);
   void client.invalidateQueries({ queryKey: explorerKeys.folders });
 }
 
-/**
- * Puts the folder builds' statuses into the cache, one entry per folder: the
- * builds running when the page mounts, then each change the jobs report. A
- * build that is waiting its turn or was cancelled drops its entry, so the
- * folder shows what its index on disk holds. The open folder's watcher
- * updates arrive on their own event. Mounted once, by the Explorer page;
- * everything that shows a status reads the cache.
- */
 export function useExplorerIndexStatusEvents(): void {
   const client = useQueryClient();
   const builds = useJobs(FOLDER_INDEX_JOBS);
@@ -194,18 +161,15 @@ export function useExplorerIndexStatusEvents(): void {
 const statusQuery = (root: string) =>
   queryOptions<FolderIndexStatus>({
     queryKey: explorerKeys.indexStatus(root),
-    // Written by events and index commands, never fetched.
     queryFn: skipToken,
     staleTime: Infinity,
   });
 
-/** A folder's index status as the backend last reported it; `null` until it has. */
 export function useExplorerIndexStatus(root: string | null): FolderIndexStatus | null {
   const { data } = useQuery(statusQuery(root ?? ''));
   return root ? data ?? null : null;
 }
 
-/** The statuses reported for `roots` after `since` (ms); older ones are what a list read later already says. */
 export function useExplorerIndexStatuses(roots: readonly string[], since: number): ReadonlyMap<string, FolderIndexStatus> {
   const combine = useCallback(
     (results: Array<{ data?: FolderIndexStatus; dataUpdatedAt: number }>) => {
@@ -220,7 +184,6 @@ export function useExplorerIndexStatuses(roots: readonly string[], since: number
   return useQueries({ queries: roots.map((root) => statusQuery(root)), combine });
 }
 
-/** A command that failed outright, shown the way a failed run is. */
 function failedIndex(root: string, message: string): FolderIndexStatus {
   return {
     root,
@@ -236,11 +199,6 @@ function failedIndex(root: string, message: string): FolderIndexStatus {
   };
 }
 
-/**
- * Runs an index command and caches its result, unless a status arrived while
- * it ran: that one is newer than the command's snapshot, and a small folder
- * can finish indexing before the command's reply is back.
- */
 async function runIndexCommand(
   client: QueryClient,
   command: () => Promise<ApiResult<FolderIndexStatus>>,
@@ -255,16 +213,13 @@ async function runIndexCommand(
   else if ((client.getQueryState(key)?.dataUpdateCount ?? 0) === before) client.setQueryData(key, result.data);
 }
 
-/** Opening, rebuilding and closing the open folder's index; results land in the status cache. */
 export function useExplorerIndexCommands() {
   const client = useQueryClient();
   return useMemo(() => ({
-    /** Opens the folder's index and starts or resumes indexing; the folder joins the list. */
     open: async (root: string, stillWanted: () => boolean = () => true) => {
       await runIndexCommand(client, () => VaultAPI.explorerIndexOpen(root), root, stillWanted);
       void client.invalidateQueries({ queryKey: explorerKeys.folders });
     },
-    /** Wipes the index and builds it again; `retry` resumes a failed one instead. */
     rebuild: (root: string, retry: boolean) =>
       runIndexCommand(
         client,
@@ -272,27 +227,18 @@ export function useExplorerIndexCommands() {
         root,
         () => true
       ),
-    /** Closes the open folder's index, waiting for the batch in flight and a save. */
     close: async (root: string | null) => {
       await VaultAPI.explorerIndexClose();
-      // A closed index reports nothing more; the folders list reads it from disk.
       if (root) client.removeQueries({ queryKey: explorerKeys.indexStatus(root), exact: true });
       void client.invalidateQueries({ queryKey: explorerKeys.folders });
     },
   }), [client]);
 }
 
-/**
- * Files read once stay in memory for half an hour, so a link back to one
- * opens it at once. A file older than a minute (or any, when the window
- * regains focus) is read again behind what is shown, so edits made in
- * another editor still come through.
- */
 const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
 
 export const explorerDirKey = (root: string, path: string) => ['explorer', 'dir', root, path] as const;
 
-/** One listing per directory in `dirs`, in the same order. Only open directories are read. */
 export function useExplorerDirListings(root: string, dirs: readonly string[]) {
   return useQueries({
     queries: dirs.map((path) => ({
@@ -303,7 +249,6 @@ export function useExplorerDirListings(root: string, dirs: readonly string[]) {
   });
 }
 
-/** The open file's text, or why it is not shown; idle until a file is open. */
 export function useExplorerFileQuery(root: string, path: string | null) {
   return useQuery({
     queryKey: ['explorer', 'file', root, path],
@@ -313,10 +258,6 @@ export function useExplorerFileQuery(root: string, path: string | null) {
   });
 }
 
-/**
- * Files in the folder that a missing path may have meant. `exists` says the
- * path itself came back: the file is there but would not read.
- */
 export function useExplorerLocateQuery(root: string, path: string) {
   return useQuery({
     queryKey: ['explorer', 'locate', root, path],
@@ -328,7 +269,6 @@ export function useExplorerLocateQuery(root: string, path: string) {
   });
 }
 
-/** Text matches in the folder; idle until `enabled`. */
 export function useExplorerSearchQuery(root: string, query: string, enabled: boolean) {
   return useQuery({
     queryKey: ['explorer', 'search', root, query],

@@ -1,21 +1,6 @@
 //! Delete Mention Use Case
 //!
 //! Deletes an existing mention and all its document associations.
-//!
-//! # Dependencies
-//! - `MentionRepositoryPort` - Mention persistence
-//!
-//! # Security
-//! - Validates mention ID exists
-//! - Rate limited to prevent abuse
-//! - Cascades deletion to document_mentions (handled by repository)
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DeleteMentionUseCase::new(mention_repo);
-//! use_case.execute("mention-123".into()).await?;
-//! println!("Mention deleted successfully");
-//! ```
 
 use lattice_core::application::ports::MentionRepositoryPort;
 use lattice_core::shared::error::AppError;
@@ -32,24 +17,8 @@ impl DeleteMentionUseCase {
 
     /// Delete a mention and all its document associations.
     ///
-    /// # Arguments
-    ///
-    /// * `id` - ID of the mention to delete
-    ///
-    /// # Returns
-    ///
-    /// Unit result indicating successful deletion.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if mention ID is empty
-    /// - `AppError::Database` if deletion fails
-    ///
-    /// # Notes
-    ///
     /// This operation cascades to delete all document_mentions entries
-    /// that reference this mention. The mention will be permanently removed
-    /// from the database.
+    /// that reference this mention.
     pub async fn execute(&self, id: String) -> Result<(), AppError> {
         if id.trim().is_empty() {
             return Err(AppError::InvalidInput(

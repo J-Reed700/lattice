@@ -1,39 +1,9 @@
-//! Context Window Builder Service
-//!
-//! Builds context arrays from conversation history with token-aware truncation.
-//!
-//! # Architecture
-//!
-//! The service is split into small, composable operations:
-//! - **Self-contained**: All logic for context building is here
-//! - **Token-aware**: Respects model token limits (75% for context, 25% for generation)
-//! - **Chronological**: Returns messages in oldest-to-newest order
-//!
-//! # Usage
-//!
-//! Token-aware truncation:
-//! ```rust,no_run
-//! use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
-//! use lattice_core::application::ports::ConversationHistoryPort;
-//! use std::sync::Arc;
-//!
-//! # async fn example(conversation_history: Arc<dyn ConversationHistoryPort>) -> Result<(), Box<dyn std::error::Error>> {
-//! let token_counter = Arc::new(|text: &str| text.split_whitespace().count());
-//! let builder = ContextWindowBuilder::new(conversation_history, 100_000, token_counter);
-//!
-//! let context = builder.build("conversation_id").await?;
-//! # Ok(())
-//! # }
-//! ```
-
 use crate::application::ports::ConversationHistoryPort;
 use crate::domain::conversation::MessageRole;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 
-/// Context window builder for conversation history
-///
-/// Builds context arrays from conversation messages with token-aware truncation.
+/// Context window builder for conversation history.
 /// Reserves 75% of model's max tokens for context, leaving 25% for generation.
 pub struct ContextWindowBuilder {
     conversation_history: Arc<dyn ConversationHistoryPort>,
@@ -42,26 +12,6 @@ pub struct ContextWindowBuilder {
 }
 
 impl ContextWindowBuilder {
-    /// Create a context window builder.
-    ///
-    /// Automatically reserves 75% of model's max tokens for context,
-    /// leaving 25% for generation.
-    ///
-    /// # Arguments
-    ///
-    /// * `conversation_history` - Port for accessing conversation data
-    /// * `max_tokens` - Maximum token budget from the model
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
-    /// # use std::sync::Arc;
-    /// # async fn example(conversation_history: Arc<dyn lattice_core::application::ports::ConversationHistoryPort>) {
-    /// let token_counter = Arc::new(|text: &str| text.split_whitespace().count());
-    /// let builder = ContextWindowBuilder::new(conversation_history, 100_000, token_counter);
-    /// # }
-    /// ```
     pub fn new(
         conversation_history: Arc<dyn ConversationHistoryPort>,
         max_tokens: usize,
@@ -75,37 +25,7 @@ impl ContextWindowBuilder {
         }
     }
 
-    /// Build context array from conversation history
-    ///
-    /// The newest completed messages are retained until the model's context
-    /// budget is full, then restored to chronological order.
-    ///
-    /// Returns messages formatted as: ["User: ...", "Assistant: ...", ...]
-    /// Ordered chronologically (oldest first).
-    ///
-    /// # Arguments
-    ///
-    /// * `conversation_id` - ID of conversation to build context from
-    ///
-    /// # Returns
-    ///
-    /// Vector of formatted messages in chronological order
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::NotFound` if conversation doesn't exist
-    /// - `AppError::Database` if database query fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::services::context_window_builder::ContextWindowBuilder;
-    /// # async fn example(builder: ContextWindowBuilder) -> Result<(), Box<dyn std::error::Error>> {
-    /// let context = builder.build("conversation_id").await?;
-    /// assert!(!context.is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Build context array from conversation history in chronological order.
     pub async fn build(&self, conversation_id: &str) -> Result<Vec<String>> {
         self.build_without_summary(conversation_id).await
     }
@@ -191,26 +111,7 @@ impl ContextWindowBuilder {
     }
 }
 
-/// Estimate token count for text
-///
-/// Uses rough heuristic: ~1.3 tokens per word for English.
-/// This is a conservative estimate that works well for most models.
-///
-/// # Arguments
-///
-/// * `text` - Text to estimate tokens for
-///
-/// # Returns
-///
-/// Estimated token count
-///
-/// # Example
-///
-/// ```
-/// # use lattice_core::application::services::context_window_builder::estimate_tokens;
-/// assert_eq!(estimate_tokens("hello world"), 2);
-/// assert_eq!(estimate_tokens("the quick brown fox"), 5);
-/// ```
+/// Estimate token count for text using a rough heuristic (~1.3 tokens per word).
 pub fn estimate_tokens(text: &str) -> usize {
     let words = text.split_whitespace().count();
     (words as f32 * 1.3) as usize

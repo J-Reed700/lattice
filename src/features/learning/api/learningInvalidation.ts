@@ -11,7 +11,6 @@ export async function invalidateLearningSourceDependents(client: QueryClient, pr
     learningPlanKey(programId),
     learningLessonEvidencePrefix(programId),
     learningOutlineEvidencePrefix(programId),
-    // Deleting a source reopens the claims it resolved (§5.3).
     learningClaimReviewPrefix(programId),
     ['learning-source-version', programId],
     ['learning-source-search', programId],

@@ -1,32 +1,4 @@
-//! HyDE Generator Service
-//!
-//! Generates hypothetical document embeddings (HyDE) for query expansion.
-//! Uses LLM to rewrite questions into retrieval-oriented intent expansions
-//! that semantically match what relevant documents would contain.
-//!
-//! ## Purpose
-//!
-//! - For greetings: Fast-path with no LLM call
-//! - For questions: Generate hypothetical document via LLM
-//! - For commands: Generate expanded command interpretation
-//!
-//! ## Architecture
-//!
-//! ```text
-//! QueryType + Query Text
-//!         ↓
-//!   HyDEGenerator
-//!         ↓
-//!   ┌─────┴─────┐
-//!   │           │
-//! Greeting   Question/Command
-//!   │           │
-//! Fast-path   LLM Call
-//!   │           │
-//!   └─────┬─────┘
-//!         ↓
-//! HyDEInterpretation
-//! ```
+//! HyDE generator service for query expansion using hypothetical document embeddings.
 
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use lattice_core::application::ports::LLMPort;

@@ -322,18 +322,6 @@ impl MockTagRepository {
     }
 
     /// Add a tag entity to the mock repository
-    ///
-    /// # Example
-    /// ```rust
-    /// use lattice_core::domain::entities::tag::Tag;
-    /// use lattice_core::shared::types::TagName;
-    /// use lattice::services::traits::MockTagRepository;
-    ///
-    /// let mock = MockTagRepository::new();
-    /// let name = TagName::new("rust".to_string()).unwrap();
-    /// let tag = Tag::new(name, "#ff5733".to_string());
-    /// mock.add_tag(tag);
-    /// ```
     pub fn add_tag(&self, tag: lattice_core::domain::entities::Tag) {
         let id = tag.id().as_str().to_string();
         let name_key = tag.name().as_str().to_lowercase();

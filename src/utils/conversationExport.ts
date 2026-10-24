@@ -1,15 +1,4 @@
-/**
- * Turning a conversation — or one answer, or one checked sentence — into
- * markdown someone can paste into a paper, a journal page or an email.
- *
- * An answer in Lattice is a checkable document: the claim, the passages behind
- * it and the verdict on each sentence. Carrying only the prose out would throw
- * away the part that makes it worth quoting, so every block written here keeps
- * the numbered sources and says what the verification found.
- *
- * Everything in this file is pure. The callers own the clipboard, the journal
- * and the toasts.
- */
+// Pure helpers to export conversations, answers, and claims to Markdown with citations and verification status.
 
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import {
@@ -22,13 +11,8 @@ import {
 import { createCitationMap } from '@/utils/citations';
 import { sanitizeFileName } from '@/utils/sanitize';
 
-/** How many ungrounded sentences a verification line names before it counts. */
 const MAX_NAMED_UNSUPPORTED = 3;
-
-/** Longest ungrounded sentence quoted inline before it is cut. */
 const MAX_UNSUPPORTED_CHARS = 140;
-
-/** What a conversation with no title of its own is called. */
 const UNTITLED_CONVERSATION = 'Untitled conversation';
 
 /** The shape this module needs from a conversation; anything else is ignored. */

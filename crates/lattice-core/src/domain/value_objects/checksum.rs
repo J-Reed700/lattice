@@ -1,63 +1,13 @@
-//! # Checksum Value Object
-//!
-//! Immutable checksum value object following DDD patterns.
-//!
-//! ## Pure Domain Model
-//!
-//! This value object contains only the checksum value and validation logic.
-//! **The actual computation of checksums is handled by the application layer.**
-//!
-//! Domain Layer Principle: Zero file I/O, zero external cryptography dependencies.
-//! For checksum computation, use `ChecksumFactory` from the application layer.
-
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
-/// File content checksum value object.
-///
-/// Provides content-based verification using checksums (typically SHA-256).
-///
-/// ## Invariants
-///
-/// - Checksum is a valid hex string
-/// - Checksum is non-empty
-/// - For SHA-256: exactly 64 hex characters
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::checksum::Checksum;
-///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create from existing hash
-/// let checksum = Checksum::new("a".repeat(64))?;
-/// println!("Checksum: {}", checksum.as_str());
-/// # Ok(())
-/// # }
-/// ```
+/// File content checksum value object (SHA-256 hex string).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Checksum(String);
 
 impl Checksum {
-    /// Create checksum from existing hash string (pure domain constructor).
-    ///
-    /// This is the primary pure domain constructor. For computing checksums from
-    /// files or content, use `ChecksumFactory` from the application layer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the hash string is empty or invalid format.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::checksum::Checksum;
-    ///
-    /// let hash = "a".repeat(64); // Valid SHA-256 length
-    /// let checksum = Checksum::new(hash)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
+    /// Create checksum from existing hash string with validation.
     pub fn new(hash: String) -> Result<Self> {
         if hash.is_empty() {
             return Err(AppError::InvalidInput("Checksum cannot be empty".into()));

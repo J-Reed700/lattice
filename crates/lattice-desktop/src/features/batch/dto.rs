@@ -1,13 +1,8 @@
-//! # Batch Operation DTOs
-//!
-//! Data Transfer Objects for starting and monitoring batch file and URL
-//! imports.
+//! Batch operation DTOs for file and URL imports.
 
 use serde::{Deserialize, Serialize};
 
 /// Request to start a batch file import job.
-///
-/// Accepts 1-100 file paths for batch processing.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartBatchFileImportRequestDto {
@@ -25,8 +20,6 @@ pub struct StartBatchFileImportRequestDto {
 }
 
 /// Response after starting a batch file import job.
-///
-/// Contains the job ID for status tracking.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartBatchFileImportResponseDto {
@@ -35,61 +28,30 @@ pub struct StartBatchFileImportResponseDto {
 }
 
 /// Request to start a batch URL import job.
-///
-/// Creates a batch job that processes multiple URLs concurrently.
-///
-/// # Example
-/// ```rust,no_run
-/// use lattice_core::application::dtos::batch_dto::{
-///     StartBatchUrlImportRequestDto, BatchImportOptionsDto
-/// };
-///
-/// let request = StartBatchUrlImportRequestDto {
-///     urls: vec![
-///         "https://example.com/article1".to_string(),
-///         "https://example.com/article2".to_string(),
-///     ],
-///     options: Some(BatchImportOptionsDto {
-///         extract_article: Some(true),
-///     }),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartBatchUrlImportRequestDto {
-    /// List of URLs to import (1-50 URLs)
+    /// List of URLs to import (1-50 URLs).
     pub urls: Vec<String>,
-
-    /// Optional import options
+    /// Optional import options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<BatchImportOptionsDto>,
 }
 
 /// Options for batch import operations.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
-///
-/// let options = BatchImportOptionsDto {
-///     extract_article: Some(true),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchImportOptionsDto {
-    /// Whether to extract article content (default: true)
+    /// Whether to extract article content (default: true).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract_article: Option<bool>,
 }
 
 /// Response from starting a batch URL import.
-///
-/// Contains the job ID for tracking progress.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartBatchUrlImportResponseDto {
-    /// Unique batch job ID for tracking
+    /// Unique batch job ID for tracking.
     pub job_id: String,
 }
 
@@ -97,41 +59,31 @@ pub struct StartBatchUrlImportResponseDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GetBatchJobStatusRequestDto {
-    /// The batch job ID to query
+    /// The batch job ID to query.
     pub job_id: String,
 }
 
 /// Full batch job status with all items.
-///
-/// Contains detailed status for the job and each item.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchJobStatusDto {
-    /// Unique batch job ID
+    /// Unique batch job ID.
     pub job_id: String,
-
-    /// Job type: "file_import" or "url_import"
+    /// Job type: "file_import" or "url_import".
     pub job_type: String,
-
-    /// Job status: "pending", "running", "completed", "cancelled"
+    /// Job status: "pending", "running", "completed", "cancelled".
     pub status: String,
-
-    /// Total number of items in the batch
+    /// Total number of items in the batch.
     pub total_items: i64,
-
-    /// Number of successfully completed items
+    /// Number of successfully completed items.
     pub completed_items: i64,
-
-    /// Number of failed items
+    /// Number of failed items.
     pub failed_items: i64,
-
-    /// Job creation timestamp (ISO 8601 string)
+    /// Job creation timestamp (ISO 8601 string).
     pub created_at: String,
-
     /// Job completion timestamp, when the job has finished.
     pub completed_at: Option<String>,
-
-    /// List of all batch items with their status
+    /// List of all batch items with their status.
     pub items: Vec<BatchJobItemDto>,
 }
 
@@ -139,16 +91,13 @@ pub struct BatchJobStatusDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchJobItemDto {
-    /// Unique item ID
+    /// Unique item ID.
     pub item_id: String,
-
-    /// Target URL or file path
+    /// Target URL or file path.
     pub target: String,
-
-    /// Item status: "pending", "processing", "completed", "failed", "cancelled"
+    /// Item status: "pending", "processing", "completed", "failed", "cancelled".
     pub status: String,
-
-    /// Error message if status is "failed"
+    /// Error message if status is "failed".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     /// Canonical document produced by this import, when available.
@@ -159,7 +108,7 @@ pub struct BatchJobItemDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelBatchJobRequestDto {
-    /// The batch job ID to cancel
+    /// The batch job ID to cancel.
     pub job_id: String,
 }
 
@@ -167,7 +116,7 @@ pub struct CancelBatchJobRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelBatchJobResponseDto {
-    /// Number of items that were cancelled
+    /// Number of items that were cancelled.
     pub cancelled_count: usize,
 }
 
@@ -175,11 +124,10 @@ pub struct CancelBatchJobResponseDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBatchJobsRequestDto {
-    /// Maximum number of jobs to return (default: 50, max: 100)
+    /// Maximum number of jobs to return (default: 50, max: 100).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
-
-    /// Number of jobs to skip (for pagination)
+    /// Number of jobs to skip (for pagination).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<i64>,
 }
@@ -188,35 +136,27 @@ pub struct ListBatchJobsRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBatchJobsResponseDto {
-    /// List of batch job summaries (newest first)
+    /// List of batch job summaries (newest first).
     pub jobs: Vec<BatchJobSummaryDto>,
 }
 
 /// Summary information for a batch job.
-///
-/// Lightweight representation for job history list.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchJobSummaryDto {
-    /// Unique batch job ID
+    /// Unique batch job ID.
     pub job_id: String,
-
-    /// Job type: "file_import" or "url_import"
+    /// Job type: "file_import" or "url_import".
     pub job_type: String,
-
-    /// Job status: "pending", "running", "completed", "cancelled"
+    /// Job status: "pending", "running", "completed", "cancelled".
     pub status: String,
-
-    /// Total number of items in the batch
+    /// Total number of items in the batch.
     pub total_items: i64,
-
-    /// Number of successfully completed items
+    /// Number of successfully completed items.
     pub completed_items: i64,
-
-    /// Number of failed items
+    /// Number of failed items.
     pub failed_items: i64,
-
-    /// Job creation timestamp (ISO 8601 string)
+    /// Job creation timestamp (ISO 8601 string).
     pub created_at: String,
 }
 
@@ -224,7 +164,7 @@ pub struct BatchJobSummaryDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteBatchJobResponseDto {
-    /// Whether the deletion was successful
+    /// Whether the deletion was successful.
     pub success: bool,
 }
 
@@ -234,8 +174,7 @@ pub struct DeleteBatchJobResponseDto {
 pub struct RetryFailedItemsResponseDto {
     /// The retry attempt to follow; it takes over the import's items.
     pub new_job_id: String,
-
-    /// Number of failed items being retried
+    /// Number of failed items being retried.
     pub retried_count: usize,
 }
 

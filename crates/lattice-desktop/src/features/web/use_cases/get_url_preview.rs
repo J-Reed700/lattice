@@ -1,4 +1,4 @@
-//! # Get URL Preview Use Case
+//! Get URL Preview Use Case
 //!
 //! Fetches URL metadata without indexing the content.
 //!
@@ -7,24 +7,6 @@
 //! 2. HTML fetching (HEAD + partial GET for efficiency)
 //! 3. Metadata extraction (Open Graph, Twitter Card, Schema.org)
 //! 4. Preview return (NO indexing)
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-//! use lattice_core::application::dtos::web_dto::GetUrlPreviewRequestDto;
-//!
-//! # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = GetUrlPreviewRequestDto {
-//!     url: "https://example.com/article".to_string(),
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Title: {}", response.title);
-//! println!("Description: {:?}", response.description);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -39,20 +21,12 @@ use lattice_core::shared::error::{AppError, Result};
 /// - Page title, description, image
 /// - Open Graph / Twitter Card metadata
 /// - Site information
-///
-/// ## Dependencies
-///
-/// - `WebCaptureServiceTrait`: Handles URL fetching and metadata extraction
 pub struct GetUrlPreviewUseCase {
     web_capture_service: Arc<dyn WebCaptureServiceTrait>,
 }
 
 impl GetUrlPreviewUseCase {
     /// Create a new get URL preview use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `web_capture_service` - Service for URL preview and metadata extraction
     pub fn new(web_capture_service: Arc<dyn WebCaptureServiceTrait>) -> Self {
         Self {
             web_capture_service,
@@ -61,47 +35,12 @@ impl GetUrlPreviewUseCase {
 
     /// Execute URL preview.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the URL to preview
-    ///
-    /// # Returns
-    ///
-    /// Preview with URL metadata (title, description, image, site name)
-    ///
     /// # Errors
-    ///
     /// Returns error if:
     /// - URL is invalid (not HTTP/HTTPS)
     /// - Network request fails
     /// - HTML parsing fails
     /// - Metadata extraction fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-    /// # use lattice_core::application::dtos::web_dto::GetUrlPreviewRequestDto;
-    /// # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = GetUrlPreviewRequestDto {
-    ///     url: "https://blog.example.com/article".to_string(),
-    /// };
-    ///
-    /// match use_case.execute(request).await {
-    ///     Ok(preview) => {
-    ///         println!("Title: {}", preview.title);
-    ///         if let Some(desc) = preview.description {
-    ///             println!("Description: {}", desc);
-    ///         }
-    ///         if let Some(img) = preview.image {
-    ///             println!("Image: {}", img);
-    ///         }
-    ///     }
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(&self, request: GetUrlPreviewRequestDto) -> Result<UrlPreviewDto> {
         // 1. Validate URL (must be HTTP or HTTPS)
         Self::validate_url(&request.url)?;
@@ -119,17 +58,8 @@ impl GetUrlPreviewUseCase {
 
     /// Validate URL is HTTP or HTTPS.
     ///
-    /// # Arguments
-    ///
-    /// * `url` - URL to validate
-    ///
-    /// # Returns
-    ///
-    /// Ok if URL is valid, Err otherwise
-    ///
     /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if URL is not HTTP/HTTPS
+    /// Returns error if URL is not HTTP/HTTPS or empty.
     fn validate_url(url: &str) -> Result<()> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(AppError::InvalidInput(
@@ -145,14 +75,6 @@ impl GetUrlPreviewUseCase {
     }
 
     /// Convert UrlPreview from function_calling_dto to web_dto format.
-    ///
-    /// # Arguments
-    ///
-    /// * `preview` - UrlPreview from service layer
-    ///
-    /// # Returns
-    ///
-    /// UrlPreviewDto for application layer
     fn convert_preview(preview: UrlPreview) -> UrlPreviewDto {
         UrlPreviewDto {
             url: preview.url,

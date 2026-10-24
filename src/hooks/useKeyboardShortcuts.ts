@@ -1,31 +1,3 @@
-/**
- * useKeyboardShortcuts Hook
- *
- * Purpose: Register and manage keyboard shortcuts with conflict detection
- *
- * Features:
- * - Platform detection (⌘ for Mac, Ctrl for Windows/Linux)
- * - Modifier key combinations (Ctrl/⌘, Shift, Alt)
- * - Conflict detection and warnings
- * - Context-aware shortcuts (different shortcuts per view)
- * - Automatic cleanup on unmount
- * - Prevent default browser shortcuts
- * - Custom shortcuts storage and persistence
- *
- * Usage:
- * ```tsx
- * useKeyboardShortcuts([
- *   {
- *     id: 'save',
- *     keys: 'Mod+S',
- *     description: 'Save document',
- *     handler: handleSave,
- *     category: 'editor'
- *   }
- * ], { context: 'editor', preventDefault: true });
- * ```
- */
-
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 import { matchesShortcut} from '../config/shortcuts';
@@ -36,12 +8,8 @@ import {
 } from '../types/shortcuts';
 import { logger } from '../utils/logger';
 
-// Global registry of all active shortcuts
 const globalShortcutRegistry = new Map<string, KeyboardShortcutRegistration>();
 
-/**
- * Load custom shortcuts from localStorage
- */
 function loadCustomShortcuts(): Record<string, string> {
   try {
     const stored = localStorage.getItem('lattice-custom-shortcuts');
@@ -52,9 +20,6 @@ function loadCustomShortcuts(): Record<string, string> {
   }
 }
 
-/**
- * Save custom shortcuts to localStorage
- */
 function saveCustomShortcuts(shortcuts: Record<string, string>): void {
   try {
     localStorage.setItem('lattice-custom-shortcuts', JSON.stringify(shortcuts));
@@ -63,9 +28,6 @@ function saveCustomShortcuts(shortcuts: Record<string, string>): void {
   }
 }
 
-/**
- * Detect conflicts between shortcuts
- */
 function detectConflicts(
   newShortcut: KeyboardShortcutRegistration,
   registry: Map<string, KeyboardShortcutRegistration>
@@ -79,7 +41,6 @@ function detectConflicts(
       const existingContext = existing.options?.context;
       const newContext = newShortcut.options?.context;
 
-      // Conflict if both are global or in the same context
       if (!existingContext || !newContext || existingContext === newContext) {
         conflicts.push({
           shortcut1: existing.id,
@@ -112,17 +73,11 @@ function areConflictsEqual(
   return true;
 }
 
-/**
- * Get the effective shortcut (custom or default)
- */
 function getEffectiveShortcut(id: string, defaultKeys: string): string {
   const customShortcuts = loadCustomShortcuts();
   return customShortcuts[id] || defaultKeys;
 }
 
-/**
- * Main hook for registering keyboard shortcuts
- */
 export function useKeyboardShortcuts(
   shortcuts: KeyboardShortcutRegistration[],
   options: UseKeyboardShortcutsOptions = {}
@@ -145,14 +100,12 @@ export function useKeyboardShortcuts(
     shortcutsRef.current = shortcuts;
   }, [shortcuts]);
 
-  // Register shortcuts in global registry
   useEffect(() => {
     if (!enabled) return;
 
     const registeredIds: string[] = [];
     const newConflicts: ShortcutConflict[] = [];
 
-    // Register each shortcut
     for (const shortcut of shortcuts) {
       const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys);
       const registration: KeyboardShortcutRegistration = {
@@ -167,7 +120,6 @@ export function useKeyboardShortcuts(
         logger.warn(`Shortcut conflict detected for "${shortcut.id}":`, { conflicts });
       }
 
-      // Register the shortcut
       globalShortcutRegistry.set(shortcut.id, registration);
       registeredIds.push(shortcut.id);
     }
@@ -187,8 +139,6 @@ export function useKeyboardShortcuts(
     if (!enabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Don't trigger shortcuts when typing in inputs (unless it's a global shortcut)
-      // Runtime type guard instead of type cast
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       const isInput = target.tagName === 'INPUT' ||
@@ -199,7 +149,6 @@ export function useKeyboardShortcuts(
         const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys);
 
         if (matchesShortcut(event, effectiveKeys)) {
-          // Skip if typing in input and not a global shortcut
           if (isInput && !shortcut.global) {
             continue;
           }
@@ -209,7 +158,6 @@ export function useKeyboardShortcuts(
             continue;
           }
 
-          // Prevent default if requested
           if (preventDefault || shortcut.options?.preventDefault !== false) {
             event.preventDefault();
             event.stopPropagation();
@@ -226,7 +174,7 @@ export function useKeyboardShortcuts(
             logger.error(`Error executing shortcut "${shortcut.id}":`, { error });
           }
 
-          break; // Only execute first matching shortcut
+          break;
         }
       }
     };
@@ -285,17 +233,11 @@ export function useKeyboardShortcuts(
   };
 }
 
-/**
- * Hook to get all registered shortcuts (for display in UI)
- */
 export function useRegisteredShortcuts(): KeyboardShortcutRegistration[] {
   const shortcuts = Array.from(globalShortcutRegistry.values());
   return shortcuts;
 }
 
-/**
- * Hook to check if a shortcut key combination is available
- */
 export function useIsShortcutAvailable(keys: string, excludeId?: string): boolean {
   for (const [id, shortcut] of globalShortcutRegistry) {
     if (id === excludeId) continue;

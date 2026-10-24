@@ -84,6 +84,26 @@ class MechanicalChecks(unittest.TestCase):
         self.assertFalse(spe.mechanical(rubric(), declined)["passed"])
         self.assertFalse(spe.mechanical(silent, turn("It is 555-0100."))["passed"])
 
+    def test_incidental_missing_information_does_not_turn_a_conclusion_into_abstention(self):
+        answer = (
+            "The applicable policy requires 14 days [1]. "
+            "A separate schedule is not provided [2]. "
+            "Therefore the applicable period is 14 days [1]."
+        )
+        self.assertFalse(spe.abstained(answer))
+
+    def test_a_negative_premise_followed_by_a_cited_correction_is_not_abstention(self):
+        answer = "There is no mention of using the prior release; instead use v5.7.3 [1]."
+        self.assertFalse(spe.abstained(answer))
+
+    def test_a_global_or_concluding_refusal_is_still_abstention(self):
+        long_decline = (
+            "The answer is not available in the provided documents. "
+            + "Several unrelated records are listed. " * 40
+        )
+        self.assertTrue(spe.abstained(long_decline))
+        self.assertTrue(spe.abstained("The records discuss timing, but it cannot be determined."))
+
     def test_a_failed_turn_never_passes(self):
         failed = turn("14 days [1].")
         failed["error"] = "timed out"

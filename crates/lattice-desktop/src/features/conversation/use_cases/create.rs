@@ -21,20 +21,7 @@ impl CreateConversationUseCase {
         }
     }
 
-    /// Execute the use case
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - CreateConversationRequestDto containing title and optional system_prompt
-    ///
-    /// # Returns
-    ///
-    /// CreateConversationResponseDto with the created conversation
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if the title is empty
-    /// - `AppError::Database` if database insert fails
+    /// Execute the use case to create a new conversation.
     pub async fn execute(
         &self,
         request: CreateConversationRequestDto,

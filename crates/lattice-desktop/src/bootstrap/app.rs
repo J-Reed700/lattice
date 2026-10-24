@@ -33,17 +33,7 @@ impl StartupFailure {
     }
 }
 
-/// Loads application configuration from the specified path.
-/// Creates a default configuration if the file doesn't exist or is invalid.
-///
-/// # Arguments
 /// Initializes the database layer with the specified database path.
-///
-/// # Arguments
-/// * `db_path` - Path to the SQLite database file
-///
-/// # Returns
-/// * `Result<DatabaseConnection, AppError>` - Database connection or error
 async fn initialize_database_layer(
     db_path: PathBuf,
 ) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, AppError> {
@@ -61,9 +51,6 @@ async fn initialize_database_layer(
 }
 
 /// Initializes the security context layer.
-///
-/// # Returns
-/// * `Arc<SecurityContext>` - Initialized security context (never fails)
 fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
     tracing::info!("Initializing security context...");
     let context = Arc::new(crate::security::SecurityContext::new());
@@ -75,15 +62,6 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 ///
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
-///
-/// # Arguments
-/// * `pool` - SQLite connection pool
-/// * `security_context` - Security context
-/// * `data_dir` - Application data directory
-/// * `config` - Application configuration
-///
-/// # Returns
-/// * `Result<Container, AppError>` - Container (always succeeds, AI features optional)
 async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
@@ -96,7 +74,7 @@ async fn create_container(
 ) -> Result<crate::interfaces::di::Container, AppError> {
     use crate::interfaces::di::Container;
 
-    tracing::info!("Creating DI Container (pure DDD architecture)");
+    tracing::info!("Creating DI Container");
 
     // Create container (always succeeds, AI optional). Builder-style
     // `with_app_handle` attaches the Tauri AppHandle so the sidecar
@@ -121,7 +99,6 @@ async fn create_container(
 /// It coordinates the setup of directories, database, security context,
 /// and configuration.
 ///
-/// # Architecture
 /// The initialization follows a layered approach where each layer is
 /// independently testable and has a single responsibility:
 ///
@@ -193,7 +170,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         let conn = initialize_database_layer(db_path).await?;
         let security_context = initialize_security_layer();
 
-        tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
+        tracing::info!("🔧 Initializing DI Container");
 
         // Read Ollama endpoint + model from the unified Settings store. This
         // also runs the one-shot migration of any leftover legacy config.json

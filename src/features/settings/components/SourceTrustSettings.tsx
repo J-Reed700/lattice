@@ -1,11 +1,3 @@
-/**
- * Settings → Source trust (source provenance §13, §19): the user's site
- * overrides with what the claims under them did since, the bars in force for
- * every claim kind and level with each automatic change and its numbers, the
- * policy parameters with their derivations, the checker's measured
- * reliability, and the provenance eval export.
- */
-
 import { Check, Minus } from 'lucide-react';
 
 import { PageHeader, SettingsSection } from '@/components/ui';

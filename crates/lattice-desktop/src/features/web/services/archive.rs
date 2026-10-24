@@ -2,26 +2,14 @@
 //!
 //! Manages full-fidelity web article archives on the local filesystem.
 //!
-//! ## Architecture
+//! Web articles are stored on the filesystem by domain (e.g., `github.com/`, `arxiv.org/`),
+//! preserving markdown, full HTML snapshots, and JSON metadata.
 //!
-//! This service provides filesystem-based archival of web articles:
-//! - Stores each article in its own directory
-//! - Preserves both markdown AND full HTML snapshots
-//! - Includes JSON metadata for programmatic access
-//! - Organizes articles by domain (e.g., `github.com/`, `arxiv.org/`)
-//! - Creates helpful README.md explaining the archive structure
-//!
-//! ## Storage Structure
-//!
-//! Each article is stored as a directory:
-//! ```
-//! web-archive/
-//! ├── github.com/
-//! │   └── rust-best-practices-abc123/
-//! │       ├── article.md          # Markdown with frontmatter
-//! │       ├── page.html           # Full HTML snapshot
-//! │       └── metadata.json       # Structured metadata
-//! ```
+//! Storage structure:
+//! - `web-archive/<domain>/<article-slug>/`
+//!   - `article.md`: Markdown with frontmatter
+//!   - `page.html`: Full HTML snapshot
+//!   - `metadata.json`: Structured metadata
 //!
 //! ### article.md Format
 //! ```markdown
@@ -169,23 +157,23 @@ To backup your web archive, simply copy this directory to another location.
 
 ## Directory Structure Example
 
-```
+```text
 web-archive/
-├── README.md (this file)
-├── github.com/
-│   ├── rust-best-practices-abc123/
-│   │   ├── article.md
-│   │   ├── page.html
-│   │   └── metadata.json
-│   └── tauri-tutorial-def456/
-│       ├── article.md
-│       ├── page.html
-│       └── metadata.json
-└── arxiv.org/
-    └── machine-learning-paper-ghi789/
-        ├── article.md
-        ├── page.html
-        └── metadata.json
+  README.md (this file)
+  github.com/
+    rust-best-practices-abc123/
+      article.md
+      page.html
+      metadata.json
+    tauri-tutorial-def456/
+      article.md
+      page.html
+      metadata.json
+  arxiv.org/
+    machine-learning-paper-ghi789/
+      article.md
+      page.html
+      metadata.json
 ```
 
 ## Re-indexing
@@ -213,9 +201,6 @@ impl WebArchiveService {
     ///
     /// Initializes the archive directory at `~/.lattice/web-archive` and
     /// ensures the README.md exists.
-    ///
-    /// # Returns
-    /// `WebArchiveService` instance ready to use
     ///
     /// # Errors
     /// - `AppError::ConfigError` if home directory cannot be determined

@@ -4,19 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// Strongly-typed document identifier
-///
-/// Prevents accidental mixing of document IDs with other entity IDs.
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::shared::types::DocumentId;
-///
-/// let id = DocumentId::new();
-/// let id_str = id.to_string();
-/// let parsed = DocumentId::from_string(id_str)?;
-/// ```
+/// Strongly-typed document identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(transparent)]
 pub struct DocumentId(String);

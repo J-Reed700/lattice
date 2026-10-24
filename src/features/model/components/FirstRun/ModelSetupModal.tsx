@@ -1,7 +1,3 @@
-/**
- * Single-bundle first-run install. Backend recommends; modal renders.
- * Click dismisses immediately — downloads continue in the header drawer.
- */
 import { useQuery } from '@tanstack/react-query';
 import { Cpu } from 'lucide-react';
 
@@ -26,11 +22,6 @@ interface ModelSetupModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onComplete: () => void;
-  /**
-   * Records that the user has been offered the bundle. Owned by the gate so
-   * there is exactly one writer; it persists to the settings repository, not
-   * to localStorage.
-   */
   onDismiss: () => void;
 }
 
@@ -47,14 +38,11 @@ export function ModelSetupModal({
   onComplete,
   onDismiss,
 }: ModelSetupModalProps) {
-  // Read again on every opening; what was read last stays up meanwhile.
   const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: open });
   const status = statusQuery.data ?? null;
   const loading = statusQuery.isFetching;
   const error = statusQuery.isError ? getErrorMessage(statusQuery.error) : null;
   const { downloadEmbeddingModel, downloadChatModel } = useFirstRunDownloads();
-  // The catalog says which of the picked models can see; the recommendation
-  // itself carries names and sizes only.
   const { systemCapabilities, compatibleModels } = useModelCatalog({
     autoLoadCapabilities: true,
     autoLoadModels: open,
@@ -70,8 +58,6 @@ export function ModelSetupModal({
   };
 
   const handleMoreOptions = () => {
-    // Dismissing prevents a re-open in Settings, but don't mark complete —
-    // user is choosing manually.
     onDismiss();
     onOpenChange(false);
     // Mounted outside RouterProvider, so useNavigate() is unavailable here.
@@ -82,8 +68,6 @@ export function ModelSetupModal({
   const handleInstall = async () => {
     if (!status?.embedding_model && !status?.chat_model) return;
 
-    // Embedding uses its first-run dedicated command; chat uses the
-    // generic download path. Both are fire-and-forget.
     const tasks: Array<Promise<unknown>> = [];
 
     if (status.embedding_model) {
@@ -125,9 +109,6 @@ export function ModelSetupModal({
   const totalSize = status.total_estimated_size_bytes ?? 0;
   const sizeLabel = totalSize > 0 ? formatGb(totalSize) : '~5 GB';
 
-  // The backend already sized this bundle to the machine's RAM, so a memory
-  // verdict here would restate its own decision. Disk is the one thing it does
-  // not check, and the one thing that makes the install fail halfway.
   const totalGb = totalSize / 1_073_741_824;
   const freeGb = systemCapabilities?.available_disk_gb ?? null;
   const notEnoughDisk = freeGb != null && freeGb > 0 && totalGb > freeGb;
@@ -179,8 +160,6 @@ export function ModelSetupModal({
         </div>
 
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
-          {/* Skipping never depends on the status, so a re-read never blocks
-              it; only Install waits for the fresh recommendation. */}
           <Button variant="ghost" onClick={handleSkip} className="sm:mr-auto">
             Not now
           </Button>

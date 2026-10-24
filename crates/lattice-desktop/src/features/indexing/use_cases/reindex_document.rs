@@ -1,25 +1,6 @@
-//! # Reindex Document Use Case
+//! Reindex Document Use Case
 //!
 //! Reindexes an existing document with updated content or strategy.
-//!
-//! This use case:
-//! 1. Retrieves existing document from repository
-//! 2. Reads current file content
-//! 3. Reindexes with new chunking strategy
-//! 4. Generates new embeddings
-//! 5. Updates repository
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
-//!
-//! # async fn example(use_case: ReindexDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute("doc-123".to_string()).await?;
-//! println!("Reindexed with {} chunks", response.chunks_created);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -38,20 +19,6 @@ use lattice_core::shared::error::{AppError, Result};
 /// Reindex document use case.
 ///
 /// Updates an existing document's index with current content.
-///
-/// ## Use Cases
-///
-/// - File content has changed
-/// - Switching to a different chunking strategy
-/// - Fixing indexing errors
-/// - Updating embeddings with new model
-///
-/// ## Dependencies
-///
-/// - `FileStoragePort`: Reads updated file content
-/// - `EmbeddingPort`: Generates new embeddings
-/// - `RepositoryPort`: Retrieves and updates document
-/// - `EmbeddingRepositoryPort`: Persists chunk embeddings
 pub struct ReindexDocumentUseCase {
     file_storage: Arc<dyn FileStoragePort>,
     content_extractor: Option<Arc<dyn lattice_core::application::ports::ContentExtractionPort>>,
@@ -112,14 +79,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Create a new reindex document use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_storage` - Service for reading file content
-    /// * `embedding_service` - Service for generating embeddings
-    /// * `document_repo` - Repository for document persistence
-    /// * `embedding_repo` - Repository for persisting embeddings
-    /// * `vector_search` - Live vector index, kept in step with the database
     pub fn new(
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
@@ -139,23 +98,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Execute document reindexing.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to reindex
-    ///
-    /// # Returns
-    ///
-    /// Response with updated indexing statistics
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Document not found
-    /// - File no longer exists
-    /// - Reindexing fails
-    /// - Embedding generation fails
-    /// - Update fails
     pub async fn execute(&self, document_id: String) -> Result<IndexFileResponseDto> {
         self.execute_internal(document_id, None).await
     }
@@ -363,15 +305,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Execute reindexing with a specific chunking strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to reindex
-    /// * `strategy` - New chunking strategy to use
-    ///
-    /// # Returns
-    ///
-    /// Response with updated indexing statistics
     pub async fn execute_with_strategy(
         &self,
         document_id: String,

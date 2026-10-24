@@ -1,13 +1,3 @@
-/**
- * Vision declaration — whether a remote model is shown pictures, and the
- * geometry its encoder takes them at. Lattice never asks a server what a
- * model can see: the user declares it here, per model, and the declaration
- * sizes every picture sent and the tokens charged for it.
- *
- * A cloud model with no declaration of its own sees through its provider's
- * published default; llama.cpp and Ollama models see nothing until declared.
- */
-
 import { useEffect, useId, useState } from 'react';
 
 import { ChevronRight } from 'lucide-react';

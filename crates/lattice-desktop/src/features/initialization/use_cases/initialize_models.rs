@@ -1,32 +1,6 @@
 //! Initialize Models Use Case
 //!
 //! Downloads and initializes embedding models for first-run setup.
-//!
-//! # Purpose
-//!
-//! Ensures the application has the required embedding models before indexing.
-//! On first run, downloads the default model. On subsequent runs, verifies
-//! the model is loaded and ready.
-//!
-//! # Business Logic
-//!
-//! 1. Check if embedding model is already loaded/available
-//! 2. If not loaded, attempt to load from disk
-//! 3. If not on disk, return error (model download is a separate use case)
-//! 4. Verify model integrity and readiness
-//! 5. Return success with model metadata
-//!
-//! # Example
-//!
-//! ```rust
-//! let use_case = InitializeModelsUseCase::new(embedding_port);
-//! let response = use_case.execute().await?;
-//!
-//! if response.success {
-//!     println!("Model ready at: {}", response.model_path);
-//!     println!("Dimension: {}", response.model_dimension.unwrap());
-//! }
-//! ```
 
 use crate::features::initialization::dto::InitializeModelsResponseDto;
 use crate::infrastructure::services::traits::ModelManagerTrait;
@@ -45,26 +19,11 @@ pub struct InitializeModelsUseCase {
 
 impl InitializeModelsUseCase {
     /// Create a new instance of the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `model_manager` - Model manager for downloads and paths
     pub fn new(model_manager: Arc<dyn ModelManagerTrait>) -> Self {
         Self { model_manager }
     }
 
     /// Execute the use case.
-    ///
-    /// # Returns
-    ///
-    /// Response DTO with model initialization status and metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Model is not available and cannot be loaded
-    /// - Model integrity check fails
-    /// - Embedding service is not operational
     pub async fn execute(&self) -> Result<InitializeModelsResponseDto> {
         let was_cached = self.model_manager.is_model_ready().await;
         let model_path = if was_cached {

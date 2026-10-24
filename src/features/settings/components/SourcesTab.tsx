@@ -1,16 +1,3 @@
-/**
- * Settings → Sources (source-finding toolbelt design §3.14, §3.17): the paid
- * search engines and their keys, the user's own SearXNG server, the contact
- * for polite pools, the keys that raise rate limits, and every other finder
- * grouped by what it reaches, each with its privacy line, switch and health.
- *
- * Switches, the SearXNG address, the contact and the archive toggle are the
- * `sourcing` settings category; keys go to the system keychain through their
- * own commands and never come back: the panel learns only that one is saved.
- * Either way the backend re-registers its finders at once, so a change holds
- * from the next search.
- */
-
 import { useState, type ReactNode } from 'react';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';

@@ -20,7 +20,6 @@ export const spacesQueryOptions = () =>
     staleTime: 30_000,
   });
 
-/** Every space, archived ones included, in the backend's order. */
 export function useSpacesQuery() {
   return useQuery(spacesQueryOptions());
 }
@@ -29,11 +28,6 @@ type CreateSpaceRequest = Parameters<typeof VaultAPI.createConversationSpace>[0]
 type UpdateSpaceRequest = Parameters<typeof VaultAPI.updateConversationSpace>[0];
 type ArchiveSpaceRequest = Parameters<typeof VaultAPI.archiveConversationSpace>[0];
 
-/**
- * Creating, editing and archiving a space. Each refreshes the spaces list;
- * archiving also refreshes conversation lists, which leave out an archived
- * space's chats.
- */
 export function useSpaceMutations() {
   const client = useQueryClient();
   const create = useMutation({

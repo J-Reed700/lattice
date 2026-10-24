@@ -1,10 +1,3 @@
-/**
- * Update Checker API Types
- *
- * Type definitions for update checking functionality.
- * These types match the Rust backend structures from commands/update_checker.rs
- */
-
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;

@@ -15,18 +15,6 @@ export interface CommandPaletteState {
 
 const MAX_RECENT_ITEMS = 5
 
-/**
- * useCommandPalette
- *
- * Purpose: Manages command palette state, keyboard shortcuts, and recent items
- *
- * Features:
- * - Cmd+K / Ctrl+K global keyboard shortcut
- * - Recent searches and documents tracking
- * - Search mode toggle
- * - Local storage persistence
- */
-/** Dispatched on `window` by anything that wants the palette open (the rail's Find button). */
 export const OPEN_PALETTE_EVENT = 'lattice:open-palette'
 
 export function useCommandPalette() {
@@ -64,16 +52,13 @@ export function useCommandPalette() {
     }
   }, [state.recentSearches, state.recentDocuments])
 
-  // Keyboard shortcut handler
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Cmd+K (Mac) or Ctrl+K (Windows/Linux)
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setState(prev => ({ ...prev, isOpen: !prev.isOpen, searchMode: false }))
       }
 
-      // Escape to close
       if (event.key === 'Escape' && state.isOpen) {
         event.preventDefault()
         setState(prev => ({ ...prev, isOpen: false, searchMode: false }))

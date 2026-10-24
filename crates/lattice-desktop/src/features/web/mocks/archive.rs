@@ -13,35 +13,7 @@ use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Mock implementation of WebArchiveServiceTrait for testing
-///
-/// Stores articles in memory using a HashMap keyed by file path.
-/// Useful for testing without actual filesystem operations.
-///
-/// # Example
-/// ```rust
-/// use lattice::infrastructure::services::mocks::MockWebArchiveService;
-/// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
-///
-/// let mock = MockWebArchiveService::new();
-///
-/// # tokio_test::block_on(async {
-/// let article = CleanArticle {
-///     title: "Test Article".to_string(),
-///     author: Some("Author".to_string()),
-///     content: "<p>Content</p>".to_string(),
-///     text_content: "Content".to_string(),
-///     word_count: 1,
-///     reading_time_minutes: 1,
-///     published_date: None,
-///     excerpt: None,
-/// };
-///
-/// let path = mock.archive_article(article.clone(), "https://example.com").await.unwrap();
-/// let loaded = mock.load_article(&path).await.unwrap();
-/// assert_eq!(loaded.title, "Test Article");
-/// # });
-/// ```
+/// Mock implementation of WebArchiveServiceTrait for testing.
 pub struct MockWebArchiveService {
     /// In-memory storage keyed by file path
     articles: Arc<Mutex<HashMap<PathBuf, CleanArticle>>>,

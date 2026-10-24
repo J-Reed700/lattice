@@ -1,17 +1,6 @@
-/**
- * Finds a cited passage inside an open PDF.
- *
- * No extractor writes a page number into a chunk, so the page is resolved
- * client-side by scanning the already-loaded document. That is why a citation
- * row shows `p. 12` only *after* the file has been opened once: the page is
- * resolved, never guessed.
- */
-
 import { buildNeedles, normalizeForMatch } from '@/shared/sources/passageLocator';
 
-/** Pages scanned before giving up. A very long PDF is not worth a stall. */
 const DEFAULT_MAX_PAGES = 400;
-
 
 interface PdfTextItem {
   str: string;
@@ -26,13 +15,7 @@ interface PdfDocumentLike {
   getPage(_pageNumber: number): Promise<PdfPageLike>;
 }
 
-/**
- * Escape `&`, `<`, `>` and `"` for safe innerHTML injection.
- *
- * react-pdf's `customTextRenderer` returns a **string that is assigned to
- * innerHTML**. Every fragment we do not control has to come back through here
- * or a PDF containing `<script>` would execute it.
- */
+/** Escapes HTML special characters for safe injection into react-pdf customTextRenderer. */
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -43,10 +26,7 @@ export function escapeHtml(value: string): string {
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/**
- * A react-pdf `customTextRenderer` that wraps occurrences of `needle` in
- * `<mark class="lattice-pdf-mark">`. Every non-matching fragment is escaped.
- */
+/** Wraps occurrences of `needle` in `<mark class="lattice-pdf-mark">`. */
 export function buildPassageTextRenderer(
   needle: string
 ): (_item: { str: string }) => string {
@@ -63,7 +43,6 @@ export function buildPassageTextRenderer(
     return text
       .split(pattern)
       .map((part, index) =>
-        // split() with one capture group puts matches at odd indices.
         index % 2 === 1
           ? `<mark class="lattice-pdf-mark">${escapeHtml(part)}</mark>`
           : escapeHtml(part)
@@ -72,7 +51,7 @@ export function buildPassageTextRenderer(
   };
 }
 
-/** Match the page as a whole, then map the matched span back to PDF text items. */
+/** Matches the page as a whole, then maps the matched span back to PDF text items. */
 export function passageItemMarks(items: PdfTextItem[], needle: string, compact = false): Record<number, [number, number]> {
   const raw = items.map(item => item.str ?? '').join(' ');
   const tokens = Array.from(raw.matchAll(/[\p{L}\p{N}'"\u2018-\u201f\u2010-\u2015-]+/gu))
@@ -115,12 +94,7 @@ export function buildItemTextRenderer(marks: Record<number, [number, number]>) {
   };
 }
 
-/**
- * Scan pages for the passage, longest needle first.
- *
- * Returns the 1-based page and a literal substring that occurs on it, or null.
- * Aborts as soon as `signal.aborted` flips — the caller unmounts freely.
- */
+/** Scans PDF pages for the passage, returning 1-based page number and matched substring. */
 export async function findPassagePage(
   pdf: PdfDocumentLike,
   text: string,
@@ -149,7 +123,6 @@ export async function findPassagePage(
       items = content.items;
       pageText = items.map((item) => item.str ?? '').join(' ');
     } catch {
-      // A page that will not render is a page we cannot search. Keep going.
       continue;
     }
 

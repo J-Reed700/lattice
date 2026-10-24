@@ -1,28 +1,3 @@
-//! # Health Check Use Case
-//!
-//! Performs comprehensive system health checks.
-//!
-//! This use case orchestrates:
-//! 1. Database connectivity check
-//! 2. Embedding service availability check
-//! 3. LLM readiness, as the caller reports it
-//! 4. Overall system status determination
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::health::HealthCheckUseCase;
-//!
-//! # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute(false).await?;
-//! println!("System status: {}", response.status);
-//! println!("Database: {}", response.database);
-//! println!("Embedding: {}", response.embedding_model);
-//! println!("LLM: {}", response.llm);
-//! # Ok(())
-//! # }
-//! ```
-
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -31,49 +6,16 @@ use crate::features::health::dto::HealthCheckResponseDto;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;
 
-/// Health check use case.
-///
 /// Coordinates system health checks by verifying the availability of core services:
 /// - Database connection
 /// - Embedding service
-/// - LLM readiness
-///
-/// The `llm` flag means "a language model is loaded and not degraded" (not
-/// on the CPU fallback, and not given a smaller window than asked for).
-/// Models load lazily, on first use, so it reads `false` until one has.
-///
-/// ## Dependencies
-///
-/// - `db_pool` - Database connection pool for health checks
-/// - `embedding_service` - Embedding service to verify availability
+/// - LLM readiness (models load lazily on first use)
 pub struct HealthCheckUseCase {
     db_pool: SqlitePool,
     embedding_service: Arc<dyn EmbeddingPort>,
 }
 
 impl HealthCheckUseCase {
-    /// Create a new health check use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `db_pool` - SQLite connection pool
-    /// * `embedding_service` - Service for generating embeddings
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::use_cases::health::HealthCheckUseCase;
-    /// # use std::sync::Arc;
-    /// # use sqlx::SqlitePool;
-    /// # use lattice_core::application::ports::EmbeddingPort;
-    ///
-    /// # async fn example(
-    /// #     pool: SqlitePool,
-    /// #     embedder: Arc<dyn EmbeddingPort>,
-    /// # ) {
-    /// let use_case = HealthCheckUseCase::new(pool, embedder);
-    /// # }
-    /// ```
     pub fn new(db_pool: SqlitePool, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self {
             db_pool,
@@ -82,51 +24,13 @@ impl HealthCheckUseCase {
     }
 
     /// Execute health check.
-    ///
-    /// `llm_ready` is whether a language model is loaded and not degraded;
-    /// it is reported as given.
-    ///
-    /// # Returns
-    ///
-    /// Health check response with status of all services
-    ///
-    /// # Errors
-    ///
-    /// This operation is designed to never fail. Individual service failures
-    /// are captured in the response as `false` values, but the overall
-    /// health check always returns a response.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::health::HealthCheckUseCase;
-    /// # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let response = use_case.execute(false).await?;
-    ///
-    /// if response.status == "healthy" {
-    ///     println!("All systems operational");
-    /// } else if response.status == "degraded" {
-    ///     println!("Some systems unavailable");
-    /// } else {
-    ///     println!("Critical systems down");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// `llm_ready` is whether a language model is loaded and not degraded.
     pub async fn execute(&self, llm_ready: bool) -> Result<HealthCheckResponseDto> {
-        // 1. Check database health
         let db_healthy = self.check_database().await;
-
-        // 2. Check embedding service health
         let embedding_healthy = self.check_embedding_service().await;
-
-        // 3. LLM readiness, as the caller read it
         let llm_healthy = llm_ready;
-
-        // 4. Determine overall system status
         let status = self.determine_status(db_healthy, embedding_healthy, llm_healthy);
 
-        // 5. Build response
         Ok(HealthCheckResponseDto {
             status,
             database: db_healthy,
@@ -136,34 +40,14 @@ impl HealthCheckUseCase {
         })
     }
 
-    /// Check database connectivity.
-    ///
-    /// Attempts to acquire a connection from the pool. If successful,
-    /// the database is considered healthy.
     async fn check_database(&self) -> bool {
         self.db_pool.acquire().await.is_ok()
     }
 
-    /// Check embedding service availability.
-    ///
-    /// Calls the service's `is_ready()` method to verify availability.
-    /// Returns false if the service is not ready or if the check fails.
     async fn check_embedding_service(&self) -> bool {
         self.embedding_service.is_ready().await.unwrap_or(false)
     }
 
-    /// Determine overall system status based on individual component health.
-    ///
-    /// Status logic:
-    /// - "healthy": Database and embedding service are both healthy (LLM is optional)
-    /// - "degraded": Database is healthy but embedding service is not
-    /// - "unhealthy": Database is not healthy (critical failure)
-    ///
-    /// # Arguments
-    ///
-    /// * `db_healthy` - Database health status
-    /// * `embedding_healthy` - Embedding service health status
-    /// * `llm_healthy` - LLM service health status (currently unused in logic)
     fn determine_status(
         &self,
         db_healthy: bool,
@@ -247,7 +131,6 @@ mod tests {
         let use_case = HealthCheckUseCase::new(pool, embedder);
         let response = use_case.execute(false).await.unwrap();
 
-        // LLM is optional, so status should still be healthy if db and embedding are ok
         assert_eq!(response.status, "healthy");
         assert!(response.database);
         assert!(response.embedding_model);

@@ -36,12 +36,6 @@ function writeSidebarCollapsed(value: boolean): void {
   }
 }
 
-/**
- * Shell orchestrator for the reference inbox surface. Two-pane layout
- * (sidebar + reader), URL-driven selection via ?referenceId=, wires the
- * data hook's actions into navigation callbacks and toasts.
- * Spec §3, §10.
- */
 export function ReferenceInbox() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,10 +77,7 @@ export function ReferenceInbox() {
   useEffect(() => {
     const current = searchParams.get('referenceId');
     if (!selectedId) {
-      // A deep link arrives before the list does. Stripping it on that first
-      // render — when nothing is selected yet because nothing is loaded yet —
-      // threw away the id the inbox was about to open. Only an inbox that has
-      // finished loading with nothing in it clears the parameter.
+      // Clear parameter only once loading has finished and the list is empty.
       if (current && !state.isLoading && state.filteredItems.length === 0) {
         const next = new URLSearchParams(searchParams);
         next.delete('referenceId');
@@ -239,8 +230,6 @@ export function ReferenceInbox() {
 
   const handleViewSource = useCallback(
     (source: SourceWithMetadata) => {
-      // The preview modal is already mounted on this surface: open the file
-      // rather than naming it. A control that only announces itself is a lie.
       setPreviewLocator(
         source.content
           ? { text: source.content, chunkId: source.chunkId || undefined }

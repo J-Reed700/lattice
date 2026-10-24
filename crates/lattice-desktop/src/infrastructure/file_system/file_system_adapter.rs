@@ -44,14 +44,8 @@ impl FileSystemAdapter {
 
     /// Validate a file path before performing operations.
     ///
-    /// # Security
-    ///
-    /// This performs basic path validation:
-    /// - Checks for null bytes
-    /// - Ensures path is not empty
-    /// - Canonicalizes path to prevent traversal
-    ///
-    /// Note: More comprehensive validation should be done at the domain layer
+    /// Performs basic path validation (null bytes, not empty, canonicalization).
+    /// More comprehensive validation should be done at the domain layer
     /// using ValidatedFilePath before calling these methods.
     async fn validate_path(path: &Path) -> Result<std::path::PathBuf> {
         if path.as_os_str().is_empty() {
@@ -132,8 +126,6 @@ impl FileSystemAdapter {
     /// - **Windows**: `explorer.exe /select,"<path>"`
     /// - **macOS**: `open -R "<path>"`
     /// - **Linux**: Opens containing directory (file selection not standardized)
-    ///
-    /// # Security
     ///
     /// Uses std::process::Command with proper argument passing to prevent
     /// command injection. Paths are passed as separate arguments, NOT

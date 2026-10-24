@@ -1,23 +1,3 @@
-//! # Metadata Value Object
-//!
-//! Validated metadata with size constraints to prevent database errors.
-//!
-//! ## Purpose
-//!
-//! Ensures metadata JSON serialization stays within database column size limits
-//! (typically 64KB for TEXT columns). Prevents runtime errors from oversized data.
-//!
-//! ## Example
-//!
-//! ```rust
-//! use lattice_core::domain::value_objects::metadata::ValidatedMetadata;
-//!
-//! let json = r#"{"sources": [{"id": 1}]}"#.to_string();
-//! let validated = ValidatedMetadata::new(json)?;
-//! assert!(validated.size_bytes() < 65_000);
-//! # Ok::<(), lattice_core::shared::errors::AppError>(())
-//! ```
-
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 
@@ -27,46 +7,13 @@ use serde::{Deserialize, Serialize};
 /// (63.5KB) to leave room for encoding overhead and safety margin.
 const MAX_METADATA_SIZE_BYTES: usize = 65_000;
 
-/// Validated metadata that enforces size constraints
-///
-/// This value object ensures that metadata JSON:
-/// 1. Does not exceed database column size limits
-/// 2. Is valid JSON (can be deserialized)
-/// 3. Is immutable after validation
-///
-/// ## Invariants
-///
-/// - Size ≤ 65,000 bytes (~64KB)
-/// - Valid JSON structure
-/// - Non-empty string
+/// Validated metadata that enforces size constraints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedMetadata {
     json: String,
 }
 
 impl ValidatedMetadata {
-    /// Create validated metadata from JSON string
-    ///
-    /// # Arguments
-    ///
-    /// * `json` - JSON string to validate
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::InvalidInput` if:
-    /// - JSON exceeds size limit (65KB)
-    /// - JSON is malformed (invalid syntax)
-    /// - JSON is empty string
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use lattice_core::domain::value_objects::metadata::ValidatedMetadata;
-    ///
-    /// let json = r#"{"key": "value"}"#.to_string();
-    /// let metadata = ValidatedMetadata::new(json)?;
-    /// # Ok::<(), lattice_core::shared::errors::AppError>(())
-    /// ```
     pub fn new(json: String) -> Result<Self, AppError> {
         if json.is_empty() {
             return Err(AppError::InvalidInput(
@@ -89,29 +36,14 @@ impl ValidatedMetadata {
         Ok(Self { json })
     }
 
-    /// Get the validated JSON string
-    ///
-    /// # Returns
-    ///
-    /// Reference to the validated JSON string
     pub fn as_str(&self) -> &str {
         &self.json
     }
 
-    /// Get the size in bytes
-    ///
-    /// # Returns
-    ///
-    /// Size of the JSON string in bytes
     pub fn size_bytes(&self) -> usize {
         self.json.len()
     }
 
-    /// Get maximum allowed size in bytes
-    ///
-    /// # Returns
-    ///
-    /// Maximum metadata size (65,000 bytes)
     pub const fn max_size_bytes() -> usize {
         MAX_METADATA_SIZE_BYTES
     }

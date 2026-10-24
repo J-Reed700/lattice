@@ -52,7 +52,8 @@ JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
 EXTRA_ABSTENTION_RE = re.compile(
     r"\b(?:no (?:mention|record|reference|document|entry)|isn't (?:mentioned|recorded|in)|"
     r"is not (?:mentioned|recorded|in the)|couldn't find|could not find|none of the "
-    r"(?:documents|sources|notes)|not (?:mentioned|recorded|listed|included))\b",
+    r"(?:documents|sources|notes)|not (?:mentioned|recorded|listed|included)|"
+    r"cannot be determined)\b",
     re.IGNORECASE,
 )
 
@@ -168,7 +169,39 @@ def validate_questions(questions, corpus):
 
 
 def abstained(answer):
-    return bool(ABSTENTION_RE.search(answer or "") or EXTRA_ABSTENTION_RE.search(answer or ""))
+    """Whether the answer's disposition is that the requested fact is unavailable.
+
+    Missing-information language can also qualify one source, reject a premise,
+    or contrast an incorrect option with the supported answer. Treating any such
+    phrase anywhere as a whole-answer abstention makes a decisive answer fail
+    merely because it includes a useful caveat.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False
+
+    def unavailable(fragment):
+        return ABSTENTION_RE.search(fragment) or EXTRA_ABSTENTION_RE.search(fragment)
+
+    if not unavailable(text):
+        return False
+
+    first_breaks = [index for mark in ".!?\n" if (index := text.find(mark)) >= 0]
+    first_end = min(first_breaks) + 1 if first_breaks else min(len(text), 400)
+    lead = text[:first_end]
+    lead_match = unavailable(lead)
+    if lead_match:
+        # "There is no X; instead use Y [1]" is a correction, not a refusal.
+        rest = text[lead_match.end():]
+        correction = re.search(r"\b(?:instead|rather|however)\b", rest, re.I)
+        if correction:
+            corrected = rest[correction.end():]
+            if CITATION_RE.search(corrected) and not unavailable(corrected):
+                return False
+        return True
+
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+    return bool(unavailable(sentences[-1]))
 
 
 def mechanical(rubric, turn):

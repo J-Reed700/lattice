@@ -12,17 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Use case for opening a file by its document ID.
-///
-/// This use case:
-/// 1. Looks up the file path from the document repository
-/// 2. Validates the file path exists on disk
-/// 3. Opens it with the default application
-///
-/// # Security
-///
-/// - Document ID validation
-/// - Path existence verification
-/// - Secure file opening via FileSystemPort
+/// Opens a file in the default application by resolving its document ID.
 pub struct OpenFileByIdUseCase {
     document_repository: Arc<dyn DocumentRepositoryPort>,
     file_system: Arc<dyn FileSystemPort>,
@@ -32,15 +22,6 @@ pub struct OpenFileByIdUseCase {
 }
 
 impl OpenFileByIdUseCase {
-    /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repository` - Repository for document lookups
-    /// * `file_system` - File system operations port
-    /// * `file_storage` - File storage operations port
-    /// * `file_access_config` - File access security configuration
-    /// * `vault_path` - Root lattice path for resolving relative paths
     pub fn new(
         document_repository: Arc<dyn DocumentRepositoryPort>,
         file_system: Arc<dyn FileSystemPort>,
@@ -57,21 +38,7 @@ impl OpenFileByIdUseCase {
         }
     }
 
-    /// Execute the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the document ID
-    ///
-    /// # Returns
-    ///
-    /// Success DTO if file was opened successfully.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::NotFound` if document or file does not exist
-    /// - `AppError::Database` if repository query fails
-    /// - `AppError::Io` if file cannot be opened
+    /// Execute the use case to open a file by document ID.
     pub async fn execute(&self, request: OpenFileByIdRequestDto) -> Result<OpenFileResponseDto> {
         // Look up file path from repository
         let relative_path = self

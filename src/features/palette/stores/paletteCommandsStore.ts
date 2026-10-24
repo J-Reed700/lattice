@@ -2,26 +2,15 @@ import { create } from 'zustand';
 
 import type { LucideIcon } from 'lucide-react';
 
-/**
- * A verb the command palette can run. Surfaces register the verbs that make
- * sense for what is on screen (synthesize, capture, reindex this file…) so the
- * chrome can stay quiet and ⌘K stays the one place every action lives.
- *
- * This is UI-only state; the backend does not read it.
- */
+/** UI command registered for execution in the command palette. */
 export interface PaletteCommand {
-  /** Stable, namespaced id, e.g. `chat.regenerate`. Re-registering replaces. */
   id: string;
   label: string;
-  /** Group heading in the palette. Defaults to "Actions". */
   group?: string;
   icon?: LucideIcon;
-  /** Display-only shortcut hint, e.g. "⌘⇧N". The surface owns the key binding. */
   shortcut?: string;
   description?: string;
-  /** Extra words the fuzzy filter should match. */
   keywords?: string[];
-  /** Hidden from the palette when false (no selection, nothing to act on). */
   enabled?: boolean;
   run: () => void | Promise<void>;
 }

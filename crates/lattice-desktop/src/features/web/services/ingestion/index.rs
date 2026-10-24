@@ -11,14 +11,6 @@ impl WebIngestionService {
     /// Split text losslessly within the loaded model's token budget.
     /// The shared policy includes the document prefix and special tokens.
     ///
-    /// # Arguments
-    ///
-    /// * `text` - The text to chunk
-    ///
-    /// # Returns
-    ///
-    /// Vector of contextualized chunks with metadata
-    ///
     /// # Errors
     ///
     /// - `AppError::TokenizationError` if tokenization fails

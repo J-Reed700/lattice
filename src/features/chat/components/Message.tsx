@@ -306,7 +306,7 @@ export const Message = memo(({
             images={figures}
           />
           </TangentSelection>
-          {/* Streaming cursor — spec §3.7 */}
+          {/* Streaming cursor — spec  */}
           {!isUser && isPending && (
             <span
               aria-hidden="true"

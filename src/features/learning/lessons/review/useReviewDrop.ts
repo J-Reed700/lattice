@@ -35,7 +35,7 @@ function originOf(data: DataTransfer): string | null {
 const basename = (path: string) => path.replace(/\\/g, '/').split('/').pop() || path;
 
 /**
- * Drop and paste anywhere on the review screen (§3.6): an address becomes a
+ * Drop and paste anywhere on the review screen : an address becomes a
  * link, text longer than a line becomes pasted text, and a file goes through
  * the library import the chat uses for dropped files, which gives the
  * document id the attach takes. Paste into a text field stays a paste.

@@ -15,17 +15,7 @@ use lattice_core::shared::error::AppError;
 
 use super::enrichment::{enrich_hybrid_results, enrich_vector_results, LibraryMode};
 
-/// Implementation: Fast lightweight search returning minimal data (IDs and scores only).
-///
-/// This is the business logic implementation that performs the actual search.
-/// It is separated from the Tauri command handler for better testability and
-/// adherence to clean architecture principles.
-///
-/// # Architecture Note
-///
-/// This function contains the core business logic and returns ApiResult<T>.
-/// The Tauri command handler `search_fast` below turns it into the command's
-/// `Result` with `ApiResult::into_result`.
+/// Fast lightweight search returning minimal data (IDs and scores only).
 #[tracing::instrument(skip(container), fields(query = %query, limit = limit))]
 pub(super) async fn search_fast_impl(
     container: &Container,
@@ -34,7 +24,6 @@ pub(super) async fn search_fast_impl(
 ) -> lattice_core::shared::ipc::ApiResult<Vec<(String, f32)>> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
-    // Input validation
     if let Err(e) = container
         .security_context()
         .input_validator()
@@ -64,7 +53,6 @@ pub(super) async fn search_fast_impl(
         }
     };
 
-    // Perform vector search
     let search_service = container.search_service();
     let results = match search_service.search(&query_embedding, limit) {
         Ok(results) => results,
@@ -73,79 +61,12 @@ pub(super) async fn search_fast_impl(
         }
     };
 
-    // Transform results to tuples
     let result: Vec<(String, f32)> = results.into_iter().map(|r| (r.id, r.score)).collect();
 
     ApiResult::success(result)
 }
 
-/// Pure semantic search using vector similarity (DDD use case)
-///
-/// Executes semantic search using embedding-based similarity without keyword matching.
-/// This is the DDD-aligned version that delegates to a dedicated use case for business
-/// logic encapsulation and testability.
-///
-/// # Arguments
-///
-/// * `container` - Service container with semantic search use case
-/// * `request` - Search request DTO with query and options
-///
-/// # Returns
-///
-/// * `Ok(SearchResponseDto)` - Semantic search results with enriched metadata
-/// * `Err(AppError)` - If validation fails or execution fails
-///
-/// # Errors
-///
-/// * `AppError::InvalidInput` - Query validation failed
-/// * `AppError::Other` - Use case execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface SearchRequestDto {
-///   query: string;
-///   limit?: number;
-///   filters?: Record<string, string>;
-/// }
-///
-/// // DDD-aligned semantic search
-/// const response = await invoke('semantic_search', {
-///   request: {
-///     query: 'quantum computing fundamentals',
-///     limit: 15
-///   }
-/// });
-///
-/// console.log(`Found ${response.results.length} semantically similar documents`);
-/// ```
-///
-/// # Security
-///
-/// - **Input Validation**: Sanitizes query
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// - Applies cross-cutting concerns (validation)
-/// - Delegates to `SemanticSearchUseCase` for business logic
-/// - Handles error translation
-///
-/// # Comparison with Other Search Commands
-///
-/// - **vs search_documents**: DDD-aligned, no caching, pure semantic
-/// - **vs search_fast**: Returns enriched results (not just IDs)
-/// - **vs hybrid_search**: Pure vector similarity (no BM25)
-///
-/// # Command Flow
-///
-/// 1. Input validation
-/// 2. Delegate to SemanticSearchUseCase
-/// 3. Use case handles embedding, search, enrichment
-/// 4. Return enriched results
-/// Implementation: Pure semantic search using vector similarity.
+/// Pure semantic search using vector similarity.
 #[tracing::instrument(skip(container), fields(query = %request.query))]
 pub async fn semantic_search_impl(
     container: &Container,
@@ -153,7 +74,6 @@ pub async fn semantic_search_impl(
 ) -> lattice_core::shared::ipc::ApiResult<SearchResponseDto> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
-    // Input validation
     if let Err(e) = container
         .security_context()
         .input_validator()
@@ -173,83 +93,7 @@ pub async fn semantic_search_impl(
     ApiResult::success(response)
 }
 
-/// Hybrid search combining vector similarity and BM25 keyword matching
-///
-/// Executes hybrid search that combines embedding-based semantic similarity with
-/// traditional BM25 keyword matching using Reciprocal Rank Fusion (RRF) for ranking.
-/// Supports fallback to pure semantic or pure keyword modes.
-///
-/// # Arguments
-///
-/// * `container` - Service container with hybrid search service
-/// * `query` - Search query string
-/// * `limit` - Maximum number of results to return
-/// * `search_mode` - Search mode: "semantic", "keyword", or "hybrid"
-///
-/// # Returns
-///
-/// * `Ok(Vec<SearchResultDto>)` - Hybrid search results with dual ranking scores
-/// * `Err(AppError)` - If validation fails or execution fails
-///
-/// # Errors
-///
-/// * `AppError::InvalidInput` - Query validation failed
-/// * `AppError::Other` - Embedding or search execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Hybrid search with dual ranking
-/// const results = await invoke('hybrid_search', {
-///   query: 'transformer architecture attention mechanism',
-///   limit: 20,
-///   searchMode: 'hybrid'
-/// });
-///
-/// results.forEach(result => {
-///   console.log(`${result.title}`);
-///   console.log(`  Vector score: ${result.vectorScore}`);
-///   console.log(`  BM25 score: ${result.bm25Score}`);
-///   console.log(`  Final score: ${result.score}`);
-/// });
-/// ```
-///
-/// # Security
-///
-/// - **Input Validation**: Sanitizes query
-///
-/// # Search Modes
-///
-/// - **"semantic"**: Pure vector similarity
-/// - **"keyword"**: Pure BM25 keyword matching
-/// - **"hybrid"**: RRF fusion of vector + BM25, exactly as chat searches
-/// - **Default**: Hybrid mode if unrecognized
-///
-/// # Ranking Algorithm
-///
-/// **Reciprocal Rank Fusion (RRF)**:
-/// - Combines rankings from vector and BM25 searches
-/// - Score = vector_weight/(k + vector_rank) + keyword_weight/(k + bm25_rank)
-/// - k = 10, with 0.7 vector / 0.3 keyword weights
-/// - Normalizes final scores to [0, 1]
-///
-/// # Performance
-///
-/// - **Hybrid**: ~2x slower than pure semantic (runs both searches)
-/// - **Semantic**: Single vector search
-/// - **Keyword**: Single BM25 search
-///
-/// # Command Flow
-///
-/// 1. Input validation
-/// 2. Parse search mode string
-/// 3. Run the library search orchestrator (vector + BM25 + RRF)
-/// 4. Enrich results with metadata
-/// 5. Return ranked results
-///
-/// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
+/// Hybrid search combining vector similarity and BM25 keyword matching via Reciprocal Rank Fusion (RRF).
 pub async fn hybrid_search_impl(
     container: &Container,
     query: String,
@@ -258,7 +102,6 @@ pub async fn hybrid_search_impl(
 ) -> lattice_core::shared::ipc::ApiResult<Vec<SearchResultDto>> {
     use lattice_core::shared::ipc::{ApiResult, ErrorCode};
 
-    // Input validation
     if let Err(e) = container
         .security_context()
         .input_validator()
@@ -278,7 +121,6 @@ pub async fn hybrid_search_impl(
         );
     }
 
-    // Determine search mode
     let mode = match search_mode.as_str() {
         "semantic" => LibraryMode::Vector,
         "keyword" => LibraryMode::Keyword,
@@ -297,7 +139,6 @@ pub async fn hybrid_search_impl(
         }
     };
 
-    // Enrich results
     let enrichment_service = container.search_enrichment_service();
     let search_results = match enrich_hybrid_results(results, enrichment_service).await {
         Ok(results) => results,
@@ -309,7 +150,6 @@ pub async fn hybrid_search_impl(
     ApiResult::success(search_results)
 }
 
-// Access tracking helper
 async fn track_document_access(
     results: &[SearchResultDto],
     document_repo: Arc<dyn RepositoryPort<Document>>,
@@ -328,10 +168,7 @@ async fn track_document_access(
     Ok(())
 }
 
-/// Search documents implementation for gateway pattern
-///
-/// This async function is called directly by the gateway.
-/// Async state is stored on heap via Futures.
+/// Search documents implementation with query result caching.
 #[tracing::instrument(skip(container), fields(query = %options.query, limit = ?options.limit))]
 pub async fn search_documents_impl(
     container: &Container,
@@ -450,7 +287,7 @@ pub async fn search_documents_impl(
     Ok(response)
 }
 
-/// Find similar implementation for gateway pattern
+/// Find similar chunks based on vector embedding similarity.
 #[tracing::instrument(skip(container), fields(chunk_id = %chunk_id))]
 pub async fn find_similar_impl(
     container: &Container,

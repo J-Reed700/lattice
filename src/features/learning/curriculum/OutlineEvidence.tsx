@@ -8,7 +8,7 @@ import type {
 
 export function OutlineEvidenceStatus({ report }: { report: OutlineEvidenceQuery }) {
   if (report.isError) return (
-    <div role="alert" className="my-3 rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-700 dark:text-rose-300">
+    <div role="alert" className="my-3 rounded-lg border border-danger/30 bg-danger-muted/30 p-3 text-sm text-danger-fg">
       <p>Outline citations could not be loaded. {report.error.message}</p>
       <button type="button" disabled={report.isFetching} onClick={() => void report.refetch()} className="mt-2 underline disabled:opacity-50">
         {report.isFetching ? 'Retrying outline citations…' : 'Retry outline citations'}

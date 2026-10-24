@@ -1,22 +1,11 @@
-/**
- * Formatting helpers shared by the downloads UI.
- *
- * These deliberately live next to the components that use them: they encode
- * presentation decisions (how to render an unknown total, a stalled speed, a
- * missing ETA) that only matter to the drawer and its indicators.
- */
-
 import type { DownloadState } from '@/types/downloads';
 import { formatBytes } from '@/utils/formatters';
 
-
-/** Bytes-per-second rendered as a transfer rate, e.g. `1.2 MB/s`. */
 export function formatSpeed(bytesPerSecond: number): string {
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '—';
   return `${formatBytes(bytesPerSecond)}/s`;
 }
 
-/** Seconds remaining rendered compactly, e.g. `3m 20s`. */
 export function formatEta(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return '—';
   const total = Math.round(seconds);
@@ -27,11 +16,6 @@ export function formatEta(seconds: number | null): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-/**
- * `downloaded / total` where total is known, otherwise just the downloaded
- * figure. The backend reports `total_bytes: null` for responses with no
- * `Content-Length`, which is common for HF redirects.
- */
 export function formatProgressBytes(
   bytesDownloaded: number,
   totalBytes: number | null
@@ -40,10 +24,6 @@ export function formatProgressBytes(
   return `${formatBytes(bytesDownloaded)} / ${formatBytes(totalBytes)}`;
 }
 
-/**
- * A percentage clamped to 0–100, or `null` when the total size is unknown —
- * callers render an indeterminate bar in that case rather than a misleading 0%.
- */
 export function normalizePercentage(
   percentage: number | null,
   bytesDownloaded: number,
@@ -58,7 +38,6 @@ export function normalizePercentage(
   return null;
 }
 
-/** Filename portion of a destination path, used as the display label. */
 export function basename(destination: string): string {
   const parts = destination.split(/[\\/]/);
   return parts[parts.length - 1] || destination;
@@ -73,7 +52,6 @@ export const STATE_LABELS: Record<DownloadState, string> = {
   Cancelled: 'Cancelled',
 };
 
-/** Tailwind text colour per state, using the app's CSS custom properties. */
 export const STATE_TEXT_CLASS: Record<DownloadState, string> = {
   Pending: 'text-[hsl(var(--text-muted))]',
   Downloading: 'text-[hsl(var(--accent))]',
@@ -83,7 +61,6 @@ export const STATE_TEXT_CLASS: Record<DownloadState, string> = {
   Cancelled: 'text-[hsl(var(--text-muted))]',
 };
 
-/** Fill colour for the progress bar per state. */
 export const STATE_BAR_CLASS: Record<DownloadState, string> = {
   Pending: 'bg-[hsl(var(--text-muted))]',
   Downloading: 'bg-[hsl(var(--accent))]',
@@ -93,7 +70,6 @@ export const STATE_BAR_CLASS: Record<DownloadState, string> = {
   Cancelled: 'bg-[hsl(var(--text-muted))]',
 };
 
-/** States that represent work still in flight (or resumable). */
 export function isActive(state: DownloadState): boolean {
   return state === 'Downloading' || state === 'Pending' || state === 'Paused';
 }

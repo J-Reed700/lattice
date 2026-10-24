@@ -13,7 +13,17 @@ NC='\033[0m' # No Color
 # Project paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAURI_DIR="$PROJECT_ROOT/crates/lattice-desktop"
-DB_PATH="$HOME/Library/Application Support/com.lattice.lattice/lattice.db"
+# Must match "identifier" in crates/lattice-desktop/tauri.conf.json.
+APP_IDENTIFIER="tech.lattice.app"
+case "$(uname -s)" in
+    Darwin)
+        APP_DATA_DIR="$HOME/Library/Application Support/$APP_IDENTIFIER"
+        ;;
+    *)
+        APP_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_IDENTIFIER"
+        ;;
+esac
+DB_PATH="$APP_DATA_DIR/lattice.db"
 MODELS_DIR="$HOME/.cache/lattice/models"
 LOG_DIR="/tmp"
 
@@ -114,22 +124,30 @@ setup_rust_build_env() {
     exit 1
 }
 
-# Kill all running processes
+# Kill a process pattern scoped to this repo: TERM first, KILL stragglers.
+kill_repo_pattern() {
+    local pattern="$1"
+    pkill -TERM -f "$pattern" 2>/dev/null || true
+    sleep 1
+    pkill -KILL -f "$pattern" 2>/dev/null || true
+}
+
+# Kill this repo's dev processes only (Tauri CLI, Vite, cargo, the app binary)
 kill_all() {
-    print_header "Killing all processes"
+    print_header "Killing this repo's dev processes"
 
-    print_info "Killing Node processes..."
-    killall -9 node npm vite 2>/dev/null || true
+    print_info "Stopping Tauri dev / Vite started from $PROJECT_ROOT..."
+    kill_repo_pattern "$PROJECT_ROOT/node_modules/.bin/tauri"
+    kill_repo_pattern "$PROJECT_ROOT/node_modules/@tauri-apps/cli"
+    kill_repo_pattern "$PROJECT_ROOT/node_modules/.bin/vite"
+    kill_repo_pattern "$PROJECT_ROOT/node_modules/vite/"
 
-    print_info "Killing Tauri processes..."
-    pkill -9 -f "tauri" 2>/dev/null || true
-    killall -9 lattice-desktop 2>/dev/null || true
+    print_info "Stopping cargo builds and the app binary for this repo..."
+    kill_repo_pattern "cargo.*$TAURI_DIR"
+    kill_repo_pattern "$PROJECT_ROOT/target/debug/lattice-desktop"
+    kill_repo_pattern "$PROJECT_ROOT/target/release/lattice-desktop"
 
-    print_info "Killing Rust processes..."
-    pkill -9 -f "cargo" 2>/dev/null || true
-
-    sleep 2
-    print_success "All processes killed"
+    print_success "Repo dev processes stopped"
 }
 
 # Clean build artifacts
@@ -383,7 +401,7 @@ run_frontend() {
     cd "$PROJECT_ROOT"
 
     print_info "Starting Vite dev server on http://localhost:5173..."
-    npm run dev
+    npx vite
 }
 
 # Run Tauri dev
@@ -529,14 +547,14 @@ health_check() {
     echo ""
     print_info "Checking for running processes..."
 
-    if pgrep -f "vite" > /dev/null; then
-        print_warning "Vite is running (PID: $(pgrep -f 'vite'))"
+    if pgrep -f "$PROJECT_ROOT/node_modules/.*vite" > /dev/null; then
+        print_warning "Vite is running (PID: $(pgrep -f "$PROJECT_ROOT/node_modules/.*vite" | tr '\n' ' '))"
     else
         print_success "No Vite processes running"
     fi
 
-    if pgrep -f "lattice-desktop" > /dev/null; then
-        print_warning "Tauri app is running (PID: $(pgrep -f 'lattice-desktop'))"
+    if pgrep -f "$PROJECT_ROOT/target/.*/lattice-desktop" > /dev/null; then
+        print_warning "Tauri app is running (PID: $(pgrep -f "$PROJECT_ROOT/target/.*/lattice-desktop" | tr '\n' ' '))"
     else
         print_success "No Tauri processes running"
     fi
@@ -625,6 +643,7 @@ show_menu() {
     print_header "Lattice Desktop - Development Script"
     echo ""
     echo "Usage: ./scripts/dev/dev.sh [command] [options]"
+    echo "       (no command = dev)"
     echo ""
     echo -e "${CYAN}Build Commands:${NC}"
     echo "  build-frontend       Build frontend only (Vite)"
@@ -635,7 +654,7 @@ show_menu() {
     echo "  rebuild-rust         Rebuild Rust only (slow, keeps npm)"
     echo ""
     echo -e "${CYAN}Run Commands:${NC}"
-    echo "  dev                  Run Tauri dev mode (frontend + backend)"
+    echo "  dev                  Run Tauri dev mode (frontend + backend) [default]"
     echo "  dev-logs             Run Tauri dev with logging"
     echo "  quick-start          Quick start for testing (builds dist if needed)"
     echo "  frontend             Run frontend dev server only"
@@ -647,7 +666,7 @@ show_menu() {
     echo "  clean-models         Clean downloaded models"
     echo "  clean-logs           Clean log files"
     echo "  clean-all            Nuclear clean (everything)"
-    echo "  kill                 Kill all running processes"
+    echo "  kill                 Kill this repo's dev processes (Tauri/Vite/cargo)"
     echo ""
     echo -e "${CYAN}Install Commands:${NC}"
     echo "  install              Install all dependencies (npm + Rust)"
@@ -673,7 +692,7 @@ show_menu() {
 main() {
     cd "$PROJECT_ROOT"
 
-    case "${1:-}" in
+    case "${1:-dev}" in
         # Build commands
         build-frontend)
             build_frontend
@@ -766,10 +785,8 @@ main() {
 
         # Default
         *)
-            if [ -n "${1:-}" ]; then
-                print_error "Unknown command: $1"
-                echo ""
-            fi
+            print_error "Unknown command: $1"
+            echo ""
             show_menu
             exit 1
             ;;

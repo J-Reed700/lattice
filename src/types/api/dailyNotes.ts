@@ -1,13 +1,4 @@
-/**
- * Daily Notes API Types
- *
- * Types for daily notes feature (work in progress).
- */
-
-/**
- * Daily note representation
- * TODO: Define proper fields when backend is implemented
- */
+// TODO: Define proper fields when backend is implemented
 export interface DailyNote {
   id: string;
   date: string;

@@ -211,7 +211,7 @@ impl ContextAssembler {
         request: &ContextRequest<'_>,
         prepared: Option<&crate::application::ports::conversation_memory::PreparedMemory>,
     ) -> Result<ContextPlan> {
-        // --- 1. fixed costs -------------------------------------------------
+        // 1. Fixed costs
         // The date line and the request are the part of the final message no
         // eviction removes, so both are charged as fixed. Evidence rendered
         // into the request is not: it is added at step 8.
@@ -231,7 +231,7 @@ impl ContextAssembler {
         accounting.current_input = current_tokens;
         accounting.tool_schemas = request.tool_schema_tokens;
 
-        // --- 2. mandatory memory -------------------------------------------
+        // 2. Mandatory memory
         // Loaded whole and validated against live source. An item whose evidence
         // no longer resolves is not carried as fact: it is counted as a conflict
         // and left out, because the alternative is quoting text the user does
@@ -267,14 +267,14 @@ impl ContextAssembler {
             .map(|section| self.section_cost(section))
             .unwrap_or(0);
 
-        // --- 3. reserve the newest complete turn ---------------------------
+        // 3. Reserve the newest complete turn
         let newest_turn_tokens = request
             .recent
             .last()
             .map(|message| self.count_input(&render::render_recent(message)))
             .unwrap_or(0);
 
-        // --- 4. validate mandatory capacity, borrowing if needed ----------
+        // 4. Validate mandatory capacity, borrowing if needed
         let ceiling = allocation.mandatory_ceiling_with_turn_reserved(newest_turn_tokens);
         if memory_tokens > allocation.mandatory_memory {
             if memory_tokens > ceiling {
@@ -294,7 +294,7 @@ impl ContextAssembler {
         // Room left for everything selectable after mandatory memory is paid.
         let mut remaining = allocation.available.saturating_sub(memory_tokens);
 
-        // --- 5. recent whole turns ----------------------------------------
+        // 5. Recent whole turns
         // Chosen before the summary: the user's own turns outrank a model's
         // paraphrase of them, and whether the summary is needed at all depends
         // on how far back the window reaches. Newest first so the most recent
@@ -346,7 +346,7 @@ impl ContextAssembler {
                 oldest_kept_sequence == i64::MAX || message.sequence < oldest_kept_sequence
             });
 
-        // --- 6. working summary --------------------------------------------
+        // 6. Working summary
         // Carried only once older turns have left the window. While the window
         // still holds the whole transcript the summary would only repeat text
         // the model has verbatim, and a request without it stays append-only
@@ -373,7 +373,7 @@ impl ContextAssembler {
             None => None,
         };
 
-        // --- 7. recalled passages -----------------------------------------
+        // 7. Recalled passages
         // Recall was sized to its share when it was searched; here it may use
         // whatever the pools above left, ahead of any document. A passage too
         // long for what is left is passed over, not the end of recall: the
@@ -443,7 +443,7 @@ impl ContextAssembler {
             .map(|passage| passage.message_id.clone())
             .collect();
 
-        // --- 8. document and web evidence ----------------------------------
+        // 8. Document and web evidence
         // Evidence the caller rendered into the current message is carried
         // whole while the request fits, and has the first claim on what the
         // history left: it is what this turn answers from, and the saved
@@ -509,7 +509,7 @@ impl ContextAssembler {
         accounting.document_evidence += inline_tokens;
         accounting.inline_evidence_kept = inline.map_or(0, |inline| inline.items);
 
-        // --- 9. render, query-dependent material last ----------------------
+        // 9. Render, query-dependent material last
         last.recalled = recalled_section;
         last.memory = memory_section;
         last.evidence = evidence_section;

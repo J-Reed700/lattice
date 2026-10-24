@@ -50,10 +50,6 @@ pub struct ConversationRepository {
 
 impl ConversationRepository {
     /// Create a new conversation repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,

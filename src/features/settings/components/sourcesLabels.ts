@@ -1,9 +1,3 @@
-/**
- * Words for Settings → Sources: group names, status lines and the field
- * checks the backend repeats (its validation is the rule; these only say so
- * before a round trip).
- */
-
 import type {
   FinderStatusDto,
   KeyServiceDto,

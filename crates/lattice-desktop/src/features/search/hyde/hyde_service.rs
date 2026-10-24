@@ -1,42 +1,6 @@
 //! HyDE Service Orchestrator
 //!
-//! Main entry point for HyDE (Hypothetical Document Embeddings) system.
 //! Coordinates query classification and HyDE generation.
-//!
-//! ## Architecture
-//!
-//! ```text
-//! User Query
-//!     ↓
-//! HyDEService::interpret_query()
-//!     ↓
-//! QueryClassifier
-//!     ↓
-//! QueryType
-//!     ↓
-//! HyDEGenerator
-//!     ↓
-//! HyDEInterpretation
-//! ```
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice::features::search::hyde::HyDEService;
-//! use std::sync::Arc;
-//!
-//! async fn example(llm: Arc<dyn LLMPort>) {
-//!     let service = HyDEService::new(llm);
-//!
-//!     let interpretation = service.interpret_query("What is Rust?").await?;
-//!
-//!     println!("Query type: {}", interpretation.query_type);
-//!     println!("Search strategy: {}", interpretation.search_strategy);
-//!     if let Some(hyde) = interpretation.hyde_text {
-//!         println!("HyDE text: {}", hyde);
-//!     }
-//! }
-//! ```
 
 use crate::features::search::hyde::hyde_generator::HyDEGenerator;
 use crate::features::search::hyde::query_classifier::QueryClassifier;
@@ -50,34 +14,6 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// Orchestrates HyDE query interpretation pipeline.
-///
-/// This service is the main entry point for HyDE processing. It:
-/// 1. Classifies the query type (greeting, question, command, followup)
-/// 2. Generates appropriate HyDE expansion via LLM (if needed)
-/// 3. Returns interpretation with search strategy
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use lattice::features::search::hyde::HyDEService;
-/// use lattice_core::domain::qa::hyde::QueryType;
-/// use std::sync::Arc;
-///
-/// async fn example(llm: Arc<dyn LLMPort>) -> Result<()> {
-///     let service = HyDEService::new(llm);
-///
-///     // Greeting - fast path, no LLM call
-///     let greeting = service.interpret_query("Hello!").await?;
-///     assert_eq!(greeting.query_type, QueryType::Greeting);
-///
-///     // Question - LLM generates hypothetical answer
-///     let question = service.interpret_query("What is DDD?").await?;
-///     assert_eq!(question.query_type, QueryType::Question);
-///     assert!(question.hyde_text.is_some());
-///
-///     Ok(())
-/// }
-/// ```
 pub struct HyDEService {
     classifier: QueryClassifier,
     generator: HyDEGenerator,
@@ -85,19 +21,6 @@ pub struct HyDEService {
 
 impl HyDEService {
     /// Create a new HyDE service with LLM backend.
-    ///
-    /// # Arguments
-    ///
-    /// * `llm` - LLM port implementation for HyDE generation
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::features::search::hyde::HyDEService;
-    /// use std::sync::Arc;
-    ///
-    /// let service = HyDEService::new(llm_port);
-    /// ```
     pub fn new(llm: Arc<dyn LLMPort>) -> Self {
         Self {
             classifier: QueryClassifier::new(),
@@ -114,50 +37,6 @@ impl HyDEService {
     }
 
     /// Interpret a user query with HyDE enrichment.
-    ///
-    /// This is the main entry point for the HyDE pipeline:
-    /// 1. **Classify** the query type using pattern matching
-    /// 2. **Generate** HyDE expansion via LLM (if appropriate)
-    /// 3. **Return** interpretation with search strategy
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - The user's query string
-    ///
-    /// # Returns
-    ///
-    /// `HyDEInterpretation` containing:
-    /// - Original query
-    /// - Classified query type
-    /// - Optional HyDE-generated text
-    /// - Recommended search strategy
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if query is empty or too long
-    /// - `AppError::Network` if LLM call fails (for questions/commands)
-    /// - `AppError::Other` for LLM generation errors
-    ///
-    /// # Performance
-    ///
-    /// - **Greetings**: ~1ms (fast-path, no LLM)
-    /// - **Questions**: ~500-2000ms (LLM call)
-    /// - **Commands**: ~500-2000ms (LLM call)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// let interpretation = service.interpret_query("What is Rust?").await?;
-    ///
-    /// match interpretation.query_type {
-    ///     QueryType::Greeting => println!("No search needed"),
-    ///     QueryType::Question => {
-    ///         let hyde = interpretation.hyde_text.unwrap();
-    ///         println!("Search using HyDE: {}", hyde);
-    ///     }
-    ///     _ => {}
-    /// }
-    /// ```
     pub async fn interpret_query(&self, query: impl Into<String>) -> Result<HyDEInterpretation> {
         self.interpret_query_with_context(query, None).await
     }
@@ -270,27 +149,6 @@ impl HyDEService {
     /// Interpret a query with explicit query type (for testing/debugging).
     ///
     /// Skips classification and directly generates HyDE with the provided type.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - The user's query string
-    /// * `query_type` - Explicitly specified query type
-    ///
-    /// # Returns
-    ///
-    /// `HyDEInterpretation` with the specified query type.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::qa::hyde::QueryType;
-    ///
-    /// // Force treating a query as a question
-    /// let interpretation = service.interpret_query_with_type(
-    ///     "machine learning",
-    ///     QueryType::Question
-    /// ).await?;
-    /// ```
     pub async fn interpret_query_with_type(
         &self,
         query: impl Into<String>,

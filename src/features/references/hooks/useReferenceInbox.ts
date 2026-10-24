@@ -43,7 +43,6 @@ export interface CaptureDestination {
 
 export interface UseReferenceInboxResult {
   bookmarks: ConversationMessageBookmarkDto[];
-  /** Message bookmarks and passage references merged, newest first, filtered. */
   filteredItems: InboxItem[];
   selectedItem: InboxItem | null;
   spacesById: Map<string, ConversationSpaceDto>;
@@ -79,13 +78,6 @@ export interface UseReferenceInboxResult {
   getPayload: (bookmark: ConversationMessageBookmarkDto) => Promise<BookmarkPayload>;
 }
 
-/**
- * Owns the data-loading lifecycle and state orchestration for the
- * ReferenceInbox surface. Wraps listMessageBookmarks + listWorkspaceNotes +
- * listConversationSpaces + listJournals, payload resolution caching,
- * annotation save / capture / remove actions, and filter/search derivations.
- * Spec §10.
- */
 export function useReferenceInbox(options: {
   requestedReferenceId: string | null;
 }): UseReferenceInboxResult {
@@ -171,17 +163,9 @@ export function useReferenceInbox(options: {
     [capturedIndex, items, journalsById, normalizedQuery, originFilter, statusChip],
   );
 
-  // The URL is a follower, not a second source of truth. `ReferenceInbox`
-  // mirrors `selectedId` into `?referenceId=`, so if this effect kept forcing
-  // the URL's value back onto the selection the two would trade places forever:
-  // click B → URL still says A → selection reverts to A while the URL becomes B
-  // → selection becomes B while the URL reverts to A → repeat, pinning the CPU.
-  // A requested id is therefore applied once, when it arrives; after that the
-  // user's clicks own the selection.
+  // Apply requested referenceId from URL once on arrival to avoid selection feedback loops.
   const appliedRequestRef = useRef<string | null>(null);
 
-  // Selection reconciliation: respect a newly requested reference id, fall back
-  // to the first item.
   useEffect(() => {
     if (filteredItems.length === 0) {
       if (selectedId !== null) setSelectedId(null);

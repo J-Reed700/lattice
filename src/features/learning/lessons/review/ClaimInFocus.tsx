@@ -13,7 +13,7 @@ const LEGEND: Array<[string, string]> = [['A', 'accept'], ['E', 'edit'], ['R', '
 
 const siteOf = (url: string | null) => { try { return url ? new URL(url).host : null; } catch { return null; } };
 
-/** The checked statement, marked, inside its sentence and paragraph (§3.3 item 2). */
+/** The checked statement, marked, inside its sentence and paragraph  item 2). */
 const StatementInContext = forwardRef<HTMLParagraphElement, { item: ClaimReviewItemDto }>(({ item }, ref) => {
   const { statement, sentence, contextBefore, contextAfter } = item.presentation;
   const at = sentence.indexOf(statement);
@@ -57,7 +57,7 @@ function Tried({ item, onOpen }: { item: ClaimReviewItemDto; onOpen: (source: So
 }
 
 /**
- * One claim in focus (§3.3), top to bottom: where it is, the statement in
+ * One claim in focus , top to bottom: where it is, the statement in
  * its sentence, why it waits, the best evidence, what was tried, the
  * actions and the keyboard legend. Nothing else.
  */
@@ -126,7 +126,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
 
       {sheet}
 
-      <div className={stickyActions ? 'sticky bottom-0 -mx-4 border-t border-border bg-surface px-4 pb-3 pt-3' : undefined}>
+      <div className={stickyActions ? 'sticky bottom-0 -mx-4 border-t border-border-default bg-surface px-4 pb-3 pt-3 shadow-xs' : undefined}>
         <ClaimActions item={item} sharing={sharing} suggested={why.fixes[0] ?? 'accept'} busy={busy} error={error} form={form}
           onFormChange={onFormChange} onAct={onAct} onAcceptSource={onAcceptSource} onAddSource={onAddSource} closest={Boolean(closest)} />
       </div>

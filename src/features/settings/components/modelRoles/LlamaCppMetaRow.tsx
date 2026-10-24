@@ -1,15 +1,3 @@
-/**
- * LlamaCppMetaRow
- *
- * The llama.cpp connection lives in LLM settings rather than the downloaded
- * models table. Selecting Chat updates the provider; selecting Utility,
- * Learning, or Verifier saves the served model reference in Settings.
- * Active roles are shown as compact badges on the row, while role assignment
- * lives in the model configuration menu. Connection details remain editable
- * on the Chat settings page; whether the served model sees pictures is
- * declared here.
- */
-
 import { useState } from 'react';
 
 import { Network, SlidersHorizontal } from 'lucide-react';

@@ -17,7 +17,7 @@ export type AddSourceVariables = {
 };
 
 /**
- * "Add a source" over `attach_learning_claim_evidence` (§3.6, §5.3): the
+ * "Add a source" over `attach_learning_claim_evidence` : the
  * stage it is at, live, and the report when it ends. No timeout: the fetch's
  * own failure or the checker's error ends it. Cancel stops listening; the
  * server finishes the claim it is on (the ledger is append-only).

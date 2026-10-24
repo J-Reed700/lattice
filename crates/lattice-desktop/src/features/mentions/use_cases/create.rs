@@ -1,22 +1,6 @@
 //! Create Mention Use Case
 //!
 //! Creates a new mention entity (person, organization, location, or general).
-//!
-//! # Dependencies
-//! - `MentionRepositoryPort` - Mention persistence
-//! - `MentionMapper` - Domain to DTO mapping
-//!
-//! # Security
-//! - Validates mention name is not empty
-//! - Validates mention type is a valid enum value
-//! - Rate limited to prevent abuse
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = CreateMentionUseCase::new(mention_repo, mapper);
-//! let mention = use_case.execute("John Doe".into(), "person".into(), None).await?;
-//! println!("Created mention: {}", mention.id);
-//! ```
 
 use crate::features::mentions::dto::MentionDto;
 use crate::features::mentions::mapper::MentionMapper;
@@ -41,21 +25,6 @@ impl CreateMentionUseCase {
     }
 
     /// Create a new mention.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the entity being mentioned (e.g., "John Doe", "ACME Corp")
-    /// * `mention_type` - Type of mention: "person", "organization", "location", or "general"
-    /// * `metadata` - Optional metadata JSON string
-    ///
-    /// # Returns
-    ///
-    /// Created mention DTO with generated ID and timestamp.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if name is empty or mention_type is invalid
-    /// - `AppError::Database` if storage fails
     pub async fn execute(
         &self,
         name: String,

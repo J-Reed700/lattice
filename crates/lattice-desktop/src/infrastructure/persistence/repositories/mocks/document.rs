@@ -15,12 +15,6 @@ use lattice_core::shared::error::{AppError, Result};
 /// In-memory mock implementation of DocumentRepositoryTrait (LEGACY)
 ///
 /// Stores documents in a HashMap. Thread-safe using Arc<RwLock>.
-///
-/// # Example
-/// ```rust
-/// let repo = MockDocumentRepository::new();
-/// repo.create("/path/file.txt", "file.txt", "text/plain", 1024, "2024-01-01", "hash").await?;
-/// ```
 #[derive(Clone)]
 pub struct MockDocumentRepository {
     documents: Arc<RwLock<HashMap<String, Document>>>,
@@ -185,24 +179,10 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
 // DocumentRepositoryPort, Filter, RepositoryPort already imported at top
 // Document already imported at line 34 with Chunk and Mention
 
-/// Mock document repository for testing with DDD ports.
+/// Mock document repository for testing.
 ///
 /// Implements both `RepositoryPort<Document>` and `DocumentRepositoryPort`
-/// for comprehensive testing without database dependencies.
-///
-/// # Example
-///
-/// ```rust
-/// use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
-/// use lattice_core::application::ports::{RepositoryPort, DocumentRepositoryPort};
-///
-/// let mock = Arc::new(MockDocumentRepository::new());
-/// let repo: Arc<dyn RepositoryPort<Document> + DocumentRepositoryPort> = mock;
-///
-/// // Use in tests
-/// repo.save(&document).await?;
-/// let found = repo.find_by_id(doc.id()).await?;
-/// ```
+/// for testing without database dependencies.
 pub struct MockDocumentRepository {
     documents: Arc<RwLock<HashMap<String, Document>>>,
     paths: Arc<RwLock<HashMap<String, String>>>, // file_path -> id

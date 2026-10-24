@@ -2,35 +2,6 @@
 use super::*;
 
 /// Detailed compatibility analysis between a model and system.
-///
-/// This value object represents the output of the compatibility scoring
-/// algorithm, providing:
-/// - Overall compatibility level
-/// - Detailed factor scores (RAM, GPU, disk)
-/// - Performance estimates
-/// - Recommendations
-///
-/// # Scoring Algorithm
-///
-/// 1. **Critical Checks** (instant fail):
-///    - RAM: available >= minimum (else Incompatible)
-///    - Disk: available >= size (else Incompatible)
-///
-/// 2. **Factor Scores** (0-100):
-///    - RAM Score: % of recommended RAM available
-///    - GPU Score: 100 if GPU available, 50 otherwise
-///    - Disk Score: 100 if ample space, 75 if tight
-///
-/// 3. **Overall Score**:
-///    - RAM: 50% weight
-///    - GPU: 30% weight
-///    - Disk: 20% weight
-///
-/// 4. **Compatibility Level**:
-///    - > 85: Excellent
-///    - 60-85: Good
-///    - < 60: Poor
-///    - Fails critical: Incompatible
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompatibilityScore {
     /// Overall compatibility level
@@ -116,61 +87,6 @@ impl ModelRecommendation {
 }
 
 /// Domain service for scoring model compatibility with system capabilities.
-///
-/// This service implements the compatibility scoring algorithm as pure business
-/// logic with no infrastructure dependencies.
-///
-/// # Algorithm
-///
-/// See [`CompatibilityScore`] documentation for detailed algorithm description.
-///
-/// # Example
-///
-/// ```rust
-/// use lattice_core::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata, ModelCategory, PerformanceTier, GpuAcceleration, GpuType, CpuArchitecture};
-///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let scorer = CompatibilityScorer::new();
-///
-/// let capabilities = SystemCapabilities {
-///     total_ram_gb: 16.0,
-///     // available_ram_gb removed
-///     cpu_cores: 8,
-///     cpu_architecture: CpuArchitecture::ARM64,
-///     gpu_type: GpuType::AppleSilicon,
-///     gpu_acceleration: GpuAcceleration::Metal,
-///     vram_gb: None,
-///     available_disk_gb: 100.0,
-/// };
-///
-/// let model = ModelMetadata {
-///     id: "phi-3-mini".into(),
-///     name: "Phi-3 Mini".into(),
-///     category: ModelCategory::LLM,
-///     description: "Compact model".into(),
-///     size_gb: 1.8,
-///     minimum_ram_gb: 4.0,
-///     recommended_ram_gb: 8.0,
-///     context_length: 4096,
-///     performance_tier: PerformanceTier::Fast,
-///     supported_quantizations: vec!["Q4_K_M".into()],
-///     capabilities: vec!["chat".into()],
-///     download_url: None,
-///     license: "MIT".into(),
-///     requires_auth: false,
-///     model_id: None,
-///     default_filename: None,
-///     files: vec![],
-///     total_size_bytes: 0,
-///     embedding_dimensions: None,
-///     embedding_compatibility: None,
-/// };
-///
-/// let score = scorer.score_compatibility(&model, &capabilities)?;
-/// println!("Compatibility: {}", score.compatibility_level);
-/// # Ok(())
-/// # }
-/// ```
 pub struct CompatibilityScorer;
 
 impl CompatibilityScorer {
@@ -180,13 +96,6 @@ impl CompatibilityScorer {
     }
 
     /// Score compatibility between a model and system capabilities.
-    ///
-    /// # Arguments
-    /// - `model` - Model to score
-    /// - `capabilities` - System hardware capabilities
-    ///
-    /// # Returns
-    /// Detailed compatibility score with recommendations.
     pub fn score_compatibility(
         &self,
         model: &ModelMetadata,

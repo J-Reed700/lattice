@@ -13,16 +13,8 @@ import type {
   WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
-/*
- * The review's copy deck (UI design §4). Plain, short, present tense, second
- * person; never an internal name (a level, kind or bar word, a pass, bytes,
- * an identifier). The same words serve a biology, history or software course.
- */
-
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 export const claimsCount = (count: number) => plural(count, 'claim', 'claims');
-
-// ── Sources: kind, standing, "counts as" (§4.3) ─────────────────────────────
 
 const KIND_WORDS: Record<SourceKindDto, string> = {
   online_book: 'online book',
@@ -42,7 +34,6 @@ const KIND_WORDS: Record<SourceKindDto, string> = {
 
 export const kindWord = (kind: SourceKindDto) => KIND_WORDS[kind];
 
-/** "an online book", "a forum", "documentation", "your file". */
 export function kindWithArticle(kind: SourceKindDto): string {
   const word = KIND_WORDS[kind];
   if (kind === 'documentation' || kind === 'your_file' || kind === 'pasted_text') return word;
@@ -60,10 +51,8 @@ const STANDING_WORDS: Record<LearningTrustLevel, string> = {
 
 export const standingWords = (level: LearningTrustLevel) => STANDING_WORDS[level];
 
-/** The levels the bulk accept offers, in the order the dialog lists them. */
 export const ACCEPT_LEVELS: LearningTrustLevel[] = ['established', 'authoritative', 'primary'];
 
-/** "Counts as" for the evidence shown (§3.4, §4.3, §4.6). */
 export function countsAs(support: ClaimSupportDto, sufficiency: LearningSufficiencyDto | null): string {
   if (support.role === 'contradicts') return support.standing ? standingWords(support.standing) : 'a source in this course';
   if (support.source.addedBy === 'user' && support.counts.outcome !== 'not_counted') return 'a source you added · enough, it states this';
@@ -76,7 +65,6 @@ export function countsAs(support: ClaimSupportDto, sufficiency: LearningSufficie
   }
 }
 
-/** Labels on verified claims (§4.3). */
 export function verifiedLabel(sufficiency: LearningSufficiencyDto | null): string | null {
   switch (sufficiency?.label) {
     case 'practice': return 'A recommendation';
@@ -90,21 +78,16 @@ export function verifiedLabel(sufficiency: LearningSufficiencyDto | null): strin
   }
 }
 
-/** "Tool Use & Function Calling · prakashkagitha.github.io · online book". */
 export function sourceLine(support: Pick<ClaimSupportDto, 'source' | 'site' | 'kind'>): string {
   return [support.source.title, support.site, kindWord(support.kind)].filter(Boolean).join(' · ');
 }
-
-// ── Why a claim waits (§4.1) ────────────────────────────────────────────────
 
 export type FixAction = 'accept' | 'accept_source' | 'edit' | 'remove' | 'add_source' | 'general_knowledge';
 
 export type WhyItWaits = {
   chip: string;
   reason: string;
-  /** The specific lack, when the facts are known. */
   detail: string | null;
-  /** The suggested fixes, first one first. */
   fixes: FixAction[];
 };
 
@@ -195,14 +178,12 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
   }
 }
 
-/** The chip, the one-line reason, the specific lack and the suggested fixes. */
 export function whyItWaits(item: ClaimReviewItemDto): WhyItWaits {
   const copy = verdictCopy(item);
   if (item.state.state !== 'reopened') return copy;
   return { ...copy, chip: 'Reopened', detail: [REOPENED[item.state.cause.cause], copy.detail].filter(Boolean).join(' ') || null };
 }
 
-/** The state of a claim that no longer waits, for its row and its chip. */
 export function resolvedChip(item: ClaimReviewItemDto): string {
   const state = item.state;
   switch (state.state) {
@@ -217,8 +198,6 @@ export function resolvedChip(item: ClaimReviewItemDto): string {
     case 'reopened': return whyItWaits(item).chip;
   }
 }
-
-// ── "What fixes it" groups (§4.2) ───────────────────────────────────────────
 
 export type FixGroup = 'accept_source' | 'needs_source' | 'says_otherwise' | 'common_knowledge' | 'could_not_check';
 
@@ -243,9 +222,6 @@ export function fixGroupOf(item: ClaimReviewItemDto): FixGroup {
   }
 }
 
-// ── What was tried (§3.3) ───────────────────────────────────────────────────
-
-/** "Searched the web 9 times and read 214 pages; none stated it." Null when nothing was tried. */
 export function triedLine(tried: ResearchSummaryDto): string | null {
   if (tried.searches === 0 && tried.pagesRead === 0) return null;
   const searched = tried.searches > 0
@@ -256,9 +232,6 @@ export function triedLine(tried: ResearchSummaryDto): string | null {
   return `${searched}; none stated it.`;
 }
 
-// ── Tally (§4.4) ────────────────────────────────────────────────────────────
-
-/** "33 claims need you · 12 verified · 74 rewritten by the machine". Zero counts are left out. */
 export function tallyLine(counts: ClaimCountsDto): string {
   const parts: Array<[number, string]> = [
     [counts.queued, counts.queued === 1 ? 'claim needs you' : 'claims need you'],
@@ -273,7 +246,6 @@ export function tallyLine(counts: ClaimCountsDto): string {
   return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
 }
 
-/** The running job's claims, for the preparation details: the same order and words. */
 export function jobTallyLine(tally: LearningClaimTally): string {
   const checking = tally.unchecked + tally.searching + tally.sentBack + tally.repairing;
   const parts: Array<[number, string]> = [
@@ -286,7 +258,6 @@ export function jobTallyLine(tally: LearningClaimTally): string {
   return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
 }
 
-/** "Preparing · 44 of 44 checked", from the running job's tally. */
 export function preparingLine(tally: LearningClaimTally | null | undefined): string {
   if (!tally) return 'Preparing';
   const total = tally.unchecked + tally.searching + tally.sentBack + tally.repairing + tally.waiting + tally.verified + tally.resolvedByYou;
@@ -295,8 +266,6 @@ export function preparingLine(tally: LearningClaimTally | null | undefined): str
 
 export const claimsNeedYou = (count: number) => `${claimsCount(count)} need${count === 1 ? 's' : ''} you`;
 export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} for you`;
-
-// ── Announcements (§4.5) ────────────────────────────────────────────────────
 
 export const ALL_RESOLVED = 'Everything is resolved. Resume verification to publish the lesson.';
 const left = (remaining: number) => (remaining > 0 ? `${remaining} left.` : ALL_RESOLVED);
@@ -320,8 +289,6 @@ export function trustedAnnouncement(title: string, verified: number, stillWaitin
   return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
 }
 
-// ── Adding a source (§4.6) ──────────────────────────────────────────────────
-
 export function addSourceTitle(scope: 'claim' | 'group' | 'queue', count: number): string {
   if (scope === 'claim' || count <= 1) return 'Add a source for this claim';
   return scope === 'queue' ? `Add a source for all ${count} claims` : `Add a source for these ${count} claims`;
@@ -341,7 +308,6 @@ export function progressLine(stage: { stage: 'fetching'; host: string | null } |
   }
 }
 
-/** What went wrong, in one sentence; the next steps are the buttons under it. */
 const FAILURES: Record<AttachFailureKindDto, (host: string) => string> = {
   refused: (host) => `${host} refused the request.`,
   paywall: (host) => `${host} shows a sign-in or subscription wall.`,
@@ -353,20 +319,16 @@ const FAILURES: Record<AttachFailureKindDto, (host: string) => string> = {
 
 export function failureLine(kind: AttachFailureKindDto, host: string | null, message: string): string {
   const line = FAILURES[kind](host ?? 'The site');
-  // A refusal names its status when the message carries one ("HTTP 403").
   const status = kind === 'refused' ? /HTTP \d{3}/.exec(message)?.[0] : null;
   return status ? line.replace(/\.$/, ` (${status}).`) : line;
 }
 
 export type AttachSummary = {
-  /** The claim in focus is now verified by what was added. */
   stated: boolean;
-  /** The claim in focus was compared and the page does not say it. */
   notStated: boolean;
   line: string;
 };
 
-/** The result line for an attach, from its report (§3.6, §4.6). */
 export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
   const title = report.source?.title ?? 'the source';
   const outcome = report.outcome;
@@ -395,7 +357,6 @@ export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, r
   return { stated, notStated, line: `Nothing in ${title} mentions this claim. It is saved in your sources.` };
 }
 
-/** The Sources tab's line after adding a source (§4.6); null when nothing waited. */
 export function recheckLine(recheck: WaitingClaimsRecheckDto | null | undefined): string | null {
   if (!recheck || recheck.tried === 0) return null;
   const stopped = recheck.stopped ? ` The rest were not checked: ${recheck.stopped}.` : '';

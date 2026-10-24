@@ -6,16 +6,8 @@ import { VaultAPI } from '@/lib/api';
 import type { PassageReferenceDto } from '@/types/api/passageReferences';
 import type { UpdatePassageReferenceRequest } from '@/types/api/references';
 
-/** Contract §4.3 — shared with the ReferenceInbox. */
 export const PASSAGE_REFERENCES_QUERY_KEY = ['references', 'passages'] as const;
 
-/**
- * Saved passage references.
- *
- * The query surfaces its own failure (`isError`) so a reader looking at the
- * inbox is told the list could not be loaded, rather than being shown an
- * empty shelf that reads as "you have saved nothing".
- */
 export function usePassageReferencesQuery() {
   return useQuery<PassageReferenceDto[]>({
     queryKey: PASSAGE_REFERENCES_QUERY_KEY,
@@ -29,18 +21,11 @@ export function usePassageReferencesQuery() {
   });
 }
 
-/** The `{ documentId, chunkId }` pairs a citation mark is matched against. */
 export interface PassageReferenceKey {
   documentId: string;
   chunkId: string | null;
 }
 
-/**
- * Just the keys behind the "from your references" mark.
- *
- * Degrades to an empty list on any failure: the mark is an extra, and its
- * absence says nothing false — unlike the inbox, which must admit the error.
- */
 export function usePassageReferenceIds(): PassageReferenceKey[] {
   const { data } = usePassageReferencesQuery();
   return useMemo(
@@ -53,13 +38,8 @@ export function usePassageReferenceIds(): PassageReferenceKey[] {
   );
 }
 
-/** Public alias for the passage-reference query key. */
 export const passageReferencesKey = PASSAGE_REFERENCES_QUERY_KEY;
 
-/**
- * Annotation-only update. Success invalidates the query rather than patching a
- * second local copy.
- */
 export function useUpdatePassageReferenceMutation() {
   const queryClient = useQueryClient();
   return useMutation<PassageReferenceDto, Error, UpdatePassageReferenceRequest>({

@@ -1,52 +1,8 @@
-//! # Model Catalog Domain
-//!
-//! Domain logic for searching and ranking AI models from external catalogs.
-//!
-//! ## Architecture
-//!
-//! Following Domain-Driven Design (DDD) patterns:
-//! - Value Objects: SearchFilters, ModelSearchResult
-//! - Domain Services: ModelCatalogService
-//!
-//! ## Key Concepts
-//!
-//! - **SearchFilters**: Filter criteria for model search (category, size, capabilities)
-//! - **ModelSearchResult**: Aggregate containing model + relevance score
-//! - **ModelCatalogService**: Domain service for search and ranking logic
-//!
-//! ## Example
-//!
-//! ```rust
-//! use lattice_core::domain::models::catalog::{SearchFilters, ModelCatalogService};
-//! use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory};
-//!
-//! let filters = SearchFilters {
-//!     category: Some(ModelCategory::LLM),
-//!     max_size_gb: Some(5.0),
-//!     required_capabilities: vec!["chat".into()],
-//!     query_text: Some("small chat model".into()),
-//! };
-//!
-//! let service = ModelCatalogService::new();
-//! let models = vec![/* external models */];
-//! let results = service.search_and_rank(models, &filters);
-//! ```
-
 use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Search filters for model catalog queries.
-///
-/// This value object encapsulates search criteria for finding models:
-/// - Category filtering (LLM, Embedding, OCR)
-/// - Size constraints (max_size_gb)
-/// - Required capabilities (chat, code, etc.)
-/// - Text query matching (name, description)
-///
-/// # Invariants
-/// - max_size_gb must be positive if specified
-/// - required_capabilities are case-insensitive
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchFilters {
     /// Filter by model category (LLM, Embedding, OCR)
@@ -61,15 +17,6 @@ pub struct SearchFilters {
 
 impl SearchFilters {
     /// Create a new SearchFilters with validation.
-    ///
-    /// # Arguments
-    /// - `category` - Optional category filter
-    /// - `max_size_gb` - Optional size limit (must be positive)
-    /// - `required_capabilities` - Required capabilities (normalized to lowercase)
-    /// - `query_text` - Optional text query
-    ///
-    /// # Returns
-    /// Validated SearchFilters or error message.
     pub fn new(
         category: Option<ModelCategory>,
         max_size_gb: Option<f64>,
@@ -84,7 +31,6 @@ impl SearchFilters {
             }
         }
 
-        // Normalize capabilities to lowercase
         let normalized_capabilities: Vec<String> = required_capabilities
             .into_iter()
             .map(|c| c.to_lowercase())
@@ -99,12 +45,6 @@ impl SearchFilters {
     }
 
     /// Check if a model matches these filters.
-    ///
-    /// # Arguments
-    /// - `model` - Model to check
-    ///
-    /// # Returns
-    /// true if model passes all filter criteria.
     pub fn matches(&self, model: &ModelMetadata) -> bool {
         if let Some(category) = &self.category {
             if model.category != *category {
@@ -173,11 +113,6 @@ pub enum ModelSource {
 
 impl ModelSearchResult {
     /// Create a new search result.
-    ///
-    /// # Arguments
-    /// - `model` - Model metadata
-    /// - `relevance_score` - Score 0-100
-    /// - `source` - Model source
     pub fn new(model: ModelMetadata, relevance_score: f64, source: ModelSource) -> Self {
         Self {
             model,
@@ -198,79 +133,19 @@ impl ModelSearchResult {
 
 /// Domain service for searching and ranking models.
 ///
-/// This service implements the search and ranking algorithm as pure business
-/// logic with no infrastructure dependencies.
-///
 /// # Algorithm
-///
 /// 1. **Filtering**: Apply search filters to remove non-matching models
-/// 2. **Relevance Scoring**: Calculate 0-100 score based on:
-///    - Text match quality (name/description)
-///    - Category match bonus
-///    - Capability match bonus
+/// 2. **Relevance Scoring**: Calculate 0-100 score based on text, category, and capability match
 /// 3. **Ranking**: Sort by relevance score (descending)
 /// 4. **Source Preference**: Curated models get +5 bonus
-///
-/// # Example
-///
-/// ```rust
-/// use lattice_core::domain::models::catalog::{SearchFilters, ModelCatalogService, ModelSource};
-/// use lattice_core::domain::models::selection::{ModelMetadata, ModelCategory, PerformanceTier};
-///
-/// let service = ModelCatalogService::new();
-///
-/// let models = vec![
-///     ModelMetadata {
-///         id: "phi-3-mini".into(),
-///         name: "Phi-3 Mini".into(),
-///         category: ModelCategory::LLM,
-///         description: "Compact chat model".into(),
-///         size_gb: 2.3,
-///         minimum_ram_gb: 4.0,
-///         recommended_ram_gb: 8.0,
-///         context_length: 4096,
-///         performance_tier: PerformanceTier::Fast,
-///         supported_quantizations: vec!["Q4_K_M".into()],
-///         capabilities: vec!["chat".into(), "code".into()],
-///         download_url: None,
-///         license: "MIT".into(),
-///         requires_auth: false,
-///         model_id: None,
-///         default_filename: None,
-///         files: vec![],
-///         total_size_bytes: 0,
-///         embedding_dimensions: None,
-///         embedding_compatibility: None,
-///     },
-/// ];
-///
-/// let filters = SearchFilters {
-///     category: Some(ModelCategory::LLM),
-///     max_size_gb: Some(5.0),
-///     required_capabilities: vec!["chat".into()],
-///     query_text: Some("phi".into()),
-/// };
-///
-/// let results = service.search_and_rank(models, &filters);
-/// assert_eq!(results.len(), 1);
-/// assert!(results[0].relevance_score > 80.0);
-/// ```
 pub struct ModelCatalogService;
 
 impl ModelCatalogService {
-    /// Create a new model catalog service.
     pub fn new() -> Self {
         Self
     }
 
     /// Search and rank models based on filters.
-    ///
-    /// # Arguments
-    /// - `models` - Models to search (curated + external)
-    /// - `filters` - Search filters
-    ///
-    /// # Returns
-    /// Ranked list of matching models with relevance scores.
     pub fn search_and_rank(
         &self,
         models: Vec<(ModelMetadata, ModelSource)>,

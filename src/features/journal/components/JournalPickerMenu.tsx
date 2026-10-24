@@ -31,7 +31,7 @@ const NEW_JOURNAL_VALUE = '__new-journal__';
  * Sidebar journal picker: shadcn Select for switching + a More menu (Popover)
  * for rename/delete of the current journal. Replaces the bare native select
  * + new-journal button.
- * Spec §4.1.2.
+ * Spec 
  */
 export function JournalPickerMenu({
   journals,

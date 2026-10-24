@@ -1,4 +1,4 @@
-//! # Ingest Web URL Use Case
+//! Ingest Web URL Use Case
 //!
 //! Fetches web content from a URL and indexes it into the document lattice.
 //!
@@ -9,23 +9,6 @@
 //! 4. Article metadata extraction
 //! 5. Content cleaning (readability)
 //! 6. Document indexing with embeddings
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-//! use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
-//!
-//! # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = IngestWebUrlRequestDto {
-//!     url: "https://example.com/article".to_string(),
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Indexed document {} with {} chunks", response.document_id, response.chunks_created);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -39,20 +22,12 @@ use lattice_core::shared::error::{AppError, Result};
 /// - URL validation and safety checks
 /// - Content fetching and extraction
 /// - Document indexing with embeddings
-///
-/// ## Dependencies
-///
-/// - `WebIngestionServiceTrait`: Handles the complete web ingestion pipeline
 pub struct IngestWebUrlUseCase {
     web_ingestion_service: Arc<dyn WebIngestionServiceTrait>,
 }
 
 impl IngestWebUrlUseCase {
     /// Create a new ingest web URL use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `web_ingestion_service` - Service for web content ingestion
     pub fn new(web_ingestion_service: Arc<dyn WebIngestionServiceTrait>) -> Self {
         Self {
             web_ingestion_service,
@@ -61,46 +36,13 @@ impl IngestWebUrlUseCase {
 
     /// Execute web URL ingestion.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the URL to ingest
-    ///
-    /// # Returns
-    ///
-    /// Response with document ID and ingestion statistics
-    ///
     /// # Errors
-    ///
     /// Returns error if:
     /// - URL is invalid (not HTTP/HTTPS)
     /// - URL is blocked (malicious domain)
     /// - Network request fails
     /// - Content extraction fails
     /// - Indexing fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-    /// # use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
-    /// # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = IngestWebUrlRequestDto {
-    ///     url: "https://blog.example.com/article".to_string(),
-    /// };
-    ///
-    /// match use_case.execute(request).await {
-    ///     Ok(response) => {
-    ///         println!("Success!");
-    ///         println!("  Document ID: {}", response.document_id);
-    ///         println!("  Title: {}", response.title);
-    ///         println!("  Word Count: {}", response.word_count);
-    ///         println!("  Chunks: {}", response.chunks_created);
-    ///     }
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(
         &self,
         request: IngestWebUrlRequestDto,
@@ -127,17 +69,8 @@ impl IngestWebUrlUseCase {
 
     /// Validate URL is HTTP or HTTPS.
     ///
-    /// # Arguments
-    ///
-    /// * `url` - URL to validate
-    ///
-    /// # Returns
-    ///
-    /// Ok if URL is valid, Err otherwise
-    ///
     /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if URL is not HTTP/HTTPS
+    /// Returns error if URL is not HTTP/HTTPS or empty.
     fn validate_url(url: &str) -> Result<()> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(AppError::InvalidInput(

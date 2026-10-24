@@ -11,7 +11,7 @@ const NEXT_STEP: Record<AttachNextStepDto['step'], string> = {
 
 /**
  * What an attach found, or why it could not read the page and what to do
- * instead (§3.6 failure states). A frozen copy that failed can be captured
+ * instead  failure states). A frozen copy that failed can be captured
  * again from here.
  */
 export function AddSourceResult({ programId, report, line, host, onNextStep }: {
@@ -38,7 +38,7 @@ export function AddSourceResult({ programId, report, line, host, onNextStep }: {
     );
   }
   return (
-    <div role="status" aria-label="What adding the source found" className="space-y-2 rounded-lg bg-background p-3 text-sm leading-6 text-text-secondary">
+    <div role="status" aria-label="What adding the source found" className="space-y-2 rounded-lg border border-border-default bg-surface-sunken/40 p-3 text-sm leading-6 text-text-secondary">
       {line && <p className="text-text-primary">{line}</p>}
       {snapshot.state === 'failed' && report.source && (
         <Button type="button" variant="outline" disabled={capture.isPending}

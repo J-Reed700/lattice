@@ -1,11 +1,9 @@
 //! Delete Model Use Case
 //!
-//! Removes a downloaded model from local storage AND database.
-//!
-//! # Purpose
+//! Removes a downloaded model from local storage and database.
 //!
 //! Deletes a locally downloaded LLM model and all its files,
-//! calculating freed disk space. This use case ensures BOTH
+//! calculating freed disk space. This use case ensures both
 //! filesystem and database records are deleted to maintain consistency.
 //!
 //! # Repository Barrier Rule (DB-as-SSOT)
@@ -20,20 +18,6 @@
 //! on failure. This prevents the orphan-on-FS-miss bug where a
 //! manually-deleted file made the model un-deletable from the UI
 //! because the FS check happened before the DB delete.
-//!
-//! # Dependencies
-//! - `ModelStoragePort` - Filesystem model storage
-//! - `DownloadedModelRepository` - Database tracking (Registry/Usage bounded context)
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DeleteModelUseCase::new(storage_port, repository);
-//! let request = DeleteModelRequestDto {
-//!     model_id: "phi-3-mini".to_string(),
-//! };
-//! let response = use_case.execute(request).await?;
-//! println!("Freed {} GB", response.freed_space_gb);
-//! ```
 
 use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use lattice_core::application::ports::model_storage::ModelStoragePort;
@@ -50,10 +34,6 @@ pub struct DeleteModelUseCase {
 
 impl DeleteModelUseCase {
     /// Create a new DeleteModelUseCase with both filesystem and database deletion
-    ///
-    /// # Arguments
-    /// * `storage` - Filesystem storage port for deleting model files
-    /// * `repository` - Database repository for deleting model records
     pub fn new(
         storage: Arc<dyn ModelStoragePort>,
         repository: Arc<dyn DownloadedModelRepository>,

@@ -33,6 +33,9 @@ async fn section_fixture() -> sqlx::SqlitePool {
         ('a-other','a','Second subsection evidence',22,'Chapter 700 > Section 706.07(b) Second action',4),
         ('a-upper','a','Different uppercase subsection',23,'Chapter 700 > 706.07(A) Other action',4),
         ('b-sub','b','Other edition evidence',100,'706.07(a)',5),
+        ('body-dot','a','Index\n7.4 The notice rule follows here.',150,'Appendix',6),
+        ('neighbor-parent','a','Parent introduction',200,'Guide > Parent',7),
+        ('neighbor-child','a','First child evidence',201,'Guide > Parent > Child',8),
         ('private-sub','private','Private evidence',0,'706.07(a) Secret',1);")
         .execute(&pool).await.unwrap();
     for index in 0..20 {
@@ -47,6 +50,39 @@ async fn section_fixture() -> sqlx::SqlitePool {
         .unwrap();
     }
     pool
+}
+
+#[tokio::test]
+async fn dotted_body_labels_are_found_and_child_neighbors_keep_their_own_heading() {
+    let repo = ConversationRepository::new(section_fixture().await);
+    let allowed = HashSet::from(["a".into()]);
+
+    let direct = repo
+        .retrieval_section_passages(&["7.4".into()], &allowed)
+        .await
+        .unwrap();
+    assert_eq!(
+        direct
+            .iter()
+            .map(|passage| passage.id.as_str())
+            .collect::<Vec<_>>(),
+        ["body-dot"]
+    );
+
+    let neighbors = repo
+        .retrieval_neighbors("neighbor-parent", &allowed)
+        .await
+        .unwrap();
+    assert_eq!(
+        neighbors
+            .iter()
+            .map(|passage| (passage.id.as_str(), passage.section.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("neighbor-parent", Some("Guide > Parent")),
+            ("neighbor-child", Some("Guide > Parent > Child")),
+        ]
+    );
 }
 
 #[tokio::test]

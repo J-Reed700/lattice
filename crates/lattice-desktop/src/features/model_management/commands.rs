@@ -1,38 +1,4 @@
-//! # Model management commands
-//!
-//! Tauri IPC commands for AI model discovery, compatibility scoring, and recommendations.
-//!
-//! ## Curated catalog commands
-//!
-//! - `detect_system_capabilities` - Detect hardware (RAM, GPU, disk)
-//! - `get_compatible_models` - Get compatible models for a category
-//! - `get_all_recommended_models` - Get all compatible models across categories
-//!
-//! ## External catalog commands
-//!
-//! - `search_model_catalog` - Search external model catalogs (Hugging Face)
-//! - `refresh_model_catalog` - Refresh catalog cache
-//! - `clear_model_catalog_cache` - Clear all cached catalog entries
-//! - `get_model_catalog_stats` - Get cache statistics
-//!
-//! ## Example Usage (TypeScript)
-//!
-//! ```typescript
-//! import { invoke } from '@tauri-apps/api/core';
-//!
-//! // Detect system capabilities
-//! const capabilities = await invoke('detect_system_capabilities');
-//! console.log(`RAM: ${capabilities.total_ram_gb} GB`);
-//!
-//! // Get recommended LLM models
-//! const models = await invoke('get_recommended_models', {
-//!   category: 'LLM'
-//! });
-//!
-//! for (const model of models) {
-//!   console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
-//! }
-//! ```
+//! Model management commands for AI model discovery, compatibility scoring, and recommendations.
 
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::features::model_management::domain::ModelMetadata;
@@ -50,7 +16,6 @@ use tauri::State;
 /// Request to get recommended models by category.
 #[derive(Debug, Deserialize)]
 pub struct GetRecommendedModelsRequest {
-    /// Model category to filter by
     pub category: String,
 }
 
@@ -80,33 +45,16 @@ impl SystemCapabilitiesResponse {
     }
 }
 
-/// Detect system hardware capabilities.
-///
-/// Returns comprehensive system information:
-/// - RAM (total, available)
-/// - CPU (cores, model)
-/// - GPU (type, acceleration, VRAM)
-/// - Disk (available space)
-///
-/// # Example
-///
-/// ```typescript
-/// const capabilities = await invoke('detect_system_capabilities');
-/// console.log(`RAM: ${capabilities.total_ram_gb} GB`);
-/// console.log(`GPU: ${capabilities.gpu_type}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn detect_system_capabilities(
     container: State<'_, Container>,
 ) -> Result<SystemCapabilitiesResponse> {
     let system_info_port = container.system_info();
-
     let system_info = system_info_port.get_system_info().await?;
 
     let capabilities = SystemCapabilities {
         total_ram_gb: system_info.total_ram_gb,
-        // available_ram_gb removed from domain - domain uses total_ram_gb only
         cpu_cores: system_info.cpu_cores,
         cpu_architecture: map_cpu_architecture(),
         gpu_type: map_gpu_type(&system_info.gpu_info),
@@ -118,29 +66,6 @@ pub async fn detect_system_capabilities(
     Ok(SystemCapabilitiesResponse::from_domain(capabilities))
 }
 
-/// Get compatible models for a specific category.
-///
-/// Returns models ranked by compatibility score, with detailed
-/// compatibility analysis for each model.
-///
-/// # Arguments
-/// - `category` - "LLM", "Embedding", or "OCR"
-///
-/// # Returns
-/// List of model recommendations sorted by ranking score (best first).
-///
-/// # Example
-///
-/// ```typescript
-/// const models = await invoke('get_compatible_models', {
-///   category: 'LLM'
-/// });
-///
-/// for (const model of models) {
-///   console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
-///   console.log(`Score: ${model.ranking_score}/100`);
-/// }
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_compatible_models(
@@ -154,7 +79,6 @@ pub async fn get_compatible_models(
 
     let capabilities = SystemCapabilities {
         total_ram_gb: system_info.total_ram_gb,
-        // available_ram_gb removed from domain - domain uses total_ram_gb only
         cpu_cores: system_info.cpu_cores,
         cpu_architecture: map_cpu_architecture(),
         gpu_type: map_gpu_type(&system_info.gpu_info),
@@ -180,7 +104,6 @@ pub async fn get_compatible_models(
         .map(|entry| (entry.model.id.clone(), entry.likes))
         .collect();
 
-    // Score compatibility for each model
     let scorer = CompatibilityScorer::new();
     let mut recommendations: Vec<ModelRecommendation> = models
         .into_iter()
@@ -209,16 +132,6 @@ pub async fn get_compatible_models(
     Ok(dto_recommendations)
 }
 
-/// Get all recommended models across all categories.
-///
-/// Returns models ranked by compatibility, grouped by category.
-///
-/// # Example
-///
-/// ```typescript
-/// const allModels = await invoke('get_all_recommended_models');
-/// console.log(`Total compatible models: ${allModels.length}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_all_recommended_models(
@@ -237,7 +150,6 @@ pub async fn get_all_recommended_models(
 
     let capabilities = SystemCapabilities {
         total_ram_gb: system_info.total_ram_gb,
-        // available_ram_gb removed from domain - domain uses total_ram_gb only
         cpu_cores: system_info.cpu_cores,
         cpu_architecture: map_cpu_architecture(),
         gpu_type: map_gpu_type(&system_info.gpu_info),
@@ -456,7 +368,6 @@ async fn fetch_hf_models(
     Ok(catalog_models)
 }
 
-/// Parse model category string.
 fn parse_model_category(category: &str) -> Result<ModelCategory> {
     match category.to_uppercase().as_str() {
         "LLM" => Ok(ModelCategory::LLM),
@@ -470,7 +381,6 @@ fn parse_model_category(category: &str) -> Result<ModelCategory> {
     }
 }
 
-/// Map CPU architecture from current platform.
 fn map_cpu_architecture() -> lattice_core::domain::CpuArchitecture {
     #[cfg(target_arch = "aarch64")]
     {
@@ -482,7 +392,6 @@ fn map_cpu_architecture() -> lattice_core::domain::CpuArchitecture {
     }
 }
 
-/// Map GPU type from port GpuInfo.
 fn map_gpu_type(
     gpu_info: &Option<lattice_core::application::ports::GpuInfo>,
 ) -> lattice_core::domain::GpuType {
@@ -505,7 +414,6 @@ fn map_gpu_type(
     }
 }
 
-/// Map GPU acceleration from port GpuInfo.
 fn map_gpu_acceleration(
     gpu_info: &Option<lattice_core::application::ports::GpuInfo>,
 ) -> lattice_core::domain::GpuAcceleration {
@@ -528,7 +436,6 @@ fn map_gpu_acceleration(
     }
 }
 
-/// Get available disk space (simplified - use first disk).
 fn get_available_disk_space() -> f64 {
     use sysinfo::Disks;
 
@@ -542,19 +449,13 @@ fn get_available_disk_space() -> f64 {
 #[cfg(test)]
 mod tests;
 
-/// Request to search external model catalogs.
 #[derive(Debug, Deserialize, specta::Type)]
 pub struct SearchModelCatalogRequest {
-    /// Search query (model name, keywords)
     pub query: String,
-    /// Optional category filter
     pub category: Option<String>,
-    /// Maximum size in GB
     pub max_size_gb: Option<f64>,
-    /// Required capabilities
     #[serde(default)]
     pub required_capabilities: Vec<String>,
-    /// Maximum number of results
     #[serde(default = "default_limit")]
     pub limit: usize,
 }
@@ -563,34 +464,6 @@ fn default_limit() -> usize {
     20
 }
 
-/// Search external model catalogs (Hugging Face).
-///
-/// Uses Hugging Face as the source of truth for downloadable models,
-/// ranks them by relevance, and returns unified results.
-///
-/// # Features
-/// - Searches Hugging Face (cached)
-/// - Filters by category, size, capabilities
-/// - Ranks by relevance score (0-100)
-/// - Caches results for 1 hour (TTL)
-/// - Graceful degradation on API errors
-///
-/// # Example
-///
-/// ```typescript
-/// const results = await invoke('search_model_catalog', {
-///   query: 'llama chat',
-///   category: 'LLM',
-///   max_size_gb: 5.0,
-///   required_capabilities: ['chat', 'code'],
-///   limit: 10
-/// });
-///
-/// for (const result of results) {
-///   console.log(`${result.model.name}: ${result.relevance_score}/100`);
-///   console.log(`Source: ${result.source}`);
-/// }
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn search_model_catalog(
@@ -660,7 +533,6 @@ pub async fn search_model_catalog(
 }
 
 /// List the actual standalone GGUF files published in a Hugging Face repository.
-/// Sizes come from the repository, while memory requirements are estimates.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_model_variants(
@@ -687,8 +559,6 @@ pub async fn get_model_variants(
         .await?
         .into_iter()
         .map(|metadata| {
-            // The catalog's own file keeps its catalog id and figures, so
-            // picking it here is the same download first run makes.
             let curated = metadata.preferred_filename.as_deref().and_then(|file| {
                 lattice_core::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
             });
@@ -700,16 +570,6 @@ pub async fn get_model_variants(
         .collect()
 }
 
-/// Refresh model catalog cache.
-///
-/// Clears the catalog cache to force fresh API calls on next search.
-///
-/// # Example
-///
-/// ```typescript
-/// await invoke('refresh_model_catalog');
-/// console.log('Catalog cache refreshed');
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn refresh_model_catalog(container: State<'_, Container>) -> Result<()> {
@@ -722,16 +582,6 @@ pub async fn refresh_model_catalog(container: State<'_, Container>) -> Result<()
     Ok(())
 }
 
-/// Clear model catalog cache.
-///
-/// Removes all cached catalog entries, forcing fresh API calls.
-///
-/// # Example
-///
-/// ```typescript
-/// const deleted = await invoke('clear_model_catalog_cache');
-/// console.log(`Cleared ${deleted} cache entries`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_model_catalog_cache(container: State<'_, Container>) -> Result<u64> {
@@ -744,18 +594,6 @@ pub async fn clear_model_catalog_cache(container: State<'_, Container>) -> Resul
     Ok(deleted)
 }
 
-/// Get model catalog cache statistics.
-///
-/// Returns metrics about cache usage and effectiveness.
-///
-/// # Example
-///
-/// ```typescript
-/// const stats = await invoke('get_model_catalog_stats');
-/// console.log(`Total: ${stats.total_entries}`);
-/// console.log(`Valid: ${stats.valid_entries}`);
-/// console.log(`Expired: ${stats.expired_entries}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_model_catalog_stats(container: State<'_, Container>) -> Result<ModelCatalogStats> {

@@ -24,15 +24,7 @@ pub(super) fn recover_resume_offset(
     Some(file_size)
 }
 
-/// Validate that a downloaded file exists and has the expected size
-///
-/// # Arguments
-/// * `path` - Path to the downloaded file
-/// * `expected_bytes` - Expected file size in bytes
-///
-/// # Returns
-/// * `Ok(())` if file exists and has the expected size
-/// * `Err(DownloadError)` if validation fails
+/// Validate that a downloaded file exists and has the expected size.
 pub(super) async fn validate_downloaded_file(
     path: &PathBuf,
     expected_bytes: u64,

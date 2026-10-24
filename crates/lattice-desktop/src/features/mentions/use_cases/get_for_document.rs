@@ -1,21 +1,6 @@
 //! Get Mentions For Document Use Case
 //!
 //! Retrieves all mentions found within a specific document with context.
-//!
-//! # Dependencies
-//! - `MentionRepositoryPort` - Document mention queries
-//! - `MentionMapper` - Domain to DTO mapping
-//!
-//! # Security
-//! - Validates document ID format
-//! - Rate limited to prevent enumeration attacks
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetMentionsForDocumentUseCase::new(mention_repo, mapper);
-//! let result = use_case.execute("doc-123".into()).await?;
-//! println!("Found {} mentions in document", result.mentions.len());
-//! ```
 
 use crate::features::mentions::dto::{GetMentionsForDocumentResultDto, MentionWithContextDto};
 use crate::features::mentions::mapper::MentionMapper;
@@ -40,19 +25,6 @@ impl GetMentionsForDocumentUseCase {
     }
 
     /// Get all mentions within a specific document.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of the document to retrieve mentions for
-    ///
-    /// # Returns
-    ///
-    /// List of mentions with their context (surrounding text) and position within the document.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if document_id is empty
-    /// - `AppError::Database` if query fails
     pub async fn execute(
         &self,
         document_id: String,

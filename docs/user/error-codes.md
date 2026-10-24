@@ -46,7 +46,7 @@ The Logs page keeps the newest 300 entries. **Export logs** saves them as a JSON
 | `PERMISSION_DENIED` | The operating system refused access to a file or folder. During a backup restore, it means the passphrase or recovery code was wrong. | Grant access to the folder, or choose one you own. For a restore, re-enter the passphrase or use the 24-word recovery code. |
 | `EXTRACTION_ERROR` | Lattice couldn't pull text out of the file. The file may be damaged, encrypted or password-protected. For audio, it may use an unsupported codec or exceed 200 MB or two hours. | Open and re-save the file, remove its password, or convert or split the recording. |
 
-**Scanned PDFs.** Lattice has no OCR. A page that is only an image is skipped and the rest of the PDF is still imported. If a PDF is all scans, its text won't be searchable.
+**Scanned PDFs.** Pages that are only images are read with the OCR model from the model catalog (PaddleOCR-VL). Without it, such a page is skipped and the rest of the PDF is still imported. If a PDF is all scans, its text won't be searchable until the OCR model is downloaded.
 
 ## Models, search and indexing
 

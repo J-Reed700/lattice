@@ -1,16 +1,3 @@
-/**
- * ArchiveSetupWizard
- *
- * Five steps to turn on off-device backup, or three of them to issue a
- * replacement recovery code.
- *
- * The recovery code is the only part of this the user has to keep. Lattice
- * holds no copy of it and cannot reset it, so step 2 shows the words, step 3
- * makes the user prove three of them were written down, and nothing is
- * persisted until step 3 succeeds — closing before then throws away a key that
- * only ever existed in the backend's memory.
- */
-
 import { useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';

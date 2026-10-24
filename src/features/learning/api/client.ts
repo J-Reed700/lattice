@@ -113,10 +113,6 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
     learningCall('resolve_learning_claim', { request }),
 
-  /**
-   * Add a link, file, pasted text or saved passage as a course source and
-   * check the claims in scope against it, reporting each stage (§5.3).
-   */
   attachLearningClaimEvidence: (
     request: Wire.AttachLearningClaimEvidenceRequestDto,
     onProgress: (update: Wire.ClaimAttachProgressDto) => void,

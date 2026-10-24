@@ -49,7 +49,7 @@ Type `/` in the message box to see the commands:
 | Command | Effect |
 |---------|--------|
 | `/docs` | Search your documents for every answer. |
-| `/web` | Let the answer search the web (via DuckDuckGo). |
+| `/web` | Let the answer search the web (using the finders enabled in **Settings > Sources**). |
 | `/wiki` | Search and summarize Wikipedia. |
 | `/deep` | Deep research: several rounds of searching and reading across sources. Slower. |
 | `/auto` | Let the router decide whether a message starts a new topic or follows up on the last one. |
@@ -91,7 +91,7 @@ Each row on that page shows the roles it holds. To change them, open the row's *
 | **Local only** | Only the engine built into Lattice. |
 | **llama.cpp** | A `llama-server` you run, on this machine or another. Set its URL, model and an optional auth header (name and value), then use **Test llama.cpp connection**. |
 | **Ollama** | An Ollama server, by URL, with an optional auth header or basic auth. |
-| **OpenAI**, **Anthropic** | The provider's API, with your API key (stored in your system keychain). Your prompts and the retrieved passages are sent to the provider. |
+| **OpenAI**, **Anthropic**, **Google** | The provider's API, with your API key (stored in your system keychain). Your prompts and the retrieved passages are sent to the provider. |
 
 **The built-in engine** is a llama.cpp `llama-server` that ships inside Lattice and runs GGUF models on your computer. It's reachable only from your computer. It uses Metal on Apple Silicon. On Windows and Linux it uses Vulkan, and falls back to a CPU build if the GPU build can't run. If neither can run, Lattice says why, and what to do, in its error message.
 
@@ -119,7 +119,7 @@ Each row on that page shows the roles it holds. To change them, open the row's *
 
 - **Model runtime:**
   - temperature, top K, top P, repeat penalty, max tokens and streaming
-  - **Context window**, and **Local model context window** for the built-in engine. Leave the local window on automatic: it's sized from what the model was trained for and how much GPU memory you have. A window that's too large for the card pushes the model onto the CPU.
+  - **Context window**, and **Local model context window** for the built-in engine. By default (**Model's max**), each local model loads with the context window it was trained for unless you set a smaller or larger window here or on the model. A window too large for your machine fails to load and reports how much memory it needed.
   - **Stall timeout**: how long a reply may go silent before Lattice treats it as dead. It doesn't limit total answer time.
 - **Router:** whether to route follow-up questions, which model routes them, the ambiguity threshold, and the prompts used.
 - **Tool output:** how many results tools return and how much text they include.
@@ -211,7 +211,7 @@ Set these before starting Lattice, for example by launching it from a terminal.
 
 | Variable | Effect |
 |----------|--------|
-| `LATTICE_FORCE_CPU=1` | Runs the embedding model, the reranker and audio transcription on the CPU instead of the GPU. Use it if those crash or misbehave on your graphics hardware. It doesn't affect the chat engine. |
+| `LATTICE_FORCE_CPU=1` | Runs the reranker and audio transcription on the CPU instead of the GPU. Use it if those crash or misbehave on your graphics hardware. It doesn't affect the llama.cpp engines (chat, embeddings, OCR). |
 | `RUST_LOG` | Sets how much goes into the log files, for example `RUST_LOG=debug`. The default for a release build is `info`. |
 
 ---
@@ -232,7 +232,6 @@ Lattice doesn't have:
 - a command-line tool
 - a supported public REST API or plugin system
 - a browser extension
-- OCR
 - cloud sync
 
 The repository's disconnected sync-service scaffold is development code; the

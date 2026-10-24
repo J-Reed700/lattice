@@ -102,7 +102,7 @@ export function useSourceTrustOverrides(enabled = true) {
   });
 }
 
-/** The bars in force and why (§13). */
+/** The bars in force and why . */
 export function useSourceTrustCalibration(enabled = true) {
   return useQuery<LearningSourceTrustCalibrationDto>({
     queryKey: LEARNING_SOURCE_TRUST_CALIBRATION_KEY,
@@ -112,7 +112,6 @@ export function useSourceTrustCalibration(enabled = true) {
   });
 }
 
-/** The local checker's measured reliability on the user's labelled claims (CR §15). */
 export function useCheckerReliability(enabled = true) {
   return useQuery<CheckerAccuracyDto[]>({
     queryKey: LEARNING_CHECKER_ACCURACY_KEY,

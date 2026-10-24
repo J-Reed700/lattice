@@ -1,9 +1,3 @@
-/**
- * Date Utilities
- *
- * Provides date grouping and formatting functions for the file browser
- */
-
 export type DateGroup = 'Today' | 'Yesterday' | 'This Week' | 'Last Week' | 'This Month' | 'Older';
 
 export function getDateGroup(dateStr: string): DateGroup {

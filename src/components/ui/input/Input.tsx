@@ -1,24 +1,5 @@
 import { type InputHTMLAttributes, forwardRef, useState, useEffect } from 'react';
 
-/**
- * Input
- *
- * Purpose: Text input field for user data entry
- *
- * Features:
- * - Icon support (left and right)
- * - Error state with message
- * - Helper text
- * - Loading state
- * - Dark mode support
- * - Character counter
- * - Inline validation
- * - Clear button
- *
- * States: default, focus, error, disabled, loading
- * Accessibility: WCAG AA, proper labels, error announcements
- */
-
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
@@ -89,7 +70,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       onClear?.();
     };
 
-    // Show right icon, loading spinner, or clear button
     const showRightContent = rightIcon || isLoading || (showClearButton && charCount > 0);
 
     return (

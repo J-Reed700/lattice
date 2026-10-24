@@ -19,37 +19,6 @@
 //! A caller searching several rewrites of one question collects each query's
 //! `QueryBranches` and fuses them all in one [`HybridSearchUseCase::fuse`],
 //! the same fusion a single query gets.
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::contracts::search::{
-//!     RerankOptions, SearchModeDto, SearchRequestDto,
-//! };
-//! use lattice::features::search::use_cases::HybridSearchUseCase;
-//!
-//! # async fn example(use_case: HybridSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = SearchRequestDto {
-//!     query: "neural network optimization".to_string(),
-//!     limit: Some(RerankOptions::candidate_pool(10)),
-//!     threshold: None,
-//!     mode: SearchModeDto::Hybrid {
-//!         vector_weight: 0.7,
-//!         bm25_weight: 0.3,
-//!     },
-//! };
-//!
-//! let fused = use_case.execute(request).await?;
-//! let options = RerankOptions {
-//!     query: "neural network optimization".to_string(),
-//!     max_candidates: 48,
-//!     query_max_chars: 6000,
-//! };
-//! let mut reranked = use_case.rerank(fused, &options).await.response;
-//! reranked.results.truncate(10);
-//! # Ok(())
-//! # }
-//! ```
 
 mod rerank;
 #[cfg(test)]
@@ -105,12 +74,6 @@ pub struct HybridSearchUseCase {
 
 impl HybridSearchUseCase {
     /// Create a new hybrid search use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `embedding_service` - Service for generating text embeddings
-    /// * `vector_search` - Service for vector similarity search
-    /// * `text_search` - Service for BM25 keyword search
     pub fn new(
         embedding_service: Arc<dyn EmbeddingPort>,
         vector_search: Arc<dyn VectorSearchPort>,

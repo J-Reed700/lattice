@@ -6,18 +6,6 @@ import { Check, Library } from 'lucide-react';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
 
-/**
- * Picks the space a chat belongs to — which is to say, the documents it can
- * search. Used by the label above the composer and wherever a chat is started
- * from outside Chat.
- *
- * A chat's space used to be decided by whatever the Chat sidebar last had
- * selected, including for chats started from the Journal, where that selection
- * is not even on screen. The answer a chat gives depends on this more than on
- * anything else, so it is shown where the question is typed and chosen where
- * the chat is made.
- */
-
 export interface SpacePickerPopoverProps {
   /** The space to mark as current, when there is a current one. */
   activeSpaceId?: string | null;

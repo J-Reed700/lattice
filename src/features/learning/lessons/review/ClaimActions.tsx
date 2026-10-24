@@ -15,7 +15,7 @@ export type ClaimActionRunner = (request: ClaimActionRequestDto, kind: Announced
 
 function CheckColumn({ title, side }: { title: string; side: CheckerSide | null }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-background p-3 text-xs leading-5">
+    <div className="min-w-0 rounded-lg border border-border-default bg-surface-sunken/40 p-3 text-xs leading-5">
       <p className="font-semibold text-text-primary">{title}</p>
       {!side ? <p className="mt-1 text-text-muted">No check recorded.</p> : <>
         <p className="mt-1 text-text-primary">{side.verdict}</p>
@@ -27,7 +27,7 @@ function CheckColumn({ title, side }: { title: string; side: CheckerSide | null 
 }
 
 /**
- * The claim's actions (§3.5): five buttons in one row, the suggested fix
+ * The claim's actions : five buttons in one row, the suggested fix
  * first in weight, then More (common knowledge, a search hint, history).
  * Accept on a contradicted claim asks for a note first.
  */
@@ -101,23 +101,23 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
           <Button type="button" size="lg" variant="ghost" aria-haspopup="menu" aria-expanded={moreOpen} aria-controls={`${id}-more`} onClick={() => setMoreOpen((open) => !open)}>
             More <ChevronDown aria-hidden="true" />
           </Button>
-          {moreOpen && <div id={`${id}-more`} role="menu" aria-label="More actions" className="absolute left-0 top-full z-20 mt-1 w-56 rounded-xl border border-border bg-surface p-1.5 shadow-sheet">
+          {moreOpen && <div id={`${id}-more`} role="menu" aria-label="More actions" className="absolute left-0 top-full z-20 mt-1 w-56 rounded-xl border border-border-default bg-surface p-1.5 shadow-md">
             {available.has('general_knowledge') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'general_knowledge' }, 'general_knowledge'); }}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background disabled:opacity-50">General knowledge</button>}
+              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-surface-sunken disabled:opacity-50">General knowledge</button>}
             {available.has('research_with_hint') && <button type="button" role="menuitem" onClick={() => toggle('hint')}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background">Search with a hint</button>}
+              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-surface-sunken">Search with a hint</button>}
             {confirmed && available.has('unconfirm') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'unconfirm' }, 'unconfirm'); }}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background disabled:opacity-50">Withdraw acceptance</button>}
+              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-surface-sunken disabled:opacity-50">Withdraw acceptance</button>}
             <button type="button" role="menuitem" onClick={() => toggle('history')}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background">History ({item.history.length})</button>
+              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-surface-sunken">History ({item.history.length})</button>
           </div>}
         </div>
         {busy && <span role="status" className="inline-flex items-center gap-1 self-center text-xs text-text-muted"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</span>}
       </div>
 
-      {form === 'note' && <div className="rounded-xl border border-border bg-background p-4">
+      {form === 'note' && <div className="rounded-xl border border-border-default bg-surface-sunken/40 p-4">
         <label htmlFor={`${id}-note`} className="text-xs font-medium text-text-secondary">Why the claim is right (required)</label>
-        <textarea id={`${id}-note`} autoFocus value={note} onChange={(event) => setNote(event.target.value)} rows={3} required className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+        <textarea id={`${id}-note`} autoFocus value={note} onChange={(event) => setNote(event.target.value)} rows={3} required className="mt-1 w-full rounded-lg border border-border-default bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-hidden" />
         <p className="mt-1 text-xs text-text-muted">A source says otherwise, so your note is kept with the claim and shown in its history.</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy || !note.trim()} onClick={accept}>Accept with this note</Button>
@@ -125,9 +125,9 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         </div>
       </div>}
 
-      {form === 'edit' && <div className="rounded-xl border border-border bg-background p-4">
+      {form === 'edit' && <div className="rounded-xl border border-border-default bg-surface-sunken/40 p-4">
         <label htmlFor={`${id}-after`} className="block text-xs font-medium text-text-secondary">The sentence</label>
-        <textarea id={`${id}-after`} autoFocus value={after} onChange={(event) => setAfter(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+        <textarea id={`${id}-after`} autoFocus value={after} onChange={(event) => setAfter(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-border-default bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-hidden" />
         <p className="mt-1 text-xs text-text-muted">The new sentence is checked against your sources when you resume.</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy} onClick={saveEdit}>Save the sentence</Button>
@@ -135,9 +135,9 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         </div>
       </div>}
 
-      {form === 'hint' && <div className="rounded-xl border border-border bg-background p-4">
+      {form === 'hint' && <div className="rounded-xl border border-border-default bg-surface-sunken/40 p-4">
         <label htmlFor={`${id}-hint`} className="text-xs font-medium text-text-secondary">What to search for</label>
-        <input id={`${id}-hint`} autoFocus value={hint} onChange={(event) => setHint(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') search(); }} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+        <input id={`${id}-hint`} autoFocus value={hint} onChange={(event) => setHint(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') search(); }} className="mt-1 w-full rounded-lg border border-border-default bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-hidden" />
         <p className="mt-1 text-xs text-text-muted">Your words are searched as written, then the claim is checked against what is found.</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy} onClick={search}>Search</Button>
@@ -145,7 +145,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         </div>
       </div>}
 
-      {form === 'history' && <div className="space-y-3 rounded-xl border border-border bg-background p-4">
+      {form === 'history' && <div className="space-y-3 rounded-xl border border-border-default bg-surface-sunken/40 p-4">
         {columns && <div role="group" aria-label="First check and independent check" className="grid gap-2 sm:grid-cols-2">
           <CheckColumn title="First check" side={columns.local} />
           <CheckColumn title="Independent check" side={columns.verifier} />

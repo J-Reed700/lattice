@@ -19,7 +19,7 @@ export function ActivityShelf({
 }) {
   return (
     <aside className="min-w-0 space-y-4">
-      <section className="rounded-2xl border border-border bg-surface p-4">
+      <section className="rounded-2xl border border-border-default bg-surface p-4 shadow-xs">
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[.15em] text-text-muted">
@@ -29,18 +29,18 @@ export function ActivityShelf({
               {lesson?.title ?? "Choose a lesson"}
             </h3>
           </div>
-          <span className="rounded-full bg-background px-2.5 py-1 text-xs text-text-muted">
+          <span className="rounded-full bg-surface-sunken px-2.5 py-1 text-xs text-text-muted">
             {activities.length}
           </span>
         </div>
         {lesson?.preparation !== "ready" ? (
-          <div className="mt-4 rounded-xl bg-amber-500/10 p-3 text-xs leading-5 text-text-secondary">
+          <div className="mt-4 rounded-xl border border-warning-muted bg-warning-muted/15 p-3 text-xs leading-5 text-warning-fg">
             Prepare the selected lesson before creating a practical
             activity.
           </div>
         ) : null}
         {activities.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-border bg-background p-5 text-center">
+          <div className="mt-4 rounded-xl border border-dashed border-border-subtle bg-surface-sunken/60 p-5 text-center">
             <Code2 className="mx-auto h-6 w-6 text-text-muted" />
             <p className="mt-2 text-xs leading-5 text-text-muted">
               No activities for this lesson yet.
@@ -62,7 +62,7 @@ export function ActivityShelf({
                 key={activity.id}
                 aria-pressed={activeActivity?.id === activity.id}
                 onClick={() => onSelectActivity(activity)}
-                className={`w-full rounded-xl border p-3 text-left transition ${activeActivity?.id === activity.id ? "border-accent/50 bg-accent/5" : "border-border bg-background/40 hover:border-accent/30"}`}
+                className={`w-full rounded-xl border p-3 text-left transition ${activeActivity?.id === activity.id ? "border-accent bg-accent-muted/15" : "border-border-default bg-surface-sunken/50 hover:border-accent/30"}`}
               >
                 <span className="flex items-center justify-between gap-2">
                   <span className="truncate text-xs font-semibold uppercase tracking-[.12em] text-accent">

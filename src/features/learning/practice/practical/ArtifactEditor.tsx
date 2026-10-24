@@ -38,7 +38,7 @@ export function ArtifactEditor({
   capability: LearningLabRuntimeCapability | undefined;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
+    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-6 shadow-xs">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-[.15em] text-accent">
@@ -76,7 +76,7 @@ export function ArtifactEditor({
           {draft.loadState === "loading" ? "Restoring your work…" : draft.saveState === "saving" ? "Saving…" : draft.saveState === "dirty" ? "Unsaved changes" : draft.error ? "Your changes need attention" : "Saved on this device"}
         </span>
       </div>
-      {draft.error && <div role="alert" className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">
+      {draft.error && <div role="alert" className="mt-3 rounded-xl border border-danger-muted bg-danger-muted/15 p-3 text-sm text-danger-fg">
         <p>{draft.error}</p>
         <div className="mt-2 flex flex-wrap gap-3">
           {draft.saveState === "conflict" ? <>
@@ -86,8 +86,8 @@ export function ArtifactEditor({
           </> : <button type="button" onClick={() => void (draft.loadState === "error" ? draft.retryLoad() : draft.flush())} className="font-medium text-accent underline underline-offset-4">{draft.loadState === "error" ? "Retry loading draft" : "Retry saving draft"}</button>}
         </div>
       </div>}
-      <div className="mt-4 overflow-hidden rounded-xl border border-border">
-        {editorFiles.length > 0 && <div role="tablist" aria-label="Activity files" className="flex flex-wrap gap-1 border-b border-border bg-background p-2">
+      <div className="mt-4 overflow-hidden rounded-xl border border-border-default">
+        {editorFiles.length > 0 && <div role="tablist" aria-label="Activity files" className="flex flex-wrap gap-1 border-b border-border-default bg-surface-sunken p-2">
           {editorFiles.map((file, index) => <button key={file.path} type="button" role="tab" id={`lab-file-tab-${activeActivity.id}-${index}`} aria-controls={`lab-file-panel-${activeActivity.id}-${index}`} aria-selected={file.path === selectedFile?.path} tabIndex={file.path === selectedFile?.path ? 0 : -1}
             onClick={() => setSelectedFilePath(file.path)}
             onKeyDown={(event) => {
@@ -98,18 +98,18 @@ export function ArtifactEditor({
               setSelectedFilePath(editorFiles[target].path);
               document.getElementById(`lab-file-tab-${activeActivity.id}-${target}`)?.focus();
             }}
-            className={`max-w-full break-all rounded-lg px-3 py-2 font-mono text-xs transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${file.path === selectedFile?.path ? "bg-surface text-accent shadow-sm" : "text-text-secondary hover:bg-surface"}`}>{file.path}</button>)}
+            className={`max-w-full break-all rounded-lg px-3 py-2 font-mono text-xs transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${file.path === selectedFile?.path ? "bg-surface text-accent shadow-xs" : "text-text-secondary hover:bg-surface"}`}>{file.path}</button>)}
         </div>}
         {editorFiles.map((file, index) => <div key={`${activeActivity.id}:${activeActivity.revision}:${file.path}`} id={`lab-file-panel-${activeActivity.id}-${index}`} role="tabpanel" aria-labelledby={`lab-file-tab-${activeActivity.id}-${index}`} hidden={selectedFile?.path !== file.path}>
           <LearningCodeEditor path={file.path} showPath={false} value={file.content} ariaLabel={`Edit ${file.path}`} readOnly={draft.loadState !== "ready"} onChange={(content) => draft.setFileContent(file.path, content)} onRunShortcut={() => void beginRun()} />
         </div>)}
-        {editorFiles.length === 0 && <p className="bg-background p-4 text-sm text-text-muted">This activity has no editable starter files.</p>}
+        {editorFiles.length === 0 && <p className="bg-surface-sunken p-4 text-sm text-text-muted">This activity has no editable starter files.</p>}
       </div>
       {activeActivity.runtimeKind !== "none" && !canRunActivity && (
-        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-warning-muted bg-warning-muted/15 p-4 text-warning-fg">
           <AlertTriangle
             size={16}
-            className="mt-0.5 shrink-0 text-amber-700"
+            className="mt-0.5 shrink-0 text-warning-fg"
           />
           <div>
             <h4 className="text-xs font-semibold text-text-primary">

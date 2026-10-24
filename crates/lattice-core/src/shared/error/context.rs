@@ -4,21 +4,6 @@
 use super::{AppError, Result};
 
 /// Extension trait for adding context to Result types.
-///
-/// This trait provides convenient methods to add contextual information
-/// to errors, making debugging and error messages more helpful.
-///
-/// # Examples
-///
-/// ```
-/// use lattice_core::shared::error::{ResultExt, AppError};
-///
-/// fn read_config(path: &str) -> Result<String, AppError> {
-///     std::fs::read_to_string(path)
-///         .context("Failed to read config file")?;
-///     Ok("config".to_string())
-/// }
-/// ```
 pub trait ResultExt<T> {
     /// Add static context to an error.
     fn context(self, msg: impl Into<String>) -> Result<T>;

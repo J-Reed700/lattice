@@ -1,15 +1,3 @@
-/**
- * Skeleton Components
- *
- * Comprehensive skeleton loader system for the Lattice desktop app.
- * Replaces spinners with content-aware loading states.
- *
- * Import CSS for animations:
- * import './skeleton.css';
- */
-
-// Core skeleton components
-// Import CSS animations
 import './skeleton.css';
 
 export {
@@ -27,7 +15,6 @@ export type {
   SkeletonButtonProps,
 } from './Skeleton';
 
-// Specialized skeleton components
 export {
   SearchResultSkeleton,
   SearchResultSkeletonCompact,

@@ -1,12 +1,4 @@
-//! # File Metadata Factory
-//!
-//! Application layer factory for creating FileMetadata from file system operations.
-//!
-//! This factory isolates file I/O from the domain layer, maintaining domain purity.
-//!
-//! **Architecture Note**: Moved from infrastructure to application layer because it creates
-//! domain value objects (FileMetadata). Factories that create domain objects belong in the
-//! application layer, not infrastructure.
+//! Factory for creating FileMetadata from file system inspection.
 
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::shared::error::{AppError, Result};
@@ -14,36 +6,10 @@ use chrono::{DateTime, Utc};
 use std::path::Path;
 
 /// Factory for creating FileMetadata with file system operations.
-///
-/// This is the proper way to create FileMetadata from files, keeping file I/O
-/// out of the domain layer as per Clean Architecture principles.
 pub struct FileMetadataFactory;
 
 impl FileMetadataFactory {
-    /// Create file metadata from a file path (with file I/O).
-    ///
-    /// This method performs file system operations, keeping file I/O out of the
-    /// domain layer (`FileMetadata::new()` stays pure).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - File does not exist
-    /// - Cannot read file metadata
-    /// - File name is invalid or empty
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::file_metadata_factory::FileMetadataFactory;
-    /// use std::path::Path;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let metadata = FileMetadataFactory::from_path(Path::new("/path/to/file.txt"))?;
-    /// println!("File: {}, Size: {} bytes", metadata.file_name(), metadata.size_bytes());
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Create file metadata from a file path.
     pub fn from_path(path: &Path) -> Result<FileMetadata> {
         let fs_metadata = std::fs::metadata(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file metadata for {:?}: {}", path, e),

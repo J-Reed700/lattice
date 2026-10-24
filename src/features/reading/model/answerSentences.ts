@@ -1,26 +1,9 @@
-/**
- * The sentences of an answer that cite a particular source.
- *
- * Used when a turn was never verified: with no claim verdicts to read, the only
- * record of which sentences leaned on source `n` is the `[n]` markers in the
- * answer text itself.
- */
-
 import { sentenceSpans, stripCitationMarkers } from '@/features/reading/model/sourcedPassages';
 
-/** `[3]`, `[1][3]` and `[1, 3]`. The chips only draw `[n]`; answers write both. */
 const CITATION_MARKER = /\[(\d{1,4}(?:\s*,\s*\d{1,4})*)\]/g;
-
-/** Markdown that carries no words: list bullets, headings, quotes, table pipes. */
 const BLOCK_PREFIX = /^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+|#{1,6}\s+|>\s*|\|\s*)/;
-
-/** The opening or closing line of a fenced code block. */
 const FENCE = /^\s*(?:```|~~~)/;
-
-/** Inline code, whose `[n]` the chips leave as text. */
 const INLINE_CODE = /`[^`\n]*`/g;
-
-/** Emphasis markers, which are punctuation to a reader and noise to a matcher. */
 const EMPHASIS = /(\*\*|__|\*|_|`)/g;
 
 function cleanLine(line: string): string {
@@ -32,17 +15,11 @@ function cleanLine(line: string): string {
     .trim();
 }
 
-/**
- * An answer split into sentences, one markdown line at a time.
- *
- * Line by line because an answer is a document: a heading, a bullet and a table
- * row are each their own sentence however they are punctuated.
- */
+/** Splits markdown text into individual sentences, ignoring fenced code blocks. */
 export function splitAnswerSentences(text: string): string[] {
   const sentences: string[] = [];
   let fenced = false;
   for (const line of text.split('\n')) {
-    // Code is not something the answer said, and the chips skip it too.
     if (FENCE.test(line)) {
       fenced = !fenced;
       continue;
@@ -58,7 +35,7 @@ export function splitAnswerSentences(text: string): string[] {
   return sentences;
 }
 
-/** The citation numbers a sentence carries, in the order they are written. */
+/** Returns all citation numbers found within a sentence. */
 export function citationsIn(sentence: string): number[] {
   const numbers: number[] = [];
   for (const match of sentence.matchAll(CITATION_MARKER)) {
@@ -70,22 +47,16 @@ export function citationsIn(sentence: string): number[] {
   return numbers;
 }
 
-/** A cited sentence as a matcher and a tooltip want it: no markers, no gaps. */
 function withoutMarkers(sentence: string): string {
   return (
     stripCitationMarkers(sentence)
       .replace(/\s+/g, ' ')
-      // The marker sat before the full stop; the gap it leaves would otherwise
-      // show up in the tooltip that names the sentence.
       .replace(/\s+([.,;:!?])/g, '$1')
       .trim()
   );
 }
 
-/**
- * The sentences of `text` that cite source `citationNumber`, with the markers
- * taken out — a matcher should not be given `[4]` to look for.
- */
+/** Returns cleaned sentences from text that cite a given citation number. */
 export function sentencesCiting(text: string, citationNumber: number): string[] {
   const sentences: string[] = [];
   for (const sentence of splitAnswerSentences(text)) {
@@ -96,17 +67,9 @@ export function sentencesCiting(text: string, citationNumber: number): string[] 
   return sentences;
 }
 
-/**
- * The sentence each `[n]` chip of one source sits in, one entry per chip in
- * reading order — entry `k` answers the chip stamped `data-cite-at="k"`.
- *
- * Counted the way `CitationMarks` draws: a bare `[n]` outside code. `[1, 3]` is
- * a citation but never a chip, so it is not counted here.
- */
+/** Returns the sentence corresponding to each occurrence of a citation chip. */
 export function sentencesByOccurrence(text: string, citationNumber: number): string[] {
   const chip = new RegExp(`\\[${citationNumber}\\]`, 'g');
-  // Inline code goes before the lines are cleaned: cleaning drops the backticks.
-  // A fence line is left alone so the splitter still sees the block open.
   const prose = text
     .split('\n')
     .map((line) => (FENCE.test(line) ? line : line.replace(INLINE_CODE, ' ')))

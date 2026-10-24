@@ -1,18 +1,8 @@
-/**
- * AudioViewer
- *
- * Plays an indexed recording and lists the transcript passages a citation
- * pointed at. Clicking a row moves the playhead; opening from a citation starts
- * at the cited moment.
- */
-
 import { type FC, useCallback, useEffect, useRef, useState } from 'react';
-
 
 import { cn } from '@/lib/utils';
 import { assetUrl } from '@/utils/assetUrl';
 
-/** One transcript passage, positioned in the recording. */
 export interface AudioSegment {
   startMs: number;
   endMs: number;
@@ -26,10 +16,8 @@ interface AudioViewerProps {
   seekToMs?: number;
 }
 
-/** How often the playhead updates the highlighted row (4 Hz). */
 const HIGHLIGHT_INTERVAL_MS = 250;
 
-/** `"12:40"` or `"1:02:40"`. Mirrors the backend's `format_timestamp`. */
 export function formatTimestamp(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const seconds = totalSeconds % 60;
@@ -55,25 +43,18 @@ function parseClock(clock: string): number | undefined {
   return total * 1000;
 }
 
-/** `"12:40"` or `"1:02:40"` → 760000. Accepts the `"mm:ss–mm:ss"` section. */
 export function parseSectionStartMs(section?: string): number | undefined {
   if (!section) return undefined;
   const [start] = section.split('–');
   return start ? parseClock(start.trim()) : undefined;
 }
 
-/** The end of a `"mm:ss–mm:ss"` section, when it has one. */
 export function parseSectionEndMs(section?: string): number | undefined {
   if (!section) return undefined;
   const parts = section.split('–');
   return parts.length > 1 ? parseClock((parts[1] ?? '').trim()) : undefined;
 }
 
-/**
- * Build AudioViewer props from a citation source: the cited chunk excerpts
- * become the segment list (each carries its own `section`), and the top-level
- * `section` sets the seek.
- */
 export function audioViewerPropsFromSource(source: {
   section?: string;
   content?: string;

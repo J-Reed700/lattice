@@ -1,19 +1,3 @@
-/**
- * RoleButton
- *
- * One small text toggle per role, generated from a {@link RoleDescriptor}.
- * Active = accent text on an accent-muted ground; inactive = ghost. The
- * button decides its own enabled/active/pending state from the model + role.
- *
- * It toggles both ways. A model that holds a role cannot be deleted, so a
- * button that only switched a role on left the last embedding model with no
- * way to be removed.
- *
- * Presentation only — the ModelRolesContext is the mutation layer. Connection
- * rows, which write Settings rather than a model row, use {@link RoleToggle}
- * directly.
- */
-
 import { useState } from 'react';
 
 import { Check, Plus } from 'lucide-react';

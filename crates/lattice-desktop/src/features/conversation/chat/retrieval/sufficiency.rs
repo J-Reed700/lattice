@@ -34,6 +34,11 @@ use super::{select_informative_terms, tokenize_keyword_terms, tokenize_overlap_t
 /// top1-minus-topN spread is measured over.
 pub(super) const COVERAGE_TOP_N: usize = 5;
 
+/// Coverage can use a little more of the evidence that will reach the answer
+/// than the five-result score-spread probe. A relevant sixth passage should
+/// not trigger a retry merely because four stronger passages share a title.
+const TERM_COVERAGE_TOP_N: usize = 10;
+
 /// Planner queries are short by construction (at most three, 24 words each).
 /// Coverage over more terms than this measures phrasing, not topicality.
 const MAX_PLAN_TERMS: usize = 12;
@@ -110,26 +115,21 @@ pub(super) fn assess_sufficiency(
     tuning: &RetrievalTuningSettingsDto,
     reranked: bool,
 ) -> SufficiencyVerdict {
-    let Some(top) = results.first() else {
+    if results.is_empty() {
         return SufficiencyVerdict {
             sufficient: false,
             reasons: vec![reason::NO_RESULTS],
             ..Default::default()
         };
-    };
+    }
 
-    let top_score = top.score;
-    let tail = results
-        .get(COVERAGE_TOP_N - 1)
-        .or_else(|| results.last())
-        .map_or(0.0, |result| result.score);
-    let spread = top_score - tail;
+    let (top_score, spread) = score_summary(results);
     let term_coverage = term_coverage(results, plan);
 
     // Ordered reading is deliberate evidence selection — the planner chose the
     // introduction and first chapter on purpose. Replanning it into a keyword
     // hunt would undo the choice, so such a plan is sufficient by construction.
-    if plan.start_at_beginning || !plan.opening_document_ids.is_empty() {
+    if plan.start_at_beginning {
         return SufficiencyVerdict {
             sufficient: true,
             top_score,
@@ -176,31 +176,89 @@ pub(super) fn assess_sufficiency(
     }
 }
 
+/// Structural evidence can be pinned ahead of score order. The sufficiency
+/// signal still describes the best scores available, not the presentation
+/// order chosen for the answer prompt.
+fn score_summary(results: &[SearchResultDto]) -> (f32, f32) {
+    let mut scores: Vec<f32> = results.iter().map(|result| result.score).collect();
+    scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let top = scores.first().copied().unwrap_or(0.0);
+    let tail = scores
+        .get(COVERAGE_TOP_N - 1)
+        .or_else(|| scores.last())
+        .copied()
+        .unwrap_or(0.0);
+    (top, top - tail)
+}
+
 /// Fraction of the plan's informative terms that appear in the top passages.
 ///
 /// A plan with no informative terms (a bare acronym, a section number) cannot
 /// fail coverage — there is nothing to miss, and reporting 0.0 would send every
 /// such turn into a pointless retry.
+fn term_matches_set(term: &str, set: &HashSet<String>) -> bool {
+    set.iter()
+        .any(|candidate| terms_are_simple_inflections(term, candidate))
+}
+
+/// Match common grammatical endings without treating an arbitrary shared
+/// prefix as evidence. The old five-character prefix comparison, for example,
+/// could call `contract` and `contrary` the same term.
+fn terms_are_simple_inflections(left: &str, right: &str) -> bool {
+    fn extends_with_inflection(base: &str, extended: &str) -> bool {
+        extended
+            .strip_prefix(base)
+            .is_some_and(|suffix| matches!(suffix, "s" | "es" | "ed" | "ing"))
+    }
+
+    fn y_plural_matches(singular: &str, plural: &str) -> bool {
+        singular
+            .strip_suffix('y')
+            .zip(plural.strip_suffix("ies"))
+            .is_some_and(|(singular_stem, plural_stem)| singular_stem == plural_stem)
+    }
+
+    left == right
+        || (left.is_ascii()
+            && right.is_ascii()
+            && left.len().min(right.len()) >= 4
+            && (extends_with_inflection(left, right)
+                || extends_with_inflection(right, left)
+                || y_plural_matches(left, right)
+                || y_plural_matches(right, left)))
+}
+
 fn term_coverage(results: &[SearchResultDto], plan: &CorpusSearchPlan) -> f32 {
-    let plan_terms = select_informative_terms(
-        tokenize_keyword_terms(&plan.queries.join(" ")),
-        MAX_PLAN_TERMS,
-    );
-    if plan_terms.is_empty() {
-        return 1.0;
-    }
-
-    let mut passage_terms: HashSet<String> = HashSet::new();
-    for result in results.iter().take(COVERAGE_TOP_N) {
-        passage_terms.extend(tokenize_overlap_terms(&result.title));
-        passage_terms.extend(tokenize_overlap_terms(&result.content));
-    }
-
-    let hits = plan_terms
+    let passage_terms: HashSet<String> = results
         .iter()
-        .filter(|term| passage_terms.contains(term.as_str()))
-        .count();
-    hits as f32 / plan_terms.len() as f32
+        .take(TERM_COVERAGE_TOP_N)
+        .flat_map(|result| {
+            let section = result
+                .metadata
+                .get("section")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            tokenize_overlap_terms(&result.content)
+                .into_iter()
+                .chain(tokenize_overlap_terms(&result.title))
+                .chain(tokenize_overlap_terms(section))
+        })
+        .collect();
+
+    let mut best_coverage = None::<f32>;
+    for query in &plan.queries {
+        let terms = select_informative_terms(tokenize_keyword_terms(query), MAX_PLAN_TERMS);
+        if terms.is_empty() {
+            continue;
+        }
+        let hits = terms
+            .iter()
+            .filter(|term| term_matches_set(term.as_str(), &passage_terms))
+            .count();
+        let coverage = hits as f32 / terms.len() as f32;
+        best_coverage = Some(best_coverage.map_or(coverage, |b| b.max(coverage)));
+    }
+    best_coverage.unwrap_or(1.0)
 }
 
 #[cfg(test)]
@@ -342,6 +400,23 @@ mod tests {
     }
 
     #[test]
+    fn pinned_structural_order_does_not_hide_the_best_reranker_score() {
+        let results = vec![
+            result("opening", 0.14, "Front matter."),
+            result("section", 0.31, "Named section."),
+            result("body", 0.96, "Body evidence answers the question."),
+            result("tail", 0.18, "Appendix."),
+            result("other", 0.15, "Other material."),
+        ];
+
+        let verdict = assess_sufficiency(&results, &plan("body evidence"), &tuning(), true);
+
+        assert_eq!(verdict.top_score, 0.96);
+        assert!((verdict.spread - 0.82).abs() < 1e-5);
+        assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
+    }
+
+    #[test]
     fn ordered_reading_plans_are_never_corrected() {
         let results = vec![result("a", 0.0, "Front matter.")];
         let mut ordered = plan("introduction foundations overview");
@@ -366,5 +441,18 @@ mod tests {
 
         assert_eq!(verdict.term_coverage, 1.0);
         assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
+    }
+
+    #[test]
+    fn coverage_matches_inflections_but_not_arbitrary_shared_prefixes() {
+        let terms = HashSet::from([
+            "monitoring".to_string(),
+            "policies".to_string(),
+            "contrary".to_string(),
+        ]);
+
+        assert!(term_matches_set("monitor", &terms));
+        assert!(term_matches_set("policy", &terms));
+        assert!(!term_matches_set("contract", &terms));
     }
 }

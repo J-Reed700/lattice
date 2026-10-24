@@ -20,24 +20,6 @@ const SERVICE_NAME: &str = "com.lattice.lattice";
 /// - Windows: Credential Manager
 /// - macOS: Keychain
 /// - Linux: Secret Service (GNOME Keyring, KWallet)
-///
-/// # Example
-/// ```
-/// use lattice::security::SecureStorage;
-///
-/// let storage = SecureStorage::new();
-///
-/// // Store an API key
-/// storage.store_api_key("anthropic_api_key", "sk-ant-...")?;
-///
-/// // Retrieve it later
-/// if let Some(key) = storage.get_api_key("anthropic_api_key")? {
-///     println!("API key: {}", key);
-/// }
-///
-/// // Delete when no longer needed
-/// storage.delete_api_key("anthropic_api_key")?;
-/// ```
 pub struct SecureStorage {
     service: String,
 }
@@ -68,21 +50,11 @@ impl SecureStorage {
 
     /// Store an API key securely in the OS keyring
     ///
-    /// # Arguments
-    /// * `key_name` - Identifier for the key (e.g., "anthropic_api_key", "openai_api_key")
-    /// * `api_key` - The API key value to store
-    ///
     /// # Errors
     /// Returns error if:
     /// - Keyring is not available (rare - usually indicates OS issue)
     /// - Permission denied
     /// - Storage is full (very rare)
-    ///
-    /// # Example
-    /// ```
-    /// storage.store_api_key("anthropic_api_key", "sk-ant-api-...")?;
-    /// storage.store_api_key("openai_api_key", "sk-...")?;
-    /// ```
     pub fn store_api_key(&self, key_name: &str, api_key: &str) -> Result<()> {
         keyring_guarded(|| {
             if api_key.is_empty() {
@@ -105,22 +77,6 @@ impl SecureStorage {
     }
 
     /// Retrieve an API key from the OS keyring
-    ///
-    /// # Arguments
-    /// * `key_name` - Identifier for the key
-    ///
-    /// # Returns
-    /// - `Ok(Some(key))` - Key found and retrieved
-    /// - `Ok(None)` - Key not found (not an error)
-    /// - `Err(_)` - System error accessing keyring
-    ///
-    /// # Example
-    /// ```
-    /// match storage.get_api_key("anthropic_api_key")? {
-    ///     Some(key) => println!("Found key: {}", &key[..10]),
-    ///     None => println!("Key not found"),
-    /// }
-    /// ```
     pub fn get_api_key(&self, key_name: &str) -> Result<Option<String>> {
         keyring_guarded(|| {
             let entry = Entry::new(&self.service, key_name).map_err(|e| {
@@ -149,19 +105,6 @@ impl SecureStorage {
     }
 
     /// Delete an API key from the OS keyring
-    ///
-    /// # Arguments
-    /// * `key_name` - Identifier for the key to delete
-    ///
-    /// # Returns
-    /// - `Ok(())` - Key deleted (or didn't exist)
-    /// - `Err(_)` - System error
-    ///
-    /// # Example
-    /// ```
-    /// // Clean up when API key is no longer needed
-    /// storage.delete_api_key("old_api_key")?;
-    /// ```
     pub fn delete_api_key(&self, key_name: &str) -> Result<()> {
         keyring_guarded(|| {
             let entry = Entry::new(&self.service, key_name).map_err(|e| {

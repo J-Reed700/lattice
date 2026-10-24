@@ -62,24 +62,6 @@ pub struct DocumentMapper;
 
 impl DocumentMapper {
     /// Convert domain entity to database model.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain document entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::DocumentMapper;
-    /// use lattice_core::domain::entities::Document;
-    ///
-    /// let entity = Document::new(/* ... */);
-    /// let db_model = DocumentMapper::to_model(&entity);
-    /// ```
     pub fn to_model(entity: &DomainDocument) -> DocumentModel {
         DocumentModel {
             id: entity.id().as_str().to_string(),
@@ -108,28 +90,11 @@ impl DocumentMapper {
 
     /// Convert database model to domain entity.
     ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
-    ///
     /// # Errors
     ///
     /// - `AppError::InvalidData` if timestamps cannot be parsed
     /// - `AppError::InvalidData` if file path is invalid
     /// - `AppError::InvalidData` if status is invalid
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::DocumentMapper;
-    ///
-    /// let db_model = /* from database */;
-    /// let entity = DocumentMapper::to_entity(&db_model)?;
-    /// ```
     pub fn to_entity(model: &DocumentModel) -> Result<DomainDocument> {
         // Log start of parsing for diagnostics
         tracing::debug!(
@@ -292,19 +257,7 @@ impl DocumentMapper {
     /// Convert a batch of database models to domain entities.
     ///
     /// Continues processing on errors, collecting all successful conversions.
-    ///
-    /// # Arguments
-    ///
-    /// * `models` - Vector of database models
-    ///
-    /// # Returns
-    ///
-    /// Vector of domain entities (may be shorter than input if some conversions failed).
-    ///
-    /// # Warning
-    ///
-    /// **This method silently drops documents that fail to parse!**
-    /// Parse errors are logged at ERROR level. Check logs to diagnose missing documents.
+    /// Documents that fail to parse are dropped and logged at ERROR level.
     pub fn to_entities(models: &[DocumentModel]) -> Vec<DomainDocument> {
         tracing::info!(
             "Converting batch of {} database models to domain entities",
@@ -356,14 +309,6 @@ impl DocumentMapper {
     }
 
     /// Convert a batch of domain entities to database models.
-    ///
-    /// # Arguments
-    ///
-    /// * `entities` - Vector of domain entities
-    ///
-    /// # Returns
-    ///
-    /// Vector of database models ready for persistence.
     pub fn to_models(entities: &[DomainDocument]) -> Vec<DocumentModel> {
         entities.iter().map(Self::to_model).collect()
     }

@@ -1,9 +1,3 @@
-/**
- * Settings — shell.
- *
- * Icon-led navigation and grouped settings in a responsive reading column.
- */
-
 import { useEffect, useState } from 'react';
 
 import { save, open } from '@tauri-apps/plugin-dialog';

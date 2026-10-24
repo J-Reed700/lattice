@@ -1,18 +1,4 @@
-//! Model Setup Commands
-//!
-//! Commands for first-run model setup and default model downloads.
-//!
-//! # Commands
-//!
-//! - `check_first_run_status_impl` - Check if first-run setup is needed
-//! - `download_default_embedding_model_impl` - Download and activate default model
-//! - `download_model_impl` - Download a catalog model by id
-//! - `test_llama_cpp_connection` - Reach a llama.cpp server and list its models
-//!
-//! # Gateway Pattern
-//!
-//! All commands are routed through the Gateway pattern which provides async dispatch.
-//! Async functions store state on the heap (in Future objects), not the stack.
+//! First-run model setup and catalog model downloads.
 
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
@@ -37,7 +23,6 @@ struct DownloadDefaultModelResponse {
 ///
 /// Detects if this is the first run by checking for existing .onnx models.
 /// Returns recommendation for default model if no models are found.
-/// Called by gateway - async dispatch.
 pub async fn check_first_run_status_impl(
     container: &Container,
 ) -> std::result::Result<String, String> {
@@ -56,12 +41,7 @@ pub async fn check_first_run_status_impl(
     serde_json::to_string(&response).map_err(|e| format!("Serialization error: {}", e))
 }
 
-/// Download default embedding model implementation.
-///
-/// Downloads the model `default_embedding_model` names, the same one
-/// `check_first_run_status` offered.
-/// Progress can be monitored via download events.
-/// Called by gateway - async dispatch.
+/// Downloads the default embedding model recommendation.
 pub async fn download_default_embedding_model_impl(
     container: &Container,
 ) -> std::result::Result<String, String> {
@@ -93,7 +73,6 @@ pub async fn download_default_embedding_model_impl(
     };
 
     let payload = DownloadDefaultModelResponse {
-        // Batch download snapshots are keyed by model_id.
         download_id: model_id.clone(),
         model_id: model_id.clone(),
         model_name: model_name.clone(),
@@ -106,128 +85,7 @@ pub async fn download_default_embedding_model_impl(
     serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {}", e))
 }
 
-/// Downloads an LLM model with progress tracking and integrity verification
-///
-/// Initiates download of a model from remote storage to local filesystem. Provides
-/// real-time progress updates via events, validates downloaded file integrity, and
-/// handles network errors gracefully with retry logic.
-///
-/// # Arguments
-///
-/// * `model_id` - Unique identifier of the model to download (e.g., "llama-3-8b")
-/// * `container` - Service container with use cases
-///
-/// # Returns
-///
-/// * `Ok(DownloadModelResponseDto)` - Download completion status with path
-/// * `Err(AppError)` - If download fails or verification fails
-///
-/// # Errors
-///
-/// * `AppError::InvalidInput` - Model ID invalid or not in catalog
-/// * `AppError::Other` - Network error, storage full, or integrity check failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-/// import { listen } from '@tauri-apps/api/event';
-///
-/// interface DownloadProgress {
-///   modelId: string;
-///   bytesDownloaded: number;
-///   totalBytes: number;
-///   percentComplete: number;
-///   downloadSpeed: number;      // Bytes per second
-///   estimatedTimeRemaining: number; // Seconds
-/// }
-///
-/// interface DownloadComplete {
-///   modelId: string;
-///   path: string;
-///   sizeBytes: number;
-///   downloadTimeSeconds: number;
-/// }
-///
-/// // Listen for progress updates using the unified download:progress event
-/// const unlisten = await listen<DownloadStateSnapshot>('download:progress', (event) => {
-///   const snapshot = event.payload;
-///   if (snapshot.kind === 'single') {
-///     console.log(`Downloading ${snapshot.filename}: ${snapshot.percentage}%`);
-///     console.log(`Speed: ${(snapshot.bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s`);
-///     console.log(`ETA: ${snapshot.etaSeconds}s`);
-///   }
-/// });
-///
-/// try {
-///   // Start download
-///   const result = await invoke<DownloadComplete>('download_model', {
-///     modelId: 'llama-3-8b'
-///   });
-///
-///   console.log(`Download complete: ${result.path}`);
-///   console.log(`Downloaded in ${result.downloadTimeSeconds}s`);
-///   console.log(`Size: ${(result.sizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
-/// } catch (error) {
-///   console.error('Download failed:', error);
-/// } finally {
-///   unlisten();
-/// }
-/// ```
-///
-/// # Download Process
-///
-/// **Workflow**:
-/// 1. **Model Validation**: Verify model ID exists in catalog
-/// 2. **Storage Check**: Ensure sufficient disk space
-/// 3. **Network Download**: Stream model file with progress events
-/// 4. **Integrity Verification**: Validate checksum after download
-///
-/// **Progress Events**:
-/// - Emitted every 1 second or 10MB, whichever comes first
-/// - Event name: `download:progress` (unified download event system)
-/// - Payload: DownloadStateSnapshot with discriminated union (kind: 'single' | 'batch')
-/// - Includes: bytes downloaded, total size, percentage, speed, ETA
-///
-/// **Error Handling**:
-/// - **Network Failure**: Automatic retry up to 3 times with exponential backoff
-/// - **Storage Full**: Clean error message, suggests freeing disk space
-/// - **Integrity Failure**: Deletes corrupted file, suggests retry
-///
-/// # Security
-///
-/// - **Integrity Verification**: SHA-256 checksum validation
-/// - **Path Validation**: Downloads only to safe, validated paths (CWE-22)
-/// - **Size Limits**: Rejects downloads exceeding maximum size (100GB)
-///
-/// # Performance
-///
-/// **Download Speeds** (typical):
-/// - **Small Models** (<5GB): 2-5 minutes on 100Mbps connection
-/// - **Medium Models** (5-15GB): 5-15 minutes on 100Mbps connection
-/// - **Large Models** (15-50GB): 15-60 minutes on 100Mbps connection
-/// - **Ultra Models** (>50GB): 1+ hours on 100Mbps connection
-///
-/// **Resource Usage**:
-/// - **Memory**: ~100-200MB for download buffer
-/// - **Disk I/O**: Sequential writes, minimal system impact
-/// - **Network**: Sustained download, may affect other network operations
-///
-/// # Architecture
-///
-/// Thin controller delegating to `DownloadModelUseCase`.
-///
-/// # Command Flow
-///
-/// 1. Get use case from container
-/// 2. Create request DTO with model ID
-/// 3. Execute download (validate, download, verify)
-/// 4. Return DownloadModelResponseDto with path
-///
-/// # Note
-///
-/// Downloads can be cancelled using a separate `cancel_download` command. Progress
-/// is saved, allowing resumption on retry (if supported by download source).
+/// Downloads an LLM model with progress tracking and integrity verification.
 pub async fn download_model_impl(
     model_id: String,
     container: &Container,
@@ -306,7 +164,6 @@ mod tests {
     async fn test_check_first_run_status_command() {
         let (container, _temp_dir) = create_test_container().await;
 
-        // Resolve the repository from the container (proper DI) and run the use case.
         let repository = container.downloaded_models();
         let use_case = CheckFirstRunStatusUseCase::new(repository);
         let response = use_case.execute().await.unwrap();
@@ -323,7 +180,6 @@ mod tests {
 
         assert!(models_path.to_string_lossy().contains("models"));
 
-        // Verify fallback works (should use home dir)
         assert!(models_path.exists() || models_path.to_string_lossy().contains(".lattice"));
     }
 }

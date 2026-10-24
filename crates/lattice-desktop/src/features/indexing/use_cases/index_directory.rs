@@ -1,33 +1,6 @@
-//! # Index Directory Use Case
+//! Index Directory Use Case
 //!
 //! Recursively indexes all supported files in a directory.
-//!
-//! This use case:
-//! 1. Discovers files in directory (optionally recursive)
-//! 2. Filters by supported file extensions
-//! 3. Indexes each file using IndexFileUseCase
-//! 4. Collects statistics and errors
-//! 5. Tracks progress and supports cancellation
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::index_directory::IndexDirectoryUseCase;
-//! use lattice_core::application::dtos::indexing_dto::{IndexDirectoryRequestDto, ChunkingStrategyDto};
-//!
-//! # async fn example(use_case: IndexDirectoryUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = IndexDirectoryRequestDto {
-//!     path: "/path/to/docs".to_string(),
-//!     recursive: true,
-//!     chunking_strategy: ChunkingStrategyDto::FixedSize { size: 512 },
-//!     include_extensions: Some(vec!["txt".to_string(), "md".to_string()]),
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Indexed {} files, {} failed", response.files_indexed, response.files_failed);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,11 +15,6 @@ use lattice_core::shared::error::{AppError, Result};
 /// Index directory use case.
 ///
 /// Batch indexes all supported files in a directory tree.
-///
-/// ## Dependencies
-///
-/// - `IndexFileUseCase`: Handles individual file indexing
-/// - `IndexingState`: Tracks progress and cancellation
 pub struct IndexDirectoryUseCase {
     index_file_use_case: Arc<IndexFileUseCase>,
     indexing_state: Arc<IndexingState>,
@@ -54,11 +22,6 @@ pub struct IndexDirectoryUseCase {
 
 impl IndexDirectoryUseCase {
     /// Create a new index directory use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `index_file_use_case` - Use case for indexing individual files
-    /// * `indexing_state` - Shared state for progress tracking
     pub fn new(
         index_file_use_case: Arc<IndexFileUseCase>,
         indexing_state: Arc<IndexingState>,
@@ -71,23 +34,7 @@ impl IndexDirectoryUseCase {
 
     /// Execute directory indexing.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Directory indexing request
-    ///
-    /// # Returns
-    ///
-    /// Response with statistics about indexed files
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Directory path is invalid
-    /// - Directory cannot be read
-    /// - Permissions are insufficient
-    ///
-    /// Note: Individual file failures are collected in the response,
-    /// not returned as errors (allows partial success).
+    /// Individual file failures are collected in the response rather than failing the whole batch.
     pub async fn execute(
         &self,
         request: IndexDirectoryRequestDto,

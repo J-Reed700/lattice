@@ -1,7 +1,3 @@
-//! # Search Query Value Object
-//!
-//! Validated search query string following DDD value object patterns.
-
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -9,62 +5,16 @@ const MAX_QUERY_LENGTH: usize = 1000;
 const MIN_QUERY_LENGTH: usize = 1;
 
 /// Validated search query value object.
-///
-/// Represents a user's search query with validation and normalization.
-///
-/// ## Invariants
-///
-/// - Query is non-empty after trimming whitespace
-/// - Query length is between 1 and 1000 characters
-/// - Query is normalized (trimmed, no excessive whitespace)
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::search_query::SearchQuery;
-///
-/// let query = SearchQuery::new("machine learning algorithms")?;
-/// assert_eq!(query.as_str(), "machine learning algorithms");
-/// assert_eq!(query.word_count(), 3);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SearchQuery(String);
 
 impl SearchQuery {
-    /// Create a new validated search query.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - The search query string
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Query is empty after trimming
-    /// - Query is too long (> 1000 characters)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("rust programming")?;
-    /// assert!(query.contains("rust"));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(query: impl Into<String>) -> Result<Self> {
         let normalized = Self::normalize(query.into())?;
         Ok(Self(normalized))
     }
 
-    /// Normalize and validate the query string.
-    ///
-    /// Normalization includes:
-    /// - Trimming leading/trailing whitespace
-    /// - Collapsing multiple spaces into single spaces
     fn normalize(query: String) -> Result<String> {
-        // Trim whitespace
         let trimmed = query.trim();
 
         if trimmed.is_empty() {
@@ -88,82 +38,38 @@ impl SearchQuery {
             )));
         }
 
-        // Collapse multiple spaces
         let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
-
         Ok(normalized)
     }
 
-    /// Get the query as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Get the length of the query in characters.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Check if the query is empty (always false due to validation).
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Get the number of words in the query.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("machine learning")?;
-    /// assert_eq!(query.word_count(), 2);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn word_count(&self) -> usize {
         self.0.split_whitespace().count()
     }
 
-    /// Check if the query contains a given substring (case-insensitive).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("Rust Programming")?;
-    /// assert!(query.contains_ignore_case("rust"));
-    /// assert!(query.contains_ignore_case("PROGRAMMING"));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn contains_ignore_case(&self, substring: &str) -> bool {
         self.0.to_lowercase().contains(&substring.to_lowercase())
     }
 
-    /// Check if the query contains a given substring (case-sensitive).
     pub fn contains(&self, substring: &str) -> bool {
         self.0.contains(substring)
     }
 
-    /// Get the lowercase version of the query.
-    ///
-    /// Useful for case-insensitive matching.
     pub fn to_lowercase(&self) -> String {
         self.0.to_lowercase()
     }
 
-    /// Split the query into individual words.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("machine learning algorithms")?;
-    /// let words = query.words();
-    /// assert_eq!(words, vec!["machine", "learning", "algorithms"]);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn words(&self) -> Vec<&str> {
         self.0.split_whitespace().collect()
     }

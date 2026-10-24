@@ -1,29 +1,4 @@
-//! # LLM feature
-//!
-//! Local + remote LLM inference: clients (Ollama HTTP, llama.cpp via
-//! mistral.rs local), circuit breaker, model catalog, system
-//! capabilities (GPU/CPU detection), and model download orchestration.
-//!
-//! ## Public surface
-//!
-//! - `crate::features::llm::dto` — LLM DTOs (DownloadModelRequestDto, etc.)
-//! - `crate::features::llm::use_cases` — LLM use cases
-//! - `crate::features::llm::commands` — Tauri command handlers
-//!
-//! ## Engine
-//!
-//! - `crate::features::llm::engine` — clients, catalog, inference, and
-//!   system capabilities. Owned by this feature; consumed by
-//!   model_management, DI, and others.
-//!
-//! - `crate::features::llm::scheduler` — the one admission point in front of
-//!   each inference backend: priorities, cancellation, slot affinity and
-//!   calibrated token counts.
-//!
-//! - `crate::features::llm::instances` — every model loaded now, for every
-//!   role, with GPU admission before a new bundled server starts.
-//!
-//! No port (`LLMPort` stays in `application/ports/`). No plugin.
+//! Local and remote LLM inference, model catalog, and scheduling.
 
 pub(crate) mod activity;
 pub mod commands;

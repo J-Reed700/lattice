@@ -1,11 +1,3 @@
-/**
- * LeftoverEmbeddingFilesRow — files the previous (safetensors) embedding
- * runtime left in an embedding model folder. Embeddings now run from a GGUF
- * in the bundled llama.cpp, which never reads them. The app never deletes
- * them on its own: this row shows their size and removes exactly them on
- * request. The GGUF and its tokenizer stay.
- */
-
 import { useState } from 'react';
 
 import { FolderX } from 'lucide-react';

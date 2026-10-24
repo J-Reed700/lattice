@@ -1,8 +1,4 @@
-//! # Conversation Mapper
-//!
 //! Converts between domain conversation models and DTOs.
-//!
-//! This mapper handles conversion between conversation domain models and their DTO representations.
 
 use crate::features::conversation::dto::{CompactionRecordDto, ConversationDto};
 use lattice_core::domain::{Conversation, ConversationAggregate};
@@ -12,14 +8,6 @@ pub struct ConversationDtoMapper;
 
 impl ConversationDtoMapper {
     /// Convert Conversation domain model to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `conversation` - Domain conversation entity
-    ///
-    /// # Returns
-    ///
-    /// Conversation DTO for JSON serialization
     pub fn to_dto(conversation: &Conversation) -> ConversationDto {
         ConversationDto {
             id: conversation.id.to_string(),
@@ -41,8 +29,6 @@ impl ConversationDtoMapper {
             archived_at: None,
             last_message_preview: None,
             compaction: None,
-            // The domain entity carries no lineage; the repository projection
-            // reads it from the row and fills these in.
             forked_from_conversation_id: None,
             forked_from_message_id: None,
             explorer_root: None,
@@ -51,14 +37,6 @@ impl ConversationDtoMapper {
     }
 
     /// Convert ConversationAggregate to DTO (extracts the conversation entity).
-    ///
-    /// # Arguments
-    ///
-    /// * `aggregate` - Conversation aggregate root
-    ///
-    /// # Returns
-    ///
-    /// Conversation DTO for JSON serialization
     pub fn aggregate_to_dto(aggregate: &ConversationAggregate) -> ConversationDto {
         let mut dto = Self::to_dto(aggregate.conversation());
         dto.compaction = aggregate.compaction().map(CompactionRecordDto::from_record);

@@ -1,31 +1,3 @@
-//! # Model Storage Port
-//!
-//! Port for managing local model storage.
-//!
-//! ## Purpose
-//!
-//! Provides an abstraction for managing downloaded LLM models on the
-//! local filesystem, including listing, validation, and deletion.
-//!
-//! ## Implementations
-//!
-//! - **Production**: Filesystem-based storage with integrity checks
-//! - **Mock**: In-memory mock for testing
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use crate::application::ports::ModelStoragePort;
-//!
-//! async fn check_model(storage: &dyn ModelStoragePort) -> Result<()> {
-//!     if storage.is_model_downloaded("phi-3-mini").await? {
-//!         let path = storage.get_model_path("phi-3-mini").await?;
-//!         println!("Model found at: {:?}", path);
-//!     }
-//!     Ok(())
-//! }
-//! ```
-
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -37,67 +9,22 @@ use std::sync::Arc;
 /// Information about a downloaded model.
 #[derive(Debug, Clone)]
 pub struct DownloadedModel {
-    /// Model identifier
     pub model_id: String,
-    /// Local filesystem path
     pub path: PathBuf,
-    /// Model size in bytes
     pub size_bytes: u64,
-    /// When the model was downloaded
     pub downloaded_at: DateTime<Utc>,
 }
 
 /// Port for managing local model storage.
-///
-/// Provides operations for listing, checking, and managing
-/// downloaded models on the local filesystem.
 #[async_trait]
 pub trait ModelStoragePort: Send + Sync {
-    /// List all downloaded models.
-    ///
-    /// # Returns
-    /// - `Ok(Vec<DownloadedModel>)` - List of downloaded models
-    /// - `Err(AppError)` - Failed to scan storage
     async fn list_models(&self) -> Result<Vec<DownloadedModel>, AppError>;
-
-    /// Check if a model is downloaded.
-    ///
-    /// # Arguments
-    /// - `model_id` - Model identifier to check
-    ///
-    /// # Returns
-    /// - `Ok(true)` - Model is downloaded and valid
-    /// - `Ok(false)` - Model is not downloaded
-    /// - `Err(AppError)` - Failed to check storage
     async fn is_model_downloaded(&self, model_id: &str) -> Result<bool, AppError>;
-
-    /// Get the filesystem path for a model.
-    ///
-    /// # Arguments
-    /// - `model_id` - Model identifier
-    ///
-    /// # Returns
-    /// - `Ok(PathBuf)` - Path to model directory
-    /// - `Err(AppError::NotFound)` - Model not downloaded
-    /// - `Err(AppError)` - Failed to access storage
     async fn get_model_path(&self, model_id: &str) -> Result<PathBuf, AppError>;
-
-    /// Delete a downloaded model.
-    ///
-    /// # Arguments
-    /// - `model_id` - Model identifier to delete
-    ///
-    /// # Returns
-    /// - `Ok(())` - Model deleted successfully
-    /// - `Err(AppError::NotFound)` - Model not found
-    /// - `Err(AppError)` - Failed to delete model
     async fn delete_model(&self, model_id: &str) -> Result<(), AppError>;
 }
 
 /// Mock implementation for testing.
-///
-/// Provides an in-memory mock of model storage for testing
-/// without filesystem operations.
 pub struct MockModelStoragePort {
     models: Arc<Mutex<HashMap<String, DownloadedModel>>>,
 }

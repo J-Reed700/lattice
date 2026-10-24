@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
@@ -26,7 +27,7 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review,
   getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
-  getLearningMemory: async () => ({ ok: true, data: { dueCount: 0 } }),
+  getLearningMemory: async () => ({ ok: true, data: { programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 } }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
   courseIndexOpen: async () => ({ ok: true, data: undefined }),
   courseIndexClose: async () => ({ ok: true, data: undefined }),
@@ -97,5 +98,40 @@ describe('Course page', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
     expect(screen.getByText('Goal')).toBeVisible();
     expect(screen.getAllByText(GOAL)).toHaveLength(1);
+  });
+
+  it('renders StudyHabitsBar and switches workbench mode between grounded practice and Feynman technique', async () => {
+    const user = userEvent.setup();
+    show(program('Circulation'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
+
+    // Navigate to Practice tab
+    await user.click(screen.getByRole('tab', { name: 'Practice' }));
+
+    // Mode switcher buttons exist
+    const groundedBtn = screen.getByRole('button', { name: 'Grounded practice' });
+    const feynmanBtn = screen.getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
+    expect(groundedBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(feynmanBtn).toHaveAttribute('aria-pressed', 'false');
+
+    // Switch to Feynman mode
+    await user.click(feynmanBtn);
+    expect(groundedBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(feynmanBtn).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('allows selecting Free recall (Brain dump) in the Recall tab', async () => {
+    const user = userEvent.setup();
+    show(program('Circulation'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
+
+    // Navigate to Recall tab
+    await user.click(screen.getByRole('tab', { name: 'Recall' }));
+
+    const brainDumpBtn = screen.getByRole('button', { name: 'Free recall (Brain dump)' });
+    expect(brainDumpBtn).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(brainDumpBtn);
+    expect(brainDumpBtn).toHaveAttribute('aria-pressed', 'true');
   });
 });

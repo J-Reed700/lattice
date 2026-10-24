@@ -10,20 +10,8 @@ use std::path::{Path, PathBuf};
 /// Every model lives under the single unified location
 /// (`~/.cache/lattice/models/`).
 ///
-/// # Security
-///
-/// - Validates model_id to prevent directory traversal (CWE-22)
-/// - Rejects paths containing `..`, `/`, or `\`
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use lattice::infrastructure::adapters::fs::model_paths::ModelPaths;
-///
-/// let paths = ModelPaths::new("phi-3-mini")?;
-/// println!("Unified path: {}", paths.unified_path().display());
-/// # Ok::<(), lattice_core::shared::error::AppError>(())
-/// ```
+/// Validates model_id to prevent directory traversal (CWE-22) by
+/// rejecting paths containing `..`, `/`, or `\`.
 #[derive(Debug, Clone)]
 pub struct ModelPaths {
     model_id: String,
@@ -33,21 +21,8 @@ pub struct ModelPaths {
 impl ModelPaths {
     /// Create new model paths for the given model ID.
     ///
-    /// # Arguments
-    ///
-    /// * `model_id` - Model identifier (validated for security)
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(ModelPaths)` - Valid paths
-    /// * `Err(AppError::InvalidInput)` - Invalid model_id (path traversal, empty, etc.)
-    ///
-    /// # Security
-    ///
-    /// Prevents directory traversal by rejecting:
-    /// - `..` sequences
-    /// - `/` or `\` path separators
-    /// - Empty strings
+    /// Prevents directory traversal by rejecting `..` sequences, `/` or `\`
+    /// path separators, and empty strings.
     pub fn new(model_id: &str) -> Result<Self, AppError> {
         Self::validate_model_id(model_id)?;
 
@@ -75,26 +50,7 @@ impl ModelPaths {
     /// Get the full path for a model file.
     ///
     /// Constructs the complete file path by appending the filename
-    /// to the unified model directory path.
-    ///
-    /// # Arguments
-    ///
-    /// * `filename` - The filename to append to the model directory
-    ///
-    /// # Returns
-    ///
-    /// Full path to the file: `~/.cache/lattice/models/{model_id}/{filename}`
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::adapters::fs::model_paths::ModelPaths;
-    ///
-    /// let paths = ModelPaths::new("phi-3-mini")?;
-    /// let file_path = paths.file_path("model.gguf")?;
-    /// // Returns: ~/.cache/lattice/models/phi-3-mini/model.gguf
-    /// # Ok::<(), lattice_core::shared::error::AppError>(())
-    /// ```
+    /// to the unified model directory path (`~/.cache/lattice/models/{model_id}/{filename}`).
     ///
     /// # Errors
     ///

@@ -1,24 +1,3 @@
-/**
- * ConfirmDialog Component
- *
- * Purpose: Request user confirmation before destructive/irreversible actions
- *
- * Use cases:
- * - Delete files/folders
- * - Clear data
- * - Reset settings
- * - Cancel operations
- *
- * Features:
- * - Multiple severity levels (danger, warning, info)
- * - Keyboard shortcuts (Enter=confirm, Esc=cancel)
- * - Focus management
- * - Loading state during async operations
- *
- * States: Idle, Loading (during async confirm)
- * Accessibility: Focus trap, ARIA dialog, keyboard navigation
- */
-
 import { useEffect, useRef, useState } from 'react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -27,37 +6,16 @@ import { sanitizeFileName } from '@/utils/sanitize';
 import { ButtonLoading } from '../LoadingState';
 
 export interface ConfirmDialogProps {
-  /** Dialog open state */
   isOpen: boolean;
-
-  /** Dialog title */
   title: string;
-
-  /** Confirmation message/question */
   message: string;
-
-  /** Severity level */
   variant?: 'danger' | 'warning' | 'info';
-
-  /** Confirm button label */
   confirmLabel?: string;
-
-  /** Cancel button label */
   cancelLabel?: string;
-
-  /** Callback when confirmed */
   onConfirm: () => void | Promise<void>;
-
-  /** Callback when cancelled */
   onCancel: () => void;
-
-  /** Require typing confirmation text */
   requireConfirmation?: string;
-
-  /** Additional details/explanation */
   details?: string;
-
-  /** Disable confirm button */
   confirmDisabled?: boolean;
   /** Allow stopping a multi-step operation while its current step finishes. */
   allowCancelWhileLoading?: boolean;

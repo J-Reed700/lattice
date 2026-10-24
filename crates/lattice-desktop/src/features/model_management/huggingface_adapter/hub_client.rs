@@ -9,10 +9,7 @@ pub struct HuggingFaceAdapter {
 }
 
 impl HuggingFaceAdapter {
-    /// Create a new Hugging Face adapter.
-    ///
-    /// # Configuration
-    /// - HTTP client with 10s timeout
+    /// Create a new Hugging Face adapter with a 10s timeout client.
     pub fn new() -> Self {
         let client = reqwest_client_builder()
             .timeout(Duration::from_secs(10))
@@ -39,13 +36,6 @@ impl HuggingFaceAdapter {
     }
 
     /// Search Hugging Face models via API.
-    ///
-    /// # Arguments
-    /// - `query` - Search query
-    /// - `limit` - Maximum number of results
-    ///
-    /// # Returns
-    /// List of models or error.
     async fn search_api(
         &self,
         query: &str,
@@ -80,12 +70,6 @@ impl HuggingFaceAdapter {
     }
 
     /// Get a specific model by ID.
-    ///
-    /// # Arguments
-    /// - `model_id` - Model identifier (e.g., "meta-llama/Llama-3.2-7B")
-    ///
-    /// # Returns
-    /// Model metadata or error.
     async fn get_model_api(&self, model_id: &str) -> Result<HuggingFaceModel, AppError> {
         let encoded_model_id = model_id
             .split('/')

@@ -18,10 +18,6 @@ impl GetDownloadedModelsWithMetadataUseCase {
     }
 
     /// Execute the use case
-    ///
-    /// # Returns
-    ///
-    /// Vector of all downloaded models, ordered by download date (newest first)
     pub async fn execute(&self) -> Result<Vec<DownloadedModel>> {
         self.repository.list().await
     }

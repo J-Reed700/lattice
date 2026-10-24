@@ -7,7 +7,6 @@ const studyCall = <T>(command: CommandName, args?: Record<string, unknown>) =>
   studyActivityCall<T>('study', command, args);
 
 export const studyApi = {
-  /** Builds a comparison table across documents. */
   listStudyDecks: (): Promise<ApiResult<Wire.StudyDeckSummaryDto[]>> =>
     studyCall('list_study_decks'),
 

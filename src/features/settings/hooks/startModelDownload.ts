@@ -1,11 +1,3 @@
-/**
- * Starting a model download, in one place.
- *
- * Both the result row and the detail panel offer a Download button; the
- * command call, response contract, and toasts are identical, so
- * they share this instead of drifting apart.
- */
-
 import { type QueryClient } from '@tanstack/react-query';
 
 import { embeddingBlockReason } from '@/features/settings/components/ModelCatalog/catalogUtils';
@@ -22,7 +14,6 @@ export interface StartModelDownloadArgs {
 }
 
 export interface StartModelDownloadResult {
-  /** The backend reported the files were already on disk. */
   alreadyDownloaded: boolean;
 }
 

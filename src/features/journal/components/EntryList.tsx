@@ -118,7 +118,7 @@ const FILTER_OPTIONS: Array<{ id: EntryFilter; label: string }> = [
 /**
  * Full left-sidebar for the journal workspace: wordmark top rail, journal
  * picker, page list, search, filter chips, grouped entry list, footer.
- * Spec §4.
+ * Spec 
  */
 /**
  * The way into a new chat from the journal. With more than one space it asks

@@ -135,9 +135,9 @@ under **Settings > AI > Downloaded**.
   on your computer, then indexes the transcript. Install a transcription model
   from **Settings > AI > Models** first.
 
-Images, video, archives, executables and WMA audio can't be imported. Lattice
-doesn't run OCR, so a scanned PDF needs a text layer before its text can be
-searched.
+Images, video, archives, executables and WMA audio can't be imported. Scanned
+PDFs are read with the OCR model from the model catalog (PaddleOCR-VL); without
+it, a scanned PDF needs a text layer before its text can be searched.
 
 ---
 
@@ -226,12 +226,15 @@ message box, and you can also type `/` to set them:
 | `/compact` | Fold older messages into a summary |
 
 Type `@` and part of a document's name to point the question at that document.
-Drop files onto the chat to attach them to the conversation.
+Drop files onto the chat to attach them to the conversation, or attach pictures
+to send them to a vision-capable model. You can also pick a different model for
+the current conversation without changing your default chat model.
 
 ### Reading an answer
 
 - Numbered citations link to the passages used. Hover to preview a passage;
-  click to open the source.
+  click to open the source (including frozen snapshots of cited web pages).
+- Answers render math (KaTeX) and Mermaid diagrams inline.
 - With **Verify responses** on (in **Settings > AI > Prompts**, on by default),
   Lattice checks claims against the passages they cite and marks which ones it
   could and couldn't verify.
@@ -375,8 +378,12 @@ Studio (⌘7) builds learning programs from material you trust.
 - **Programs.** Describe what you want to learn and what you already know,
   choose up to eight library documents or add reference URLs, and Studio drafts
   an outline for you to review before it prepares any lessons. Each program has
-  lessons, practice, assessments, recall cards, a notebook and a canvas, and
-  your progress is saved on this device.
+  lessons, practice, hands-on labs, assessments, recall cards, a notebook and a
+  canvas, and builds its own evidence index as sources are gathered. Every
+  lesson claim is checked against its citation and corroborated across the
+  course; doubtful claims are held on a review screen where you can inspect the
+  evidence and judge the source. A course can also be exported as a pack and
+  resumed on another computer.
 - **Flashcards.** Make a deck from up to three documents, optionally with a
   topic and a learning goal. Lattice writes the questions from your documents,
   each with its source. Review them as flashcards; your results and next review
@@ -416,11 +423,12 @@ Open Settings with **⌘,**. The buttons at the bottom of the tab list
   are off by default, and Lattice doesn't currently send either anywhere.
 - **Logs**: recent log messages; search them, filter by severity, or clear them.
 
-### AI
+### AI and sources
 
 - **Chat**: the chat provider (**Auto**, **Local only**, **Ollama**,
-  **llama.cpp**, **OpenAI** or **Anthropic**), connection details and API keys,
-  the active chat, embedding and utility models, and conversation memory.
+  **llama.cpp**, **OpenAI**, **Anthropic** or **Google**), connection details
+  and API keys, the active chat, embedding and utility models, and conversation
+  memory.
 - **Models**: the model catalog, which shows how well each model fits your
   computer and downloads it; external folders where you keep your own GGUF
   models; and a Hugging Face token for gated downloads.
@@ -433,6 +441,15 @@ Open Settings with **⌘,**. The buttons at the bottom of the tab list
   follow-up routing and related options.
 - **Tools**: the built-in tools a chat can use, plus your own search tools that
   call an HTTP endpoint.
+- **Sources**: web and reference finders used by Chat and Learning Studio —
+  switches for keyless groups (web search engines, official sites, package
+  registries, code hosts, scholarly indexes, standards, law and government,
+  community, encyclopedias, Internet Archive, linked pages) and optional API
+  keys for Brave, Tavily, Exa, GitHub, Semantic Scholar, api.data.gov and Stack
+  Exchange.
+- **Source trust**: how Learning Studio weighs who published what a lesson
+  cites, including your site overrides, the evidence bars in force for each
+  kind of claim, and local checker reliability.
 
 ---
 

@@ -11,7 +11,7 @@ export function RunHistory({
   setSelectedRunId: (runId: string) => void;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5">
+    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-5 shadow-xs">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
@@ -21,17 +21,17 @@ export function RunHistory({
             This activity’s attempts
           </h3>
         </div>
-        <span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">
+        <span className="rounded-full bg-surface-sunken px-3 py-1.5 text-xs text-text-muted">
           {runs.length}
         </span>
       </div>
       {runs.length === 0 ? (
-        <p className="mt-3 rounded-xl bg-background p-4 text-xs text-text-muted">
+        <p className="mt-3 rounded-xl bg-surface-sunken p-4 text-xs text-text-muted">
           Runs appear here after a local runtime starts. Conversation
           turns are kept separately.
         </p>
       ) : (
-        <div className="mt-3 divide-y divide-border">
+        <div className="mt-3 divide-y divide-border-subtle">
           {runs.map((run) => (
             <button
               type="button"

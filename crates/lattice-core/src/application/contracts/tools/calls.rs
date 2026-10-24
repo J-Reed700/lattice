@@ -1,14 +1,4 @@
-//! Function calling domain models
-//!
-//! Rich domain models for LLM function calling with business logic and invariants.
-//!
-//! # Architecture (Bricks and Studs)
-//!
-//! - **ToolDefinition**: Self-contained function metadata with validation
-//! - **FunctionCall**: A request to execute a specific function
-//! - **FunctionResult**: Execution outcome with success/error handling
-//!
-//! These models enforce business rules (e.g., valid tool names, parameter schemas).
+//! Function calling domain models.
 //!
 //! This `ToolDefinition` is the registry's: the frontend lists it with an
 //! `input_schema` field. The model-facing one is
@@ -20,61 +10,16 @@ use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Tool (function) definition for LLM function calling
-///
-/// Represents a callable function with its metadata and parameter schema.
-/// Enforces invariants:
-/// - Tool name must be non-empty and alphanumeric + underscore
-/// - Description must be clear and actionable
-/// - Parameters must have valid JSON schema
-///
-/// # Example
-/// ```rust
-/// use serde_json::json;
-///
-/// let tool = ToolDefinition {
-///     name: "semantic_search".to_string(),
-///     description: "Search user's documents using semantic similarity".to_string(),
-///     input_schema: json!({
-///         "type": "object",
-///         "properties": {
-///             "query": {"type": "string"},
-///             "limit": {"type": "integer", "default": 10}
-///         },
-///         "required": ["query"]
-///     }),
-/// };
-/// ```
+/// Tool (function) definition for LLM function calling.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ToolDefinition {
-    /// Function name (alphanumeric + underscores)
     pub name: String,
-
-    /// Human-readable description of what the function does
     pub description: String,
-
-    /// JSON Schema for input parameters
-    ///
-    /// Should follow JSON Schema specification with:
-    /// - type: "object"
-    /// - properties: parameter definitions
-    /// - required: list of required parameter names
     pub input_schema: serde_json::Value,
 }
 
 impl ToolDefinition {
-    /// Create a new tool definition with validation
-    ///
-    /// # Arguments
-    /// * `name` - Tool name (must be alphanumeric + underscores)
-    /// * `description` - Clear description of functionality
-    /// * `input_schema` - JSON Schema for parameters
-    ///
-    /// # Returns
-    /// Validated ToolDefinition
-    ///
-    /// # Errors
-    /// Returns error if name is invalid or schema is malformed
+    /// Create a new tool definition with validation.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -117,41 +62,15 @@ impl ToolDefinition {
     }
 }
 
-/// A function call request from the LLM
-///
-/// Represents an LLM's intent to execute a specific function with arguments.
-///
-/// # Example
-/// ```rust
-/// use serde_json::json;
-///
-/// let call = FunctionCall {
-///     id: "call_abc123".to_string(),
-///     name: "semantic_search".to_string(),
-///     arguments: json!({
-///         "query": "machine learning papers",
-///         "limit": 5
-///     }),
-/// };
-/// ```
+/// A function call request from the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionCall {
-    /// Unique identifier for this function call
-    ///
-    /// Used to correlate the call with its result in multi-turn conversations
     pub id: String,
-
-    /// Name of the function to execute
     pub name: String,
-
-    /// Function arguments as JSON value
-    ///
-    /// Structure should match the tool's input_schema
     pub arguments: serde_json::Value,
 }
 
 impl FunctionCall {
-    /// Create a new function call
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -165,27 +84,7 @@ impl FunctionCall {
     }
 }
 
-/// Result of executing a function call
-///
-/// Encapsulates success or failure with detailed error information.
-///
-/// # Example (Success)
-/// ```rust
-/// use serde_json::json;
-///
-/// let result = FunctionResult::success(json!({
-///     "results": ["doc1.pdf", "doc2.txt"],
-///     "total_found": 2
-/// }));
-/// ```
-///
-/// # Example (Failure)
-/// ```rust
-/// let result = FunctionResult::error(
-///     "DOCUMENT_NOT_FOUND",
-///     "Document with ID abc123 not found"
-/// );
-/// ```
+/// Result of executing a function call.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionResult {
     /// Whether the function executed successfully

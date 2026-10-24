@@ -86,7 +86,7 @@ function countWords(markdown: string): number {
  * The page and what sits beside it: a writing column on the desk, and a
  * context rail holding the picked conversation, the kept highlights and
  * Synthesize. The rail can be put away (⌘.) when the page wants the room.
- * Spec §5, §6.
+ * Spec 
  */
 export function EntryEditor({
   activeNote,

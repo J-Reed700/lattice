@@ -1,133 +1,58 @@
-/**
- * Conversation API Types
- *
- * Type definitions for conversation management operations.
- * These types match the Rust backend structures from application/dtos/modules/conversation_dto.rs
- */
-
-/**
- * Conversation representation with metadata and usage statistics.
- */
 export type ConversationDto = import('../../lib/bindings').ConversationDto;
-
-/**
- * Conversation message with role and content.
- */
 export type MessageDto = import('../../lib/bindings').MessageDto;
 
-
-/**
- * Request to create a new conversation.
- */
 export interface CreateConversationRequest {
-  /** Conversation title */
   title: string;
-  /** Optional system prompt */
   systemPrompt?: string;
 }
 
-/**
- * Request to get a conversation by ID.
- */
 export interface GetConversationRequest {
-  /** Conversation identifier */
   conversationId: string;
 }
 
-/**
- * Request to get conversation messages.
- */
 export interface GetConversationMessagesRequest {
-  /** Conversation identifier */
   conversationId: string;
 }
 
-/**
- * Request to rename a conversation.
- */
 export interface RenameConversationRequest {
-  /** Conversation identifier */
   conversationId: string;
-  /** New title */
   newTitle: string;
 }
 
-/**
- * Request to delete a conversation.
- */
 export interface DeleteConversationRequest {
-  /** Conversation identifier */
   conversationId: string;
 }
 
-/**
- * Query parameters for listing conversations.
- */
 export type ListConversationsQuery = import('../../lib/bindings').ListConversationsQuery;
 
-
-/**
- * Response from creating a conversation.
- */
 export interface CreateConversationResponse {
-  /** The created conversation */
   conversation: ConversationDto;
-  /** Status message */
   status: string;
 }
 
-/**
- * Response from getting a conversation.
- */
 export interface GetConversationResponse {
-  /** The conversation (null if not found) */
   conversation: ConversationDto | null;
 }
 
-/**
- * Response from getting conversation messages.
- */
 export interface GetConversationMessagesResponse {
-  /** List of messages in chronological order */
   messages: MessageDto[];
-  /** Total count */
   total: number;
 }
 
-/**
- * Response from renaming a conversation.
- */
 export interface RenameConversationResponse {
-  /** Status message */
   status: string;
 }
 
-/**
- * Response from deleting a conversation.
- */
 export interface DeleteConversationResponse {
-  /** Status message */
   status: string;
 }
 
-/**
- * Response from listing conversations.
- */
 export interface ListConversationsResponse {
-  /** List of conversations */
   conversations: ConversationDto[];
-  /** Total count (for pagination) */
   total: number;
 }
 
-/**
- * One source a synthesis drew on.
- */
 export type SynthesisCitationDto = import('../../lib/bindings').SynthesisCitationDto;
-
-/**
- * Conversation space/environment DTO.
- */
 export type ConversationSpaceDto = import('../../lib/bindings').ConversationSpaceDto;
 
 export type ConversationJournalDto = import('../../lib/bindings').ConversationJournalDto;

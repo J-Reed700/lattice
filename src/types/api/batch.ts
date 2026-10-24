@@ -1,10 +1,3 @@
-/**
- * Batch Job API Types
- *
- * Type definitions for batch import operations.
- * These types match the Rust backend structures from batch_history.rs
- */
-
 export type BatchJobSummary = import('../../lib/bindings').BatchJobSummaryDto & {
   id: string;
   progress: number;

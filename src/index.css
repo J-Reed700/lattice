@@ -11,9 +11,10 @@
   --font-serif: var(--font-serif);
 
   --color-bg: hsl(var(--bg));
+  --color-background: hsl(var(--bg));
   --color-chrome: hsl(var(--chrome));
 
-  --color-border: hsl(var(--border-subtle));
+  --color-border: hsl(var(--border-default));
   --color-border-subtle: hsl(var(--border-subtle));
   --color-border-default: hsl(var(--border-default));
   --color-border-strong: hsl(var(--border-strong));
@@ -128,29 +129,27 @@
   :root {
     color-scheme: light;
 
-    /* Surfaces — light mode (§2.1). A ladder, dimmest first: the chrome
-       recedes, the page is the brightest thing in the window. */
-    --chrome: 38 18% 92.5%;
-    --bg: 40 26% 96.5%;
-    --surface: 42 45% 98.6%;
-    --surface-raised: 38 16% 92.5%;
-    --surface-overlay: 40 40% 99.4%;
-    --surface-sunken: 38 16% 94%;
+    /* Surfaces — light mode */
+    --chrome: 38 18% 91.5%;
+    --bg: 40 24% 95.5%;
+    --surface: 42 45% 99%;
+    --surface-raised: 38 18% 91.5%;
+    --surface-overlay: 40 40% 99.6%;
+    --surface-sunken: 38 18% 92.8%;
 
-    /* Borders — ink at low alpha, so a hairline reads the same on every
-       rung of the ladder (§2.2) */
-    --border-subtle: 30 18% 18% / 0.09;
-    --border-default: 30 18% 18% / 0.15;
-    --border-strong: 30 14% 20% / 0.3;
+    /* Borders — light mode */
+    --border-subtle: 30 18% 18% / 0.11;
+    --border-default: 30 18% 18% / 0.18;
+    --border-strong: 30 14% 20% / 0.32;
 
-    /* Text — light mode (§2.3) */
-    --text-primary: 30 12% 10%;
-    --text-secondary: 30 8% 26%;
-    --text-tertiary: 30 6% 40%;
-    --text-muted: 30 5% 41%;
-    --text-disabled: 30 6% 68%;
+    /* Text — light mode */
+    --text-primary: 30 14% 9%;
+    --text-secondary: 30 9% 24%;
+    --text-tertiary: 30 7% 37%;
+    --text-muted: 30 6% 40%;
+    --text-disabled: 30 6% 66%;
 
-    /* Accent — light mode (§2.4) */
+    /* Accent — light mode */
     --accent: 12 52% 40%;
     --accent-hover: 12 54% 33%;
     --accent-muted: 18 52% 92%;
@@ -160,7 +159,7 @@
     --action-hover: 30 8% 22%;
     --action-fg: 40 40% 97%;
 
-    /* Semantic state — light mode (§2.5) */
+    /* Semantic state — light mode */
     --success-muted: 152 45% 93%;
     --success-fg: 152 62% 28%;
     --success: 152 66% 37%;
@@ -176,7 +175,7 @@
     --overlay: 30 20% 8% / 0.32;
     --highlight: 42 95% 62% / 0.38;
 
-    /* Shadows — light mode (§6). Always two layers: contact + ambient. */
+    /* Shadows — light mode */
     --shadow-none: none;
     --shadow-sm: 0 1px 1px rgb(40 28 16 / 0.04), 0 1px 3px rgb(40 28 16 / 0.06);
     --shadow-md: 0 1px 2px rgb(40 28 16 / 0.05), 0 6px 16px -4px rgb(40 28 16 / 0.1), 0 16px 32px -12px rgb(40 28 16 / 0.08);
@@ -185,7 +184,7 @@
     --shadow-control: 0 1px 1px rgb(40 28 16 / 0.05), inset 0 1px 0 rgb(255 255 255 / 0.6);
     --shadow-action: 0 1px 2px rgb(20 14 8 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.14);
 
-    /* Radius — concentric: a child is its parent minus the padding (§5) */
+    /* Radius */
     --radius-xs: 3px;
     --radius-sm: 5px;
     --radius-md: 8px;
@@ -194,27 +193,25 @@
     --radius-full: 9999px;
     --radius: 8px;
 
-    /* Spacing primitives (§4) */
+    /* Spacing primitives */
     --space-hair: 1px;
     --space-0: 0;
     --space-px: 1px;
 
-    /* Motion — durations (§7.1) */
+    /* Motion — durations */
     --duration-instant: 80ms;
     --duration-fast: 120ms;
     --duration-base: 180ms;
     --duration-slow: 280ms;
 
-    /* Motion — easings (§7.2). `out` for anything arriving, `in-out` for
-       things that move while staying on screen, `drawer` for panes. */
+    /* Motion — easings */
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --ease-in: cubic-bezier(0.4, 0, 1, 1);
     --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
     --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
     --ease-linear: linear;
 
-    /* Typography — stacks (§3.1). Self-hosted: the app is offline-first
-       and its CSP refuses remote stylesheets. */
+    /* Typography — stacks */
     --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
     --font-serif: 'Source Serif 4 Variable', 'Source Serif 4', 'Charter', 'Iowan Old Style', 'Apple Garamond', Georgia, Cambria, 'Times New Roman', serif;
@@ -223,7 +220,7 @@
        title bar. Zero everywhere else. */
     --titlebar-inset: 0px;
 
-    /* Chart palette — stubbed pending charting phase (§10) */
+    /* Chart palette */
     --chart-1: 12 52% 40%;
     --chart-2: 152 66% 37%;
     --chart-3: 28 92% 40%;
@@ -231,33 +228,32 @@
     --chart-5: 30 8% 26%;
   }
 
-  /* Dark mode — applied via both `.dark` class and `[data-theme="dark"]` attribute (§9.2) */
+  /* Dark mode */
   .dark,
   [data-theme="dark"] {
     color-scheme: dark;
 
-    /* Surfaces — dark mode (§1.1). Elevation is lightness: each rung up is
-       a little lighter, and a little warm so copper belongs to it. */
-    --chrome: 30 6% 7.5%;
-    --bg: 30 5% 10.5%;
-    --surface: 30 5% 13%;
-    --surface-raised: 30 5% 16.5%;
-    --surface-overlay: 30 5% 15.5%;
-    --surface-sunken: 30 6% 8.5%;
+    /* Surfaces — dark mode */
+    --chrome: 30 6% 7%;
+    --bg: 30 5% 9.8%;
+    --surface: 30 5% 13.8%;
+    --surface-raised: 30 5% 17.5%;
+    --surface-overlay: 30 5% 16.5%;
+    --surface-sunken: 30 6% 7.8%;
 
-    /* Borders — paper at low alpha (§1.2) */
-    --border-subtle: 36 30% 92% / 0.07;
-    --border-default: 36 30% 92% / 0.12;
-    --border-strong: 36 24% 90% / 0.24;
+    /* Borders — dark mode */
+    --border-subtle: 36 30% 92% / 0.10;
+    --border-default: 36 30% 92% / 0.16;
+    --border-strong: 36 24% 90% / 0.28;
 
-    /* Text — dark mode (§1.3) */
-    --text-primary: 36 18% 91%;
-    --text-secondary: 35 9% 74%;
-    --text-tertiary: 32 6% 58%;
-    --text-muted: 32 5% 57%;
-    --text-disabled: 30 5% 34%;
+    /* Text — dark mode */
+    --text-primary: 36 20% 93%;
+    --text-secondary: 35 10% 76%;
+    --text-tertiary: 32 7% 61%;
+    --text-muted: 32 6% 59%;
+    --text-disabled: 30 5% 36%;
 
-    /* Accent — dark mode (§1.4) */
+    /* Accent — dark mode */
     --accent: 22 58% 72%;
     --accent-hover: 22 62% 79%;
     --accent-muted: 22 28% 18%;
@@ -267,7 +263,7 @@
     --action-hover: 0 0% 100%;
     --action-fg: 30 8% 9%;
 
-    /* Semantic state — dark mode (§1.5) */
+    /* Semantic state — dark mode */
     --success-muted: 152 36% 15%;
     --success-fg: 152 55% 68%;
     --success: 152 55% 48%;
@@ -283,8 +279,7 @@
     --overlay: 30 20% 3% / 0.62;
     --highlight: 40 90% 60% / 0.26;
 
-    /* Shadows — dark mode (§6). A lit top edge does what a drop shadow
-       cannot on a dark ground. */
+    /* Shadows — dark mode */
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
     --shadow-md: inset 0 1px 0 rgb(255 245 230 / 0.04), 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -6px rgb(0 0 0 / 0.5);
     --shadow-lg: 0 0 0 1px rgb(255 245 230 / 0.08), inset 0 1px 0 rgb(255 245 230 / 0.05), 0 2px 4px rgb(0 0 0 / 0.4), 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 40px 80px -20px rgb(0 0 0 / 0.5);
@@ -346,7 +341,7 @@
   button:not(:disabled), a[href], summary, [role="tab"], [role="menuitem"], [role="option"], label[for] { cursor: pointer; }
   input, textarea, [contenteditable="true"] { cursor: text; }
 
-  /* Focus — single treatment, everywhere (§8) */
+  /* Focus */
   :focus-visible {
     outline: 2px solid hsl(var(--ring) / 0.9);
     outline-offset: 2px;
@@ -620,7 +615,7 @@
   pointer-events: none;
 }
 .journal-writing-surface blockquote { border-left-color: #ac5941; font-style: italic; color: hsl(var(--text-secondary)); }
-/* Dark mode: the desk is the sunken rung, the page sits one above the canvas. */
+/* Journal dark mode surfaces */
 .dark .journal-index { background: hsl(var(--bg)); }
 .dark .journal-desk { background: hsl(var(--surface-sunken)); }
 .dark .journal-paper {

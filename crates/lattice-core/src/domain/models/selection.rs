@@ -1,52 +1,3 @@
-//! # Model Management Domain Types
-//!
-//! Rich domain models for AI model selection, compatibility scoring, and recommendations.
-//!
-//! ## Architecture
-//!
-//! Following Domain-Driven Design (DDD) patterns, this module provides:
-//! - Value Objects: Immutable, validated domain primitives
-//! - Aggregates: Model recommendation with compatibility analysis
-//! - Domain Services: Compatibility scoring algorithm
-//!
-//! ## Key Concepts
-//!
-//! - **SystemCapabilities**: Hardware detection results (RAM, GPU, disk)
-//! - **ModelMetadata**: Complete model information with requirements
-//! - **CompatibilityScore**: Multi-factor scoring (RAM, GPU, disk, performance)
-//! - **ModelRecommendation**: Model + compatibility + performance estimates
-//!
-//! ## Example
-//!
-//! ```rust
-//! use lattice_core::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
-//!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let capabilities = SystemCapabilities {
-//!     total_ram_gb: 16.0,
-//!     // available_ram_gb removed - uses total_ram_gb
-//!     cpu_cores: 8,
-//!     gpu_acceleration: GpuAcceleration::Metal,
-//!     available_disk_gb: 100.0,
-//! };
-//!
-//! let model = ModelMetadata {
-//!     id: "phi-3-mini".into(),
-//!     name: "Phi-3 Mini".into(),
-//!     category: ModelCategory::LLM,
-//!     size_gb: 1.8,
-//!     minimum_ram_gb: 4.0,
-//!     // ... other fields
-//! };
-//!
-//! let scorer = CompatibilityScorer::new();
-//! let score = scorer.score_compatibility(&model, &capabilities)?;
-//!
-//! assert_eq!(score.compatibility_level, CompatibilityLevel::Excellent);
-//! # Ok(())
-//! # }
-//! ```
-
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -232,14 +183,6 @@ impl fmt::Display for CompatibilityLevel {
 }
 
 /// System hardware capabilities detected from the user's machine.
-///
-/// This value object represents the result of hardware detection,
-/// used for compatibility scoring and model recommendations.
-///
-/// # Invariants
-/// - RAM values must be positive
-/// - Disk space must be positive
-/// - CPU cores must be positive
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemCapabilities {
     /// Total system RAM in gigabytes

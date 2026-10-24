@@ -1,53 +1,13 @@
-//! # HyDE (Hypothetical Document Embeddings) Domain Models
-//!
-//! Domain models for HyDE-based question answering and context enrichment.
-//!
-//! ## Overview
-//!
-//! HyDE (Hypothetical Document Embeddings) improves search quality by:
-//! 1. Classifying query type (Greeting, Question, Followup, Command)
-//! 2. Generating hypothetical answers that match the query semantically
-//! 3. Using those answers to search for similar document chunks
-//! 4. Enriching context with retrieved documents
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
-//!
-//! // Create interpretation for a greeting
-//! let greeting = HyDEInterpretation::for_greeting("Hello!");
-//! assert_eq!(greeting.query_type, QueryType::Greeting);
-//! assert_eq!(greeting.search_strategy, SearchStrategy::RawOnly);
-//!
-//! // Create interpretation for a question
-//! let question = HyDEInterpretation {
-//!     query_type: QueryType::Question,
-//!     original_query: "What is DDD?".to_string(),
-//!     hyde_text: Some("Domain-Driven Design is...".to_string()),
-//!     search_strategy: SearchStrategy::HyDEOnly,
-//!     tool_intent: ToolIntent::VaultThenWeb,
-//! };
-//! ```
+//! HyDE (Hypothetical Document Embeddings) domain models for question answering.
 
 use serde::{Deserialize, Serialize};
 
 /// Type of user query for appropriate handling.
-///
-/// Different query types require different search strategies:
-/// - Greetings: No search needed
-/// - Questions: HyDE search for semantic matching
-/// - Followups: Context-aware search
-/// - Commands: Direct execution without search
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryType {
-    /// Greeting or small talk (e.g., "Hello", "How are you?")
     Greeting,
-    /// Factual question requiring knowledge retrieval
     Question,
-    /// Follow-up to previous conversation
     Followup,
-    /// Command or instruction (e.g., "Summarize this")
     Command,
 }
 
@@ -63,18 +23,10 @@ impl std::fmt::Display for QueryType {
 }
 
 /// Strategy for document search based on query type.
-///
-/// Different strategies optimize for different query patterns:
-/// - HyDEOnly: Search using hypothetical answer (best for factual questions)
-/// - RawOnly: Search using original query (fast path for greetings/commands)
-/// - Hybrid: Search using both HyDE and raw query (balanced approach)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchStrategy {
-    /// Use only HyDE-generated hypothetical answer for search
     HyDEOnly,
-    /// Use only the original raw query for search
     RawOnly,
-    /// Use both HyDE and raw query, combine results
     Hybrid,
 }
 
@@ -93,13 +45,9 @@ impl std::fmt::Display for SearchStrategy {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ToolIntent {
-    /// Do not use retrieval tools.
     None,
-    /// Use only the local lattice (knowledge base).
     VaultOnly,
-    /// Use only web search.
     WebOnly,
-    /// Try the lattice first, then web search if needed.
     #[default]
     VaultThenWeb,
 }
@@ -125,55 +73,19 @@ impl std::fmt::Display for ToolIntent {
     }
 }
 
-/// Interpreted query with HyDE enrichment.
-///
-/// Contains the classified query type, original query text,
-/// optional HyDE-generated hypothetical answer, and recommended search strategy.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
-///
-/// let interpretation = HyDEInterpretation {
-///     query_type: QueryType::Question,
-///     original_query: "What is Rust?".to_string(),
-///     hyde_text: Some("Rust is a systems programming language...".to_string()),
-///     search_strategy: SearchStrategy::HyDEOnly,
-///     tool_intent: ToolIntent::VaultThenWeb,
-/// };
-///
-/// assert!(interpretation.hyde_text.is_some());
-/// assert_eq!(interpretation.search_strategy, SearchStrategy::HyDEOnly);
-/// ```
+/// Interpreted query with HyDE enrichment and search strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyDEInterpretation {
-    /// Classified query type
     pub query_type: QueryType,
-    /// Original user query
     pub original_query: String,
-    /// HyDE-generated hypothetical answer (None for greetings/commands)
     pub hyde_text: Option<String>,
-    /// Recommended search strategy
     pub search_strategy: SearchStrategy,
-    /// Intended retrieval scope for tool routing
     #[serde(default)]
     pub tool_intent: ToolIntent,
 }
 
 impl HyDEInterpretation {
     /// Create interpretation for a greeting (no search needed).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
-    ///
-    /// let greeting = HyDEInterpretation::for_greeting("Hello!");
-    /// assert_eq!(greeting.query_type, QueryType::Greeting);
-    /// assert_eq!(greeting.search_strategy, SearchStrategy::RawOnly);
-    /// assert!(greeting.hyde_text.is_none());
-    /// ```
     pub fn for_greeting(query: impl Into<String>) -> Self {
         Self {
             query_type: QueryType::Greeting,
@@ -185,18 +97,6 @@ impl HyDEInterpretation {
     }
 
     /// Create interpretation for a question with HyDE text.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::qa::HyDEInterpretation;
-    ///
-    /// let question = HyDEInterpretation::for_question(
-    ///     "What is DDD?",
-    ///     "Domain-Driven Design is a software design approach..."
-    /// );
-    /// assert!(question.hyde_text.is_some());
-    /// ```
     pub fn for_question(query: impl Into<String>, hyde_text: impl Into<String>) -> Self {
         Self {
             query_type: QueryType::Question,
@@ -208,8 +108,6 @@ impl HyDEInterpretation {
     }
 
     /// Create interpretation using only raw query (no HyDE).
-    ///
-    /// Used for commands and greetings where HyDE adds no value.
     pub fn raw_only(query: impl Into<String>, query_type: QueryType) -> Self {
         Self {
             query_type,
@@ -235,12 +133,7 @@ impl HyDEInterpretation {
         }
     }
 
-    /// Get the text to use for searching based on strategy.
-    ///
-    /// Returns the appropriate text(s) for document search:
-    /// - HyDEOnly: Returns HyDE text only
-    /// - RawOnly: Returns original query only
-    /// - Hybrid: Returns both HyDE and raw query
+    /// Get the text(s) to use for searching based on strategy.
     pub fn search_text(&self) -> Vec<&str> {
         match self.search_strategy {
             SearchStrategy::HyDEOnly => self
@@ -261,43 +154,14 @@ impl HyDEInterpretation {
 }
 
 /// Context enriched with retrieved documents for answering.
-///
-/// Contains the original query interpretation plus documents retrieved
-/// from the knowledge base that are relevant to answering the query.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
-///
-/// let interpretation = HyDEInterpretation::for_greeting("Hello");
-/// let context = EnrichedContext::new(interpretation);
-///
-/// // Add documents
-/// let doc = DocumentChunk {
-///     content: "Relevant content here".to_string(),
-///     file_path: "/path/to/doc.txt".to_string(),
-///     similarity_score: 0.95,
-///     chunk_index: 0,
-///     total_chunks: 1,
-///     metadata: None,
-/// };
-///
-/// let context = context.with_document(doc);
-/// assert_eq!(context.documents.len(), 1);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichedContext {
-    /// Original query interpretation
     pub interpretation: HyDEInterpretation,
-    /// Retrieved document chunks relevant to the query
     pub documents: Vec<DocumentChunk>,
-    /// Total number of documents searched
     pub total_searched: usize,
 }
 
 impl EnrichedContext {
-    /// Create new enriched context with empty documents.
     pub fn new(interpretation: HyDEInterpretation) -> Self {
         Self {
             interpretation,
@@ -306,38 +170,30 @@ impl EnrichedContext {
         }
     }
 
-    /// Add a retrieved document to the context.
     pub fn with_document(mut self, document: DocumentChunk) -> Self {
         self.documents.push(document);
         self
     }
 
-    /// Add multiple retrieved documents to the context.
     pub fn with_documents(mut self, documents: Vec<DocumentChunk>) -> Self {
         self.documents.extend(documents);
         self
     }
 
-    /// Set the total number of documents searched.
     pub fn with_total_searched(mut self, total: usize) -> Self {
         self.total_searched = total;
         self
     }
 
-    /// Check if any documents were found.
     pub fn has_documents(&self) -> bool {
         !self.documents.is_empty()
     }
 
-    /// Get the number of retrieved documents.
     pub fn document_count(&self) -> usize {
         self.documents.len()
     }
 
-    /// Get formatted context for LLM prompt.
-    ///
-    /// Formats retrieved documents into a string suitable for inclusion
-    /// in an LLM prompt, with source citations.
+    /// Formats retrieved documents into a string for inclusion in an LLM prompt.
     pub fn format_for_prompt(&self) -> String {
         if self.documents.is_empty() {
             return String::new();
@@ -357,27 +213,17 @@ impl EnrichedContext {
 }
 
 /// Retrieved document chunk with relevance score.
-///
-/// Represents a chunk of a document retrieved from the knowledge base
-/// that is relevant to answering a query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentChunk {
-    /// Text content of the chunk
     pub content: String,
-    /// File path of source document
     pub file_path: String,
-    /// Similarity score (0.0 to 1.0, higher = more similar)
     pub similarity_score: f32,
-    /// Index of this chunk within the document
     pub chunk_index: usize,
-    /// Total number of chunks in the document
     pub total_chunks: usize,
-    /// Optional metadata about the chunk
     pub metadata: Option<ChunkMetadata>,
 }
 
 impl DocumentChunk {
-    /// Create a basic document chunk without metadata.
     pub fn new(
         content: impl Into<String>,
         file_path: impl Into<String>,
@@ -393,38 +239,28 @@ impl DocumentChunk {
         }
     }
 
-    /// Add chunk position information.
     pub fn with_position(mut self, index: usize, total: usize) -> Self {
         self.chunk_index = index;
         self.total_chunks = total;
         self
     }
 
-    /// Add metadata to the chunk.
     pub fn with_metadata(mut self, metadata: ChunkMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
 }
 
-/// Optional metadata about a document chunk.
-///
-/// Contains additional information about the chunk such as
-/// document title, tags, creation date, etc.
+/// Metadata about a document chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkMetadata {
-    /// Document title
     pub title: Option<String>,
-    /// Document tags
     pub tags: Vec<String>,
-    /// Document creation/modification date
     pub date: Option<String>,
-    /// Document author
     pub author: Option<String>,
 }
 
 impl ChunkMetadata {
-    /// Create empty metadata.
     pub fn empty() -> Self {
         Self {
             title: None,
@@ -434,7 +270,6 @@ impl ChunkMetadata {
         }
     }
 
-    /// Create metadata with title.
     pub fn with_title(title: impl Into<String>) -> Self {
         Self {
             title: Some(title.into()),
@@ -446,33 +281,14 @@ impl ChunkMetadata {
 }
 
 /// Response from the chat/Q&A system.
-///
-/// Contains the answer to the user's query along with metadata
-/// about sources, reasoning, and performance metrics.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{ChatResponse, ResponseMetadata};
-///
-/// let response = ChatResponse {
-///     answer: "Domain-Driven Design is...".to_string(),
-///     sources: vec![],
-///     metadata: ResponseMetadata::default(),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
-    /// Generated answer to the query
     pub answer: String,
-    /// Source documents used to generate the answer
     pub sources: Vec<Source>,
-    /// Metadata about the response generation
     pub metadata: ResponseMetadata,
 }
 
 impl ChatResponse {
-    /// Create a simple response without sources.
     pub fn simple(answer: impl Into<String>) -> Self {
         Self {
             answer: answer.into(),
@@ -481,37 +297,27 @@ impl ChatResponse {
         }
     }
 
-    /// Add sources to the response.
     pub fn with_sources(mut self, sources: Vec<Source>) -> Self {
         self.sources = sources;
         self
     }
 
-    /// Add metadata to the response.
     pub fn with_metadata(mut self, metadata: ResponseMetadata) -> Self {
         self.metadata = metadata;
         self
     }
 }
 
-/// Source document used to generate an answer.
-///
-/// References a document chunk that contributed to the answer,
-/// with relevance score and optional excerpt.
+/// Source document reference that contributed to an answer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
-    /// File path of source document
     pub file_path: String,
-    /// Relevance score (0.0 to 1.0)
     pub relevance_score: f32,
-    /// Optional excerpt from the source
     pub excerpt: Option<String>,
-    /// Chunk index within the document
     pub chunk_index: usize,
 }
 
 impl Source {
-    /// Create a source reference.
     pub fn new(file_path: impl Into<String>, relevance_score: f32, chunk_index: usize) -> Self {
         Self {
             file_path: file_path.into(),
@@ -521,7 +327,6 @@ impl Source {
         }
     }
 
-    /// Add an excerpt to the source.
     pub fn with_excerpt(mut self, excerpt: impl Into<String>) -> Self {
         self.excerpt = Some(excerpt.into());
         self
@@ -529,23 +334,12 @@ impl Source {
 }
 
 /// Metadata about response generation.
-///
-/// Contains information about the query processing:
-/// - Query classification
-/// - Search strategy used
-/// - Number of documents retrieved
-/// - Processing time
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseMetadata {
-    /// Type of query that was processed
     pub query_type: QueryType,
-    /// Search strategy that was used
     pub search_strategy: SearchStrategy,
-    /// Number of documents retrieved
     pub documents_retrieved: usize,
-    /// Whether HyDE was used
     pub used_hyde: bool,
-    /// Processing time in milliseconds
     pub processing_time_ms: Option<u64>,
 }
 
@@ -562,7 +356,6 @@ impl Default for ResponseMetadata {
 }
 
 impl ResponseMetadata {
-    /// Create metadata from interpretation and context.
     pub fn from_context(interpretation: &HyDEInterpretation, context: &EnrichedContext) -> Self {
         Self {
             query_type: interpretation.query_type,
@@ -573,7 +366,6 @@ impl ResponseMetadata {
         }
     }
 
-    /// Add processing time.
     pub fn with_processing_time(mut self, time_ms: u64) -> Self {
         self.processing_time_ms = Some(time_ms);
         self

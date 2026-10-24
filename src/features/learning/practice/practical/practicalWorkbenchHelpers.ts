@@ -33,9 +33,9 @@ export function isSimulationKind(kind: LearningPracticalActivityKind) {
 }
 
 export function statusStyle(status: LearningPracticalRunStatus) {
-  if (status === "passed") return "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10";
-  if (status === "failed") return "text-rose-700 dark:text-rose-300 bg-rose-500/10";
+  if (status === "passed") return "bg-success-muted text-success-fg";
+  if (status === "failed") return "bg-danger-muted text-danger-fg";
   if (status === "running" || status === "pending")
-    return "text-accent bg-accent/10";
-  return "text-text-muted bg-background";
+    return "bg-accent-muted text-accent";
+  return "text-text-muted bg-surface-sunken";
 }
