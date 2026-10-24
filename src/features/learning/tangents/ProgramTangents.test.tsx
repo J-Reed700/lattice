@@ -150,13 +150,11 @@ const mockProgram: LearningProgramDto = {
               sourceIds: [],
             },
           ],
-          questions: [],
         },
       ],
     },
   ],
   sources: [],
-  attempts: [],
 };
 
 const mockTangent: LearningTangentDto = {

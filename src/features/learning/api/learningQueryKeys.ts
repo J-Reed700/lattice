@@ -18,7 +18,11 @@ export const learningCanvasKey = (programId: string) => ['learning-canvas', prog
 export const learningRecallKey = (programId: string) => ['learning-recall-v2', programId] as const;
 export const learningPracticeWorkspaceKey = (programId: string) => ['learning-practice-workspace', programId] as const;
 export const learningPracticalWorkspaceKey = (programId: string) => ['learning-practical-workspace', programId] as const;
-export const learningAssessmentWorkspaceKey = (programId: string) => ['learning-assessment-workspace', programId] as const;
+/** Every lesson quiz, module test and the course exam of one course, with its evidence. */
+export const learningQuizOverviewKey = (programId: string) => ['learning-quiz-overview', programId] as const;
+/** One quiz form: the runner's answers, then the result. */
+export const LEARNING_QUIZ_FORM_ROOT = 'learning-quiz-form';
+export const learningQuizFormKey = (formId: string | null) => [LEARNING_QUIZ_FORM_ROOT, formId] as const;
 export const learningTangentsKey = (programId?: string | null) =>
   ['learning-tangents', programId ?? 'all'] as const;
 

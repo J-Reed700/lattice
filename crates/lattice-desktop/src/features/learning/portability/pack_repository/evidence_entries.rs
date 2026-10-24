@@ -76,12 +76,11 @@ fn decode_evidence(pack: &DecodedLearningPack) -> Result<Option<LearningEvidence
     // Evidence tables travel with the rest of the learner's evidence: the
     // attempt, event and follow-up entries written by the same export option.
     let declared = pack.manifest.privacy.includes_learner_evidence
-        && pack.manifest.entries.iter().any(|entry| {
-            matches!(
-                entry.kind,
-                LearningPackEntryKind::Evidence | LearningPackEntryKind::Attempt
-            )
-        });
+        && pack
+            .manifest
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.kind, LearningPackEntryKind::Evidence));
     if !declared && entries.is_empty() {
         return Ok(None);
     }

@@ -1781,7 +1781,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
   await expect(page.getByRole('checkbox', { name: 'Select Delete 1.pdf', exact: true })).toBeVisible();
 });
 
-test('Learning Studio integrates with the app shell and preserves quick-check work across tabs', async ({ page }) => {
+test('Learning Studio integrates with the app shell and opens its Quizzes tab', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await mockCommands(page, settings => {
     const source = {
@@ -1791,10 +1791,7 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       excerpt: 'Retries are safe only when an operation has a stable identity and repeated delivery preserves the original effect.',
       acquiredAt: 1_790_000_000_000,
     };
-    const question = (id: string, kind: 'practice' | 'quiz' | 'test', prompt: string) => ({
-      id, kind, prompt, options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], sourceIds: [source.id],
-    });
-    const lesson = (id: string, title: string, suffix: string) => ({
+    const lesson = (id: string, title: string) => ({
       id, title, objective: `Explain ${title.toLowerCase()} and apply it to a production decision.`, estimatedMinutes: 30,
       preparation: 'ready', completed: false,
       blocks: [
@@ -1802,17 +1799,9 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
         { kind: 'worked_example', title: 'Trace a duplicate request', body: 'Follow one request through a timeout, retry, and replay. The stable identifier lets the service return the stored result without repeating the effect.', sourceIds: [source.id] },
         { kind: 'reflection', title: 'Name the boundary', body: 'Write down where identity is created, where the result is stored, and which side effects still need their own protection.', sourceIds: [source.id] },
       ],
-      questions: [
-        question(`practice-${suffix}-1`, 'practice', 'A client retries after losing the response. Which design preserves the original effect?'),
-        question(`practice-${suffix}-2`, 'practice', 'Where should the service compare a retry with prior work?'),
-        question(`quiz-${suffix}-1`, 'quiz', 'What property makes a repeated request safe?'),
-        question(`quiz-${suffix}-2`, 'quiz', 'Which failure requires an idempotency record?'),
-        question(`test-${suffix}-1`, 'test', 'Which production change prevents a duplicated charge?'),
-        question(`test-${suffix}-2`, 'test', 'Which observation best demonstrates safe replay?'),
-      ],
     } satisfies Fixture<LearningLessonDto>);
-    const first = lesson('lesson-1', 'Reason about retries', 'a');
-    const second = lesson('lesson-2', 'Design an idempotent boundary', 'b');
+    const first = lesson('lesson-1', 'Reason about retries');
+    const second = lesson('lesson-2', 'Design an idempotent boundary');
     const program = {
       summary: {
         id: 'program-1', title: 'Production reasoning after an AI-heavy year',
@@ -1825,18 +1814,10 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       modules: [
         { id: 'module-1', title: 'Reliable service thinking', summary: 'Recover the habit of tracing state, failure, and ownership before reaching for implementation.', outcomes: ['Trace a request across failure', 'Defend an idempotency boundary'], lessons: [first, second] },
         { id: 'module-2', title: 'Independent implementation', summary: 'Move from a justified design into code, tests, and review without surrendering the reasoning step.', outcomes: ['Implement from a written model', 'Explain a tradeoff without assistance'], lessons: [
-          { ...lesson('lesson-3', 'Implement from first principles', 'c'), completed: true },
-          lesson('lesson-4', 'Review and defend the design', 'd'),
+          { ...lesson('lesson-3', 'Implement from first principles'), completed: true },
+          lesson('lesson-4', 'Review and defend the design'),
         ] },
       ],
-      attempts: [{
-        id: 'attempt-1', moduleId: 'module-1', lessonId: first.id, kind: 'quiz', correct: 1, total: 2,
-        submittedAt: 1_790_000_600_000,
-        results: [
-          { questionId: 'quiz-a-1', prompt: 'What property makes a repeated request safe?', options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], selectedIndex: 0, correctIndex: 0, explanation: 'The saved identifier connects a retry to the original result.', sourceIds: [source.id] },
-          { questionId: 'quiz-a-2', prompt: 'Which failure requires an idempotency record?', options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], selectedIndex: 1, correctIndex: 0, explanation: 'A response can be lost after the effect commits, so the next delivery must find the earlier result.', sourceIds: [source.id] },
-        ],
-      }],
     } satisfies Fixture<LearningProgramDto>;
     return {
       get_settings: () => settings,
@@ -1849,6 +1830,24 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       get_learning_program: () => program,
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
+      get_learning_quiz_overview: () => {
+        const status = (scope: { kind: 'lesson' | 'module' | 'course'; id: string | null }, title: string) => ({
+          scope, title, bankStatus: 'ready', bankMessage: '', bankSize: 24, freshItems: 8, formSize: 8, expectedMinutes: 12, passingScore: 0.7,
+          coverage: null, activeFormId: null, verdict: 'not_taken', best: null, latest: null, attempts: 0, preparingJobId: null,
+        } as const);
+        const best = { formId: 'form-1', score: 0.5, passed: false, gradeStatus: 'deterministic', submittedAt: 1_790_000_600_000, retakeOfFormId: null, overriddenItems: 0, pendingItems: 0 } as const;
+        return {
+          programId: program.summary.id, settings: { quizPass: 0.7, testPass: 0.75, examPass: 0.75, writtenAnswers: true },
+          exam: status({ kind: 'course', id: null }, 'Course exam'),
+          modules: program.modules.map((module) => ({
+            moduleId: module.id, test: status({ kind: 'module', id: module.id }, 'Module test'),
+            lessons: module.lessons.map((entry) => ({ lessonId: entry.id, quiz: entry.id === first.id
+              ? { ...status({ kind: 'lesson', id: entry.id }, entry.title), verdict: 'not_passed' as const, best, latest: best, attempts: 1 }
+              : status({ kind: 'lesson', id: entry.id }, entry.title) })),
+          })),
+          quizzesPassed: 0, quizzesTotal: 4, outcomes: [], evidence: [], followUps: [],
+        };
+      },
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -1863,19 +1862,13 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
   await expect(moduleWorkspace).toBeVisible();
   await expect(moduleWorkspace.getByRole('tab', { name: 'Lessons', exact: true })).toHaveAttribute('aria-selected', 'true');
 
-  await openStudioSection(page, 'Quick checks');
-  const quickCheckType = page.getByRole('group', { name: 'Quick check type' });
-  await expect(quickCheckType.getByRole('button', { name: 'practice', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('radio', { name: 'Use a stable operation identifier' }).click();
-  await quickCheckType.getByRole('button', { name: 'quiz', exact: true }).click();
-  await quickCheckType.getByRole('button', { name: 'practice', exact: true }).click();
-  await openStudioSection(page, 'Lessons');
-  await openStudioSection(page, 'Quick checks');
-  await expect(page.getByRole('radio', { name: 'Use a stable operation identifier' })).toBeChecked();
-
-  await quickCheckType.getByRole('button', { name: 'History (1)', exact: true }).click();
-  await expect(page.getByText('Model-authored answer key', { exact: true })).toBeVisible();
-  await expect(page.getByText('1 correct of 2', { exact: true })).toBeVisible();
+  await openStudioSection(page, 'Quizzes');
+  await expect(moduleWorkspace.getByRole('tab', { name: 'Quizzes', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Check what stuck, whenever you like' })).toBeVisible();
+  const retries = page.locator('#quiz-lesson-lesson-1');
+  await expect(retries.getByText('Not passed yet · best 50\u00a0%', { exact: true })).toBeVisible();
+  await expect(retries.getByRole('button', { name: 'Retake' })).toBeVisible();
+  await expect(page.getByText('Quizzes passed', { exact: true })).toBeVisible();
   await page.screenshot({ path: '/tmp/lattice-learning-studio.png', fullPage: true, animations: 'disabled' });
   expect(errors).toEqual([]);
 });

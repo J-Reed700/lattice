@@ -4,7 +4,7 @@
 use super::{
     canvas_entries::CanvasPackSnapshot,
     db,
-    entries::{ImportScope, PracticalPackSnapshot, PrivateAnswerKey, SECTION_ROWS},
+    entries::{ImportScope, PracticalPackSnapshot, SECTION_ROWS},
     invalid, json_string, parse,
     remap::{remap, remap_json_field, remap_json_string_field, remap_refs},
     source_entries::SourceHistorySnapshot,
@@ -68,37 +68,10 @@ pub(super) async fn insert_program(
                 remap_refs(map, &mut sources);
                 sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(&lesson.id).bind(bi as i64).bind(crate::features::learning::repository::block_kind(block.kind.clone())).bind(&block.title).bind(&block.body).bind(json_string(&sources)?).bind(json_string(&block.rubric)?).execute(&mut *tx).await.map_err(db)?;
             }
-            for (qi, question) in lesson.questions.iter().enumerate() {
-                let mut sources = question.source_ids.clone();
-                remap_refs(map, &mut sources);
-                sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,?,?,?,?,?)").bind(&question.id).bind(&lesson.id).bind(&module.id).bind(crate::features::learning::repository::assessment(question.kind.clone())).bind(&question.prompt).bind(json_string(&question.options)?).bind(json_string(&sources)?).bind(qi as i64).execute(&mut *tx).await.map_err(db)?;
-            }
         }
     }
     for source in &program.sources {
         sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(&summary.id).bind(&source.title).bind(&source.url).bind(&source.excerpt).bind(source.acquired_at).execute(&mut *tx).await.map_err(db)?;
-    }
-    for attempt in &program.attempts {
-        // Evidence is carried only when explicitly selected at export. IDs and
-        // citations are remapped with the rest of the imported aggregate.
-        let mut result_rows = attempt.results.clone();
-        for result in &mut result_rows {
-            result.question_id = remap(map, &result.question_id);
-            remap_refs(map, &mut result.source_ids);
-        }
-        let answers: Vec<crate::features::learning::dto::LearningAnswerDto> = result_rows
-            .iter()
-            .map(|r| crate::features::learning::dto::LearningAnswerDto {
-                question_id: r.question_id.clone(),
-                selected_index: r.selected_index,
-            })
-            .collect();
-        let correct = result_rows
-            .iter()
-            .filter(|r| r.selected_index == r.correct_index)
-            .count() as i64;
-        sqlx::query("INSERT INTO learning_attempts(id,program_id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at,payload_hash,covered_lessons,module_lessons) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&attempt.id).bind(&summary.id).bind(&attempt.module_id).bind(&attempt.lesson_id).bind(crate::features::learning::repository::assessment(attempt.kind.clone())).bind(correct).bind(result_rows.len() as i64).bind(json_string(&answers)?).bind(json_string(&result_rows)?).bind(attempt.submitted_at).bind("imported").bind(attempt.coverage.map(|c| c.covered_lessons)).bind(attempt.coverage.map(|c| c.module_lessons)).execute(&mut *tx).await.map_err(db)?;
     }
     Ok(())
 }
@@ -696,29 +669,6 @@ pub(super) async fn insert_selectors(
             sqlx::query("INSERT INTO learning_source_selectors(id,program_id,source_id,source_version_id,exact_text,prefix_text,suffix_text,start_byte,end_byte,candidate_count,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(selector_id).bind(program_id).bind(source_id).bind(version_id).bind(exact).bind(prefix).bind(suffix).bind(start).bind(end).bind(candidate_count).bind(status).bind(created_at).execute(&mut *tx).await.map_err(db)?;
         }
-    }
-    Ok(())
-}
-
-pub(super) async fn insert_answer_keys(
-    tx: &mut SqliteConnection,
-    keys: Vec<PrivateAnswerKey>,
-    map: &HashMap<String, String>,
-) -> Result<()> {
-    for key in keys {
-        let qid = map
-            .get(&key.question_id)
-            .cloned()
-            .unwrap_or(key.question_id);
-        sqlx::query(
-            "INSERT INTO learning_answer_keys(question_id,correct_index,explanation) VALUES(?,?,?)",
-        )
-        .bind(qid)
-        .bind(key.correct_index as i64)
-        .bind(key.explanation)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
     }
     Ok(())
 }

@@ -53,7 +53,7 @@ export function claimFixture(options: ClaimOptions) {
 }
 
 type LearningState = {
-  program: { modules: Array<{ lessons: Array<{ id: string; title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> };
+  program: { modules: Array<{ lessons: Array<{ id: string; title: string; preparation: string; blocks: unknown[] }> }> };
   planWorkspace: { programId: string; programRevision: number; jobs: unknown[] };
   claimReviews: Record<string, unknown>;
 };
@@ -65,7 +65,6 @@ export async function holdLessonForReview(page: Page, claims: ReturnType<typeof 
     const lesson = state.program.modules[0].lessons[0];
     lesson.preparation = 'outline';
     lesson.blocks = [];
-    lesson.questions = [];
     const finishedAt = Date.now() - 60_000;
     state.planWorkspace.jobs = [{
       id: 'held-job', programId: state.planWorkspace.programId, operationId: 'operation', kind: 'lesson_preparation', payloadSha256: 'fixture',

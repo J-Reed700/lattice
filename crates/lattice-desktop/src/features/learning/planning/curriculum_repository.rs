@@ -148,7 +148,7 @@ impl LearningCurriculumRepository {
             let outcome_labels: Vec<String> = decode(m.get("outcomes_json"))?;
             let mut outcome_ids = Vec::new();
             for (ordinal, label) in outcome_labels.iter().enumerate() {
-                let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND title=? ORDER BY ordinal LIMIT 1")
+                let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND title=? AND lesson_id IS NULL ORDER BY ordinal LIMIT 1")
                     .bind(program_id).bind(&module_id).bind(label).fetch_optional(&mut *tx).await.map_err(db)?;
                 let outcome_id = if let Some(id) = existing {
                     id
@@ -602,12 +602,6 @@ async fn materialize(
                 if protected == 0 && !lesson.assessment_started {
                     sqlx::query("UPDATE learning_lessons SET module_id=?,ordinal=?,title=?,objective=?,estimated_minutes=?,curriculum_state=?,replacement_lesson_id=? WHERE id=? AND program_id=?")
                     .bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes as i64).bind(state_name(lesson.state)).bind(&lesson.replacement_lesson_id).bind(&lesson.id).bind(&revision.program_id).execute(&mut **tx).await.map_err(db)?;
-                    sqlx::query("UPDATE learning_questions SET module_id=? WHERE lesson_id=?")
-                        .bind(&module.id)
-                        .bind(&lesson.id)
-                        .execute(&mut **tx)
-                        .await
-                        .map_err(db)?;
                 } else {
                     sqlx::query(
                         "UPDATE learning_lessons SET ordinal=? WHERE id=? AND program_id=?",

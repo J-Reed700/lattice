@@ -372,7 +372,7 @@ pub(super) async fn run_and_confirm(
         .await?;
     let lesson = &published.modules[0].lessons[0];
     assert_eq!(lesson.preparation, LearningPreparation::Ready);
-    assert!(!lesson.blocks.is_empty() && !lesson.questions.is_empty());
+    assert!(!lesson.blocks.is_empty());
     std::fs::write(
         directory.join("program.json"),
         serde_json::to_vec_pretty(&published)?,

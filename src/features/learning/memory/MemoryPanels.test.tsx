@@ -23,10 +23,10 @@ vi.mock('@/components/TiptapEditor', () => ({
 
 const source = { id: 'source-1', title: 'Field guide', url: 'https://example.org/guide', excerpt: 'A source excerpt supporting recall.', acquiredAt: 1_790_000_000_000 };
 const extraSource = { id: 'source-2', title: 'Unrelated notes', url: 'https://example.org/other', excerpt: 'A different passage.', acquiredAt: 1_790_000_000_000 };
-const lesson = { id: 'lesson-1', title: 'The central idea', objective: 'Explain the central idea', estimatedMinutes: 20, preparation: 'ready' as const, completed: false, blocks: [{ kind: 'explanation' as const, title: 'The idea', body: 'A useful explanation.', sourceIds: ['source-1'] }], questions: [] };
+const lesson = { id: 'lesson-1', title: 'The central idea', objective: 'Explain the central idea', estimatedMinutes: 20, preparation: 'ready' as const, completed: false, blocks: [{ kind: 'explanation' as const, title: 'The idea', body: 'A useful explanation.', sourceIds: ['source-1'] }] };
 const program: LearningProgramDto = {
   summary: { id: 'program-1', title: 'Reasoning well', goal: 'Learn to reason well.', status: 'active', revision: 1, moduleCount: 1, lessonCount: 1, completedLessons: 0, currentLessonId: lesson.id, createdAt: 1_790_000_000_000 },
-  priorKnowledge: '', minutesPerSession: 30, modelName: 'Model', modules: [{ id: 'module-1', title: 'Foundations', summary: 'Start here.', outcomes: ['Explain it'], lessons: [lesson] }], sources: [source], attempts: [],
+  priorKnowledge: '', minutesPerSession: 30, modelName: 'Model', modules: [{ id: 'module-1', title: 'Foundations', summary: 'Start here.', outcomes: ['Explain it'], lessons: [lesson] }], sources: [source],
 };
 const note: WorkspaceNoteDto = { revision: 0, id: 'note-1', title: 'The central idea', journalId: 'journal-1', content: '', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: '2026-09-30T12:00:00Z', updatedAt: '2026-09-30T12:00:00Z' };
 const secondLesson = { ...lesson, id: 'lesson-2', title: 'A second idea', objective: 'Explain another idea' };

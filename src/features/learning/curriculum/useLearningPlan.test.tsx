@@ -23,8 +23,8 @@ const program: LearningProgramDto = {
   priorKnowledge: '', minutesPerSession: 20, modelName: 'fixture', outlineReview: null,
   modules: [{ id: 'module', title: 'Foundations', summary: '', outcomes: [], prerequisiteModuleIds: [], project: null,
     lessons: [{ id: 'lesson', title: 'Before acceptance', objective: 'Learn', estimatedMinutes: 20,
-      preparation: 'outline', blocks: [], questions: [], completed: false }] }],
-  sources: [], attempts: [],
+      preparation: 'outline', blocks: [], completed: false }] }],
+  sources: [],
 };
 const plan: LearningPlanDto = { programId: 'program', programRevision: 9, acceptedRevision: null, draftRevision: null,
   previewChanges: [], requiredLessonCountBefore: 1, requiredLessonCountAfter: 1, resumeLessonId: 'lesson', jobs: [], latestDiagnostic: null };
