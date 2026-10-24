@@ -315,11 +315,19 @@ test("Studio text viewers survive repeated lesson and quiz navigation", async ({
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await tabs.getByRole('tab', { name: 'Quizzes', exact: true }).click();
+    const question = page.getByText('Which detail makes two counts comparable?', { exact: true });
     const lessonRow = page.locator('#quiz-lesson-lesson-observation');
     const resume = lessonRow.getByRole('button', { name: 'Resume', exact: true });
-    if (await resume.isVisible()) await resume.click();
-    else await lessonRow.getByRole('button', { name: /Start quiz/ }).click();
-    await expect(page.getByText('Which detail makes two counts comparable?', { exact: true })).toBeVisible();
+    const start = lessonRow.getByRole('button', { name: /Start quiz/ });
+    if (await resume.isVisible()) {
+      await resume.click();
+    } else if (await start.isVisible()) {
+      await start.click();
+    } else if (!await question.isVisible()) {
+      const action = lessonRow.getByRole('button', { name: /Start quiz|Resume/ });
+      await action.click();
+    }
+    await expect(question).toBeVisible();
     await tabs.getByRole('tab', { name: 'Lessons', exact: true }).click();
     await expect(page.getByRole('button', { name: 'View lesson evidence' }).first()).toBeVisible();
   }

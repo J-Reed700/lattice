@@ -149,7 +149,7 @@ export function shownScore(form: LearningAssessmentFormDto) {
 /** Where the score sits against the pass mark, kindly and exactly. */
 export function passMarkWords(form: LearningAssessmentFormDto): string | undefined {
   const submission = form.submission;
-  if (!submission || submission.passed === null || form.mode === 'practice') return undefined;
+  if (submission?.passed == null || form.mode === 'practice') return undefined;
   const gap = Math.round((submission.score - form.passingScore) * 100);
   if (submission.passed) return gap > 0 ? `${gap} % above the ${percent(form.passingScore)} pass mark.` : `Right on the ${percent(form.passingScore)} pass mark.`;
   return `${Math.max(1, -gap)} % short of the ${percent(form.passingScore)} pass mark. A retake uses fresh questions.`;
