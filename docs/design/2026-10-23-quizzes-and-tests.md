@@ -959,9 +959,9 @@ has a human grade (Josh labels blind through `calibration-sample`).
   - `full_credit_includes` that doesn't reproduce the reference answer.
 
   On the calibration slice, the human also labels the reason as one of: *right*, *verdict right but reason wrong*, or *reason fabricated*. Headline: the share of marked-down answers whose reason a human accepts. A grader with correct verdicts and unacceptable reasons fails this eval.
-  Predeclared bar (proposed; owner to confirm before the baseline runs): any
-  reason labelled *fabricated* fails the grader, and the accepted share must be
-  at least 80 %, reported with its exact 95 % interval.
+  Predeclared bar (set by the owner on 2026-10-24: a B or better): any reason
+  labelled *fabricated* fails the grader, and the accepted share must be at
+  least 83 %, reported with its exact 95 % interval.
 - Contest rows: a regrade must not change its verdict on an unchanged answer
   more than 10 % of the time across three seeds (stability), reported
   separately.
