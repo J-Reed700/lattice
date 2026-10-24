@@ -17,6 +17,8 @@ use std::collections::HashMap;
 mod activities;
 mod drafts;
 mod reads;
+#[cfg(test)]
+mod replay_tests;
 mod runs;
 mod simulations;
 

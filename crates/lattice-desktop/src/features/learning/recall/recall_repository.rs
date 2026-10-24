@@ -18,6 +18,8 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashSet;
 
 mod cards;
+#[cfg(test)]
+mod cards_tests;
 mod selectors;
 mod workspace;
 

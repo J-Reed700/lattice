@@ -12,6 +12,8 @@ mod assistance;
 mod reads;
 mod sessions;
 mod submissions;
+#[cfg(test)]
+mod workbench_tests;
 
 const MAX_ARTIFACT_CHARS: usize = 24_000;
 const MAX_TUTOR_PROMPT_CHARS: usize = 2_000;
