@@ -5,8 +5,9 @@ import { AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3, F
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { canvasTextOutline, parseCanvasScene, serializeCanvasScene } from '@/features/learning/canvas/canvasScene';
 import type { CanvasSurfaceHandle } from '@/features/learning/canvas/CanvasSurface';
+import DualCodingToolbar from '@/features/learning/canvas/DualCodingToolbar';
 import { useCreateLearningCanvas, useCreateLearningCanvasSnapshot, useLearningCanvas, useRestoreLearningCanvasSnapshot, useSaveLearningCanvas } from '@/features/learning/canvas/useLearningCanvas';
-import type { JsonValue, LearningCanvasDto , LearningCanvasSnapshotDto } from '@/lib/bindings';
+import type { JsonValue, LearningCanvasDto, LearningCanvasSnapshotDto, LearningLessonDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
 
@@ -29,7 +30,21 @@ function samePayload(a: Editable | null, b: Editable) { return Boolean(a?.title.
 function timestamp(value: number) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString(); }
 function saveConflict(error: unknown) { return /revision|conflict|changed since|stale/i.test(error instanceof Error ? error.message : String(error)); }
 
-export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, enabled }: { programId: string; lessonId?: string; lessonTitle: string; theme: Theme; enabled: boolean }) {
+export default function CanvasPanel({
+  programId,
+  lessonId,
+  lessonTitle,
+  theme,
+  enabled,
+  lesson,
+}: {
+  programId: string;
+  lessonId?: string;
+  lessonTitle: string;
+  theme: Theme;
+  enabled: boolean;
+  lesson?: LearningLessonDto;
+}) {
   const query = useLearningCanvas(programId);
   const create = useCreateLearningCanvas();
   const save = useSaveLearningCanvas();
@@ -95,6 +110,16 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
   const clearSceneError = useCallback(() => { sceneErrorRef.current = null; setSceneError(null); }, []);
   const handleSceneChange = useCallback((scene: SceneUpdate) => { clearSceneError(); saveDraft(scene); }, [clearSceneError, saveDraft]);
   const handleImageBlocked = useCallback(() => setImageBlocked(true), []);
+
+  const effectiveLessonTitle = lesson?.title || lessonTitle;
+  const lessonBlocks = useMemo(
+    () => lesson?.blocks?.map((block, index) => ({
+      id: `block-${index}`,
+      title: block.title,
+      body: block.body,
+    })),
+    [lesson?.blocks],
+  );
 
   const clearAutosave = useCallback(() => {
     if (autosaveTimer.current !== null) window.clearTimeout(autosaveTimer.current);
@@ -276,6 +301,17 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
       <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-3" aria-label="Canvases">{canvases.map((canvas) => <button type="button" key={canvas.id} aria-pressed={canvas.id === selectedId} onClick={() => void switchCanvas(canvas.id)} className={`max-w-[230px] shrink-0 truncate rounded-full border px-3.5 py-2 text-xs ${canvas.id === selectedId ? 'border-accent/50 bg-accent/10 font-semibold text-accent' : 'border-border text-text-secondary hover:border-accent/35'}`}>Canvas: {canvas.title}</button>)}</div>
       {selected && draft && <div className="p-4 sm:p-6">
         <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(180px,.75fr)_minmax(240px,1.5fr)_auto] sm:items-start"><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Title<input aria-label="Canvas title" value={draft.title} maxLength={120} onChange={(e) => saveDraft({ title: e.target.value })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium normal-case tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Written description<textarea aria-label="Describe your drawing or its meaning" rows={2} maxLength={2000} value={draft.description} onChange={(e) => saveDraft({ description: e.target.value })} placeholder="Explain this drawing in words for someone who cannot see it" className="resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-normal normal-case leading-5 tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><div className="flex items-center gap-2 pt-1 text-xs text-text-muted" aria-live="polite">{saveState === 'dirty' ? <><Clock3 size={14} /> Unsaved changes</> : saveState === 'saving' ? <><LoaderCircle size={14} className="animate-spin" /> Saving</> : saveState === 'error' ? <><AlertCircle size={14} className="text-rose-600" /> Not saved</> : <><Check size={14} className="text-emerald-700" /> Saved</>}</div></div>
+        <div className="mb-4">
+          <DualCodingToolbar
+            lessonTitle={effectiveLessonTitle}
+            lessonObjective={lesson?.objective}
+            lessonBlocks={lessonBlocks}
+            onApplyTemplate={(sceneJson, outline, elementCount) => {
+              handleSceneChange({ sceneJson, outline, elementCount });
+              setSurfaceVersion((v) => v + 1);
+            }}
+          />
+        </div>
         {sceneError && <div role="alert" className="mb-3 rounded-lg border border-amber-600/25 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-200">{sceneError} Saving is paused until the scene is simplified or corrected.</div>}
         {imageBlocked && <p role="status" className="mb-3 rounded-lg bg-accent/5 px-3 py-2 text-xs text-text-secondary">Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.</p>}
         {conflict && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-600/25 bg-amber-500/5 p-3 text-xs text-text-secondary"><span>This canvas changed elsewhere. Reload the latest version to continue; unsaved local edits will be replaced.</span><button type="button" onClick={() => void reloadLatest()} className="rounded-full border border-amber-600/30 px-3 py-1.5 font-semibold text-amber-800 dark:text-amber-200">Reload latest</button></div>}

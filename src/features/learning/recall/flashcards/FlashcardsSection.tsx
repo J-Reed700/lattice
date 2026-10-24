@@ -4,6 +4,7 @@ import { ArrowRight, Layers, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { FlashcardGenerations } from '@/features/learning/recall/flashcards/FlashcardGenerations';
+import { InterleavedStudyPanel } from '@/features/learning/recall/flashcards/InterleavedStudyPanel';
 import { useFlashcardDecks, useFlashcardGenerations } from '@/features/learning/recall/flashcards/useFlashcards';
 
 /**
@@ -36,6 +37,7 @@ export function FlashcardsSection({ ref }: { ref?: Ref<HTMLElement> }) {
           <span className="mt-4 flex items-center gap-1.5 text-[11px] text-text-muted"><Layers size={13} />{deck.cardCount} cards · {deck.dueCount} due{deck.quizAttempts > 0 ? ` · ${Math.round(deck.quizCorrect / deck.quizAttempts * 100)}% correct` : ''}</span>
         </button>)}</div>
           : generations.length === 0 ? <div className="rounded-2xl border border-dashed border-border bg-surface p-6"><h3 className="font-serif text-xl text-text-primary">Put what you learn into practice.</h3><p className="mt-2 max-w-xl text-sm leading-6 text-text-secondary">Make a deck from library documents, or use the flashcard action on a conversation to turn its verified claims into cards. Every answer keeps its citations so you can check the evidence.</p></div> : null}
+    {decks.data && decks.data.length >= 2 ? <div className="mt-6"><InterleavedStudyPanel decks={decks.data} /></div> : null}
     </div>
   </section>;
 }

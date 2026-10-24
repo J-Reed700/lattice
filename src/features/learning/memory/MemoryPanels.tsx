@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Sparkles, Trash2, Undo2 } from 'lucide-react';
+import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Shuffle, Sparkles, Trash2, Undo2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { TiptapEditor } from '@/components/TiptapEditor';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
+import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
 import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useGenerateLearningCardDrafts, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
 import type { LearningCardDraftDto, LearningCardOriginDto, LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 import { flushPendingSaves, registerPendingSave } from '@/lib/pendingSaves';
@@ -37,8 +38,12 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   const startedEnsure = useRef(new Set<string>());
   const latest = useRef({ memory, drafts });
   const flushAllRef = useRef<() => Promise<boolean>>(async () => true);
+  const [noteMode, setNoteMode] = useState<'typed' | 'split' | 'handwritten'>('typed');
   latest.current = { memory, drafts };
-  const noteItem = memory?.lessonNotes.find((item) => item.lessonId === lessonId);
+  const currentLesson = program.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === lessonId);
+  const lessonSourceIds = new Set(currentLesson?.blocks.flatMap((block) => block.sourceIds) ?? []);
+  const lessonSources = program.sources.filter((source) => lessonSourceIds.has(source.id));
+  const noteItem = memory?.lessonNotes?.find((item) => item.lessonId === lessonId);
   const note = noteItem?.note;
   const key = `${program.summary.id}:${lessonId ?? 'none'}`;
   const draft = note ? drafts[key] ?? { title: note.title, content: note.content } : undefined;
@@ -73,7 +78,7 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   flushAllRef.current = async () => {
     const latestMemory = latest.current.memory;
     if (!latestMemory) return true;
-    for (const item of latestMemory.lessonNotes) {
+    for (const item of latestMemory.lessonNotes ?? []) {
       const draftKey = `${program.summary.id}:${item.lessonId}`;
       const candidate = latest.current.drafts[draftKey] ?? { title: item.note.title, content: item.note.content };
       if (candidate.title === item.note.title && candidate.content === item.note.content) continue;
@@ -117,7 +122,60 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   };
   return <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-5"><div><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[.16em] text-accent"><BookOpen size={14} /> Lesson notebook</div><h3 className="mt-1 font-serif text-xl text-text-primary">A place to make the idea your own</h3></div><button type="button" disabled={titleMissing} onClick={() => void openJournal()} className="inline-flex items-center gap-2 rounded-full border border-border px-3.5 py-2 text-xs font-medium text-text-secondary hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50">Open full Journal <ExternalLink size={13} /></button></header>
-    <div className="px-6 py-6 sm:px-8"><label htmlFor={`note-title-${lessonId}`} className="sr-only">Notebook page title</label><input id={`note-title-${lessonId}`} value={title} onChange={(event) => setDraft(key, { title: event.target.value, content })} className="w-full border-b border-border bg-transparent pb-3 font-serif text-2xl text-text-primary outline-hidden focus:border-accent" /><label className="mb-2 mt-6 block text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Your notes</label><div className="min-h-[280px] rounded-xl border border-border bg-background/70 px-4 py-3 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10"><TiptapEditor value={content} onChange={(markdown) => setDraft(key, { title, content: markdown })} ariaLabel="Your notes" placeholder="What stands out? What do you want to remember, question, or explain in your own words?" className="min-h-[250px] text-sm leading-7 text-text-primary" /></div>
+    <div className="px-6 py-6 sm:px-8">
+      <label htmlFor={`note-title-${lessonId}`} className="sr-only">Notebook page title</label>
+      <input id={`note-title-${lessonId}`} value={title} onChange={(event) => setDraft(key, { title: event.target.value, content })} className="w-full border-b border-border bg-transparent pb-3 font-serif text-2xl text-text-primary outline-hidden focus:border-accent" />
+      <div className="mb-2 mt-6 flex flex-wrap items-center justify-between gap-2">
+        <label className="block text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Your notes</label>
+        <div role="group" aria-label="Notebook input mode" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-pressed={noteMode === 'typed'}
+            onClick={() => setNoteMode('typed')}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              noteMode === 'typed' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Typed notes
+          </button>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-pressed={noteMode === 'split'}
+            onClick={() => setNoteMode('split')}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              noteMode === 'split' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Split: Type + Sketch
+          </button>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-pressed={noteMode === 'handwritten'}
+            onClick={() => setNoteMode('handwritten')}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              noteMode === 'handwritten' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Handwritten sketch
+          </button>
+        </div>
+      </div>
+      <div hidden={noteMode === 'handwritten'}>
+        <div className="min-h-[280px] rounded-xl border border-border bg-background/70 px-4 py-3 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10">
+          <TiptapEditor value={content} onChange={(markdown) => setDraft(key, { title, content: markdown })} ariaLabel="Your notes" placeholder="What stands out? What do you want to remember, question, or explain in your own words?" className="min-h-[250px] text-sm leading-7 text-text-primary" />
+        </div>
+      </div>
+      <HandwrittenSynthesisTools
+        noteContent={content}
+        sourceTexts={[...(currentLesson?.blocks.map((block) => block.body) ?? []), ...lessonSources.map((source) => source.excerpt)]}
+        lessonKey={key}
+        sketchpadOpen={noteMode !== 'typed'}
+        onSketchpadOpenChange={(open) => setNoteMode((current) => (open ? (current === 'handwritten' ? 'handwritten' : 'split') : 'typed'))}
+        onInsertSynthesis={(snippet) => setDraft(key, { title, content: content ? `${content}\n\n${snippet}` : snippet })}
+      />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="text-xs">{titleMissing ? <span role="alert" className="text-amber-700">Add a page title before saving or opening Journal.</span> : save.isPending ? <span role="status" className="text-text-muted"><LoaderCircle size={13} className="mr-1 inline animate-spin" />Saving…</span> : save.isError ? <span role="alert" className="text-rose-700">Could not save: {save.error.message}</span> : dirty ? <span className="text-text-muted">Unsaved changes · saves after you pause</span> : <span role="status" className="text-text-muted"><Check size={13} className="mr-1 inline text-emerald-700" />Saved to Journal</span>}</div>{save.isError && !titleMissing && <button type="button" onClick={saveCurrent} className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs"><RotateCcw size={13} /> Retry save</button>}<p className="ml-auto text-[10px] text-text-muted">Lesson-linked canonical Journal page</p></div>
     </div>
   </section>;
@@ -186,11 +244,62 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [reviewedCard, setReviewedCard] = useState<StudyCardDto | null>(null);
   const [reviewError, setReviewError] = useState('');
+  const [reviewScope, setReviewScope] = useState<'interleaved' | 'lesson'>('interleaved');
   const reviewRequest = useRef<{ cardId: string; rating: 'again' | 'hard' | 'good' | 'easy'; id: string } | null>(null);
-  const dueCards = (memory?.studyDeck?.cards ?? []).filter((card) => card.dueAt <= Date.now() && !reviewedIds.includes(card.id)).sort((a, b) => a.dueAt - b.dueAt);
+
+  const allDueCards = useMemo(
+    () => (memory?.studyDeck?.cards ?? [])
+      .filter((card) => card.dueAt <= Date.now() && !reviewedIds.includes(card.id))
+      .sort((a, b) => a.dueAt - b.dueAt),
+    [memory?.studyDeck?.cards, reviewedIds],
+  );
+
+  const cardLessonMap = useMemo(
+    () => new Map((memory?.acceptedCards ?? []).map((origin) => [origin.cardId, origin.lessonId])),
+    [memory?.acceptedCards],
+  );
+
+  const dueCards = useMemo(() => {
+    if (reviewScope === 'lesson') {
+      return allDueCards.filter((card) => cardLessonMap.get(card.id) === lessonId);
+    }
+    const lessonGroups = new Map<string, StudyCardDto[]>();
+    for (const card of allDueCards) {
+      const lId = cardLessonMap.get(card.id) ?? 'unassigned';
+      const group = lessonGroups.get(lId) ?? [];
+      group.push(card);
+      lessonGroups.set(lId, group);
+    }
+    const groupArrays = Array.from(lessonGroups.values()).map((cards) => [...cards]);
+    const result: StudyCardDto[] = [];
+    let remaining = allDueCards.length;
+    while (remaining > 0) {
+      for (const group of groupArrays) {
+        if (group.length > 0) {
+          result.push(group.shift()!);
+          remaining--;
+        }
+      }
+    }
+    return result;
+  }, [allDueCards, cardLessonMap, lessonId, reviewScope]);
+
+  const dueLessonsCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const card of allDueCards) {
+      const lId = cardLessonMap.get(card.id);
+      if (lId) ids.add(lId);
+    }
+    return ids.size;
+  }, [allDueCards, cardLessonMap]);
+
   const currentCard = dueCards[0];
+  const currentCardOrigin = memory?.acceptedCards?.find((o) => o.cardId === currentCard?.id);
+  const currentCardLesson = currentCardOrigin?.lessonId
+    ? program.modules.flatMap((module) => module.lessons).find((item) => item.id === currentCardOrigin.lessonId)
+    : undefined;
   const selectedLesson = program.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === lessonId);
-  const origins = memory?.acceptedCards.filter((origin) => origin.lessonId === lessonId) ?? [];
+  const origins = memory?.acceptedCards?.filter((origin) => origin.lessonId === lessonId) ?? [];
   const draftActionError = acceptDraft.error?.message || discardDraft.error?.message;
   const draftPending = saveDraft.isPending || acceptDraft.isPending || discardDraft.isPending;
   const runGeneration = () => { if (lessonId && selectedLesson?.preparation === 'ready') generate.mutate({ programId: program.summary.id, lessonId, count }); };
@@ -250,16 +359,70 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
       {generate.error && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-700"><span>Draft generation failed: {generate.error.message}</span><button type="button" onClick={runGeneration} className="inline-flex items-center gap-1 text-xs underline"><RotateCcw size={12} /> Retry</button></div>}
       {manualOpen && <div className="mt-4"><DraftEditor draftId={null} lessonId={lessonId} program={program} origin="manual" pending={saveDraft.isPending} error={draftSaveTarget === 'manual' ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(null, value)} onCancel={() => setManualOpen(false)} /></div>}
       {draftActionError && <p role="alert" className="mt-3 text-xs text-rose-700">{draftActionError}</p>}
-      <div className="mt-6"><h4 className="font-serif text-lg text-text-primary">Draft cards <span className="text-sm text-text-muted">{memory?.drafts.filter((draft) => draft.lessonId === lessonId).length ?? 0}</span></h4>
-        {(memory?.drafts.filter((draft) => draft.lessonId === lessonId) ?? []).length ? <div className="mt-3 space-y-3">{memory?.drafts.filter((draft) => draft.lessonId === lessonId).map((draft) => <article key={draft.id} aria-label={`Draft card: ${draft.question}`} className="space-y-2"><DraftEditor draftId={draft.id} lessonId={lessonId} program={program} initial={draft} origin={draft.origin} pending={draftPending} error={draftSaveTarget === draft.id ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(draft.id, value)} /><div className="flex justify-end gap-2"><button type="button" disabled={draftPending || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => acceptCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Check size={13} />Accept card</button><button type="button" disabled={draftPending} onClick={() => discardCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-text-secondary disabled:opacity-50"><Trash2 size={13} />Discard</button></div></article>)}</div> : !manualOpen && !generate.isPending ? <p className="mt-2 rounded-xl border border-dashed border-border p-5 text-sm text-text-muted">No drafts for this lesson yet. Generate source-grounded suggestions or write one yourself.</p> : null}
+      <div className="mt-6"><h4 className="font-serif text-lg text-text-primary">Draft cards <span className="text-sm text-text-muted">{memory?.drafts?.filter((draft) => draft.lessonId === lessonId).length ?? 0}</span></h4>
+        {(memory?.drafts?.filter((draft) => draft.lessonId === lessonId) ?? []).length ? <div className="mt-3 space-y-3">{memory?.drafts?.filter((draft) => draft.lessonId === lessonId).map((draft) => <article key={draft.id} aria-label={`Draft card: ${draft.question}`} className="space-y-2"><DraftEditor draftId={draft.id} lessonId={lessonId} program={program} initial={draft} origin={draft.origin} pending={draftPending} error={draftSaveTarget === draft.id ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(draft.id, value)} /><div className="flex justify-end gap-2"><button type="button" disabled={draftPending || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => acceptCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Check size={13} />Accept card</button><button type="button" disabled={draftPending} onClick={() => discardCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-text-secondary disabled:opacity-50"><Trash2 size={13} />Discard</button></div></article>)}</div> : !manualOpen && !generate.isPending ? <p className="mt-2 rounded-xl border border-dashed border-border p-5 text-sm text-text-muted">No drafts for this lesson yet. Generate source-grounded suggestions or write one yourself.</p> : null}
       </div>
     </section>
 
-    <section className="rounded-2xl border border-border bg-surface p-3 shadow-sm sm:p-6"><div className="flex flex-wrap items-end justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">In-Studio review</div><h3 className="mt-1 font-serif text-2xl text-text-primary">Due cards</h3><p className="mt-1 text-xs text-text-secondary">Prompt first, reveal when you are ready, then record a recall rating.</p></div><span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">{dueCards.length} due · {memory?.studyDeck?.cards.length ?? 0} total</span></div>
+    <section className="rounded-2xl border border-border bg-surface p-3 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">In-Studio review</div>
+          <h3 className="mt-1 font-serif text-2xl text-text-primary">Due cards</h3>
+          <p className="mt-1 text-xs text-text-secondary">Prompt first, reveal when you are ready, then record a recall rating.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div role="group" aria-label="Review scope" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
+            <button
+              type="button"
+              aria-pressed={reviewScope === 'interleaved'}
+              onClick={() => setReviewScope('interleaved')}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                reviewScope === 'interleaved'
+                  ? 'bg-surface text-text-primary shadow-xs font-medium'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Interleaved course mix
+            </button>
+            <button
+              type="button"
+              aria-pressed={reviewScope === 'lesson'}
+              onClick={() => setReviewScope('lesson')}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                reviewScope === 'lesson'
+                  ? 'bg-surface text-text-primary shadow-xs font-medium'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              This lesson only
+            </button>
+          </div>
+          <span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">{dueCards.length} due · {memory?.studyDeck?.cards.length ?? 0} total</span>
+        </div>
+      </div>
       {reviewedCard && <p role="status" className="mt-4 rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800">Review saved. Next interval: {reviewedCard.intervalDays} days.</p>}
       {reviewError && <p role="alert" className="mt-4 rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{reviewError}</p>}
-      {currentCard ? <article aria-label="Current review card" className="mt-5 min-w-0 rounded-xl border border-border bg-background p-3 wrap-anywhere sm:p-7"><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-text-muted">Recall prompt</div><p className="mt-3 font-serif text-xl leading-7 text-text-primary">{currentCard.question}</p>{!revealed ? <button type="button" disabled={review.isPending} onClick={() => setRevealed(true)} className="mt-5 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg">Reveal answer</button> : <div className="mt-5 border-t border-border pt-5"><div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">Answer</div><p className="mt-2 text-base font-medium leading-6 text-text-primary">{currentCard.answer}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{currentCard.explanation}</p><SourceProvenance sourceIds={memory?.acceptedCards.find((origin) => origin.cardId === currentCard.id)?.sourceIds ?? []} program={program} /><div className="mt-5"><div className="mb-2 text-xs text-text-muted">How did recall feel?</div><div className="flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as const).map((rating) => <button key={rating} type="button" disabled={review.isPending} onClick={() => rateCard(rating)} className="rounded-full border border-border px-4 py-2 text-xs font-medium capitalize text-text-secondary hover:border-accent/50 hover:text-accent disabled:opacity-50">{review.isPending ? 'Saving…' : rating}</button>)}</div></div></div>}</article> : <div className="mt-5 rounded-xl border border-dashed border-border p-7 text-center"><h4 className="font-serif text-xl text-text-primary">{memory?.studyDeck?.cards.length ? 'You are caught up' : 'No accepted cards yet'}</h4><p className="mt-2 text-sm leading-6 text-text-secondary">{memory?.studyDeck?.cards.length ? 'There are no due cards in this program right now.' : 'Accepted cards will appear here when their scheduled review is due.'}</p></div>}
-      {memory?.acceptedCards.length ? <div className="mt-7 border-t border-border pt-6"><h4 className="font-serif text-lg text-text-primary">Accepted cards for this lesson</h4><div className="mt-3 space-y-3">{origins.map((origin) => { const card = memory.studyDeck?.cards.find((item) => item.id === origin.cardId); return card ? <AcceptedCardEditor key={card.id} card={card} origin={origin} program={program} pending={updateCard.isPending} error={cardUpdateTarget === card.id ? updateCard.error?.message : undefined} onSave={editAccepted} /> : null; })}</div>{origins.length === 0 && <p className="mt-2 text-xs text-text-muted">No accepted cards yet for this lesson.</p>}</div> : null}
+      {currentCard ? <article aria-label="Current review card" className="mt-5 min-w-0 rounded-xl border border-border bg-background p-3 wrap-anywhere sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-[10px] font-semibold uppercase tracking-[.15em] text-text-muted">Recall prompt</div>
+            {currentCardLesson && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-text-secondary">
+                <span className="text-text-muted">Lesson:</span>
+                <span>{currentCardLesson.title}</span>
+              </span>
+            )}
+          </div>
+          {dueLessonsCount > 1 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold text-accent">
+              <Shuffle size={11} />
+              Interleaved across {dueLessonsCount} lessons
+            </span>
+          )}
+        </div>
+        <p className="mt-3 font-serif text-xl leading-7 text-text-primary">{currentCard.question}</p>{!revealed ? <button type="button" disabled={review.isPending} onClick={() => setRevealed(true)} className="mt-5 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg">Reveal answer</button> : <div className="mt-5 border-t border-border pt-5"><div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">Answer</div><p className="mt-2 text-base font-medium leading-6 text-text-primary">{currentCard.answer}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{currentCard.explanation}</p><SourceProvenance sourceIds={memory?.acceptedCards?.find((origin) => origin.cardId === currentCard.id)?.sourceIds ?? []} program={program} /><div className="mt-5"><div className="mb-2 text-xs text-text-muted">How did recall feel?</div><div className="flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as const).map((rating) => <button key={rating} type="button" disabled={review.isPending} onClick={() => rateCard(rating)} className="rounded-full border border-border px-4 py-2 text-xs font-medium capitalize text-text-secondary hover:border-accent/50 hover:text-accent disabled:opacity-50">{review.isPending ? 'Saving…' : rating}</button>)}</div></div></div>}</article> : <div className="mt-5 rounded-xl border border-dashed border-border p-7 text-center"><h4 className="font-serif text-xl text-text-primary">{memory?.studyDeck?.cards.length ? 'You are caught up' : 'No accepted cards yet'}</h4><p className="mt-2 text-sm leading-6 text-text-secondary">{memory?.studyDeck?.cards.length ? 'There are no due cards in this program right now.' : 'Accepted cards will appear here when their scheduled review is due.'}</p></div>}
+      {memory?.acceptedCards?.length ? <div className="mt-7 border-t border-border pt-6"><h4 className="font-serif text-lg text-text-primary">Accepted cards for this lesson</h4><div className="mt-3 space-y-3">{origins.map((origin) => { const card = memory.studyDeck?.cards.find((item) => item.id === origin.cardId); return card ? <AcceptedCardEditor key={card.id} card={card} origin={origin} program={program} pending={updateCard.isPending} error={cardUpdateTarget === card.id ? updateCard.error?.message : undefined} onSave={editAccepted} /> : null; })}</div>{origins.length === 0 && <p className="mt-2 text-xs text-text-muted">No accepted cards yet for this lesson.</p>}</div> : null}
     </section>
   </div>;
 }

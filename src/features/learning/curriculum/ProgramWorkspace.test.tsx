@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
@@ -29,6 +30,8 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
   getLearningMemory: async () => ({ ok: true, data: { dueCount: 0 } }),
   getLearningQuizOverview: async () => ({ ok: true, data: quizOverview({ quizzesPassed: 1 }) }),
+  getLearningRecallWorkspace: async () => ({ ok: true, data: { programId: 'program-1', cards: [], duplicates: [], schedulerDisclosure: '' } }),
+  getLearningSourceWorkspace: async () => ({ ok: true, data: { programId: 'program-1', sources: [] } }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
   courseIndexOpen: async () => ({ ok: true, data: undefined }),
   courseIndexClose: async () => ({ ok: true, data: undefined }),
@@ -113,5 +116,47 @@ describe('Course page', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
     expect(screen.getByText('Goal')).toBeVisible();
     expect(screen.getAllByText(GOAL)).toHaveLength(1);
+  });
+
+  it('renders StudyHabitsBar with retention frameworks and opens the frameworks modal', async () => {
+    const user = userEvent.setup();
+    show(program(GOAL));
+    const frameworksButton = await screen.findByRole('button', { name: /Retention Frameworks/i });
+    expect(frameworksButton).toBeVisible();
+    await user.click(frameworksButton);
+    expect(await screen.findByRole('dialog')).toBeVisible();
+    expect(screen.getByText('Evidence-Based Learning & Retention Guide')).toBeVisible();
+  });
+
+  it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {
+    const user = userEvent.setup();
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    await user.click(tabs[1]);
+    const practiceModes = await screen.findByRole('group', { name: 'Written practice mode' });
+    expect(practiceModes).toBeVisible();
+    const feynmanButton = within(practiceModes).getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
+    await user.click(feynmanButton);
+    expect(feynmanButton).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(/The Feynman Technique · Teach a Beginner/i)).toBeVisible();
+  });
+
+  it('allows switching recall to Free recall (Brain dump) and Versioned cards & schedules', async () => {
+    const user = userEvent.setup();
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    await user.click(tabs[3]);
+    const recallModes = await screen.findByRole('group', { name: 'Recall view' });
+    expect(recallModes).toBeVisible();
+
+    const brainDumpButton = within(recallModes).getByRole('button', { name: 'Free recall (Brain dump)' });
+    await user.click(brainDumpButton);
+    expect(brainDumpButton).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByText(/Close your books & write everything from memory/i)).toBeVisible();
+
+    const evolutionButton = within(recallModes).getByRole('button', { name: 'Versioned cards & schedules' });
+    await user.click(evolutionButton);
+    expect(evolutionButton).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByTestId('learning-recall-evolution')).toBeVisible();
   });
 });
