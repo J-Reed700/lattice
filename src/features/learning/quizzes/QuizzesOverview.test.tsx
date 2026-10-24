@@ -11,6 +11,9 @@ import { quizForm, quizOverview, quizStatus } from '@/features/learning/quizzes/
 import { QuizzesOverview } from '@/features/learning/quizzes/QuizzesOverview';
 import type { LearningLessonDto, LearningProgramDto, LearningQuizOverviewDto } from '@/lib/bindings';
 
+/** What a reader sees: Testing Library normalises the no-break space in percent() to a plain one. */
+const shown = (score: number) => percent(score).replace('\u00a0', ' ');
+
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
 const api = vi.hoisted(() => ({ overview: vi.fn(), start: vi.fn(), prepare: vi.fn(), plan: vi.fn() }));
@@ -46,10 +49,10 @@ describe('Quizzes overview', () => {
     api.overview.mockResolvedValue(ok(overview));
     wrap(<QuizzesOverview program={program} formId={null} onFormIdChange={vi.fn()} onOpenLesson={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Check what stuck, whenever you like' })).toBeVisible();
-    expect(screen.getByText(`Pass marks: quiz ${percent(0.7)} · test ${percent(0.75)} · exam ${percent(0.75)}`)).toBeVisible();
+    expect(screen.getByText(`Pass marks: quiz ${shown(0.7)} · test ${shown(0.75)} · exam ${shown(0.75)}`)).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Course exam' })).toBeVisible();
     const module = within(screen.getByRole('region', { name: /Module 1/ }));
-    expect(module.getByText(`Not passed yet · best ${percent(0.63)}`)).toBeVisible();
+    expect(module.getByText(`Not passed yet · best ${shown(0.63)}`)).toBeVisible();
     expect(module.getByText(/repeats 3 questions you have seen/)).toBeVisible();
     // An unprepared lesson is not locked: it says how its quiz gets written.
     expect(module.getByRole('button', { name: 'Prepare the lesson' })).toBeVisible();
@@ -86,7 +89,7 @@ describe('lesson quiz callout', () => {
   it('says a pass in words and offers a retake', async () => {
     api.overview.mockResolvedValue(ok(withLesson({ verdict: 'passed', best: attempt(0.88), latest: attempt(0.88), attempts: 1 })));
     wrap(<LessonQuizCallout program={program} lesson={enzyme} onOpenForm={vi.fn()} onViewResult={vi.fn()} />);
-    expect(await screen.findByText(`Passed · ${percent(0.88)}`)).toBeVisible();
+    expect(await screen.findByText(`Passed · ${shown(0.88)}`)).toBeVisible();
     expect(screen.getByRole('button', { name: /Retake/ })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Review' })).toBeVisible();
   });

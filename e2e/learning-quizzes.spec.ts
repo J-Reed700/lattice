@@ -122,8 +122,8 @@ test("take a lesson quiz, learn why points were lost, retake with fresh question
 
   await page.getByRole("button", { name: "Quizzes", exact: true }).click();
   const row = page.locator("#quiz-lesson-lesson-observation");
-  await expect(row.getByText("Passed · 100 %", { exact: true })).toBeVisible();
-  await expect(row.getByText(/latest 100 %|2 attempts/)).toBeVisible();
+  await expect(row.getByText("Passed · 100 %", { exact: true })).toBeVisible();
+  await expect(row.getByText(/latest 100 %|2 attempts/)).toBeVisible();
   expect(await unsupported(page)).toEqual([]);
 });
 

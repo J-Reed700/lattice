@@ -15,7 +15,7 @@ export type Words = { label: string; detail?: string; tone: Tone };
 
 /** "85 %" with a no-break space, so the sign never wraps away from its number. */
 export function percent(score: number): string {
-  return `${Math.round(score * 100)} %`;
+  return `${Math.round(score * 100)}\u00a0%`;
 }
 
 /** 7 → "7", 6.75 → "6.8". */
