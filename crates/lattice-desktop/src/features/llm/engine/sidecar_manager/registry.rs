@@ -567,17 +567,25 @@ impl Drop for JobObjectGuard {
 /// AppImage, a translocated macOS app) leaves its orphans alone; missing
 /// one is better than killing someone else's server.
 ///
-/// A matching process is left alone while its parent is a running Lattice
-/// from the same directory (`has_live_lattice_parent`): launching the app a
-/// second time used to SIGKILL the first window's model mid-turn.
+/// A matching process is left alone while its parent is this Lattice
+/// executable (`has_live_lattice_parent`): launching the app a second time
+/// used to SIGKILL the first window's model mid-turn. The parent has to be the
+/// executable itself, not any program in its directory: a .deb installs into
+/// `/usr/bin`, where an orphan re-parented to a subreaper such as
+/// `/usr/bin/tini` or a container's `/usr/bin/sleep` would otherwise pass for
+/// a running Lattice and never be reaped.
 ///
 /// Best-effort: `sysinfo` failures collapse to "no orphans found" and
 /// the scan continues. We never panic from here.
 pub fn reap_orphan_sidecars() {
-    let Some(lattice_dir) = tauri::utils::platform::current_exe()
+    let Some(lattice_exe) = tauri::utils::platform::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(canonical_or_raw))
+        .map(|exe| canonical_or_raw(&exe))
     else {
+        tracing::debug!("Skipping orphan sidecar scan: Lattice executable path unknown");
+        return;
+    };
+    let Some(lattice_dir) = lattice_exe.parent().map(std::path::Path::to_path_buf) else {
         tracing::debug!("Skipping orphan sidecar scan: Lattice executable directory unknown");
         return;
     };
@@ -623,7 +631,7 @@ pub fn reap_orphan_sidecars() {
             .parent()
             .and_then(|ppid| system.process(ppid))
             .and_then(|parent| parent.exe());
-        if has_live_lattice_parent(parent_exe, &lattice_dir) {
+        if has_live_lattice_parent(parent_exe, &lattice_exe) {
             tracing::info!(
                 pid = pid.as_u32(),
                 process_name = name,
@@ -677,14 +685,23 @@ pub(super) fn is_installed_sidecar(exe: &std::path::Path, lattice_dir: &std::pat
 }
 
 /// Whether a sidecar's parent is a live Lattice from this install: the parent
-/// process still exists and its executable sits in `lattice_dir`. An orphan's
-/// parent is gone (Windows), or it has been re-parented to init/launchd, or its
-/// PID has been reused by something else — none of which live there.
+/// process still exists and runs `lattice_exe` (canonical). An orphan's parent
+/// is gone (Windows), or it has been re-parented to init/launchd or a
+/// subreaper, or its PID has been reused by something else.
+///
+/// Linux reports a running executable whose file was replaced, as a package
+/// upgrade does, as `<path> (deleted)`; that is still the same install.
 pub(super) fn has_live_lattice_parent(
     parent_exe: Option<&std::path::Path>,
-    lattice_dir: &std::path::Path,
+    lattice_exe: &std::path::Path,
 ) -> bool {
-    parent_exe.is_some_and(|exe| canonical_or_raw(exe).parent() == Some(lattice_dir))
+    parent_exe.is_some_and(|exe| {
+        let exe = exe
+            .to_str()
+            .and_then(|raw| raw.strip_suffix(" (deleted)"))
+            .map_or_else(|| exe.to_path_buf(), PathBuf::from);
+        canonical_or_raw(&exe) == lattice_exe
+    })
 }
 
 /// Canonical form for path comparison (symlinks resolved; `\\?\` form on

@@ -68,14 +68,68 @@ Native compatibility tests build and exercise isolated app packages on macOS
 (both architectures), Windows x64 and Ubuntu. See the
 [desktop test guide](e2e/desktop/README.md) for local commands and CI coverage.
 
-You'll need Node.js 20.19+ or 22.12+ (CI uses 24), a current Rust toolchain,
-and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for
-your platform. Local generation uses a bundled `llama-server` sidecar; see
+### Install on a new machine
+
+One command installs everything the build needs, builds the app, installs it
+and opens it. Steps that are already done are skipped, so running it again
+just rebuilds and reinstalls.
+
+macOS or Linux, from a checkout:
+
+```bash
+./setup.sh
+```
+
+Without a checkout (the source goes to `~/lattice`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
+```
+
+Windows: double-click `setup.cmd`, or without a checkout run
+`irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex`
+in PowerShell.
+
+What the script installs when it is missing:
+
+| | macOS | Linux (apt, dnf) | Windows (winget) |
+| --- | --- | --- | --- |
+| Build tools | Xcode Command Line Tools | WebKitGTK 4.1, GTK and the other [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), a C/C++ toolchain, git, curl, python3, the Vulkan loader | Visual Studio 2022 Build Tools (C++), Git, Python 3 |
+| Rust | rustup, stable (1.95 or newer) | same | same |
+| Node.js | 24, unpacked into `~/.local/share/lattice/toolchain` (or `$XDG_DATA_HOME/lattice/toolchain`) | same | Node.js LTS |
+| Project | `npm ci`, the pinned `llama-server` sidecar | same | same |
+| App | `Lattice.app` in `/Applications` | the `.deb` or `.rpm`, installed with apt or dnf | the NSIS installer, current user |
+
+The build needs about 8 GB of memory, counting swap: compiling the app crate
+peaked near 7 GB in testing. On Linux the script checks memory and swap before
+it starts and prints the commands to add swap when there is too little.
+
+On Arch Linux the script installs the prerequisites with pacman, but there is
+no Arch package to build, so use `./setup.sh --dev` there.
+
+On first launch the app shows "Set up AI" with a chat model and an embedding
+model sized to the machine's memory. Click Install. The downloads run in the
+background and both models are switched on when they finish.
+
+Other modes: `./setup.sh --check` lists what is missing and changes nothing,
+`--deps` stops once the build prerequisites are installed, `--dev` runs
+`npm run tauri:dev` instead of installing, and `--yes` never prompts. The
+Windows script takes `-Check`, `-Deps`, `-Dev` and `-Yes`.
+`e2e/turnkey/` tests the Linux path on clean Ubuntu containers; see its
+[README](e2e/turnkey/README.md).
+
+### Set up by hand
+
+You'll need Node.js 20.19+ or 22.12+ (CI uses 24), Rust 1.95 or newer, and the
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
+platform. Local generation uses a bundled `llama-server` sidecar; the build
+refuses to start without it. See
 [crates/lattice-desktop/binaries](crates/lattice-desktop/binaries/README.md)
 for how it is fetched.
 
 ```bash
 npm ci
+bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run tauri:dev
 ```
 
