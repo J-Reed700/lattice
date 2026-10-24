@@ -64,8 +64,9 @@ pub(super) fn normalize_prompt_settings(
     prompt_settings.system_prompt.push_str(DIAGRAM_GUIDANCE);
     prompt_settings.system_prompt.push('\n');
     prompt_settings.system_prompt.push_str(MATH_GUIDANCE);
-    prompt_settings.rag_prompt_template =
-        enforce_numeric_citation_format(&prompt_settings.rag_prompt_template);
+    // The citation rule is said once, in the system prompt, before the
+    // question. A second copy closed the document-answer template, after its
+    // "Answer:" cue, where the reading instruction now goes.
     prompt_settings
 }
 

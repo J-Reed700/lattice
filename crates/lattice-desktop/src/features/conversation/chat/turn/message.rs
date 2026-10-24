@@ -156,6 +156,8 @@ impl TurnMessage {
         .with_kb_attempted(frame.kb_attempted)
         .with_kb_sufficiency(frame.sufficiency.as_ref())
         .with_evidence_cut(kept.len() < self.items.len())
+        // A numbered passage is one the model reads before it answers.
+        .reading_passages(kept.iter().any(|item| !item.citations.is_empty()))
         .build()
     }
 
@@ -268,9 +270,21 @@ mod tests {
         ))
         .with_web_context(Some([page(5).1, page(6).1].join("\n\n")))
         .with_kb_attempted(true)
+        .reading_passages(true)
         .build();
         assert_eq!(whole, built);
         assert!(!whole.contains("Context window:"));
+    }
+
+    #[test]
+    fn only_a_message_showing_numbered_passages_asks_for_a_reading() {
+        use crate::features::conversation::chat::tool_loop::READING_INSTRUCTION;
+        let message = message();
+        assert!(message.render(6).ends_with(READING_INSTRUCTION));
+        assert!(message.render(1).ends_with(READING_INSTRUCTION));
+        assert!(!message.render(0).contains(READING_INSTRUCTION));
+        let folder_only = TurnMessage::new(frame()).with_folder(Some("src/main.rs".into()));
+        assert!(!folder_only.render(1).contains(READING_INSTRUCTION));
     }
 
     #[test]

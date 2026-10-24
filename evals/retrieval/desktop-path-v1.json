@@ -1,6 +1,6 @@
 {
  "name": "lattice-desktop-path-v1",
- "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have. The long-document tag and its twelve items were added on 2026-10-23 with the per-document cap cases (docs/design/2026-10-23-per-document-cap.md); runs before that date do not have them.",
+ "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have. The long-document tag and its twelve items were added on 2026-10-23 with the per-document cap cases (docs/design/2026-10-23-per-document-cap.md); runs before that date do not have them. Later on 2026-10-23 four long-document asks were rephrased as \"everything the <document> records about <subject>\" (lab-notebook, choir-minutes, conservation-record, observing-log), because their narrowing clause excluded a fact the rubric requires, and chronicle's ISO dates gained their written-out forms as alternates (docs/design/2026-10-23-answer-coverage.md section 7); runs before that are scored against the older wording.",
  "corpus": "evals/retrieval/synthetic-library-v3.json",
  "tags": {
   "multi-hop": "The answer needs facts from two or more documents.",
@@ -1419,10 +1419,14 @@
      "rubric": {
       "must_mention": [
        [
-        "1850-11-18"
+        "1850-11-18",
+        "18 November 1850",
+        "November 1850"
        ],
        [
-        "1860-02-24"
+        "1860-02-24",
+        "24 February 1860",
+        "February 1860"
        ],
        [
         "17.5 per cent",
@@ -1437,7 +1441,9 @@
         "4525.32"
        ],
        [
-        "1887-12-21"
+        "1887-12-21",
+        "21 December 1887",
+        "December 1887"
        ]
       ],
       "must_not_claim": [],
@@ -1457,7 +1463,7 @@
    ],
    "turns": [
     {
-     "ask": "List every reading and observation the soil lab notebook gives for the Throassmere core.",
+     "ask": "List everything the soil lab notebook records about the Throassmere core.",
      "rubric": {
       "must_mention": [
        [
@@ -1588,7 +1594,7 @@
    ],
    "turns": [
     {
-     "ask": "What did the choir committee decide about the Holdmere fund over the year? Give me every decision.",
+     "ask": "List everything the choir committee minutes record about the Holdmere fund over the year.",
      "rubric": {
       "must_mention": [
        [
@@ -1720,7 +1726,7 @@
    ],
    "turns": [
     {
-     "ask": "What treatments and checks has the Nouftley tapestry had, according to the conservation record book?",
+     "ask": "List everything the conservation record book records about the Nouftley tapestry.",
      "rubric": {
       "must_mention": [
        [
@@ -1763,7 +1769,7 @@
    ],
    "turns": [
     {
-     "ask": "Summarise every observation of Comet Dreaspstead in the observing log.",
+     "ask": "Summarise everything the observing log records about Comet Dreaspstead.",
      "rubric": {
       "must_mention": [
        [
