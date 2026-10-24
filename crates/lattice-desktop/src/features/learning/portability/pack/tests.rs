@@ -99,8 +99,8 @@ fn only_the_current_pack_version_imports() -> anyhow::Result<()> {
     let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
     assert_eq!(decoded.manifest.version, LEARNING_PACK_VERSION);
     let mut manifest = decoded.manifest.clone();
-    assert_eq!(LEARNING_PACK_VERSION, 5);
-    for unsupported in [0, 1, 2, 3, 4, LEARNING_PACK_VERSION + 1] {
+    assert_eq!(LEARNING_PACK_VERSION, 6);
+    for unsupported in [0, 1, 2, 3, 4, 5, LEARNING_PACK_VERSION + 1] {
         manifest.version = unsupported;
         let error = decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)
             .expect_err("only the current pack version imports");
@@ -264,7 +264,7 @@ fn content_privacy_declarations_match_entries_on_encode_and_decode() -> anyhow::
     let mut pack = input();
     pack.privacy.includes_answer_keys = true;
     pack.entries.push(LearningPackEntry {
-        path: "program/answer-keys.json".into(),
+        path: QUIZ_KEYS_TABLE_ENTRY.into(),
         kind: LearningPackEntryKind::Curriculum,
         bytes: b"[]".to_vec(),
     });
