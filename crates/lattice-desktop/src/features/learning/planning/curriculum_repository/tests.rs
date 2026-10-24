@@ -407,10 +407,21 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     let accepted = stored.accepted_revision.expect("accepted");
     let target = accepted.modules[0].lessons[0].id.clone();
     // Establish the conflicting persisted item before the job's content
-    // baseline. This test exercises publication rollback, not a stale job.
+    // baseline: another course's bank item already holds the ID the staged
+    // lesson's question joins the bank under. This test exercises
+    // publication rollback, not a stale job.
     let duplicate_question_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,0,'explanation','Existing item','An existing block the staged lesson collides with.','[]','[]')")
-        .bind(&target).execute(&pool).await.map_err(db)?;
+    let other = active_program(&pool).await?;
+    let other_outcome = curriculum
+        .plan(&other.summary.id)
+        .await?
+        .accepted_revision
+        .expect("accepted")
+        .modules[0]
+        .outcome_ids[0]
+        .clone();
+    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'single_choice',2,'Existing item','[\"One\",\"Two\"]',NULL,'[]','[]','person',NULL,?,?)")
+        .bind(&duplicate_question_id).bind(&other.summary.id).bind(&other_outcome).bind(uuid::Uuid::new_v4().to_string()).bind(now()).execute(&pool).await.map_err(db)?;
     let request = StartLearningGenerationJobRequestDto {
         operation_id: op_id(),
         program_id: program.summary.id.clone(),
@@ -722,13 +733,18 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
             source_ids: vec![],
         }],
         questions: vec![crate::features::learning::dto::LessonQuestion {
-            id: duplicate_question_id,
+            id: duplicate_question_id.clone(),
             kind: crate::features::learning::dto::LessonQuestionKind::Practice,
             prompt: "A conflicting item".into(),
             options: vec!["One".into(), "Two".into()],
             source_ids: vec![],
         }],
-        keys: vec![],
+        // Keyed, so the question joins the bank and meets the conflict.
+        keys: vec![crate::features::learning::dto::LessonAnswerKey {
+            question_id: duplicate_question_id,
+            correct_index: 0,
+            explanation: "One is the answer.".into(),
+        }],
     };
     broken.verification =
         Some(crate::features::learning::content_verification::tests::attest(&target, &broken));

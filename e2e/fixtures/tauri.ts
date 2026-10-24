@@ -194,7 +194,15 @@ export async function installTauriMock(page: Page) {
             throw error instanceof Error ? error.message : error;
           }
         }
-        if (ipc.served.includes(key) && window.__latticeServeCommand) return window.__latticeServeCommand(key, args);
+        if (ipc.served.includes(key) && window.__latticeServeCommand) {
+          // A Node handler's Error arrives carrying its Node stack; Tauri
+          // rejects with the serialized error alone, so pass on its message.
+          try {
+            return await window.__latticeServeCommand(key, args);
+          } catch (error) {
+            throw error instanceof Error ? error.message : error;
+          }
+        }
         ipc.unsupported.push(key);
         void window.__latticeReportUnsupported?.(key);
         throw new Error(`No e2e fixture answers ${command}`);

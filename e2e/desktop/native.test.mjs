@@ -190,7 +190,7 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
         'A rejected Learning Studio read must not poison the native command surface');
       const missingProgram = '00000000-0000-4000-8000-000000000404';
       for (const [command, args] of [
-        ['plugin:learning|get_learning_assessment_workspace', { id: missingProgram }],
+        ['plugin:learning|get_learning_quiz_overview', { programId: missingProgram }],
         ['plugin:learning|get_learning_plan', { id: missingProgram }],
         ['plugin:learning|get_learning_practical_workspace', { programId: missingProgram }],
         ['plugin:learning|get_learning_recall_workspace', { programId: missingProgram }],

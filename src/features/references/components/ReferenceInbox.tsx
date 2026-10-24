@@ -81,6 +81,9 @@ export function ReferenceInbox() {
 
   // Sync selectedId back into URL (?referenceId=) without polluting history.
   useEffect(() => {
+    // A linked reference may sit in a list that has not loaded yet; writing the
+    // current selection now would replace the link with a different item.
+    if (state.isRequestPending) return;
     const current = searchParams.get('referenceId');
     if (!selectedId) {
       // A deep link arrives before the list does. Stripping it on that first
@@ -99,7 +102,7 @@ export function ReferenceInbox() {
       next.set('referenceId', selectedId);
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, selectedId, setSearchParams, state.filteredItems.length, state.isLoading]);
+  }, [searchParams, selectedId, setSearchParams, state.filteredItems.length, state.isLoading, state.isRequestPending]);
 
   // Toggle sidebar via ⌘\
   useEffect(() => {

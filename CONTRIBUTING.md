@@ -5,11 +5,17 @@ behavioral changes, and avoid committing local reports or work-session notes.
 
 ## Setup
 
-Install Node.js 20.19+ or 22.12+ (CI uses 24), a current Rust toolchain, and
-the platform prerequisites listed by Tauri. Then run:
+On macOS or Linux, `./setup.sh --dev` installs the toolchains and
+dependencies and starts the app in development mode (`setup.cmd` or
+`setup.ps1 -Dev` on Windows). The README's
+[Getting started](README.md#getting-started) section lists what it installs.
+
+To do it by hand, install Node.js 20.19+ or 22.12+ (CI uses 24), Rust 1.95 or
+newer, and the platform prerequisites listed by Tauri. Then run:
 
 ```bash
 npm ci
+bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run tauri:dev
 ```
 
