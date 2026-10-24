@@ -1,0 +1,62 @@
+{
+  "items": 8,
+  "turns": 8,
+  "errors": [],
+  "overall": {
+    "items": 8,
+    "mechanical": {
+      "passed": 5,
+      "total": 8,
+      "rate": 0.625,
+      "wilson95": [
+        0.30574239460262737,
+        0.8631557141764026
+      ]
+    }
+  },
+  "by_tag": {
+    "long-document": {
+      "items": 8,
+      "mechanical": {
+        "passed": 5,
+        "total": 8,
+        "rate": 0.625,
+        "wilson95": [
+          0.30574239460262737,
+          0.8631557141764026
+        ]
+      }
+    }
+  },
+  "timing_ms": {
+    "answered_ms": {
+      "median": 95084.0,
+      "p95": 115404
+    },
+    "retrieval_ms": {
+      "median": 45480.0,
+      "p95": 54225
+    },
+    "generation_ms": {
+      "median": 44941.0,
+      "p95": 63745
+    },
+    "verification_wait_ms": {
+      "median": 26623.0,
+      "p95": 37282
+    }
+  },
+  "prompt_tokens": {
+    "cached_prompt_tokens": 136102,
+    "evaluated_prompt_tokens": 228739,
+    "completion_tokens": 11133
+  },
+  "observed": {
+    "turns_with_kb_search": 8,
+    "turns_with_corrective_retry": 0,
+    "turns_planner_skipped": 0,
+    "turns_insufficient": 0,
+    "turns_with_tool_calls": 0,
+    "model_calls_per_turn_median": 12.0
+  }
+}

@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::{LLMProvider, LLMSettingsDto},
     ports::llm_port::{
-        CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode, ToolChoice,
+        tool_specs, CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode,
+        ToolChoice, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -99,13 +100,62 @@ impl CloudLlm {
         self
     }
 
+    /// The output ceiling to send: the request's, or the configured one, cut
+    /// to the room the prompt leaves in the model's context window. A provider
+    /// refuses a request whose prompt and output ceiling together exceed the
+    /// window rather than writing less, as llama.cpp does
+    /// (`LlamaCppLlm::output_room_for`). A ceiling that fits is kept.
+    fn output_room(&self, request: &CompletionRequest) -> u32 {
+        let requested = request.effective_max_output_tokens(self.max_tokens);
+        let prompt_tokens = self.prompt_tokens(request);
+        let window = self.context_window;
+        let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
+        let allowed = requested.min(room);
+        if allowed < requested {
+            tracing::debug!(
+                requested,
+                allowed,
+                prompt_tokens,
+                window,
+                "Capped the cloud output reservation to what the window has left"
+            );
+        }
+        allowed
+    }
+
+    /// The prompt's tokens by this backend's count: every message with its
+    /// role, every call and result and the tool schemas, plus the chat
+    /// template's framing and each picture's declared cost. Opaque provider
+    /// state (signed reasoning) is not text and is left out, as the scheduler
+    /// leaves it out, so it never cuts an answer.
+    fn prompt_tokens(&self, request: &CompletionRequest) -> usize {
+        let text = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Native { .. } => None,
+                CompletionInput::Message { role, .. }
+                | CompletionInput::Multimodal { role, .. } => {
+                    Some(format!("{role}\n{}", item.text()))
+                }
+                _ => Some(item.text().into_owned()),
+            })
+            .chain((!request.tools.is_empty()).then(|| tool_specs(&request.tools).to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.count_tokens(&text)
+            + TEMPLATE_TOKENS_PER_MESSAGE * request.input.len()
+            + TEMPLATE_TOKENS_FOR_ANSWER
+            + request.image_tokens()
+    }
+
     fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
         if request.has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model));
         }
         if self.provider == LLMProvider::Openai {
             let input = messages::openai_input(&request.input)?;
-            let max_output = request.effective_max_output_tokens(self.max_tokens);
+            let max_output = self.output_room(request);
             let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":max_output});
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
@@ -155,7 +205,7 @@ impl CloudLlm {
             Ok(body)
         } else if self.provider == LLMProvider::Google {
             let messages = messages::chat_messages(&request.input)?;
-            let max_output = request.effective_max_output_tokens(self.max_tokens);
+            let max_output = self.output_room(request);
             let model = self.model.strip_prefix("models/").unwrap_or(&self.model);
             let mut body = json!({
                 "model": model,
@@ -220,7 +270,7 @@ impl CloudLlm {
             Ok(body)
         } else {
             let (system, messages) = messages::anthropic_messages(&request.input)?;
-            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":request.effective_max_output_tokens(self.max_tokens),"stream":stream});
+            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.output_room(request),"stream":stream});
             if let Some(sampling) = request.sampling {
                 if let Some(temperature) = sampling.temperature {
                     set_field(&mut body, "temperature", json!(temperature))?;

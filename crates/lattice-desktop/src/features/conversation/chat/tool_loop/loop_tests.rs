@@ -22,24 +22,42 @@ use std::sync::{Arc, Mutex};
 
 const CONVERSATION: &str = "tool-loop-conversation";
 
+/// One step of a model's script: a reply, or the provider failing.
+enum Scripted {
+    Reply(CompletionResponse),
+    Fail(String),
+}
+
+impl From<CompletionResponse> for Scripted {
+    fn from(reply: CompletionResponse) -> Self {
+        Self::Reply(reply)
+    }
+}
+
 /// Answers rounds from a script and condensing requests with fixed notes,
 /// keeping every request it was sent.
 struct Model {
-    script: Mutex<VecDeque<CompletionResponse>>,
+    script: Mutex<VecDeque<Scripted>>,
     notes: String,
     requests: Mutex<Vec<CompletionRequest>>,
+    /// The context window it reports.
+    window: AtomicUsize,
 }
 
 impl Model {
-    fn new(script: impl IntoIterator<Item = CompletionResponse>) -> Arc<Self> {
+    fn new<S: Into<Scripted>>(script: impl IntoIterator<Item = S>) -> Arc<Self> {
         Self::with_notes(script, "- Page A: the bridge opened in 1932 [1].")
     }
 
-    fn with_notes(script: impl IntoIterator<Item = CompletionResponse>, notes: &str) -> Arc<Self> {
+    fn with_notes<S: Into<Scripted>>(
+        script: impl IntoIterator<Item = S>,
+        notes: &str,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            script: Mutex::new(script.into_iter().collect()),
+            script: Mutex::new(script.into_iter().map(Into::into).collect()),
             notes: notes.to_string(),
             requests: Mutex::default(),
+            window: AtomicUsize::new(32_768),
         })
     }
 
@@ -70,7 +88,8 @@ impl LLMPort for Model {
         }
         let reply = self.script.lock().unwrap().pop_front();
         match reply {
-            Some(reply) => Ok(reply),
+            Some(Scripted::Reply(reply)) => Ok(reply),
+            Some(Scripted::Fail(error)) => Err(AppError::ServiceNotAvailable(error)),
             // Out of script: wait to be stopped.
             None => std::future::pending().await,
         }
@@ -79,7 +98,7 @@ impl LLMPort for Model {
         "scripted"
     }
     fn max_context_tokens(&self) -> usize {
-        32_768
+        self.window.load(Ordering::Relaxed)
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)

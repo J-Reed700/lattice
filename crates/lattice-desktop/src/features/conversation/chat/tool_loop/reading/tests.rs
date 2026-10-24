@@ -306,22 +306,117 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
 }
 
 #[tokio::test]
+async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
+    let first = "[1] -";
+    let second = "[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
+    let notes = format!("{first}\n{second}");
+    let counter = Model::new([]);
+    let reserved = counter.count_tokens(&notes);
+    let model = Model::new([
+        // Each cut at the output limit mid-line: only complete lines are kept.
+        reply(&format!("{first}\n[2] 1887-12-21. The last"), "length"),
+        reply(&format!("{second}\n[3] Die Mühle"), "length"),
+        reply("[3] -\n[4] -", "stop"),
+    ]);
+    let mut request = planned(&[1, 2, 3, 4]);
+    request.max_output_tokens = Some(u32::try_from(reserved).unwrap());
+    let read = read(&model, &request).await.unwrap();
+    let sent = model.requests();
+    assert_eq!(
+        sent.len(),
+        2,
+        "the reservation is spent: [3] and [4] are not asked for"
+    );
+    let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens).collect();
+    let after_first = reserved - counter.count_tokens(first);
+    assert_eq!(
+        ceilings,
+        vec![
+            Some(u32::try_from(reserved).unwrap()),
+            Some(u32::try_from(after_first).unwrap())
+        ]
+    );
+    assert_eq!(read.text, notes, "complete lines only");
+    assert_eq!(read.tokens, reserved, "no more than the answer may");
+    assert_eq!(read.noted, [2].into());
+    assert!(!read.lines.contains_key(&3));
+}
+
+#[test]
+fn a_message_that_numbers_no_source_the_turn_holds_asks_for_no_reading() {
+    let planned = planned(&[7, 8]);
+    assert!(planned.input[1].text().contains(READING_INSTRUCTION));
+    assert!(asked(&planned.input, &sources()).is_none());
+}
+
+#[test]
+fn a_note_in_a_script_without_spaces_is_split_at_its_own_full_stops() {
+    let passage = normalize_whitespace(
+        "磨坊于1850年洪水后重新启用。磨坊主后来搬走了。磨坊在1860年卖给了磨坊主的家人。",
+    );
+    let notes =
+        parse_notes("［5］：磨坊于1850年洪水后重新启用。磨坊在1860年卖给了磨坊主的家人。\n[6]：-");
+    assert_eq!(
+        notes,
+        vec![
+            (
+                5,
+                Some("磨坊于1850年洪水后重新启用。磨坊在1860年卖给了磨坊主的家人。".into())
+            ),
+            (6, None),
+        ]
+    );
+    let note = notes[0].1.as_deref().unwrap();
+    assert!(
+        verbatim(note, &passage),
+        "two sentences copied, not side by side"
+    );
+    assert!(!verbatim("磨坊于1850年重新启用。", &passage));
+}
+
+#[test]
+fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
+    let read = vec![
+        CompletionInput::Message {
+            role: "assistant".into(),
+            content: "[1] -".into(),
+        },
+        CompletionInput::Message {
+            role: "user".into(),
+            content: WRITE_INSTRUCTION.into(),
+        },
+    ];
+    assert!(noted_in(&read));
+    let unread = vec![CompletionInput::ToolResult {
+        id: "1".into(),
+        output: "Results.".into(),
+    }];
+    assert!(!noted_in(&unread));
+}
+
+#[tokio::test]
 async fn a_reading_with_no_label_in_it_gives_no_notes() {
     let model = Model::new([reply("The mill closed in 1887.", "stop")]);
     assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
     assert_eq!(model.requests().len(), 1);
 }
 
-#[test]
-fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instruction_after_it() {
+#[tokio::test]
+async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instruction_after_it() {
     let request = planned(&[1, 2]);
     let mut writing = request.clone();
     let notes = Notes {
         text: "[1] -\n[2] -".into(),
         lines: BTreeMap::from([(1, None), (2, None)]),
         noted: BTreeSet::new(),
+        tokens: 3,
     };
-    append_notes(&mut writing, &notes);
+    assert!(append_notes(&Model::new([]), &mut writing, &notes).await);
+    assert_eq!(
+        writing.max_output_tokens,
+        Some(777),
+        "a window with room keeps the reservation"
+    );
     assert_eq!(
         json(&writing.input[..request.input.len()].to_vec()),
         json(&request.input)
@@ -340,6 +435,7 @@ fn a_continuation_quotes_each_left_out_note() {
         text: String::new(),
         lines: BTreeMap::from([(6, Some("A.".into())), (7, Some("B.".into()))]),
         noted: [6, 7].into(),
+        tokens: 4,
     };
     assert_eq!(
         continue_instruction(&[6, 7].into(), &notes),

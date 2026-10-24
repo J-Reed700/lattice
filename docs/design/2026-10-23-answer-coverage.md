@@ -95,7 +95,9 @@ The notes also make the two failure kinds distinguishable in the turn record, wh
 | Quantity | Source |
 |---|---|
 | Passages read | the labels in the prompt (evidence budget → `retrieval_depth`) |
-| Reading output ceiling | the round's `max_output_tokens` (the context assembler's output reservation) |
+| Reading output ceiling | the answer's output reservation R, for all sweeps together: each sweep asks for R less the notes kept so far (measured with the backend's tokenizer where it has one), and the reading ends at zero |
+| Writing round ceiling | min(R, window − measured writing request); the notes are withdrawn when that room is smaller than the notes' own measured size |
+| Coverage continuation ceiling | min(R, window − measured continuation request); skipped when no room is left. Written whole before it is shown, then shown and saved as one piece; a failure or the clock keeps the answer as it was |
 | Reading continuation bound | the set of unaccounted labels; stop on no progress |
 | Coverage continuation bound | the set of left-out labels; stop on no progress |
 | Time | the turn's `TurnClock` (deadline/Stop), as every round |
@@ -125,7 +127,7 @@ llama.cpp refuses `json_schema` together with `tools` in one request, and the to
 
 - Steps: `Generate` "Reading the passages" (disclosure = notes), `Generate` "Writing the answer" as today, `Generate` "Adding what was left out" for a continuation, each with its result line.
 - The saved assistant message is the answer text including continuations; the notes live in the turn record only.
-- Research turns: the notes and the writing instruction sit after `planned_len`, so `journal.round` saves them with the first round's transcript; a resumed turn with a saved transcript skips the reading round (it is in the transcript).
+- Research turns: the notes and the writing instruction sit after `planned_len`, so `journal.round` saves them with the first round's transcript; a resumed turn with a saved transcript skips the reading round (it is in the transcript). A resumed turn whose saved rounds hold no notes (the reading failed or was withdrawn) has the reading instruction withdrawn from its message, as the live turn did.
 - Explorer turns without library search have no labels and are untouched. A turn whose prompt has no labels (greeting, closed-book without evidence) is untouched.
 
 ### 4.6 Risks, and the safe failure for each

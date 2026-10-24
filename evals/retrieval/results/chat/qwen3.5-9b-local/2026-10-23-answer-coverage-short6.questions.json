@@ -1,0 +1,189 @@
+{
+ "name": "lattice-desktop-path-v1",
+ "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have. The long-document tag and its twelve items were added on 2026-10-23 with the per-document cap cases (docs/design/2026-10-23-per-document-cap.md); runs before that date do not have them. Later on 2026-10-23 four long-document asks were rephrased as \"everything the <document> records about <subject>\" (lab-notebook, choir-minutes, conservation-record, observing-log), because their narrowing clause excluded a fact the rubric requires, and chronicle's ISO dates gained their written-out forms as alternates (docs/design/2026-10-23-answer-coverage.md section 7); runs before that are scored against the older wording.",
+ "corpus": "evals/retrieval/synthetic-library-v3.json",
+ "tags": {
+  "multi-hop": "The answer needs facts from two or more documents.",
+  "planner-rewrite": "The question shares little vocabulary with the passage that answers it; the corpus planner's rewrite (or HyDE) is what reaches it.",
+  "corrective-retry": "A first pass is likely to come back thin (paraphrase, damaged scan, deep needle), so the sufficiency check may order the corrective retry.",
+  "opening-or-section": "The answer sits at a named document's opening, under a numbered clause, or deep inside one long document.",
+  "abstain": "The corpus does not contain the answer; a correct reply says so and invents nothing.",
+  "conflict": "Two documents (versions, rings, sessions) give different answers; a correct reply says which applies or that they differ.",
+  "numeric-precision": "A number, amount, date or identifier must come back exactly.",
+  "follow-up-memory": "A later turn only makes sense with the earlier turns of the same conversation.",
+  "table": "The answer is one cell of a Markdown table or CSV block.",
+  "ocr": "The answer is in an OCR-damaged scan.",
+  "multilingual": "The document is not in English.",
+  "entity-collision": "Several unrelated things share the name in the question.",
+  "fragment": "A one-line note beats long notes that only mention the topic.",
+  "pronoun-follow-up": "A later turn refers back with a pronoun or 'that'; its search query has to be rewritten with the antecedent, which may sit in an earlier answer rather than an earlier question.",
+  "ellipsis-follow-up": "A later turn is a fragment ('And on the edge ring?') that only becomes a question inside the earlier turn's frame.",
+  "topic-shift": "A later turn changes subject; carrying the earlier topic into its search query (rewrite drift) retrieves the wrong documents. Some return to the first topic past the intervening one.",
+  "cross-turn-evidence": "A later turn's answer needs facts established in two earlier turns, from different documents, put together.",
+  "long-document": "One long document holds six facts the answer needs, each in a different part of it, so retrieval has to bring back more than a few passages of the same document."
+ },
+ "items": [
+  {
+   "id": "dp-paraphrase-clock",
+   "tags": [
+    "planner-rewrite",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "What does the system do when the machines cannot agree on what time it is?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Reillmere"
+       ],
+       [
+        "64 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-core-04"
+      ],
+      "abstain": false,
+      "notes": "When the clock source disagrees with its peers, the Reillmere arbiter freezes ordering and holds writes for 64 weeks before failing them outright."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-buried-handbook-ticket",
+   "tags": [
+    "opening-or-section",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In the platform operations handbook, unpaginated edition: what reference goes on a ticket raised against this handbook?",
+     "rubric": {
+      "must_mention": [
+       [
+        "SIG-26321"
+       ]
+      ],
+      "must_not_claim": [
+       "SIG-59359"
+      ],
+      "expected_citations": [
+       "handbook-prose-0"
+      ],
+      "abstain": false,
+      "notes": "Tickets against the unpaginated platform operations handbook are filed under the Tedgewick heading with the standing reference SIG-26321 (the structured edition uses a different reference)."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-buried-agreement-meeting",
+   "tags": [
+    "opening-or-section",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Under the Tessivar Cloud framework agreement, is there a meeting the parties have to hold before anyone goes to court, and how soon?",
+     "rubric": {
+      "must_mention": [
+       [
+        "31 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-0"
+      ],
+      "abstain": false,
+      "notes": "Yes: the Reackgate step obliges the parties to hold an escalation meeting within 31 weeks of a notified dispute before either may start proceedings."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-section-after-clause",
+   "tags": [
+    "opening-or-section"
+   ],
+   "turns": [
+    {
+     "ask": "In the Tessivar Cloud framework agreement, what does the paragraph right after clause 24.111 say, before Section 25 begins?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Reackgate"
+       ],
+       [
+        "31 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-0"
+      ],
+      "abstain": false,
+      "notes": "Right after clause 24.111 comes the Reackgate step: the parties must hold an escalation meeting within 31 weeks of a notified dispute before either may commence proceedings."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-opening-agreement",
+   "tags": [
+    "opening-or-section"
+   ],
+   "turns": [
+    {
+     "ask": "How does the Brackleton Facilities framework agreement open? What is its first section called?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Scope and application"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-2"
+      ],
+      "abstain": false,
+      "notes": "The Brackleton Facilities framework agreement (consolidated text) opens with Section 1, 'Scope and application'."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-transcript-rollback",
+   "tags": [
+    "opening-or-section",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In the quarterly platform review transcript, what do we roll back to when this goes wrong, and is it just the previous build?",
+     "rubric": {
+      "must_mention": [
+       [
+        "v5.7.3",
+        "5.7.3"
+       ]
+      ],
+      "must_not_claim": [
+       "v7.2.3",
+       "v7.2.8"
+      ],
+      "expected_citations": [
+       "transcript-long-0"
+      ],
+      "abstain": false,
+      "notes": "The Geangford rollback target is v5.7.3, explicitly not whatever build is current at the time."
+     }
+    }
+   ]
+  }
+ ]
+}
