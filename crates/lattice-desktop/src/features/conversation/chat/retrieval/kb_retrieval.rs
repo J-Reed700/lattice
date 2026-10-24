@@ -400,16 +400,19 @@ pub(super) async fn run_kb_retrieval(
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
     }
     timings.kb_sufficient = Some(verdict.sufficient);
-    search_response.results.truncate(kb_search_limit);
-    if let Err(error) = super::corpus_plan::expand_evidence(
+    // The first `kb_search_limit` passages are the hits, in rank order. Every
+    // hit's section neighbours follow them as context, which the prompt's
+    // evidence budget carries only in the room the hits leave: a neighbour
+    // never displaces a hit.
+    if let Err(error) = super::corpus_plan::append_context(
         repository.as_ref(),
         &mut search_response.results,
         &scope.document_ids,
-        kb_search_limit + 8,
+        kb_search_limit,
     )
     .await
     {
-        warn!(%error, "Could not expand neighboring section evidence");
+        warn!(%error, "Could not read the hits' section context");
     }
     search_response.total = search_response.results.len();
     // RRF scores are ranks, not probabilities. A cosine cutoff must never be
