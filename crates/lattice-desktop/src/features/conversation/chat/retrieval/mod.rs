@@ -39,6 +39,7 @@ pub(super) use self::source_citations::{
     drop_unbudgeted_sources, web_context_entries, WebContextItem,
 };
 mod sufficiency;
+mod summary_tier;
 mod tool_format;
 use self::conversation_helpers::{
     build_hyde_context_window_for_conversation as build_hyde_context_window_for_conversation_impl,
