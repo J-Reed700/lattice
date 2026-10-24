@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "dataset_sha256": "c8f59008f58ea46af0621913fb62db1911039df2350727a53540162f98d27672",
+  "expectations_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "retrieval_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "settings": {
+    "harness": "shipped_desktop_path",
+    "model": null,
+    "model_revision": null,
+    "recipe_sha256": null,
+    "corpus_sha256": null,
+    "thinking": null,
+    "commit": null,
+    "judge": null
+  },
+  "harness_sha256": "a9773248274e81e2e0487609865f6d0355da6a5a54cf5f8e723955646e240652",
+  "run_id": "2a40e191f9caab8dcf4abc8ef18e88b03bf96606a60531cf5a51e7ce6283e28c"
+}
