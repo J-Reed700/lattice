@@ -9,7 +9,9 @@ cannot answer whether smaller chunks, late chunking, a sparse branch, a
 different embedding model or a reranker is worth its latency.
 
 v3 is the fixture that can. It is one person's messy vault rather than a tidy
-company wiki: **379 documents, 194 queries, 1.61 M characters**, 1.8 MB of JSON.
+company wiki: **405 documents, 219 queries, 2.31 M characters**, 2.6 MB of JSON
+(379 documents, 194 queries and 1.61 M characters before the per-document cap cases
+were added on 2026-10-23; see [below](#the-per-document-cap-cases-2026-10-23)).
 The schema is v2's, so `crates/lattice-desktop/examples/retrieval_eval/`, `scripts/rag_eval.py`,
 `scripts/compare_rag_eval.py`, `scripts/validate_rag_evals.py` and
 `scripts/eval_integrity.py` all read it unchanged.
@@ -28,19 +30,23 @@ platform engineer at Quillon Grid; the vault mixes work and home.
 | 24 | `personal/reading`, 24 `personal/home`, 20 `personal/recipes` |
 | 22 | `archive/scans` — OCR-damaged, with repeated page furniture |
 | 18 | `work/chat` — timestamped on-call logs |
-| 16 | `work/long-form` — 28 k to 87 k characters each, 57 % of the corpus |
+| 16 | `work/long-form` — 28 k to 87 k characters each, 39 % of the corpus (57 % before 2026-10-23) |
 | 16 | `vendors/orders`, 8 `vendors/contracts`, 12 `work/projects` |
 | 16 | `personal/notes`, 12 `personal/fragments` |
 | 15 | `work/international` — German, Spanish, Russian, Japanese, Chinese |
 | 18 | `engineering/records` and `finance/extracts` — tables and CSV blocks |
 | 4 | `work/facilities` |
+| 12 | long non-software records for the cap cases — a household log, a transcript, a chronicle, a lab notebook, a tenancy agreement, a cookbook, minutes, an apiary log, a cruising log, a conservation record, an observing log, family history notes; 41 k to 46 k characters each, in their own collections (`personal/home`, `community/minutes`, `archive/history`, …) |
+| 7 | `community/records` — six forms filled in ten times over and one re-quoted email thread, 20 k to 32 k characters each |
+| 7 | `community/notes` — short notes on the same topics as those seven |
 
 ## What each dimension probes
 
 Every query carries a `dimensions` list, so `rag_eval.py`'s `by_dimension` block
 attributes a regression to a named behaviour. The twelve v2 names are kept with
-the same meaning; five are new. The minimum is 12 queries per dimension and the
-build fails below it.
+the same meaning; five are new in v3, and two more came with the per-document cap
+cases on 2026-10-23. The minimum is 12 queries per dimension and the build fails
+below it.
 
 | dimension | n | the weakness it exposes |
 | --- | ---: | --- |
@@ -60,6 +66,8 @@ build fails below it.
 | `scope and applicability boundaries` | 13 | The v2 name: a rule scoped to the core rings with a sibling scoped to the Wendover Basin edge ring, each the wrong answer to the other's question. |
 | `entity collisions` | 12 | The v2 name. Four codenames (`Garnetline`, `Ostrel`, `Sibbe`, `Dunlark`) each name three unrelated things — a product, something personal, and a building or street. |
 | `short fragment notes` | 16 | One- and two-line notes with `[[wikilinks]]`, competing against twelve long notes that list every fragment topic by name and explain none of them. |
+| `many passages from one document` | 12 | Added 2026-10-23. Six facts about one named thing (a stove, a councillor's commitments, a mill, a soil core, a society's obligations, a starter, a fund, a hive, a lock flight, a tapestry, a comet, an ancestor) planted at six depths of a 41 k–46 k character record, at least 6,000 bytes apart so each sits in its own chunk. The query asks for everything about that thing; one document graded 3, six spans. Score passage recall@10: a cap of four chunks per document holds it at 4/6 = 0.667 at most. |
+| `repetitive document` | 13 | Added 2026-10-23. Six forms whose ten repeats are identical apart from one field (99.6–99.9 % alike by `difflib` ratio), plus an email thread where every reply re-quotes the ones before. *Flooding guard* (7, category `answer beside a repetitive document`): the answer is in a short note on the same topic, graded 3, and the repetitive document is graded 0; score document recall@5 and passage recall@5. *Variant check* (6, category `one changed field in a repeated template`): the answer is the changed field in repeat 7 of 10, one span; score passage recall@5. A dedup by text or embedding similarity would drop that repeat as a copy of its siblings. |
 | `unanswerable questions` | 21 | The v2 marking: `relevance` is `{}`. Plausible, on-domain, with near-miss documents present — an identifier one digit outside every minted range, a named clause that does not exist, an attribute the vault never records. The build proves each of those strings occurs in no document. |
 
 ## Passage labels (`answer_spans`)
@@ -152,6 +160,10 @@ that each integrity check fails on the mistake it exists to catch.
   a positively graded document, no query has more than three positives (so
   Recall@5 is attainable), every dimension is in the declared vocabulary, and the
   output passes `rag_eval.validate_dataset` and `eval_integrity`.
+- **Spread.** In a `many passages from one document` record, consecutive planted
+  facts sit at least `MIN_FACT_GAP_BYTES` (6,000) apart. Chat chunks at 800 tokens
+  (`ChunkerConfig::default`), about 3,200–4,500 bytes of this English, so no chunk
+  can hold two of them.
 
 ## Running and scoring it
 
@@ -177,6 +189,31 @@ python3 scripts/compare_rag_eval.py evals/retrieval/synthetic-library-v3.json \
   --baseline /tmp/v3-baseline.jsonl --candidate /tmp/v3-candidate.jsonl \
   --k 5 --max-regression 0.02 --min-queries 5
 ```
+
+## The per-document cap cases (2026-10-23)
+
+Until these were added no query needed more than two passages of one document and no
+document was near-repetitive, so a cap on chunks per document could not move any
+score in either direction ([`docs/design/2026-10-23-per-document-cap.md`](../../docs/design/2026-10-23-per-document-cap.md),
+section 2). The two dimensions above make it measurable:
+
+- `many passages from one document` shows the cap's harm: passage recall@10 can
+  reach 1.0 without it and 0.667 at most with it.
+- The flooding guard is where a cap could earn its keep, by stopping one document's
+  near-identical chunks from filling the top 5. The design predicts it does not move.
+- The variant check stops anyone replacing the cap with a similarity dedup.
+
+All 26 documents and 25 queries are new and are built last, from their own random
+streams and after every older token has been minted, so the 379 older documents and
+194 older queries are byte-identical to the previous build and per-query comparisons
+with earlier runs still hold. Pair runs by query id (`compare_rag_eval.py`); an
+overall mean moves simply because 25 queries joined it. The new queries carry only
+the two new dimensions, so the older dimensions' per-dimension numbers mean the same
+as before. The terse slice leaves them out (`EXCLUDED_DIMENSIONS` in
+`scripts/terse_slice.py`), so its population and length targets are unchanged.
+
+The same twelve long records back the `long-document` items in
+[`desktop-path-v1.json`](desktop-path-v1.json), one per record, each asking for all six facts.
 
 ## Known limits
 

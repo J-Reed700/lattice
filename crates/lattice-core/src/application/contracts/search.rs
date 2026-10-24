@@ -16,7 +16,7 @@ pub use dto::{
     SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
 pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedRanking};
-pub use ranking::{BranchKind, QueryBranches, RankedBranch, RerankOptions, Reranked, Spread};
+pub use ranking::{BranchKind, QueryBranches, RankedBranch, RerankOptions, Reranked};
 
 /// Bounded catalog evidence for planning document retrieval. The preview is
 /// actual opening text, never a generated summary.
