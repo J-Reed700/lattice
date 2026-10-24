@@ -28,6 +28,10 @@ pub struct LessonFacts {
     /// The lesson-level outcome; every prepared lesson has one.
     pub outcome_id: Option<String>,
     pub source_version_ids: Vec<String>,
+    /// The formats the lesson's latest quiz blueprint asks; empty before its
+    /// first. A copied course carries its blueprints and banks under fresh
+    /// lesson IDs, so the mix already stored is kept rather than picked again.
+    pub quiz_formats: Vec<LearningItemFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,8 +81,8 @@ pub fn default_settings() -> LearningQuizSettingsDto {
     }
 }
 
-/// A stable choice from the lesson ID, so a lesson's quiz mix never changes
-/// between preparations.
+/// A stable choice from the lesson ID, so a lesson's first quiz mix never
+/// changes between preparations; once stored, the blueprint keeps it.
 fn stable_pick(seed: &str, choices: usize) -> usize {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in seed.bytes() {
@@ -155,8 +159,14 @@ pub fn blueprint_for(
             let typed = [LearningItemFormat::ShortAnswer, LearningItemFormat::Cloze];
             let pick = |choices: &[LearningItemFormat], salt: &str| {
                 choices
-                    .get(stable_pick(&format!("{}:{salt}", lesson.id), choices.len()))
+                    .iter()
                     .copied()
+                    .find(|format| lesson.quiz_formats.contains(format))
+                    .or_else(|| {
+                        choices
+                            .get(stable_pick(&format!("{}:{salt}", lesson.id), choices.len()))
+                            .copied()
+                    })
                     .unwrap_or(LearningItemFormat::SingleChoice)
             };
             slots.push(requirement(
@@ -438,14 +448,21 @@ pub async fn course_facts_in(
                 }
             }
         }
+        let prepared = row.get::<String, _>("preparation") == "ready";
+        let quiz_formats = if prepared {
+            lesson_quiz_formats_in(connection, program_id, &id).await?
+        } else {
+            Vec::new()
+        };
         lessons.push(LessonFacts {
             id,
             module_id: row.get("module_id"),
             title: row.get("title"),
             objective: row.get("objective"),
-            prepared: row.get::<String, _>("preparation") == "ready",
+            prepared,
             outcome_id,
             source_version_ids: sources.into_iter().collect(),
+            quiz_formats,
         });
     }
     Ok(CourseFacts {
@@ -453,6 +470,26 @@ pub async fn course_facts_in(
         modules,
         lessons,
     })
+}
+
+/// The formats a lesson's latest quiz blueprint asks; empty before its first.
+pub async fn lesson_quiz_formats_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    lesson_id: &str,
+) -> Result<Vec<LearningItemFormat>> {
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id.to_owned()),
+    };
+    let Some(blueprint) = latest_blueprint_in(connection, program_id, &scope).await? else {
+        return Ok(Vec::new());
+    };
+    Ok(requirements_in(connection, &blueprint)
+        .await?
+        .into_iter()
+        .map(|requirement| requirement.format)
+        .collect())
 }
 
 /// A stored blueprint revision.
@@ -701,61 +738,5 @@ pub fn validate_scope(scope: &LearningQuizScopeDto) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn facts() -> CourseFacts {
-        let lesson = |id: &str, module: &str, prepared: bool| LessonFacts {
-            id: id.into(),
-            module_id: module.into(),
-            title: format!("Lesson {id}"),
-            objective: "Explain it".into(),
-            prepared,
-            outcome_id: prepared.then(|| format!("o-{id}")),
-            source_version_ids: vec![],
-        };
-        CourseFacts {
-            program_title: "Cell biology".into(),
-            modules: vec![ModuleFacts {
-                id: "m1".into(),
-                title: "Enzymes".into(),
-                outcome_ids: vec!["mo1".into()],
-            }],
-            lessons: vec![lesson("l1", "m1", true), lesson("l2", "m1", false)],
-        }
-    }
-
-    #[test]
-    fn lesson_quizzes_need_a_prepared_lesson_and_ask_eight_items() {
-        let settings = default_settings();
-        let scope = |id: &str| LearningQuizScopeDto {
-            kind: LearningQuizScopeKind::Lesson,
-            id: Some(id.into()),
-        };
-        assert!(blueprint_for(&scope("l2"), &facts(), &settings).is_none());
-        let quiz = blueprint_for(&scope("l1"), &facts(), &settings).unwrap();
-        let items: usize = quiz.slots.iter().map(|s| s.requirement.count).sum();
-        assert_eq!(items, 8);
-        assert_eq!(quiz.passing_score, 0.7);
-        let without_written = LearningQuizSettingsDto {
-            written_answers: false,
-            ..settings
-        };
-        let quiz = blueprint_for(&scope("l1"), &facts(), &without_written).unwrap();
-        assert!(quiz
-            .slots
-            .iter()
-            .all(|s| s.requirement.format != LearningItemFormat::Explanation));
-    }
-
-    #[test]
-    fn module_tests_cover_prepared_lessons_and_say_so() {
-        let scope = LearningQuizScopeDto {
-            kind: LearningQuizScopeKind::Module,
-            id: Some("m1".into()),
-        };
-        let test = blueprint_for(&scope, &facts(), &default_settings()).unwrap();
-        assert_eq!(test.coverage, Some((1, 2)));
-        assert_eq!(test.passing_score, 0.75);
-    }
-}
+#[path = "quiz_blueprints_tests.rs"]
+mod tests;

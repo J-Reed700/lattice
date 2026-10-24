@@ -58,10 +58,16 @@ SET sql = replace(
 WHERE type = 'table' AND name = 'learning_assessment_submissions';
 
 -- The single-index columns below are dropped, and SQLite refuses DROP COLUMN
--- while a table-level CHECK names the column, so that CHECK goes first.
+-- while a table-level CHECK names the column, so that CHECK goes first. The
+-- stored CREATE text keeps the line ends of the checkout the app was built
+-- from (CRLF on Windows), so the CHECK is removed after either.
 UPDATE sqlite_schema
 SET sql = replace(
-    sql,
+    replace(
+        sql,
+        ',' || char(13) || char(10) || '    CHECK(selected_index IS NULL OR selected_index >= 0)',
+        ''
+    ),
     ',' || char(10) || '    CHECK(selected_index IS NULL OR selected_index >= 0)',
     ''
 )
