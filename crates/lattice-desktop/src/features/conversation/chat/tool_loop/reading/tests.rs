@@ -1,6 +1,9 @@
+use super::close_read::CLOSE_READ_INSTRUCTION;
+use super::notes::locate;
 use super::*;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::error::AppError;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -94,6 +97,9 @@ fn reply(text: &str, finish_reason: &str) -> CompletionResponse {
 struct Model {
     script: Mutex<VecDeque<CompletionResponse>>,
     requests: Mutex<Vec<CompletionRequest>>,
+    context_tokens: Option<usize>,
+    /// Fails every request past the script, as a provider that went down.
+    down_after_script: bool,
 }
 
 impl Model {
@@ -101,6 +107,27 @@ impl Model {
         Self {
             script: Mutex::new(script.into_iter().collect()),
             requests: Mutex::default(),
+            context_tokens: None,
+            down_after_script: false,
+        }
+    }
+
+    fn going_down_after(script: impl IntoIterator<Item = CompletionResponse>) -> Self {
+        Self {
+            down_after_script: true,
+            ..Self::new(script)
+        }
+    }
+
+    fn with_context_tokens(
+        context_tokens: usize,
+        script: impl IntoIterator<Item = CompletionResponse>,
+    ) -> Self {
+        Self {
+            script: Mutex::new(script.into_iter().collect()),
+            requests: Mutex::default(),
+            context_tokens: Some(context_tokens),
+            down_after_script: false,
         }
     }
 
@@ -114,13 +141,19 @@ impl LLMPort for Model {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.requests.lock().unwrap().push(request.clone());
         let reply = self.script.lock().unwrap().pop_front();
-        Ok(reply.unwrap_or_else(reply_nothing))
+        match reply {
+            Some(reply) => Ok(reply),
+            None if self.down_after_script => {
+                Err(AppError::ServiceNotAvailable("The provider is down".into()))
+            }
+            None => Ok(reply_nothing()),
+        }
     }
     fn model_name(&self) -> &str {
         "scripted"
     }
     fn max_context_tokens(&self) -> usize {
-        32_768
+        self.context_tokens.unwrap_or(32_768)
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -193,31 +226,115 @@ fn a_reading_cut_at_its_limit_keeps_only_its_complete_lines() {
 }
 
 #[test]
-fn a_note_counts_only_when_it_is_copied_from_its_own_passage() {
+fn a_note_is_found_in_the_passage_it_was_copied_from() {
     let passages = passages();
-    let mill = passages.0.get(&2).unwrap();
-    assert!(verbatim(
-        "1887-12-21. The last miller at Greassby Mill   retired,\nand the building was let as a store.",
-        mill
-    ));
-    assert!(verbatim(
-        "\"The last miller at Greassby Mill retired, and the building was let as a store.\"",
-        mill
-    ));
-    assert!(!verbatim("The last miller retired in December 1887.", mill));
-    assert!(!verbatim(
-        "I'm putting £6,497.92 from my ward budget towards the new kitchen.",
-        mill
-    ));
-    assert!(!verbatim("none", mill));
-    let mühle = passages.0.get(&3).unwrap();
-    assert!(verbatim(
-        "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen. Der Müller zog später fort.",
-        mühle
-    ));
-    assert!(
-        verbatim("„Der Müller zog später fort.“", mühle),
+    assert_eq!(
+        locate(
+            "1887-12-21. The last miller at Greassby Mill   retired,\nand the building was let as a store.",
+            &passages
+        ),
+        [2]
+    );
+    assert_eq!(
+        locate(
+            "\"The last miller at Greassby Mill retired, and the building was let as a store.\"",
+            &passages
+        ),
+        [2]
+    );
+    assert!(locate("The last miller retired in December 1887.", &passages).is_empty());
+    assert_eq!(
+        locate(
+            "I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled.",
+            &passages
+        ),
+        [1],
+        "a quote from another passage is found there"
+    );
+    assert!(locate("none", &passages).is_empty());
+    assert_eq!(
+        locate(
+            "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen. Der Müller zog später fort.",
+            &passages
+        ),
+        [3]
+    );
+    assert_eq!(
+        locate("„Der Müller zog später fort.“", &passages),
+        [3],
         "quotation marks around a copy are not part of it"
+    );
+}
+
+#[test]
+fn a_note_copied_from_one_other_passage_is_that_passages_note() {
+    let passages = passages();
+    let mühle = "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen.";
+    let molino = "El molino se vendió en 1860 a la familia del molinero.";
+    let posada = "La escritura se firmó en la posada.";
+    let mut lines = BTreeMap::from([
+        (1, Some(mühle.to_string())),
+        (2, Some(molino.to_string())),
+        (3, None),
+        (4, Some(posada.to_string())),
+    ]);
+    let (noted, moved) = attribute(&mut lines, &passages);
+    assert_eq!(moved, vec![(1, 3)]);
+    assert_eq!(noted, [3, 4].into());
+    assert_eq!(
+        lines[&3],
+        Some(mühle.into()),
+        "it takes the place of the hyphen"
+    );
+    assert_eq!(
+        lines[&1],
+        Some(mühle.into()),
+        "the label written keeps its line, as a mistaken note"
+    );
+    assert_eq!(
+        lines[&4],
+        Some(posada.into()),
+        "a passage that holds a copy of its own keeps it"
+    );
+    assert_eq!(lines[&2], Some(molino.into()));
+}
+
+#[test]
+fn a_note_found_in_several_passages_stays_a_mistaken_note() {
+    let filler = "The treasurer noted that the reserve is healthy.";
+    let passages = Passages(BTreeMap::from([
+        (
+            1,
+            Passage::from(format!("{filler} The roof was mended in 1851.")),
+        ),
+        (
+            2,
+            Passage::from(format!("The hall opened in 1932. {filler}")),
+        ),
+        (3, Passage::from("The bell was cast in 1702.")),
+    ]));
+    let mut lines = BTreeMap::from([(1, None), (2, None), (3, Some(filler.to_string()))]);
+    let written = lines.clone();
+    let (noted, moved) = attribute(&mut lines, &passages);
+    assert!(noted.is_empty());
+    assert!(moved.is_empty());
+    assert_eq!(lines, written, "nothing is guessed");
+}
+
+#[test]
+fn a_numbered_list_of_labels_is_read_by_its_labels() {
+    assert_eq!(
+        parse_notes("1. [1] -\n12. [12] The bell was cast in 1702.\n1. -"),
+        vec![
+            (1, None),
+            (12, Some("The bell was cast in 1702.".into())),
+            (1, None),
+        ]
+    );
+    assert_eq!(
+        parse_notes("2. 1887-12-21. The last miller retired."),
+        vec![(2, Some("1887-12-21. The last miller retired.".into()))],
+        "a bare number after the label is the note's own"
     );
 }
 
@@ -252,13 +369,17 @@ fn every_way_of_citing_a_passage_uses_it() {
 #[tokio::test]
 async fn the_reading_round_is_the_planned_request_with_calls_forbidden_and_no_sampling() {
     let model = Model::new([reply(
-        "[1] I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled.\n[2] -\n[3] -\n[4] -",
+        &format!("[1] {KITCHEN}\n[2] {MILL}\n[3] {MÜHLE}\n[4] {MOLINO}"),
         "stop",
     )]);
     let request = planned(&[1, 2, 3, 4]);
     let notes = read(&model, &request).await.unwrap();
     let sent = model.requests();
-    assert_eq!(sent.len(), 1, "every label accounted for: no sweep");
+    assert_eq!(
+        sent.len(),
+        1,
+        "every label accounted for with notes: no sweep or close read"
+    );
     let reading = &sent[0];
     assert_eq!(json(&reading.input), json(&request.input));
     assert_eq!(json(&reading.tools), json(&request.tools));
@@ -269,7 +390,7 @@ async fn the_reading_round_is_the_planned_request_with_calls_forbidden_and_no_sa
     );
     assert_eq!(reading.thinking, ThinkingMode::Off);
     assert_eq!(reading.max_output_tokens, Some(777));
-    assert_eq!(notes.noted, [1].into());
+    assert_eq!(notes.noted, [1, 2, 3, 4].into());
 }
 
 #[tokio::test]
@@ -277,12 +398,15 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
     let model = Model::new([
         // Cut mid-line: [2] is lost with it and asked for again.
         reply("[1] -\n[2] 1887-12-21. The last", "length"),
-        reply("[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -", "stop"),
+        reply(
+            "[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -",
+            "stop",
+        ),
         reply("[1] overwritten?", "stop"),
     ]);
     let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
     let sent = model.requests();
-    assert_eq!(sent.len(), 3, "the third sweep added nothing and ended it");
+    assert_eq!(sent.len(), 4, "three sweeps and one close read");
     assert_eq!(
         sent[1].input.last().unwrap().text(),
         "You did not account for [2], [3], [4]. Write one line for each of them, in the same form."
@@ -296,6 +420,12 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
         sent[2].input.last().unwrap().text(),
         "You did not account for [4]. Write one line for each of them, in the same form."
     );
+    assert!(sent[3]
+        .input
+        .last()
+        .unwrap()
+        .text()
+        .contains(&CLOSE_READ_INSTRUCTION.replace("{passages}", "")));
     assert_eq!(
         notes.lines.get(&1),
         Some(&None),
@@ -324,8 +454,8 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
     let sent = model.requests();
     assert_eq!(
         sent.len(),
-        2,
-        "the reservation is spent: [3] and [4] are not asked for"
+        3,
+        "the reservation is spent: [3] and [4] are not asked for, and [1] is read again"
     );
     let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens).collect();
     let after_first = reserved - counter.count_tokens(first);
@@ -333,8 +463,10 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
         ceilings,
         vec![
             Some(u32::try_from(reserved).unwrap()),
-            Some(u32::try_from(after_first).unwrap())
-        ]
+            Some(u32::try_from(after_first).unwrap()),
+            Some(u32::try_from(reserved).unwrap()),
+        ],
+        "the close read is sent with the reading's reservation"
     );
     assert_eq!(read.text, notes, "complete lines only");
     assert_eq!(read.tokens, reserved, "no more than the answer may");
@@ -367,11 +499,13 @@ fn a_note_in_a_script_without_spaces_is_split_at_its_own_full_stops() {
         ]
     );
     let note = notes[0].1.as_deref().unwrap();
-    assert!(
-        verbatim(note, &passage),
+    let passages = Passages(BTreeMap::from([(5, Passage::from(passage))]));
+    assert_eq!(
+        locate(note, &passages),
+        [5],
         "two sentences copied, not side by side"
     );
-    assert!(!verbatim("磨坊于1850年重新启用。", &passage));
+    assert!(locate("磨坊于1850年重新启用。", &passages).is_empty());
 }
 
 #[test]
@@ -399,6 +533,76 @@ async fn a_reading_with_no_label_in_it_gives_no_notes() {
     let model = Model::new([reply("The mill closed in 1887.", "stop")]);
     assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
     assert_eq!(model.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_reading_that_copies_no_passage_gives_no_notes() {
+    let model = Model::new([reply("1. [1] -\n2. [2] -\n3. [3] -\n4. [4] -", "stop")]);
+    assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
+    assert_eq!(model.requests().len(), 1, "every label accounted for");
+    let model = Model::new([reply(
+        "[1] -\n[2] The last miller retired in December 1887.\n[3] -\n[4] -",
+        "stop",
+    )]);
+    assert!(
+        read(&model, &planned(&[1, 2, 3, 4])).await.is_none(),
+        "a paraphrase is no copy"
+    );
+}
+
+#[tokio::test]
+async fn a_note_written_under_the_wrong_label_is_replayed_under_its_own_too() {
+    let mühle = "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen.";
+    let model = Model::new([reply(&format!("[1] {mühle}\n[2] -\n[3] -\n[4] -"), "stop")]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.noted, [3].into());
+    assert_eq!(
+        notes.text,
+        format!("[1] {mühle}\n[2] -\n[3] {mühle}\n[4] -")
+    );
+    assert_eq!(notes.tokens, model.count_tokens(&notes.text));
+}
+
+#[tokio::test]
+async fn what_a_reading_writes_after_its_lines_is_not_replayed() {
+    let mill = "1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
+    let model = Model::new([reply(
+        &format!("[1] -\n[2] {mill}\n[3] -\n[4] -\n\nThe mill closed in 1887 [1]."),
+        "stop",
+    )]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.text, format!("[1] -\n[2] {mill}\n[3] -\n[4] -"));
+    assert_eq!(
+        notes.tokens,
+        model.count_tokens(&notes.text),
+        "measured as it is replayed"
+    );
+}
+
+#[tokio::test]
+async fn a_reading_of_notes_alone_is_replayed_as_written() {
+    let written = "1. [1] -\n[2]: 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n\n［3］ —\n4. -";
+    let model = Model::new([reply(written, "stop")]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.text, written, "byte for byte");
+    assert_eq!(notes.noted, [2].into());
+}
+
+#[tokio::test]
+async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
+    let model = Model::new([
+        reply(
+            "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.",
+            "stop",
+        ),
+        reply("[3] -\n[4] -", "stop"),
+    ]);
+    read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    let sent = model.requests();
+    assert_eq!(sent.len(), 3, "a reading, one sweep and one close read");
+    for request in &sent {
+        assert_eq!(request.stop, ["[5]", "\n5."]);
+    }
 }
 
 #[tokio::test]
@@ -430,6 +634,14 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
 }
 
 #[test]
+fn the_writing_round_asks_for_the_answer_in_the_passages_own_words() {
+    assert_eq!(
+        WRITE_INSTRUCTION,
+        "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question."
+    );
+}
+
+#[test]
 fn a_continuation_quotes_each_left_out_note() {
     let notes = Notes {
         text: String::new(),
@@ -446,3 +658,5 @@ fn a_continuation_quotes_each_left_out_note() {
 fn json(value: &impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
 }
+
+mod close_reading;

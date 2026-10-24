@@ -299,7 +299,7 @@ impl OllamaClient {
         // same way: the user's pin, or the request with tool rounds held off.
         let thinking = self.config.thinking_override.mode_for(request);
         let profile = self.config.profile(thinking);
-        let options = HashMap::from([
+        let mut options = HashMap::from([
             (
                 "temperature".to_string(),
                 serde_json::json!(sampling.temperature.unwrap_or(profile.temperature)),
@@ -329,6 +329,9 @@ impl OllamaClient {
                 )),
             ),
         ]);
+        if !request.stop.is_empty() {
+            options.insert("stop".to_string(), serde_json::json!(request.stop));
+        }
 
         // `think: false` is sent every time thinking is off: Ollama rejects
         // only a truthy `think` on a model without thinking, and leaving it out

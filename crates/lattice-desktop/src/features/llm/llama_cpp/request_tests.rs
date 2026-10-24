@@ -181,6 +181,26 @@ fn tool_choice_is_sent_only_alongside_tools() {
     assert!(bare.get("tools").is_none());
 }
 
+#[test]
+fn stop_sequences_are_sent_only_when_asked_for() {
+    let client = client();
+    let stopped = client
+        .body(&CompletionRequest {
+            input: user("Read them"),
+            stop: vec!["[5]".into(), "\n5.".into()],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(stopped["stop"], json!(["[5]", "\n5."]));
+    let open = client
+        .body(&CompletionRequest {
+            input: user("Hi"),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(open.get("stop").is_none());
+}
+
 /// The Qwen 3.5 card's two profiles: answering directly samples cooler and
 /// narrower than thinking does; both keep the presence penalty that stops
 /// loops and leave the multiplicative repeat penalty off.

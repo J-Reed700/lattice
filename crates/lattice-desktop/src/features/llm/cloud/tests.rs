@@ -388,6 +388,53 @@ fn google_sends_the_tool_choice_with_tools() {
         .is_none());
 }
 
+#[test]
+fn each_provider_that_takes_stop_sequences_is_sent_them() {
+    let request = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Read them.".into(),
+        }],
+        stop: vec!["[5]".into(), "\n5.".into()],
+        ..Default::default()
+    };
+    let bare = CompletionRequest {
+        stop: Vec::new(),
+        ..request.clone()
+    };
+    for (provider, field) in [
+        (LLMProvider::Anthropic, "stop_sequences"),
+        (LLMProvider::Google, "stop"),
+    ] {
+        let settings = LLMSettingsDto {
+            provider,
+            model: "model".into(),
+            ..Default::default()
+        };
+        let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
+        assert_eq!(
+            cloud.body(&request, false).unwrap()[field],
+            json!(["[5]", "\n5."]),
+            "{provider:?}"
+        );
+        assert!(
+            cloud.body(&bare, false).unwrap().get(field).is_none(),
+            "{provider:?}"
+        );
+    }
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Openai,
+        model: "gpt-5.1".into(),
+        ..Default::default()
+    };
+    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = openai.body(&request, false).unwrap();
+    assert!(
+        body.get("stop").is_none() && body.get("stop_sequences").is_none(),
+        "the Responses API takes no stop sequences"
+    );
+}
+
 fn picture_request() -> CompletionRequest {
     use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
     CompletionRequest {

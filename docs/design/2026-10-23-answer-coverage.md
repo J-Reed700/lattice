@@ -202,3 +202,238 @@ No schema, settings, flag or compat change. `TurnBudget`, `retrieval_depth`, the
 - The lexical sufficiency heuristic (`retrieval/sufficiency.rs`, `COVERAGE_TOP_N`, term coverage) could be replaced by the reading round's finding, but it drives corrective search *before* the prompt exists; moving it is a separate change.
 - The reading notes are quote-level evidence the grounding judge could use directly (a claim whose cited passage's note contains its numbers is supported without a judge call); a later saving of verification time.
 - The planner's ~70 s is the largest cost in the turn and is untouched here.
+
+## 10. Reading misses on the merged tree: diagnosis, the second look, and the A/B (2026-10-24)
+
+### 10.1 What the 24 readings show
+
+Three runs × 8 items = 24 reading rounds, 144 fact-bearing passages (6 per item), 158 note lines with text. Every fact was in the prompt every time. Scored: r1 4/8, r2 5/8, r3 5/8 — 10 failures.
+
+**Where each fact-bearing passage ended up** (reading round only, before the writer):
+
+| outcome | passages | what it is |
+|---|---|---|
+| quoted verbatim under its own label | 121 | the design working |
+| hyphen, but the sentence was quoted under label **[1]** | 7 | a *mislabelled* note, not a miss: the document's first bearing sentence (in [2] or [3]) written as [1]'s line, then "[2] -" because the sentence was already used. 8 such notes in all; conservation ×3, apiary ×2, choir ×2, lab ×1 |
+| hyphen in a reading that wrote only hyphens | 6 | hall r3: the model opened with `1. [1] -` and wrote 16 numbered hyphen lines. The prompt differed from r1 only by document IDs and the order of decoy chunks [11]–[16] |
+| hyphen, sentence quoted nowhere | **10** | the true misses |
+
+**The 10 scored failures:** 8 are true misses (r1 hall, conservation, family; r2 household, hall, choir; r3 conservation ×2 facts, family), 1 is the collapse (hall r3: the writer recovered 5 of 6 from the passages with no notes to go on), 1 is the chronicle form miss. None of the 7 mislabels cost a fact — the writer found them in the prompt — but they cost citations: apiary cited [1] for [2]'s sentence in both runs and the grounding check marked one claim unsupported each time; conservation r2 the same.
+
+**Hypotheses against the data:**
+
+| hypothesis | verdict | evidence |
+|---|---|---|
+| judges a passage by its opening | refuted as a discriminator | every synthetic passage opens with filler; 121 hits have the same shape as the 10 misses (`## heading`, filler paragraph, the one subject sentence, filler) |
+| the fact is late in a long passage | refuted | 47 hits at relative offset 0.91–0.99 (incl. five last sentences); misses at 0.08, 0.10, 0.48, 0.51, 0.57, 0.95, 0.99; mean length of missed passages 948 chars vs 881 for hits |
+| a count prior | **supported, in rank form** | miss rate by the passage's rank among the item's bearing passages, in label order (collapse excluded): ranks 1–2: **0/46**; ranks 3–5: 5/69; rank 6 (the last one): **5/23**. Eight of the 10 true misses fell on the 4th–6th bearing passage, after 3–5 quotes had been written. Readings do not stop at a count (choir r1 quoted 19 labels), but the willingness to quote drops as the list grows — the pre-#174 "one bullet each, last ones dropped" prior, now acting line by line |
+| instruction wording | untestable here | no wording varied across the runs; the A/B has an arm for it only indirectly (the second-look text) |
+| deterministic decoding | half true | per prompt it is deterministic: hall r1 and r2 notes are byte-identical. Across trivially different prompts it is chaotic: reordering six decoy chunks turned hall r3 into a numbered-list collapse; family [7] (same text, same label) was quoted in r2 and hyphenated in r1 and r3; household's `2025-03-19` passage was quoted as [5] and [6], hyphenated as [7]. The decision is a near-tie at one token, and greedy decoding gives it no second chance |
+| something else | three things | (i) the first-chunk mislabel above; (ii) the format collapse; (iii) one reading (short6 paraphrase-clock) prefixed every line with the passage heading, so no note was verbatim and the coverage check had nothing to work with (the fact was still found) |
+
+The remaining true miss that the rank prior does not explain is hall [4] — one line by the councillor among fourteen by other speakers, missed identically in both working readings. That is dilution: the single-step lookup over a 10.8k-token prompt does not light up one line in a block of filler.
+
+**What the logs cannot tell apart:** whether a true hyphen is a *lookup* failure (the sentence never got attention at the decision token) or a *judgment* failure (attended, judged not to bear). The reading calls recorded no logprobs. Arm A0 of the A/B records them at zero cost.
+
+### 10.2 The fix
+
+Three parts here, a fourth and the short-question rules in 10.5. The first two are deterministic and cost nothing; the third is one more model call on the cached prompt. `tool_loop.rs` does not change: everything happens inside `reading::read_passages`, whose signature and `Option<Notes>` contract stay as they are (10.5 widens the `Ok(None)` case to "no verified copy"). The one change outside `reading.rs` is the optional `stop` field of 10.5.
+
+**Part 1 — a note belongs to the passage it was copied from (`reading.rs`).**
+
+`verbatim(note, passage)` already decides whether a note is a copy. Generalise it to `locate`: given a note, the set of labels whose passage contains every sentence of it.
+
+- If the labelled passage is in the set → as today.
+- If the set is exactly one *other* label → the note is that passage's note: it is recorded under that label, it enters `noted`, and it overrides a hyphen the model wrote there. The label the model wrote keeps its line as a mistaken note (not verbatim, not in `noted`), as a paraphrase does today.
+- If the set is empty or has several labels (the filler sentences repeat across these documents) → as today: a mistaken note. Nothing is guessed.
+
+`Notes::text` is rebuilt from `lines` in label order only when a relocation (or a second-look flip, part 3) changed something; otherwise the model's own text is kept byte for byte so the writing round's prefix is unchanged. The turn record's disclosure shows the corrected lines.
+
+Fixes the 8 mislabelled notes and the wrong `[1]` citations they produced. Exact text, language-neutral, no threshold — the same rule as the verbatim check, applied to attribution.
+
+**Part 2 — the ordinal prefix (`parse_line`).** `1. [1] -` is read today as label 1 with the note `[1] -`, which counts as text. After the digits and separator, if the remainder opens with a bracketed number, that is the label and the ordinal was list numbering. Hall r3 then parses as 16 hyphens, which is what it was.
+
+**Part 3 — the second look.** After the sweep, while the reading has an output ceiling left and the clock allows:
+
+- `H` = the labels whose line is a hyphen, in **descending** label order.
+- One continuation on the cached prefix: `input + assistant(notes so far) + user(SECOND_LOOK)`, tools kept with `ToolChoice::None`, deterministic, thinking off, ceiling = reservation − notes so far, as every sweep.
+
+  > SECOND_LOOK: "Go through the passages you marked with a hyphen once more, from the last to the first: {labels}. Write one line for each in the same form — its label, then the sentences of that passage that bear on my question copied exactly as written, or a hyphen."
+
+- Lines are accepted only for labels in `H`, and a line counts only if it locates (part 1) to a passage in `H`; a line for a label already quoted is ignored, as the sweep ignores labels it did not ask for.
+- Repeat while a pass turned at least one hyphen into a verbatim note. `H` shrinks monotonically, so it ends; in practice one pass, two after a flip.
+- The flipped lines go into `lines`/`noted`; `text` is rebuilt (part 1 rule); the writing round replays the merged notes as one assistant message, as today.
+
+*Why reversed.* The measured failure is rank-dependent: the later a bearing passage comes in the list, the likelier its hyphen. The second pass starts a new list in the opposite order, so the passages decided last are decided first and no label is decided after the same predecessors twice. This is a decorrelation of the one-token decision, not a magic number: the set is the hyphen set, read once per pass, and the pass count is bounded by progress, exactly as the sweep and the coverage continuation are.
+
+*Why a continuation and not a fresh reading.* A fresh reading with a different instruction changes the tail of the 10k-token user message; on the hybrid model the server's newest checkpoint before that point is the one before the user message, so it would re-prefill the whole prompt (~35 s on the 9B). A continuation appends after the generated notes and prefills only the instruction.
+
+*Why one line per label and not "list only what you now find".* The walk is the mechanism: emitting `[k]` for each label is what makes the model look at each passage. Lines for hyphens are ~5 tokens each.
+
+*What the second look does not do.* It does not say the first reading missed anything. Telling a 9B "you missed one" produces quotes of filler (choir r1 quoted "the treasurer noted that the reserve is healthy" thirteen times unprompted); the wording allows hyphens again, and only verbatim text counts.
+
+*The collapse.* For hall r3, `H` is every label; the second look is a full reverse re-read on the cached prompt. It is the only remedy that does not cost a re-prefill; whether it breaks the numbered-hyphen pattern is a question for the A/B (hall r3's prompt is in it).
+
+**Writing instruction:** see 10.5 (Q3), which supersedes the first draft of this section; it also carries the chronicle precision clause of 10.3.
+
+**What does not change:** the verbatim rule, the coverage check, `withdraw`, the journal shape (still one notes message closed by WRITE), `tool_loop.rs`. `READING_INSTRUCTION` changes only as arm F of the A/B decides (10.5).
+
+**Cost per grounded turn on the 9B** (measured from the logs' `timings`: prefill 304 tok/s, generation 24.9 tok/s):
+
+| | calls | prefill | generation | wall |
+|---|---|---|---|---|
+| Parts 1–2 | 0 | 0 | 0 | 0 |
+| Second look, first pass | +1 | ~60 tokens (instruction; prefix cached) | ~5 × \|H\| + ~40 × flips: 50–200 tokens for 16–36 passages | **+2–8 s** |
+| Second pass (only after a flip) | +1 | ~60 | less than the first | +2–6 s |
+| Writing round when the notes changed | 0 | the merged notes again, 200–600 tokens, from the checkpoint the server keeps near the prompt's end | — | +1–2 s |
+
+Against today's reading round (+9–23 s measured) that is roughly a third more reading time, and it is paid on every grounded turn, including single-fact ones (29 hyphen lines ≈ 6 s). The writing-round figure assumes the near-prompt-end checkpoint the 2026-10-16 server notes describe; the A/B reads `timings.cache_n`/`prompt_n` on every call to confirm it. If it is not there, the fallback is to append WRITE after the second look's lines instead of merging (cache-perfect; the writer sees the earlier hyphen and the later quote and the WRITE text covers "every passage you noted").
+
+**The honest limit.** A 9B's one-token judgment over a 10k-token prompt misses about 7 % of bearing passages (10/138 outside the collapse), and the rank pattern says most of that is prior, not capacity. If the A/B shows the second look recovers the rank-driven misses but not the stubborn ones (hall [4], conservation `13 weeks` — 0/3), the remaining fix is structural: the **close read**, which re-presents each hyphenated passage next to the decision —
+
+> CLOSE_READ: "Here again are the passages you marked with a hyphen. Read each on its own and write its line in the same form.\n\n[k] <passage text>\n\n[j] <passage text> …"
+
+— as a continuation on the same prefix, re-presenting as many of `H` as the window's room (`room_left` after prompt and notes, less the reservation) allows, in label order, in further requests when they do not all fit (each later request replaces the previous one's user message, which the server rolls back to its checkpoint before the last user message). Cost on the 9B: the hyphenated text again, ≈ 230 tokens × \|H\| ≈ 5–7k tokens ≈ 17–23 s, plus the lines: **+25–35 s per long turn**, and the same for single-fact turns. It is arm A3 of the A/B and is built only if A2 leaves misses that A3 recovers.
+
+### 10.3 The chronicle form miss
+
+Notes: `[5] 1850-11-18. The wheel at Greassby Mill turned again…` (verbatim). Answer: `**1850**: The wheel at Greassby Mill turned again … [5]`. The label is cited, so the coverage check is satisfied; the grounding check accepts "1850" as supported by a passage that says 1850-11-18. What was lost is precision within one claim.
+
+Should the check compare noted text with the answer? No.
+
+- An exact-text comparison (does the answer contain each noted sentence?) would hold the answer to being a concatenation of quotes. The chronicle answer carried the sentence verbatim and lost the date in its own heading; prose answers paraphrase, merge and translate, and the chronicle's other five dates survived the same treatment.
+- Anything looser is a similarity threshold or a digit-run match: lexical, language-fragile, and wrong on every legitimate re-form ("£6,497.92" vs "6497.92", "17.5 per cent" vs "17.5 %", "18 November 1850"). It would fire continuations that repeat facts already stated.
+- A model judge ("which of your notes does your answer state incompletely?") is one more call per turn by the same 9B that made the slip.
+
+So the coverage check stays what it is: labels found against labels cited, exact and complete. Precision within a claim is the writer's job and the grounding verifier's domain; the WRITE wording in 10.5 asks for the passage's dates, figures and names as given, and the eval measures it (arm W). If precision loss recurs, the place for it is a verifier verdict ("states less than the passage"), not a lexical gate in the coverage check.
+
+### 10.4 The offline A/B
+
+Runs against llama-server on the saved requests, no app build; after the running eval finishes, on the one 9B server. Harness draft: `scripts/replay_reading_ab.py` (stdlib only; same request plumbing as `scripts/replay_answer_round.py`).
+
+**Data.** The 24 saved reading requests (8 long items × r1–r3: 24 *distinct* prompts, since retrieval order differed per run — that is the replication; the reading itself is deterministic, so seeds add nothing to it) plus short6-r1's six saved readings (single-fact items, 16–34 passages) as the regression gate of 10.5 and the precision control: a second look over 29 hyphens must not manufacture quotes that the coverage check then forces into the answer. Arms A2e and F, the withdrawn baseline write and the stop sequences are defined in 10.5.
+
+**Arms** (per prompt, in this order, so each request extends the previous one's cache):
+
+| arm | what | calls per prompt |
+|---|---|---|
+| A0 | the saved reading request exactly, with `logprobs` on | 1 |
+| A1 | A0's output + relocation + the ordinal parse (offline) | 0 |
+| A2 | A1 + the reversed second look as a continuation, repeated while it flips | 1–2 |
+| A3 | A1 + the close read of the hyphen set, re-presented, same termination | 1–2 (prefill-heavy) |
+| writes | for A1, A2, A3: the writing round from each arm's merged notes, app sampling, seeds 1 and 2, with the coverage continuation | 2 each, plus continuations |
+| W | A2's notes, the new WRITE wording, seeds 1 and 2 | 2 |
+
+**Measures.**
+
+1. *Replay fidelity*: A0's notes vs the logged notes, per prompt. 24/24 identical confirms the arm is the log; any difference is server nondeterminism and is reported as such.
+2. *Decision margin* (A0 logprobs): at each label's decision token — the first token after `[k] ` — the probability of the chosen token and the best alternative, split by fact-bearing hyphen / fact-bearing quote / other. Near-ties at the misses say "prior, re-rollable"; confident hyphens say "judgment, needs the close read".
+3. *Reading recall*: fact-bearing passages noted verbatim under the right label, out of 144, per arm. A2 and A3 are supersets of A1 by construction, so the comparison is paired and one-directional: how many of A1's misses each recovers (McNemar on the 144 pairs; with ~16 misses, recovering ≥ 8 is beyond noise).
+4. *Reading precision*: verbatim notes on passages holding no rubric fact, per arm (A1 baseline: 13, all choir r1). Every one of these becomes a forced citation.
+5. *Cost*: per call `usage.completion_tokens`, `timings.cache_n`, `prompt_n`, `prompt_ms`, `predicted_ms`. `prompt_n` on the writing round is the direct test of the checkpoint assumption in 10.2.
+6. *End to end*: rubric pass per (prompt, seed) — 48 answers per arm — facts missing, continuations fired, labels cited that the passage does not support (the mislabel symptom).
+
+**Decision rule.** Ship parts 1–2 regardless (they are corrections, measured in A1). Ship A2 if it recovers the rank-driven misses with no rise in precision failures on long8 or short6. Build A3 only if A2 leaves misses that A3 recovers, and then as the follow-up to A2 on what A2 left, since A3 costs 4–10× more time. Take the W wording if the chronicle-type precision does not get worse on any item.
+
+**Runtime on the 9B** (one slot, cold prefill 11k tokens ≈ 36 s each): A0 ≈ 24 × 50 s = 20 min; A2 looks ≈ 24 × 8 s; A3 close reads ≈ 24 × 30 s = 12 min; writes 3 arms × 48 × ~12 s ≈ 30 min; W ≈ 10 min; short6 adds ~15 min. About 1.5–2 h, in one process so the cache order holds. Never alongside a compile.
+
+### 10.5 Short questions: the reading round made them worse, and what changes
+
+short6 on the merged tree: 2/6, against 11/12 on the depth replay's `full+tools` arm before #174 (five items 2/2, section-after-clause 1/2). Every fact was in the prompt. What the six readings and answers did:
+
+| item | reading (N passages) | notes replayed as | answer | scored |
+|---|---|---|---|---|
+| paraphrase-clock | `[7] # Runbook: … > Standing provision When the clock source disagrees…` — right sentence, heading prefixed, so nothing verbatim; same for [10] | notes with 0 verified copies | "The provided context contains no information regarding … The only relevant passage found describes … not general machine disagreement:" then the fact, cited [7] | abstention |
+| buried-handbook | `[2] …SIG-26321.` clean | 1 verified | "The only information in the provided text regarding tickets … is found in Passage [2]. It states…" | pass |
+| buried-agreement | numbered form `1. [1] -`, [3] right, [4]–[17] the same filler sentence, then `18. [18] -` … `89. [89] -` until **max_tokens (4096, finish=length, ~165 s)** | 13 verified (1 fact, 12 filler) | right, with 12 filler citations | pass |
+| section-after-clause | `1. [1] -` … `20. [20] -`, then a paragraph: "The answer is not available … do not include Section 24" (it is in [2]) | 0 verified + the abstention | abstained, citing [2]–[20] | fail |
+| opening-agreement | `1. -` … `18. -` (no brackets), then "The provided context does not contain the opening text…" ([1] is "Section 1. Scope and application") | 0 verified + the abstention | abstained, arguing against its own [1] | fail |
+| transcript-rollback | `1. [1] -` … `17. [17] -`, nothing else | 0 verified | "The provided context does not contain information about…" then the right quote from [3] | abstention |
+
+Three mechanisms, all already visible in the long runs, now dominant:
+
+1. **The numbered form collapses.** Five of six short readings took the form `n. [n] -` or `n. -`, against one of 24 long readings (hall r3). Every numbered reading either collapsed to all hyphens (4) or ran away past the label set (1); no bracket-form reading ever did either (25 of 25). In `1. -` the hyphen is a bullet, not a verdict: the model is writing an empty numbered list. The first token picks the form, the form picks the outcome.
+2. **Notes that found nothing steer the writer.** An all-hyphen reading, replayed as the assistant's own message, is a prior the writer inherits: transcript-rollback opens "does not contain" and quotes the fact in the next sentence; the two readings that appended an abstention paragraph were followed by answers that repeat it. The coverage check cannot help — `noted` is empty, so it never fires — and the sweep never fires either, because every label is accounted for.
+3. **The writing instruction makes the writer report on passages.** Three of the five non-abstaining short answers open with meta-talk ("The only information in the provided text regarding…", "The only relevant passage found describes…", "The only explicit mention…"); the pre-#174 answers to the same prompts answer in their first sentence. "Your reading notes above say what each passage states about it" and "Leave out a note that was mistaken" ask the writer to adjudicate notes, and the 9B adjudicates out loud — paraphrase-clock's "a specific arbiter, not general machine disagreement" is that hedge.
+
+**Decisions.**
+
+*Q1 — an all-hyphen reading.* **Withdrawn**, and more generally: **a reading with no verified copy is withdrawn** (`read_passages` returns `Ok(None)` when `noted` is empty after relocation, not only when `lines` is empty; the existing `withdraw` path then runs the writer exactly as before #174). The rule looks only at the reading's output. Rationale: such notes carry nothing the writer or the coverage check can use, and replayed they are a prior with no evidence behind it; a genuinely empty retrieval still ends in abstention by the system prompt's rule, as it did before #174, so nothing is lost; and the reading is then neutral at worst on every grounded turn. It covers the hyphen collapse, the heading-prefixed notes (paraphrase-clock) and hall r3 alike. The reading round is not wrong in principle for these questions — buried-handbook shows it working on one — but it must earn its place with a verified copy. **No second look on such a reading**: the second look is the remedy for the rank prior of a working reading, and a continuation of a collapsed one inherits its form; withdrawal is the guaranteed-neutral path. Arm A2e of the A/B measures whether a continuation can break the collapse; if it does, the rule relaxes to "second look, then withdraw if still empty".
+
+*Q2 — trailing text.* **Stripped.** It is not a short-question quirk: 8 of the 30 readings wrote something after their lines, and in 5 of them (apiary ×3, household ×2 — bracket form, working readings) it is a *complete answer* with bullets and citations, and the citations are shifted by the [1] mislabel (`…67 calendar days… [1]`, `…42.4 per cent… [2]`). Replayed as the assistant's own message, that leak is what the writer then cites — apiary's final answers cite [1] in every run. In paraphrase-clock the leak was a direct, correct answer; the writing round then hedged on the same context, which is the strongest evidence for Q3. So the replayed notes are the note lines and nothing else: `Notes::text` is the model's own text when every line of it parses as a note (byte-identical, cache held), otherwise the lines rendered in canonical `[k] …` form. The leak also costs ~150 generated tokens (~6 s) per reading; the F wording's "write nothing after the last line" is the attempt to stop it at the source.
+
+*Q3 — WRITE wording.* **Yes, it invites hedging**, and it changes:
+
+> WRITE: "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question."
+
+Whether the hedge comes from the wording or from the notes' presence the logs cannot separate; arm W (same notes, new wording) does. `noted_in` keys on the new text; earlier saved research transcripts then read as unnoted and answer without notes, which is the pre-release rule.
+
+*Part 4 — the runaway.* The reading's only output bound is the answer reservation R, and a numbered reading walks past the last label until it hits it: buried-agreement reached `373. [373] -` at 4096 tokens, ~165 s, once in 30 readings (the cut's partial last line was `3`, which `whole_lines` rightly drops; a harness without that guard reads it as label 3's hyphen and loses the one real note). The bound that exists is the label set: generation should stop at the first label that is not shown. `CompletionRequest` gains `stop: Vec<String>` (llama-server and OpenAI-shaped servers take `stop`, Anthropic `stop_sequences`, Ollama `options.stop`; the one addition outside `reading.rs`), and the reading, sweep and second look send `["[N+1]", "\n{N+1}."]` for N the highest label shown. A legitimate note cut by it (a copied sentence containing that bracket) fails verbatim and is asked for again by the sweep; nothing is lost but one line. Optional if the port change is unwelcome; the cost it removes is real.
+
+*The form itself.* The instruction can say what the line looks like without naming anything in any language:
+
+> READING_INSTRUCTION: "Before answering, go through every numbered passage above in order and write one line for each, beginning with its label in brackets exactly as shown above, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. Account for every label, and write nothing after the last line; the answer comes after."
+
+Two changes: "beginning with its label in brackets exactly as shown above" (against the ordinal form) and "write nothing after the last line" (against the leaked paragraph). It changes the cached prefix for every grounded turn equally and is priced by the budget as today. It is arm F of the A/B, run on all 30 prompts, because a wording change can move the long items too. Assistant prefill (`[1] ` as the start of the reply) would force the form outright, but it is server-specific behaviour and is not used.
+
+**Cost on short turns after this section.** Reading as today (+9–23 s on the 9B; the F wording does not change its size). Second look only when at least one copy was verified: on a single-fact turn that is N−1 hyphen lines, +5–8 s. Withdrawal is free. The runaway stop removes up to R tokens of generation.
+
+**short6 as a regression gate.** Per item and seed, the end-to-end answer must be no worse than the depth replay's `full+tools` arm: no abstention where a fact is in the passages, rubric pass on paraphrase-clock, opening-agreement, transcript-rollback, buried-handbook and buried-agreement (2/2 each), section-after-clause ≥ 1/2; no reading with `finish_reason=length`; no replayed notes without a verified copy. The gate runs with every long8 A/B pass.
+
+**A/B additions.** short6-r1's six saved readings join the 24 long prompts (30). New arms: **A2e** — the second look on the five readings with no verified copy (hall r3 and four short6), to measure whether a continuation breaks the collapse; **F** — the readings again with the new READING_INSTRUCTION (cold prefill, ~50 s each), then A1/A2 and writes on those notes, measuring the numbered-form rate, runaways, mislabels and recall against A0. The withdrawn writing round (notes absent, instruction removed from the message, tools callable) is the baseline write for every prompt whose reading has no verified copy. All readings carry the stop sequences; replay fidelity compares parsed notes for shown labels, not raw text. Recommended order: A2, A2e, W first (~1.5 h with writes); F second (~1 h); A3 only if A2 leaves misses.
+
+### 10.6 Residuals, recorded
+
+- Precision: the reading quotes filler that merely resembles the subject (choir r1: 13 lines), and the coverage check then forces 13 citations into the answer. Correct by the design's rule, verbose for the reader. Not addressed here; the A/B's precision count keeps it visible.
+- Heading-prefixed notes (paraphrase-clock): nothing verbatim, check inert, answer still right. A one-reading format deviation; no rule change — any looser match is a threshold.
+- The collapse (1 of 24): the second look is the only remedy that fits the cache; if the A/B shows it does not break the pattern, the fallback is that the writer answers from the passages, which it did (5/6).
+- The near-prompt-end checkpoint is a server fact from the 2026-10-16 notes, not measured on this build; `prompt_n` in the A/B measures it.
+
+### 10.7 Measured A/B outcomes
+
+The A/B ran on the 30 saved prompts: the 24 long readings (8 items, three runs, 144 passages that hold a rubric fact) and the 6 short ones (one fact each). Every answer ("write") was generated on seeds 1 and 2. Results: `evals/retrieval/results/chat/qwen3.5-9b-local/2026-10-24-reading-misses-ab-{pass1,pass2-f,pass3-a3}.jsonl`, produced by `scripts/replay_reading_ab.py`.
+
+Replaying the saved reading request reproduced the logged notes on 29 of the 30 prompts.
+
+| Arm | Facts copied, long | Facts copied, short | Long writes | Short writes |
+|---|---|---|---|---|
+| A1: parts 1–2, withdrawal, stripping, stop sequences | 128/144 | 2/6 | 27/48 | 10/12 |
+| A2: second look | no line recovered | no line recovered | 26/46 | 4/4 |
+| W: A1's notes with the new write wording | 128/144 | 2/6 | 29/48 | 10/12 |
+| F: new reading instruction | 135/144 | 3/6 | 27/48 | 10/12 |
+
+Writes in the A1, A2 and F rows use the old write wording. In the A2 row the withdrawn readings are left out, which is why its counts are smaller.
+
+- **F** removed the numbered form (5 of 30 readings in A1, 0 in F) and kept hall r3 from being withdrawn (A1 0/6, F 5/6). But it quoted more passages that hold no rubric fact (32 against 25), and it changed no answer.
+- **The close read** (arm A3) ran only on the 15 long readings of the five items that missed facts. One of them, hall r3, was withdrawn and not read again. On the other 14, the close read copied every fact: 84/84, against 74/90 for A1 on the same 15 readings. Answers passed 27/28, against 11/30 for A1. These writes used the old wording.
+
+Not measured: the close read together with the new write wording; the close read on readings that missed nothing; and the close read on short questions. The end-to-end eval of the built tree measures all three.
+
+### 10.8 As built (2026-10-24)
+
+What the app does now, in `tool_loop/reading.rs` and its modules `reading/notes.rs` and `reading/close_read.rs`.
+
+Built:
+
+- **Part 1, attribution.** `notes::locate` finds the passages that hold every sentence of a note. `notes::attribute` puts a note copied from exactly one other passage under that passage's label. The notes are rebuilt in label order (`notes::corrected`) only when a note moved or a line was not kept as written; otherwise the model's text is replayed byte for byte.
+- **Part 2, the ordinal prefix.** `1. [1] -` is read as label 1 with a hyphen.
+- **Q1.** A reading with no verified copy is withdrawn: `read_passages` returns `Ok(None)` and the answer is asked for as it was before reading existed.
+- **Q2.** Text after the note lines is stripped: the writing round gets the note lines only.
+- **Stop sequences.** `CompletionRequest::stop` is sent by the llama.cpp, Ollama and cloud adapters. The reading, its sweeps and the close read stop at the first label past the last one shown (`[n+1]`, `\nn+1.`).
+- **Close read** (`reading/close_read.rs`). It runs after the reading and its sweeps, when the reading is kept and some notes are hyphens. Each request is a continuation on the reading's prompt: the notes as the model's own message, then `CLOSE_READ` with the hyphenated passages as `[k] text`, a blank line apart, in label order. It is sent as the reading is: tools forbidden, deterministic sampling, thinking off, the reading's output reservation and the same stop sequences. The room for passages is the window less the measured prompt with the notes and the instruction in it, less that reservation. Passages are packed into requests that fit, in label order; each later request replaces the one before, so requests do not stack. A passage larger than the room on its own is not shown again. A line counts only when it copies its own passage's text. The close read repeats while a pass takes a line and ends at the first pass that takes none; the hyphen set shrinks with every pass that continues. A provider error ends it with the notes as they are. Stop and the turn's deadline are errors, as in the reading round. The turn record shows it as the step "Reading the marked passages again", whose disclosure holds the notes the writer is given.
+- **Write wording (Q3).** `WRITE_INSTRUCTION` is: "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question."
+
+Not built:
+
+- **The second look (part 3).** Asking again for the hyphen labels without showing the passages recovered no fact.
+- **The new reading instruction (arm F).** It copied more facts but did not change the answers. `READING_INSTRUCTION` is unchanged.
+
+Numbers from the offline A/B on the local Qwen3.5-9B (`scripts/replay_reading_ab.py`):
+
+| measure | result |
+|---|---|
+| Reading facts copied, parts 1–2 (A1) | 130/150 |
+| Reading facts copied, new reading instruction (F) | 138/150; answers unchanged: 27/48 long, 10/12 short |
+| Second look | 0 facts recovered |
+| Close read, on the 15 long readings that missed facts | every reading 6/6; answers 27/28, against 11/30 without |
+| Short questions, readings with no verified copy withdrawn | answers 10/12, against 2/6 with the shipped reading |

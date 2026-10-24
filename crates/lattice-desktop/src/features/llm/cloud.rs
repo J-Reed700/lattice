@@ -170,6 +170,8 @@ impl CloudLlm {
                     json!({"format":{"type":"json_schema","name":"response","schema":schema,"strict":true}}),
                 )?;
             }
+            // The Responses API takes no stop sequences, so `request.stop` is
+            // not sent; the output ceiling above still bounds the answer.
             // `request.thinking` is deliberately not read here: an OpenAI
             // reasoning model always reasons and a chat model never does, so
             // the effort level below is the only control the API offers.
@@ -226,6 +228,9 @@ impl CloudLlm {
             }
             if let Some(effort) = request.reasoning_effort.as_deref() {
                 set_field(&mut body, "reasoning_effort", json!(effort))?;
+            }
+            if !request.stop.is_empty() {
+                set_field(&mut body, "stop", json!(request.stop))?;
             }
             if !request.tools.is_empty() {
                 set_field(
@@ -284,6 +289,9 @@ impl CloudLlm {
             }
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
+            }
+            if !request.stop.is_empty() {
+                set_field(&mut body, "stop_sequences", json!(request.stop))?;
             }
             // Extended thinking is off unless a `thinking` block asks for it.
             // A thinking request asks, and so does a real effort level, which
