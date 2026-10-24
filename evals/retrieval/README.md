@@ -30,8 +30,8 @@ change apart from noise. See
   long drill record whose recovery phrase is one digit-transposition away from the
   first. Forty new questions target those documents, six of them unanswerable but
   phrased entirely in corpus vocabulary.
-- `synthetic-library-v3.json` is the current fixture: 379 documents, 194
-  questions, 1.61 M characters of one person's messy vault. It exists because the
+- `synthetic-library-v3.json` is the current fixture: 405 documents, 219
+  questions, 2.31 M characters of one person's messy vault. It exists because the
   production path answers v2 at Recall@5 `0.9706` and a cross-encoder reranker
   moved nothing on it. v3 adds the conditions v2 has none of: 16 documents of 28 k
   to 87 k characters with the answer buried at an arbitrary depth (some a wall of
@@ -40,7 +40,11 @@ change apart from noise. See
   instances differing by one fact, OCR-damaged scans with repeated page furniture,
   markdown and CSV tables whose answer is one cell, five languages including
   three-character CJK queries, one-line fragment notes with `[[wikilinks]]`, facts
-  that need two documents to assemble, and 21 unanswerable questions. It is
+  that need two documents to assemble, and 21 unanswerable questions. Since
+  2026-10-23 it also has the per-document cap cases: twelve questions that need six
+  passages of one long record, and thirteen around near-repetitive forms and a
+  re-quoted email thread (26 new documents; the 379 older documents and 194 older
+  questions are byte-identical). It is
   generated deterministically by `scripts/build_synthetic_library_v3.py`, which
   proves at build time that every needle occurs in exactly the documents its query
   marks relevant. Regenerate it rather than editing it.
@@ -86,7 +90,8 @@ harness had also stopped running at all once vault-wide search began reading
 `HybridSearchUseCase` is now the one library search orchestrator: chat's first pass,
 its follow-up `semantic_search` calls, the tool executor, the search page and this
 harness all run it, including chat's branch depth (three candidates per result), its
-0.15 vector floor, its per-document cap of four, and its cross-encoder stage.
+0.15 vector floor, its per-document cap of four (removed on 2026-10-23, below), and its
+cross-encoder stage.
 `HybridSearchService` is deleted. A production-mode run now measures chat's search for
 one planned query; see [Production mode](#production-mode) for what a turn adds around it.
 
@@ -234,6 +239,36 @@ topical hard negatives (0.76 → 0.82) improve. Results:
 `results/2026-10-19-v3-TERSE-metrics.json`, `results/2026-10-19-v3-TERSE-v3-run.jsonl`,
 `results/2026-10-19-v3-TERSE-terse-run.jsonl`.
 
+## Per-document cap removed (2026-10-23)
+
+Fusion used to defer each document's fifth and later passages behind every other
+document's and then truncate, so a long document's further passages never reached
+the reranker or the prompt (`PER_DOCUMENT_CAP = 4`, a literal from the first commit
+that no run had measured). It now ranks on relevance alone and drops only a passage
+whose text is identical to one already placed. v3 had no question that needed more
+than two passages of one document, so the cap was invisible to it; the 2026-10-23
+cases above are the ones that see it.
+
+v3, Qwen3-Embedding-0.6B through llama.cpp, production mode, `--top-k 10`, main
+(c05a48f2) against the branch without the cap:
+
+| passage recall@10 | main | no cap |
+|---|---|---|
+| overall | 0.782 | 0.822 |
+| many passages from one document | 0.778 | 0.944 |
+| repetitive document | 0.615 | 1.000 |
+| buried needle in long document | 0.667 | 0.722 |
+| long-context tail facts | 0.583 | 0.667 |
+| semantic paraphrase | 0.500 | 0.521 |
+
+Every other dimension is unchanged. Per query, passage recall rose on 14 and fell on
+none at k = 10 (exact two-sided sign test p = 0.0001), and rose on 11 and fell on none
+at k = 5. Document recall@5, nDCG@5 and MRR@5 are identical (paired bootstrap delta
+0.0), so the multi-document watch (`multi-hop composition`, `graded and multi-document
+relevance`) holds. Results: `results/2026-10-23-v3-PER-DOC-CAP-metrics.json`,
+`results/2026-10-23-v3-PER-DOC-CAP-main-run.jsonl`,
+`results/2026-10-23-v3-PER-DOC-CAP-nocap-run.jsonl`.
+
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
@@ -299,7 +334,7 @@ executor and the search page share, composed as `features::search::di::build`
 composes it — the USearch index, `SqliteTextSearch`, the chunk repository — and
 asked exactly what chat's first pass asks for one planned query: the vector and
 BM25 branches at three candidates per result, weighted reciprocal-rank fusion at
-k = 10 with chat's per-document cap, and, with a reranker, chat's own
+k = 10 with exact repeats dropped, and, with a reranker, chat's own
 cross-encoder stage. Finally, section-neighbour evidence expansion is applied.
 
 `--top-k` (default 50) sets how many chunk candidates each query retrieves before
@@ -324,7 +359,7 @@ page ranges, so `page_number` is always NULL.
 To measure what a turn adds, use the shipped-path runner
 (`crates/lattice-desktop/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
 drives the desktop's own turn, from intent through the grounding check, against
-a live llama-server and the 38-item `desktop-path-v1.json` rubric set. See
+a live llama-server and the 50-item `desktop-path-v1.json` rubric set. See
 [`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
 
 The rubric judge runs behind its own `--endpoint` and `--model`, so a stronger
@@ -350,8 +385,19 @@ from different turns together, arXiv 2609.36700):
 | `topic-shift` | a change of subject the rewrite must not drag the old topic into; and a return to the first topic past the intervening one | `dp-mt-topic-shift`, `dp-mt-shift-and-return` |
 | `cross-turn-evidence` | an answer that needs facts from two earlier turns' documents: two entities compared, and two policy versions compared | `dp-mt-combine-renewals`, `dp-mt-combine-versions` |
 
-Runs before 2026-10-19 have the first 34 items only; `shipped_path_stats.py
-compare` pairs runs on the items both have and lists the rest.
+On 2026-10-23 the set gained twelve single-turn items under a new tag, one per
+long record planted for the per-document cap
+([`docs/design/2026-10-23-per-document-cap.md`](../../docs/design/2026-10-23-per-document-cap.md)):
+
+| tag | what it exercises | conversations |
+|---|---|---|
+| `long-document` | one document holds six facts the answer needs, each in a different chunk; `must_mention` is the six facts and `expected_citations` that document, so an answer built from four of its passages fails | `dp-long-*` (12) |
+
+The `dp-multihop-*` items are the control that must keep passing.
+
+Runs before 2026-10-19 have the first 34 items only, and runs before 2026-10-23 the
+first 38; `shipped_path_stats.py compare` pairs runs on the items both have and
+lists the rest.
 
 ### Vector compression
 

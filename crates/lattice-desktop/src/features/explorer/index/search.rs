@@ -6,8 +6,7 @@
 //! search is the library's orchestrator (`HybridSearchTrait`), built over
 //! this folder's vectors file and full-text index by the composition root's
 //! `HybridSearchFactory`, so a folder is ranked exactly as the library is:
-//! its branch depth, vector floor, weights, reciprocal rank constant and
-//! per-document cap (here, per file).
+//! its branch depth, vector floor, weights and reciprocal rank constant.
 //!
 //! SQLite is authoritative: a vector whose passage row is gone (a file
 //! deleted since the last save of the vectors file) is not a hit.

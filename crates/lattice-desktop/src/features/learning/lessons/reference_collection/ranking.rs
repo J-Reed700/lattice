@@ -3,7 +3,7 @@
 //!
 //! A course whose passages are embedded is ranked by the one hybrid search
 //! (`HybridSearchTrait`): each query's dense and full-text branches, all of
-//! them fused once, at the library's weights and with its per-source cap. A
+//! them fused once, at the library's weights. A
 //! course without an embedding model, and a collection built in memory, are
 //! ranked by FTS5's `bm25` over all the queries' words at once, which needs
 //! no fusion: one list. Either way a query's words match whole, as the
@@ -14,7 +14,6 @@
 use super::*;
 use crate::features::learning::references::course_index::write_version;
 use crate::infrastructure::passage_index::text_search::{match_words, WordMatch};
-use lattice_core::application::contracts::search::Spread;
 use lattice_core::shared::constants::{
     DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_VECTOR_FUSION_WEIGHT,
 };
@@ -143,7 +142,7 @@ impl<'a> ReferenceCollection<'a> {
                     ));
                 }
                 hybrid
-                    .fuse(branches, fetch, Spread::ByRelevance)
+                    .fuse(branches, fetch)
                     .into_iter()
                     .filter_map(|result| {
                         Some((

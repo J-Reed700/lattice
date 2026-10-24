@@ -1,0 +1,777 @@
+{
+  "fixture": "synthetic-library-v3.json (405 documents, 219 queries)",
+  "mode": "production",
+  "recipe": "LATTICE_EMBED_GGUF=Qwen3-Embedding-0.6B-f16.gguf retrieval_eval --mode production --top-k 10 --compression none ../../evals/retrieval/synthetic-library-v3.json; scripts/rag_eval.py --k 5 / --k 10",
+  "main": {
+    "commit": "c05a48f2 (ranking identical to 0026ce4e, the binary that ran)",
+    "run": "2026-10-23-v3-PER-DOC-CAP-main-run.jsonl"
+  },
+  "nocap": {
+    "commit": "6326b797 (fix/per-document-cap)",
+    "run": "2026-10-23-v3-PER-DOC-CAP-nocap-run.jsonl"
+  },
+  "by_k": {
+    "5": {
+      "overall": {
+        "recall_at_k": {
+          "main": 0.7920875420875422,
+          "nocap": 0.7920875420875422
+        },
+        "ndcg_at_k": {
+          "main": 0.7287411057736862,
+          "nocap": 0.7287411057736862
+        },
+        "mrr_at_k": {
+          "main": 0.7398148148148147,
+          "nocap": 0.7398148148148147
+        },
+        "passage_recall_at_k": {
+          "main": 0.728114478114478,
+          "nocap": 0.7415824915824917
+        }
+      },
+      "by_dimension": {
+        "buried needle in long document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9517183196428588,
+            "nocap": 0.9517183196428588
+          },
+          "mrr_at_k": {
+            "main": 0.9351851851851851,
+            "nocap": 0.9351851851851851
+          },
+          "passage_recall_at_k": {
+            "main": 0.6111111111111112,
+            "nocap": 0.6111111111111112
+          }
+        },
+        "current versus superseded policy": {
+          "recall_at_k": {
+            "main": 0.9411764705882353,
+            "nocap": 0.9411764705882353
+          },
+          "ndcg_at_k": {
+            "main": 0.7131692664452773,
+            "nocap": 0.7131692664452773
+          },
+          "mrr_at_k": {
+            "main": 0.7352941176470589,
+            "nocap": 0.7352941176470589
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "entity collisions": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "exact identifiers and numeric distinctions": {
+          "recall_at_k": {
+            "main": 0.75,
+            "nocap": 0.75
+          },
+          "ndcg_at_k": {
+            "main": 0.6143942585512313,
+            "nocap": 0.6143942585512313
+          },
+          "mrr_at_k": {
+            "main": 0.600462962962963,
+            "nocap": 0.600462962962963
+          },
+          "passage_recall_at_k": {
+            "main": 0.75,
+            "nocap": 0.75
+          }
+        },
+        "graded and multi-document relevance": {
+          "recall_at_k": {
+            "main": 0.5933333333333334,
+            "nocap": 0.5933333333333334
+          },
+          "ndcg_at_k": {
+            "main": 0.5929570078607261,
+            "nocap": 0.5929570078607261
+          },
+          "mrr_at_k": {
+            "main": 0.7866666666666667,
+            "nocap": 0.7866666666666667
+          },
+          "passage_recall_at_k": {
+            "main": 0.66,
+            "nocap": 0.66
+          }
+        },
+        "long-context tail facts": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9275774794642881,
+            "nocap": 0.9275774794642881
+          },
+          "mrr_at_k": {
+            "main": 0.9027777777777778,
+            "nocap": 0.9027777777777778
+          },
+          "passage_recall_at_k": {
+            "main": 0.5,
+            "nocap": 0.5
+          }
+        },
+        "many passages from one document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 0.5555555555555555,
+            "nocap": 0.6944444444444445
+          }
+        },
+        "multi-hop composition": {
+          "recall_at_k": {
+            "main": 0.4583333333333333,
+            "nocap": 0.4583333333333333
+          },
+          "ndcg_at_k": {
+            "main": 0.4987880627479566,
+            "nocap": 0.4987880627479566
+          },
+          "mrr_at_k": {
+            "main": 0.7777777777777778,
+            "nocap": 0.7777777777777778
+          },
+          "passage_recall_at_k": {
+            "main": 0.4583333333333333,
+            "nocap": 0.4583333333333333
+          }
+        },
+        "multilingual and cross-lingual retrieval": {
+          "recall_at_k": {
+            "main": 0.9375,
+            "nocap": 0.9375
+          },
+          "ndcg_at_k": {
+            "main": 0.9375,
+            "nocap": 0.9375
+          },
+          "mrr_at_k": {
+            "main": 0.9375,
+            "nocap": 0.9375
+          },
+          "passage_recall_at_k": {
+            "main": 0.9375,
+            "nocap": 0.9375
+          }
+        },
+        "near-duplicate distractors": {
+          "recall_at_k": {
+            "main": 0.696969696969697,
+            "nocap": 0.696969696969697
+          },
+          "ndcg_at_k": {
+            "main": 0.6499690732835955,
+            "nocap": 0.6499690732835955
+          },
+          "mrr_at_k": {
+            "main": 0.7803030303030304,
+            "nocap": 0.7803030303030304
+          },
+          "passage_recall_at_k": {
+            "main": 0.9090909090909091,
+            "nocap": 0.9090909090909091
+          }
+        },
+        "negation and exception handling": {
+          "recall_at_k": {
+            "main": 0.8461538461538461,
+            "nocap": 0.8461538461538461
+          },
+          "ndcg_at_k": {
+            "main": 0.9407509922954683,
+            "nocap": 0.9407509922954683
+          },
+          "mrr_at_k": {
+            "main": 0.9615384615384616,
+            "nocap": 0.9615384615384616
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "noisy and OCR text": {
+          "recall_at_k": {
+            "main": 0.5625,
+            "nocap": 0.5625
+          },
+          "ndcg_at_k": {
+            "main": 0.3131290894077652,
+            "nocap": 0.3131290894077652
+          },
+          "mrr_at_k": {
+            "main": 0.23125,
+            "nocap": 0.23125
+          },
+          "passage_recall_at_k": {
+            "main": 0.5625,
+            "nocap": 0.5625
+          }
+        },
+        "repetitive document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 0.6153846153846154,
+            "nocap": 0.6923076923076923
+          }
+        },
+        "scope and applicability boundaries": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9716099810439582,
+            "nocap": 0.9716099810439582
+          },
+          "mrr_at_k": {
+            "main": 0.9615384615384616,
+            "nocap": 0.9615384615384616
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "semantic paraphrase": {
+          "recall_at_k": {
+            "main": 0.5833333333333334,
+            "nocap": 0.5833333333333334
+          },
+          "ndcg_at_k": {
+            "main": 0.4821040663353271,
+            "nocap": 0.4821040663353271
+          },
+          "mrr_at_k": {
+            "main": 0.4486111111111111,
+            "nocap": 0.4486111111111111
+          },
+          "passage_recall_at_k": {
+            "main": 0.4375,
+            "nocap": 0.4375
+          }
+        },
+        "short fragment notes": {
+          "recall_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "ndcg_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "mrr_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "passage_recall_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          }
+        },
+        "tables and structured content": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.7386605985424117,
+            "nocap": 0.7386605985424117
+          },
+          "mrr_at_k": {
+            "main": 0.6511904761904762,
+            "nocap": 0.6511904761904762
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "topical hard negatives": {
+          "recall_at_k": {
+            "main": 0.7662337662337663,
+            "nocap": 0.7662337662337663
+          },
+          "ndcg_at_k": {
+            "main": 0.7371670065862717,
+            "nocap": 0.7371670065862717
+          },
+          "mrr_at_k": {
+            "main": 0.7272727272727273,
+            "nocap": 0.7272727272727273
+          },
+          "passage_recall_at_k": {
+            "main": 0.7532467532467533,
+            "nocap": 0.7532467532467533
+          }
+        },
+        "unanswerable questions": {}
+      },
+      "document_metrics_paired_bootstrap": {
+        "recall_at_k": {
+          "baseline": 0.7920875420875422,
+          "candidate": 0.7920875420875422,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "ndcg_at_k": {
+          "baseline": 0.7287411057736862,
+          "candidate": 0.7287411057736862,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "mrr_at_k": {
+          "baseline": 0.7398148148148147,
+          "candidate": 0.7398148148148147,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "passage_recall_per_query": {
+        "better": 11,
+        "worse": 0,
+        "exact_two_sided_sign_test_p": 0.0009765625
+      }
+    },
+    "10": {
+      "overall": {
+        "recall_at_k": {
+          "main": 0.8434343434343434,
+          "nocap": 0.8434343434343434
+        },
+        "ndcg_at_k": {
+          "main": 0.7431715678846987,
+          "nocap": 0.7431715678846987
+        },
+        "mrr_at_k": {
+          "main": 0.74500962000962,
+          "nocap": 0.74500962000962
+        },
+        "passage_recall_at_k": {
+          "main": 0.781986531986532,
+          "nocap": 0.8223905723905724
+        }
+      },
+      "by_dimension": {
+        "buried needle in long document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9517183196428588,
+            "nocap": 0.9517183196428588
+          },
+          "mrr_at_k": {
+            "main": 0.9351851851851851,
+            "nocap": 0.9351851851851851
+          },
+          "passage_recall_at_k": {
+            "main": 0.6666666666666666,
+            "nocap": 0.7222222222222222
+          }
+        },
+        "current versus superseded policy": {
+          "recall_at_k": {
+            "main": 0.9705882352941176,
+            "nocap": 0.9705882352941176
+          },
+          "ndcg_at_k": {
+            "main": 0.7157387886097394,
+            "nocap": 0.7157387886097394
+          },
+          "mrr_at_k": {
+            "main": 0.7352941176470589,
+            "nocap": 0.7352941176470589
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "entity collisions": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "exact identifiers and numeric distinctions": {
+          "recall_at_k": {
+            "main": 0.7916666666666666,
+            "nocap": 0.7916666666666666
+          },
+          "ndcg_at_k": {
+            "main": 0.6284907103050105,
+            "nocap": 0.6284907103050105
+          },
+          "mrr_at_k": {
+            "main": 0.6032407407407407,
+            "nocap": 0.6032407407407407
+          },
+          "passage_recall_at_k": {
+            "main": 0.7916666666666666,
+            "nocap": 0.7916666666666666
+          }
+        },
+        "graded and multi-document relevance": {
+          "recall_at_k": {
+            "main": 0.7533333333333333,
+            "nocap": 0.7533333333333333
+          },
+          "ndcg_at_k": {
+            "main": 0.6462192001897269,
+            "nocap": 0.6462192001897269
+          },
+          "mrr_at_k": {
+            "main": 0.8066666666666668,
+            "nocap": 0.8066666666666668
+          },
+          "passage_recall_at_k": {
+            "main": 0.78,
+            "nocap": 0.78
+          }
+        },
+        "long-context tail facts": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9275774794642881,
+            "nocap": 0.9275774794642881
+          },
+          "mrr_at_k": {
+            "main": 0.9027777777777778,
+            "nocap": 0.9027777777777778
+          },
+          "passage_recall_at_k": {
+            "main": 0.5833333333333334,
+            "nocap": 0.6666666666666666
+          }
+        },
+        "many passages from one document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 0.7777777777777778,
+            "nocap": 0.9444444444444445
+          }
+        },
+        "multi-hop composition": {
+          "recall_at_k": {
+            "main": 0.5416666666666666,
+            "nocap": 0.5416666666666666
+          },
+          "ndcg_at_k": {
+            "main": 0.5351893022176507,
+            "nocap": 0.5351893022176507
+          },
+          "mrr_at_k": {
+            "main": 0.7916666666666666,
+            "nocap": 0.7916666666666666
+          },
+          "passage_recall_at_k": {
+            "main": 0.5416666666666666,
+            "nocap": 0.5416666666666666
+          }
+        },
+        "multilingual and cross-lingual retrieval": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9583333333333334,
+            "nocap": 0.9583333333333334
+          },
+          "mrr_at_k": {
+            "main": 0.9464285714285714,
+            "nocap": 0.9464285714285714
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "near-duplicate distractors": {
+          "recall_at_k": {
+            "main": 0.9318181818181818,
+            "nocap": 0.9318181818181818
+          },
+          "ndcg_at_k": {
+            "main": 0.7013941550120611,
+            "nocap": 0.7013941550120611
+          },
+          "mrr_at_k": {
+            "main": 0.7954545454545454,
+            "nocap": 0.7954545454545454
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "negation and exception handling": {
+          "recall_at_k": {
+            "main": 0.9743589743589743,
+            "nocap": 0.9743589743589743
+          },
+          "ndcg_at_k": {
+            "main": 0.9555917604986757,
+            "nocap": 0.9555917604986757
+          },
+          "mrr_at_k": {
+            "main": 0.9615384615384616,
+            "nocap": 0.9615384615384616
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "noisy and OCR text": {
+          "recall_at_k": {
+            "main": 0.6875,
+            "nocap": 0.6875
+          },
+          "ndcg_at_k": {
+            "main": 0.3520289743859665,
+            "nocap": 0.3520289743859665
+          },
+          "mrr_at_k": {
+            "main": 0.2464285714285714,
+            "nocap": 0.2464285714285714
+          },
+          "passage_recall_at_k": {
+            "main": 0.6875,
+            "nocap": 0.6875
+          }
+        },
+        "repetitive document": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "mrr_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "passage_recall_at_k": {
+            "main": 0.6153846153846154,
+            "nocap": 1.0
+          }
+        },
+        "scope and applicability boundaries": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.9716099810439582,
+            "nocap": 0.9716099810439582
+          },
+          "mrr_at_k": {
+            "main": 0.9615384615384616,
+            "nocap": 0.9615384615384616
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "semantic paraphrase": {
+          "recall_at_k": {
+            "main": 0.625,
+            "nocap": 0.625
+          },
+          "ndcg_at_k": {
+            "main": 0.495992955224216,
+            "nocap": 0.495992955224216
+          },
+          "mrr_at_k": {
+            "main": 0.45456349206349206,
+            "nocap": 0.45456349206349206
+          },
+          "passage_recall_at_k": {
+            "main": 0.5,
+            "nocap": 0.5208333333333334
+          }
+        },
+        "short fragment notes": {
+          "recall_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "ndcg_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "mrr_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          },
+          "passage_recall_at_k": {
+            "main": 0.8125,
+            "nocap": 0.8125
+          }
+        },
+        "tables and structured content": {
+          "recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          },
+          "ndcg_at_k": {
+            "main": 0.7386605985424117,
+            "nocap": 0.7386605985424117
+          },
+          "mrr_at_k": {
+            "main": 0.6511904761904762,
+            "nocap": 0.6511904761904762
+          },
+          "passage_recall_at_k": {
+            "main": 1.0,
+            "nocap": 1.0
+          }
+        },
+        "topical hard negatives": {
+          "recall_at_k": {
+            "main": 0.7922077922077922,
+            "nocap": 0.7922077922077922
+          },
+          "ndcg_at_k": {
+            "main": 0.7458250152442802,
+            "nocap": 0.7458250152442802
+          },
+          "mrr_at_k": {
+            "main": 0.7309833024118738,
+            "nocap": 0.7309833024118738
+          },
+          "passage_recall_at_k": {
+            "main": 0.7792207792207793,
+            "nocap": 0.7792207792207793
+          }
+        },
+        "unanswerable questions": {}
+      },
+      "document_metrics_paired_bootstrap": {
+        "recall_at_k": {
+          "baseline": 0.8434343434343434,
+          "candidate": 0.8434343434343434,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "ndcg_at_k": {
+          "baseline": 0.7431715678846987,
+          "candidate": 0.7431715678846987,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "mrr_at_k": {
+          "baseline": 0.74500962000962,
+          "candidate": 0.74500962000962,
+          "delta": 0.0,
+          "paired_delta_95ci": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "passage_recall_per_query": {
+        "better": 14,
+        "worse": 0,
+        "exact_two_sided_sign_test_p": 0.0001220703125
+      }
+    }
+  }
+}

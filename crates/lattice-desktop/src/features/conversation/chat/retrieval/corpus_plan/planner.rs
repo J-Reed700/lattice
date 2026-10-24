@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -132,6 +134,54 @@ pub(in super::super) async fn plan_correction(
 /// the server's message.
 fn is_window_overflow(error: &AppError) -> bool {
     error.to_string().contains("exceed_context_size")
+}
+
+/// Rank the documents the planner is shown, once per turn: as many as the
+/// planner's prompt on `llm` has rows for.
+pub(in super::super) async fn shortlist_candidates(
+    hybrid: &dyn HybridSearchTrait,
+    llm: &dyn LLMPort,
+    question: &str,
+    history: Option<&str>,
+    catalog: &[CorpusDocument],
+    summaries: &HashMap<String, String>,
+    document_ids: &HashSet<String>,
+    turn: &mut PlannerTurn<'_>,
+) {
+    if turn.candidates.is_some() {
+        return;
+    }
+    let rows =
+        shortlist_rows(llm, question, history, catalog, summaries, turn).unwrap_or_else(|error| {
+            warn!(%error, "Planner rows could not be sized; showing the catalog in its own order");
+            0
+        });
+    turn.candidates =
+        Some(shortlist::candidate_documents(hybrid, question, history, document_ids, rows).await);
+}
+
+/// How many catalog rows the planner's next prompt on `llm` holds for this
+/// request: as many documents as the shortlist search ranks, since the
+/// prompt shows no more. Sized as `plan_with` sizes the prompt, from the
+/// window and the conversation it carries.
+fn shortlist_rows(
+    llm: &dyn LLMPort,
+    question: &str,
+    history: Option<&str>,
+    catalog: &[CorpusDocument],
+    summaries: &HashMap<String, String>,
+    turn: &PlannerTurn<'_>,
+) -> Result<usize> {
+    let target = turn.health.prompt_tokens(llm);
+    let history = prompt::recent_history(llm, history, target);
+    let parts = prompt::PromptParts {
+        question,
+        history: &history,
+        catalog_total: catalog.len(),
+        correction: None,
+        summaries,
+    };
+    prompt::rows_held(llm, &parts, catalog, target)
 }
 
 async fn plan_with(

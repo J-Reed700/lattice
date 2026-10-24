@@ -25,8 +25,8 @@ class SyntheticLibraryV3Tests(unittest.TestCase):
 
     def test_the_fixture_stays_within_its_size_and_coverage_budget(self):
         summary = generator.summary(self.dataset)
-        self.assertTrue(300 <= summary['documents'] <= 400, summary['documents'])
-        self.assertTrue(150 <= summary['queries'] <= 200, summary['queries'])
+        self.assertTrue(300 <= summary['documents'] <= 450, summary['documents'])
+        self.assertTrue(150 <= summary['queries'] <= 250, summary['queries'])
         self.assertGreaterEqual(summary['unanswerable_queries'], 20)
         self.assertTrue(1_500_000 <= summary['total_characters'] <= 3_000_000,
                         summary['total_characters'])
