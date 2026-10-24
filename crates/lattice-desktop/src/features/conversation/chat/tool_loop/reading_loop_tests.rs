@@ -411,23 +411,17 @@ async fn a_message_without_numbered_passages_reads_nothing() {
 #[tokio::test]
 async fn a_grounded_answer_close_reads_and_cites_the_flipped_passage() {
     let initial_notes = "[2] The roof was mended in 1851.\n[5] -\n[7] -\n[9] -";
-    let close_read_pass1 = format!("[5] {OPENING}\n[7] -\n[9] -");
-    let close_read_pass2 = "[7] -\n[9] -";
+    let close_read = format!("[5] {OPENING}\n[7] -\n[9] -");
     let answer = "The roof was mended in 1851 [2]. The bridge opened on 1932-05-01 [5].";
-    let model = Model::new([
-        reply(initial_notes),
-        reply(&close_read_pass1),
-        reply(close_read_pass2),
-        reply(answer),
-    ]);
+    let model = Model::new([reply(initial_notes), reply(&close_read), reply(answer)]);
     let run = grounded(&model).await;
     let outcome = run.outcome.as_ref().expect("an answer");
     assert_eq!(outcome.response, answer);
     assert_eq!(streamed(&run), answer);
 
     let requests = model.requests();
-    assert_eq!(requests.len(), 4, "reading, 2 close reads, writing");
-    let writing = &requests[3];
+    assert_eq!(requests.len(), 3, "reading, one close read, writing");
+    let writing = &requests[2];
     let expected_notes = format!("[2] The roof was mended in 1851.\n[5] {OPENING}\n[7] -\n[9] -");
     assert_eq!(writing.input[2].text(), expected_notes);
     let step = run

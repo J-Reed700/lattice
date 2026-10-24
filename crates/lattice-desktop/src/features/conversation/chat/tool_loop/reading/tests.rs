@@ -420,12 +420,9 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
         sent[2].input.last().unwrap().text(),
         "You did not account for [4]. Write one line for each of them, in the same form."
     );
-    assert!(sent[3]
-        .input
-        .last()
-        .unwrap()
-        .text()
-        .contains(&CLOSE_READ_INSTRUCTION.replace("{passages}", "")));
+    let (before, after) = CLOSE_READ_INSTRUCTION.split_once("{passages}").unwrap();
+    let close_read = sent[3].input.last().unwrap().text();
+    assert!(close_read.starts_with(before) && close_read.ends_with(after));
     assert_eq!(
         notes.lines.get(&1),
         Some(&None),
