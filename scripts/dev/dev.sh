@@ -83,37 +83,6 @@ ensure_npm_runtime_deps() {
     fi
 }
 
-# Ensure Rust/Tauri builds can invoke Metal compiler on macOS.
-# Some Xcode installs require selecting the downloaded Metal toolchain explicitly.
-setup_rust_build_env() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        return
-    fi
-
-    # If default toolchain works, do nothing.
-    if xcrun -sdk macosx metal -v >/dev/null 2>&1; then
-        return
-    fi
-
-    local metal_toolchain_id=""
-    metal_toolchain_id=$(
-        xcodebuild -showComponent MetalToolchain -json 2>/dev/null \
-            | sed -n 's/.*"toolchainIdentifier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            | head -n 1
-    )
-
-    if [ -n "$metal_toolchain_id" ] && xcrun --toolchain "$metal_toolchain_id" metal -v >/dev/null 2>&1; then
-        export TOOLCHAINS="$metal_toolchain_id"
-        print_info "Using Metal toolchain: $metal_toolchain_id"
-        return
-    fi
-
-    print_error "Metal compiler is not usable from xcrun."
-    print_info "Run: xcodebuild -downloadComponent MetalToolchain"
-    print_info "Then retry: ./scripts/dev/dev.sh <command>"
-    exit 1
-}
-
 # Kill all running processes
 kill_all() {
     print_header "Killing all processes"
@@ -233,7 +202,6 @@ clean_all() {
 # Install dependencies (both npm and Rust)
 install_deps() {
     print_header "Installing dependencies"
-    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -262,7 +230,6 @@ install_npm() {
 # Build Rust dependencies only
 install_rust() {
     print_header "Building Rust dependencies"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -306,7 +273,6 @@ rebuild_npm() {
 # Rebuild Rust only (clean + build)
 rebuild_rust() {
     print_header "Rebuilding Rust dependencies"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -350,7 +316,6 @@ build_frontend() {
 # Build Tauri (release)
 build_tauri_release() {
     print_header "Building Tauri (Release)"
-    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -364,7 +329,6 @@ build_tauri_release() {
 # Build Tauri (debug)
 build_tauri_debug() {
     print_header "Building Tauri (Debug)"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -389,7 +353,6 @@ run_frontend() {
 # Run Tauri dev
 run_tauri_dev() {
     print_header "Running Tauri dev"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
@@ -402,7 +365,6 @@ run_tauri_dev() {
 # Quick start for testing (minimal build)
 quick_start() {
     print_header "Quick Start (Testing Mode)"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
@@ -423,7 +385,6 @@ quick_start() {
 # Run Tauri dev with logs
 run_tauri_dev_logs() {
     print_header "Running Tauri dev with logs"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     local LOG_FILE="/tmp/tauri_dev_$(date +%Y%m%d_%H%M%S).log"
@@ -437,7 +398,6 @@ run_tauri_dev_logs() {
 # Run tests
 run_tests() {
     print_header "Running tests"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -453,7 +413,6 @@ run_tests() {
 # Run linter
 run_lint() {
     print_header "Running linters"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -585,7 +544,6 @@ watch_logs() {
 # Full rebuild
 full_rebuild() {
     print_header "FULL REBUILD"
-    setup_rust_build_env
 
     kill_all
     clean_build
