@@ -13,8 +13,17 @@
 //! own message, then the marked passages, as many as the window has room
 //! for, in label order. Those that do not fit go in further requests, each in
 //! place of the one before, so the server reads only the new passages. A line
-//! counts only when it copies its own passage. It reads again while a pass
-//! turns a hyphen into a note: the hyphens only ever get fewer, so it ends.
+//! counts only when it copies its own passage. Each marked passage is shown
+//! again once.
+//!
+//! The instruction comes after the passages and says again what the reading
+//! asked for: the sentences that bear on the question, or a hyphen. Told only
+//! to write "in the same form", the 9B took its form from the first passage
+//! and copied whole passages that said nothing on the question. In the second
+//! offline A/B (evals/retrieval/2026-10-24-CLOSE-READ.md) this wording kept
+//! every fact the first one copied, 281 of 281, with 31 lines that held none
+//! against 50 for the same sentences said before the passages.
+//!
 //! The window's room, the turn's clock and Stop bound it; nothing is counted.
 
 use super::super::clock::TurnClock;
@@ -35,12 +44,11 @@ use tracing::warn;
 
 /// Said after the notes, with the passages they mark with a hyphen shown
 /// again. `{passages}` is each of them as `[label] text`, a blank line apart.
-pub(super) const CLOSE_READ_INSTRUCTION: &str = "Here again are the passages you marked with a hyphen. Read each on its own and write its line in the same form.\n\n{passages}";
+pub(super) const CLOSE_READ_INSTRUCTION: &str = "Here again, each on its own, are the passages you marked with a hyphen.\n\n{passages}\n\nWrite one line for each of these passages, as before: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or its label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines.";
 
-/// Show the model the passages its notes mark with a hyphen again, and take
-/// each line it writes that copies its own passage in place of the hyphen,
-/// for as long as a pass takes at least one. Returns how many hyphens became
-/// notes.
+/// Show the model the passages its notes mark with a hyphen again, once, and
+/// take each line it writes that copies its own passage in place of the
+/// hyphen. Returns how many hyphens became notes.
 ///
 /// It only ever adds to the notes: a request the provider fails ends it with
 /// the notes as they are. Only Stop and the turn's deadline are errors, as
@@ -55,72 +63,65 @@ pub(super) async fn close_read(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<usize> {
-    let mut sizes: BTreeMap<u32, usize> = BTreeMap::new();
-    let mut step = None;
-    let mut added = 0;
-    let mut failed = false;
-    loop {
-        let marked = hyphens(notes);
-        if marked.is_empty() {
-            break;
-        }
-        let room = room_for_passages(llm, request, &notes.text).await;
-        let parts = pack(&measured(llm, passages, &marked, &mut sizes).await, room);
-        if parts.is_empty() {
-            break;
-        }
-        if step.is_none() {
-            let count = parts.iter().map(Vec::len).sum::<usize>();
-            step = Some(recorder.begin_guarded(
-                TurnStepKind::Generate,
-                "Reading the marked passages again",
-                Some(match count {
-                    1 => "1 passage".to_string(),
-                    count => format!("{count} passages"),
-                }),
-            ));
-        }
-        // Every part is read beside the notes as they stood when the pass
-        // began, so each request replaces the one before it.
-        let mut taken: BTreeMap<u32, String> = BTreeMap::new();
-        for part in &parts {
-            let said = &notes.text;
-            let Some(written) =
-                ask(llm, request, passages, stop, said, part, cancel, clock).await?
-            else {
-                failed = true;
-                break;
-            };
-            taken.extend(copies(&written, part, passages));
-        }
-        added += taken.len();
-        let took = !taken.is_empty();
-        for (label, note) in taken {
-            notes.lines.insert(label, Some(note));
-            notes.noted.insert(label);
-        }
-        if took {
-            notes.text = as_kept(&notes.lines);
-            notes.tokens = tokens(llm, &notes.text).await;
-        }
-        if failed || !took {
-            break;
-        }
+    let marked = hyphens(notes);
+    if marked.is_empty() {
+        return Ok(0);
     }
-    if let Some(step) = step {
-        if added > 0 {
-            step.set_reasoning(Some(&notes.text));
-        }
-        let summary = match added {
-            0 => "nothing added".to_string(),
-            1 => "1 more passage bears on the question".to_string(),
-            added => format!("{added} more passages bear on the question"),
+    let room = room_for_passages(llm, request, &notes.text).await;
+    let parts = pack(&measured(llm, passages, &marked).await, room);
+    if parts.is_empty() {
+        return Ok(0);
+    }
+    let count = parts.iter().map(Vec::len).sum::<usize>();
+    let step = recorder.begin_guarded(
+        TurnStepKind::Generate,
+        "Reading the marked passages again",
+        Some(match count {
+            1 => "1 passage".to_string(),
+            count => format!("{count} passages"),
+        }),
+    );
+    // Every part is read beside the notes as the reading left them, so each
+    // request replaces the one before it.
+    let mut taken: BTreeMap<u32, String> = BTreeMap::new();
+    let mut failed = false;
+    for part in &parts {
+        let Some(written) = ask(
+            llm,
+            request,
+            passages,
+            stop,
+            &notes.text,
+            part,
+            cancel,
+            clock,
+        )
+        .await?
+        else {
+            failed = true;
+            break;
         };
-        if failed {
-            step.failed(Some(summary));
-        } else {
-            step.done(Some(summary));
-        }
+        taken.extend(copies(&written, part, passages));
+    }
+    let added = taken.len();
+    for (label, note) in taken {
+        notes.lines.insert(label, Some(note));
+        notes.noted.insert(label);
+    }
+    if added > 0 {
+        notes.text = as_kept(&notes.lines);
+        notes.tokens = tokens(llm, &notes.text).await;
+        step.set_reasoning(Some(&notes.text));
+    }
+    let summary = match added {
+        0 => "nothing added".to_string(),
+        1 => "1 more passage bears on the question".to_string(),
+        added => format!("{added} more passages bear on the question"),
+    };
+    if failed {
+        step.failed(Some(summary));
+    } else {
+        step.done(Some(summary));
     }
     Ok(added)
 }
@@ -153,26 +154,14 @@ async fn room_for_passages(llm: &dyn LLMPort, request: &CompletionRequest, said:
 }
 
 /// Each marked passage with its size as it would be shown again, with the
-/// blank line after it, in label order. A passage is measured once a turn.
-async fn measured(
-    llm: &dyn LLMPort,
-    passages: &Passages,
-    marked: &[u32],
-    sizes: &mut BTreeMap<u32, usize>,
-) -> Vec<(u32, usize)> {
+/// blank line after it, in label order.
+async fn measured(llm: &dyn LLMPort, passages: &Passages, marked: &[u32]) -> Vec<(u32, usize)> {
     let mut measured = Vec::with_capacity(marked.len());
     for &label in marked {
         let Some(text) = passages.raw(label) else {
             continue;
         };
-        let size = match sizes.get(&label) {
-            Some(size) => *size,
-            None => {
-                let size = tokens(llm, &format!("{}{PARAGRAPH_BREAK}", shown(label, text))).await;
-                sizes.insert(label, size);
-                size
-            }
-        };
+        let size = tokens(llm, &format!("{}{PARAGRAPH_BREAK}", shown(label, text))).await;
         measured.push((label, size));
     }
     measured

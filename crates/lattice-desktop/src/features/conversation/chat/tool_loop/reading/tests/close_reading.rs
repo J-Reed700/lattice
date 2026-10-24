@@ -32,8 +32,8 @@ async fn the_marked_passages_are_shown_again_and_a_copy_takes_the_hyphens_place(
     let sent = model.requests();
     assert_eq!(
         sent.len(),
-        3,
-        "the reading, a pass that took [2] and a pass that took nothing"
+        2,
+        "the reading and one showing of the marked passages"
     );
     let first = &sent[1];
     let planned_len = request.input.len();
@@ -60,17 +60,6 @@ async fn the_marked_passages_are_shown_again_and_a_copy_takes_the_hyphens_place(
     assert_eq!(first.thinking, ThinkingMode::Off);
     assert_eq!(first.max_output_tokens, Some(777));
     assert_eq!(first.stop, ["[5]", "\n5."]);
-
-    let second = &sent[2];
-    assert_eq!(
-        second.input[planned_len].text(),
-        kept,
-        "the next pass reads beside the notes as kept"
-    );
-    assert_eq!(
-        second.input.last().unwrap().text(),
-        shown_again(&format!("[3] {MÜHLE}\n\n[4] {MOLINO}"))
-    );
 }
 
 #[tokio::test]
@@ -102,24 +91,38 @@ async fn only_a_line_that_copies_its_own_passage_takes_a_hyphens_place() {
         notes.text,
         format!("[1] {KITCHEN}\n[2] -\n[3] -\n[4] {MOLINO}")
     );
-    assert_eq!(model.requests().len(), 3);
+    assert_eq!(model.requests().len(), 2);
 }
 
 #[tokio::test]
-async fn the_close_read_ends_with_the_first_pass_that_takes_no_line() {
+async fn each_marked_passage_is_shown_again_once() {
     let model = Model::new([
         reply(&marked(), "stop"),
-        reply("[2] -\n[3] -\n[4] -", "stop"),
-        reply(&format!("[2] {MILL_NOTE}"), "stop"),
+        reply(&format!("[2] {MILL_NOTE}\n[3] -\n[4] -"), "stop"),
+        reply(&format!("[3] {MÜHLE}"), "stop"),
     ]);
     let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
     assert_eq!(
         model.requests().len(),
         2,
-        "no pass after one that took nothing"
+        "no second showing, even after one that took a line"
     );
-    assert_eq!(notes.text, marked());
-    assert_eq!(notes.noted, [1].into());
+    assert_eq!(notes.noted, [1, 2].into());
+    assert_eq!(notes.lines.get(&3), Some(&None));
+}
+
+#[test]
+fn the_close_read_asks_for_its_lines_after_the_passages() {
+    let said = shown_again("[2] PASSAGE");
+    let (before, after) = said.split_once("[2] PASSAGE").unwrap();
+    assert!(before.ends_with("marked with a hyphen.\n\n"));
+    assert!(after.starts_with("\n\nWrite one line for each of these passages"));
+    assert!(
+        after.contains("the sentences of that passage that bear on my question")
+            && after.contains("a single hyphen when it says nothing bearing on my question"),
+        "the reading's own criterion, said again"
+    );
+    assert!(after.ends_with("Write only these lines."));
 }
 
 #[tokio::test]

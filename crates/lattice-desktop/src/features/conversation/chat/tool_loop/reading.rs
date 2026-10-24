@@ -180,7 +180,7 @@ pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<
     message
         .contains(READING_INSTRUCTION)
         .then(|| Passages::shown(sources, &message))
-        .filter(|passages| !passages.0.is_empty())
+        .filter(|passages| !passages.is_empty())
 }
 
 /// The reading round: one line per passage, then a sweep for the labels the
