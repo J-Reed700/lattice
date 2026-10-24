@@ -199,22 +199,9 @@ pub(super) fn rewrite_program(program: &mut LearningProgramDto, map: &HashMap<St
             for block in &mut lesson.blocks {
                 remap_refs(map, &mut block.source_ids);
             }
-            for question in &mut lesson.questions {
-                question.id = remap(map, &question.id);
-                remap_refs(map, &mut question.source_ids);
-            }
         }
     }
     for source in &mut program.sources {
         source.id = remap(map, &source.id);
-    }
-    for attempt in &mut program.attempts {
-        attempt.id = remap(map, &attempt.id);
-        attempt.module_id = remap(map, &attempt.module_id);
-        attempt.lesson_id = attempt.lesson_id.as_deref().map(|id| remap(map, id));
-        for result in &mut attempt.results {
-            result.question_id = remap(map, &result.question_id);
-            remap_refs(map, &mut result.source_ids);
-        }
     }
 }

@@ -19,7 +19,7 @@ vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   SectionTangentBar: () => null,
 }));
 
-const lesson: LearningLessonDto = { id: 'lesson-1', title: 'Phase changes', objective: 'Explain boiling.', estimatedMinutes: 20, preparation: 'outline', blocks: [], questions: [], completed: false };
+const lesson: LearningLessonDto = { id: 'lesson-1', title: 'Phase changes', objective: 'Explain boiling.', estimatedMinutes: 20, preparation: 'outline', blocks: [], completed: false };
 const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [], modules: [] } as unknown as LearningProgramDto;
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,

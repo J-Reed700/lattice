@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { formItem, quizForm, quizOverview } from '@/features/learning/quizzes/quizTestData';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
 import type { ExportAllLearningPacksResultDto, LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
 import { queryClient as activityClient } from '@/lib/queryClient';
@@ -22,7 +23,7 @@ vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ Portability
 vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: ({ onImported }: { onImported: (id: string, title: string) => void }) => <button onClick={() => onImported('imported-1', 'Imported course')}>Complete test import</button> }));
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), submit: vi.fn(),
+  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
@@ -43,10 +44,11 @@ vi.mock('@/lib/api', () => ({ default: {
   acceptLearningProgram: mocks.accept,
   prepareLearningLesson: mocks.prepare,
   completeLearningLesson: mocks.complete,
-  submitLearningAttempt: mocks.submit,
   getLearningPlan: mocks.plan,
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
-  getLearningAssessmentWorkspace: async (programId: string) => ({ ok: true, data: { programId, outcomes: [], forms: [], blueprints: [], evidence: [], followUps: [] } }),
+  getLearningQuizOverview: async () => ({ ok: true, data: quizOverview() }),
+  startLearningQuiz: mocks.startQuiz,
+  getLearningAssessmentForm: mocks.form,
   getLearningMemory: mocks.memory,
   // Flashcards share the landing page; an unconfigured mock means "no decks".
   listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
@@ -58,9 +60,6 @@ vi.mock('@/lib/api', () => ({ default: {
 
 
 const source = { id: 'source-1', title: 'Field guide', url: 'https://example.org/guide', excerpt: 'A carefully chosen passage.', acquiredAt: 1_790_000_000_000 };
-const quizQuestion = { id: 'quiz-1', kind: 'quiz' as const, prompt: 'Which principle applies?', options: ['First principle', 'Second principle'], sourceIds: ['source-1'] };
-const practiceQuestion = { id: 'practice-1', kind: 'practice' as const, prompt: 'Apply the concept to this case.', options: ['Apply it', 'Ignore it'], sourceIds: ['source-1'] };
-const testQuestion = { id: 'test-1', kind: 'test' as const, prompt: 'Which choice follows the model?', options: ['A', 'B'], sourceIds: ['source-1'] };
 
 function lesson(id: string, title: string, ready = false): LearningLessonDto {
   return {
@@ -70,8 +69,7 @@ function lesson(id: string, title: string, ready = false): LearningLessonDto {
       { kind: 'explanation', title: 'The idea', body: 'A source-backed explanation.', sourceIds: ['source-1'] },
       { kind: 'worked_example', title: 'Worked through', body: 'A short worked example.', sourceIds: ['source-1'] },
     ] : [],
-    questions: ready ? [quizQuestion, practiceQuestion, testQuestion] : [],
-  };
+  } as LearningLessonDto;
 }
 
 function module(id: string, title: string, lessons: LearningLessonDto[]): LearningModuleDto {
@@ -88,7 +86,7 @@ function program(status: 'draft' | 'active' = 'draft', firstReady = false): Lear
     status, revision: status === 'active' ? 1 : 0, moduleCount: 2, lessonCount: 4, completedLessons: 0,
     currentLessonId: 'lesson-1', createdAt: 1_790_000_000_000,
   };
-  return { summary, priorKnowledge: 'Some experience', minutesPerSession: 30, modelName: 'Selected model', modules, sources: [source], attempts: [] };
+  return { summary, priorKnowledge: 'Some experience', minutesPerSession: 30, modelName: 'Selected model', modules, sources: [source] } as LearningProgramDto;
 }
 
 function summary(value: LearningProgramDto): LearningProgramSummaryDto { return value.summary; }
@@ -346,77 +344,23 @@ describe('Learning Studio program workflow', () => {
     expect(screen.getAllByRole('region', { name: 'Lesson preparation' })).toHaveLength(1);
   });
 
-  it('validates a quiz, preserves answers through a failed submit, and retries with the same attempt id', async () => {
+  it('opens Quizzes as a primary tab and starts a lesson quiz from its row', async () => {
     const user = userEvent.setup();
     const active = program('active', true);
-    const successful = structuredClone(active);
-    successful.attempts = [{
-      id: 'saved-attempt', moduleId: 'module-1', lessonId: 'lesson-1', kind: 'quiz', correct: 1, total: 1,
-      submittedAt: 1_790_000_000_000, coverage: null,
-      results: [{ questionId: 'quiz-1', prompt: quizQuestion.prompt, options: quizQuestion.options, selectedIndex: 0, correctIndex: 0, explanation: 'The source explains this principle.', sourceIds: ['source-1'] }],
-    }];
+    const started = quizForm({ items: [formItem('single_choice', { prompt: 'Which principle applies?', options: ['First principle', 'Second principle'] })] });
     mocks.list.mockResolvedValue(ok([summary(active)]));
     mocks.get.mockResolvedValue(ok(active));
-    mocks.submit.mockResolvedValueOnce(fail('Connection interrupted')).mockResolvedValueOnce(ok(successful));
+    mocks.startQuiz.mockResolvedValue(ok(started));
+    mocks.form.mockResolvedValue(ok(started));
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    await user.click(screen.getByRole('button', { name: /^quiz$/ }));
-    expect(screen.getByRole('button', { name: 'Submit answers' })).toBeDisabled();
-    expect(screen.queryByText('The source explains this principle.')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: 'First principle' }));
-    await user.click(screen.getByRole('button', { name: 'Submit answers' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted');
-    expect(screen.getByRole('radio', { name: 'First principle' })).toBeChecked();
-    const firstAttemptId = mocks.submit.mock.calls[0][0].attemptId;
-    await user.click(screen.getByRole('button', { name: 'Submit answers' }));
-    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(2));
-    expect(mocks.submit.mock.calls[1][0].attemptId).toBe(firstAttemptId);
-    expect(mocks.submit.mock.calls[0][0]).toMatchObject({ kind: 'quiz', moduleId: 'module-1', lessonId: 'lesson-1', answers: [{ questionId: 'quiz-1', selectedIndex: 0 }] });
-    await user.click(screen.getByRole('button', { name: 'History (1)' }));
-    expect(await screen.findByText('Model-authored answer key')).toBeVisible();
-    expect(screen.getByText('The source explains this principle.')).toBeVisible();
-  });
-
-  it('starts a module test once one lesson is prepared and says how much of the module it covers', async () => {
-    const user = userEvent.setup();
-    const active = program('active', true);
-    const submitted = structuredClone(active);
-    submitted.attempts = [{
-      id: 'test-attempt', moduleId: 'module-1', lessonId: null, kind: 'test', correct: 1, total: 1,
-      submittedAt: 1_790_000_000_000, coverage: { coveredLessons: 1, moduleLessons: 2 },
-      results: [{ questionId: 'test-1', prompt: testQuestion.prompt, options: testQuestion.options, selectedIndex: 0, correctIndex: 0, explanation: 'The model points to A.', sourceIds: ['source-1'] }],
-    }];
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    mocks.submit.mockResolvedValue(ok(submitted));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    await user.click(screen.getByRole('button', { name: 'Module test' }));
-    expect(screen.getByText('Covers 1 of 2 lessons in this module.')).toBeVisible();
-    expect(screen.queryByText(/Prepare at least one lesson/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: 'A' }));
-    await user.click(screen.getByRole('button', { name: 'Submit answers' }));
-    await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'test', moduleId: 'module-1', lessonId: null, answers: [{ questionId: 'test-1', selectedIndex: 0 }] })));
-    await user.click(screen.getByRole('button', { name: 'History (1)' }));
-    expect(await screen.findByText('Covers 1 of 2 lessons in this module · partial test')).toBeVisible();
-  });
-
-  it('asks for one prepared lesson before a module test can start', async () => {
-    const user = userEvent.setup();
-    const active = program('active');
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    await user.click(screen.getByRole('button', { name: 'Module test' }));
-    expect(screen.getByText(/Prepare at least one lesson in this module to take its test/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Submit answers' })).not.toBeInTheDocument();
+    await user.click(within(screen.getByRole('tablist', { name: 'Program workspace' })).getByRole('tab', { name: 'Quizzes' }));
+    expect(await screen.findByRole('heading', { name: 'Check what stuck, whenever you like' })).toBeVisible();
+    expect(screen.getByText('Questions not prepared yet')).toBeVisible();
+    await user.click(screen.getAllByRole('button', { name: /Start quiz/ })[0]);
+    await waitFor(() => expect(mocks.startQuiz).toHaveBeenCalledWith(expect.objectContaining({ programId: 'program-1', scope: { kind: 'lesson', id: 'lesson-1' }, mode: 'graded', retakeOfFormId: null })));
+    expect(await screen.findByText('Which principle applies?')).toBeVisible();
+    expect(screen.getByRole('radio', { name: /First principle/ })).toBeVisible();
   });
 
   it('keeps a practical session mounted when switching workspace groups and exposes More as a keyboard menu', async () => {
@@ -428,7 +372,7 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     const mainNav = screen.getByRole('tablist', { name: 'Program workspace' });
-    expect(within(mainNav).getAllByRole('tab')).toHaveLength(5);
+    expect(within(mainNav).getAllByRole('tab')).toHaveLength(6);
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
     const lab = screen.getByRole('textbox', { name: 'Lab scratchpad' });
@@ -472,7 +416,7 @@ describe('Learning Studio program workflow', () => {
     await waitFor(() => expect(lessonSelect).toHaveValue('lesson-2'));
   });
 
-  it('resets retained editors and quiz answers after a same-program import', async () => {
+  it('resets retained editors after a same-program import', async () => {
     const user = userEvent.setup();
     const active = program('active', true);
     mocks.list.mockResolvedValue(ok([summary(active)]));
@@ -481,9 +425,6 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    await user.click(screen.getByRole('button', { name: 'quiz' }));
-    await user.click(screen.getByRole('radio', { name: 'First principle' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
     await user.type(screen.getByRole('textbox', { name: 'Lab scratchpad' }), 'before import');
     await user.click(screen.getByRole('button', { name: 'More' }));
@@ -492,8 +433,6 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
     expect(screen.getByRole('textbox', { name: 'Lab scratchpad' })).toHaveValue('');
-    await user.click(screen.getByRole('tab', { name: 'Quick checks' }));
-    expect(screen.getByRole('radio', { name: 'First principle' })).not.toBeChecked();
   });
 
   it('opens the copy an import creates from inside another course', async () => {

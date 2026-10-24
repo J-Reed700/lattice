@@ -1,6 +1,6 @@
 //! Pure checks on a decoded pack, run before anything is written.
+use super::evidence_tables::LearningEvidenceSnapshot;
 use super::*;
-use super::{entries::PrivateAnswerKey, evidence_tables::LearningEvidenceSnapshot};
 use std::collections::HashSet;
 
 pub(super) fn validate_aggregate_id_namespaces(
@@ -20,16 +20,10 @@ pub(super) fn validate_aggregate_id_namespaces(
         register(&module.id, "module")?;
         for lesson in &module.lessons {
             register(&lesson.id, "lesson")?;
-            for question in &lesson.questions {
-                register(&question.id, "question")?;
-            }
         }
     }
     for source in &program.sources {
         register(&source.id, "source_version")?;
-    }
-    for attempt in &program.attempts {
-        register(&attempt.id, "attempt")?;
     }
     for row in outcome_rows {
         register(value_str(row, "id")?, "outcome")?;
@@ -49,12 +43,9 @@ pub(super) fn validate_aggregate_id_namespaces(
                     }
                 }
                 if let Some(core_namespace) = core.get(id) {
-                    let expected_alias = (table.table == "learning_attempts"
+                    let expected_alias = table.table == "learning_outcome_definitions"
                         && key == "id"
-                        && *core_namespace == "attempt")
-                        || (table.table == "learning_outcome_definitions"
-                            && key == "id"
-                            && *core_namespace == "outcome");
+                        && *core_namespace == "outcome";
                     if !expected_alias {
                         return Err(invalid(
                             "Pack aggregate identifier collides with another imported entity type.",
@@ -80,7 +71,6 @@ pub(super) fn validate_program(p: &LearningProgramDto) -> Result<()> {
     }
     let mut modules = HashSet::new();
     let mut lessons = HashSet::new();
-    let mut questions = HashMap::<&str, usize>::new();
     for m in &p.modules {
         validate_uuid(&m.id, "module")?;
         if !ids.insert(m.id.as_str()) {
@@ -121,24 +111,6 @@ pub(super) fn validate_program(p: &LearningProgramDto) -> Result<()> {
                     ));
                 }
             }
-            for q in &l.questions {
-                validate_uuid(&q.id, "question")?;
-                if !ids.insert(q.id.as_str()) {
-                    return Err(invalid("Pack has duplicate entity IDs."));
-                }
-                if !(2..=8).contains(&q.options.len())
-                    || q.options.iter().any(|o| o.trim().is_empty())
-                    || q.options.iter().collect::<HashSet<_>>().len() != q.options.len()
-                {
-                    return Err(invalid("Pack question choices are invalid."));
-                }
-                if q.source_ids.iter().any(|id| !sources.contains(id.as_str())) {
-                    return Err(invalid(
-                        "Pack question refers to an unknown source version.",
-                    ));
-                }
-                questions.insert(q.id.as_str(), q.options.len());
-            }
         }
     }
     if p.summary
@@ -150,64 +122,11 @@ pub(super) fn validate_program(p: &LearningProgramDto) -> Result<()> {
             "Pack current lesson is missing from its curriculum.",
         ));
     }
-    for attempt in &p.attempts {
-        validate_uuid(&attempt.id, "attempt")?;
-        if !ids.insert(attempt.id.as_str())
-            || !modules.contains(attempt.module_id.as_str())
-            || attempt
-                .lesson_id
-                .as_deref()
-                .is_some_and(|id| !lessons.contains(id))
-        {
-            return Err(invalid(
-                "Pack attempt has an invalid or duplicate curriculum reference.",
-            ));
-        }
-        for r in &attempt.results {
-            if !questions.contains_key(r.question_id.as_str())
-                || r.correct_index >= r.options.len()
-                || r.selected_index >= r.options.len()
-                || r.source_ids.iter().any(|id| !sources.contains(id.as_str()))
-            {
-                return Err(invalid(
-                    "Pack attempt evidence has an invalid reference or answer index.",
-                ));
-            }
-        }
-    }
     if p.modules.is_empty()
         || p.modules.len() > 100
         || p.modules.iter().map(|m| m.lessons.len()).sum::<usize>() > 1000
     {
         return Err(invalid("Pack curriculum exceeds import limits."));
-    }
-    Ok(())
-}
-pub(super) fn validate_answer_keys(
-    program: &LearningProgramDto,
-    keys: &[PrivateAnswerKey],
-) -> Result<()> {
-    let question_options: HashMap<&str, usize> = program
-        .modules
-        .iter()
-        .flat_map(|m| m.lessons.iter())
-        .flat_map(|l| l.questions.iter())
-        .map(|q| (q.id.as_str(), q.options.len()))
-        .collect();
-    let mut seen = HashSet::new();
-    for key in keys {
-        let Some(count) = question_options.get(key.question_id.as_str()) else {
-            return Err(invalid("Pack answer key refers to an unknown question."));
-        };
-        if !seen.insert(key.question_id.as_str())
-            || key.correct_index >= *count
-            || key.explanation.trim().is_empty()
-        {
-            return Err(invalid("Pack answer key data is invalid."));
-        }
-    }
-    if seen.len() != question_options.len() {
-        return Err(invalid("Pack omits one or more assessment answer keys."));
     }
     Ok(())
 }

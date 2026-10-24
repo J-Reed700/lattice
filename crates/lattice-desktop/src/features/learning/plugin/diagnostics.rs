@@ -37,8 +37,8 @@ pub async fn start_learning_diagnostic(
     repo.plan(&request.program_id)
         .await
         .map_err(ApiError::from)?;
-    let workspace = assessment_repo(&container)
-        .workspace(&request.program_id)
+    let outcomes = assessment_repo(&container)
+        .module_outcomes(&request.program_id)
         .await
         .map_err(ApiError::from)?;
     let pin = learning_model(
@@ -56,7 +56,7 @@ pub async fn start_learning_diagnostic(
     let tasks = crate::features::learning::diagnostic_generation::author(
         llm.as_ref(),
         &program,
-        &workspace.outcomes,
+        &outcomes,
         &sources,
     )
     .await

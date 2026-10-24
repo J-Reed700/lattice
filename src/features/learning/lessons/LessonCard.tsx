@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 
 import { ArrowRight, Check, CheckCircle2, ClipboardCheck, Clock3, Play } from 'lucide-react';
 
@@ -25,7 +25,7 @@ const blockLabels: Record<LearningBlockKind, string> = {
   independent_practice: 'Your assignment', reflection: 'Reflect & connect', recap: 'Key takeaways',
 };
 
-export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview }: {
+export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout }: {
   lesson: LearningLessonDto;
   moduleId: string;
   outlineEvidence?: LearningOutlineEvidenceDto | null;
@@ -39,6 +39,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   onPractice: () => void;
   /** Opens the lesson's claim review screen; the course page never shows claims itself. */
   onReview?: (programId: string, lessonId: string) => void;
+  /** The lesson quiz callout, shown after the last section and before "Mark lesson complete". */
+  quizCallout?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
   const showCitations = useCitationDisplayStore((state) => state.visible);
@@ -167,6 +169,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                 ))}
               </div>
               <SectionTangentBar moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle={lesson.title} sectionText={`${lesson.title}\n\n${lesson.objective}`} label="Start a tangent on this lesson" />
+              {quizCallout}
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5"><button type="button" onClick={onPractice} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg hover:brightness-95">Practice this lesson <ArrowRight size={15} /></button><div className="flex flex-wrap items-center gap-3"><p className="max-w-lg text-xs leading-5 text-text-muted">Reading the lesson does not count as completion.</p><button type="button" disabled={lesson.completed || pending} onClick={onComplete} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-accent/40 px-4 py-2.5 text-sm font-medium text-accent hover:bg-accent/5 disabled:opacity-45">{lesson.completed ? <><CheckCircle2 size={15} /> Marked complete</> : pending ? 'Saving…' : <>Mark lesson complete <Check size={15} /></>}</button></div></div>
             </>
           )}

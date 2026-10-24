@@ -11,7 +11,6 @@ import type {
   AcceptLearningProgramRequestDto,
   PrepareLearningLessonRequestDto,
   CompleteLearningLessonRequestDto,
-  SubmitLearningAttemptRequestDto,
 } from '@/lib/bindings';
 
 
@@ -138,7 +137,4 @@ export function usePrepareLearningLesson() {
 }
 export function useCompleteLearningLesson() {
   return useProgramMutation<CompleteLearningLessonRequestDto>(VaultAPI.completeLearningLesson);
-}
-export function useSubmitLearningAttempt() {
-  return useProgramMutation<SubmitLearningAttemptRequestDto>(VaultAPI.submitLearningAttempt);
 }

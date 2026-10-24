@@ -369,7 +369,7 @@ fn evidence_table_and_canvas_folders_require_their_kind_and_a_flat_name() {
     for (path, kind) in [
         (
             "evidence/tables/study_cards.json",
-            LearningPackEntryKind::Attempt,
+            LearningPackEntryKind::Curriculum,
         ),
         (
             "program/canvases/canvas-1.json",

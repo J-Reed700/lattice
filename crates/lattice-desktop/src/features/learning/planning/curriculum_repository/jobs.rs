@@ -11,6 +11,7 @@ use crate::features::learning::persistence::{db, decode, hash};
 use crate::features::learning::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
 };
+use crate::features::learning::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
 use sqlx::Row;
@@ -26,9 +27,12 @@ impl LearningCurriculumRepository {
         program_id: &str,
     ) -> Result<Vec<LearningGenerationJob>> {
         let scopes = job_scopes(&mut *connection, program_id).await?;
-        JobStore::list_for_subject_in(connection, LESSON_PREPARATION, program_id)
-            .await?
-            .into_iter()
+        let mut jobs = Vec::new();
+        for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING] {
+            jobs.extend(JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?);
+        }
+        jobs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        jobs.into_iter()
             .filter_map(|job| {
                 let scope = scopes.get(&job.id)?.clone();
                 Some(learning_job(job, scope))
@@ -487,14 +491,17 @@ async fn job_scopes(
 
 fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob> {
     use LearningGenerationJobStatus as S;
-    if job.kind != LESSON_PREPARATION {
-        return Err(AppError::Database("Invalid generation job kind".into()));
-    }
+    let kind = match job.kind.as_str() {
+        LESSON_PREPARATION => LearningGenerationJobKind::LessonPreparation,
+        QUIZ_BANK => LearningGenerationJobKind::QuizBank,
+        QUIZ_GRADING => LearningGenerationJobKind::QuizGrading,
+        _ => return Err(AppError::Database("Invalid generation job kind".into())),
+    };
     let job = LearningGenerationJob {
         id: job.id,
         program_id: scope.program_id,
         operation_id: job.operation_id,
-        kind: LearningGenerationJobKind::LessonPreparation,
+        kind,
         payload_sha256: job.payload_hash,
         base_revision_number: scope.base_revision_number as u32,
         status: match job.status {

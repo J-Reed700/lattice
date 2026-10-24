@@ -312,6 +312,7 @@ impl Waiting {
                 self.revision().await?,
                 &[(self.lesson_id.clone(), lesson.clone())],
                 &[],
+                &[],
             )
             .await?;
         Ok(lesson)

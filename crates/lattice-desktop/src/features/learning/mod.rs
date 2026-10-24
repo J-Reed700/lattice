@@ -24,6 +24,10 @@ pub mod service;
 pub use assessment::assessment_engine;
 pub use assessment::assessment_generation;
 pub use assessment::assessment_repository;
+pub use assessment::grade_rationale;
+pub(crate) use assessment::key_review;
+pub use assessment::quiz_bank_jobs;
+pub use assessment::quiz_blueprints;
 pub use canvas::canvas_repository;
 pub use lessons::generation;
 pub use lessons::lesson_evidence;
@@ -55,7 +59,6 @@ pub use runtime::lab_runtime;
 pub use runtime::python_runtime;
 pub use runtime::runtime_catalog;
 
-use lessons::answer_review;
 pub(crate) use lessons::content_verification;
 use lessons::generation_jobs;
 use lessons::lesson_drafts;
@@ -85,5 +88,3 @@ mod tests;
 mod consistency_tests;
 #[cfg(test)]
 mod content_caps_tests;
-#[cfg(test)]
-mod module_test_tests;

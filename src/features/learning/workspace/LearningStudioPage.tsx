@@ -5,7 +5,6 @@ import { ArrowLeft, ArrowRight, Archive, BookOpenCheck, Clock3, Plus, Sparkles, 
 import { useNavigate, useSearchParams } from 'react-router';
 
 
-import { type FormSnapshot } from '@/features/learning/assessment/AssessmentPanel';
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
@@ -26,10 +25,8 @@ import {
   useLearningProgram,
   useLearningPrograms,
   usePrepareLearningLesson,
-  useSubmitLearningAttempt,
 } from '@/features/learning/workspace/useLearningStudio';
 import { useStudioNavigationGuard } from '@/features/learning/workspace/useStudioNavigationGuard';
-import type { LearningAssessmentKind, LearningLessonDto, LearningModuleDto, LearningQuestionDto, SubmitLearningAttemptRequestDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination } from '@/lib/studyActivity';
 
@@ -92,14 +89,12 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const [screen, setScreen] = useState<Screen>('programs');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const navigation = useStudioNavigationGuard(selectedId !== null);
-  const [forms, setForms] = useState<Record<string, FormSnapshot>>({});
   const programs = useLearningPrograms();
   const detail = useLearningProgram(selectedId);
   const generate = useGenerateLearningProgram();
   const accept = useAcceptLearningProgram();
   const prepare = usePrepareLearningLesson();
   const complete = useCompleteLearningLesson();
-  const submit = useSubmitLearningAttempt();
   const handledNewRoute = useRef(false);
   const flashcardsRef = useRef<HTMLElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
@@ -205,40 +200,6 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     }
   };
 
-  const formFor = (key: string, questions: { id: string }[]): FormSnapshot => {
-    const existing = forms[key];
-    if (!existing) return { answers: {}, attemptId: null, fingerprint: null };
-    const known = new Set(questions.map((question) => question.id));
-    const answers = Object.fromEntries(Object.entries(existing.answers).filter(([id]) => known.has(id)));
-    return { ...existing, answers };
-  };
-  const setAnswer = (key: string, questionId: string, value: number) => setForms((current) => {
-    const previous = current[key] ?? { answers: {}, attemptId: null, fingerprint: null };
-    if (previous.answers[questionId] === value) return current;
-    return { ...current, [key]: { answers: { ...previous.answers, [questionId]: value }, attemptId: null, fingerprint: null } };
-  });
-
-  const submitAttempt = (key: string, kind: LearningAssessmentKind, module: LearningModuleDto, lesson: LearningLessonDto | null, questions: LearningQuestionDto[], form: FormSnapshot, proposedId: string) => {
-    if (!selectedId || questions.length === 0) return;
-    const answers = questions.map((question) => ({ questionId: question.id, selectedIndex: form.answers[question.id] }));
-    if (answers.some((answer) => !Number.isInteger(answer.selectedIndex))) return;
-    const fingerprint = JSON.stringify(answers);
-    const attemptId = form.attemptId && form.fingerprint === fingerprint ? form.attemptId : proposedId;
-    // Save the identifier before sending. If the response is lost, retrying the
-    // same unchanged form reuses this UUID and the backend's idempotency key.
-    setForms((current) => ({ ...current, [key]: { answers: form.answers, attemptId, fingerprint } }));
-    const request: SubmitLearningAttemptRequestDto = {
-      attemptId,
-      programId: selectedId,
-      expectedRevision: detail.data?.summary.revision ?? 0,
-      moduleId: module.id,
-      lessonId: kind === 'test' ? null : lesson?.id ?? null,
-      kind,
-      answers,
-    };
-    submit.mutate(request, { onSuccess: () => { setForms((current) => ({ ...current, [key]: { answers: {}, attemptId: null, fingerprint: null } })); } });
-  };
-
   if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
   if (screen === 'import' || screen === 'export-all') return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
   if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
@@ -257,7 +218,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} />
     ) : <div className="mx-auto max-w-[1450px]">
       <header className="relative overflow-hidden rounded-[1.6rem] border border-[#d7c9b8] bg-[#eee8df] px-7 py-8 sm:px-10 sm:py-10 dark:border-white/10 dark:bg-[#28251f]"><div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full border border-accent/20" /><div className="relative flex flex-wrap items-end justify-between gap-6"><div className="max-w-2xl"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-accent"><BookOpenCheck size={15} /> Learning Studio</div><h1 className="mt-3 font-serif text-4xl leading-tight text-text-primary sm:text-[3.2rem]">A course shaped around your curiosity.</h1><p className="mt-3 max-w-xl text-sm leading-6 text-text-secondary">Start with a goal. Follow a complete course through in-depth lessons, practical assignments, knowledge checks, and a final project. Your own materials are optional.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setScreen('import')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Upload size={15} /> Import a course…</button><button type="button" onClick={() => setScreen('export-all')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Archive size={15} /> Export all courses…</button><button type="button" onClick={() => { generate.reset(); setScreen('builder'); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95"><Plus size={16} /> Build a program</button></div></div></header>
       <CourseTangentsSection onOpenDestination={handleSelectDestination} />

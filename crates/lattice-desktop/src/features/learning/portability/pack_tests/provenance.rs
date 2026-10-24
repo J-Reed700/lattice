@@ -47,14 +47,14 @@ async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
             source_ids: vec![program.sources[0].id.clone()],
             rubric: vec![],
         }],
-        questions: vec![LearningQuestionDto {
+        questions: vec![LessonQuestion {
             id: question_id.clone(),
-            kind: LearningAssessmentKind::Quiz,
+            kind: LessonQuestionKind::Quiz,
             prompt: "PRIVATE assessment finding".into(),
             options: vec!["First".into(), "Second".into()],
             source_ids: vec![program.sources[0].id.clone()],
         }],
-        keys: vec![LearningAnswerKey {
+        keys: vec![LessonAnswerKey {
             question_id,
             correct_index: 0,
             explanation: "PRIVATE answer explanation".into(),

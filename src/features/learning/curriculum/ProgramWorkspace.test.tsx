@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 vi.mock('@/features/learning/tangents/ProgramTangents', () => ({
@@ -27,6 +28,7 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
   getLearningMemory: async () => ({ ok: true, data: { dueCount: 0 } }),
+  getLearningQuizOverview: async () => ({ ok: true, data: quizOverview({ quizzesPassed: 1 }) }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
   courseIndexOpen: async () => ({ ok: true, data: undefined }),
   courseIndexClose: async () => ({ ok: true, data: undefined }),
@@ -35,7 +37,7 @@ vi.mock('@/lib/api', () => ({ default: {
 // A course whose title is its whole goal, as an outline generated from a long goal can be.
 const GOAL = 'Understand how the circulatory system moves oxygen from the lungs to every cell, and why it fails in heart disease.';
 
-const held: LearningLessonDto = { id: 'lesson-1', title: 'The heart as a pump', objective: 'Explain the cardiac cycle.', estimatedMinutes: 20, preparation: 'outline', blocks: [], questions: [], completed: false };
+const held = { id: 'lesson-1', title: 'The heart as a pump', objective: 'Explain the cardiac cycle.', estimatedMinutes: 20, preparation: 'outline', blocks: [], completed: false } as unknown as LearningLessonDto;
 const next: LearningLessonDto = { ...held, id: 'lesson-2', title: 'Blood vessels' };
 
 function program(title: string, goal = GOAL): LearningProgramDto {
@@ -44,7 +46,7 @@ function program(title: string, goal = GOAL): LearningProgramDto {
     summary: { id: 'program-1', title, goal, status: 'active', revision: 9, currentLessonId: 'lesson-1' },
     priorKnowledge: '', minutesPerSession: 30, modelName: 'Test model',
     modules: [{ id: 'module-1', title: 'Circulation', summary: 'How blood moves.', outcomes: ['Describe the cardiac cycle'], lessons: [held, next] }],
-    sources: [], attempts: [],
+    sources: [],
   } as unknown as LearningProgramDto;
 }
 
@@ -60,7 +62,6 @@ function show(course: LearningProgramDto, onReview = vi.fn()) {
   render(<QueryClientProvider client={client}>
     <ProgramWorkspace program={course} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
       onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false}
-      formFor={() => ({ answers: {}, attemptId: null, fingerprint: null })} setAnswer={vi.fn()} onSubmitAttempt={vi.fn()} submitPending={false}
       onReview={onReview} />
   </QueryClientProvider>);
   return onReview;
@@ -90,6 +91,21 @@ describe('Course page', () => {
     // No internal revision number and no claim text on the course page.
     expect(screen.queryByText(/Revision 9/)).not.toBeInTheDocument();
     expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
+  });
+
+  it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Sources']);
+    tabs[1].click();
+    const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
+    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations']);
+    expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();
+  });
+
+  it('shows quizzes passed beside lessons complete in the course header', async () => {
+    show(program(GOAL));
+    expect(await screen.findByText('Quizzes passed')).toBeVisible();
   });
 
   it('keeps a goal that differs from the title behind one Goal disclosure', async () => {

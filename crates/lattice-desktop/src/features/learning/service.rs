@@ -195,7 +195,6 @@ pub async fn generate_with_references_and_progress(
         model_name: llm.model_name().to_string(),
         modules,
         sources,
-        attempts: vec![],
     };
     progress.check_cancelled()?;
     let _run = drafts.acquire(&program.summary.id)?;
@@ -255,10 +254,7 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
                     "Lesson estimate must be between 1 and 600 minutes.".into(),
                 ));
             }
-            if l.preparation != LearningPreparation::Outline
-                || !l.blocks.is_empty()
-                || !l.questions.is_empty()
-            {
+            if l.preparation != LearningPreparation::Outline || !l.blocks.is_empty() {
                 return Err(AppError::InvalidInput(
                     "Generated programs must begin as unprepared outlines.".into(),
                 ));
@@ -436,9 +432,9 @@ pub(super) fn validate_prepared(
         ));
     }
     let counts = [
-        LearningAssessmentKind::Practice,
-        LearningAssessmentKind::Quiz,
-        LearningAssessmentKind::Test,
+        LessonQuestionKind::Practice,
+        LessonQuestionKind::Quiz,
+        LessonQuestionKind::Test,
     ]
     .map(|kind| p.questions.iter().filter(|q| q.kind == kind).count());
     if counts.contains(&0) {
@@ -456,32 +452,5 @@ pub async fn complete(
     uuid(&request.program_id, "program")?;
     uuid(&request.lesson_id, "lesson")?;
     repo.complete(&request).await?;
-    repo.get(&request.program_id).await
-}
-pub async fn submit(
-    repo: &LearningRepository,
-    request: SubmitLearningAttemptRequestDto,
-) -> Result<LearningProgramDto> {
-    uuid(&request.attempt_id, "attempt")?;
-    uuid(&request.program_id, "program")?;
-    uuid(&request.module_id, "module")?;
-    if let Some(id) = &request.lesson_id {
-        uuid(id, "lesson")?;
-    }
-    if request.answers.is_empty() || request.answers.len() > 128 {
-        return Err(AppError::InvalidInput(
-            "An attempt must contain 1–128 answers.".into(),
-        ));
-    }
-    let mut unique = std::collections::HashSet::new();
-    for a in &request.answers {
-        uuid(&a.question_id, "question")?;
-        if !unique.insert(&a.question_id) {
-            return Err(AppError::InvalidInput(
-                "Duplicate question answers are not allowed.".into(),
-            ));
-        }
-    }
-    repo.submit(&request).await?;
     repo.get(&request.program_id).await
 }

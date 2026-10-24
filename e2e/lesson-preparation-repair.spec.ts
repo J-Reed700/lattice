@@ -8,13 +8,12 @@ test('Completed checking gives way to visible repair progress: the status line n
   await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
   await page.evaluate(() => {
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: {
-      program: { modules: Array<{ lessons: Array<{ title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> };
+      program: { modules: Array<{ lessons: Array<{ title: string; preparation: string; blocks: unknown[] }> }> };
       planWorkspace: { programId: string; programRevision: number; jobs: unknown[] };
     } }).__LATTICE_LEARNING_STATE__;
     const lesson = state.program.modules[0].lessons[0];
     lesson.preparation = 'outline';
     lesson.blocks = [];
-    lesson.questions = [];
     state.planWorkspace.jobs = [{
       id: 'repair-job', programId: state.planWorkspace.programId, operationId: 'operation',
       kind: 'lesson_preparation', payloadSha256: 'fixture', baseRevisionNumber: state.planWorkspace.programRevision,

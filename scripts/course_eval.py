@@ -12,9 +12,16 @@ and `calibration-score` read. Design: docs/design/2026-10-20-course-eval.md.
   takes; a prompt over the judge's window is refused, never truncated. It resumes past scored items.
 * `summarize` writes the headline, the criterion and request tables and the `compare` commands.
 
+Rubric `lattice-course-judge/2` (design Appendix C) adds the `quiz` stage of docs/design/2026-10-23-quizzes-and-tests.md
+section 7.1: each Ready lesson's quiz bank (the harness's `quiz-<sel>.json`, or the lesson's own six questions when no
+bank was recorded) gets mechanical item checks in `metrics.json` and judged criteria Q1-Q5 per item, one call each;
+its slot `<request>/<lesson>/quiz` passes when the mechanical checks pass and at least 90 % of items pass every judged
+criterion. L5 is retired into Q2-Q4. The quiz judge must not be the model that wrote the bank (`--allow-self-judge`
+records an exception in the manifest).
+
 Commands:
   collect RUN_DIR --out RESULTS [--requests SET]
-  score RESULTS --endpoint URL --model NAME [--window N] [--claims]
+  score RESULTS --endpoint URL --model NAME [--window N] [--claims] [--allow-self-judge]
   summarize RESULTS
 """
 import argparse
@@ -23,17 +30,19 @@ import json
 import math
 import re
 import statistics
-import string
+import urllib.request
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 
+import course_eval_quiz as cq
 import shipped_path_stats as sps
 from chat_rag_eval import load_jsonl
 from eval_integrity import SCHEMA_VERSION, digest, unique_records, wilson
-from shipped_path_eval import http_judge, judge_identity, judge_request
+from shipped_path_eval import http_judge, judge_headers, judge_identity, judge_request
 
 ROOT = Path(__file__).resolve().parent.parent
-RUBRIC = "lattice-course-judge/1"
+RUBRIC = "lattice-course-judge/2"
 SET_SCHEMA = "course-eval-requests/1"
 ITEMS_SCHEMA = "course-eval-items/1"
 RESULTS_SCHEMA = "course-eval-results/1"
@@ -46,8 +55,10 @@ HARNESS_FILES = (*(LESSONS_DIR + name for name in ("live_course_eval.rs", "live_
 COPIED = ("request.json", "outline.json", "web-trace-report.json", "phases.jsonl")
 CALL_FILE = re.compile(r"call-(\d+)\.json")
 LESSON_FILE = re.compile(r"lesson-(.+)\.json")
+QUIZ_FILE = re.compile(r"quiz-(.+)\.json")
+QUIZ_ITEM_PASS_SHARE = Fraction(9, 10)  # design 2026-10-23 section 7.1: a bank, unlike a lesson, tolerates a few drops
 
-# --- rubric texts, Appendix A (`lattice-course-judge/1`), verbatim ----------
+# --- rubric texts, Appendix A (`lattice-course-judge/1`) and C (`/2`), verbatim ----------
 
 COURSE_JUDGE_SYSTEM = (
     "You grade one artifact of a learning app, an outline or a lesson, against one criterion written by the "
@@ -97,9 +108,6 @@ LESSON_CRITERIA = {
     "L4": ("Practice", "The practice blocks can be completed using only what this lesson and the learner's prior "
            "knowledge provide, and completing them exercises the objective. Fail if practice needs tools or facts "
            "the lesson never gave, or practises something else."),
-    "L5": ("Questions", "Each question tests the objective; exactly one option is defensibly correct given the "
-           "lesson; the other options are plausible to a learner who missed the point, not obviously wrong or "
-           "jokes; the marked correct answer is the correct one. Fail if any question breaks any of these."),
     "L6": ("Level", "The lesson is pitched to the learner's stated prior knowledge: it does not re-teach what they "
            "know, and it does not assume vocabulary or skills they said they lack without introducing them. Fail "
            "if either happens in more than a passing sentence."),
@@ -107,7 +115,55 @@ LESSON_CRITERIA = {
            "contradicts another. Fail on a contradiction, a recap that lists things not taught, or a section that "
            "belongs to a different lesson."),
 }
-TITLES = {key: value[0] for key, value in {**OUTLINE_CRITERIA, **LESSON_CRITERIA}.items()}
+# `lattice-course-judge/2`: L5 (questions) is retired; the quiz stage's Q2-Q4 judge every question instead.
+RETIRED = {"L5": "Questions"}
+QUIZ_JUDGE_SYSTEM = (
+    "You grade one quiz item of a learning app against one criterion written by the person who built the test. "
+    "The lesson the item belongs to is given. Judge only the criterion you are given, from the lesson and the "
+    "item. Return JSON with verdict \"pass\" or \"fail\" and a one-sentence reason that names the part of the "
+    "item that decided it."
+)
+QUIZ_SOLVE_SYSTEM = (
+    "You are a careful learner who has read only the lesson given. Answer the quiz item from the lesson alone. "
+    "Return JSON with answer in the format asked for, other_defensible true when a different answer would also be "
+    "defensible given the lesson, and a one-sentence reason."
+)
+Q2_LINES = ("Solve the item from the lesson alone, without the key. Pass when your answer is the key and no "
+            "other answer is defensible given the lesson.")
+Q5_TEXT = {
+    "typed": ("The accepted variants cover the reasonable ways a correct learner would phrase this; the numeric "
+              "tolerance is neither trivial nor forgiving of a wrong answer."),
+    "explanation": ("Each rubric criterion names an observable thing in the answer at incomplete, adequate and "
+                    "strong levels, without stating the answer."),
+}
+QUIZ_CRITERIA = {
+    "Q1": ("Answerable from the lesson", "A learner who read only this lesson can answer the item; it needs no "
+           "outside fact the lesson does not teach."),
+    "Q2": ("Exactly one correct key", Q2_LINES),
+    "Q3": ("Plausible distractors", "Each wrong option is one a learner who missed the point could pick; none is "
+           "a joke, a category error, or trivially excluded by grammar or length."),
+    "Q4": ("No leak", "The stem, the other options, and the lesson's own phrasing of the item do not give the "
+           "answer away."),
+    "Q5": ("Keyed fairly", None),
+}
+QUIZ_KEY_SHOWN = ("Q3", "Q4", "Q5")  # Q1 and Q2 read the item as a learner does; the others need to know the key
+TITLES = {key: value[0] for key, value in {**OUTLINE_CRITERIA, **LESSON_CRITERIA, **RETIRED, **QUIZ_CRITERIA}.items()}
+
+
+def quiz_criteria(item):
+    """The criteria that apply to an item's format: Q2 needs a key to solve for, Q3 distractors, Q5 typed
+    variants or a rubric."""
+    fmt = item.get("format")
+    distractors = fmt in ("single_choice", "multi_select") or (
+        fmt == "matching" and len(item.get("right") or []) > len(item.get("left") or []))
+    return (["Q1"] + (["Q2"] if fmt != "explanation" else []) + (["Q3"] if distractors else []) + ["Q4"]
+            + (["Q5"] if fmt in ("short_answer", "cloze", "explanation") else []))
+
+
+def quiz_lines(criterion, item):
+    if criterion == "Q5":
+        return [Q5_TEXT["explanation" if item.get("format") == "explanation" else "typed"]]
+    return [QUIZ_CRITERIA[criterion][1]]
 
 
 def outline_lines(criterion, set_item):
@@ -263,7 +319,9 @@ def answer_key(question, document):
 
 
 def render_lesson(document, request):
-    """A prepared lesson as the judge and the labeller read it, blocks and answer key included."""
+    """A prepared lesson as the judge and the labeller read it. Its questions are not part of it: under
+    `lattice-course-judge/2` they are quiz items with their own criteria, and a quiz judge must not see their keys
+    in the lesson text."""
     lesson, asked = document["lesson"], request_lines(request)
     lines = [f"# {lesson.get('title', '')}", "", f"Objective: {lesson.get('objective', '')}", asked[1], asked[2], ""]
     for block in lesson.get("blocks") or []:
@@ -272,17 +330,6 @@ def render_lesson(document, request):
             lines += ["Rubric:", *[f"- {c.get('title', '')}: {c.get('description', '')} "
                                    f"({field(c, 'maxPoints', 'max_points', default='?')} points)"
                                    for c in block["rubric"]], ""]
-    questions = lesson.get("questions") or []
-    lines += ["## Questions", ""] if questions else []
-    for n, question in enumerate(questions, 1):
-        options = question.get("options") or []
-        lines += [f"{n}. {question.get('prompt', '')}",
-                  *[f"   {letter}. {option}" for letter, option in zip(string.ascii_uppercase, options)]]
-        index, explanation = answer_key(question, document)
-        correct = string.ascii_uppercase[index] if isinstance(index, int) and 0 <= index < len(options) else None
-        lines.append(f"   Correct: {correct or '(not recorded)'}")
-        lines += [f"   Explanation: {explanation}"] if explanation else []
-        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -359,6 +406,64 @@ def claim_items(slot, document, request):
     return items, answers
 
 
+def load_bank(source, sel, document):
+    """(origin, bank) for a prepared lesson: the bank the harness recorded with its keys (`quiz-<sel>.json`), else
+    the lesson's own reviewed questions as single-choice items, else (None, None)."""
+    path = source / f"quiz-{sel}.json"
+    if path.exists():
+        bank = read_json(path)
+        if bank.get("schema") != cq.BANK_SCHEMA:
+            raise SystemExit(f"{path} is not {cq.BANK_SCHEMA}")
+        return "bank", bank
+    items = []
+    for question in ((document or {}).get("lesson") or {}).get("questions") or []:
+        index, explanation = answer_key(question, document)
+        items.append({"id": question.get("id"), "format": "single_choice", "prompt": question.get("prompt"),
+                      "options": question.get("options") or [], "key": [index] if isinstance(index, int) else [],
+                      "explanation": explanation, "origin": "prose_step",
+                      "source_ids": field(question, "sourceIds", "source_ids", default=[])})
+    return ("lesson_questions", {"schema": cq.BANK_SCHEMA, "selector": sel, "items": items}) if items else (None, None)
+
+
+def quiz_stage(source, rid, set_item, lesson_slot_row, document, request, metrics):
+    """The quiz slot of one lesson, its items (one per bank item, one turn per criterion that applies), their
+    answers (the item with its key, as a labeller reads it), and the lesson text the quiz judge reads."""
+    sel = lesson_slot_row["lesson"]
+    prepared = lesson_slot_row["answer"] is not None
+    origin, bank = load_bank(source, sel, document) if prepared else (None, None)
+    items = list((bank or {}).get("items") or [])
+    checks = cq.bank_checks(items, cq.lesson_plain(document), bank.get("sources"), bank.get("metrics")) if bank else None
+    stage = metrics.setdefault("lessons", {}).setdefault(sel, {}) if prepared else {}
+    if prepared:
+        stage["quiz"] = ({"origin": origin, **checks} if checks else
+                         {"origin": None, "items": 0, "passed": False, "error": stage.get("quiz_error")})
+    slot_id = f"{rid}/{sel}/quiz"
+    slot = {"slot": slot_id, "request": rid, "shape": set_item.get("shape"), "stage": "quiz", "lesson": sel,
+            "outcome": origin or ("no bank" if prepared else "no lesson"), "error": stage.get("quiz_error"),
+            "mechanical_checks_passed": bool(checks and checks["passed"]), "resumed": False,
+            "answer": lesson_slot_row["answer"] if items else None}
+    ask = "\n".join([*request_lines(request)[:2], f"Lesson: requests/{rid}/lesson-{sel}.md (read it once)"])
+    entries, answers, used = [], [], set()
+    for item in items:
+        name = re.sub(r"[/\s]+", "_", str(item.get("id") or "item"))
+        name = name if name not in used else f"{name}-{len(used)}"
+        used.add(name)
+        problems = checks["problems"].get(item.get("id"), [])
+        invalid = [p for p in problems if p.startswith("format_invalid")]
+        criteria = ["format"] if invalid else quiz_criteria(item)
+        turns = [{"criterion": c, "ask": ask,
+                  "rubric": {"lines": ["The item is valid for its format."] if c == "format" else quiz_lines(c, item)}}
+                 for c in criteria]
+        entries.append({"id": f"{slot_id}/{name}", "request": rid, "shape": set_item.get("shape"), "stage": "quiz",
+                        "lesson": sel, "slot": slot_id, "criterion": "quiz-item", "title": item.get("format"),
+                        "format": item.get("format"), "origin": item.get("origin", origin),
+                        "mechanical_checks_passed": not problems, "mechanical_problems": problems,
+                        "item": item, "lesson_ref": f"{rid}/{sel}", "turns": turns})
+        shown = json.dumps(item, indent=2, ensure_ascii=False) if invalid else cq.render_item(item, key=True)
+        answers.append({"query_id": entries[-1]["id"], "turns": [{"answer": shown} for _ in turns]})
+    return slot, entries, answers
+
+
 def gather_request(source, set_item):
     """Everything collect writes for one request, read before anything is written."""
     rid, run_meta = source.name, read_json(source / "run.json")
@@ -373,16 +478,27 @@ def gather_request(source, set_item):
     for sel in selected_lessons(source, run_meta, metrics):
         lessons[sel] = read_json(source / f"lesson-{sel}.json")
         slots.append(lesson_slot(rid, set_item, sel, metrics, lessons[sel], request))
-    gathered = {"id": rid, "slots": slots, "items": [], "answers": [], "claims": [], "claim_answers": []}
-    for slot in slots:
+    gathered = {"id": rid, "slots": slots, "items": [], "answers": [], "claims": [], "claim_answers": [],
+                "quiz": [], "quiz_answers": [], "lessons": {}}
+    copies = {}
+    for slot in list(slots):
         more, said = slot_items(slot, set_item, request)
         gathered["items"] += more
         gathered["answers"] += said
-        if slot["stage"] == "lesson" and slot["answer"]:
-            more, said = claim_items(slot, lessons[slot["lesson"]], request)
-            gathered["claims"] += more
-            gathered["claim_answers"] += said
-    copies = {name: (source / name).read_bytes() for name in COPIED if (source / name).exists()}
+        if slot["stage"] == "lesson":
+            if slot["answer"]:
+                more, said = claim_items(slot, lessons[slot["lesson"]], request)
+                gathered["claims"] += more
+                gathered["claim_answers"] += said
+                gathered["lessons"][f"{rid}/{slot['lesson']}"] = slot["answer"]
+                copies[f"lesson-{slot['lesson']}.md"] = slot["answer"].encode()
+            quiz, more, said = quiz_stage(source, rid, set_item, slot, lessons[slot["lesson"]], request, metrics)
+            slots.append(quiz)
+            gathered["quiz"] += more
+            gathered["quiz_answers"] += said
+            if (source / f"quiz-{slot['lesson']}.json").exists():
+                copies[f"quiz-{slot['lesson']}.json"] = (source / f"quiz-{slot['lesson']}.json").read_bytes()
+    copies |= {name: (source / name).read_bytes() for name in COPIED if (source / name).exists()}
     copies |= {f"lesson-{sel}.json": (source / f"lesson-{sel}.json").read_bytes() for sel in lessons if lessons[sel]}
     copies["metrics.json"] = (json.dumps(metrics, indent=2, ensure_ascii=False) + "\n").encode()
     index = hashlib.sha256("\n".join(sorted(c["sha256"] for c in calls.values())).encode()).hexdigest()
@@ -431,9 +547,14 @@ def collect(run_dir, out, set_path=None):
     write_json(out / "claims.items.json", {**head, "items": [i for r in gathered for i in r["claims"]]})
     write_jsonl(out / "answers.jsonl", [row for r in gathered for row in r["answers"]])
     write_jsonl(out / "claims.jsonl", [row for r in gathered for row in r["claim_answers"]])
+    write_json(out / "quiz.items.json", {**head, "stage": "quiz",
+                                         "lessons": {k: v for r in gathered for k, v in r["lessons"].items()},
+                                         "items": [i for r in gathered for i in r["quiz"]]})
+    write_jsonl(out / "quiz.jsonl", [row for r in gathered for row in r["quiz_answers"]])
     manifest = {
         "schema": RESULTS_SCHEMA, "set": request_set.get("name"), "set_path": relative(set_path),
         "set_sha256": sha256_file(set_path), "scorer_sha256": sha256_file(__file__),
+        "quiz_scorer_sha256": sha256_file(cq.__file__),
         "harness_sha256": {name: sha256_file(ROOT / name) if (ROOT / name).exists() else None
                            for name in HARNESS_FILES},
         "artifacts_dir": relative(run_dir),
@@ -476,6 +597,83 @@ def grade(entry, answer, judge, window):
     return {"pass": passed, "reason": reason, "graded": True}
 
 
+SOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}, "other_defensible": {"type": "boolean"}, "reason": {"type": "string"}},
+    "required": ["answer", "other_defensible", "reason"],
+}
+
+
+def solve_request(model, messages):
+    """The judge request (greedy, thinking off) bound to the blind-solve schema."""
+    return judge_request(model, messages) | {
+        "response_format": {"type": "json_schema", "json_schema": {"name": "solve", "schema": SOLVE_SCHEMA}}}
+
+
+def parse_solve(payload):
+    content = payload["choices"][0]["message"]["content"]
+    solved = json.loads(re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip())
+    if not isinstance(solved.get("answer"), str) or not isinstance(solved.get("other_defensible"), bool):
+        raise ValueError(f"solver returned no answer: {content!r}")
+    return solved
+
+
+def http_solver(endpoint, model):
+    """Solves one item blind (Q2). Like the judge, it takes as long as the server takes."""
+    url, headers = endpoint.rstrip("/") + "/v1/chat/completions", judge_headers()
+
+    def call(messages):
+        body = json.dumps(solve_request(model, messages)).encode()
+        with urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST", headers=headers)) as reply:
+            return parse_solve(json.load(reply))
+    return call
+
+
+def quiz_messages(lesson, item, criterion, lines):
+    """One quiz criterion's prompt: the lesson and the item between markers; Q2 asks for a blind solve."""
+    if criterion == "Q2":
+        user = ["Lesson:", "<<<", lesson, ">>>", "", "Item:", "<<<", cq.render_item(item), ">>>", "",
+                f"Answer with {cq.answer_format(item)}."]
+        return [{"role": "system", "content": QUIZ_SOLVE_SYSTEM}, {"role": "user", "content": "\n".join(user)}]
+    user = ["Criterion:", *lines, "", "Lesson:", "<<<", lesson, ">>>", "", "Item:", "<<<",
+            cq.render_item(item, key=criterion in QUIZ_KEY_SHOWN), ">>>"]
+    return [{"role": "system", "content": QUIZ_JUDGE_SYSTEM}, {"role": "user", "content": "\n".join(user)}]
+
+
+def solve_verdict(item, solved):
+    """Q2 is decided by code: the blind answer must earn the key's full credit and the solver must call no other
+    answer defensible."""
+    response = cq.parse_answer(item, solved.get("answer"))
+    agrees = cq.agrees_with_key(item, response)
+    other = bool(solved.get("other_defensible"))
+    reason = (f"solved {solved.get('answer')!r}, key {cq.key_text(item)}: "
+              f"{'agrees' if agrees else 'disagrees'}{'; another answer is defensible' if other else ''}. "
+              f"{solved.get('reason', '')}").strip()
+    return {"pass": agrees and not other, "reason": reason, "graded": True, "solved": solved}
+
+
+def grade_quiz_item(entry, lesson, judge, solver, window):
+    """One verdict per criterion turn; an invalid item fails ungraded without a call."""
+    item, turns = entry["item"], []
+    for number, turn in enumerate(entry["turns"]):
+        criterion = turn["criterion"]
+        if criterion == "format":
+            verdict = {"pass": False, "reason": "invalid item: " + "; ".join(entry["mechanical_problems"]),
+                       "graded": False}
+        else:
+            messages = quiz_messages(lesson, item, criterion, turn["rubric"]["lines"])
+            if window and prompt_tokens(messages) + judge_request("", messages)["max_tokens"] > window:
+                verdict = {"pass": False, "reason": TOO_LONG, "graded": False}
+            elif criterion == "Q2":
+                verdict = (solve_verdict(item, solver(messages)) if solver else
+                           {"pass": False, "reason": "no solver was given", "graded": False})
+            else:
+                passed, reason = judge(messages)
+                verdict = {"pass": passed, "reason": reason, "graded": True}
+        turns.append({"turn": number, "criterion": criterion, "judge": verdict})
+    return turns
+
+
 def course_manifest(items_doc, run, judge_settings):
     """Identity in the chat scorer's manifest shape, so review tooling can read it."""
     runs = {rid: r.get("run") or {} for rid, r in (run.get("requests") or {}).items()}
@@ -506,10 +704,8 @@ def stable(manifest):
     return manifest["dataset_sha256"], {**manifest["settings"], "judge": judge}
 
 
-def score_file(results, items_name, answers_name, out_name, judge, judge_settings, window):
-    """Grade one question set into `out_name`, appending to what an earlier run of this score graded."""
-    items_doc = read_json(results / items_name)
-    answers = unique_records(load_jsonl(results / answers_name), "query_id")
+def scored_output(results, items_doc, out_name, judge_settings):
+    """(manifest, output path, query ids already scored): resume only with the same items and judge."""
     manifest = course_manifest(items_doc, read_json(results / "run.json"), judge_settings)
     manifest_path, out_path = results / f"{out_name}.manifest.json", results / out_name
     earlier = read_json(manifest_path)
@@ -521,7 +717,14 @@ def score_file(results, items_name, answers_name, out_name, judge, judge_setting
         raise SystemExit(f"{out_path} has no manifest; it was not written by this scorer")
     else:
         write_json(manifest_path, manifest)
-    done = {row["query_id"] for row in load_optional(out_path)}
+    return manifest, out_path, {row["query_id"] for row in load_optional(out_path)}
+
+
+def score_file(results, items_name, answers_name, out_name, judge, judge_settings, window):
+    """Grade one question set into `out_name`, appending to what an earlier run of this score graded."""
+    items_doc = read_json(results / items_name)
+    answers = unique_records(load_jsonl(results / answers_name), "query_id")
+    manifest, out_path, done = scored_output(results, items_doc, out_name, judge_settings)
     counts = {"graded": 0, "skipped": len(done), "no_artifact": 0, "too_long": 0}
     with out_path.open("a") as out:
         for entry in items_doc["items"]:
@@ -540,6 +743,55 @@ def score_file(results, items_name, answers_name, out_name, judge, judge_setting
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
             out.flush()
     return counts
+
+
+def score_quiz(results, judge, solver, judge_settings, window):
+    """Grade every quiz item into `quiz.scored.jsonl`: one row per item, one turn score per criterion; the item
+    passes when every criterion does."""
+    items_doc = read_json(results / "quiz.items.json")
+    manifest, out_path, done = scored_output(results, items_doc, "quiz.scored.jsonl", judge_settings)
+    counts = {"graded": 0, "skipped": len(done), "ungraded": 0}
+    with out_path.open("a") as out:
+        for entry in items_doc["items"]:
+            if entry["id"] in done:
+                continue
+            turns = grade_quiz_item(entry, items_doc["lessons"].get(entry["lesson_ref"], ""), judge, solver, window)
+            counts["graded" if all(t["judge"]["graded"] for t in turns) else "ungraded"] += 1
+            row = {"query_id": entry["id"], **{k: entry[k] for k in ("request", "shape", "stage", "lesson", "slot",
+                                                                      "criterion", "format", "origin")},
+                   "judge_pass": bool(turns) and all(t["judge"]["pass"] for t in turns),
+                   "mechanical_checks_passed": entry["mechanical_checks_passed"], "turn_scores": turns,
+                   "answer_sha256": digest(entry["item"]), "run_id": manifest["run_id"]}
+            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+            out.flush()
+    return counts
+
+
+def quiz_slot_rows(run_slots, items_doc, scored):
+    """One row per quiz slot: it passes when at least QUIZ_ITEM_PASS_SHARE of its items pass every criterion; a
+    lesson with no bank has no items and fails ungraded."""
+    rows, members = unique_records(scored, "query_id"), {}
+    for entry in items_doc["items"]:
+        members.setdefault(entry["slot"], []).append(entry)
+    out, incomplete = [], []
+    for slot in (s for s in run_slots if s["stage"] == "quiz"):
+        own = members.get(slot["slot"], [])
+        graded = [rows.get(entry["id"]) for entry in own]
+        if any(row is None for row in graded):
+            incomplete.append(slot["slot"])
+            continue
+        passing = sum(bool(row["judge_pass"]) for row in graded)
+        passed = bool(own) and passing >= QUIZ_ITEM_PASS_SHARE * len(own)
+        reason = (f"{passing} of {len(own)} items pass every judged criterion" if own
+                  else f"no quiz items ({slot['outcome']})")
+        complete = bool(own) and all(t["judge"]["graded"] for row in graded for t in row["turn_scores"])
+        out.append({"query_id": slot["slot"], **{k: slot[k] for k in ("request", "shape", "stage", "lesson")},
+                    "criterion": "all", "judge_pass": passed,
+                    "mechanical_checks_passed": slot["mechanical_checks_passed"],
+                    "turn_scores": [{"turn": 0, "judge": {"pass": passed, "reason": reason, "graded": complete}}],
+                    "answer_sha256": digest(sorted(row["answer_sha256"] for row in graded)),
+                    "run_id": graded[0]["run_id"] if graded else None})
+    return out, incomplete
 
 
 def slot_rows(items_doc, scored):
@@ -565,7 +817,7 @@ def slot_rows(items_doc, scored):
     return out, incomplete
 
 
-def score(results, judge, judge_settings, window=None, claims=False):
+def score(results, judge, judge_settings, window=None, claims=False, solver=None, allow_self_judge=False):
     results = Path(results)
     if not (results / "items.json").exists():
         raise SystemExit(f"{results} has no items.json; run collect first")
@@ -575,6 +827,16 @@ def score(results, judge, judge_settings, window=None, claims=False):
         report["claims"] = score_file(results, "claims.items.json", "claims.jsonl", "claims.scored.jsonl", judge,
                                       judge_settings, window)
     rows, incomplete = slot_rows(read_json(results / "items.json"), load_jsonl(results / "scored.jsonl"))
+    if (results / "quiz.items.json").exists():
+        if judge_settings.get("independent") is False and not allow_self_judge:
+            report["quiz"] = {"refused": "the judge is the model that wrote the bank; name another judge, or pass "
+                                         "--allow-self-judge to record the exception"}
+        else:
+            report["quiz"] = score_quiz(results, judge, solver, judge_settings, window)
+            more, waiting = quiz_slot_rows(read_json(results / "run.json")["slots"],
+                                           read_json(results / "quiz.items.json"),
+                                           load_jsonl(results / "quiz.scored.jsonl"))
+            rows, incomplete = rows + more, incomplete + waiting
     partial = results / "slots.scored.jsonl.partial"
     write_jsonl(partial, rows, mode="w")
     partial.replace(results / "slots.scored.jsonl")
@@ -616,12 +878,75 @@ def previous_results(results):
     return max(earlier, key=lambda p: p.name, default=None)
 
 
+def quiz_summary(slots, scored, quiz_metrics):
+    """The quiz stage: criterion pass counts across items, and per bank the mechanical checks and the harness's
+    own numbers (target, validation, key review, cost) when it recorded them."""
+    criteria = {}
+    for row in scored:
+        for turn in row["turn_scores"]:
+            entry = criteria.setdefault(turn.get("criterion", "?"), {"passed": 0, "graded": 0, "total": 0,
+                                                                     "too_long": 0})
+            entry["passed"] += bool(turn["judge"]["pass"])
+            entry["graded"] += bool(turn["judge"]["graded"])
+            entry["total"] += 1
+            entry["too_long"] += turn["judge"].get("reason") == TOO_LONG
+    banks, totals = [], {name: 0 for name in (*cq.GATING_CHECKS, "duplicate_items", "near_duplicate_items",
+                                               "letter_references")}
+    longest, anchors = {"items": 0, "of": 0, "chance_sum": 0.0}, {"items": 0, "of": 0}
+    shapes, counts, truth = [], {}, [0, 0]
+    for slot in slots:
+        own = quiz_metrics(slot)
+        if not own.get("items"):
+            banks.append({"slot": slot["slot"], "origin": own.get("origin"), "items": 0, "passed": False})
+            continue
+        hits = {name: len(own["hits"].get(name, [])) for name in cq.GATING_CHECKS}
+        hits |= {name: len(own.get(name) or []) for name in ("duplicate_items", "near_duplicate_items",
+                                                             "letter_references")}
+        for name, value in hits.items():
+            totals[name] += value
+        key = own.get("key_longest") or {}
+        longest["items"] += key.get("items", 0)
+        longest["of"] += key.get("of", 0)
+        longest["chance_sum"] += (key.get("chance") or 0) * key.get("of", 0)
+        anchors["items"] += own["anchored"]["items"]
+        anchors["of"] += own["anchored"]["of"]
+        positions = own.get("key_positions") or {}
+        shapes += (positions.get("choice") or {}).get("shapes") or []
+        for letter, n in ((positions.get("choice") or {}).get("counts") or {}).items():
+            counts[letter] = counts.get(letter, 0) + n
+        truth[0] += (positions.get("true_false") or {}).get("true", 0)
+        truth[1] += (positions.get("true_false") or {}).get("false", 0)
+        banks.append({"slot": slot["slot"], "origin": own.get("origin"), "items": own["items"],
+                      "passed": own["passed"], "hits": hits, "format_mix": own.get("format_mix"),
+                      "key_longest": key, "anchored": own["anchored"], "harness": own.get("harness") or {},
+                      "key_positions": positions})
+    return {
+        "items": {"passing": sum(bool(r["judge_pass"]) for r in scored), "total": len(scored),
+                  "ungraded": sum(not all(t["judge"]["graded"] for t in r["turn_scores"]) for r in scored)},
+        "criteria": dict(sorted(criteria.items())), "mechanical": totals,
+        "key_longest": {"items": longest["items"], "of": longest["of"],
+                        "share": longest["items"] / longest["of"] if longest["of"] else None,
+                        "chance": longest["chance_sum"] / longest["of"] if longest["of"] else None},
+        "anchored": anchors, "banks": banks,
+        # Pooled over every bank of the run: a shuffle that leans one way shows here before any one bank flags.
+        "key_positions": {"counts": counts, "p_value": cq.position_test(shapes, [counts.get(l, 0) for l in
+                                                                                 cq.LETTERS[:len(counts)]]),
+                          "true": truth[0], "false": truth[1],
+                          "true_false_p_value": cq.position_test([[2, 1]] * sum(truth), truth),
+                          "skewed_banks": sum(bool((b.get("key_positions") or {}).get("choice", {}).get("skewed")
+                                                   or (b.get("key_positions") or {}).get("true_false", {}).get("skewed"))
+                                              for b in banks if b["items"]),
+                          "alpha": cq.POSITION_ALPHA},
+    }
+
+
 def summarize(results):
     results = Path(results)
     run = read_json(results / "run.json")
     slots, scored = run["slots"], load_optional(results / "scored.jsonl")
     judged = {row["query_id"]: row for row in load_optional(results / "slots.scored.jsonl")}
     claims = load_optional(results / "claims.scored.jsonl")
+    quiz_scored = load_optional(results / "quiz.scored.jsonl")
     metrics = {rid: read_json(results / "requests" / rid / "metrics.json", {}) for rid in run["requests"]}
     web = {rid: read_json(results / "requests" / rid / "web-trace-report.json") or {} for rid in run["requests"]}
 
@@ -641,6 +966,7 @@ def summarize(results):
 
     outlines = [s for s in slots if s["stage"] == "outline"]
     lessons = [s for s in slots if s["stage"] == "lesson"]
+    quizzes = [s for s in slots if s["stage"] == "quiz"]
     ready = [s for s in lessons if s["outcome"] == "ready"]
     ground = {key: sum(count(dig(stage_metrics(s), "claims", key)) for s in ready)
               for key in ("total", "supported", "unsupported", "contradicted", "unverified", "general_knowledge")}
@@ -671,9 +997,10 @@ def summarize(results):
                                                                "untraced_calls")}})
     costs = [stage_metrics(s).get("cost") or {} for s in lessons]
     previous = previous_results(results)
+    previous_rubric = (read_json(previous / "summary.json") or {}).get("rubric") if previous else None
     summary = {
         "set": run.get("set"), "rubric": RUBRIC, "judged": bool(judged),
-        "slots": {"outline": tally(outlines), "lesson": tally(lessons),
+        "slots": {"outline": tally(outlines), "lesson": tally(lessons), "quiz": tally(quizzes),
                   "by_shape": {shape: tally([s for s in slots if str(s["shape"]) == shape])
                                for shape in sorted({str(s["shape"]) for s in slots})}},
         "lessons_ready": {"ready": len(ready), "total": len(lessons),
@@ -689,7 +1016,10 @@ def summarize(results):
         "too_long": sum(c["too_long"] for c in criteria.values()),
         "requests": requests, "missing_requests": run.get("missing_requests", []),
         "skipped_optional": run.get("skipped_optional", []),
-        "previous": relative(previous) if previous else None, "metrics": metrics,
+        "previous": relative(previous) if previous else None, "previous_rubric": previous_rubric,
+        "quiz": quiz_summary(quizzes, quiz_scored, lambda slot: stage_metrics(slot).get("quiz") or {})
+        | {"judged": bool(quiz_scored), "calibrated": calibrated(results, "quiz.calibration-labels.json", quiz_scored)},
+        "metrics": metrics,
     }
     write_json(results / "summary.json", summary)
     (results / "summary.md").write_text(markdown(summary, relative(results)))
@@ -704,12 +1034,76 @@ def number(value):
     return "—" if value is None else f"{value:.1f}" if isinstance(value, float) else str(value)
 
 
+def share(part, whole):
+    return f"{part}/{whole}" + (f" ({part / whole:.0%})" if whole else "")
+
+
+def quiz_headline(quiz):
+    if not quiz["banks"]:
+        return []
+    hits, key = quiz["mechanical"], quiz["key_longest"]
+    items = (f"{quiz['items']['passing']}/{quiz['items']['total']} items pass every judged criterion"
+             if quiz["judged"] else "items not judged")
+    longest = (f"the key is the longest option in {key['share']:.0%} of choice items (chance {key['chance']:.0%})"
+               if key["share"] is not None else "no choice items")
+    return [f"5. **Quizzes**: {items}; mechanical hits: leak {hits['leak']}, length bias {hits['length_bias']}, "
+            f"duplicate options {hits['duplicate_options']}, key/explanation conflicts "
+            f"{hits['key_explanation_conflict']}, invalid format {hits['format_invalid']}, unstated absolutes "
+            f"{hits['absolute_unstated']}, duplicate items {hits['duplicate_items']}, near-duplicates "
+            f"{hits['near_duplicate_items']}; {longest}; anchored {share(quiz['anchored']['items'], quiz['anchored']['of'])}; "
+            f"{positions_line(quiz['key_positions'])}."]
+
+
+def positions_line(positions):
+    counts = ", ".join(f"{letter} {n}" for letter, n in positions["counts"].items())
+    pooled = f"pooled exact p {positions['p_value']:.3g}" if positions["p_value"] is not None else "no choice items"
+    return (f"key positions {counts or '—'} ({pooled}; True {positions['true']}, False {positions['false']}), "
+            f"{positions['skewed_banks']} banks skewed at p < {positions['alpha']}")
+
+
+def quiz_tables(quiz):
+    if not quiz["banks"]:
+        return []
+    lines = ["", "## Quiz criteria", "", "| criterion | passed | graded | items | too long |", "|---|---:|---:|---:|---:|"]
+    lines += [f"| {c} {TITLES.get(c, c)} | {e['passed']} | {e['graded']} | {e['total']} | {e['too_long']} |"
+              for c, e in quiz["criteria"].items()]
+    lines += ["", "## Quiz banks", "",
+              "| slot | origin | items | target | mechanical | gating hits | key longest | key positions | written of "
+              "authored | key review | calls | minutes |",
+              "|---|---|---:|---:|---|---:|---:|---|---:|---|---:|---:|"]
+    for bank in quiz["banks"]:
+        if not bank["items"]:
+            lines.append(f"| {bank['slot']} | {bank['origin'] or 'none'} | 0 | — | fail | — | — | — | — | — | — | — |")
+            continue
+        harness, key = bank["harness"], bank["key_longest"]
+        validated, review = harness.get("validated") or {}, harness.get("key_review") or {}
+        gating = sum(bank["hits"][name] for name in cq.GATING_CHECKS) + bank["hits"]["duplicate_items"] \
+            + bank["hits"]["near_duplicate_items"]
+        lines.append(
+            f"| {bank['slot']} | {bank['origin']} | {bank['items']} | {number(harness.get('target'))} | "
+            f"{'pass' if bank['passed'] else 'fail'} | {gating} | {key.get('items', 0)}/{key.get('of', 0)} | "
+            + bank_positions(bank.get("key_positions") or {}) + " | "
+            + (f"{validated.get('passed')}/{validated.get('total')}" if validated else "—") + " | "
+            + (", ".join(f"{k} {v}" for k, v in review.items()) if review else "—")
+            + f" | {number(harness.get('calls'))} | "
+            + (number(harness['seconds'] / 60) if harness.get("seconds") is not None else "—") + " |")
+    return lines
+
+
+def bank_positions(positions):
+    choice = positions.get("choice") or {}
+    counts = " ".join(f"{letter}{n}" for letter, n in (choice.get("counts") or {}).items())
+    flag = " **skewed**" if choice.get("skewed") or (positions.get("true_false") or {}).get("skewed") else ""
+    return (counts or "—") + flag
+
+
 def markdown(summary, here):
     slots, ground, cost = summary["slots"], summary["grounding"], summary["cost"]
     lines = [f"# Course eval: {summary['set']}", "",
              f"1. **Slots passed** (mechanical checks and every judged criterion): outlines "
-             f"{fraction(slots['outline'])}, lessons {fraction(slots['lesson'])} (mechanical only: "
-             f"{fraction(slots['outline'], 'mechanical')}, {fraction(slots['lesson'], 'mechanical')}). By shape: "
+             f"{fraction(slots['outline'])}, lessons {fraction(slots['lesson'])}, quizzes {fraction(slots['quiz'])} "
+             f"(mechanical only: {fraction(slots['outline'], 'mechanical')}, {fraction(slots['lesson'], 'mechanical')}, "
+             f"{fraction(slots['quiz'], 'mechanical')}). By shape: "
              + ", ".join(f"{shape} {fraction(t)}" for shape, t in slots["by_shape"].items()) + ".",
              f"2. **Lessons Ready**: {summary['lessons_ready']['ready']}/{summary['lessons_ready']['total']}."]
     lines += [f"   - {f['slot']}: {f['outcome']}" + (f" — {f['error']}" if f.get("error") else "")
@@ -730,6 +1124,7 @@ def markdown(summary, here):
                  f"{number(cost['lesson_calls']['median'])} calls and {number(cost['lesson_input_tokens']['median'])} "
                  f"input tokens (median), max {number(cost['lesson_calls']['max'])} and "
                  f"{number(cost['lesson_input_tokens']['max'])}.")
+    lines += quiz_headline(summary["quiz"])
     if summary["too_long"]:
         lines.append(f"\n{summary['too_long']} items were {TOO_LONG}; they count as ungraded fails.")
     if summary["missing_requests"]:
@@ -737,6 +1132,7 @@ def markdown(summary, here):
     lines += ["", "## Criteria", "", "| criterion | passed | graded | items | too long |", "|---|---:|---:|---:|---:|"]
     lines += [f"| {c} {TITLES.get(c, 'True statement')} | {e['passed']} | {e['graded']} | {e['total']} | "
               f"{e['too_long']} |" for c, e in summary["criteria"].items()]
+    lines += quiz_tables(summary["quiz"])
     lines += ["", "## Requests", "", "| request | shape | outline | lessons Ready | slots passed | web |",
               "|---|---|---|---:|---:|---|"]
     for request in summary["requests"]:
@@ -747,7 +1143,12 @@ def markdown(summary, here):
                      f"{' (resumed)' if request['resumed'] else ''} | {request['lessons_ready']}/{request['lessons']} "
                      f"| {fraction(request['slots'])} | {web_line} |")
     if summary["previous"]:
-        lines += ["", "## Compare with the previous run", "", "```sh"]
+        lines += ["", "## Compare with the previous run", ""]
+        if summary.get("previous_rubric") not in (None, summary["rubric"]):
+            lines += [f"The previous run was judged under {summary['previous_rubric']}, this one under "
+                      f"{summary['rubric']}: lesson slots no longer include L5 and quiz slots are new, so the slot "
+                      f"comparison crosses rubric versions and says less.", ""]
+        lines += ["```sh"]
         lines += [f"python3 scripts/shipped_path_stats.py compare --baseline {summary['previous']}/{name} "
                   f"--candidate {here}/{name} --outcome both" for name in ("slots.scored.jsonl", "scored.jsonl")]
         lines += ["```", "", "The slot comparison is the verdict; the criterion comparison is screening only."]
@@ -770,6 +1171,9 @@ def main(argv=None):
     judged.add_argument("--window", type=int, help="the judge's context window in tokens "
                         "(default: n_ctx from the server's model listing, when it lists one)")
     judged.add_argument("--claims", action="store_true", help="also judge every claim (C1)")
+    judged.add_argument("--allow-self-judge", action="store_true",
+                        help="judge the quiz stage even when the judge is the model that wrote the bank; the "
+                             "manifest records it")
     report = sub.add_parser("summarize")
     report.add_argument("results", type=Path)
     args = parser.parse_args(argv)
@@ -781,14 +1185,24 @@ def main(argv=None):
     elif args.command == "score":
         run = read_json(args.results / "run.json") or {}
         models = {dig(r, "run", "recipe", "server", "model") for r in (run.get("requests") or {}).values()}
-        identity = judge_identity(args.endpoint, args.model, next(iter(models)) if len(models) == 1 else None)
+        answer_model = next(iter(models)) if len(models) == 1 else None
+        identity = judge_identity(args.endpoint, args.model, answer_model)
         window = args.window or served_window(identity, args.model)
+        own = identity.get("judges_own_answers") or (answer_model is not None and args.model == answer_model)
+        independent = False if own else (True if identity.get("judges_own_answers") is False else None)
         if window is None:
             print("no judge window given or listed: every prompt is sent whole, none is refused for size")
         settings = judge_request(args.model, []) | {
             "messages": None, "rubric": RUBRIC, "identity": identity, "window": window,
-            "chars_per_token": CHARS_PER_TOKEN, "system_sha256": digest([COURSE_JUDGE_SYSTEM, CLAIM_JUDGE_SYSTEM])}
-        result = score(args.results, http_judge(args.endpoint, args.model), settings, window, args.claims)
+            "chars_per_token": CHARS_PER_TOKEN, "independent": independent,
+            "self_judge_allowed": bool(args.allow_self_judge),
+            "system_sha256": digest([COURSE_JUDGE_SYSTEM, CLAIM_JUDGE_SYSTEM, QUIZ_JUDGE_SYSTEM, QUIZ_SOLVE_SYSTEM]),
+            "solve_schema": SOLVE_SCHEMA}
+        if independent is None:
+            print("the judge's independence from the course model could not be established from the server's "
+                  "model listing; the manifest records it as unknown")
+        result = score(args.results, http_judge(args.endpoint, args.model), settings, window, args.claims,
+                       http_solver(args.endpoint, args.model), args.allow_self_judge)
         print(json.dumps(result, indent=2))
     else:
         summarize(args.results)
