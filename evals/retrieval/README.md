@@ -242,6 +242,35 @@ topical hard negatives (0.76 → 0.82) improve. Results:
 `results/2026-10-19-v3-TERSE-metrics.json`, `results/2026-10-19-v3-TERSE-v3-run.jsonl`,
 `results/2026-10-19-v3-TERSE-terse-run.jsonl`.
 
+## Section context after every hit (2026-10-23)
+
+The app used to insert each of the first eight hits' section neighbours directly
+behind its hit, in a list of `kb_search_limit + 8`. The prompt fills by tokens in
+list order, so those neighbours took the room of the later hits. Production eval mode
+appended them after the hits instead, so no run measured what the app sent. Both now
+do the same thing: every hit in rank order, then every hit's unseen section
+neighbours, carried only in the room the hits leave (`append_context`; the eval
+sizes that room as `top_k` passages of the library's mean length). The design and the
+14 queries the old placement lost are in
+`docs/design/2026-10-23-neighbour-context.md`.
+
+Production mode, Qwen3-Embedding-0.6B through llama.cpp. "Cap removed" is #167 alone;
+"with context" is #167 merged with this change (ef0a04ca):
+
+| passage recall@10 | main | cap removed | cap removed + neighbours behind their hit | with context |
+|---|---|---|---|---|
+| v3 | 0.782 | 0.822 | 0.752 | 0.822 |
+| v3, Qwen3-Reranker-0.6B judging | 0.831 | | | 0.899 |
+| section-context-v1 | 0.958 | | | 0.958 |
+
+Document recall@10 on v3 is 0.843 for main, the cap removal and this change, and 0.881
+for both reranked runs; the old placement lost documents too (0.816). On
+section-context-v1 the answer is in the passage after the hit for 12
+questions: 11 are carried (0.917), and the 12 same-passage controls are all found.
+Main's eval already appended context, so its number there is the same; what changes is
+that the app now sends what that number measured. Results:
+`results/2026-10-23-NEIGHBOUR-CONTEXT-*`.
+
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
