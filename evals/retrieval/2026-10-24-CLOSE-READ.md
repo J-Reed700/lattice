@@ -21,7 +21,8 @@ the runs, so the times are an upper bound.
 The two misses:
 - long8-r2 `dp-long-chronicle`: the answer dropped the dates the notes held. That is the write step, not the
   reading.
-- short6 `dp-section-after-clause`: the reading quoted the wrong agreement and was withdrawn.
+- short6 `dp-section-after-clause`: the reading marked every passage with a hyphen and was withdrawn, and the
+  answer took clause 24.111 from the wrong agreement (`2026-10-24-EVAL-JOURNEY.md`, "The last two misses").
 
 The answers also showed a precision problem. On short questions the close read copied whole passages that said
 nothing on the question (`dp-paraphrase-clock`: 1,385 and 1,214 output tokens). The writer then repeated one
