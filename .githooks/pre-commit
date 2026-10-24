@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Fast checks on the files this commit stages, the same tools CI runs.
+# Heavier checks run before a push (.githooks/pre-push); CI runs the full
+# suite. Enable once per clone: git config core.hooksPath .githooks
+set -o pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+rust=()
+web=()
+e2e=0
+while IFS= read -r file; do
+  case "$file" in
+    *.rs) rust+=("$file") ;;
+    src/*.ts | src/*.tsx) web+=("$file") ;;
+    e2e/*.ts | e2e/*.tsx) web+=("$file"); e2e=1 ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+failed=0
+step() {
+  echo "pre-commit: $1"
+  shift
+  "$@" || failed=1
+}
+
+if [ ${#rust[@]} -gt 0 ]; then
+  step "rustfmt (fix: rustfmt --edition 2021 <file>)" rustfmt --edition 2021 --check "${rust[@]}"
+fi
+if [ ${#web[@]} -gt 0 ]; then
+  step "eslint" npx --no-install eslint --max-warnings 0 "${web[@]}"
+  step "type-check" npx --no-install tsc --noEmit
+  if [ $e2e -eq 1 ]; then
+    step "type-check e2e" npx --no-install tsc --noEmit -p tsconfig.e2e.json
+  fi
+fi
+
+if [ $failed -ne 0 ]; then
+  echo "pre-commit: failed; fix the errors above and commit again." >&2
+fi
+exit $failed

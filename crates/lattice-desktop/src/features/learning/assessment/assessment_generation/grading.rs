@@ -138,7 +138,7 @@ async fn batched(
             )
         };
         let mut size = values.len() - start;
-        while size > 1 && !model_call::fits(llm, &request_for(size)) {
+        while size > 1 && !model_call::fits(llm, &request_for(size)).await {
             size = size.div_ceil(2);
         }
         let response = model_call::send(

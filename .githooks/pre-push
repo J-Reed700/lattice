@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# CI's lint, type and unit-test jobs for what this push changes against
+# origin/main, so a pull request does not open red. The full suite (every
+# Rust test, desktop and e2e) stays in CI. Enable once per clone:
+# git config core.hooksPath .githooks
+# CARGO_HOOK_WRAPPER: optional command put before cargo, e.g. a machine's
+# build lock, so a push does not compete with builds already running.
+set -o pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+base=$(git merge-base HEAD origin/main 2>/dev/null) || base=$(git rev-list --max-parents=0 HEAD | tail -1)
+changed=$(git diff --name-only "$base" HEAD)
+
+rust=0
+web=0
+packages=0
+features=()
+core=0
+while IFS= read -r file; do
+  case "$file" in
+    *.rs | Cargo.toml | */Cargo.toml | Cargo.lock) rust=1 ;;
+  esac
+  case "$file" in
+    src/* | e2e/* | package.json | package-lock.json | vitest.config.* | tsconfig*.json | eslint.config.*) web=1 ;;
+  esac
+  case "$file" in
+    package.json | package-lock.json) packages=1 ;;
+  esac
+  case "$file" in
+    crates/lattice-desktop/src/features/*/*)
+      feature=${file#crates/lattice-desktop/src/features/}
+      feature=${feature%%/*}
+      case " ${features[*]} " in *" $feature "*) ;; *) features+=("$feature") ;; esac
+      ;;
+    crates/lattice-core/*) core=1 ;;
+  esac
+done <<< "$changed"
+
+failed=0
+step() {
+  echo "pre-push: $1"
+  shift
+  "$@" || failed=1
+}
+
+if [ $rust -eq 1 ]; then
+  cargo=(${CARGO_HOOK_WRAPPER:-} cargo)
+  cd crates/lattice-desktop || exit 1
+  step "cargo fmt" cargo fmt --all -- --check
+  step "cargo clippy" "${cargo[@]}" clippy --workspace --all-targets -- -D warnings
+  for feature in "${features[@]}"; do
+    step "cargo test features::$feature" "${cargo[@]}" test --lib -- "features::$feature"
+  done
+  if [ $core -eq 1 ]; then
+    step "cargo test lattice-core" "${cargo[@]}" test -p lattice-core --lib
+  fi
+  cd - >/dev/null || exit 1
+fi
+if [ $web -eq 1 ]; then
+  step "type-check" npm run --silent type-check
+  step "type-check e2e" npm run --silent type-check:e2e
+  step "lint" npm run --silent lint
+  step "ipc contracts" npm run --silent contracts:check
+  step "unit tests with coverage" npx --no-install vitest run --coverage --maxWorkers=2
+fi
+if [ $packages -eq 1 ]; then
+  step "npm audit" npm audit --audit-level=high
+fi
+
+if [ $failed -ne 0 ]; then
+  echo "pre-push: failed; nothing was pushed. Fix the errors above and push again." >&2
+fi
+exit $failed

@@ -304,7 +304,7 @@ pub(in crate::features::learning) async fn review_bank_items(
                 ),
             )
         };
-        while size > 1 && !model_call::fits(llm, &request_for(size).1) {
+        while size > 1 && !model_call::fits(llm, &request_for(size).1).await {
             size = size.div_ceil(2);
         }
         let indices = request_for(size).0;

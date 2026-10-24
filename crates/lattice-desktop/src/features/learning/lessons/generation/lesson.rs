@@ -302,7 +302,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 map,
                 true,
             )?;
-            if fits(llm, &lesson_system(true), &prompt, reserve) {
+            if fits(llm, &lesson_system(true), &prompt, reserve).await {
                 break (prompt, sources);
             }
             added.pop();

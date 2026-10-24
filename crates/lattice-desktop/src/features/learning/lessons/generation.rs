@@ -204,11 +204,45 @@ pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
     })
 }
 
-/// Whether `prompt` and the answer's reservation fit the model's window.
-fn fits(llm: &dyn LLMPort, system: &str, prompt: &str, output_tokens: usize) -> bool {
+/// Whether `prompt` and the answer's reservation fit the model's window,
+/// counted exactly where the backend can count.
+async fn fits(llm: &dyn LLMPort, system: &str, prompt: &str, output_tokens: usize) -> bool {
     let mut request = GroundedRequest::new(system, prompt);
     request.output_tokens = output_tokens;
-    model_call::fits(llm, &request)
+    model_call::fits(llm, &request).await
+}
+
+/// [`model_call::send_fitted`] for a call whose material helps but is not
+/// required: when none fits beside the request, `call` gets the request
+/// built without any, and `subject` is made from what the prompt itself
+/// holds. Only a request that does not fit even bare is
+/// [`model_call::window_too_small`], `what` saying what does not fit.
+pub(in crate::features::learning) async fn send_packed<T, F>(
+    llm: &dyn LLMPort,
+    room: usize,
+    mut build: impl FnMut(usize) -> GroundedRequest,
+    mut call: impl FnMut(GroundedRequest) -> F,
+    subject: &str,
+    what: &str,
+) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    if let Some(sent) = model_call::send_fitted(llm, room, &mut build, &mut call).await? {
+        return Ok(sent);
+    }
+    let bare = build(0);
+    if !model_call::fits(llm, &bare).await {
+        return Err(model_call::window_too_small(llm, what));
+    }
+    tracing::warn!(
+        subject,
+        "No source material fits beside the request; sending it without"
+    );
+    call(bare).await.map_err(|error| match error {
+        AppError::PromptExceedsWindow { .. } => model_call::window_too_small(llm, what),
+        error => error,
+    })
 }
 
 #[cfg(test)]
