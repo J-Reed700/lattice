@@ -12,7 +12,6 @@ import { PanelLeft } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
-import { usePassageReferencesQuery } from '@/features/reading/hooks/usePassageReferencesQuery';
 import { PassageListItem } from '@/features/references/components/PassageListItem';
 import { ReferenceListItem } from '@/features/references/components/ReferenceListItem';
 import { ReferenceOriginPicker } from '@/features/references/components/ReferenceOriginPicker';
@@ -36,6 +35,22 @@ interface ReferenceListProps {
   onOpenPassageSource: (passage: PassageReferenceDto) => void;
   onCopyPassage: (passage: PassageReferenceDto) => void;
   onDeletePassage: (passage: PassageReferenceDto) => void;
+}
+
+function LoadFailure({ message, onRetry, isRetrying }: { message: string; onRetry: () => void; isRetrying: boolean }) {
+  return (
+    <p className="px-4 py-6 text-sm text-text-secondary">
+      {message}{' '}
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={isRetrying}
+        className="text-accent underline-offset-2 hover:underline disabled:opacity-60"
+      >
+        Retry
+      </button>
+    </p>
+  );
 }
 
 type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | string;
@@ -120,6 +135,9 @@ export function ReferenceList({
     journalsById,
     capturedIndex,
     isLoading,
+    listLoadFailed,
+    isRetryingLoad,
+    retryLoad,
     query,
     setQuery,
     originFilter,
@@ -130,14 +148,9 @@ export function ReferenceList({
     setSelectedId,
   } = state;
 
-  // The passage list is React Query's; when it fails, an empty shelf would
-  // read as "you have saved nothing" instead of "we could not look".
-  const passagesQuery = usePassageReferencesQuery();
-
   const groups = useMemo(() => groupByDate(filteredItems), [filteredItems]);
 
   const isEmpty = !isLoading && filteredItems.length === 0;
-  const hasLoadError = passagesQuery.isError;
   const isFilteredEmpty =
     isEmpty && (query.trim() !== '' || originFilter !== 'all' || statusChip !== 'all');
 
@@ -168,24 +181,20 @@ export function ReferenceList({
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <p className="px-4 py-6 text-sm text-text-muted">Loading…</p>
-        ) : isEmpty && hasLoadError ? (
-          <p className="px-4 py-6 text-sm text-text-secondary">
-            Couldn&apos;t load references.{' '}
-            <button
-              type="button"
-              onClick={() => void passagesQuery.refetch()}
-              disabled={passagesQuery.isFetching}
-              className="text-accent underline-offset-2 hover:underline disabled:opacity-60"
-            >
-              Retry
-            </button>
-          </p>
+        ) : isEmpty && listLoadFailed ? (
+          // An empty shelf would read as "you have saved nothing" instead of
+          // "we could not look".
+          <LoadFailure message="Couldn't load references." onRetry={retryLoad} isRetrying={isRetryingLoad} />
         ) : isEmpty ? (
           <p className="px-4 py-6 text-sm text-text-secondary">
             {isFilteredEmpty ? 'No references match.' : 'No references yet.'}
           </p>
         ) : (
           <div className="pb-2">
+            {/* One list loaded and the other did not: what is shown is not all that is saved. */}
+            {listLoadFailed && (
+              <LoadFailure message="Couldn't load all references." onRetry={retryLoad} isRetrying={isRetryingLoad} />
+            )}
             {groups.map((group, groupIndex) => (
               <div key={group.key}>
                 {/* REFERENCE-REDESIGN-SPEC §4.3: serif italic, not an

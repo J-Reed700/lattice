@@ -1,6 +1,7 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
+import { describeFailure } from '@/lib/errorHandling';
 import type { DocumentMetadata, RecentDocument } from '@/types';
 import type {
   ConversationDto,
@@ -171,9 +172,9 @@ export const useDashboardQuery = (
         VaultAPI.listMessageBookmarks({ limit: 10, offset: 0 }),
       ]);
 
-      if (!statsResult.ok || !docsResult.ok) {
-        throw new Error('Failed to fetch dashboard data');
-      }
+      // Say why Home could not load: the backend's reason, not a stock line.
+      if (!statsResult.ok) throw new Error(describeFailure(statsResult));
+      if (!docsResult.ok) throw new Error(describeFailure(docsResult));
 
       const documents: DocumentMetadata[] = docsResult.data ?? [];
 
