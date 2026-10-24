@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 
+import { usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
+import { useToastStore } from '@/stores/toastStore';
 import type {
   ArchiveStatus,
   BackupInfo,
   RestoreArchiveResult,
 } from '@/types/api/backup';
 import type { IndexingSnapshot } from '@/types/api/indexing';
+
 
 import { BackupSection } from './BackupSection';
 
@@ -480,6 +483,215 @@ describe('BackupSection', () => {
       expect(
         await screen.findByText(/Your Lattice database itself is inside OneDrive/),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe('archive actions', () => {
+    const toastTitles = () => useToastStore.getState().toasts.map((toast) => toast.title);
+    const offDeviceBackUp = async () => {
+      // The folder section renders once the archive status arrives.
+      await screen.findByRole('button', { name: 'Restore from file' });
+      return screen.getAllByRole('button', { name: 'Back up now' })[1];
+    };
+
+    beforeEach(() => {
+      useToastStore.setState({ toasts: [] });
+      mockGetArchiveStatus.mockResolvedValue({ ok: true, data: configuredStatus() });
+    });
+
+    it('backs up to the folder and reports the size', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await offDeviceBackUp());
+      await waitFor(() => expect(toastTitles()).toContain('Backed up to your folder'));
+      expect(useToastStore.getState().toasts[0].message).toBe('One encrypted file, 100 MB.');
+    });
+
+    it('reports a backup to the folder that failed, and one with no size', async () => {
+      const user = userEvent.setup();
+      mockCreateArchiveNow.mockResolvedValueOnce({ ok: false, error: 'folder is read-only' });
+      renderSection();
+      await user.click(await offDeviceBackUp());
+      await waitFor(() => expect(toastTitles()).toContain("Couldn't back up to your folder"));
+      mockCreateArchiveNow.mockResolvedValueOnce({ ok: true, data: { path: '/x', createdAt: '2026-09-16T12:00:00.000Z', size: 0, durationMs: 1 } });
+      await user.click(await offDeviceBackUp());
+      await waitFor(() => expect(useToastStore.getState().toasts[0].message).toBe('One encrypted file.'));
+    });
+
+    it('does nothing when the file picker is cancelled', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+      await waitFor(() => expect(mockRestoreArchive).toHaveBeenCalledWith(null));
+      expect(screen.queryByLabelText('Passphrase or recovery code')).not.toBeInTheDocument();
+      expect(toastTitles()).toEqual([]);
+    });
+
+    it('reports a restore that failed before any secret was asked for', async () => {
+      const user = userEvent.setup();
+      mockRestoreArchive.mockResolvedValueOnce({ ok: false, error: 'archive is corrupt' });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+      await waitFor(() => expect(toastTitles()).toContain("Couldn't restore that backup"));
+    });
+
+    it('keeps the unlock dialog open on a wrong secret', async () => {
+      const user = userEvent.setup();
+      mockRestoreArchive
+        .mockResolvedValueOnce({ ok: true, data: restoreResult({ outcome: 'needs_secret' }) })
+        .mockResolvedValueOnce({ ok: false, error: 'That passphrase does not open this archive.' });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+      await user.type(await screen.findByLabelText('Passphrase or recovery code'), 'wrong words');
+      await user.click(screen.getByRole('button', { name: 'Unlock' }));
+      expect(await screen.findByText('That passphrase does not open this archive.')).toBeInTheDocument();
+      expect(screen.getByLabelText('Passphrase or recovery code')).toBeInTheDocument();
+    });
+
+    it('explains an undownloaded archive without a provider and retries with the last secret', async () => {
+      const user = userEvent.setup();
+      mockRestoreArchive.mockResolvedValue({ ok: true, data: restoreResult({ outcome: 'not_hydrated', message: null }) });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+      expect(await screen.findByText(/hasn't been downloaded to this computer yet\. Download it in your cloud folder/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(mockRestoreArchive).toHaveBeenCalledTimes(2));
+      expect(mockRestoreArchive).toHaveBeenLastCalledWith(null);
+    });
+
+    it('reports a local backup that could not be restored', async () => {
+      const user = userEvent.setup();
+      mockListBackups.mockResolvedValue({ ok: true, data: [backup()] });
+      mockRestoreBackup.mockResolvedValueOnce({ ok: false, error: 'backup file is truncated' });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Restore…' }));
+      await user.type(screen.getByPlaceholderText('restore'), 'restore');
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Restore/ }));
+      await waitFor(() => expect(toastTitles()).toContain("Couldn't restore that backup"));
+      expect(screen.queryByText('Restore this backup?')).not.toBeInTheDocument();
+    });
+
+    it('changes the folder and how many archives to keep, reporting failures', async () => {
+      const user = userEvent.setup();
+      mockChooseArchiveDestination.mockResolvedValueOnce({ ok: false, error: 'not writable' });
+      mockSetArchiveKeepCount.mockResolvedValueOnce({ ok: false, error: 'out of range' });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Change' }));
+      await waitFor(() => expect(toastTitles()).toContain("Couldn't change the folder"));
+      await user.selectOptions(screen.getByLabelText('Archives to keep'), '10');
+      await waitFor(() => expect(mockSetArchiveKeepCount).toHaveBeenCalledWith(10));
+      await waitFor(() => expect(toastTitles()).toContain("Couldn't change how many to keep"));
+    });
+
+    describe('passphrase', () => {
+      it('checks length and agreement before saving', async () => {
+        const user = userEvent.setup();
+        renderSection();
+        await user.click(await screen.findByRole('button', { name: 'Set passphrase' }));
+        expect(screen.getByRole('heading', { name: 'Set a passphrase' })).toBeInTheDocument();
+        await user.type(screen.getByLabelText('Passphrase'), 'short');
+        await user.click(screen.getByRole('button', { name: 'Save' }));
+        expect(screen.getByRole('alert')).toHaveTextContent('The passphrase has to be at least 8 characters.');
+        await user.type(screen.getByLabelText('Passphrase'), ' and long');
+        await user.type(screen.getByLabelText('Passphrase again'), 'something else');
+        await user.click(screen.getByRole('button', { name: 'Save' }));
+        expect(screen.getByRole('alert')).toHaveTextContent("The two passphrases don't match.");
+        expect(mockSetArchivePassphrase).not.toHaveBeenCalled();
+      });
+
+      it('saves a passphrase and closes', async () => {
+        const user = userEvent.setup();
+        renderSection();
+        await user.click(await screen.findByRole('button', { name: 'Set passphrase' }));
+        await user.type(screen.getByLabelText('Passphrase'), 'river stone moss');
+        await user.type(screen.getByLabelText('Passphrase again'), 'river stone moss');
+        await user.click(screen.getByRole('button', { name: 'Save' }));
+        await waitFor(() => expect(toastTitles()).toContain('Passphrase saved'));
+        expect(mockSetArchivePassphrase).toHaveBeenCalledWith('river stone moss');
+        await waitFor(() => expect(screen.queryByRole('heading', { name: 'Set a passphrase' })).not.toBeInTheDocument());
+      });
+
+      it('shows a refused passphrase in the dialog', async () => {
+        const user = userEvent.setup();
+        mockSetArchivePassphrase.mockResolvedValueOnce({ ok: false, error: 'keyring locked' });
+        renderSection();
+        await user.click(await screen.findByRole('button', { name: 'Set passphrase' }));
+        await user.type(screen.getByLabelText('Passphrase'), 'river stone moss');
+        await user.type(screen.getByLabelText('Passphrase again'), 'river stone moss');
+        await user.click(screen.getByRole('button', { name: 'Save' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('keyring locked');
+      });
+
+      it('removes an existing passphrase, or shows why it could not', async () => {
+        const user = userEvent.setup();
+        mockGetArchiveStatus.mockResolvedValue({ ok: true, data: configuredStatus({ hasPassphrase: true }) });
+        mockSetArchivePassphrase.mockResolvedValueOnce({ ok: false, error: 'keyring locked' });
+        renderSection();
+        await user.click(await screen.findByRole('button', { name: 'Change passphrase' }));
+        await user.click(screen.getByRole('button', { name: 'Remove passphrase' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('keyring locked');
+        expect(mockSetArchivePassphrase).toHaveBeenCalledWith(null);
+        await user.click(screen.getByRole('button', { name: 'Remove passphrase' }));
+        await waitFor(() => expect(toastTitles()).toContain('Passphrase removed'));
+      });
+
+      it('closes from Cancel', async () => {
+        const user = userEvent.setup();
+        renderSection();
+        await user.click(await screen.findByRole('button', { name: 'Set passphrase' }));
+        await user.click(screen.getByRole('button', { name: 'Cancel' }));
+        await waitFor(() => expect(screen.queryByRole('heading', { name: 'Set a passphrase' })).not.toBeInTheDocument());
+      });
+    });
+
+    it('turns off after confirmation', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^Turn off/ }));
+      await waitFor(() => expect(mockDisableArchive).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByText('Turn off off-device backup?')).not.toBeInTheDocument());
+    });
+
+    it('shows why turning off failed', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockDisableArchive.mockResolvedValueOnce({ ok: false, error: 'archive busy' });
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Turn off/ }));
+      expect(await screen.findByText('archive busy')).toBeInTheDocument();
+    });
+
+    it('starts a new recovery code', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Generate new recovery code' }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('registers the vault commands in the palette', async () => {
+      renderSection();
+      await screen.findByRole('button', { name: 'Restore from file' });
+      const commands = usePaletteCommandsStore.getState().commands;
+      expect(commands.get('vault.archive.backup')?.enabled).toBe(true);
+      expect(commands.get('vault.archive.restore')?.enabled).toBe(true);
+      await act(async () => { await commands.get('vault.archive.backup')!.run(); });
+      await waitFor(() => expect(mockCreateArchiveNow).toHaveBeenCalled());
+      await act(async () => { await commands.get('vault.archive.restore')!.run(); });
+      await waitFor(() => expect(mockRestoreArchive).toHaveBeenCalledWith(null));
+      await act(async () => { await commands.get('vault.export.markdown')!.run(); });
+      await waitFor(() => expect(mockExportMarkdown).toHaveBeenCalled());
+      await act(async () => { await commands.get('vault.backup')!.run(); });
+      await waitFor(() => expect(mockCreateBackup).toHaveBeenCalled());
+    });
+
+    it('exports as JSON', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'JSON' }));
+      await waitFor(() => expect(mockExportJson).toHaveBeenCalled());
     });
   });
 });

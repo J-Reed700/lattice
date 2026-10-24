@@ -265,6 +265,7 @@ export function EntryEditor({
                 <TiptapEditor
                   value={activeNote.content ?? ''}
                   onChange={onUpdateNoteContent}
+                  ariaLabel="Journal entry"
                   placeholder="A thought, a question, a place to begin…"
                   selectionActions={selectionActions}
                   citationNumbers={[...citationMap.keys()]}

@@ -18,7 +18,9 @@ use sections::{SectionPath, PRACTICAL_ENTRY, QUIZ_KEYS_TABLE_ENTRY, SECTIONS, SO
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
 // v4 stores learner evidence one table per entry and canvases one per entry,
 // and records the database schema that wrote it; v5 adds the lesson claim
-// reviews, one table per entry. Only this version imports:
+// reviews, one table per entry; v6 carries the quiz bank in every pack, one
+// table per entry, and drops quick-check attempts and keys. Only this version
+// imports:
 // both computers run the same build, which `schema_version` proves.
 pub const LEARNING_PACK_VERSION: u32 = 6;
 const MAX_ENTRIES: usize = 4_096;

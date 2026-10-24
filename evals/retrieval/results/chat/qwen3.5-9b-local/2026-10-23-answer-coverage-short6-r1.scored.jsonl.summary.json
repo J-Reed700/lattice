@@ -1,0 +1,98 @@
+{
+  "items": 6,
+  "turns": 6,
+  "errors": [],
+  "overall": {
+    "items": 6,
+    "mechanical": {
+      "passed": 2,
+      "total": 6,
+      "rate": 0.3333333333333333,
+      "wilson95": [
+        0.09677141110578041,
+        0.700006684861608
+      ]
+    }
+  },
+  "by_tag": {
+    "planner-rewrite": {
+      "items": 1,
+      "mechanical": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      }
+    },
+    "corrective-retry": {
+      "items": 2,
+      "mechanical": {
+        "passed": 1,
+        "total": 2,
+        "rate": 0.5,
+        "wilson95": [
+          0.09453120573423074,
+          0.9054687942657693
+        ]
+      }
+    },
+    "opening-or-section": {
+      "items": 5,
+      "mechanical": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      }
+    },
+    "numeric-precision": {
+      "items": 4,
+      "mechanical": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      }
+    }
+  },
+  "timing_ms": {
+    "answered_ms": {
+      "median": 92068.0,
+      "p95": 212614
+    },
+    "retrieval_ms": {
+      "median": 47672.5,
+      "p95": 50970
+    },
+    "generation_ms": {
+      "median": 39075.5,
+      "p95": 161916
+    },
+    "verification_wait_ms": {
+      "median": 21736.5,
+      "p95": 39845
+    }
+  },
+  "prompt_tokens": {
+    "cached_prompt_tokens": 96190,
+    "evaluated_prompt_tokens": 187784,
+    "completion_tokens": 10207
+  },
+  "observed": {
+    "turns_with_kb_search": 6,
+    "turns_with_corrective_retry": 0,
+    "turns_planner_skipped": 0,
+    "turns_insufficient": 0,
+    "turns_with_tool_calls": 0,
+    "model_calls_per_turn_median": 8.0
+  }
+}

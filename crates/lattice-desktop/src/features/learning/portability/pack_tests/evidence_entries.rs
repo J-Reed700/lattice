@@ -144,7 +144,7 @@ async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
         .keys()
         .filter(|path| path.starts_with("evidence/tables/"))
         .count();
-    assert_eq!(tables, 32);
+    assert_eq!(tables, 28);
 
     let missing = repack(&decoded, |input| {
         input

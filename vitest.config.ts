@@ -25,15 +25,15 @@ export default defineConfig({
         'src/vite-env.d.ts',
         'src/lib/bindings.ts', // Exclude generated file
       ],
-      // Vitest 4 only enforces floors nested under `thresholds`. Keep a
-      // realistic whole-renderer baseline while applying a substantially
-      // stronger contract to Learning Studio, where failures can corrupt a
-      // learner's durable workflow. Raise these values as coverage grows.
+      // Vitest 4 only enforces floors nested under `thresholds`. The
+      // whole-renderer floors are the coverage last measured on the full
+      // suite, rounded down, so coverage can rise but not quietly fall.
+      // Raise them to the new measurement whenever coverage grows.
       thresholds: {
-        lines: 61,
-        functions: 55,
-        branches: 55.5,
-        statements: 60,
+        lines: 92.3,
+        functions: 87.1,
+        branches: 81.9,
+        statements: 89.9,
         // These lifecycle, I/O and import boundaries must retain complete
         // coverage individually; a well-covered sibling cannot hide a gap.
         'src/{lib/pendingSaves,features/reading/hooks/useFileContent,hooks/useDebounce,utils/batchHistory,utils/batchImport,features/model/components/Downloads/downloadFormat}.ts': {

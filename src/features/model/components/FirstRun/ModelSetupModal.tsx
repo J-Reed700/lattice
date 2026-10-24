@@ -141,7 +141,7 @@ export function ModelSetupModal({
           </div>
           <DialogTitle>Set up AI</DialogTitle>
           <DialogDescription>
-            Lattice picked a chat model and an embedding model that fit this Mac.
+            Lattice picked a chat model and an embedding model that fit this computer.
             Both download once and run on this machine.
           </DialogDescription>
         </DialogHeader>

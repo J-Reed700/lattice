@@ -19,32 +19,35 @@
 //!
 //! Nothing here looks at the question or depends on its language. The inputs
 //! are the labels the message shows, the model's notes and the labels in its
-//! answer. Every loop ends when a finite set of labels stops shrinking, each
-//! round is held to the round's own output reservation, and the turn's clock
-//! and Stop bound all of it.
+//! answer. Every loop ends when a finite set of labels stops shrinking. The
+//! notes are written out of the answer's output reservation, all their sweeps
+//! together; the answer is held to what the window has left after them, and
+//! goes without them when they would take more of it than they leave. The
+//! turn's clock and Stop bound all of it.
 //!
 //! `scripts/replay_answer_round.py` sends these same instructions to measure
 //! the rounds; docs/design/2026-10-23-answer-coverage.md has the numbers.
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
-use super::generation::{generate, Generation};
-use super::written_calls::WrittenCalls;
-use super::{StreamEmitter, CUT_SHORT_NOTE};
+use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::verification::cited_labels;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, ContentPart, SamplingOverride, ThinkingMode, ToolChoice,
+    TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::normalize_whitespace;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Closes a message that shows numbered passages. It is part of the message,
 /// so the round that reads and the round that writes share the prompt to its
@@ -111,21 +114,31 @@ pub(super) struct Notes {
     /// these can find an answer incomplete: a note that is a paraphrase, a
     /// "none", or a quote from another passage proves nothing.
     noted: BTreeSet<u32>,
+    /// `text` in tokens, as the backend counts them where it can.
+    tokens: usize,
 }
 
 /// The passages to read, when the turn's message asks for a reading: it
 /// closes with [`READING_INSTRUCTION`], which the prompt builder adds only to
-/// a message that shows numbered passages.
+/// a message that shows numbered passages. `None` too when none of the labels
+/// it shows is a source the turn holds: there is nothing to read, and the
+/// instruction is taken back (see [`withdraw`]).
 pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<Passages> {
     let message = input.iter().rev().find(|item| item.is_user())?.text();
     message
         .contains(READING_INSTRUCTION)
         .then(|| Passages::shown(sources, &message))
+        .filter(|passages| !passages.0.is_empty())
 }
 
 /// The reading round: one line per passage, then a sweep for the labels the
 /// notes left out, asked for again while each sweep accounts for at least one
 /// of them.
+///
+/// The writing round reads the notes back out of the room the answer was
+/// given, so all the sweeps together write no more than the answer may: each
+/// is asked for what the reservation has left after the notes kept so far,
+/// and the reading ends when nothing is left.
 ///
 /// `Ok(None)` when no notes came of it — the provider failed, or the model
 /// wrote no line under a label — and the answer is then asked for as it was
@@ -144,11 +157,19 @@ pub(super) async fn read_passages(
         "Reading the passages",
         Some(format!("{} passages", passages.0.len())),
     );
+    let reserved = request.max_output_tokens;
     let mut text = String::new();
     let mut lines: BTreeMap<u32, Option<String>> = BTreeMap::new();
+    // Tokens of `text`, measured each time it grows.
+    let mut written = 0usize;
     let mut sweeps = 0usize;
     loop {
         let missing = unaccounted(passages, &lines);
+        let ceiling = reserved
+            .map(|reserved| reserved.saturating_sub(u32::try_from(written).unwrap_or(u32::MAX)));
+        if ceiling == Some(0) {
+            break;
+        }
         let mut input = request.input.clone();
         if !text.is_empty() {
             if missing.is_empty() {
@@ -168,7 +189,7 @@ pub(super) async fn read_passages(
             // A transcription: the same passages should read the same way
             // every time.
             sampling: Some(SamplingOverride::deterministic()),
-            max_output_tokens: request.max_output_tokens,
+            max_output_tokens: ceiling,
             priority: request.priority,
             cancel: request.cancel.clone(),
             cache_key: request.cache_key.clone(),
@@ -190,9 +211,9 @@ pub(super) async fn read_passages(
                 break;
             }
         };
-        let written = whole_lines(&response.text, &response.finish_reason);
+        let whole = whole_lines(&response.text, &response.finish_reason);
         let mut accounted = false;
-        for (label, note) in parse_notes(written) {
+        for (label, note) in parse_notes(whole) {
             // The first reading takes every line it wrote; a sweep only the
             // labels it was asked for, so it cannot overwrite a note.
             let wanted = if text.is_empty() {
@@ -213,7 +234,8 @@ pub(super) async fn read_passages(
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(written.trim());
+        text.push_str(whole.trim());
+        written = tokens(llm, &text).await;
     }
     if lines.is_empty() {
         warn!("The reading round wrote no notes; answering without them");
@@ -234,6 +256,7 @@ pub(super) async fn read_passages(
         quoted,
         verbatim = noted.len(),
         sweeps,
+        tokens = written,
         "Read the passages before answering"
     );
     step.set_reasoning(Some(&text));
@@ -241,15 +264,53 @@ pub(super) async fn read_passages(
         "{quoted} of {} passages bear on the question",
         passages.0.len()
     )));
-    Ok(Some(Notes { text, lines, noted }))
+    Ok(Some(Notes {
+        text,
+        lines,
+        noted,
+        tokens: written,
+    }))
 }
 
 /// Give the writing round the notes, as the model's own message, and the
 /// instruction to write, said last. Everything before them is the reading
 /// round's request unchanged, so the server reads only these.
-pub(super) fn append_notes(request: &mut CompletionRequest, notes: &Notes) {
+///
+/// The prompt was planned to leave the answer its reservation, and the notes
+/// and the instruction now take part of it. So the writing round is measured
+/// as it will be sent, and its answer held to the room left in the window the
+/// turn was planned against, never more than the reservation. When that room
+/// is smaller than the notes themselves, the notes would cost the answer more
+/// than they give it: they are not given, the request is left as it was, and
+/// `false` says so.
+pub(super) async fn append_notes(
+    llm: &dyn LLMPort,
+    request: &mut CompletionRequest,
+    notes: &Notes,
+) -> bool {
+    let planned = request.input.len();
     request.input.push(assistant(&notes.text));
     say_last(&mut request.input, WRITE_INSTRUCTION);
+    let room = room_left(llm, request).await;
+    if room < notes.tokens {
+        info!(
+            room,
+            notes = notes.tokens,
+            "The notes would leave the answer less room than they take; answering without them"
+        );
+        request.input.truncate(planned);
+        return false;
+    }
+    request.max_output_tokens = Some(within(request.max_output_tokens, room));
+    true
+}
+
+/// Whether a research turn's saved rounds hold its reading: the notes, and
+/// the instruction to write from them said after.
+pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
+    transcript
+        .iter()
+        .any(|item| item.text().ends_with(WRITE_INSTRUCTION))
 }
 
 /// Take the reading instruction back out of the turn's message when no notes
@@ -273,12 +334,15 @@ pub(super) fn withdraw(input: &mut [CompletionInput]) {
 }
 
 /// Ask the model to add the passages its notes quote and its answer does not
-/// cite, streamed after the answer, for as long as each continuation cites at
-/// least one of them. The set shrinks every time round, so it ends.
+/// cite, after the answer, for as long as each continuation cites at least
+/// one of them. The set shrinks every time round, so it ends.
 ///
-/// An answer stopped at its output limit is left as it is: it already says
-/// why it ends there. The answer stands as written when the turn's time runs
-/// out or the provider fails; only Stop is an error.
+/// A continuation is written whole before any of it is shown, then shown and
+/// kept as one piece, so what the reader saw and what is saved are the same
+/// text, and a continuation that fails or runs out of time takes nothing from
+/// an answer that was already finished: the answer stands as written. An
+/// answer stopped at its output limit is left as it is too: it already says
+/// why it ends there. Only Stop is an error.
 pub(super) async fn add_what_was_left_out(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -297,39 +361,67 @@ pub(super) async fn add_what_was_left_out(
     // forbidden and no thinking, as for any round that may only write.
     request.tool_choice = (!request.tools.is_empty()).then_some(ToolChoice::None);
     request.thinking = ThinkingMode::Off;
-    while !left.is_empty() && clock.remaining().is_ok() {
-        info!(left_out = ?left, "The answer left out passages its notes quote; asking for them");
+    while !left.is_empty() {
+        let Ok(remaining) = clock.remaining() else {
+            break;
+        };
         say_last(&mut request.input, &continue_instruction(&left, notes));
-        emitter.content(PARAGRAPH_BREAK)?;
-        let round = generate(
-            llm,
-            request,
-            emitter,
-            recorder,
-            cancel,
-            clock,
-            "Adding what was left out",
-            WrittenCalls::Cut,
-        )
-        .await;
-        let Generation { mut response, step } = match round {
-            Ok(round) => round,
-            Err(error) if cancel.is_cancelled() => return Err(error),
-            Err(error) => {
+        let room = room_left(llm, request).await;
+        if room == 0 {
+            info!(left_out = ?left, "No room left in the window to add what the answer left out; keeping the answer");
+            break;
+        }
+        info!(left_out = ?left, "The answer left out passages its notes quote; asking for them");
+        request.max_output_tokens = Some(within(request.max_output_tokens, room));
+        request.time_budget = Some(remaining);
+        let step = recorder.begin_guarded(TurnStepKind::Generate, "Adding what was left out", None);
+        let completion = timeout(remaining, llm.complete(request));
+        let response = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(cancelled_error()),
+            result = completion => result,
+        };
+        let mut response = match response {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) if cancel.is_cancelled() => return Err(cancelled_error()),
+            Ok(Err(error)) => {
                 warn!(%error, "Could not add what the answer left out; keeping the answer");
+                step.failed(Some("nothing added".into()));
+                break;
+            }
+            Err(_) => {
+                warn!(
+                    "The turn's time ran out adding what the answer left out; keeping the answer"
+                );
+                step.failed(Some("nothing added".into()));
                 break;
             }
         };
-        let added = cited_labels(&response.text).intersection(&left).count();
+        // A call written as text is cut out: this round may not call.
+        let (written, called) = match written_call_start(&response.text) {
+            Some(start) => (&response.text[..start], true),
+            None => (response.text.as_str(), false),
+        };
+        let written = written.trim();
+        let cut_short = match answer_was_cut_short(&response.finish_reason, written, false) {
+            Ok(cut_short) => cut_short && !called,
+            Err(error) => {
+                warn!(%error, "Could not add what the answer left out; keeping the answer");
+                step.failed(Some("nothing added".into()));
+                break;
+            }
+        };
+        let added = cited_labels(written).intersection(&left).count();
         step.done(Some(match added {
             0 => "nothing added".to_string(),
             1 => "1 passage added".to_string(),
             added => format!("{added} passages added"),
         }));
-        let text = response.text.trim();
-        if !text.is_empty() {
-            answer.push_str(PARAGRAPH_BREAK);
-            answer.push_str(text);
+        if !written.is_empty() {
+            let note = if cut_short { CUT_SHORT_NOTE } else { "" };
+            let shown = format!("{PARAGRAPH_BREAK}{written}{note}");
+            emitter.content(&shown)?;
+            answer.push_str(&shown);
         }
         request.input.append(&mut response.replay);
         if added == 0 || answer.ends_with(CUT_SHORT_NOTE) {
@@ -356,29 +448,43 @@ fn whole_lines<'t>(text: &'t str, finish_reason: &str) -> &'t str {
 }
 
 /// The notes as `(label, note)`, in the order written: a line that starts
-/// with a label, bracketed or bare, then an optional `:`, `.` or dash. A note
-/// with no letter or digit in it — a hyphen — is `None`. Lines without a label
-/// are not notes.
+/// with a label, bracketed or bare, then an optional `:`, `.` or dash, in
+/// their full-width forms too. A note with no letter or digit in it — a
+/// hyphen — is `None`. Lines without a label are not notes.
 pub(super) fn parse_notes(text: &str) -> Vec<(u32, Option<String>)> {
     text.lines().filter_map(parse_line).collect()
 }
 
 fn parse_line(line: &str) -> Option<(u32, Option<String>)> {
     let rest = line.trim_start();
-    let rest = rest.strip_prefix('[').unwrap_or(rest);
+    let rest = rest
+        .strip_prefix(|c: char| narrow(c) == '[')
+        .unwrap_or(rest);
     let digits = rest
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(rest.len());
     let label = rest.get(..digits).filter(|digits| !digits.is_empty())?;
     let label = label.parse().ok()?;
     let rest = &rest[digits..];
-    let rest = rest.strip_prefix(']').unwrap_or(rest).trim_start();
+    let rest = rest
+        .strip_prefix(|c: char| narrow(c) == ']')
+        .unwrap_or(rest)
+        .trim_start();
     let note = rest
-        .strip_prefix([':', '.', '-', '–', '—'])
+        .strip_prefix(|c: char| matches!(narrow(c), ':' | '.' | '-' | '–' | '—'))
         .unwrap_or(rest)
         .trim();
     let says_something = note.chars().any(|c| c.is_alphanumeric() || c == '_');
     Some((label, says_something.then(|| note.to_string())))
+}
+
+/// A full-width form (`：`, `．`, `［` …) read as the ASCII character it is
+/// the wide form of, so a label is set off the same way in any script.
+fn narrow(c: char) -> char {
+    match c {
+        '\u{FF01}'..='\u{FF5E}' => char::from_u32(u32::from(c) - 0xFEE0).unwrap_or(c),
+        _ => c,
+    }
 }
 
 /// Whether a note is copied from the passage: each of its sentences, with
@@ -401,21 +507,12 @@ pub(super) fn verbatim(note: &str, passage: &str) -> bool {
             .all(|sentence| passage.contains(sentence.as_str()))
 }
 
-/// A note split after each `.`, `!` or `?` followed by whitespace, so the
-/// sentences it copied need not have stood side by side in the passage.
+/// A note split into its sentences where Unicode puts their boundaries
+/// (UAX #29: after `.`, `!` or `?` and a space, after `。`, `！`, `？` and
+/// every other script's terminators), so the sentences it copied need not
+/// have stood side by side in the passage.
 fn sentences(note: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut previous = None;
-    for (index, c) in note.char_indices() {
-        if c.is_whitespace() && matches!(previous, Some('.' | '!' | '?')) {
-            out.push(&note[start..index]);
-            start = index;
-        }
-        previous = Some(c);
-    }
-    out.push(&note[start..]);
-    out
+    note.split_sentence_bounds().collect()
 }
 
 /// The labels the notes have not accounted for yet, in label order.
@@ -441,15 +538,70 @@ fn sweep_instruction(labels: &[u32]) -> String {
 }
 
 fn continue_instruction(left: &BTreeSet<u32>, notes: &Notes) -> String {
-    let quotes = left
-        .iter()
+    CONTINUE_INSTRUCTION.replace("{quotes}", &quotes(left, notes))
+}
+
+/// Each left-out label with its note, as a continuation is asked to restate.
+fn quotes(left: &BTreeSet<u32>, notes: &Notes) -> String {
+    left.iter()
         .filter_map(|label| {
             let note = notes.lines.get(label)?.as_deref()?;
             Some(format!("[{label}] \"{note}\""))
         })
         .collect::<Vec<_>>()
-        .join(" ");
-    CONTINUE_INSTRUCTION.replace("{quotes}", &quotes)
+        .join(" ")
+}
+
+/// The output ceiling for a round with `room` left in the window: the
+/// reservation, or the room when that is less.
+fn within(reserved: Option<u32>, room: usize) -> u32 {
+    let room = u32::try_from(room).unwrap_or(u32::MAX);
+    reserved.map_or(room, |reserved| reserved.min(room))
+}
+
+/// What the window the turn was planned against has left once `request`'s
+/// prompt is in it.
+async fn room_left(llm: &dyn LLMPort, request: &CompletionRequest) -> usize {
+    llm.max_context_tokens()
+        .saturating_sub(prompt_tokens(llm, request).await)
+}
+
+/// `request`'s prompt in tokens, as the send-time gates measure one: every
+/// message with its role, every call and result and the tool schemas, plus
+/// the chat template's framing and each picture's declared cost.
+pub(super) async fn prompt_tokens(llm: &dyn LLMPort, request: &CompletionRequest) -> usize {
+    let text = request
+        .input
+        .iter()
+        .flat_map(|item| match item {
+            CompletionInput::Native { value } => vec![Cow::Owned(value.to_string())],
+            CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
+                vec![Cow::Borrowed(role.as_str()), item.text()]
+            }
+            _ => vec![item.text()],
+        })
+        .chain((!request.tools.is_empty()).then(|| Cow::Owned(tool_schema_text(&request.tools))))
+        .collect::<Vec<_>>()
+        .join("\n");
+    tokens(llm, &text).await
+        + TEMPLATE_TOKENS_PER_MESSAGE * request.input.len()
+        + TEMPLATE_TOKENS_FOR_ANSWER
+        + request.image_tokens()
+}
+
+/// Tokens in `text` as the backend's own tokenizer counts them where it has
+/// one, by its estimate otherwise or when the count fails.
+async fn tokens(llm: &dyn LLMPort, text: &str) -> usize {
+    if !llm.counts_tokens_exactly() {
+        return llm.count_tokens(text);
+    }
+    match llm.count_tokens_exact(text).await {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            debug!(%error, "The backend could not count the text; measuring by the estimate");
+            llm.count_tokens(text)
+        }
+    }
 }
 
 fn assistant(text: &str) -> CompletionInput {
