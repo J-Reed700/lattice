@@ -9,6 +9,7 @@ mod image_pick;
 mod images;
 #[cfg(test)]
 mod loop_tests;
+mod reading;
 mod research_notes;
 mod scoped_document_tools;
 mod tool_sources;
@@ -30,6 +31,7 @@ use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 use final_round::LastRound;
+pub(super) use reading::READING_INSTRUCTION;
 use written_calls::WrittenCalls;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
@@ -290,6 +292,30 @@ pub(super) async fn run_agentic_tool_loop(
         fetched,
         sources,
     );
+    // A message that shows numbered passages asks for a reading of them
+    // first; a resumed turn has its notes in the saved transcript already.
+    let mut notes = None;
+    if let Some(passages) = reading::asked(&native_request.input, sources.as_slice())
+        .filter(|_| native_request.input.len() == planned_len)
+    {
+        let reading_start = Instant::now();
+        notes = reading::read_passages(
+            llm.as_ref(),
+            &native_request,
+            &passages,
+            recorder,
+            &turn_cancel,
+            &clock,
+        )
+        .await?;
+        match notes.as_ref() {
+            Some(notes) => reading::append_notes(&mut native_request, notes),
+            None => reading::withdraw(&mut native_request.input),
+        }
+        timings.llm_stream_ms = timings
+            .llm_stream_ms
+            .saturating_add(elapsed_ms(reading_start));
+    }
     let mut condensed = 0;
     for iteration in first_round..max_tool_rounds {
         timings.iterations = (iteration + 1) as u32;
@@ -390,7 +416,10 @@ pub(super) async fn run_agentic_tool_loop(
             recorder,
             &turn_cancel,
             &clock,
-            generation::thinking_label(iteration),
+            match notes {
+                Some(_) if iteration == 0 => "Writing the answer",
+                _ => generation::thinking_label(iteration),
+            },
             written_calls,
         )
         .await?;
@@ -475,7 +504,7 @@ pub(super) async fn run_agentic_tool_loop(
         // A call written as text is cut out of the answer, and the answer
         // says why it stops there rather than ending mid-thought for no
         // visible reason.
-        let response_text = match answer_only.and_then(|last_round| {
+        let mut response_text = match answer_only.and_then(|last_round| {
             final_round::written_call_start(&response_text).map(|start| (start, last_round))
         }) {
             Some((start, last_round)) => {
@@ -504,6 +533,24 @@ pub(super) async fn run_agentic_tool_loop(
         if tool_calls.is_empty() {
             if response_text.trim().is_empty() {
                 return Err(AppError::InvalidState("Model returned no answer".into()));
+            }
+            // A last round answers at a limit, and adds nothing after it.
+            if let Some(notes) = notes.as_ref().filter(|_| last_round.is_none()) {
+                let coverage_start = Instant::now();
+                reading::add_what_was_left_out(
+                    llm.as_ref(),
+                    &mut native_request,
+                    notes,
+                    &mut response_text,
+                    &emitter,
+                    recorder,
+                    &turn_cancel,
+                    &clock,
+                )
+                .await?;
+                timings.llm_stream_ms = timings
+                    .llm_stream_ms
+                    .saturating_add(elapsed_ms(coverage_start));
             }
             emitter.done();
             tracing::info!(
