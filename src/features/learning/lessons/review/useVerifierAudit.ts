@@ -10,7 +10,7 @@ function unwrap<T>(result: ApiResult<T>): T {
   return result.data;
 }
 
-/** The course's opt-in to the Verifier audit, with what consent it needs . */
+/** The course's opt-in to the Verifier audit, with what consent it needs (§14.2). */
 export function useProgramVerifierAudit(programId: string, enabled = true) {
   return useQuery<LearningVerifierAuditDto>({
     queryKey: learningVerifierAuditKey(programId),

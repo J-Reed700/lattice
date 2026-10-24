@@ -41,7 +41,38 @@ impl MockWebCaptureService {
         }
     }
 
-    /// Configure mock to return specific preview for a URL.
+    /// Configure mock to return specific preview for a URL
+    ///
+    /// When `fetch_url_preview` is called with this URL, the configured preview will be returned.
+    ///
+    /// # Arguments
+    /// * `url` - The URL to match
+    /// * `preview` - The UrlPreview to return
+    ///
+    /// # Example
+    /// ```rust
+    /// use lattice::infrastructure::services::mocks::MockWebCaptureService;
+    /// use lattice_core::application::dtos::function_calling_dto::UrlPreview;
+    ///
+    /// let service = MockWebCaptureService::new();
+    /// service.set_preview_for_url(
+    ///     "https://example.com",
+    ///     UrlPreview {
+    ///         url: "https://example.com".to_string(),
+    ///         title: "Example Article".to_string(),
+    ///         description: Some("A test article".to_string()),
+    ///         site_name: Some("Example".to_string()),
+    ///         image: None,
+    ///         author: Some("John Doe".to_string()),
+    ///         published_date: None,
+    ///         word_count: 500,
+    ///         reading_time_minutes: 3,
+    ///         language: Some("en".to_string()),
+    ///         content_type: Some("article".to_string()),
+    ///         keywords: vec!["test".to_string()],
+    ///     }
+    /// );
+    /// ```
     pub fn set_preview_for_url(&self, url: impl Into<String>, preview: UrlPreview) {
         self.mock_previews
             .write()
@@ -49,7 +80,13 @@ impl MockWebCaptureService {
             .insert(url.into(), preview);
     }
 
-    /// Get list of URLs that were previewed.
+    /// Get list of URLs that were previewed
+    ///
+    /// Returns a clone of all URLs that have been previewed via `fetch_url_preview`.
+    /// Useful for verifying that expected URLs were processed.
+    ///
+    /// # Returns
+    /// Vector of URLs in the order they were previewed
     pub fn get_previewed_urls(&self) -> Vec<String> {
         self.previewed_urls
             .read()

@@ -1,3 +1,9 @@
+/**
+ * SectionError — inline fallback for a failed surface (Search, Library, …).
+ * The rest of the app keeps working; this says so in one line and offers
+ * a retry.
+ */
+
 import React, { useState } from 'react';
 
 import { getUserFriendlyMessage } from '../../types/errors';

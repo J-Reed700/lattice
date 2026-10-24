@@ -37,7 +37,7 @@ function IndexBar({ status }: { status: IndexingStatus }) {
   const percent = indexPercent(status.embedded, status.total);
   return (
     <div role="progressbar" aria-label="Passages embedded" aria-valuemin={0} aria-valuemax={status.total} aria-valuenow={Math.min(status.embedded, status.total)} aria-valuetext={describeIndexCounts(status) ?? undefined}
-      className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-sunken border border-border-subtle">
+      className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-border">
       <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${percent}%` }} />
     </div>
   );
@@ -57,7 +57,7 @@ export function CourseIndexNotice({ programId }: { programId: string }) {
   const status = useCourseIndexStatus(programId);
   const words = describeCourseIndex(status);
   if (!status || !words) return null;
-  const frame = 'mt-3 rounded-xl border border-border-default bg-surface-sunken/60 px-4 py-3 shadow-2xs';
+  const frame = 'mt-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3';
   if (status.state !== 'indexing') {
     return (
       <p role="status" className={`${frame} text-sm leading-6 text-text-primary`}>

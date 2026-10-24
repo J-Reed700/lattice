@@ -46,13 +46,13 @@ export function Passage({
 }) {
   const url = safeUrl(passage.url);
   return (
-    <details className="rounded-lg border border-border-subtle bg-surface-sunken p-3" open={defaultOpen}>
+    <details className="rounded-lg bg-background p-3" open={defaultOpen}>
       <summary className="cursor-pointer text-xs font-medium text-text-secondary">
         <span className="mr-2 inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">
           {number}
         </span>
         {passage.title}
-        {provenance && <span className="ml-2 rounded-full border border-border-subtle bg-surface px-2 py-0.5 text-[10px] font-medium text-text-secondary">{provenance}</span>}
+        {provenance && <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-text-secondary">{provenance}</span>}
         {passage.trust && <span className="ml-2"><TrustLevelChip trust={passage.trust} /></span>}
       </summary>
       {passage.trust && passage.trust.reasons.length > 0 && (
@@ -86,25 +86,25 @@ function isGeneralKnowledge(claim: LearningClaimEvidenceDto) {
   return claim.resolution === 'general_knowledge' || claim.verdict === GENERAL_KNOWLEDGE;
 }
 
-/** How the claim was settled, in words : confirmed never reads as verified. */
+/** How the claim was settled, in words (§5.6): confirmed never reads as verified. */
 function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
   if (isGeneralKnowledge(claim)) {
-    return <span className="rounded-full border border-border-default px-2 py-0.5 text-[10px] font-medium text-text-secondary">General knowledge · not checked against a source</span>;
+    return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">General knowledge · not checked against a source</span>;
   }
   if (claim.resolution === 'confirmed_by_you') {
-    return <span className="rounded-full border border-border-default bg-surface-sunken px-2 py-0.5 text-[10px] font-medium text-text-secondary">Confirmed by you</span>;
+    return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">Confirmed by you</span>;
   }
   if (claim.resolution === 'source_removed') {
-    return <span className="rounded-full border border-warning/40 bg-warning-muted/30 px-2 py-0.5 text-[10px] font-medium text-warning-fg">Source removed · review</span>;
+    return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">Source removed · review</span>;
   }
   return (
-    <span className="rounded-full bg-success-muted px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-success-fg">
+    <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
       {claim.verdict || 'checked'}
     </span>
   );
 }
 
-/** "12 claims verified against sources · 3 confirmed by you · 2 general knowledge" . */
+/** "12 claims verified against sources · 3 confirmed by you · 2 general knowledge" (§5.6). */
 export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount);
   const byLevel = verifiedByLevel(report.teachingClaims);
@@ -129,7 +129,7 @@ function ClaimEvidence({
   onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
 }) {
   return (
-    <article className="wrap-anywhere rounded-lg border border-border-default bg-surface p-3 shadow-2xs">
+    <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-sm font-medium leading-6 text-text-primary">{claim.claim}</p>
         <ResolutionChip claim={claim} />
@@ -141,7 +141,7 @@ function ClaimEvidence({
         <p className="mt-2 text-xs leading-5 text-text-secondary">The source that supported this claim was deleted. The lesson stays readable; review the claim to attach another source or confirm it.</p>
       )}
       {claim.contentQuote && (
-        <blockquote className="mt-2 border-l-2 border-border-subtle pl-3 text-xs leading-5 text-text-muted">
+        <blockquote className="mt-2 border-l-2 border-border pl-3 text-xs leading-5 text-text-muted">
           <span className="font-medium text-text-secondary">In the lesson: </span>
           {claim.contentQuote}
         </blockquote>
@@ -193,17 +193,17 @@ export function LessonEvidencePanel({
 
   return (
     <>
-      <section className="mb-4 rounded-lg border border-border-subtle bg-surface-sunken/50 px-3.5 py-2" aria-label="Lesson evidence">
-        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-8 w-full items-center gap-2 text-left text-xs font-medium text-accent">
-          <FileSearch size={15} />
+      <section className="mb-5 rounded-xl border border-border bg-surface p-4" aria-label="Lesson evidence">
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-10 w-full items-center gap-2 text-left text-sm font-semibold text-accent">
+          <FileSearch size={17} />
           {open ? 'Hide lesson evidence' : 'View lesson evidence'}
-          {data && <span className="ml-auto text-xxs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'claim' : 'claims'}</span>}
+          {data && <span className="ml-auto text-xs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'claim' : 'claims'}</span>}
         </button>
         {open && (
           <div className="mt-3 space-y-4">
             {report.isFetching && <p role="status" className="text-sm text-text-muted">Loading the saved verification report…</p>}
             {report.error && (
-              <div role="alert" className="text-sm text-danger-fg">
+              <div role="alert" className="text-sm text-rose-700">
                 <p>{report.error.message}</p>
                 <button type="button" onClick={() => void report.refetch()} className="mt-2 underline">Retry evidence</button>
               </div>
@@ -214,12 +214,12 @@ export function LessonEvidencePanel({
                 <p className="text-sm leading-6 text-text-secondary">
                   {evidenceSummary(data)} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
                 </p>
-                {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-warning-muted bg-warning-muted/20 p-3 text-sm text-warning-fg">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'claim lost its source' : 'claims lost their source'} — review {sourceRemovedCount(data) === 1 ? 'it' : 'them'} in the claim review.</p>}
+                {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'claim lost its source' : 'claims lost their source'} — review {sourceRemovedCount(data) === 1 ? 'it' : 'them'} in the claim review.</p>}
                 <p className="text-xs leading-5 text-text-muted">
                   {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical' ? 'Keyword retrieval — references were not searched by meaning' : data.retrievalMode === 'partial' ? 'Semantic and keyword retrieval over the embedded references; keyword retrieval for the rest — embedding was not finished' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
                 </p>
-                {data.unexecutedLanguages.length > 0 && <p className="rounded-lg border border-warning-muted bg-warning-muted/20 p-3 text-sm text-warning-fg">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
-                {!data.sourcesCurrent && <p role="status" className="rounded-lg border border-warning-muted bg-warning-muted/20 p-3 text-sm text-warning-fg">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
+                {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
+                {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
                 <details>
                   <summary className="cursor-pointer text-xs text-text-muted">Verification details</summary>
                   <dl className="mt-2 space-y-1 break-all text-xs text-text-secondary">
@@ -282,7 +282,7 @@ export function LessonSectionEvidence({
 
   return (
     <>
-      <details className="mt-3 rounded-lg border border-border-subtle bg-surface-sunken/40 px-3 py-2">
+      <details className="mt-4 border-t border-border pt-3">
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
           <ShieldCheck size={14} />
           Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}

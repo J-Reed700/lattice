@@ -34,6 +34,14 @@ pub struct TagMapper;
 
 impl TagMapper {
     /// Convert domain entity to database model.
+    ///
+    /// # Arguments
+    ///
+    /// * `entity` - Domain tag entity
+    ///
+    /// # Returns
+    ///
+    /// Database model ready for persistence.
     pub fn to_model(entity: &DomainTag) -> TagModel {
         TagModel {
             id: entity.id().as_str().to_string(),
@@ -45,6 +53,20 @@ impl TagMapper {
     }
 
     /// Convert database model to domain entity.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Database model from SQLx
+    ///
+    /// # Returns
+    ///
+    /// Domain entity with business logic.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::InvalidData` if timestamps cannot be parsed
+    /// - `AppError::InvalidData` if tag ID is invalid
+    /// - `AppError::InvalidData` if tag name is invalid
     pub fn to_entity(model: &TagModel) -> Result<DomainTag> {
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
@@ -70,6 +92,16 @@ impl TagMapper {
     }
 
     /// Convert a batch of database models to domain entities.
+    ///
+    /// Continues processing on errors, collecting all successful conversions.
+    ///
+    /// # Arguments
+    ///
+    /// * `models` - Vector of database models
+    ///
+    /// # Returns
+    ///
+    /// Vector of domain entities (may be shorter than input if some conversions failed).
     pub fn to_entities(models: &[TagModel]) -> Vec<DomainTag> {
         models
             .iter()
@@ -78,6 +110,14 @@ impl TagMapper {
     }
 
     /// Convert a batch of domain entities to database models.
+    ///
+    /// # Arguments
+    ///
+    /// * `entities` - Vector of domain entities
+    ///
+    /// # Returns
+    ///
+    /// Vector of database models ready for persistence.
     pub fn to_models(entities: &[DomainTag]) -> Vec<TagModel> {
         entities.iter().map(Self::to_model).collect()
     }

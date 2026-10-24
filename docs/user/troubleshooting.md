@@ -92,7 +92,7 @@ Start with the notice Lattice shows in the chat:
 - **Auto** tries the built-in engine, then a llama.cpp server, then Ollama.
 - **Local only** uses only models running inside Lattice.
 - **llama.cpp** or **Ollama** use a server you run yourself. Check the server URL, and use **Test llama.cpp connection** for a llama.cpp server.
-- **OpenAI**, **Anthropic** or **Google** need an API key, which Lattice stores in your system keychain.
+- **OpenAI** or **Anthropic** need an API key, which Lattice stores in your system keychain.
 
 **"Lattice's bundled llama-server can't run on this machine."** Lattice runs local models with a llama.cpp engine that ships with the app. The message ends with what to do:
 
@@ -102,7 +102,7 @@ Start with the notice Lattice shows in the chat:
 
 **The answer stops partway.** In **Settings > AI > Tuning**, **Stall timeout** is how many seconds a reply may go silent before Lattice treats it as dead. It doesn't cap total answer time. Raise it on slow hardware or with a slow remote server.
 
-**The model runs out of memory when loading.** By default (**Model's max**), each local model loads at the context window it was trained for. If that window needs more memory than your machine has, set a smaller **Local model context window** in **Settings > AI > Tuning** (or on the model itself), or choose a smaller model.
+**The model runs out of memory, or falls back to the CPU.** Leave **Local model context window** in **Settings > AI > Tuning** on automatic. A window too large for your graphics memory pushes the model onto the CPU. Otherwise, choose a smaller model.
 
 ---
 
@@ -129,7 +129,7 @@ Start with the notice Lattice shows in the chat:
 - **The file type isn't supported.** See [What file types can I import?](faq.md#what-file-types-can-i-import). Images aren't supported.
 - **The file is too large.** Documents are limited to 50 MB. Audio recordings
   are limited to 200 MB and two hours. Split the file or save a smaller copy.
-- **A scanned PDF has no searchable text.** Pages that are only images are read with the OCR model from the model catalog. Download it from **Settings > AI > Models** (PaddleOCR-VL, about 0.9B), then re-import the PDF. Without the model, those pages are skipped and the rest of the PDF is imported.
+- **A scanned PDF has no searchable text.** Lattice has no OCR. Pages that are only images are skipped and the rest of the PDF is imported. Run the PDF through an OCR tool first.
 - **A password-protected or damaged file fails.** Remove the password or re-save the file in its original app, then import again.
 - **An audio file fails with "No transcription model is downloaded."** Audio is transcribed on your computer. Download a transcription model from **Settings > AI > Models**, then import again.
 - **A WMA recording fails.** WMA decoding is not supported yet. Convert it to

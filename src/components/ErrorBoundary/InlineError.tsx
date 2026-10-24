@@ -1,3 +1,10 @@
+/**
+ * InlineError Component
+ *
+ * Minimal error display for inline/compact error states.
+ * Used for small components or tight spaces.
+ */
+
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 export interface InlineErrorProps {

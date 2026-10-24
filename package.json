@@ -3,13 +3,11 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
-  "engines": {
-    "node": ">=22.22.2 <23 || >=24.15.0 <25 || >=26"
-  },
   "scripts": {
     "dev": "bash scripts/dev/dev.sh",
     "build": "node scripts/build/build-auto.js",
     "build:auto": "node scripts/build/build-auto.js",
+    "build:node": "node scripts/build/build.js",
     "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build/build.ps1",
     "build:unix": "bash scripts/build/build.sh",
     "build:dev": "node scripts/build/build-auto.js --mode dev --no-bundle",
@@ -17,8 +15,15 @@
     "build:production": "node scripts/build/build-auto.js --mode production --clean --checksums",
     "build:clean": "node scripts/build/build-auto.js --clean",
     "build:fast": "node scripts/build/build-auto.js --mode dev --no-bundle --skip-tests",
+    "build:master": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1",
+    "build:master:all": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1 -Components all",
+    "build:master:desktop": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1 -Components sidecar,frontend,tauri",
+    "build:master:backend": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1 -Components backend",
+    "build:master:sidecar": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1 -Components sidecar",
+    "build:complete": "powershell -ExecutionPolicy Bypass -File scripts/build/build-master.ps1 -Components all -Clean -Checksums",
     "build:all": "bash scripts/build/build.sh",
     "checksums": "bash scripts/build/build.sh --checksums",
+    "bundle:python": "python scripts/bundle_python.py",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
@@ -137,7 +142,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tiptap-markdown": "^0.9.0",
     "use-sync-external-store": "^1.7.0",
-    "zod": "^3.23.0",
+    "zod": "^4.6.7",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
@@ -154,8 +159,8 @@
     "@typescript-eslint/eslint-plugin": "^8.48.1",
     "@typescript-eslint/parser": "^8.48.1",
     "@vitejs/plugin-react": "^6.0.5",
-    "@vitest/coverage-v8": "^4.0.8",
-    "@vitest/ui": "^4.0.8",
+    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/ui": "^4.1.12",
     "eslint": "^9.39.1",
     "eslint-import-resolver-typescript": "^3.10.1",
     "eslint-plugin-import": "^2.32.0",
@@ -168,7 +173,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "webdriverio": "9.31.9"
   },
   "overrides": {

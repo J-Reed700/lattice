@@ -1,3 +1,11 @@
+/**
+ * FullPageError — the app-level failure screen used by RootErrorBoundary.
+ *
+ * One column, no tinted header, no icon circle. Says what happened, offers
+ * the two things that can help, and keeps the technical detail one click
+ * away.
+ */
+
 import React, { useState } from 'react';
 
 import { getUserFriendlyMessage, sanitizeErrorMessage } from '../../types/errors';

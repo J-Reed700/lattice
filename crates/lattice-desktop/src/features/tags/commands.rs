@@ -1,6 +1,6 @@
-//! Tag Command Handlers
+//! Tag Command Handlers (DDD Architecture)
 //!
-//! Handlers for document tagging operations.
+//! Thin controllers for document tagging operations following Domain-Driven Design.
 //! Provides CRUD operations, query commands, tag assignment, and LLM-based tag generation.
 //! These commands apply cross-cutting concerns (rate limiting, validation)
 //! and delegate business logic to dedicated use cases.

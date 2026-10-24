@@ -38,83 +38,16 @@ export function OutlineGenerationProgress({ progress, cancelling, onCancel, onOp
   const modelStep = stage && ['drafting', 'checking_citations', 'reviewing', 'repairing', 'checking_repair'].includes(stage);
   const stopping = cancelling && stage !== 'saving' && stage !== 'completed';
 
-  return <section aria-label="Course generation progress" className="mt-8 rounded-xl border border-border-default bg-surface p-5 shadow-xs">
+  return <section aria-label="Course generation progress" className="mt-8 rounded-xl border border-accent/30 bg-accent/5 p-4 sm:p-5">
     <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status">
-          <LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
-          {stopping ? 'Cancelling generation…' : current.title}
-        </div>
-        <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-          {stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : current.detail}
-        </p>
-        {!stopping && progress?.detail && (
-          <p className="mt-1 text-xs text-text-muted" aria-label="Stage progress">{progress.detail}</p>
-        )}
-      </div>
-      <span className="text-xs tabular-nums text-text-muted" aria-live="off">
-        Elapsed <span aria-label="Elapsed time">{duration(Math.max(elapsed, progress?.elapsedSeconds ?? 0))}</span>
-      </span>
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status"><LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />{stopping ? 'Cancelling generation…' : current.title}</div><p className="mt-2 text-sm leading-6 text-text-secondary">{stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : current.detail}</p>{!stopping && progress?.detail && <p className="mt-1 text-xs text-text-muted" aria-label="Stage progress">{progress.detail}</p>}</div>
+      <span className="text-xs tabular-nums text-text-muted" aria-live="off">Elapsed <span aria-label="Elapsed time">{duration(Math.max(elapsed, progress?.elapsedSeconds ?? 0))}</span></span>
     </div>
-    <ol aria-label="Generation stages" className="mt-5 grid gap-3 text-xs sm:grid-cols-4">
-      {['Read references', 'Write outline', 'Review and revise', 'Save outline'].map((label, index) => (
-        <li
-          key={label}
-          aria-current={index === current.step ? 'step' : undefined}
-          className={`flex items-center gap-2 ${
-            index === current.step ? 'font-semibold text-accent' : index < current.step ? 'text-text-primary' : 'text-text-muted'
-          }`}
-        >
-          <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${
-            index === current.step ? 'border-accent bg-accent-muted text-accent' : index < current.step ? 'border-accent text-accent' : 'border-border-default text-text-muted'
-          }`}>
-            {index < current.step ? <Check size={12} aria-label="Complete" /> : index + 1}
-          </span>
-          {label}
-        </li>
-      ))}
-    </ol>
-    {modelStep && (
-      <div className="mt-4 rounded-lg border border-border-subtle bg-surface-sunken p-3.5 text-xs leading-relaxed text-text-secondary">
-        <p>
-          {progress!.responseCharacters > 0
-            ? `Response so far · ${progress!.responseCharacters.toLocaleString()} characters received in this step`
-            : 'Waiting for the model’s response. It may still be processing the request.'}
-        </p>
-        {progress?.modelName && (
-          <p className="mt-1 wrap-break-word text-text-muted">Model: {progress.modelName}</p>
-        )}
-        {(progress?.stageSeconds ?? 0) >= 90 && (
-          <p className="mt-2 text-warning-fg">
-            This step is taking a while. You can keep waiting or cancel and try a faster model or a focused course.
-          </p>
-        )}
-      </div>
-    )}
-    <p className="mt-4 text-xs leading-relaxed text-text-muted">
-      {deepDive ? 'A deep dive plans 24–60 lessons, then reviews the whole syllabus. ' : 'Writing and reviewing use separate model calls. '}
-      There is no overall time limit or per-step deadline. You can cancel; completed draft corrections stay saved.
-    </p>
-    {progress?.programId && (
-      <p className="mt-3 text-sm text-text-secondary">
-        A draft is saved in your programs.{' '}
-        {onOpenDraft && (
-          <button type="button" onClick={onOpenDraft} className="font-semibold text-accent underline">
-            Inspect saved draft
-          </button>
-        )}
-      </p>
-    )}
-    {onCancel && (
-      <button
-        type="button"
-        onClick={onCancel}
-        disabled={cancelling || stage === 'saving' || stage === 'completed'}
-        className="mt-4 min-h-10 rounded-lg border border-border-default bg-surface px-4 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised disabled:opacity-50"
-      >
-        {stopping ? 'Cancelling…' : 'Cancel generation'}
-      </button>
-    )}
-    {cancelError && <p role="alert" className="mt-3 text-sm text-danger-fg">Could not cancel: {cancelError}</p>}
+    <ol aria-label="Generation stages" className="mt-5 grid gap-3 text-xs sm:grid-cols-4">{['Read references', 'Write outline', 'Review and revise', 'Save outline'].map((label, index) => <li key={label} aria-current={index === current.step ? 'step' : undefined} className={`flex items-center gap-2 ${index === current.step ? 'font-semibold text-accent' : 'text-text-muted'}`}><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current">{index < current.step ? <Check size={12} aria-label="Complete" /> : index + 1}</span>{label}</li>)}</ol>
+    {modelStep && <div className="mt-4 rounded-lg bg-background/70 p-3 text-xs leading-5 text-text-secondary"><p>{progress!.responseCharacters > 0 ? `Response so far · ${progress!.responseCharacters.toLocaleString()} characters received in this step` : 'Waiting for the model’s response. It may still be processing the request.'}</p>{progress?.modelName && <p className="mt-1 wrap-break-word text-text-muted">Model: {progress.modelName}</p>}{(progress?.stageSeconds ?? 0) >= 90 && <p className="mt-2">This step is taking a while. You can keep waiting or cancel and try a faster model or a focused course.</p>}</div>}
+    <p className="mt-4 text-xs leading-5 text-text-muted">{deepDive ? 'A deep dive plans 24–60 lessons, then reviews the whole syllabus. ' : 'Writing and reviewing use separate model calls. '}There is no overall time limit or per-step deadline. You can cancel; completed draft corrections stay saved.</p>
+    {progress?.programId && <p className="mt-3 text-sm text-text-secondary">A draft is saved in your programs. {onOpenDraft && <button type="button" onClick={onOpenDraft} className="font-semibold text-accent underline">Inspect saved draft</button>}</p>}
+    {onCancel && <button type="button" onClick={onCancel} disabled={cancelling || stage === 'saving' || stage === 'completed'} className="mt-4 min-h-10 rounded-lg border border-border bg-background px-4 text-sm font-medium text-text-primary hover:bg-surface disabled:opacity-50">{stopping ? 'Cancelling…' : 'Cancel generation'}</button>}
+    {cancelError && <p role="alert" className="mt-3 text-sm text-rose-700">Could not cancel: {cancelError}</p>}
   </section>;
 }

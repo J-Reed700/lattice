@@ -1,3 +1,10 @@
+/**
+ * Format a timestamp as a relative time string (e.g., "2h ago", "3d ago")
+ *
+ * @param timestamp - ISO timestamp string
+ * @param fallback - Value to return if timestamp is invalid (default: 'Recently')
+ * @returns Formatted relative time string
+ */
 export function formatRelativeTime(timestamp?: string, fallback = 'Recently'): string {
   if (!timestamp || timestamp === 'Never') return timestamp || fallback;
 
@@ -23,6 +30,12 @@ export function formatRelativeTime(timestamp?: string, fallback = 'Recently'): s
   }
 }
 
+/**
+ * Format bytes to human-readable string (e.g., "1.5 MB", "2.3 GB")
+ *
+ * @param bytes - Number of bytes
+ * @returns Formatted string with appropriate unit
+ */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const k = 1024;

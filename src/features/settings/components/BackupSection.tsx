@@ -1,3 +1,22 @@
+/**
+ * BackupSection
+ *
+ * Back up, restore, and export — the three things a user does when they want
+ * their data out of, or back into, Lattice.
+ *
+ * There is no folder picker for the local backups. `BackupAdapter::create_backup`
+ * confines writes to the app's backups folder and returns PermissionDenied for
+ * anything else, so a native dialog here would produce a security error the
+ * user could not act on. Both backup and export write to the app's own folders
+ * and hand the user a "Show" action instead.
+ *
+ * Off-device backup is the other half: one encrypted file per run, written to a
+ * folder the user picks. That folder is chosen by a native dialog on the Rust
+ * side and never crosses IPC, which is why every archive command here takes no
+ * path argument.
+ */
+
+
 import { useMemo, useState } from 'react';
 
 import { Archive, Download, Upload } from 'lucide-react';

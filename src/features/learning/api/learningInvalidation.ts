@@ -1,4 +1,4 @@
-import { LEARNING_PROGRAMS_KEY, learningAssessmentWorkspaceKey, learningCanvasKey, learningClaimReviewPrefix, learningLessonEvidencePrefix, learningMemoryKey, learningOutlineEvidencePrefix, learningPlanKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningProgramKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { LEARNING_PROGRAMS_KEY, learningCanvasKey, learningClaimReviewPrefix, learningLessonEvidencePrefix, learningMemoryKey, learningOutlineEvidencePrefix, learningPlanKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningProgramKey, learningQuizOverviewKey, learningRecallKey, LEARNING_QUIZ_FORM_ROOT } from '@/features/learning/api/learningQueryKeys';
 
 import type { QueryClient } from '@tanstack/react-query';
 
@@ -11,6 +11,7 @@ export async function invalidateLearningSourceDependents(client: QueryClient, pr
     learningPlanKey(programId),
     learningLessonEvidencePrefix(programId),
     learningOutlineEvidencePrefix(programId),
+    // Deleting a source reopens the claims it resolved (§5.3).
     learningClaimReviewPrefix(programId),
     ['learning-source-version', programId],
     ['learning-source-search', programId],
@@ -28,11 +29,11 @@ export async function refreshLearningProgramAfterImport(client: QueryClient, pro
     learningRecallKey(programId),
     learningPracticeWorkspaceKey(programId),
     learningPracticalWorkspaceKey(programId),
-    learningAssessmentWorkspaceKey(programId),
+    learningQuizOverviewKey(programId),
   ];
   const details = {
     predicate: (query: { queryKey: readonly unknown[]; state: { data: unknown } }) => {
-      if (!['learning-practice-session', 'learning-assessment-form'].includes(String(query.queryKey[0]))) return false;
+      if (!['learning-practice-session', LEARNING_QUIZ_FORM_ROOT].includes(String(query.queryKey[0]))) return false;
       // A pending first read has no owner yet; cancel it conservatively as well.
       const data = query.state.data as { programId?: string } | undefined;
       return !data || data.programId === programId;

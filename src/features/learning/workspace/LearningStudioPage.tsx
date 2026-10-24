@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Archive, BookOpenCheck, Plus, Sparkles, Upload } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Archive, BookOpenCheck, Clock3, Plus, Sparkles, Upload } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { type FormSnapshot } from '@/features/learning/assessment/AssessmentPanel';
+
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
@@ -26,10 +26,8 @@ import {
   useLearningProgram,
   useLearningPrograms,
   usePrepareLearningLesson,
-  useSubmitLearningAttempt,
 } from '@/features/learning/workspace/useLearningStudio';
 import { useStudioNavigationGuard } from '@/features/learning/workspace/useStudioNavigationGuard';
-import type { LearningAssessmentKind, LearningLessonDto, LearningModuleDto, LearningQuestionDto, SubmitLearningAttemptRequestDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
 
@@ -75,7 +73,7 @@ export function LearningStudioPage() {
       ? { programId: requestedCourse, lessonId: requestedLesson, tab: 'lessons' }
       : { programId: requestedCourse });
   }, [requestedCourse, requestedLesson, setSearchParams]);
-  return <div className="flex h-full min-h-0 flex-col bg-bg">
+  return <div className="flex h-full min-h-0 flex-col">
     <StudyActivityPanel onOpen={next => void openTask(next)} />
     {navigationError && <p role="alert" className="px-6 py-3 text-sm text-danger-fg">Could not save before opening this task: {navigationError}</p>}
     {heldForExport && exportingAll && <p role="status" className="px-6 py-3 text-sm text-text-secondary">Your courses are still being exported. Open the task again when the export finishes.</p>}
@@ -92,19 +90,17 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const [screen, setScreen] = useState<Screen>('programs');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const navigation = useStudioNavigationGuard(selectedId !== null);
-  const [forms, setForms] = useState<Record<string, FormSnapshot>>({});
   const programs = useLearningPrograms();
   const detail = useLearningProgram(selectedId);
   const generate = useGenerateLearningProgram();
   const accept = useAcceptLearningProgram();
   const prepare = usePrepareLearningLesson();
   const complete = useCompleteLearningLesson();
-  const submit = useSubmitLearningAttempt();
   const handledNewRoute = useRef(false);
   const flashcardsRef = useRef<HTMLElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
   const flashcardRoute = searchParams.has('deck') || searchParams.get('newDeck') === '1';
-  // The review screen is the address `?course=…&lesson=…&review=claims` .
+  // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
   const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
   const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;
   const reviewing = Boolean(reviewCourse && reviewLesson);
@@ -222,233 +218,41 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     handleSelectDestination({ programId: targetProgram.id, tab: tabMap[action] });
   };
 
-  const formFor = (key: string, questions: { id: string }[]): FormSnapshot => {
-    const existing = forms[key];
-    if (!existing) return { answers: {}, attemptId: null, fingerprint: null };
-    const known = new Set(questions.map((question) => question.id));
-    const answers = Object.fromEntries(Object.entries(existing.answers).filter(([id]) => known.has(id)));
-    return { ...existing, answers };
-  };
-  const setAnswer = (key: string, questionId: string, value: number) => setForms((current) => {
-    const previous = current[key] ?? { answers: {}, attemptId: null, fingerprint: null };
-    if (previous.answers[questionId] === value) return current;
-    return { ...current, [key]: { answers: { ...previous.answers, [questionId]: value }, attemptId: null, fingerprint: null } };
-  });
-
-  const submitAttempt = (key: string, kind: LearningAssessmentKind, module: LearningModuleDto, lesson: LearningLessonDto | null, questions: LearningQuestionDto[], form: FormSnapshot, proposedId: string) => {
-    if (!selectedId || questions.length === 0) return;
-    const answers = questions.map((question) => ({ questionId: question.id, selectedIndex: form.answers[question.id] }));
-    if (answers.some((answer) => !Number.isInteger(answer.selectedIndex))) return;
-    const fingerprint = JSON.stringify(answers);
-    const attemptId = form.attemptId && form.fingerprint === fingerprint ? form.attemptId : proposedId;
-    // Save the identifier before sending. If the response is lost, retrying the
-    // same unchanged form reuses this UUID and the backend's idempotency key.
-    setForms((current) => ({ ...current, [key]: { answers: form.answers, attemptId, fingerprint } }));
-    const request: SubmitLearningAttemptRequestDto = {
-      attemptId,
-      programId: selectedId,
-      expectedRevision: detail.data?.summary.revision ?? 0,
-      moduleId: module.id,
-      lessonId: kind === 'test' ? null : lesson?.id ?? null,
-      kind,
-      answers,
-    };
-    submit.mutate(request, { onSuccess: () => { setForms((current) => ({ ...current, [key]: { answers: {}, attemptId: null, fingerprint: null } })); } });
-  };
-
   if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
-  if (screen === 'import' || screen === 'export-all') return <div className="h-full min-h-0 overflow-y-auto bg-bg px-4 py-4 sm:px-6 sm:py-5"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-4 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
-  if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-bg px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
+  if (screen === 'import' || screen === 'export-all') return <div className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
+  if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
 
   const reviewTitle = reviewing ? detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === reviewLesson)?.title ?? 'Lesson' : '';
   return <>
     {reviewing && <div className="h-full min-h-0">
       {detail.data?.summary.id === reviewCourse
         ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}`} programId={reviewCourse!} lessonId={reviewLesson!} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
-        : detail.isError ? <div role="alert" className="m-6 rounded-xl border border-border-default bg-danger-muted/30 p-4 text-sm text-text-primary"><p className="text-danger-fg">{message(detail.error)}</p><button type="button" onClick={leaveReview} className="mt-3 underline">Back to the course</button></div>
+        : detail.isError ? <div role="alert" className="m-6 rounded-xl bg-danger-muted p-4 text-sm text-text-primary"><p>{message(detail.error)}</p><button type="button" onClick={leaveReview} className="mt-3 underline">Back to the course</button></div>
           : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
     </div>}
     {/* The course page stays mounted behind the review, so leaving it returns to the same tab and scroll. */}
-    <div hidden={reviewing} className="h-full min-h-0 overflow-y-auto bg-bg px-4 py-4 sm:px-6 sm:py-6">
-    {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1450px] rounded-xl border border-border-default bg-danger-muted/30 p-3 text-sm text-danger-fg">{navigation.error}</p>}
+    <div hidden={reviewing} className="h-full min-h-0 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5">
+    {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (
-      detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-xl border border-border-default bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
-        : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-xl border border-border-default bg-surface p-8 shadow-xs"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-accent-fg shadow-xs transition hover:brightness-95">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-xl border border-border-default bg-surface px-4 py-2 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} formFor={formFor} setAnswer={setAnswer} onSubmitAttempt={submitAttempt} submitPending={submit.isPending} submitError={submit.error ? message(submit.error) : undefined} />
+      detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
+        : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} />
     ) : <div className="mx-auto max-w-[1450px]">
-      <header className="rounded-xl border border-border-default bg-surface p-6 shadow-xs sm:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-6">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-accent">
-              <BookOpenCheck size={15} /> Learning Studio
-            </div>
-            <h1 className="mt-2.5 font-serif text-[28px] leading-tight text-text-primary sm:text-3xl">
-              Turn your materials into a clear path you can practice
-            </h1>
-            <p className="mt-2.5 text-sm leading-relaxed text-text-secondary">
-              Follow a complete course through in-depth lessons, practical assignments, knowledge checks, and a final project. Your own materials are optional.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setScreen('import')}
-              className="inline-flex items-center gap-2 rounded-xl border border-border-default bg-surface px-3.5 py-2 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised"
-            >
-              <Upload size={15} /> Import a course…
-            </button>
-            <button
-              type="button"
-              disabled={exportingAll}
-              onClick={() => setScreen('export-all')}
-              className="inline-flex items-center gap-2 rounded-xl border border-border-default bg-surface px-3.5 py-2 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised disabled:opacity-50"
-            >
-              <Archive size={15} /> Export all courses…
-            </button>
-            <button
-              type="button"
-              onClick={() => { generate.reset(); setScreen('builder'); }}
-              className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-accent-fg shadow-xs transition hover:brightness-95"
-            >
-              <Plus size={16} /> New program
-            </button>
-          </div>
-        </div>
-      </header>
-
+      <header className="relative overflow-hidden rounded-[1.6rem] border border-[#d7c9b8] bg-[#eee8df] px-7 py-8 sm:px-10 sm:py-10 dark:border-white/10 dark:bg-[#28251f]"><div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full border border-accent/20" /><div className="relative flex flex-wrap items-end justify-between gap-6"><div className="max-w-2xl"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-accent"><BookOpenCheck size={15} /> Learning Studio</div><h1 className="mt-3 font-serif text-4xl leading-tight text-text-primary sm:text-[3.2rem]">A course shaped around your curiosity.</h1><p className="mt-3 max-w-xl text-sm leading-6 text-text-secondary">Start with a goal. Follow a complete course through in-depth lessons, practical assignments, knowledge checks, and a final project. Your own materials are optional.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setScreen('import')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Upload size={15} /> Import a course…</button><button type="button" onClick={() => setScreen('export-all')} className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-surface/60 px-4 py-3 text-sm font-semibold text-accent transition hover:bg-surface"><Archive size={15} /> Export all courses…</button><button type="button" onClick={() => { generate.reset(); setScreen('builder'); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95"><Plus size={16} /> Build a program</button></div></div></header>
       <StudyHabitsBar className="mt-6" onSelectFramework={handleSelectFramework} />
-
-      {/* 1. Programs come first */}
-      <section aria-labelledby="studio-programs-heading" className="mt-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-text-muted">Your learning</div>
-            <h2 id="studio-programs-heading" className="mt-1 font-serif text-2xl text-text-primary">Programs</h2>
-          </div>
-          {programs.data?.length ? (
-            <div className="text-xs text-text-muted">
-              {programs.data.length} {programs.data.length === 1 ? 'program' : 'programs'}
-            </div>
-          ) : null}
-        </div>
-
-        {programs.isLoading ? (
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {[0, 1, 2].map((n) => (
-              <div key={n} className="h-52 animate-pulse rounded-xl border border-border-subtle bg-surface" />
-            ))}
-          </div>
-        ) : programs.isError ? (
-          <div role="alert" className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border-default bg-surface p-6 shadow-xs">
-            <div>
-              <h3 className="font-serif text-xl text-text-primary">Programs are unavailable</h3>
-              <p className="mt-1 text-sm text-text-secondary">{message(programs.error)}</p>
-            </div>
-            <button
-              type="button"
-              onClick={refresh}
-              className="rounded-xl border border-border-default bg-surface px-4 py-2 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised"
-            >
-              Retry
-            </button>
-          </div>
-        ) : programs.data?.length ? (
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {programs.data.map((program) => {
-              const percent = program.lessonCount ? Math.round((program.completedLessons / program.lessonCount) * 100) : 0;
-              const active = program.status === 'active';
-              return (
-                <button
-                  type="button"
-                  key={program.id}
-                  onClick={() => {
-                    setSelectedId(program.id);
-                    void client.invalidateQueries({ queryKey: learningProgramKey(program.id) });
-                  }}
-                  className="group flex flex-col justify-between rounded-xl border border-border-default bg-surface p-5 text-left shadow-xs transition-colors hover:border-border-strong hover:bg-surface-raised/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[.13em] ${
-                          active ? 'bg-accent-muted text-accent' : 'bg-warning-muted text-warning-fg'
-                        }`}
-                      >
-                        {active ? 'Active' : 'Draft outline'}
-                      </span>
-                      <span className="text-xs text-text-muted">
-                        {program.moduleCount} {program.moduleCount === 1 ? 'module' : 'modules'} · {program.lessonCount} {program.lessonCount === 1 ? 'lesson' : 'lessons'}
-                      </span>
-                    </div>
-                    <h3 className="mt-4 font-serif text-xl font-medium leading-snug text-text-primary">
-                      {program.title}
-                    </h3>
-                    <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-text-secondary">
-                      {program.goal}
-                    </p>
-                  </div>
-                  <div className="mt-6 border-t border-border-subtle pt-4">
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken">
-                      <div
-                        className="h-full rounded-full bg-accent transition-all"
-                        style={{ width: `${active ? percent : 0}%` }}
-                      />
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs">
-                      <span className="text-text-muted">
-                        {active ? `${program.completedLessons}/${program.lessonCount} completed` : 'Review outline'}
-                      </span>
-                      <span className="inline-flex items-center gap-1 font-medium text-accent group-hover:underline">
-                        Continue <ArrowRight size={14} className="transition group-hover:translate-x-0.5" />
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="mt-5 grid gap-5 rounded-xl border border-border-default bg-surface p-8 shadow-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-10">
-            <div>
-              <div className="grid h-10 w-10 place-items-center rounded-lg border border-border-subtle bg-surface-sunken text-accent">
-                <Sparkles size={18} />
-              </div>
-              <h3 className="mt-4 font-serif text-2xl text-text-primary">Start with a question you care about.</h3>
-              <p className="mt-2 max-w-xl text-sm leading-relaxed text-text-secondary">
-                Your first program starts with your goal and experience. Add your own materials if you have them. You will review its outline before Studio prepares a lesson.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2.5 sm:flex-col sm:items-stretch">
-              <button
-                type="button"
-                onClick={() => setScreen('builder')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg shadow-xs transition hover:brightness-95"
-              >
-                Build your first program <ArrowRight size={15} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setScreen('import')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border-default bg-surface px-5 py-2.5 text-sm font-medium text-text-primary shadow-xs transition hover:bg-surface-raised"
-              >
-                <Upload size={15} /> Import a course
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* 2. Flashcards */}
-      <FlashcardsSection ref={flashcardsRef} />
-
-      {/* 3. Course Tangents below Courses & Flashcards */}
       <CourseTangentsSection onOpenDestination={handleSelectDestination} />
-
-      {/* Hairline minimalist footer */}
-      <footer className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-border-subtle pt-4 text-xs text-text-muted">
-        <span>Programs and study data stay on this device</span>
-        <span>Local learning workspace · Private to your vault</span>
-      </footer>
+      <div className="mt-8 flex flex-wrap items-end justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-text-muted">Your learning</div><h2 className="mt-1 font-serif text-2xl text-text-primary">Programs</h2></div>{programs.data?.length ? <div className="text-xs text-text-muted">{programs.data.length} {programs.data.length === 1 ? 'program' : 'programs'}</div> : null}</div>
+      {programs.isLoading ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map((n) => <div key={n} className="h-52 animate-pulse rounded-2xl bg-surface" />)}</div>
+        : programs.isError ? <div role="alert" className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-rose-500/25 bg-surface p-6"><div><h3 className="font-serif text-xl text-text-primary">Programs are unavailable</h3><p className="mt-1 text-sm text-text-secondary">{message(programs.error)}</p></div><button type="button" onClick={refresh} className="rounded-full border border-border px-4 py-2 text-sm">Retry</button></div>
+          : programs.data?.length ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{programs.data.map((program) => {
+            const percent = program.lessonCount ? Math.round(program.completedLessons / program.lessonCount * 100) : 0;
+            const active = program.status === 'active';
+            const created = new Date(program.createdAt);
+            const createdLabel = Number.isNaN(created.getTime()) ? 'date unavailable' : created.toLocaleDateString();
+            return <button type="button" key={program.id} onClick={() => { setSelectedId(program.id); void client.invalidateQueries({ queryKey: learningProgramKey(program.id) }); }} className="group relative flex min-h-56 flex-col overflow-hidden rounded-2xl border border-border bg-surface p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"><div className="absolute right-0 top-0 h-28 w-28 rounded-bl-[5rem] bg-[#eee8df]/80 transition group-hover:bg-accent/10 dark:bg-white/5" /><div className="relative flex items-center justify-between"><span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[.13em] ${active ? 'bg-success-muted text-success-fg' : 'bg-warning-muted text-warning-fg'}`}>{active ? 'Active' : 'Draft outline'}</span><ArrowRight size={16} className="text-text-muted transition group-hover:translate-x-1 group-hover:text-accent" /></div><h3 className="relative mt-5 line-clamp-2 font-serif text-2xl leading-tight text-text-primary">{program.title}</h3><p className="relative mt-2 line-clamp-2 text-sm leading-5 text-text-secondary">{program.goal}</p><div className="relative mt-auto pt-6"><div className="flex items-center justify-between text-[11px] text-text-muted"><span className="flex items-center gap-1.5"><Clock3 size={13} /> {program.moduleCount} {program.moduleCount === 1 ? 'module' : 'modules'} · {program.lessonCount} {program.lessonCount === 1 ? 'lesson' : 'lessons'}</span><span>{active ? `${program.completedLessons} complete` : 'Review outline'}</span></div><div className="mt-2 h-1 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-accent" style={{ width: `${active ? percent : 0}%` }} /></div><div className="mt-2 flex items-center gap-1 text-[10px] text-text-muted">{active ? 'Self-reported lesson completion' : 'No progress recorded'} · created {createdLabel}</div></div></button>;
+          })}</div> : <div className="mt-5 grid gap-5 rounded-2xl border border-dashed border-border bg-surface p-8 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-10"><div><div className="grid h-11 w-11 place-items-center rounded-full bg-accent/10 text-accent"><Sparkles size={19} /></div><h3 className="mt-5 font-serif text-2xl text-text-primary">Start with a question you care about.</h3><p className="mt-2 max-w-xl text-sm leading-6 text-text-secondary">Your first program starts with your goal and experience. Add your own materials if you have them. You will review its outline before Studio prepares a lesson.</p></div><div className="flex flex-wrap items-center gap-2 sm:flex-col sm:items-stretch"><button type="button" onClick={() => setScreen('builder')} className="inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg">Build your first program <ArrowRight size={15} /></button><button type="button" onClick={() => setScreen('import')} className="inline-flex items-center justify-center gap-2 rounded-full border border-accent/35 px-5 py-3 text-sm font-semibold text-accent"><Upload size={15} /> Import a course</button></div></div>}
+      <FlashcardsSection ref={flashcardsRef} />
+      <div className="mt-8 flex flex-wrap items-center gap-2 text-[10px] text-text-muted"><span className="rounded-full border border-border px-2.5 py-1">Topic or source-based</span><span className="rounded-full border border-border px-2.5 py-1">Review outline before lessons</span><span className="rounded-full border border-border px-2.5 py-1">Progress from persisted work</span><span className="ml-auto">Programs stay on this device</span></div>
     </div>}
     </div>
   </>;

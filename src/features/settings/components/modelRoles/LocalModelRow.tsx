@@ -1,3 +1,15 @@
+/**
+ * LocalModelRow
+ *
+ * One hairline row per downloaded model. Name and id on the left, a single
+ * meta line in the middle, role toggles plus hover actions on the right.
+ * The role toggles are generated from {@link ROLES} so adding a fourth role
+ * doesn't require touching this component.
+ *
+ * Ollama-backed models are NOT rendered here — they live in
+ * {@link OllamaMetaRow}.
+ */
+
 import { useEffect, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';

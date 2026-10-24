@@ -15,31 +15,59 @@ import { useConversationsStore } from '@/shared/conversations/conversationsStore
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
 
+
+/**
+ * A cited web page, read.
+ *
+ * The reader shows the immutable page text saved with the citation and marks
+ * passages whose wording the answer's cited sentences share. Older citations
+ * without a snapshot can still show their saved source text, clearly labelled.
+ *
+ * Those marks are a wording match and are described as one. The snapshot
+ * records what was read, not what the model leaned on, and a highlight that
+ * claimed otherwise would be inventing a provenance nobody recorded.
+ */
+
 export interface WebArticleViewProps {
+  /** The address to read. Null when the source carries none. */
   url: string | null;
+  /** The source as the answer cited it: its name, its number, its snippet. */
   source: SourceWithMetadata;
+  /** The message whose citations the reader is showing, when it came from one. */
   ownerKey?: string;
+  /** Citation-bearing journal text, independent of the loaded chat history. */
   citationContent?: string;
+  /**
+   * Which of the answer's marks for this source was clicked. The answer cites a
+   * page from several sentences; the reader opens on the passage for this one.
+   */
   occurrence?: number | null;
+  /** Import and Open URL. The compact readers keep them in the footer instead. */
   actions?: ReactNode;
+  /** The passage in view, so "Open URL" can point the browser at it too. */
   onActivePassageChange?: (_text: string | null) => void;
+  /** Where in the file to land. Used by non-chat surfaces to locate search/reference passages. */
   initialLocator?: PassageLocator | null;
 }
 
+/** The sentences of an answer that cite one source, and any quoted evidence. */
 interface CitedSentences {
   sentences: string[];
   quotes: { text: string; sentenceIndex: number }[];
+  /** The sentence the clicked mark sits in, as an index into `sentences`. */
   focus: number | null;
 }
 
 const EMPTY_SENTENCES: CitedSentences = { sentences: [], quotes: [], focus: null };
 
+/** Letters and digits only: the verifier and the splitter cut markdown differently. */
 function comparable(sentence: string): string {
   return stripCitationMarkers(sentence)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
+/** Where `target` is among `sentences`, exactly or as the larger part of one. */
 function indexOfSentence(sentences: readonly string[], target: string | undefined): number | null {
   if (!target) return null;
   const wanted = comparable(target);
@@ -51,6 +79,14 @@ function indexOfSentence(sentences: readonly string[], target: string | undefine
   return partial >= 0 ? partial : null;
 }
 
+/**
+ * Which sentences of the answer cite this source.
+ *
+ * A verified turn already knows: its claim verdicts name the citations each
+ * sentence rests on, and some carry the quote the judge matched. Everything
+ * else falls back to the `[n]` markers in the answer text, which is the only
+ * record an unverified turn leaves.
+ */
 function useCitedSentences(
   ownerKey: string | undefined,
   citationNumber: number | undefined,
@@ -70,6 +106,8 @@ function useCitedSentences(
         if (content !== undefined) break;
       }
     }
+    // The chips are drawn from the answer's text, so that is where a clicked
+    // one is looked up, whichever record then supplies the sentences.
     const clicked =
       occurrence === null || content === undefined
         ? undefined
@@ -100,6 +138,7 @@ interface Span {
   end: number;
 }
 
+/** Paragraphs, as the page cache separates them: a blank line apart. */
 function paragraphSpans(text: string): Span[] {
   const spans: Span[] = [];
   const push = (from: number, to: number) => {
@@ -132,7 +171,12 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
-// Scroll within the article container to avoid scrolling outer layout ancestors.
+/**
+ * Bring a mark into view by scrolling the article, and nothing else.
+ *
+ * `scrollIntoView` would take every scrollable ancestor with it, including the
+ * window, which would move the answer the reader is checking this against.
+ */
 function scrollPassageIntoView(mark: HTMLElement): void {
   let scroller = mark.parentElement;
   while (scroller && scroller !== document.body) {
@@ -194,6 +238,9 @@ export function WebArticleView({
       }
       return findSourcedPassages(pageText, [locatorTarget]);
     }
+    // A quote the judge took off this page is where the answer came from, as
+    // exactly as anything here can say; merging lets it win the span it shares
+    // with a weaker lexical match.
     const quoted = quotes.flatMap((quote) => {
       const span = findQuoteSpan(pageText, quote.text);
       return span ? [{ ...span, sentenceIndex: quote.sentenceIndex, score: 1 }] : [];
@@ -201,6 +248,14 @@ export function WebArticleView({
     return mergePassages([...quoted, ...findSourcedPassages(pageText, sentences)], pageText);
   }, [pageText, sentences, quotes, locatorTarget]);
 
+  /**
+   * The passage to open on: the clicked sentence's, or the first.
+   *
+   * Looked for on its own rather than by `sentenceIndex`, because passages that
+   * touch are merged and the merged one remembers only its strongest sentence.
+   * -1 when a sentence was clicked and the page has nothing like it — lighting
+   * some other sentence's passage would answer a question nobody asked.
+   */
   const openingIndex = useMemo(() => {
     if (focus === null) return 0;
     const quote = quotes.find((candidate) => candidate.sentenceIndex === focus);
@@ -225,8 +280,12 @@ export function WebArticleView({
     if (mark) {
       scrollPassageIntoView(mark);
     } else if (activeIndex < 0 && articleRef.current) {
+      // Nothing matched the clicked sentence. Staying where the last click left
+      // the page would read as "this is its passage", so go back to the top.
       scrollArticleTo(articleRef.current, 0);
     }
+    // `occurrence` too: another mark of the same sentence is a new request to
+    // be shown the passage, even though the passage has not changed.
   }, [activeIndex, passages, occurrence]);
 
   const activePassage = passages[activeIndex];
@@ -263,7 +322,10 @@ export function WebArticleView({
       if (start > cursor) {
         nodes.push(<Fragment key={`text-${cursor}`}>{pageText.slice(cursor, start)}</Fragment>);
       }
-      // Only register the first paragraph fragment of a multi-paragraph passage as scroll target.
+      // A passage that runs over a paragraph break is drawn once per paragraph,
+      // and only the first of those is where it begins. Registering them all
+      // would leave the last one as the scroll target and open the reader at
+      // the passage's end, several paragraphs past the sentence it matched.
       const opensHere = passage.start >= paragraph.start;
       nodes.push(
         <mark
@@ -314,6 +376,7 @@ export function WebArticleView({
   );
 
   const showMatchNotice = Boolean(pageText) && sentences.length > 0;
+  // A verdict's sentence is raw markdown; a reader is shown words.
   const focusedSentence =
     pageText && focus !== null
       ? stripCitationMarkers(sentences[focus] ?? '')
@@ -352,6 +415,7 @@ export function WebArticleView({
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-subtle py-2">
           <p
             className={`text-xs ${
+              // A click that found nothing has to say so louder than a count does.
               focus !== null && openingIndex < 0
                 ? 'font-medium text-[hsl(var(--text-primary))]'
                 : 'text-[hsl(var(--text-muted))]'
@@ -363,13 +427,13 @@ export function WebArticleView({
                 ? `No passage on this page closely matches that sentence · ${passages.length} ${
                     passages.length === 1 ? 'passage matches' : 'passages match'
                   } the answer's other sentences citing it`
-                : `${passages.length} passage${passages.length === 1 ? '' : 's'} match${
-                    passages.length === 1 ? 'es' : ''
-                  } what the answer says · matched on ${
-                    quotes.length > 0 && passages.every((passage) => passage.score === 1)
-                      ? 'the quoted evidence'
-                      : 'wording'
-                  }`}
+              : `${passages.length} passage${passages.length === 1 ? '' : 's'} match${
+                  passages.length === 1 ? 'es' : ''
+                } what the answer says · matched on ${
+                  quotes.length > 0 && passages.every((passage) => passage.score === 1)
+                    ? 'the quoted evidence'
+                    : 'wording'
+                }`}
           </p>
           {(passages.length > 1 || (passages.length > 0 && activeIndex < 0)) && (
             <div className="flex items-center gap-1">

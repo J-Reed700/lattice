@@ -1,10 +1,11 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RetentionFrameworksModal, RETENTION_FRAMEWORKS } from '../RetentionFrameworksModal';
 import { StudyHabitsBar } from '../StudyHabitsBar';
-import { HABIT_CHECKLIST_STORAGE_KEY } from '../types';
+import { CHECKLIST_ITEMS, HABIT_CHECKLIST_STORAGE_KEY } from '../types';
+import { useHabitChecklist } from '../useHabitChecklist';
 
 import type { FrameworkAction } from '../types';
 
@@ -95,8 +96,11 @@ describe('StudyHabitsBar and Pomodoro Focus Timer', () => {
     });
 
     expect(screen.getByText('00:00')).toBeInTheDocument();
-    // After finishing, start button should be available again
-    expect(screen.getByRole('button', { name: 'Start focus timer' })).toBeInTheDocument();
+    // After finishing, clicking start resets back to active preset duration
+    const restartButton = screen.getByRole('button', { name: 'Start focus timer' });
+    expect(restartButton).toBeInTheDocument();
+    fireEvent.click(restartButton);
+    expect(screen.getByText('05:00')).toBeInTheDocument();
   });
 
   it('triggers Anti-Cramming & Single-Tasking Guard alert after 90 continuous study minutes', () => {
@@ -412,5 +416,121 @@ describe('Harvard Retention Principles, Mayo Clinic Health & Metacognitive Check
     expect(
       screen.getByText('Harvard Summer School Retention Principles')
     ).toBeInTheDocument();
+  });
+
+  it('renders completed habit indicators on Health & Consolidation pill when items are checked', () => {
+    window.localStorage.setItem(
+      HABIT_CHECKLIST_STORAGE_KEY,
+      JSON.stringify({
+        'sleep-consolidation': true,
+        'aerobic-movement': true,
+        'focused-block': true,
+      })
+    );
+
+    render(<StudyHabitsBar />);
+
+    expect(screen.getByLabelText('Sleep completed')).toBeInTheDocument();
+    expect(screen.getByLabelText('Aerobic movement completed')).toBeInTheDocument();
+    expect(screen.getByLabelText('Focused block completed')).toBeInTheDocument();
+  });
+
+  it('allows switching between tabs in RetentionFrameworksModal', async () => {
+    const user = userEvent.setup();
+    render(<RetentionFrameworksModal open onOpenChange={vi.fn()} initialTab="frameworks" />);
+
+    expect(screen.getByText('Active Recall (Testing Yourself)')).toBeInTheDocument();
+
+    const habitsTabTrigger = screen.getByRole('tab', { name: /Harvard Principles & Health/i });
+    await user.click(habitsTabTrigger);
+
+    expect(
+      screen.getByText('Metacognitive Self-Assessment & Daily Habits Checklist')
+    ).toBeInTheDocument();
+
+    const frameworksTabTrigger = screen.getByRole('tab', { name: /Core Retention Frameworks/i });
+    await user.click(frameworksTabTrigger);
+
+    expect(screen.getByText('Active Recall (Testing Yourself)')).toBeInTheDocument();
+  });
+
+  it('forwards onNavigate when framework action is chosen via StudyHabitsBar modal', async () => {
+    const user = userEvent.setup();
+    const handleNavigate = vi.fn();
+    render(<StudyHabitsBar onNavigate={handleNavigate} />);
+
+    await user.click(screen.getByRole('button', { name: /Learning Frameworks & Retention Guide/i }));
+    await user.click(screen.getByRole('button', { name: 'Open Free Recall (Brain Dump)' }));
+
+    expect(handleNavigate).toHaveBeenCalledWith('recall-dump');
+  });
+});
+
+describe('useHabitChecklist hook functionality', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it('manages item state, checks completion, and responds to storage / custom events', () => {
+    const { result } = renderHook(() => useHabitChecklist());
+
+    expect(result.current.completedCount).toBe(0);
+    expect(result.current.isComplete).toBe(false);
+
+    // setItemState
+    act(() => {
+      result.current.setItemState('sleep-consolidation', true);
+    });
+    expect(result.current.completedCount).toBe(1);
+    expect(result.current.checklist['sleep-consolidation']).toBe(true);
+
+    // toggleItem
+    act(() => {
+      result.current.toggleItem('sleep-consolidation');
+    });
+    expect(result.current.checklist['sleep-consolidation']).toBe(false);
+
+    // Complete all items to verify isComplete
+    act(() => {
+      for (const item of CHECKLIST_ITEMS) {
+        result.current.setItemState(item.id, true);
+      }
+    });
+    expect(result.current.isComplete).toBe(true);
+    expect(result.current.completedCount).toBe(result.current.totalCount);
+
+    // resetAll
+    act(() => {
+      result.current.resetAll();
+    });
+    expect(result.current.completedCount).toBe(0);
+    expect(result.current.isComplete).toBe(false);
+
+    // Simulate external update via storage event
+    window.localStorage.setItem(
+      HABIT_CHECKLIST_STORAGE_KEY,
+      JSON.stringify({ 'aerobic-movement': true })
+    );
+    act(() => {
+      window.dispatchEvent(new Event('storage'));
+    });
+    expect(result.current.checklist['aerobic-movement']).toBe(true);
+
+    // Simulate lattice custom event
+    window.localStorage.setItem(
+      HABIT_CHECKLIST_STORAGE_KEY,
+      JSON.stringify({ 'focused-block': true })
+    );
+    act(() => {
+      window.dispatchEvent(new CustomEvent('lattice:habit-checklist-update'));
+    });
+    expect(result.current.checklist['focused-block']).toBe(true);
+  });
+
+  it('handles invalid JSON in localStorage safely', () => {
+    window.localStorage.setItem(HABIT_CHECKLIST_STORAGE_KEY, 'not-valid-json{{{');
+    const { result } = renderHook(() => useHabitChecklist());
+    expect(result.current.checklist).toEqual({});
   });
 });

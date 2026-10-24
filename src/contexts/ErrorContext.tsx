@@ -135,6 +135,7 @@ function getSuggestedAction(error: string): ToastError['action'] | undefined {
     return {
       label: 'Learn More',
       onClick: () => {
+        // Open external documentation for permission errors
         window.open('https://github.com/yourusername/lattice-desktop/wiki/Troubleshooting#permission-errors', '_blank');
       },
     };
@@ -144,6 +145,7 @@ function getSuggestedAction(error: string): ToastError['action'] | undefined {
     return {
       label: 'Download Model',
       onClick: () => {
+        // Navigate to settings page where models can be downloaded
         // Using custom event since we don't have direct access to navigation
         window.dispatchEvent(new CustomEvent('navigate', { detail: { view: 'settings', section: 'models' } }));
       },
@@ -163,6 +165,7 @@ function getSuggestedAction(error: string): ToastError['action'] | undefined {
     return {
       label: 'View Queue',
       onClick: () => {
+        // Navigate to files view which shows indexing progress
         window.dispatchEvent(new CustomEvent('navigate', { detail: { view: 'files' } }));
       },
     };

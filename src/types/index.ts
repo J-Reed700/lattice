@@ -9,6 +9,8 @@ export type SearchOptions = Pick<SearchOptionsWire, 'query'> & Partial<Omit<Sear
 
 export type RecentDocument = import('../lib/bindings').RecentDocument;
 
+// DocumentMetadata type matching list_all_documents backend response
+// This matches DocumentMetadataDto from document_list.rs
 export type DocumentMetadata = import('../lib/bindings').DocumentMetadataDto;
 
 export interface IndexProgress {

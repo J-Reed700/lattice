@@ -6,6 +6,9 @@
 /// background task; if the app quits under that task the marker stays, and the
 /// message would show "Checking…" forever. Nothing re-runs the check (its
 /// evidence lived in the turn), so the honest state is "not checked".
+///
+/// # Returns
+/// Number of messages marked interrupted.
 pub async fn reconcile_interrupted_verifications(
     pool: &sqlx::SqlitePool,
 ) -> Result<u64, sqlx::Error> {
@@ -27,6 +30,9 @@ pub async fn reconcile_interrupted_verifications(
 /// answer commits or the turn fails. A crash or force-quit in between leaves it
 /// `pending`, which renders as still in flight with nothing left to finish it.
 /// No turn survives a restart, so every such row is failed and can be retried.
+///
+/// # Returns
+/// Number of messages marked failed.
 pub async fn reconcile_stuck_turns(pool: &sqlx::SqlitePool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "UPDATE conversation_messages SET status = 'failed' \

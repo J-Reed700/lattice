@@ -6,24 +6,21 @@
 //! the orchestrator. Rows run in this table's order, which is the import's
 //! insert order.
 use super::{
+    bank_entries::BANK_TABLE_ROWS,
     canvas_entries::CANVASES,
     conflicts::IdClaim,
     evidence_entries::EVIDENCE_TABLE_ROWS,
     export, importers, parse,
-    program_entry::{ATTEMPTS, PROGRAM},
+    program_entry::PROGRAM,
     provenance,
     review_entries::REVIEW_TABLE_ROWS,
     source_entries::{SourceBodies, SourceHistory, SourceLibrary, SourceSelectors, SourceTrust},
-    validation::validate_answer_keys,
     value_str,
 };
 use crate::features::learning::{
     dto::LearningProgramDto,
     pack::{
-        sections::{
-            PackSection, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, OUTCOMES_ENTRY,
-            PRACTICAL_ENTRY,
-        },
+        sections::{PackSection, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, OUTCOMES_ENTRY, PRACTICAL_ENTRY},
         DecodedLearningPack, LearningPackEntry,
     },
     portability_dto::{LearningPackConflictPolicy, LearningPackExportOptionsDto},
@@ -108,7 +105,6 @@ pub(super) trait SectionRows: Sync {
 /// Every section's behaviour, in insert order.
 pub(super) const SECTION_ROWS: &[&dyn SectionRows] = &[
     &PROGRAM,
-    &ATTEMPTS,
     &LessonStates,
     &Outcomes,
     &Events,
@@ -119,8 +115,8 @@ pub(super) const SECTION_ROWS: &[&dyn SectionRows] = &[
     &SourceHistory,
     &SourceSelectors,
     &SourceTrust,
+    &BANK_TABLE_ROWS,
     &EVIDENCE_TABLE_ROWS,
-    &AnswerKeys,
     &Provenance,
     &SourceBodies,
     &REVIEW_TABLE_ROWS,
@@ -175,14 +171,6 @@ pub(super) fn decode<T: DeserializeOwned>(
 /// The `key` of every row in a JSON array entry.
 pub(super) fn row_ids<'a>(rows: &'a [serde_json::Value], key: &str) -> Result<Vec<&'a str>> {
     rows.iter().map(|row| value_str(row, key)).collect()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PrivateAnswerKey {
-    pub(super) question_id: String,
-    pub(super) correct_index: usize,
-    pub(super) explanation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,42 +487,6 @@ impl SectionRows for Practical {
             scope.policy.remaps_ids(),
         )?;
         importers::insert_practical_snapshot(connection, program_id, &snapshot).await
-    }
-}
-
-struct AnswerKeys;
-impl AnswerKeys {
-    fn keys(pack: &DecodedLearningPack) -> Result<Vec<PrivateAnswerKey>> {
-        decode(pack, KEYS_ENTRY)?
-            .ok_or_else(|| AppError::InvalidInput("Pack is missing assessment answer data.".into()))
-    }
-}
-#[async_trait]
-impl SectionRows for AnswerKeys {
-    fn section(&self) -> PackSection {
-        PackSection::AnswerKeys
-    }
-    async fn encode(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ExportScope<'_>,
-    ) -> Result<Vec<LearningPackEntry>> {
-        export::answer_keys(connection, &scope.program.summary.id).await
-    }
-    fn check(
-        &self,
-        pack: &DecodedLearningPack,
-        program: &LearningProgramDto,
-    ) -> Result<Vec<String>> {
-        validate_answer_keys(program, &Self::keys(pack)?)?;
-        Ok(Vec::new())
-    }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
-        importers::insert_answer_keys(connection, Self::keys(scope.pack)?, scope.ids).await
     }
 }
 

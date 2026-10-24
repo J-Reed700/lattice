@@ -29,7 +29,7 @@ export function TrustLevelChip({ trust }: { trust: LearningSourceTrustDto }) {
 }
 
 /**
- * The level badge . Its button opens the reasons, verbatim, with the
+ * The level badge (§19). Its button opens the reasons, verbatim, with the
  * publisher, dates, relations, track record and overrides when known.
  */
 export function TrustBadge({

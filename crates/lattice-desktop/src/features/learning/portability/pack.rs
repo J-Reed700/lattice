@@ -13,14 +13,16 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 
 pub mod sections;
-use sections::{SectionPath, KEYS_ENTRY, PRACTICAL_ENTRY, SECTIONS, SOURCE_BODY_PREFIX};
+use sections::{SectionPath, PRACTICAL_ENTRY, QUIZ_KEYS_TABLE_ENTRY, SECTIONS, SOURCE_BODY_PREFIX};
 
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
 // v4 stores learner evidence one table per entry and canvases one per entry,
 // and records the database schema that wrote it; v5 adds the lesson claim
-// reviews, one table per entry. Only this version imports:
+// reviews, one table per entry; v6 carries the quiz bank in every pack, one
+// table per entry, and drops quick-check attempts and keys. Only this version
+// imports:
 // both computers run the same build, which `schema_version` proves.
-pub const LEARNING_PACK_VERSION: u32 = 5;
+pub const LEARNING_PACK_VERSION: u32 = 6;
 const MAX_ENTRIES: usize = 4_096;
 const MIB: usize = 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 32 * MIB;
@@ -39,7 +41,6 @@ pub enum LearningPackEntryKind {
     Notebook,
     Canvas,
     Recall,
-    Attempt,
     Evidence,
     PracticalActivity,
     PracticalArtifact,
@@ -259,13 +260,13 @@ fn validate_content_policy(
     entries: impl IntoIterator<Item = (String, LearningPackEntryKind)>,
 ) -> Result<()> {
     let entries: Vec<(String, LearningPackEntryKind)> = entries.into_iter().collect();
-    let has_keys = entries.iter().any(|(path, _)| path == KEYS_ENTRY);
+    let has_keys = entries
+        .iter()
+        .any(|(path, _)| path == QUIZ_KEYS_TABLE_ENTRY);
     let has_evidence = entries.iter().any(|(path, kind)| {
         matches!(
             kind,
-            LearningPackEntryKind::Attempt
-                | LearningPackEntryKind::Evidence
-                | LearningPackEntryKind::Canvas
+            LearningPackEntryKind::Evidence | LearningPackEntryKind::Canvas
         ) || (kind == &LearningPackEntryKind::PracticalArtifact && path == PRACTICAL_ENTRY)
     });
     let has_practical = entries.iter().any(|(_, kind)| {
@@ -346,7 +347,6 @@ fn root_digest(schema_version: i64, entries: &[LearningPackManifestEntry]) -> St
             LearningPackEntryKind::Notebook => b"notebook",
             LearningPackEntryKind::Canvas => b"canvas",
             LearningPackEntryKind::Recall => b"recall",
-            LearningPackEntryKind::Attempt => b"attempt",
             LearningPackEntryKind::Evidence => b"evidence",
             LearningPackEntryKind::PracticalActivity => b"practical_activity",
             LearningPackEntryKind::PracticalArtifact => b"practical_artifact",

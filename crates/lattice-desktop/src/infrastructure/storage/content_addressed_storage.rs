@@ -7,12 +7,23 @@
 //! - Preserves original filename for UX
 //! - Owns the deletion of those copies, and only those copies
 //!
+//! # Architecture
+//!
 //! Content-addressed storage solves the problem of files being moved or deleted
 //! after indexing. Once a file is imported, it lives in the library permanently
 //! at a hash-based location.
 //!
-//! Storage layout:
-//! - `~/.lattice/files/<sha256_hash>/<original_filename.ext>`
+//! # Storage Layout
+//!
+//! ```text
+//! ~/.lattice/files/
+//!   ├── a3d5f7.../
+//!   │   └── document.pdf
+//!   ├── b8e2c1.../
+//!   │   └── notes.txt
+//!   └── f4d9a2.../
+//!       └── paper.pdf
+//! ```
 //!
 //! # Concurrency
 //!

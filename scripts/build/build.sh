@@ -17,13 +17,14 @@
 #   --verbose                          Enable verbose logging
 #   --checksums                        Generate SHA256 checksums
 #   --parallel                         Enable parallel builds (default)
+#   --config <path>                    Custom config file path
 #   --help                             Show this help message
 #
 # Examples:
 #   ./scripts/build/build.sh                                    # Simple release build
 #   ./scripts/build/build.sh --clean --mode release            # Clean release build
 #   ./scripts/build/build.sh --mode dev --no-bundle            # Dev build without bundling
-#   ./scripts/build/build.sh --features test-utils              # Build with specific features
+#   ./scripts/build/build.sh --features embeddings,file_watcher # Build with specific features
 #   ./scripts/build/build.sh --platform mac --checksums        # macOS build with checksums
 ################################################################################
 
@@ -62,6 +63,7 @@ TARGET=""
 VERBOSE=false
 CHECKSUMS=false
 PARALLEL=true
+CONFIG_FILE="${SCRIPT_DIR}/build.config.json"
 
 ################################################################################
 # Logging Functions
@@ -524,6 +526,9 @@ ${WHITE}Options:${RESET}
   ${GREEN}--parallel${RESET}
       Enable parallel builds (default)
       
+  ${GREEN}--config <path>${RESET}
+      Custom config file path (default: scripts/build/build.config.json)
+      
   ${GREEN}--help${RESET}
       Show this help message
 
@@ -538,7 +543,7 @@ ${WHITE}Examples:${RESET}
   ./scripts/build/build.sh --mode dev --no-bundle
   
   # Build with specific features
-  ./scripts/build/build.sh --features test-utils
+  ./scripts/build/build.sh --features embeddings,file_watcher
   
   # macOS universal binary (Intel + Apple Silicon)
   ./scripts/build/build.sh --platform mac --target aarch64-apple-darwin
@@ -547,9 +552,10 @@ ${WHITE}Examples:${RESET}
   ./scripts/build/build.sh --verbose --checksums
 
 ${WHITE}Available Features:${RESET}
-  (see [features] in crates/lattice-desktop/Cargo.toml)
-  learning-labs   - Built-in JavaScript/Python lab runtimes (on by default)
-  test-utils      - Testing utilities and mocks
+  embeddings      - ML embeddings and semantic search
+  file_watcher    - Automatic file watching
+  sync            - Cloud sync (experimental)
+  telemetry       - OpenTelemetry observability
 
 EOF
 }
@@ -596,6 +602,10 @@ parse_arguments() {
             --parallel)
                 PARALLEL=true
                 shift
+                ;;
+            --config)
+                CONFIG_FILE="$2"
+                shift 2
                 ;;
             --help|-h)
                 show_help

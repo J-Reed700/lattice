@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   analyzeFeynmanExplanation,
@@ -24,7 +24,6 @@ describe('analyzeFeynmanExplanation', () => {
         sourceIds: ['s1'],
       },
     ],
-    questions: [],
   };
 
   it('rates short explanation (< 15 words) as Needs More Explanation', () => {
@@ -103,7 +102,6 @@ describe('FeynmanTechniquePanel UI', () => {
         sourceIds: [],
       },
     ],
-    questions: [],
   };
 
   const mockModule: LearningModuleDto = {
@@ -132,12 +130,15 @@ describe('FeynmanTechniquePanel UI', () => {
     modelName: 'default',
     modules: [mockModule],
     sources: [],
-    attempts: [],
   };
 
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('renders Feynman guidance and defaults to current lesson title', () => {
@@ -195,7 +196,8 @@ describe('FeynmanTechniquePanel UI', () => {
     expect(checkbox).toBeChecked();
   });
 
-  it('copies explanation to clipboard with feedback', async () => {
+  it('copies explanation to clipboard with feedback and resets copied timer', async () => {
+    vi.useFakeTimers();
     const writeTextMock = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: writeTextMock },
@@ -213,23 +215,82 @@ describe('FeynmanTechniquePanel UI', () => {
     });
 
     const copyButton = screen.getByRole('button', { name: /Copy explanation/i });
-    fireEvent.click(copyButton);
+    await act(async () => {
+      fireEvent.click(copyButton);
+    });
 
     expect(writeTextMock).toHaveBeenCalled();
-    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    expect(screen.getByText('Copied')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.queryByText('Copied')).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
-  it('persists explanation to localStorage and allows manual save', async () => {
-    const user = userEvent.setup();
+  it('persists explanation to localStorage, handles manual save, and resets save feedback timer', () => {
+    vi.useFakeTimers();
     render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
 
     const explanationInput = screen.getByLabelText(/Your plain-language explanation/i);
-    await user.type(explanationInput, 'Persisted plain explanation text.');
+    fireEvent.change(explanationInput, {
+      target: { value: 'Persisted plain explanation text.' },
+    });
 
     const saveButton = screen.getByRole('button', { name: /Save draft/i });
-    await user.click(saveButton);
+    fireEvent.click(saveButton);
 
     expect(screen.getByText('Saved')).toBeInTheDocument();
     expect(localStorage.getItem('feynman_workbench_prog-1_l-1')).toContain('Persisted plain explanation text.');
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('loads previously stored draft from localStorage on mount', () => {
+    localStorage.setItem(
+      'feynman_workbench_prog-1_l-1',
+      JSON.stringify({
+        explanation: 'Stored explanation loaded on mount.',
+        analogy: 'Like a recipe card.',
+        readAloud: true,
+        concept: 'Call Stack and Base Case',
+      })
+    );
+
+    render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
+
+    expect(screen.getByDisplayValue('Stored explanation loaded on mount.')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Like a recipe card.')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Speak out loud test/i })).toBeChecked();
+  });
+
+  it('displays jargon, dense sentences, textbook verbatim alerts, and beginner questions in the UI', () => {
+    render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
+
+    const explanationInput = screen.getByLabelText(/Your plain-language explanation/i);
+
+    // Type text containing textbook wording, dense phrasing, and technical terms
+    const longVerbatim =
+      'A recursive function calls itself until reaching a termination condition known as the base case in order to demonstrate cellular bioenergetics and chloroplast organelles with dense descriptive sentences that exceed twenty-eight words without pauses.';
+    fireEvent.change(explanationInput, {
+      target: { value: longVerbatim },
+    });
+
+    expect(screen.getByText(/Unexplained domain jargon detected/i)).toBeInTheDocument();
+    expect(screen.getByText(/Overly dense sentences/i)).toBeInTheDocument();
+    expect(screen.getByText(/Textbook phrasing detected/i)).toBeInTheDocument();
+    expect(screen.getByText(/Beginner Follow-up Questions/i)).toBeInTheDocument();
+  });
+
+  it('renders gracefully when lesson and module are omitted', () => {
+    render(<FeynmanTechniquePanel program={mockProgram} />);
+
+    expect(screen.getByText('Computer Science')).toBeInTheDocument();
+    expect(screen.getByText(/The Feynman Technique · Teach a Beginner/i)).toBeInTheDocument();
   });
 });

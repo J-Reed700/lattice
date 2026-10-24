@@ -45,9 +45,11 @@ pub enum LearningBlockKind {
     Recap,
     Reflection,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+/// The role a lesson's own reviewed question played when the lesson was
+/// written; it sets the question's difficulty in the quiz bank.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum LearningAssessmentKind {
+pub enum LessonQuestionKind {
     Practice,
     Quiz,
     Test,
@@ -71,11 +73,13 @@ pub struct LearningBlockDto {
     #[serde(default)]
     pub rubric: Vec<LearningPracticeCriterionDto>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+/// One of the six questions the lesson's prose step writes and reviews; it
+/// joins the lesson's quiz bank when the lesson is published.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LearningQuestionDto {
+pub struct LessonQuestion {
     pub id: String,
-    pub kind: LearningAssessmentKind,
+    pub kind: LessonQuestionKind,
     pub prompt: String,
     pub options: Vec<String>,
     pub source_ids: Vec<String>,
@@ -89,7 +93,6 @@ pub struct LearningLessonDto {
     pub estimated_minutes: i64,
     pub preparation: LearningPreparation,
     pub blocks: Vec<LearningBlockDto>,
-    pub questions: Vec<LearningQuestionDto>,
     pub completed: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -130,45 +133,6 @@ pub struct LearningProgramSummaryDto {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct LearningAnswerDto {
-    pub question_id: String,
-    pub selected_index: usize,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct LearningQuestionResultDto {
-    pub question_id: String,
-    pub prompt: String,
-    pub options: Vec<String>,
-    pub selected_index: usize,
-    pub correct_index: usize,
-    pub explanation: String,
-    pub source_ids: Vec<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct LearningAttemptDto {
-    pub id: String,
-    pub module_id: String,
-    pub lesson_id: Option<String>,
-    pub kind: LearningAssessmentKind,
-    pub correct: i64,
-    pub total: i64,
-    pub results: Vec<LearningQuestionResultDto>,
-    pub submitted_at: i64,
-    /// Module tests only: the share of the module the test covered.
-    pub coverage: Option<LearningModuleTestCoverageDto>,
-}
-/// A module test asks about the module's prepared lessons, so it may cover
-/// only some of them; such a test does not stand for the whole module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct LearningModuleTestCoverageDto {
-    pub covered_lessons: i64,
-    pub module_lessons: i64,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
 pub struct LearningProgramDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outline_review: Option<super::outline_draft::LearningOutlineReviewDto>,
@@ -178,7 +142,6 @@ pub struct LearningProgramDto {
     pub model_name: String,
     pub modules: Vec<LearningModuleDto>,
     pub sources: Vec<LearningSourceDto>,
-    pub attempts: Vec<LearningAttemptDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -232,22 +195,11 @@ pub struct CompleteLearningLessonRequestDto {
     pub lesson_id: String,
     pub expected_revision: i64,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SubmitLearningAttemptRequestDto {
-    pub attempt_id: String,
-    pub program_id: String,
-    pub expected_revision: i64,
-    pub module_id: String,
-    pub lesson_id: Option<String>,
-    pub kind: LearningAssessmentKind,
-    pub answers: Vec<LearningAnswerDto>,
-}
 
 // Validated internal generation types. Never export answer keys before submission.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LearningAnswerKey {
+pub struct LessonAnswerKey {
     pub question_id: String,
     pub correct_index: usize,
     pub explanation: String,
@@ -256,6 +208,6 @@ pub struct LearningAnswerKey {
 pub struct PreparedLearningLesson {
     pub verification: Option<super::content_verification::LessonVerificationReport>,
     pub blocks: Vec<LearningBlockDto>,
-    pub questions: Vec<LearningQuestionDto>,
-    pub keys: Vec<LearningAnswerKey>,
+    pub questions: Vec<LessonQuestion>,
+    pub keys: Vec<LessonAnswerKey>,
 }

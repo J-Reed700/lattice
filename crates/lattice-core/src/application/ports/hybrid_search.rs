@@ -1,5 +1,5 @@
 //! The one hybrid search: dense and BM25 branches fused by weighted
-//! reciprocal rank, with the per-document cap and the vector floor.
+//! reciprocal rank, with the vector floor and exact repeats dropped.
 //!
 //! The library's instance is what chat, the agents and the search page call.
 //! A passage index on disk (a folder's, a course's) gets an instance of the
@@ -14,7 +14,7 @@ use async_trait::async_trait;
 
 use crate::application::contracts::search::{
     QueryBranches, RankedBranch, RerankOptions, Reranked, SearchRequestDto, SearchResponseDto,
-    SearchResultDto, Spread,
+    SearchResultDto,
 };
 use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::shared::error::Result;
@@ -47,12 +47,7 @@ pub trait HybridSearchTrait: Send + Sync {
         bm25_weight: f32,
     ) -> QueryBranches;
 
-    fn fuse(
-        &self,
-        branches: Vec<RankedBranch>,
-        limit: usize,
-        spread: Spread,
-    ) -> Vec<SearchResultDto>;
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto>;
 
     async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked;
 }

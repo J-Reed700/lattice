@@ -212,7 +212,7 @@ export function StudyTangentSelection({
             }}
           >
             {isTooLong && (
-              <p className="px-2 py-1 text-[11px] text-warning-fg">
+              <p className="px-2 py-1 text-[11px] text-amber-600 dark:text-amber-400">
                 Select a shorter passage (up to 8,000 characters)
               </p>
             )}
@@ -319,13 +319,13 @@ export function SectionTangentBar({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs text-text-muted">
         <div className="flex flex-wrap items-center gap-1.5">
           {sectionTangents.length > 0 && (
             <button
               type="button"
               onClick={() => tangentsContext.openTangentsDrawer(lessonId)}
-              className="inline-flex items-center gap-1 rounded-full bg-accent-muted px-2.5 py-0.5 text-xxs font-medium text-accent hover:brightness-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+              className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
             >
               <GitBranch className="h-3 w-3 text-accent" aria-hidden="true" />
               {sectionTangents.length} {sectionTangents.length === 1 ? 'tangent' : 'tangents'}
@@ -337,7 +337,7 @@ export function SectionTangentBar({
               type="button"
               title={t.title}
               onClick={() => tangentsContext.openTangent(t.conversationId)}
-              className="inline-flex max-w-[180px] items-center truncate rounded-md border border-border-subtle bg-surface px-2 py-0.5 text-xxs text-text-secondary hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+              className="inline-flex max-w-[180px] items-center truncate rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-secondary hover:border-accent hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
             >
               {t.title}
             </button>
@@ -350,7 +350,7 @@ export function SectionTangentBar({
           data-testid={testId}
           disabled={tangentsContext.isCreating}
           onClick={handleStartClick}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-surface-sunken/60 px-2.5 py-1 text-xxs font-medium text-text-secondary hover:border-border-default hover:bg-surface-raised hover:text-text-primary disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent transition-colors"
+          className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 font-medium text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
         >
           <GitBranch className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
           {displayLabel}

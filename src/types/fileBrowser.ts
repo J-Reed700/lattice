@@ -1,3 +1,9 @@
+/**
+ * File Browser Type Definitions
+ *
+ * Comprehensive type system for the file browser feature
+ */
+
 import type { CustomCollectionDto } from '../lib/bindings';
 
 export type ViewMode = 'tree' | 'list' | 'grid';

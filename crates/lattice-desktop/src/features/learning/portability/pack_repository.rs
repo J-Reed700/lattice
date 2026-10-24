@@ -2,6 +2,7 @@
 //! This file is the orchestrator; what each pack section does lives in its
 //! row in `entries`, what stands in an import's way in `conflicts`, what is
 //! recorded in `records`, and where packs go in `files`.
+mod bank_entries;
 mod canvas_entries;
 mod conflicts;
 mod entries;

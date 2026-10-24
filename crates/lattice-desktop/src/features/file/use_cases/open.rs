@@ -12,7 +12,16 @@ use std::sync::Arc;
 
 /// Use case for opening a file with the system's default application.
 ///
-/// Opens a file in the default system application with path confinement (CWE-22/CWE-78 prevention).
+/// This use case:
+/// 1. Validates the file path (security: CWE-22)
+/// 2. Checks file existence
+/// 3. Verifies it's a file (not a directory)
+/// 4. Opens it with the default application (security: CWE-78 prevention)
+///
+/// # Security
+///
+/// - Path validation prevents directory traversal (CWE-22)
+/// - Uses secure system APIs via FileSystemPort (prevents CWE-78)
 pub struct OpenFileUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,
@@ -33,7 +42,21 @@ impl OpenFileUseCase {
         }
     }
 
-    /// Execute the use case to open a file.
+    /// Execute the use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Request containing the file path to open
+    ///
+    /// # Returns
+    ///
+    /// Success DTO if file was opened successfully.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::NotFound` if file does not exist
+    /// - `AppError::InvalidInput` if path is invalid or is a directory
+    /// - `AppError::Io` if file cannot be opened
     pub async fn execute(&self, request: OpenFileRequestDto) -> Result<OpenFileResponseDto> {
         // CRITICAL: Validate path FIRST to prevent directory traversal (CWE-22)
         let validated_path = self

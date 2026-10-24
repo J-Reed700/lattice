@@ -13,17 +13,7 @@ NC='\033[0m' # No Color
 # Project paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAURI_DIR="$PROJECT_ROOT/crates/lattice-desktop"
-# Must match "identifier" in crates/lattice-desktop/tauri.conf.json.
-APP_IDENTIFIER="tech.lattice.app"
-case "$(uname -s)" in
-    Darwin)
-        APP_DATA_DIR="$HOME/Library/Application Support/$APP_IDENTIFIER"
-        ;;
-    *)
-        APP_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_IDENTIFIER"
-        ;;
-esac
-DB_PATH="$APP_DATA_DIR/lattice.db"
+DB_PATH="$HOME/Library/Application Support/com.lattice.lattice/lattice.db"
 MODELS_DIR="$HOME/.cache/lattice/models"
 LOG_DIR="/tmp"
 
@@ -93,61 +83,22 @@ ensure_npm_runtime_deps() {
     fi
 }
 
-# Ensure Rust/Tauri builds can invoke Metal compiler on macOS.
-# Some Xcode installs require selecting the downloaded Metal toolchain explicitly.
-setup_rust_build_env() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        return
-    fi
-
-    # If default toolchain works, do nothing.
-    if xcrun -sdk macosx metal -v >/dev/null 2>&1; then
-        return
-    fi
-
-    local metal_toolchain_id=""
-    metal_toolchain_id=$(
-        xcodebuild -showComponent MetalToolchain -json 2>/dev/null \
-            | sed -n 's/.*"toolchainIdentifier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            | head -n 1
-    )
-
-    if [ -n "$metal_toolchain_id" ] && xcrun --toolchain "$metal_toolchain_id" metal -v >/dev/null 2>&1; then
-        export TOOLCHAINS="$metal_toolchain_id"
-        print_info "Using Metal toolchain: $metal_toolchain_id"
-        return
-    fi
-
-    print_error "Metal compiler is not usable from xcrun."
-    print_info "Run: xcodebuild -downloadComponent MetalToolchain"
-    print_info "Then retry: ./scripts/dev/dev.sh <command>"
-    exit 1
-}
-
-# Kill a process pattern scoped to this repo: TERM first, KILL stragglers.
-kill_repo_pattern() {
-    local pattern="$1"
-    pkill -TERM -f "$pattern" 2>/dev/null || true
-    sleep 1
-    pkill -KILL -f "$pattern" 2>/dev/null || true
-}
-
-# Kill this repo's dev processes only (Tauri CLI, Vite, cargo, the app binary)
+# Kill all running processes
 kill_all() {
-    print_header "Killing this repo's dev processes"
+    print_header "Killing all processes"
 
-    print_info "Stopping Tauri dev / Vite started from $PROJECT_ROOT..."
-    kill_repo_pattern "$PROJECT_ROOT/node_modules/.bin/tauri"
-    kill_repo_pattern "$PROJECT_ROOT/node_modules/@tauri-apps/cli"
-    kill_repo_pattern "$PROJECT_ROOT/node_modules/.bin/vite"
-    kill_repo_pattern "$PROJECT_ROOT/node_modules/vite/"
+    print_info "Killing Node processes..."
+    killall -9 node npm vite 2>/dev/null || true
 
-    print_info "Stopping cargo builds and the app binary for this repo..."
-    kill_repo_pattern "cargo.*$TAURI_DIR"
-    kill_repo_pattern "$PROJECT_ROOT/target/debug/lattice-desktop"
-    kill_repo_pattern "$PROJECT_ROOT/target/release/lattice-desktop"
+    print_info "Killing Tauri processes..."
+    pkill -9 -f "tauri" 2>/dev/null || true
+    killall -9 lattice-desktop 2>/dev/null || true
 
-    print_success "Repo dev processes stopped"
+    print_info "Killing Rust processes..."
+    pkill -9 -f "cargo" 2>/dev/null || true
+
+    sleep 2
+    print_success "All processes killed"
 }
 
 # Clean build artifacts
@@ -251,7 +202,6 @@ clean_all() {
 # Install dependencies (both npm and Rust)
 install_deps() {
     print_header "Installing dependencies"
-    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -280,7 +230,6 @@ install_npm() {
 # Build Rust dependencies only
 install_rust() {
     print_header "Building Rust dependencies"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -324,7 +273,6 @@ rebuild_npm() {
 # Rebuild Rust only (clean + build)
 rebuild_rust() {
     print_header "Rebuilding Rust dependencies"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -368,7 +316,6 @@ build_frontend() {
 # Build Tauri (release)
 build_tauri_release() {
     print_header "Building Tauri (Release)"
-    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -382,7 +329,6 @@ build_tauri_release() {
 # Build Tauri (debug)
 build_tauri_debug() {
     print_header "Building Tauri (Debug)"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -401,13 +347,12 @@ run_frontend() {
     cd "$PROJECT_ROOT"
 
     print_info "Starting Vite dev server on http://localhost:5173..."
-    npx vite
+    npm run dev
 }
 
 # Run Tauri dev
 run_tauri_dev() {
     print_header "Running Tauri dev"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
@@ -420,7 +365,6 @@ run_tauri_dev() {
 # Quick start for testing (minimal build)
 quick_start() {
     print_header "Quick Start (Testing Mode)"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
@@ -441,7 +385,6 @@ quick_start() {
 # Run Tauri dev with logs
 run_tauri_dev_logs() {
     print_header "Running Tauri dev with logs"
-    setup_rust_build_env
     ensure_npm_runtime_deps
 
     local LOG_FILE="/tmp/tauri_dev_$(date +%Y%m%d_%H%M%S).log"
@@ -455,7 +398,6 @@ run_tauri_dev_logs() {
 # Run tests
 run_tests() {
     print_header "Running tests"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -471,7 +413,6 @@ run_tests() {
 # Run linter
 run_lint() {
     print_header "Running linters"
-    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -547,14 +488,14 @@ health_check() {
     echo ""
     print_info "Checking for running processes..."
 
-    if pgrep -f "$PROJECT_ROOT/node_modules/.*vite" > /dev/null; then
-        print_warning "Vite is running (PID: $(pgrep -f "$PROJECT_ROOT/node_modules/.*vite" | tr '\n' ' '))"
+    if pgrep -f "vite" > /dev/null; then
+        print_warning "Vite is running (PID: $(pgrep -f 'vite'))"
     else
         print_success "No Vite processes running"
     fi
 
-    if pgrep -f "$PROJECT_ROOT/target/.*/lattice-desktop" > /dev/null; then
-        print_warning "Tauri app is running (PID: $(pgrep -f "$PROJECT_ROOT/target/.*/lattice-desktop" | tr '\n' ' '))"
+    if pgrep -f "lattice-desktop" > /dev/null; then
+        print_warning "Tauri app is running (PID: $(pgrep -f 'lattice-desktop'))"
     else
         print_success "No Tauri processes running"
     fi
@@ -603,7 +544,6 @@ watch_logs() {
 # Full rebuild
 full_rebuild() {
     print_header "FULL REBUILD"
-    setup_rust_build_env
 
     kill_all
     clean_build
@@ -643,7 +583,6 @@ show_menu() {
     print_header "Lattice Desktop - Development Script"
     echo ""
     echo "Usage: ./scripts/dev/dev.sh [command] [options]"
-    echo "       (no command = dev)"
     echo ""
     echo -e "${CYAN}Build Commands:${NC}"
     echo "  build-frontend       Build frontend only (Vite)"
@@ -654,7 +593,7 @@ show_menu() {
     echo "  rebuild-rust         Rebuild Rust only (slow, keeps npm)"
     echo ""
     echo -e "${CYAN}Run Commands:${NC}"
-    echo "  dev                  Run Tauri dev mode (frontend + backend) [default]"
+    echo "  dev                  Run Tauri dev mode (frontend + backend)"
     echo "  dev-logs             Run Tauri dev with logging"
     echo "  quick-start          Quick start for testing (builds dist if needed)"
     echo "  frontend             Run frontend dev server only"
@@ -666,7 +605,7 @@ show_menu() {
     echo "  clean-models         Clean downloaded models"
     echo "  clean-logs           Clean log files"
     echo "  clean-all            Nuclear clean (everything)"
-    echo "  kill                 Kill this repo's dev processes (Tauri/Vite/cargo)"
+    echo "  kill                 Kill all running processes"
     echo ""
     echo -e "${CYAN}Install Commands:${NC}"
     echo "  install              Install all dependencies (npm + Rust)"
@@ -692,7 +631,7 @@ show_menu() {
 main() {
     cd "$PROJECT_ROOT"
 
-    case "${1:-dev}" in
+    case "${1:-}" in
         # Build commands
         build-frontend)
             build_frontend
@@ -785,8 +724,10 @@ main() {
 
         # Default
         *)
-            print_error "Unknown command: $1"
-            echo ""
+            if [ -n "${1:-}" ]; then
+                print_error "Unknown command: $1"
+                echo ""
+            fi
             show_menu
             exit 1
             ;;

@@ -1,3 +1,16 @@
+/**
+ * Privacy settings.
+ *
+ * Reads from + writes to the backend Privacy settings slice via React Query.
+ * The Rust SettingsRepository is the SSOT — Zustand is intentionally not
+ * involved because backend-backed state uses React Query.
+ *
+ * The marketing panels that used to live here ("Privacy First", the
+ * telemetry bullet lists, "Local Data Storage", "Current Status", and three
+ * link buttons with no handlers) were removed in the September 2026
+ * overhaul: none of them were controls, and the link buttons went nowhere.
+ */
+
 import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 

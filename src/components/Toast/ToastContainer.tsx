@@ -1,3 +1,15 @@
+/**
+ * ToastContainer - Renders all active toast notifications
+ *
+ * Purpose: Container for displaying toast notifications with:
+ * - Configurable positioning (top-right, top-left, bottom-right, etc.)
+ * - Stack animations (enter/exit)
+ * - Z-index management
+ * - Accessibility (ARIA live region)
+ *
+ * Accessibility: WCAG AA, keyboard navigation (Tab, Esc), screen reader support
+ */
+
 import React, { useEffect } from 'react';
 
 import { ToastItem } from './ToastItem';
@@ -6,6 +18,7 @@ import { useToastStore } from '../../stores/toastStore';
 export const ToastContainer: React.FC = () => {
   const { toasts, config, dismissAll } = useToastStore();
 
+  // Global keyboard shortcut: Esc to dismiss all toasts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && toasts.length > 0) {

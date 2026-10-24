@@ -6,17 +6,25 @@ use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-/// Response from web ingestion command.
+/// Response from web ingestion command
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WebIngestResponse {
+    /// Unique document ID
     pub document_id: String,
+    /// Final URL (after redirects)
     pub url: String,
+    /// Document title
     pub title: String,
+    /// Word count
     pub word_count: usize,
+    /// Number of chunks created
     pub chunks: usize,
+    /// Site name (if available)
     pub site_name: Option<String>,
+    /// Author (if available)
     pub author: Option<String>,
+    /// Estimated reading time in minutes
     pub reading_time_minutes: Option<i64>,
 }
 
@@ -86,7 +94,99 @@ async fn assign_document_to_space(
         })
 }
 
-/// Ingests a web page, chunks and indexes its text, and associates it with spaces or conversations if specified.
+/// Ingest web content with full extraction and indexing pipeline
+///
+/// Fetches web page, extracts main content using Mozilla Readability, chunks the text,
+/// generates embeddings, and indexes for semantic search. Returns document metadata
+/// including word count, chunk count, and reading time estimate.
+///
+/// # Arguments
+///
+/// * `url` - Web URL to ingest (http/https only)
+/// * `container` - Service container with dependencies
+///
+/// # Returns
+///
+/// * `Ok(WebIngestResponse)` - Ingested document details with metadata
+/// * `Err(AppError)` - Ingestion failed (network, extraction, indexing errors)
+///
+/// # Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// interface WebIngestResponse {
+///   documentId: string;
+///   url: string;
+///   title: string;
+///   wordCount: number;
+///   chunks: number;
+///   siteName?: string;
+///   author?: string;
+///   readingTimeMinutes?: number;
+/// }
+///
+/// // Ingest web article
+/// const result = await invoke<WebIngestResponse>('ingest_web_url', {
+///   url: 'https://example.com/article'
+/// });
+///
+/// console.log(`Ingested: ${result.title}`);
+/// console.log(`Created ${result.chunks} chunks from ${result.wordCount} words`);
+/// console.log(`Reading time: ${result.readingTimeMinutes} minutes`);
+///
+/// // Show ingestion progress
+/// const ingestWithProgress = async (url: string) => {
+///   showProgress('Fetching URL...');
+///   const result = await invoke<WebIngestResponse>('ingest_web_url', { url });
+///
+///   showSuccess(`Ingested: ${result.title}`);
+///   return result.documentId;
+/// };
+///
+/// // Batch ingest URLs
+/// const ingestMultipleUrls = async (urls: string[]) => {
+///   const results = [];
+///   for (const url of urls) {
+///     try {
+///       const result = await invoke<WebIngestResponse>('ingest_web_url', { url });
+///       results.push(result);
+///     } catch (error) {
+///       console.error(`Failed to ingest ${url}:`, error);
+///     }
+///   }
+///   return results;
+/// };
+/// ```
+///
+/// # Pipeline Steps
+///
+/// 1. **URL Validation**: Verify URL safety (SSRF prevention)
+/// 2. **Fetch**: Download HTML content
+/// 3. **Extract**: Use Mozilla Readability to extract main content
+/// 4. **Chunk**: Split content into semantic chunks
+/// 5. **Embed**: Generate embeddings for each chunk
+/// 6. **Index**: Store in vector database
+///
+/// # Security
+///
+/// **SSRF Prevention**: URL validation in service layer
+///
+/// # Performance
+///
+/// - **Ingest Time**: ~2-10 seconds (depends on page size, network)
+/// - **Chunking**: Semantic chunking with overlap
+/// - **Embedding**: Batched for efficiency
+///
+/// # Use Cases
+///
+/// - **Research**: Index articles for later semantic search
+/// - **Knowledge Base**: Build indexed corpus from web sources
+/// - **Reading List**: Import articles for offline reading
+///
+/// # Architecture
+///
+/// Thin controller delegating to `IngestWebUrlUseCase`
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn ingest_web_url(
     url: String,
@@ -106,6 +206,7 @@ pub async fn ingest_web_url(
     }
 
     // Ensure embedding model is available before starting ingestion.
+    // This pre-loads the active embedding model into cache if configured.
     match container.get_or_load_embedding().await {
         Ok(embedding) => match embedding.is_ready().await {
             Ok(true) => {
@@ -113,10 +214,10 @@ pub async fn ingest_web_url(
             }
             Ok(false) => {
                 return Err(AppError::AiModelsNotInstalled(
-                    "AI models are not installed. This feature requires embedding models. \
-                     Please download models from Settings → Models to enable this functionality."
-                        .to_string(),
-                ));
+                        "AI models are not installed. This feature requires embedding models. \
+                         Please download models from Settings → Models to enable this functionality."
+                            .to_string(),
+                    ));
             }
             Err(e) => {
                 tracing::warn!(
@@ -128,8 +229,10 @@ pub async fn ingest_web_url(
         Err(e) => return Err(e),
     }
 
+    // 1. Get use case
     let ingest_use_case = container.ingest_web_url_use_case();
 
+    // 2. Ingest URL via use case
     let result = match ingest_use_case
         .execute(IngestWebUrlRequestDto { url: url.clone() })
         .await
@@ -142,10 +245,12 @@ pub async fn ingest_web_url(
         }
     };
 
+    // 4. Scope imported document into an explicit space when provided.
     if let Some(space_id) = requested_space_id.as_deref() {
         assign_document_to_space(&container, &result.document_id, space_id).await?;
     }
 
+    // 5. Link imported document to conversation context when provided.
     if let Some(conversation_id) = requested_conversation_id.as_deref() {
         container
             .conversation_service()
@@ -159,8 +264,10 @@ pub async fn ingest_web_url(
             })?;
     }
 
+    // 6. Record metrics after success
     container.metrics().record_indexing_operation();
 
+    // 8. Return response
     Ok(WebIngestResponse {
         document_id: result.document_id,
         url: result.url,

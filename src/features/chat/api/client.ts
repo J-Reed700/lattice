@@ -1,3 +1,4 @@
+
 import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
@@ -49,6 +50,19 @@ export const chatApi = {
   promoteConversationTangent: (conversationId: string): Promise<ApiResult<Wire.ConversationDto>> =>
     apiCall<Wire.ConversationDto>('promote_conversation_tangent', { request: { conversationId } }),
 
+  /**
+   * Creates a new conversation for multi-turn Q&A with context.
+   * Initializes a conversation thread that maintains context across multiple
+   * question-answering interactions.
+   *
+   * A new chat answers with the Settings default until it chooses a model
+   * of its own, so creating one needs no model and never fails for want of
+   * one: the first turn reports what is missing.
+   *
+   * @param title - Human-readable conversation title
+   * @param systemPrompt - Optional system instructions to guide LLM behavior
+   * @returns Response with created conversation and status
+   */
   createConversation: async (
     title: string,
     systemPrompt?: string,
@@ -60,6 +74,12 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Sets the model this one conversation answers with: a model of its own,
+   * or the Settings default. Validates that the model can be used now and
+   * returns the saved conversation; never loads a model, and never touches
+   * Settings or any other conversation.
+   */
   setConversationModelChoice: async (
     conversationId: string,
     choice: Wire.ChatModelChoice,
@@ -69,6 +89,14 @@ export const chatApi = {
       choice,
     }),
 
+  /**
+   * Lists all conversations with pagination support.
+   * Returns conversations ordered by most recently updated first.
+   *
+   * @param limit - Maximum number of conversations to return (default: 100)
+   * @param offset - Number of conversations to skip for pagination (default: 0)
+   * @returns Response with conversations and total count
+   */
   listConversations: async (
     limit?: number,
     offset?: number,
@@ -80,6 +108,13 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Retrieves a single conversation by ID.
+   * Returns conversation metadata without loading message history.
+   *
+   * @param conversationId - Unique identifier of the conversation to retrieve
+   * @returns Response with conversation metadata or null if not found
+   */
   getConversation: async (
     conversationId: string,
   ): Promise<ApiResult<GetConversationResponse>> =>
@@ -89,6 +124,13 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Retrieves all messages for a conversation.
+   * Returns complete message history in chronological order.
+   *
+   * @param conversationId - Unique identifier of the conversation
+   * @returns Response with messages and total count
+   */
   getConversationMessages: async (
     conversationId: string,
   ): Promise<ApiResult<GetConversationMessagesResponse>> =>
@@ -101,6 +143,14 @@ export const chatApi = {
       },
     ),
 
+  /**
+   * Renames a conversation with a new title.
+   * Updates the conversation's title (sanitized for security).
+   *
+   * @param conversationId - Unique identifier of the conversation to rename
+   * @param newTitle - New title for the conversation
+   * @returns Response with status message
+   */
   renameConversation: async (
     conversationId: string,
     newTitle: string,
@@ -112,6 +162,17 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Sends a message to a conversation and receives an AI response.
+   * Creates a new conversation if conversationId is null.
+   *
+   * @param conversationId - ID of existing conversation, or null to create new one
+   * @param message - User's message text
+   * @param attachmentNames - File names to stamp on the message, for the chips in history
+   * @param attachmentDocumentIds - Documents this message brought in; the turn reads them whole
+   * @param attachmentImageIds - Pictures attached to the draft (`attachMessageImages`); the message claims them
+   * @returns Response containing conversation ID, all messages, and context usage
+   */
   chatWithConversation: async (
     conversationId: string | null,
     message: string,
@@ -131,15 +192,24 @@ export const chatApi = {
       attachmentImageIds,
     }),
 
+  /**
+   * Stores pictures the reader attached to a draft. They belong to the
+   * conversation but to no message until a send names their ids.
+   */
   attachMessageImages: (conversationId: string, paths: string[]): Promise<ApiResult<Wire.ChatImageDto[]>> =>
     apiCall<Wire.ChatImageDto[]>('attach_message_images', { conversationId, paths }),
 
+  /** Lets go of draft pictures that were removed or discarded before a send. */
   releaseMessageImages: (conversationId: string, imageIds: string[]): Promise<ApiResult<null>> =>
     apiCall<null>('release_message_images', { conversationId, imageIds }),
 
+  /** A copy of a sent picture, staged on the draft so the next turn shows it again. */
   restageMessageImage: (conversationId: string, imageId: string): Promise<ApiResult<Wire.ChatImageDto>> =>
     apiCall<Wire.ChatImageDto>('restage_message_image', { conversationId, imageId }),
 
+  /**
+   * Cancels active model generation for a conversation if one is currently in-flight.
+   */
   cancelConversationGeneration: async (
     conversationId: string,
     requestId: string,
@@ -159,6 +229,13 @@ export const chatApi = {
     return { ok: true, data: undefined };
   },
 
+  /**
+   * Deletes a conversation and all associated messages.
+   * This operation is irreversible.
+   *
+   * @param conversationId - Unique identifier of the conversation to delete
+   * @returns Response with status message
+   */
   deleteConversation: async (
     conversationId: string,
   ): Promise<ApiResult<DeleteConversationResponse>> =>
@@ -168,6 +245,9 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Creates a conversation space (environment) with optional defaults.
+   */
   createConversationSpace: async (
     request: CreateConversationSpaceRequest,
   ): Promise<ApiResult<ConversationSpaceDto>> =>
@@ -175,18 +255,30 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Lists all conversation spaces.
+   */
   listConversationSpaces: async (): Promise<
     ApiResult<ConversationSpaceDto[]>
   > => apiCall<Wire.ConversationSpaceDto[]>('list_conversation_spaces'),
 
+  /**
+   * Creates a journal notebook.
+   */
   createJournal: async (
     request: CreateConversationJournalRequest,
   ): Promise<ApiResult<ConversationJournalDto>> =>
     apiCall<Wire.ConversationJournalDto>('create_journal', { request }),
 
+  /**
+   * Lists all journals.
+   */
   listJournals: async (): Promise<ApiResult<ConversationJournalDto[]>> =>
     apiCall<Wire.ConversationJournalDto[]>('list_journals'),
 
+  /**
+   * Lists members for a specific conversation space.
+   */
   listConversationSpaceMembers: async (
     spaceId: string,
   ): Promise<ApiResult<ConversationSpaceMemberDto[]>> =>
@@ -197,6 +289,9 @@ export const chatApi = {
       },
     ),
 
+  /**
+   * Adds/updates a conversation space member and role.
+   */
   upsertConversationSpaceMember: async (
     request: UpsertConversationSpaceMemberRequest,
   ): Promise<ApiResult<ConversationSpaceMemberDto>> =>
@@ -205,6 +300,9 @@ export const chatApi = {
       { request },
     ),
 
+  /**
+   * Removes a member from a conversation space.
+   */
   removeConversationSpaceMember: async (
     request: RemoveConversationSpaceMemberRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -213,6 +311,9 @@ export const chatApi = {
       { request },
     ),
 
+  /**
+   * Updates a conversation space.
+   */
   updateConversationSpace: async (
     request: UpdateConversationSpaceRequest,
   ): Promise<ApiResult<ConversationSpaceDto>> =>
@@ -220,6 +321,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Archives/unarchives a conversation space.
+   */
   archiveConversationSpace: async (
     request: ArchiveConversationSpaceRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -227,21 +331,38 @@ export const chatApi = {
       request,
     }),
 
+  // The `*ConversationThread` wrappers that used to live here were removed:
+  // the feature was renamed thread → space on the backend, so they invoked
+  // `create_conversation_thread` and friends, none of which are registered
+  // Tauri commands. Use the `*ConversationSpace` functions above.
+
+  /**
+   * Updates a journal notebook.
+   */
   updateJournal: async (
     request: UpdateConversationJournalRequest,
   ): Promise<ApiResult<ConversationJournalDto>> =>
     apiCall<Wire.ConversationJournalDto>('update_journal', { request }),
 
+  /**
+   * Archives/unarchives a journal notebook.
+   */
   archiveJournal: async (
     request: ArchiveConversationJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
     apiCall<Wire.RenameConversationResponseDto>('archive_journal', { request }),
 
+  /**
+   * Permanently deletes a journal notebook.
+   */
   deleteJournal: async (
     request: DeleteConversationJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
     apiCall<Wire.RenameConversationResponseDto>('delete_journal', { request }),
 
+  /**
+   * Moves a conversation to a space.
+   */
   moveConversationToSpace: async (
     request: MoveConversationToSpaceRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -249,6 +370,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Adds a conversation to a journal without changing its owning space.
+   */
   addConversationToJournal: async (
     request: AddConversationToJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -256,6 +380,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Removes a conversation from a journal entry deck.
+   */
   removeConversationFromJournal: async (
     request: RemoveConversationFromJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -264,6 +391,9 @@ export const chatApi = {
       { request },
     ),
 
+  /**
+   * Sets the "saved" state for a conversation.
+   */
   setConversationSaved: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -271,6 +401,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Sets the "bookmarked" state for a conversation.
+   */
   setConversationBookmarked: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -278,6 +411,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Sets the "pinned" state for a conversation.
+   */
   setConversationPinned: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -285,6 +421,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Sets the "archived" state for a conversation.
+   */
   setConversationArchived: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -292,6 +431,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Deletes a specific message from a conversation.
+   */
   deleteConversationMessage: async (
     request: DeleteConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -299,6 +441,9 @@ export const chatApi = {
       request,
     }),
 
+  /**
+   * Bookmarks a specific message in a conversation (upsert by message).
+   */
   bookmarkConversationMessage: async (
     request: BookmarkConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -307,6 +452,9 @@ export const chatApi = {
       { request },
     ),
 
+  /**
+   * Removes a message bookmark from a conversation.
+   */
   unbookmarkConversationMessage: async (
     request: UnbookmarkConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
@@ -315,6 +463,9 @@ export const chatApi = {
       { request },
     ),
 
+  /**
+   * Lists message-level bookmarks with optional conversation and text filters.
+   */
   listMessageBookmarks: async (
     query?: ListMessageBookmarksQuery,
   ): Promise<ApiResult<ListMessageBookmarksResponse>> =>
@@ -322,6 +473,9 @@ export const chatApi = {
       query: query ?? {},
     }),
 
+  /**
+   * Lists conversations for the explorer with filters and text search.
+   */
   listConversationsExplorer: async (
     query?: ListConversationsExplorerQuery,
   ): Promise<ApiResult<ListConversationsResponse>> =>
@@ -329,6 +483,9 @@ export const chatApi = {
       query: query ?? {},
     }),
 
+  /**
+   * Lists conversations included in a journal (additive membership).
+   */
   listJournalConversations: async (
     query: ListJournalConversationsQuery,
   ): Promise<ApiResult<ListConversationsResponse>> =>
@@ -336,16 +493,25 @@ export const chatApi = {
       query,
     }),
 
+  /** The conversations pinned in a journal, the most recently pinned first. */
   listJournalEntryPins: (
     journalSpaceId: string,
   ): Promise<ApiResult<string[]>> =>
     apiCall('list_journal_entry_pins', { journalSpaceId }),
 
+  /** Pins or unpins an entry in one journal; the Chat sidebar's pin is separate. */
   setJournalEntryPinned: (
     request: Wire.SetJournalEntryPinnedRequestDto,
   ): Promise<ApiResult<void>> =>
     apiCall('set_journal_entry_pinned', { request }),
 
+  /**
+   * The documents a chat in this space may read, newest first.
+   *
+   * `spaceId` of `null` means General. The backend answers from the same
+   * allow-list retrieval uses, so what this offers is exactly what a turn can
+   * search — never a superset. `limit` is clamped to 50 there.
+   */
   listSpaceDocuments: async (
     spaceId: string | null,
     conversationId: string | null,
@@ -359,6 +525,9 @@ export const chatApi = {
       limit,
     }),
 
+  /**
+   * Lists documents currently linked to a conversation context.
+   */
   listConversationLinkedDocuments: async (
     conversationId: string,
   ): Promise<ApiResult<ConversationLinkedDocumentDto[]>> =>
@@ -369,6 +538,9 @@ export const chatApi = {
       },
     ),
 
+  /**
+   * Removes a linked document reference from a conversation.
+   */
   removeConversationLinkedDocument: async (
     conversationId: string,
     documentId: string,
@@ -377,10 +549,14 @@ export const chatApi = {
       'remove_conversation_linked_document',
       {
         conversationId,
+
         documentId,
       },
     ),
 
+  /**
+   * Adds or updates a non-ingested web source linked to a conversation.
+   */
   addConversationWebSource: async (
     conversationId: string,
     url: string,
@@ -395,9 +571,13 @@ export const chatApi = {
       url,
       title: options?.title,
       excerpt: options?.excerpt,
+
       relevanceScore: options?.relevanceScore,
     }),
 
+  /**
+   * Lists non-ingested web sources currently linked to a conversation context.
+   */
   listConversationWebSources: async (
     conversationId: string,
   ): Promise<ApiResult<ConversationWebSourceDto[]>> =>
@@ -405,6 +585,9 @@ export const chatApi = {
       conversationId,
     }),
 
+  /**
+   * Removes a linked web source from a conversation context.
+   */
   removeConversationWebSource: async (
     conversationId: string,
     sourceId: string,
@@ -413,10 +596,14 @@ export const chatApi = {
       'remove_conversation_web_source',
       {
         conversationId,
+
         sourceId,
       },
     ),
 
+  /**
+   * Lists all spaces currently assigned to a document.
+   */
   listDocumentSpaceMemberships: async (
     documentId: string,
   ): Promise<ApiResult<DocumentSpaceMembershipDto[]>> =>
@@ -427,6 +614,9 @@ export const chatApi = {
       },
     ),
 
+  /**
+   * Assigns or removes a document from a space scope.
+   */
   setDocumentSpaceMembership: async (
     documentId: string,
     spaceId: string,
@@ -436,11 +626,17 @@ export const chatApi = {
       'set_document_space_membership',
       {
         documentId,
+
         spaceId,
         assigned,
       },
     ),
 
+  /**
+   * Deletes every message after `messageId` (and `messageId` itself when
+   * `inclusive`). Returns the remaining messages so callers can replace their
+   * cache rather than reason about what was removed.
+   */
   truncateConversationAfter: async (
     conversationId: string,
     messageId: string,
@@ -456,6 +652,7 @@ export const chatApi = {
       request: { conversationId, messageId, inclusive },
     }),
 
+  /** Creates a sibling conversation copying messages up to `upToMessageId`. */
   forkConversation: async (
     conversationId: string,
     upToMessageId?: string,
@@ -466,6 +663,11 @@ export const chatApi = {
       request: { conversationId, upToMessageId },
     }),
 
+  /**
+   * Summarizes a conversation and opens a new one in the same space whose
+   * first message is that summary. One or more full generations: minutes on
+   * a local model.
+   */
   continueInNewConversation: async (
     conversationId: string,
   ): Promise<ApiResult<{ conversation: Conversation }>> =>
@@ -473,6 +675,12 @@ export const chatApi = {
       request: { conversationId },
     }),
 
+  /**
+   * Re-runs the last user message. Streams over `llm-stream` exactly like
+   * `chatWithConversation`; the user message is not duplicated. `model`
+   * answers this one regeneration with that model and persists nothing: the
+   * chat's own choice and Settings stay as they are.
+   */
   regenerateResponse: async (
     conversationId: string,
     toolPreferences?: ToolPreferences,
@@ -486,6 +694,11 @@ export const chatApi = {
       model: model ?? null,
     }),
 
+  /**
+   * Folds the conversation's oldest messages into an LLM summary. The raw
+   * messages stay in the history; only the LLM context switches to the
+   * summary. Returns the applied compaction record.
+   */
   compactConversation: async (
     conversationId: string,
     keepRecentMessages?: number,
@@ -497,6 +710,17 @@ export const chatApi = {
       },
     }),
 
+  /**
+   * Reads what the bounded memory layer currently holds for one conversation:
+   * the active items with the quotations behind them, the counts, and the
+   * `mode` that says whether any of it is usable.
+   *
+   * This read view resolves original quotations. manageKnowledge preserves
+   * new user-authored source messages for additions and corrections.
+   *
+   * `includeHistory` also returns superseded and resolved items, for "what was
+   * my original budget?".
+   */
   manageKnowledge: async (
     request: Wire.KnowledgeRequestDto,
   ): Promise<ApiResult<Wire.KnowledgeResponseDto>> =>
@@ -510,6 +734,9 @@ export const chatApi = {
       request: { conversationId, includeHistory: includeHistory ?? null },
     }),
 
+  /**
+   * Assigns or removes multiple documents from a space scope.
+   */
   setDocumentsSpaceMembership: async (
     documentIds: string[],
     spaceId: string,
@@ -519,11 +746,20 @@ export const chatApi = {
       'set_documents_space_membership',
       {
         documentIds,
+
         spaceId,
         assigned,
       },
     ),
 
+  /**
+   * Files a chat's attachments in the library.
+   *
+   * An attached file belongs to the conversation it arrived in: it is not
+   * listed in the library, no other chat can search it, and it is deleted with
+   * the conversation. This is the one way out of that — afterwards it is an
+   * ordinary document. Documents that were never attachments are untouched.
+   */
   addDocumentsToLibrary: async (
     documentIds: string[],
   ): Promise<ApiResult<RenameConversationResponse>> =>

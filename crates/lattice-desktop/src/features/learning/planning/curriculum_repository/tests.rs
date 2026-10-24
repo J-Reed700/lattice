@@ -248,7 +248,7 @@ async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins()
     let stamp = now();
     sqlx::query("INSERT INTO learning_assessment_blueprints(id,program_id,revision,predecessor_revision,purpose,title,instructions,expected_minutes,allowed_aids_json,passing_score,rubric_json,feedback_timing,source_version_ids_json,status,change_reason,created_at) VALUES(?,?,1,NULL,'practice','A neutral assessment','Respond to the prompts.',20,'[]',0.6,'[]','immediate','[]','accepted','Initial',?)")
         .bind(&blueprint_id).bind(&program.summary.id).bind(stamp).execute(&pool).await.map_err(db)?;
-    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'multiple_choice',1,'A neutral prompt','[\"A\",\"B\"]',NULL,'[]','[]','person',NULL,?,?)")
+    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'single_choice',1,'A neutral prompt','[\"A\",\"B\"]',NULL,'[]','[]','person',NULL,?,?)")
         .bind(&candidate_id).bind(&program.summary.id).bind(&outcome_id).bind(uuid::Uuid::new_v4().to_string()).bind(stamp).execute(&pool).await.map_err(db)?;
     sqlx::query(
         "INSERT INTO learning_assessment_candidate_outcomes(candidate_id,outcome_id) VALUES(?,?)",
@@ -260,7 +260,7 @@ async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins()
     .map_err(db)?;
     sqlx::query("INSERT INTO learning_assessment_forms(id,program_id,blueprint_id,blueprint_revision,retake_of_form_id,status,revision,title,instructions,expected_minutes,allowed_aids_json,purpose,passing_score,rubric_json,feedback_timing,source_version_ids_json,model_name,created_at,updated_at,submitted_at) VALUES(?,?,?,1,NULL,'active',0,'A neutral form','Respond to the prompts.',20,'[]','practice',0.6,'[]','immediate','[]',NULL,?,?,NULL)")
         .bind(&form_id).bind(&program.summary.id).bind(&blueprint_id).bind(stamp).bind(stamp).execute(&pool).await.map_err(db)?;
-    sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed) VALUES(?,0,?,?,'multiple_choice',1,'A neutral prompt','[\"A\",\"B\"]',NULL,'[]',1,0)")
+    sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed) VALUES(?,0,?,?,'single_choice',1,'A neutral prompt','[\"A\",\"B\"]',NULL,'[]',1,0)")
         .bind(&form_id).bind(&candidate_id).bind(&outcome_id).execute(&pool).await.map_err(db)?;
     sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,0,?)")
         .bind(&form_id).bind(&outcome_id).execute(&pool).await.map_err(db)?;
@@ -407,10 +407,21 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     let accepted = stored.accepted_revision.expect("accepted");
     let target = accepted.modules[0].lessons[0].id.clone();
     // Establish the conflicting persisted item before the job's content
-    // baseline. This test exercises publication rollback, not a stale job.
+    // baseline: another course's bank item already holds the ID the staged
+    // lesson's question joins the bank under. This test exercises
+    // publication rollback, not a stale job.
     let duplicate_question_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,'practice','Existing item','[]','[]',0)")
-        .bind(&duplicate_question_id).bind(&target).bind(&accepted.modules[0].id).execute(&pool).await.map_err(db)?;
+    let other = active_program(&pool).await?;
+    let other_outcome = curriculum
+        .plan(&other.summary.id)
+        .await?
+        .accepted_revision
+        .expect("accepted")
+        .modules[0]
+        .outcome_ids[0]
+        .clone();
+    sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at) VALUES(?,?,?,'single_choice',2,'Existing item','[\"One\",\"Two\"]',NULL,'[]','[]','person',NULL,?,?)")
+        .bind(&duplicate_question_id).bind(&other.summary.id).bind(&other_outcome).bind(uuid::Uuid::new_v4().to_string()).bind(now()).execute(&pool).await.map_err(db)?;
     let request = StartLearningGenerationJobRequestDto {
         operation_id: op_id(),
         program_id: program.summary.id.clone(),
@@ -721,14 +732,19 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
             body: "This should roll back with the transaction.".into(),
             source_ids: vec![],
         }],
-        questions: vec![crate::features::learning::dto::LearningQuestionDto {
-            id: duplicate_question_id,
-            kind: crate::features::learning::dto::LearningAssessmentKind::Practice,
+        questions: vec![crate::features::learning::dto::LessonQuestion {
+            id: duplicate_question_id.clone(),
+            kind: crate::features::learning::dto::LessonQuestionKind::Practice,
             prompt: "A conflicting item".into(),
             options: vec!["One".into(), "Two".into()],
             source_ids: vec![],
         }],
-        keys: vec![],
+        // Keyed, so the question joins the bank and meets the conflict.
+        keys: vec![crate::features::learning::dto::LessonAnswerKey {
+            question_id: duplicate_question_id,
+            correct_index: 0,
+            explanation: "One is the answer.".into(),
+        }],
     };
     broken.verification =
         Some(crate::features::learning::content_verification::tests::attest(&target, &broken));

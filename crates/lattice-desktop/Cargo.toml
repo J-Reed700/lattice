@@ -94,6 +94,7 @@ docx-rs = "0.4"
 encoding_rs = "0.8"
 zip = "9"
 unicode-segmentation = "1.10"
+unicode-normalization = { workspace = true }  # quiz answer normalisation (diacritics)
 urlencoding = { workspace = true }  # URL decoding for path validation (CWE-22)
 dirs = { workspace = true }
 opener = "0.7"

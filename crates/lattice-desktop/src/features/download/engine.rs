@@ -178,7 +178,18 @@ fn mount_point_specificity(path: &Path) -> usize {
     path.components().count()
 }
 
-/// Validates whether a Content-Length value from HEAD response is reliable (>= 10KB).
+/// Validates whether a Content-Length value from HEAD response is reliable.
+///
+/// Returns false if:
+/// - Value is None (server didn't provide it)
+/// - Value is suspiciously small (< 10KB, likely redirect HTML)
+///
+/// # Arguments
+/// * `content_length` - Optional Content-Length header value in bytes
+///
+/// # Returns
+/// * `true` if Content-Length is present AND >= MIN_VALID_MODEL_SIZE
+/// * `false` otherwise (triggers GET Range probe fallback)
 fn is_content_length_valid(content_length: Option<u64>) -> bool {
     match content_length {
         Some(size) => size >= MIN_VALID_MODEL_SIZE,

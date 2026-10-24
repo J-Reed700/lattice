@@ -1,3 +1,18 @@
+/**
+ * HuggingFaceSettings
+ *
+ * The Hugging Face token used for downloading gated models. The token is
+ * stored in the OS keyring by the backend; the renderer never reads it back.
+ *
+ * Token hygiene, non-negotiable:
+ *  - The plaintext lives only in this component's `useState` while the user is
+ *    typing, and is cleared on success.
+ *  - It never reaches the React Query cache, a toast, a log, or an error
+ *    message. `mutation.reset()` after a save drops the mutation variables too.
+ *  - `get_huggingface_token` (which returns the plaintext) is never called.
+ *    The status query carries `{ isSet }` and nothing else.
+ */
+
 import { useEffect, useState } from 'react';
 
 import { Eye, EyeOff } from 'lucide-react';

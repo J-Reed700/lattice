@@ -11,6 +11,10 @@ impl WebArchiveService {
     /// Extract domain from URL
     ///
     /// Returns the domain portion of a URL for organizing articles.
+    ///
+    /// # Example
+    /// - `https://github.com/user/repo` → `github.com`
+    /// - `https://www.example.com/article` → `www.example.com`
     pub(super) fn extract_domain(url: &str) -> Result<String> {
         let parsed =
             Url::parse(url).map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?;
@@ -49,6 +53,13 @@ impl WebArchiveService {
     /// Generate a fallback title from URL when extracted title is poor quality
     ///
     /// Detects generic/bad titles and generates meaningful alternatives from the URL.
+    ///
+    /// # Arguments
+    /// - `url` - The source URL to extract a title from
+    /// - `extracted_title` - The title extracted by the article parser
+    ///
+    /// # Returns
+    /// Either the original title (if good) or a generated fallback from URL
     pub(super) fn generate_fallback_title(url: &str, extracted_title: &str) -> String {
         // Generic/bad titles to detect
         let bad_titles = [

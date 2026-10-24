@@ -136,6 +136,52 @@ fn only_a_passage_read_by_ocr_is_labelled_as_ocr_text() {
     assert!(!typed.contains("OCR"), "{typed}");
 }
 
+/// Every passage shows its document under one name: a passage read in order
+/// carries the file's full path, a search hit only its name, and the prompt
+/// showed one document under both.
+#[test]
+fn every_passage_names_its_document_the_same_way() {
+    let mut read_in_order = chunk("c1", "doc-a", "Saltings log.md", "Swept the chimney.");
+    read_in_order.path = Some("/var/folders/xy/T/Saltings log.md".into());
+    let hit = chunk("c2", "doc-a", "Saltings log.md", "Relined the stove.");
+    assert!(kb_passage(&read_in_order, 1).starts_with("[1] Document: Saltings log.md\n"));
+    assert!(kb_passage(&hit, 2).starts_with("[2] Document: Saltings log.md\n"));
+    let mut untitled = chunk("c3", "doc-b", "", "Text.");
+    untitled.path = Some("/notes/plain.txt".into());
+    assert!(kb_passage(&untitled, 3).starts_with("[3] Document: plain.txt\n"));
+}
+
+/// The reading instruction closes a message only when it shows numbered
+/// passages, and the budget charges it with the frame the evidence travels in.
+#[test]
+fn only_a_message_with_passages_asks_for_a_reading_and_the_frame_prices_it() {
+    let settings = crate::features::conversation::chat::prompt_settings::normalize_prompt_settings(
+        LLMPromptSettingsDto::default(),
+    );
+    let builder = || {
+        PromptMessageBuilder::new(
+            &settings,
+            "When was the chimney swept?",
+            false,
+            super::super::SearchFlags::from_preferences(None),
+        )
+        .with_kb_context(Some("[1] Document: log.md\nContent: Swept.".into()))
+    };
+    let read = builder().reading_passages(true).build();
+    assert!(
+        read.ends_with(&format!("Answer:\n\n{READING_INSTRUCTION}")),
+        "{read}"
+    );
+    assert_eq!(read.matches(READING_INSTRUCTION).count(), 1);
+    assert!(!builder().build().contains(READING_INSTRUCTION));
+    assert!(
+        !read.contains("Citation rule:"),
+        "the rule is said once, in the system prompt"
+    );
+    assert!(settings.system_prompt.contains("Citation rule:"));
+    assert!(evidence_frame(&settings, "When?", false).ends_with(READING_INSTRUCTION));
+}
+
 #[test]
 fn missing_passage_never_gets_an_invented_citation() {
     let results = [chunk("c1", "doc-unknown", "orphan.md", "content")];
@@ -147,29 +193,58 @@ fn missing_passage_never_gets_an_invented_citation() {
 }
 
 #[test]
-fn an_entity_bridge_explains_the_cross_passage_relationship_with_real_citations() {
-    let source = chunk(
-        "project-0",
-        "project",
-        "project.md",
-        "On-site work is performed by Northwind Services.",
+fn a_passage_carries_only_its_own_source_lines() {
+    let mut cell = chunk(
+        "zelle-0",
+        "zelle",
+        "Leitfaden Zellbiologie.md",
+        "Die Mitose teilt den Zellkern in zwei identische Tochterkerne.",
     );
-    let mut target = chunk(
-        "agreement-0",
-        "agreement",
-        "Northwind Services agreement.md",
-        "Renewal may be declined with written notice.",
+    cell.metadata.insert(
+        "section".into(),
+        serde_json::json!("Leitfaden > Zellteilung"),
     );
-    target.metadata.insert(
-        "bridgeSourceResultId".into(),
-        serde_json::json!("project-0"),
+    let harmony = chunk(
+        "harmony-0",
+        "harmony",
+        "harmony notes.md",
+        "A dominant seventh chord resolves to the tonic.",
     );
-    let refs = [&source, &target];
-    let ids = HashMap::from([("project-0".to_string(), 3), ("agreement-0".to_string(), 7)]);
+    let refs = [&cell, &harmony];
+    let ids = HashMap::from([("zelle-0".to_string(), 3), ("harmony-0".to_string(), 7)]);
 
     let context = build_kb_context(&refs, &ids).expect("context");
 
-    assert!(context.contains("Passage [3] establishes that this is the linked document"));
-    assert!(context.contains("must cite both [3] and [7]"));
-    assert!(!context.contains("must cite both [7] and [3]"));
+    assert!(context.contains("[3] Document: Leitfaden Zellbiologie.md"));
+    assert!(context.contains("Source heading: Leitfaden > Zellteilung"));
+    assert!(context.contains("[7] Document: harmony notes.md"));
+    assert!(
+        !context.contains("Evidence relationship"),
+        "no passage may claim a link the sources do not state:\n{context}"
+    );
+}
+
+#[test]
+fn the_synthesis_note_sits_once_beside_the_passages_and_names_no_document_type() {
+    let flags = SearchFlags {
+        force_kb_search: false,
+        force_web_search: false,
+        web_fallback: false,
+        force_wiki_search: false,
+        deep_research_mode: false,
+        force_followup_mode: false,
+        closed_book: false,
+    };
+    let settings = LLMPromptSettingsDto::default();
+    let prompt = |kb: Option<&str>| {
+        PromptMessageBuilder::new(&settings, "¿Qué fase sigue a la profase?", false, flags)
+            .with_kb_context(kb.map(str::to_string))
+            .build()
+    };
+
+    let with_passages = prompt(Some("[1] La metafase sigue a la profase."));
+    assert_eq!(with_passages.matches(EVIDENCE_SYNTHESIS_NOTE).count(), 1);
+    assert!(!prompt(None).contains(EVIDENCE_SYNTHESIS_NOTE));
+    assert!(!EVIDENCE_SYNTHESIS_NOTE.contains("alternatives"));
+    assert!(!EVIDENCE_SYNTHESIS_NOTE.contains("template"));
 }

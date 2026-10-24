@@ -10,6 +10,24 @@ use sqlx::SqlitePool;
 ///
 /// This function uses sqlx::migrate!() to automatically discover and run
 /// migration files from the migrations/ directory at compile time.
+///
+/// # Arguments
+///
+/// * `pool` - SQLite connection pool to run migrations against
+///
+/// # Returns
+///
+/// `Ok(())` if all migrations complete successfully, or an error if any fail.
+///
+/// # Example
+///
+/// ```rust
+/// use sqlx::SqlitePool;
+/// use crate::infrastructure::persistence::database::migrate::run_migrations;
+///
+/// let pool = SqlitePool::connect("sqlite::memory:").await?;
+/// run_migrations(&pool).await?;
+/// ```
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     tracing::info!("Starting database migrations...");
 

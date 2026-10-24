@@ -804,19 +804,40 @@ fn reaper_matches_only_installed_sidecars_next_to_lattice() {
 
 #[test]
 fn reaper_spares_sidecars_whose_lattice_is_still_running() {
-    let dir = std::path::Path::new("/Applications/Lattice.app/Contents/MacOS");
-    let lattice = dir.join("lattice-desktop");
-    assert!(has_live_lattice_parent(Some(&lattice), dir));
+    let lattice = std::path::Path::new("/Applications/Lattice.app/Contents/MacOS/lattice-desktop");
+    assert!(has_live_lattice_parent(Some(lattice), lattice));
     // Crashed Lattice: re-parented to launchd/init, or the parent is gone.
     assert!(!has_live_lattice_parent(
         Some(std::path::Path::new("/sbin/launchd")),
-        dir
+        lattice
     ));
-    assert!(!has_live_lattice_parent(None, dir));
+    assert!(!has_live_lattice_parent(None, lattice));
     // A reused PID now running something unrelated.
     assert!(!has_live_lattice_parent(
         Some(std::path::Path::new("/usr/bin/zsh")),
-        dir
+        lattice
+    ));
+}
+
+#[test]
+fn reaper_reaps_orphans_adopted_by_programs_beside_a_deb_install() {
+    // The .deb puts Lattice and its sidecars in /usr/bin. An orphan adopted by
+    // another program there (a container's `sleep` as PID 1, `tini`) is not
+    // running under Lattice, and must be reaped.
+    let lattice = std::path::Path::new("/usr/bin/lattice-desktop");
+    assert!(!has_live_lattice_parent(
+        Some(std::path::Path::new("/usr/bin/sleep")),
+        lattice
+    ));
+    assert!(!has_live_lattice_parent(
+        Some(std::path::Path::new("/usr/bin/tini")),
+        lattice
+    ));
+    assert!(has_live_lattice_parent(Some(lattice), lattice));
+    // After a package upgrade replaced the file, the old window still counts.
+    assert!(has_live_lattice_parent(
+        Some(std::path::Path::new("/usr/bin/lattice-desktop (deleted)")),
+        lattice
     ));
 }
 

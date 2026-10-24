@@ -1,3 +1,14 @@
+/**
+ * Toast Store - Zustand Implementation
+ *
+ * Purpose: Centralized toast notification management with:
+ * - Queue management (max concurrent toasts)
+ * - Auto-dismiss with configurable duration
+ * - Manual dismiss
+ * - Toast types: success, error, warning, info
+ * - Position configuration
+ */
+
 import { create } from 'zustand';
 
 export interface Toast {
@@ -43,6 +54,7 @@ interface ToastActions {
 
 interface ToastStore extends ToastState, ToastActions {}
 
+// Auto-dismiss timers
 const dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function generateId(): string {
@@ -68,6 +80,7 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     set((state) => {
       let updatedToasts = [newToast, ...state.toasts];
 
+      // Enforce max toasts limit
       if (updatedToasts.length > config.maxToasts) {
         const removed = updatedToasts.slice(config.maxToasts);
         removed.forEach((t) => {
@@ -83,6 +96,7 @@ export const useToastStore = create<ToastStore>((set, get) => ({
       return { toasts: updatedToasts };
     });
 
+    // Schedule auto-dismiss
     if (newToast.duration && newToast.duration > 0) {
       const timer = setTimeout(() => {
         get().dismissToast(id);
@@ -94,6 +108,7 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   dismissToast: (id: string) => {
+    // Clear timer
     const timer = dismissTimers.get(id);
     if (timer) {
       clearTimeout(timer);
@@ -106,6 +121,7 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   dismissAll: () => {
+    // Clear all timers
     dismissTimers.forEach((timer) => clearTimeout(timer));
     dismissTimers.clear();
 
@@ -119,10 +135,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 }));
 
+// Selectors
 export const selectToasts = (state: ToastStore) => state.toasts;
 export const selectConfig = (state: ToastStore) => state.config;
 export const selectToastCount = (state: ToastStore) => state.toasts.length;
 
+// Helper functions for typed toast creation
 export const toast = {
   success: (title: string, options?: Partial<Omit<Toast, 'id' | 'type' | 'title' | 'createdAt'>>) => useToastStore.getState().addToast({ type: 'success', title, ...options }),
 

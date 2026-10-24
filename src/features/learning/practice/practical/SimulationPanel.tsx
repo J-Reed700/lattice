@@ -137,7 +137,7 @@ export function SimulationPanel({
     }
   };
   return (
-    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-5 shadow-xs">
+    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5">
       <div className="flex items-start gap-3">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent">
           <Users size={18} />
@@ -164,7 +164,7 @@ export function SimulationPanel({
               value={learnerRole}
               onChange={(event) => setLearnerRole(event.target.value)}
               maxLength={120}
-              className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
+              className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
             />
           </label>
           <label className="text-xs font-medium text-text-secondary">
@@ -173,7 +173,7 @@ export function SimulationPanel({
               value={counterpartRole}
               onChange={(event) => setCounterpartRole(event.target.value)}
               maxLength={120}
-              className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
+              className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
             />
           </label>
           <button
@@ -189,7 +189,7 @@ export function SimulationPanel({
         </div>
       ) : (
         <>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-surface-sunken px-4 py-3">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-background px-4 py-3">
             <div className="text-xs text-text-secondary">
               <strong className="text-text-primary">
                 {session.learnerRole}
@@ -205,7 +205,7 @@ export function SimulationPanel({
                 type="button"
                 disabled={finish.isPending}
                 onClick={() => void end()}
-                className="rounded-full border border-border-default px-3 py-2 text-xs text-text-secondary hover:border-accent/40"
+                className="rounded-full border border-border px-3 py-2 text-xs"
               >
                 Finish simulation
               </button>
@@ -213,7 +213,7 @@ export function SimulationPanel({
           </div>
           <div
             aria-label="Simulation turns"
-            className="mt-3 max-h-[420px] space-y-3 overflow-y-auto rounded-xl border border-border-default bg-surface-sunken/60 p-3"
+            className="mt-3 max-h-[420px] space-y-3 overflow-y-auto rounded-xl border border-border bg-background/40 p-3"
           >
             {session.turns.length === 0 ? (
               <p className="p-4 text-xs text-text-muted">
@@ -223,7 +223,7 @@ export function SimulationPanel({
               session.turns.map((turnItem) => (
                 <article
                   key={turnItem.id}
-                  className={`max-w-[92%] rounded-xl border p-3 ${turnItem.speaker === "learner" ? "ml-auto border-accent/30 bg-accent-muted/15" : "border-border-default bg-surface"}`}
+                  className={`max-w-[92%] rounded-xl border p-3 ${turnItem.speaker === "learner" ? "ml-auto border-accent/20 bg-accent/5" : "border-border bg-surface"}`}
                 >
                   <div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">
                     {turnItem.speaker === "learner"
@@ -269,7 +269,7 @@ export function SimulationPanel({
                     void send();
                 }}
                 placeholder={`Respond as ${session.learnerRole}…`}
-                className="min-w-0 flex-1 resize-y rounded-xl border border-border-default bg-bg p-3 text-sm leading-6 text-text-primary outline-hidden focus:border-accent"
+                className="min-w-0 flex-1 resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
               />
               <button
                 type="button"
@@ -287,7 +287,7 @@ export function SimulationPanel({
       {error && (
         <p
           role="alert"
-          className="mt-3 rounded-lg border border-danger-muted bg-danger-muted/15 p-3 text-xs text-danger-fg"
+          className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
         >
           {error}{" "}
           <button
@@ -299,7 +299,7 @@ export function SimulationPanel({
                   ? void send()
                   : void begin()
             }
-            className="ml-2 font-semibold underline"
+            className="ml-2 underline"
           >
             Retry same operation
           </button>

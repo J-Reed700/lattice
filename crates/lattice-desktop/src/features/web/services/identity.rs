@@ -1,7 +1,17 @@
 //! The two HTTP identities Lattice presents (design §3.9).
 //!
-//! - **Browser-like** for HTML search engines and ordinary pages.
-//! - **Declared client** for APIs: `Lattice/<version> (+<project URL>)`.
+//! - **Browser-like** for HTML search engines and ordinary pages, where a
+//!   browser is what the site expects of a user's reading client: consistent
+//!   browser profiles (User-Agent with matching client hints) and navigation
+//!   headers.
+//! - **Declared client** for every API: `Lattice/<version> (+<project URL>)`,
+//!   plus the user's contact when they set one for polite pools. Wikimedia,
+//!   crates.io, Crossref, SEC and arXiv require an honest agent from bots, and
+//!   a browser disguise on an API is what gets a client blocked.
+//!
+//! There is no proxy pool and no challenge solver: anonymity comes from
+//! sending only the query, never from routing through someone else's
+//! machine (decided 2026-09-23).
 
 use rand::Rng;
 use reqwest::header::{
@@ -13,6 +23,7 @@ use tokio::time::sleep;
 use tracing::debug;
 
 /// Consistent browser profile pairing User-Agent with matching Sec-CH-UA headers.
+/// Anti-bot systems flag mismatched UA/client-hint combinations.
 pub struct BrowserProfile {
     pub user_agent: &'static str,
     pub sec_ch_ua: Option<&'static str>,
@@ -110,13 +121,20 @@ const BROWSER_PROFILES: &[BrowserProfile] = &[
     },
 ];
 
-#[allow(clippy::indexing_slicing)]
+// ─── Profile Selection ──────────────────────────────────────────────────────
+
+#[allow(clippy::indexing_slicing)] // gen_range stays below BROWSER_PROFILES.len()
 pub fn random_profile() -> &'static BrowserProfile {
     let idx = rand::thread_rng().gen_range(0..BROWSER_PROFILES.len());
     &BROWSER_PROFILES[idx]
 }
 
+// ─── Header Builders ────────────────────────────────────────────────────────
+
 /// Full set of browser-like headers for a navigation request.
+///
+/// When `referer` is supplied, `Sec-Fetch-Site` is set to `cross-site`
+/// (mimicking a link click). Otherwise it is `none` (direct navigation).
 pub fn browser_headers(profile: &BrowserProfile, referer: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::with_capacity(14);
 
@@ -186,7 +204,8 @@ pub fn browser_headers(profile: &BrowserProfile, referer: Option<&str>) -> Heade
     headers
 }
 
-/// Search-engine request headers.
+/// Search-engine request headers: adds `Cache-Control: no-cache` and uses
+/// `same-origin` for Sec-Fetch-Site when a search-engine referer is given.
 pub fn search_headers(profile: &BrowserProfile, search_engine_referer: Option<&str>) -> HeaderMap {
     let mut headers = browser_headers(profile, None);
 
@@ -209,7 +228,10 @@ pub fn search_headers(profile: &BrowserProfile, search_engine_referer: Option<&s
     headers
 }
 
+// ─── Random Delay ───────────────────────────────────────────────────────────
+
 /// Random delay between requests to mimic human browsing cadence.
+/// Bounds can be overridden via `RECALL_STEALTH_MIN_DELAY_MS` / `RECALL_STEALTH_MAX_DELAY_MS`.
 pub async fn random_delay(default_min_ms: u64, default_max_ms: u64) {
     let delay_ms = {
         let min_ms = std::env::var("RECALL_STEALTH_MIN_DELAY_MS")
@@ -227,9 +249,16 @@ pub async fn random_delay(default_min_ms: u64, default_max_ms: u64) {
     sleep(Duration::from_millis(delay_ms)).await;
 }
 
+// ─── Declared Client ────────────────────────────────────────────────────────
+
+/// Where the project lives: the contact half of the declared agent, which
+/// Wikimedia's User-Agent policy asks every bot to carry. A project page,
+/// never an email: one shared address would make every user look like one
+/// client to the services that pool by contact.
 pub const PROJECT_URL: &str = "https://github.com/J-Reed700/lattice";
 
-/// The declared agent: `Lattice/<version> (+<project URL>)`.
+/// The declared agent: `Lattice/<version> (+<project URL>)`, with the user's
+/// own contact appended when they set one for polite pools.
 pub fn declared_user_agent(contact: Option<&str>) -> String {
     let version = env!("CARGO_PKG_VERSION");
     match contact.map(str::trim).filter(|contact| !contact.is_empty()) {
@@ -239,6 +268,7 @@ pub fn declared_user_agent(contact: Option<&str>) -> String {
 }
 
 /// Headers for an API call: the declared agent and what the caller accepts.
+/// No browser profile, no client hints, no `Sec-Fetch-*`.
 pub fn declared_client_headers(contact: Option<&str>, accept: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::with_capacity(2);
     if let Ok(agent) = HeaderValue::from_str(&declared_user_agent(contact)) {
@@ -248,7 +278,16 @@ pub fn declared_client_headers(contact: Option<&str>, accept: &'static str) -> H
     headers
 }
 
-/// The base `ClientBuilder` for reading the public web without a cookie jar.
+// ─── Client Builder ─────────────────────────────────────────────────────────
+
+/// The base `ClientBuilder` for reading the public web. No cookie jar: one
+/// client serves every turn and conversation, so a jar would replay a search
+/// engine's cookies on every later query and let it link searches from
+/// unrelated conversations. The hidden browser reader is incognito for the
+/// same reason.
+///
+/// Does **not** set `User-Agent`: each request carries its identity's headers
+/// ([`browser_headers`], [`search_headers`] or [`declared_client_headers`]).
 pub fn client_builder() -> reqwest::ClientBuilder {
     lattice_core::shared::http::reqwest_client_builder().cookie_store(false)
 }

@@ -3,7 +3,9 @@
 use super::*;
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::scheduler::rejection::{window_refusal, RequestSize};
-use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
+use lattice_core::application::ports::llm_port::{
+    tool_specs, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+};
 use std::borrow::Cow;
 
 /// The characters a tokenizer reads in `input`: each message's role and
@@ -162,16 +164,12 @@ impl LlamaCppLlm {
     }
 
     /// The prompt's tokens as this server counts them, with the chat
-    /// template's framing: a ChatML-style template wraps each message in
-    /// about five special tokens (`<|im_start|>`, the role, a newline,
-    /// `<|im_end|>`, a newline) and opens the answer with about six more
-    /// (the assistant header and an empty think block); eight per message and
-    /// sixteen for the answer cover those with room to spare. Pictures are
-    /// added at their declared cost: a tokenizer reads text, not images.
-    /// `None` when the server cannot tokenize.
+    /// template's framing ([`TEMPLATE_TOKENS_PER_MESSAGE`] for each message,
+    /// [`TEMPLATE_TOKENS_FOR_ANSWER`] for the answer's opening), the same
+    /// allowance a learning request is measured with before it is built.
+    /// Pictures are added at their declared cost: a tokenizer reads text, not
+    /// images. `None` when the server cannot tokenize.
     async fn exact_prompt_tokens(&self, input: &[CompletionInput]) -> Option<usize> {
-        const TEMPLATE_TOKENS_PER_MESSAGE: usize = 8;
-        const TEMPLATE_TOKENS_FOR_ANSWER: usize = 16;
         let text = input
             .iter()
             .map(|item| match item {
@@ -289,6 +287,9 @@ impl LlamaCppLlm {
             if let Some(choice) = request.tool_choice {
                 body.insert("tool_choice".into(), json!(choice.as_str()));
             }
+        }
+        if !request.stop.is_empty() {
+            body.insert("stop".into(), json!(request.stop));
         }
         if request.want_logprobs {
             body.insert("logprobs".into(), json!(true));

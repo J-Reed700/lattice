@@ -1,3 +1,16 @@
+/**
+ * Display settings.
+ *
+ * Theme is the only display preference the app actually acts on. It is read
+ * and written through the backend `ui.theme` slice (React Query is the
+ * mirror; the Rust SettingsRepository is the SSOT) because `useApplyTheme`
+ * applies it from there.
+ *
+ * Font size, compact mode and file previews used to live here. Nothing in
+ * the app ever read them — they were deleted in the September 2026 overhaul
+ * rather than restyled. A control that changes nothing is a lie.
+ */
+
 import { useMemo } from 'react';
 
 import { Check, Monitor, Moon, RefreshCw, Sun } from 'lucide-react';

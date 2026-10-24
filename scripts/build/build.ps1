@@ -42,7 +42,7 @@
     Development build without creating installer
 
 .EXAMPLE
-    .\scripts\build\build.ps1 -Clean -Features "test-utils" -Verbose
+    .\scripts\build\build.ps1 -Clean -Features "embeddings,file_watcher" -Verbose
     Clean build with specific features and verbose output
 
 .EXAMPLE
@@ -78,7 +78,10 @@ param(
     [switch]$Checksums,
 
     [Parameter(Mandatory=$false)]
-    [switch]$Parallel = $true
+    [switch]$Parallel = $true,
+
+    [Parameter(Mandatory=$false)]
+    [string]$ConfigFile = (Join-Path $PSScriptRoot 'build.config.json')
 )
 
 # ============================================================================
@@ -161,6 +164,39 @@ function Invoke-Command-Safe {
     } catch {
         Write-Log "Command failed: $_" -Level Error
         throw
+    }
+}
+
+# ============================================================================
+# Configuration Loading
+# ============================================================================
+
+function Get-BuildConfig {
+    $ConfigPath = if ([System.IO.Path]::IsPathRooted($ConfigFile)) {
+        $ConfigFile
+    } else {
+        Join-Path $ProjectRoot $ConfigFile
+    }
+    
+    if (Test-Path $ConfigPath) {
+        try {
+            $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+            Write-Log "Loaded configuration from $ConfigFile" -Level Success
+            return $config
+        } catch {
+            Write-Log "Failed to parse config file: $_" -Level Warning
+        }
+    } else {
+        Write-Log "Config file not found: $ConfigFile" -Level Warning
+    }
+
+    # Return default config
+    return @{
+        features = @{}
+        build = @{
+            parallel = $true
+            optimization = 'release'
+        }
     }
 }
 
@@ -395,6 +431,8 @@ function Start-Build {
         if ($Features) {
             Write-Log "Features: $Features" -Level Info
         }
+
+        $config = Get-BuildConfig
 
         Test-Prerequisites
         Invoke-Clean

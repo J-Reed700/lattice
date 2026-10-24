@@ -1,3 +1,11 @@
+/**
+ * Tags API Types
+ *
+ * Type definitions for tagging functionality.
+ * These types match the Rust backend DDD structures from commands/tags.rs
+ */
+
+
 export interface CreateTagRequest {
   name: string;
   color?: string;

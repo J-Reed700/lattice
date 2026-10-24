@@ -1,3 +1,12 @@
+/**
+ * useApplyTheme Hook
+ *
+ * Applies theme from canonical backend settings (ui.theme) to document.
+ *
+ * Usage:
+ *   Call once at the app root (App.tsx) to apply theme globally.
+ */
+
 import { useLayoutEffect, useSyncExternalStore } from 'react';
 
 import { useSettingsQuery } from '../features/settings/hooks/useSettingsQuery';

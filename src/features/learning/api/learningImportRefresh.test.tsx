@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { learningAssessmentWorkspaceKey, learningCanvasKey, learningMemoryKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { learningCanvasKey, learningMemoryKey, learningPracticalWorkspaceKey, learningPracticeWorkspaceKey, learningQuizOverviewKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import { useImportCourse } from '@/features/learning/portability/useLearningPortability';
 import type { ApplyLearningPackImportRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
@@ -16,7 +16,7 @@ beforeEach(() => {
   api.apply.mockReset().mockResolvedValue({ ok: true, data: { programId: 'course', exports: [] } });
 });
 
-const workspaceKeys = [learningMemoryKey, learningCanvasKey, learningRecallKey, learningPracticeWorkspaceKey, learningPracticalWorkspaceKey, learningAssessmentWorkspaceKey];
+const workspaceKeys = [learningMemoryKey, learningCanvasKey, learningRecallKey, learningPracticeWorkspaceKey, learningPracticalWorkspaceKey, learningQuizOverviewKey];
 const request = { operationId: 'operation', previewId: 'preview', expectedRootSha256: 'hash' } satisfies ApplyLearningPackImportRequestDto;
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -45,7 +45,7 @@ it.each([true, false])('refreshes all imported workspaces (mounted: %s) without 
   unmount(); client.clear();
 });
 
-it.each(['learning-practice-session', 'learning-assessment-form'])('drops deleted %s snapshots and prevents an older in-flight read overwriting the import', async (kind) => {
+it.each(['learning-practice-session', 'learning-quiz-form'])('drops deleted %s snapshots and prevents an older in-flight read overwriting the import', async (kind) => {
   const { client, result, unmount } = setup();
   const late = deferred<{ programId: string; value: string }>();
   const key = [kind, 'same-id'];

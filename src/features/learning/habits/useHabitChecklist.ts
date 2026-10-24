@@ -7,7 +7,6 @@ import type { HabitChecklistState } from './types';
 const CHECKLIST_EVENT = 'lattice:habit-checklist-update';
 
 function getStoredChecklist(): HabitChecklistState {
-  if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(HABIT_CHECKLIST_STORAGE_KEY);
     if (!raw) return {};

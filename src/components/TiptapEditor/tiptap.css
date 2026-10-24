@@ -14,7 +14,9 @@
  *   accent links.
  */
 
-/* Container */
+/* ------------------------------------------------------------------ *
+ * 0. Container
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor,
 .tiptap-viewer {
@@ -67,7 +69,9 @@
   font-family: var(--font-mono);
 }
 
-/* Placeholder (edit-mode only) */
+/* ------------------------------------------------------------------ *
+ * 1. Placeholder (edit-mode only)
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
@@ -77,7 +81,9 @@
   height: 0;
 }
 
-/* Paragraphs */
+/* ------------------------------------------------------------------ *
+ * 2. Paragraphs
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor p,
 .tiptap-viewer p {
@@ -100,7 +106,10 @@
   margin-bottom: 0;
 }
 
-/* Headings */
+/* ------------------------------------------------------------------ *
+ * 3. Headings — serif in prose wrappers; inherits.
+ *    Weights capped at 600 per TOKENS-SPEC §3.3.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor h1,
 .tiptap-viewer h1,
@@ -168,7 +177,10 @@
   margin-top: 0;
 }
 
-/* Inline code */
+/* ------------------------------------------------------------------ *
+ * 4. Inline code
+ *    Distinct via surface shift — no border, no accent color.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor :not(pre) > code,
 .tiptap-viewer :not(pre) > code {
@@ -210,7 +222,9 @@
   text-decoration: none;
 }
 
-/* Code blocks */
+/* ------------------------------------------------------------------ *
+ * 5. Code blocks
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor pre,
 .tiptap-viewer pre {
@@ -504,7 +518,11 @@
   margin: 0 auto;
 }
 
-/* Syntax highlighting */
+/* ------------------------------------------------------------------ *
+ * 6. Syntax highlighting (lowlight / highlight.js classes)
+ *    Monochrome plus the product accent.
+ *    Default: everything is --text-primary. Only strings/regex reach for accent.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor pre .hljs-keyword,
 .tiptap-viewer pre .hljs-keyword,
@@ -593,7 +611,10 @@
   color: hsl(var(--success-fg));
 }
 
-/* Links */
+/* ------------------------------------------------------------------ *
+ * 7. Links — violet accent with subtle underline.
+ *    Higher specificity than the Link extension's inline Tailwind classes.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor a,
 .tiptap-viewer a {
@@ -613,7 +634,9 @@
   background-color: transparent;
 }
 
-/* Blockquotes */
+/* ------------------------------------------------------------------ *
+ * 8. Blockquotes
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor blockquote,
 .tiptap-viewer blockquote {
@@ -629,7 +652,9 @@
   color: inherit;
 }
 
-/* Callout alerts */
+/* ------------------------------------------------------------------ *
+ * 8.1 Callout Alerts (GitHub-style [!NOTE], [!TIP], [!IMPORTANT], etc.)
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor blockquote.callout-alert,
 .tiptap-viewer blockquote.callout-alert {
@@ -784,7 +809,9 @@
   color: hsl(var(--danger-fg));
 }
 
-/* Lists */
+/* ------------------------------------------------------------------ *
+ * 9. Lists
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor ul,
 .tiptap-viewer ul,
@@ -830,7 +857,9 @@
   margin: 0.4em 0;
 }
 
-/* Task lists */
+/* ------------------------------------------------------------------ *
+ * 10. Task lists — preserve tiptap's functional structure.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor ul[data-type='taskList'],
 .tiptap-viewer ul[data-type='taskList'] {
@@ -893,7 +922,9 @@
   border-radius: var(--radius-sm);
 }
 
-/* Tables */
+/* ------------------------------------------------------------------ *
+ * 11. Tables — hairlines only, no zebra striping.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor table,
 .tiptap-viewer table {
@@ -943,7 +974,9 @@
   vertical-align: top;
 }
 
-/* Horizontal rules */
+/* ------------------------------------------------------------------ *
+ * 12. Horizontal rules
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor hr,
 .tiptap-viewer hr {
@@ -954,7 +987,9 @@
   width: 100%;
 }
 
-/* Images */
+/* ------------------------------------------------------------------ *
+ * 13. Images
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor img,
 .tiptap-viewer img {
@@ -964,7 +999,9 @@
   margin: 1em 0;
 }
 
-/* Inline marks */
+/* ------------------------------------------------------------------ *
+ * 14. Inline marks
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor strong,
 .tiptap-viewer strong {
@@ -995,7 +1032,9 @@
   border-radius: var(--radius-sm);
 }
 
-/* Keyboard chips */
+/* ------------------------------------------------------------------ *
+ * 15. Keyboard chips rendered in prose.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor kbd,
 .tiptap-viewer kbd {
@@ -1008,7 +1047,9 @@
   line-height: 1;
 }
 
-/* Selection */
+/* ------------------------------------------------------------------ *
+ * 16. Selection — violet at low alpha, matches the accent.
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor ::selection,
 .tiptap-viewer ::selection {
@@ -1016,7 +1057,9 @@
   color: hsl(var(--text-primary));
 }
 
-/* Editor-only affordances */
+/* ------------------------------------------------------------------ *
+ * 17. Editor-only affordances
+ * ------------------------------------------------------------------ */
 
 .tiptap-editor .ProseMirror {
   caret-color: hsl(var(--accent));
@@ -1033,7 +1076,9 @@
   border-radius: var(--radius-sm);
 }
 
-/* Inline menus */
+/* ------------------------------------------------------------------ *
+ * 18. Inline menus
+ * ------------------------------------------------------------------ */
 
 .tiptap-bubble {
   display: flex;

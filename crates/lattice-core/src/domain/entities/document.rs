@@ -1,4 +1,11 @@
-//! Document entity and related classifications.
+//! # Document Entity
+//!
+//! Document entity within the domain layer.
+//!
+//! This is a pure domain entity with NO infrastructure concerns:
+//! - No database IDs (handled by repositories)
+//! - Just the core business data and logic
+//! - Rich behavior for document management
 
 use crate::domain::entities::chunk::Chunk;
 use crate::domain::value_objects::checksum::Checksum;
@@ -14,7 +21,42 @@ mod factory;
 pub use classification::{Category, DocumentStatus, Language};
 pub use factory::StoredDocument;
 
-/// Document entity representing an indexed file with metadata and chunks.
+/// Document entity (aggregate root for document-related operations).
+///
+/// Represents a file document with metadata.
+///
+/// ## Pure Domain Model
+///
+/// This entity contains only business logic. Infrastructure concerns like
+/// database persistence, file I/O, and search indexes are handled by
+/// the infrastructure layer.
+///
+/// ## Invariants
+///
+/// - File path must be unique
+/// - File name cannot be empty
+/// - Checksum validates content integrity
+/// - Modified timestamp must be <= indexed timestamp
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use lattice_core::domain::entities::document::Document;
+/// use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
+/// use std::path::PathBuf;
+///
+/// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();
+/// let doc = Document::new(
+///     path,
+///     "file.txt".to_string(),
+///     "text/plain".to_string(),
+///     1024,
+///     "abc123".to_string(),
+/// );
+///
+/// assert_eq!(doc.file_name(), "file.txt");
+/// assert_eq!(doc.mime_type(), "text/plain");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
@@ -336,6 +378,18 @@ impl Document {
     }
 
     /// Set token count for a specific chunk by index.
+    ///
+    /// This allows the indexing use case to set chunk metadata while maintaining
+    /// Document as the sole currency for persistence.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The zero-based index of the chunk to update
+    /// * `token_count` - The number of tokens in the chunk
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
     pub fn set_chunk_token_count(&mut self, index: usize, token_count: i32) {
         if let Some(chunk) = self.chunks.get_mut(index) {
             chunk.set_token_count(token_count);
@@ -343,6 +397,15 @@ impl Document {
     }
 
     /// Set word count for a specific chunk by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The zero-based index of the chunk to update
+    /// * `word_count` - The number of words in the chunk
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
     pub fn set_chunk_word_count(&mut self, index: usize, word_count: usize) {
         if let Some(chunk) = self.chunks.get_mut(index) {
             chunk.set_word_count(word_count);
@@ -350,6 +413,15 @@ impl Document {
     }
 
     /// Set code detection flag for a specific chunk by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The zero-based index of the chunk to update
+    /// * `has_code` - Whether the chunk contains code
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
     pub fn set_chunk_has_code(&mut self, index: usize, has_code: bool) {
         if let Some(chunk) = self.chunks.get_mut(index) {
             chunk.set_has_code(has_code);
@@ -357,6 +429,15 @@ impl Document {
     }
 
     /// Set section/heading for a specific chunk by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The zero-based index of the chunk to update
+    /// * `section` - The section or heading text, if any
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
     pub fn set_chunk_section(&mut self, index: usize, section: Option<String>) {
         if let Some(chunk) = self.chunks.get_mut(index) {
             chunk.set_section(section);
@@ -378,6 +459,19 @@ impl Document {
     }
 
     /// Mark document for reindexing with new content.
+    ///
+    /// Resets the document status to Pending and updates the modified timestamp.
+    /// This is typically called when the file content has changed and needs to be
+    /// reindexed.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - New document content
+    /// * `chunking_strategy` - Strategy for chunking
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if successful
     pub fn reindex(
         &mut self,
         content: String,

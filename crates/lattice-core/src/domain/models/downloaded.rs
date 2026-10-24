@@ -108,8 +108,27 @@ impl fmt::Display for ModelLocation {
     }
 }
 
-/// Domain entity for a downloaded model available for chat, embeddings, or utility.
-/// Note: only one model can be active for each role at a time (enforced by DB triggers).
+/// Domain entity for a downloaded model
+///
+/// This entity represents a model file that has been downloaded
+/// and is available for use in the application (e.g., for chat, embeddings, OCR).
+///
+/// ## Business Rules
+///
+/// - Only one model can be active for chat at a time (enforced by database trigger)
+/// - Only one model can be active for embedding at a time (enforced by database trigger)
+/// - `use_count` increments each time the model is used
+/// - `last_used_at` updates to current time when model is used
+/// - Model metadata stored as JSON for flexibility
+/// - Model type must match operation type (chat models for chat, embedding models for embeddings)
+///
+/// ## Invariants
+///
+/// - `model_id` must be unique across all downloaded models
+/// - `file_path` must point to an existing file when model is created
+/// - `file_size_bytes` must be > 0
+/// - `use_count` must be >= 0
+/// - `model_type` must match file extension (.gguf for chat, .safetensors for embedding)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadedModel {
@@ -188,7 +207,34 @@ pub struct StoredDownloadedModel {
 }
 
 impl DownloadedModel {
-    /// Create a new downloaded model record.
+    /// Create a new downloaded model record
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier for this record
+    /// * `model_name` - Human-readable name
+    /// * `model_id` - Unique model identifier
+    /// * `file_path` - Absolute path to model file
+    /// * `file_size_bytes` - Size of file in bytes
+    /// * `architecture` - Model architecture family (e.g., "llama", "mistral", "phi")
+    /// * `metadata` - Optional JSON metadata
+    ///
+    /// # Business Logic
+    ///
+    /// - Sets `downloaded_at` to current timestamp
+    /// - Initializes `use_count` to 0
+    /// - Sets `last_used_at` to None (never used yet)
+    /// - Sets `is_active_for_chat` to false by default
+    /// - Sets `is_active_for_embedding` to false by default
+    /// - Infers `model_type` from file extension
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - `file_size_bytes` <= 0
+    /// - `model_id` is empty
+    /// - `model_name` is empty
+    /// - `architecture` is empty
     pub fn new(
         id: String,
         model_name: String,
@@ -340,20 +386,50 @@ impl DownloadedModel {
         self.last_used_at = Some(Utc::now());
     }
 
+    /// Set whether this model is active for chat
+    ///
+    /// # Arguments
+    ///
+    /// * `active` - True to set as active chat model, false otherwise
+    ///
+    /// # Business Logic
+    ///
+    /// - Database trigger ensures only one model can be active for chat
+    /// - This just updates the field; trigger handles deactivating others
     pub fn set_active_for_chat(&mut self, active: bool) {
         self.is_active_for_chat = active;
     }
 
+    /// Set whether this model is active for the utility role
+    ///
+    /// # Arguments
+    ///
+    /// * `active` - True to set as active utility model, false otherwise
+    ///
+    /// # Business Logic
+    ///
+    /// - Database trigger ensures only one model can be active for utility
+    /// - This just updates the field; trigger handles deactivating others
     pub fn set_active_for_utility(&mut self, active: bool) {
         self.is_active_for_utility = active;
     }
 
-    /// Serialize metadata to JSON string.
+    /// Serialize metadata to JSON string
+    ///
+    /// Returns JSON string for database storage, or None if no metadata.
     pub fn metadata_to_json(&self) -> Option<String> {
         self.metadata.as_ref().map(|m| m.to_string())
     }
 
-    /// Deserialize metadata from JSON string.
+    /// Deserialize metadata from JSON string
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - JSON string to parse
+    ///
+    /// # Errors
+    ///
+    /// Returns error if JSON is invalid
     pub fn metadata_from_json(json: Option<&str>) -> Result<Option<JsonValue>> {
         match json {
             Some(s) if !s.trim().is_empty() => Ok(Some(serde_json::from_str(s)?)),
@@ -361,7 +437,23 @@ impl DownloadedModel {
         }
     }
 
-    /// Validate that model type matches the intended operation.
+    /// Validate that model type matches the intended operation
+    ///
+    /// # Arguments
+    ///
+    /// * `for_chat` - True if validating for chat operations
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if model type is compatible, Err with user-friendly message otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let chat_model = DownloadedModel::new(..., PathBuf::from("model.gguf"), ...)?;
+    /// assert!(chat_model.validate_for_operation(true).is_ok());
+    /// assert!(chat_model.validate_for_operation(false).is_err());
+    /// ```
     pub fn validate_for_operation(&self, for_chat: bool) -> Result<()> {
         if for_chat {
             if !self.model_type.is_chat_compatible() {

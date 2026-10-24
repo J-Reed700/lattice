@@ -12,8 +12,10 @@ import type {
   LearningTrustOverrideDto,
 } from '@/lib/bindings';
 
+/** Highest first, as the bars read them (source provenance §5). */
 export const TRUST_LEVELS: readonly LearningTrustLevel[] = ['primary', 'authoritative', 'established', 'community', 'unknown', 'distrusted'];
 
+/** What a site override may set: a standing, never a level (decision 4). */
 export const SITE_STANDINGS: readonly LearningSiteStanding[] = ['institutional', 'identified', 'community', 'distrusted'];
 
 export const LEVEL_WORD: Record<LearningTrustLevel, string> = {
@@ -83,6 +85,10 @@ function hasReason(trust: LearningSourceTrustDto, code: string) {
   return trust.reasons.some((reason) => reason.code === code);
 }
 
+/**
+ * The badge's words (§19): "Primary for Python", "Authoritative",
+ * "Distrusted (you)", "Added by you · origin not stated".
+ */
 export function badgeText(trust: LearningSourceTrustDto): string {
   if (trust.level === 'unknown' && hasReason(trust, 'added_by_you')) return 'Added by you · origin not stated';
   const relational = trust.level === 'primary' && trust.subject ? ` for ${trust.subject}` : '';
@@ -139,6 +145,7 @@ export function overrideLines(overrides: LearningTrustOverrideDto[]): string[] {
   return lines;
 }
 
+/** What an override change sends back to be re-decided (§18.7, §19). */
 export function impactLine(impact: LearningTrustImpactDto, target: 'source' | 'site'): string {
   const subject = target === 'source' ? 'this source' : 'this site';
   if (impact.claims === 0) return `No checked claim rests on ${subject}; later checks use the new level.`;
@@ -180,7 +187,7 @@ export function bestOf(levels: readonly LearningTrustLevel[]): LearningTrustLeve
   );
 }
 
-/** How a claim accepted below primary is shown  "Label"). */
+/** How a claim accepted below primary is shown (§6.1 "Label"). */
 const LABEL_PHRASE: Record<string, string> = {
   practice: 'shown as a practice, per its source',
   attributed: 'shown as attributed to its source',
@@ -208,6 +215,11 @@ const AGAINST: Record<LearningTrustLevel, string> = {
   distrusted: 'distrusted sources',
 };
 
+/**
+ * Verified claims by the best level of their supporting passages (§18.9):
+ * "12 claims verified against primary sources · 7 against established
+ * sources". Claims whose support was not weighed are counted apart.
+ */
 export function verifiedByLevel(claims: LearningClaimEvidenceDto[]): string[] {
   const counts = new Map<LearningTrustLevel, number>();
   let unweighed = 0;

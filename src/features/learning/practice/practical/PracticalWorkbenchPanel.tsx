@@ -150,7 +150,7 @@ export function PracticalWorkbenchPanel({
     return (
       <div
         role="status"
-        className="rounded-2xl border border-border-default bg-surface p-8 text-sm text-text-muted shadow-xs"
+        className="rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted"
       >
         <LoaderCircle className="mr-2 inline animate-spin" size={16} />
         Loading practical workspace…
@@ -158,7 +158,7 @@ export function PracticalWorkbenchPanel({
     );
   if (query.isError || !workspace)
     return (
-      <section className="rounded-2xl border border-danger-muted bg-surface p-6 shadow-xs">
+      <section className="rounded-2xl border border-rose-500/20 bg-surface p-6">
         <h3 className="font-serif text-xl text-text-primary">
           Labs &amp; simulations unavailable
         </h3>
@@ -168,7 +168,7 @@ export function PracticalWorkbenchPanel({
         <button
           type="button"
           onClick={() => void query.refetch()}
-          className="mt-4 rounded-full border border-border-default px-4 py-2 text-sm text-text-secondary hover:border-accent/40"
+          className="mt-4 rounded-full border border-border px-4 py-2 text-sm"
         >
           Retry
         </button>
@@ -216,17 +216,17 @@ export function PracticalWorkbenchPanel({
   const output = selectedRun;
 
   return (
-    <div className="space-y-4" data-testid="practical-workbench-panel">
-      <header className="rounded-xl border border-border-default bg-surface px-5 py-3.5 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-5" data-testid="practical-workbench-panel">
+      <header>
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-accent">
               <Beaker size={14} /> Labs &amp; simulations
             </div>
-            <h2 className="mt-1 font-serif text-xl text-text-primary">
+            <h2 className="mt-1 font-serif text-2xl text-text-primary">
               Work through a real brief
             </h2>
-            <p className="mt-1 max-w-2xl text-xs text-text-secondary">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
               Choose a task, work through the brief, and learn from the results.
             </p>
           </div>
@@ -235,7 +235,7 @@ export function PracticalWorkbenchPanel({
             type="button"
             disabled={lesson?.preparation !== "ready" || generate.isPending}
             onClick={() => setComposerOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-45"
+            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
           >
             <Plus size={14} /> New activity
           </button>
@@ -266,7 +266,7 @@ export function PracticalWorkbenchPanel({
 
         <main className="min-w-0 space-y-4">
           {!activeActivity ? (
-            <section className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-border-default bg-surface p-7 text-center shadow-xs">
+            <section className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-border bg-surface p-7 text-center">
               <div>
                 <CircleHelp className="mx-auto h-7 w-7 text-text-muted" />
                 <h3 className="mt-3 font-serif text-xl text-text-primary">
@@ -302,13 +302,13 @@ export function PracticalWorkbenchPanel({
               {runError && (
                 <p
                   role="alert"
-                  className="rounded-xl border border-danger-muted bg-danger-muted/15 p-4 text-sm text-danger-fg"
+                  className="rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300"
                 >
                   {runError}{" "}
                   <button
                     type="button"
                     onClick={() => void beginRun()}
-                    className="ml-2 font-semibold underline"
+                    className="ml-2 underline"
                   >
                     Retry run
                   </button>
@@ -335,7 +335,7 @@ export function PracticalWorkbenchPanel({
               {cancelRun.error && (
                 <p
                   role="alert"
-                  className="rounded-lg border border-danger-muted bg-danger-muted/15 p-3 text-xs text-danger-fg"
+                  className="rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
                 >
                   {errorText(cancelRun.error)}{" "}
                   <button
@@ -344,7 +344,7 @@ export function PracticalWorkbenchPanel({
                       const request = cancelRequestRef.current;
                       if (request) cancelRun.mutate(request);
                     }}
-                    className="ml-2 font-semibold underline"
+                    className="ml-2 underline"
                   >
                     Retry cancel
                   </button>

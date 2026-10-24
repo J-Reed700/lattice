@@ -172,7 +172,7 @@ export function ActivityComposer({
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="max-h-[90dvh] max-w-xl gap-0 overflow-y-auto rounded-2xl border border-border-default bg-surface p-5 sm:p-6 shadow-xl"
+        className="max-h-[90dvh] max-w-xl gap-0 overflow-y-auto rounded-2xl border border-border bg-surface p-5 sm:p-6"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (!openingSetup.current) returnFocusRef.current?.focus();
@@ -199,7 +199,7 @@ export function ActivityComposer({
             onChange={(event) =>
               setKind(event.target.value as LearningPracticalActivityKind)
             }
-            className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
+            className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
           >
             {kinds.map((entry) => (
               <option key={entry.id} value={entry.id}>
@@ -215,7 +215,7 @@ export function ActivityComposer({
               <select
                 value={runtimeSelection}
                 onChange={(event) => setRuntimeSelection(event.target.value)}
-                className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
+                className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
               >
                 <option value="">{needsExecution ? "Choose a language to run" : "Review this project without running code"}</option>
                 <optgroup label="Ready inside Lattice">
@@ -243,7 +243,7 @@ export function ActivityComposer({
             </button>
             {supportedBuiltins.length === 0 &&
             supportedProfiles.length === 0 ? (
-              <p className="mt-2 rounded-lg bg-surface-sunken p-3 text-[10px] leading-4 text-text-muted">
+              <p className="mt-2 rounded-lg bg-background p-3 text-[10px] leading-4 text-text-muted">
                 No execution environments are ready yet.{" "}
                 <button
                   type="button"
@@ -275,10 +275,10 @@ export function ActivityComposer({
             maxLength={2000}
             rows={3}
             placeholder="What would you like to practice or demonstrate?"
-            className="mt-1.5 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm leading-6 text-text-primary outline-hidden focus:border-accent"
+            className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
           />
         </label>
-        <section className="mt-4 rounded-xl border border-border-default bg-surface-sunken/60 p-4">
+        <section className="mt-4 rounded-xl border border-border bg-background/50 p-4">
           <div className="text-xs font-semibold text-text-primary">
             Help during practice
           </div>
@@ -295,7 +295,7 @@ export function ActivityComposer({
                 type="button"
                 aria-pressed={mode === option}
                 onClick={() => setMode(option)}
-                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-accent-fg" : "border-border-default text-text-secondary hover:border-accent/40"}`}
+                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-accent-fg" : "border-border text-text-secondary"}`}
               >
                 {option}
               </button>
@@ -309,7 +309,7 @@ export function ActivityComposer({
               {["Saved sources", "Tutor", "Notes"].map((aid) => (
                 <label
                   key={aid}
-                  className="inline-flex items-center gap-2 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-secondary"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-secondary"
                 >
                   <input
                     type="checkbox"
@@ -326,7 +326,7 @@ export function ActivityComposer({
         {error && (
           <p
             role="alert"
-            className="mt-3 rounded-lg border border-danger-muted bg-danger-muted/15 p-3 text-xs text-danger-fg"
+            className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700"
           >
             {error}
           </p>

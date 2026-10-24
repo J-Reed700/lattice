@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -43,12 +43,20 @@ export interface CaptureDestination {
 
 export interface UseReferenceInboxResult {
   bookmarks: ConversationMessageBookmarkDto[];
+  /** Message bookmarks and passage references merged, newest first, filtered. */
   filteredItems: InboxItem[];
   selectedItem: InboxItem | null;
   spacesById: Map<string, ConversationSpaceDto>;
   journalsById: Map<string, ConversationJournalDto>;
   capturedIndex: Map<string, CapturedChatReference>;
   isLoading: boolean;
+  /** Saved passages or bookmarks failed to load, so the inbox may be missing items. */
+  listLoadFailed: boolean;
+  isRetryingLoad: boolean;
+  /** Loads whichever list failed again. */
+  retryLoad: () => void;
+  /** `requestedReferenceId` is neither selected nor known to be gone yet. */
+  isRequestPending: boolean;
   query: string;
   setQuery: (value: string) => void;
   originFilter: OriginFilter;
@@ -78,6 +86,13 @@ export interface UseReferenceInboxResult {
   getPayload: (bookmark: ConversationMessageBookmarkDto) => Promise<BookmarkPayload>;
 }
 
+/**
+ * Owns the data-loading lifecycle and state orchestration for the
+ * ReferenceInbox surface. Wraps listMessageBookmarks + listWorkspaceNotes +
+ * listConversationSpaces + listJournals, payload resolution caching,
+ * annotation save / capture / remove actions, and filter/search derivations.
+ * Spec §10.
+ */
 export function useReferenceInbox(options: {
   requestedReferenceId: string | null;
 }): UseReferenceInboxResult {
@@ -108,7 +123,19 @@ export function useReferenceInbox(options: {
   const journalsById = useMemo(() => new Map(journalsQuery.journals.map(journal => [journal.id, journal])), [journalsQuery.journals]);
   const capturedIndex = useMemo(() => capturesQuery.data ?? new Map<string, CapturedChatReference>(), [capturesQuery.data]);
   const isLoading = bookmarksQuery.isPending || spacesQuery.isPending || journalsQuery.isPending || capturesQuery.isPending || passagesQuery.isPending;
-  const loadError = bookmarksQuery.error ?? spacesQuery.error ?? journalsQuery.error ?? capturesQuery.error;
+  const loadError = bookmarksQuery.error ?? passagesQuery.error ?? spacesQuery.error ?? journalsQuery.error ?? capturesQuery.error;
+  // Both lists have answered, so a reference missing from them does not exist.
+  const listsLoaded = bookmarksQuery.isSuccess && passagesQuery.isSuccess;
+  // The inbox merges two lists; either one failing leaves it incomplete, even
+  // when the other has items to show.
+  const { isError: bookmarksFailed, refetch: refetchBookmarks } = bookmarksQuery;
+  const { isError: passagesFailed, refetch: refetchPassages } = passagesQuery;
+  const listLoadFailed = bookmarksFailed || passagesFailed;
+  const isRetryingLoad = (bookmarksFailed && bookmarksQuery.isFetching) || (passagesFailed && passagesQuery.isFetching);
+  const retryLoad = useCallback(() => {
+    if (bookmarksFailed) void refetchBookmarks();
+    if (passagesFailed) void refetchPassages();
+  }, [bookmarksFailed, passagesFailed, refetchBookmarks, refetchPassages]);
   useEffect(() => {
     if (loadError) toast.error('Failed to load references', { message: loadError.message });
   }, [loadError]);
@@ -163,21 +190,35 @@ export function useReferenceInbox(options: {
     [capturedIndex, items, journalsById, normalizedQuery, originFilter, statusChip],
   );
 
-  // Apply requested referenceId from URL once on arrival to avoid selection feedback loops.
-  const appliedRequestRef = useRef<string | null>(null);
+  // The URL is a follower, not a second source of truth. `ReferenceInbox`
+  // mirrors `selectedId` into `?referenceId=`, so if this effect kept forcing
+  // the URL's value back onto the selection the two would trade places forever:
+  // click B → URL still says A → selection reverts to A while the URL becomes B
+  // → selection becomes B while the URL reverts to A → repeat, pinning the CPU.
+  // A requested id is therefore applied once, when it arrives; after that the
+  // user's clicks own the selection.
+  const [appliedRequestId, setAppliedRequestId] = useState<string | null>(null);
+  // Until it is opened or known to be gone, the URL must keep naming it.
+  const isRequestPending = requestedReferenceId !== null && requestedReferenceId !== appliedRequestId;
 
+  // Selection reconciliation: respect a newly requested reference id, fall back
+  // to the first item.
   useEffect(() => {
-    if (filteredItems.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
-      return;
-    }
-    if (requestedReferenceId && requestedReferenceId !== appliedRequestRef.current) {
+    if (isRequestPending) {
       const match = filteredItems.find((item) => item.id === requestedReferenceId);
       if (match) {
-        appliedRequestRef.current = requestedReferenceId;
+        setAppliedRequestId(requestedReferenceId);
         if (selectedId !== match.id) setSelectedId(match.id);
         return;
       }
+      // It may be in the list that has not answered yet. Falling back now
+      // would open a different reference, and the URL would then lose the link.
+      if (!listsLoaded) return;
+      setAppliedRequestId(requestedReferenceId);
+    }
+    if (filteredItems.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
     }
     const stillValid = selectedId
       ? filteredItems.some((item) => item.id === selectedId)
@@ -185,7 +226,7 @@ export function useReferenceInbox(options: {
     if (!stillValid) {
       setSelectedId(filteredItems[0]?.id ?? null);
     }
-  }, [filteredItems, requestedReferenceId, selectedId]);
+  }, [filteredItems, isRequestPending, listsLoaded, requestedReferenceId, selectedId]);
 
   const selectedItem = useMemo(
     () => filteredItems.find((item) => item.id === selectedId) ?? null,
@@ -338,6 +379,10 @@ export function useReferenceInbox(options: {
     journalsById,
     capturedIndex,
     isLoading,
+    listLoadFailed,
+    isRetryingLoad,
+    retryLoad,
+    isRequestPending,
     query,
     setQuery,
     originFilter,

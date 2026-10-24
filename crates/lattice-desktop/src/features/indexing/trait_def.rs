@@ -8,6 +8,15 @@ use std::path::Path;
 #[async_trait]
 pub trait IndexStorageTrait: Send + Sync {
     /// Store a document with text chunks and embeddings.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the document
+    /// * `mime_type` - MIME type of the document
+    /// * `chunks` - Text chunks
+    /// * `embeddings` - Vector embeddings for each chunk
+    ///
+    /// # Returns
+    /// Document ID
     async fn store_document(
         &self,
         path: &Path,

@@ -177,7 +177,6 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::InvalidState("missing lesson".into()))?;
     assert_eq!(lesson.blocks.len(), 8);
-    assert_eq!(lesson.questions.len(), 6);
     assert!(lesson
         .blocks
         .iter()
@@ -275,37 +274,15 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .accept_card_draft(&prepared.summary.id, &draft_id)
         .await?
         .is_empty());
-    let module_id = prepared
-        .modules
-        .first()
-        .ok_or_else(|| AppError::InvalidState("missing module".into()))?
-        .id
-        .clone();
-    let graded = service::submit(
-        &repo,
-        SubmitLearningAttemptRequestDto {
-            attempt_id: uuid::Uuid::new_v4().to_string(),
-            program_id: prepared.summary.id.clone(),
-            expected_revision: prepared.summary.revision,
-            module_id,
-            lesson_id: Some(lesson_id.clone()),
-            kind: LearningAssessmentKind::Quiz,
-            answers: lesson
-                .questions
-                .iter()
-                .filter(|question| question.kind == LearningAssessmentKind::Quiz)
-                .map(|question| LearningAnswerDto {
-                    question_id: question.id.clone(),
-                    selected_index: 0,
-                })
-                .collect(),
-        },
+    // The lesson's own reviewed questions joined its quiz bank.
+    let banked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson'",
     )
-    .await?;
-    assert_eq!(
-        graded.attempts.first().map(|attempt| attempt.correct),
-        Some(2)
-    );
+    .bind(&lesson_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| AppError::Database(error.to_string()))?;
+    assert!(banked > 0);
     Ok(())
 }
 
@@ -916,105 +893,42 @@ async fn a_lesson_that_cannot_be_saved_is_refused_before_persistence() -> Result
 }
 
 #[tokio::test]
-async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Result<()> {
-    use crate::features::learning::{
-        assessment_engine::LearningBlueprintRequirement,
-        assessment_repository::LearningAssessmentRepository,
+async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> Result<()> {
+    use crate::features::learning::assessment_engine::{
+        LearningBlueprintRequirement, LearningItemFormat,
     };
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
-    let draft = service::generate(
-        &repo,
-        &drafts,
-        &outline(4, 3),
-        request(LearningCourseDepth::Course),
-        vec![],
-    )
-    .await?;
-    service::accept(
-        &repo,
-        &drafts,
-        AcceptLearningProgramRequestDto {
-            program_id: draft.summary.id.clone(),
-            expected_revision: draft.summary.revision,
-            title: "Experiments".into(),
-        },
-    )
-    .await?;
-    let assessments = LearningAssessmentRepository::new(pool);
-    let workspace = assessments.workspace(&draft.summary.id).await?;
-    let outcome = workspace
-        .outcomes
-        .first()
-        .ok_or_else(|| AppError::InvalidState("missing outcome".into()))?;
-    let request = CreateLearningAssessmentBlueprintRequestDto {
-        operation_id: uuid::Uuid::new_v4().to_string(),
-        program_id: draft.summary.id.clone(),
-        blueprint_id: uuid::Uuid::new_v4().to_string(),
-        revision: 1,
-        predecessor_revision: None,
-        purpose: LearningAssessmentPurpose::ModuleTest,
-        title: "Experiment checkpoint".into(),
-        instructions: "Explain your experimental design and justify the comparison.".into(),
-        expected_minutes: 30,
-        allowed_aids: vec![],
-        passing_score: 0.7,
-        feedback_timing: LearningFeedbackTiming::AfterSubmission,
-        rubric: vec![LearningRubricCriterion {
-            id: uuid::Uuid::new_v4().to_string(),
-            title: "Reasoning".into(),
-            description: "Justify the design decisions and state limitations.".into(),
-            max_points: 4,
-        }],
-        source_version_ids: vec![],
-        requirements: vec![LearningBlueprintRequirement {
-            outcome_id: outcome.id.clone(),
+    use crate::features::learning::assessment_generation::{
+        author_items, AuthoringNeed, MaterialPassage,
+    };
+    let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
+    let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
+    let need = AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::new_v4().to_string(),
             format: LearningItemFormat::Explanation,
             count: 1,
-            difficulty_min: 2,
-            difficulty_max: 3,
+            difficulty_min: 3,
+            difficulty_max: 4,
+        },
+        outcome_title: "Design a fair comparison".into(),
+        outcome_description: "Explain how randomization supports a causal comparison.".into(),
+        lesson_id: None,
+        count: 1,
+        material: vec![MaterialPassage {
+            lesson_title: "Experiments".into(),
+            title: "Randomization".into(),
+            text: passage.into(),
+            source_version_ids: vec![],
         }],
-        change_reason: "Initial checkpoint".into(),
+        existing_prompts: vec![],
     };
-    assert!(assessments
-        .preflight_blueprint(&request, "checkpoint")
-        .await?
-        .is_none());
-    let model = Model(json!({"items":[{"requirementIndex":0,"rubric":task_rubric(),"prompt":"Explain how you would design a randomized comparison and identify its limitations.","explanation":"The response should define the comparison, measurement, assumptions, and limitations.","options":[],"answerIndex":0,"acceptedAnswers":[],"orderedValues":[],"sourceIndex":null,"quote":""}]}).to_string());
-    let candidates = crate::features::learning::assessment_generation::generate(
-        &model,
-        &request,
-        &workspace.outcomes,
-        &[],
-        &[],
-    )
-    .await?;
-    assert!(candidates
-        .iter()
-        .all(|candidate| candidate.source_version_ids.is_empty()));
-    let stored = assessments
-        .create_blueprint(&request, &candidates, "fixture", "checkpoint")
-        .await?;
-    assert_eq!(stored.blueprints.len(), 1);
-    assert!(assessments
-        .preflight_blueprint(&request, "checkpoint")
-        .await?
-        .is_some());
-    let form = assessments
-        .start_form(
-            &StartLearningAssessmentFormRequestDto {
-                operation_id: uuid::Uuid::new_v4().to_string(),
-                form_id: uuid::Uuid::new_v4().to_string(),
-                program_id: draft.summary.id.clone(),
-                blueprint_id: request.blueprint_id.clone(),
-                blueprint_revision: 1,
-                retake_of_form_id: None,
-            },
-            "start-checkpoint",
-        )
-        .await?;
-    assert_eq!(form.items.len(), 1);
+    let authored = author_items(&model, &need).await?;
+    assert_eq!(authored.items.len(), 1, "{:?}", authored.dropped);
+    assert!(authored.items[0].candidate.source_version_ids.is_empty());
+    assert_eq!(
+        authored.items[0].source_quote,
+        "assigns units to conditions by chance"
+    );
     Ok(())
 }
 

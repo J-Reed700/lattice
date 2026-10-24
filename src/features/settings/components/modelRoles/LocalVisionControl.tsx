@@ -1,3 +1,12 @@
+/**
+ * Vision for a downloaded catalog chat model: its projector, fetched on
+ * request into the model's folder, then the switch that lets the model see.
+ * Drawn only when the catalog gives the model a projector.
+ *
+ * The projector runs through the ordinary download list, so its progress,
+ * pause and failure are the ones every model download shows.
+ */
+
 import { useEffect, useState } from 'react';
 
 import { Eye } from 'lucide-react';

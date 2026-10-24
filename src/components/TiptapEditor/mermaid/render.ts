@@ -43,7 +43,9 @@ function loadLibraries(): Promise<Libraries> {
   return libraries;
 }
 
-// Colours from the theme tokens
+/* ------------------------------------------------------------------ *
+ * Colours from the theme tokens
+ * ------------------------------------------------------------------ */
 
 const HSL_TRIPLE = /^\s*(-?[\d.]+)(?:deg)?\s+([\d.]+)%\s+([\d.]+)%\s*(?:\/\s*([\d.]+)(%?))?\s*$/;
 
@@ -149,7 +151,9 @@ function mermaidConfig(): MermaidConfig {
   };
 }
 
-// Rendering
+/* ------------------------------------------------------------------ *
+ * Rendering
+ * ------------------------------------------------------------------ */
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.name === 'UnknownDiagramError') return 'no diagram type was recognised';

@@ -48,7 +48,7 @@ interface EntryFromConversationProps {
 /**
  * Trailing "From this conversation" region: insights (assistant messages),
  * sources for this entry, and the cross-entry sources expansion.
- * Spec 
+ * Spec §6.
  */
 export function EntryFromConversation({
   entry,

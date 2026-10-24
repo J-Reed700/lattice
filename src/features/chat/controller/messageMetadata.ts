@@ -106,19 +106,33 @@ export const parseVerification = (raw: unknown): MessageVerificationSummary | nu
   return parsed.success ? parsed.data : null;
 };
 
+/** A grounding check that finished after its turn returned. */
 export interface VerificationPatch {
   messageId: string;
   verification: unknown;
   turn?: unknown;
 }
 
+/**
+ * How long a turn keeps listening for its answer's background work: the cited
+ * pages it captures, then the grounding check. The backend sends both even
+ * when they are interrupted; this only stops a listener whose event went
+ * missing. Past it a still-pending badge is shown as interrupted until the
+ * next load reads the persisted result.
+ */
 export const VERIFICATION_WAIT_MS = 5 * 60 * 1000;
 
+/** Cited pages captured after their turn returned. */
 export interface CapturedSourcesPatch {
   messageId: string;
   sources: unknown[];
 }
 
+/**
+ * Write captured pages into a message's sources, as the backend persisted
+ * them. A message that carries its sources directly (the turn's own response)
+ * has them replaced too, since those win over the metadata when drawn.
+ */
 export const applyCapturedSources = (
   messages: ConversationMessage[],
   patch: CapturedSourcesPatch
@@ -141,6 +155,7 @@ export const applyCapturedSources = (
   };
 });
 
+/** Whether a message was persisted with its cited pages still being read. */
 export const isCapturePending = (message: ConversationMessage | undefined): boolean => {
   if (!message?.metadata) return false;
   try {
@@ -151,6 +166,7 @@ export const isCapturePending = (message: ConversationMessage | undefined): bool
   }
 };
 
+/** Write a finished check into a message's metadata, as the backend persisted it. */
 export const applyVerificationPatch = (
   messages: ConversationMessage[],
   patch: VerificationPatch
@@ -169,6 +185,7 @@ export const applyVerificationPatch = (
   return { ...message, metadata: JSON.stringify(metadata) };
 });
 
+/** Every message still waiting on its check is marked as never having got it. */
 export const markVerificationInterrupted = (messages: ConversationMessage[]): ConversationMessage[] =>
   messages.map(message => {
     if (!isVerificationPending(message) || !message.metadata) return message;
@@ -182,6 +199,7 @@ export const markVerificationInterrupted = (messages: ConversationMessage[]): Co
     }
   });
 
+/** Whether a message was persisted with its check still running. */
 export const isVerificationPending = (message: ConversationMessage | undefined): boolean => {
   if (!message?.metadata) return false;
   try {
@@ -192,12 +210,28 @@ export const isVerificationPending = (message: ConversationMessage | undefined):
   }
 };
 
+/**
+ * A persisted retrieval trace, or null.
+ *
+ * Absent means "no trace" — messages written before this feature, and turns
+ * where retrieval never ran, have no key. Never read that as zeros.
+ */
 export const parseRetrievalTrace = (raw: unknown): RetrievalTrace | null => {
   if (!raw || typeof raw !== 'object') return null;
   const parsed = RetrievalTraceSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 };
 
+/**
+ * A persisted turn record, or null.
+ *
+ * Absent for every answer written before the record existed, and for any turn
+ * that recorded nothing. Never read that as a turn that did nothing.
+ */
+/**
+ * The pictures in `metadata.images` or a stream event. One malformed entry is
+ * dropped, not the list: the answer then shows that one as unavailable.
+ */
 export const parseImages = (raw: unknown): ChatImage[] => {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((item) => {
@@ -206,6 +240,7 @@ export const parseImages = (raw: unknown): ChatImage[] => {
   });
 };
 
+/** A picture with a `ref` already present replaces it; a new one is added. */
 export const mergeImages = (existing: readonly ChatImage[] | undefined, incoming: readonly ChatImage[]): ChatImage[] => {
   const merged = [...(existing ?? [])];
   for (const image of incoming) {
@@ -216,6 +251,7 @@ export const mergeImages = (existing: readonly ChatImage[] | undefined, incoming
   return merged;
 };
 
+/** The pictures a message shows: streamed onto it while pending, stored in its metadata after. */
 export const messageImages = (message: DisplayMessage): ChatImage[] => {
   if ('images' in message && message.images) return message.images;
   if (!('metadata' in message) || !message.metadata) return [];
@@ -258,6 +294,13 @@ export const deriveMessageMetadata = (messages: ConversationMessage[]) => {
   return { sources, verification, retrieval, turn };
 };
 
+/**
+ * Merge one step event into a conversation's live list.
+ *
+ * A finish event carries the id of its start, so it replaces that step where it
+ * already is. Appending instead would make a finished step jump to the bottom
+ * of the timeline the moment it completed.
+ */
 export const mergeStep = (existing: TurnStep[] | undefined, step: TurnStep): TurnStep[] => {
   const steps = existing ?? [];
   const index = steps.findIndex(candidate => candidate.id === step.id);

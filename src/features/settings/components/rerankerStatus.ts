@@ -8,6 +8,14 @@ export function formatDownloadSize(bytes: number): string {
     : `${Math.round(megabytes)} MB`;
 }
 
+/**
+ * Say what reranking is actually doing.
+ *
+ * The switch on its own cannot answer this. Reranking needs a cross-encoder
+ * model that is downloaded on demand, and with the model absent the switch
+ * changes nothing — search returns the shortlist its first stage produced.
+ * That silence is what this line exists to break.
+ */
 export function describeReranker(
   status: RerankerStatusDto | undefined,
   downloadError?: Error | null

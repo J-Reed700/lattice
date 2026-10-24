@@ -1,6 +1,6 @@
 {
  "name": "lattice-desktop-path-v1",
- "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have.",
+ "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py. The four rewrite and cross-turn tags were added on 2026-10-19 with the four items that cover them; runs before that date have the first 34 items only, and scripts/shipped_path_stats.py compare pairs runs on the items both have. The long-document tag and its twelve items were added on 2026-10-23 with the per-document cap cases (docs/design/2026-10-23-per-document-cap.md); runs before that date do not have them. Later on 2026-10-23 four long-document asks were rephrased as \"everything the <document> records about <subject>\" (lab-notebook, choir-minutes, conservation-record, observing-log), because their narrowing clause excluded a fact the rubric requires, and chronicle's ISO dates gained their written-out forms as alternates (docs/design/2026-10-23-answer-coverage.md section 7); runs before that are scored against the older wording.",
  "corpus": "evals/retrieval/synthetic-library-v3.json",
  "tags": {
   "multi-hop": "The answer needs facts from two or more documents.",
@@ -19,7 +19,8 @@
   "pronoun-follow-up": "A later turn refers back with a pronoun or 'that'; its search query has to be rewritten with the antecedent, which may sit in an earlier answer rather than an earlier question.",
   "ellipsis-follow-up": "A later turn is a fragment ('And on the edge ring?') that only becomes a question inside the earlier turn's frame.",
   "topic-shift": "A later turn changes subject; carrying the earlier topic into its search query (rewrite drift) retrieves the wrong documents. Some return to the first topic past the intervening one.",
-  "cross-turn-evidence": "A later turn's answer needs facts established in two earlier turns, from different documents, put together."
+  "cross-turn-evidence": "A later turn's answer needs facts established in two earlier turns, from different documents, put together.",
+  "long-document": "One long document holds six facts the answer needs, each in a different part of it, so retrieval has to bring back more than a few passages of the same document."
  },
  "items": [
   {
@@ -1319,6 +1320,531 @@
       ],
       "abstain": false,
       "notes": "Shorter: the current version allows 74 hours, against 47 weeks in version 1.0. An answer that says the deadline is now longer fails."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-household-log",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Go through the Saltings Cottage maintenance log and tell me everything it records about the Peallby stove.",
+     "rubric": {
+      "must_mention": [
+       [
+        "2025-03-19"
+       ],
+       [
+        "36 hours"
+       ],
+       [
+        "41.6 per cent",
+        "41.6%",
+        "41.6 percent"
+       ],
+       [
+        "2026-10-14"
+       ],
+       [
+        "71 weeks"
+       ],
+       [
+        "2030-11-26"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "household-log-long"
+      ],
+      "abstain": false,
+      "notes": "'Saltings Cottage maintenance log' (household-log-long) holds six facts about this, each in a different part of the document, and a full answer states all six. 2025-03-19: the chimney sweep did the flue of the Peallby stove and left the certificate on the dresser. After the reline, the Peallby stove needs 36 hours of slow burning before the door seal stops weeping. Logs for the Peallby stove have to read under 41.6 per cent moisture on the meter, or the glass blackens within a day. The baffle plate in the Peallby stove cracked, and the replacement went in on 2026-10-14. The installer wants the Peallby stove serviced again within 71 weeks, whatever the glass looks like. A new carbon monoxide alarm went up beside the Peallby stove; it expires on 2030-11-26."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-hall-transcript",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "What did Councillor Reallhollow promise at the village hall trustees' open meeting? I want every commitment.",
+     "rubric": {
+      "must_mention": [
+       [
+        "2026-01-15"
+       ],
+       [
+        "82 calendar days",
+        "82 days"
+       ],
+       [
+        "6,497.92",
+        "6497.92"
+       ],
+       [
+        "66.6 per cent",
+        "66.6%",
+        "66.6 percent"
+       ],
+       [
+        "2026-03-18"
+       ],
+       [
+        "58 hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "hall-transcript-long"
+      ],
+      "abstain": false,
+      "notes": "'Village hall trustees, open meeting, full transcript' (hall-transcript-long) holds six facts about this, each in a different part of the document, and a full answer states all six. I will have the roof survey back to the trustees by 2026-01-15, you have my word on that. While the library is shut I'll keep the hall open late on Thursdays, for the next 82 calendar days at least. I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled. Youth groups will keep paying 66.6 per cent of the standard hire rate for as long as I'm on this committee. The ramp at the side door will be finished before 2026-03-18; I'll chase the builder myself. I'll give 58 hours a month to the repair cafe until we find a regular volunteer."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-chronicle",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Pull together everything the Mill Lane chronicle records about Greassby Mill, in order.",
+     "rubric": {
+      "must_mention": [
+       [
+        "1850-11-18",
+        "18 November 1850",
+        "November 1850"
+       ],
+       [
+        "1860-02-24",
+        "24 February 1860",
+        "February 1860"
+       ],
+       [
+        "17.5 per cent",
+        "17.5%",
+        "17.5 percent"
+       ],
+       [
+        "44 weeks"
+       ],
+       [
+        "4,525.32",
+        "4525.32"
+       ],
+       [
+        "1887-12-21",
+        "21 December 1887",
+        "December 1887"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "chronicle-long"
+      ],
+      "abstain": false,
+      "notes": "'Mill Lane chronicle, compiled by the local history group' (chronicle-long) holds six facts about this, each in a different part of the document, and a full answer states all six. 1850-11-18. The wheel at Greassby Mill turned again for the first time since the flood, watched by most of the street. 1860-02-24. Greassby Mill was sold by the estate to the miller's family, and the deed was witnessed at the inn. After the weir upstream was lowered, the leat at Greassby Mill carried only 17.5 per cent of its old flow. Greassby Mill stood idle for 44 weeks while the millstones were re-dressed by a man brought in from the next county. The parish raised £4,525.32 by subscription to repair the roof of Greassby Mill after the gale. 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-lab-notebook",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "List everything the soil lab notebook records about the Throassmere core.",
+     "rubric": {
+      "must_mention": [
+       [
+        "12.4 per cent",
+        "12.4%",
+        "12.4 percent"
+       ],
+       [
+        "0.0127 mm",
+        "0.0127mm"
+       ],
+       [
+        "57.5 per cent",
+        "57.5%",
+        "57.5 percent"
+       ],
+       [
+        "15 hours"
+       ],
+       [
+        "2025-01-10"
+       ],
+       [
+        "0.0581 mm",
+        "0.0581mm"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "lab-notebook-long"
+      ],
+      "abstain": false,
+      "notes": "'Soil laboratory notebook, autumn term' (lab-notebook-long) holds six facts about this, each in a different part of the document, and a full answer states all six. Moisture content of the Throassmere core after oven drying: 12.4 per cent. Median grain size in the lower band of the Throassmere core: 0.0127 mm, so silt rather than fine sand. Organic matter in the Throassmere core by loss on ignition: 57.5 per cent. The Throassmere core needed 15 hours in the oven before its mass stopped changing between weighings. Went back to the site of the Throassmere core on 2025-01-10 to take a second core, labelled with a B suffix. In the hydrometer test the fine fraction of the Throassmere core settled out at 0.0581 mm."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-allotment-agreement",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Under the allotment tenancy agreement, what does the Deidgehollow Allotment Society have to do? List all of its obligations.",
+     "rubric": {
+      "must_mention": [
+       [
+        "49 weeks"
+       ],
+       [
+        "8,585.50",
+        "8585.50"
+       ],
+       [
+        "2033-09-13"
+       ],
+       [
+        "86.4 per cent",
+        "86.4%",
+        "86.4 percent"
+       ],
+       [
+        "69 calendar days",
+        "69 days"
+       ],
+       [
+        "71 hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "allotment-agreement-long"
+      ],
+      "abstain": false,
+      "notes": "'Allotment site tenancy agreement, consolidated text' (allotment-agreement-long) holds six facts about this, each in a different part of the document, and a full answer states all six. The Deidgehollow Allotment Society shall repaint the site gates and the noticeboard at intervals of no more than 49 weeks. The Deidgehollow Allotment Society shall pay the council an annual rent of £8,585.50, due in one sum at the start of the year. The Deidgehollow Allotment Society shall deliver its audited accounts to the council on or before 2033-09-13. The Deidgehollow Allotment Society shall not let more than 86.4 per cent of the plots to members who live outside the parish. The Deidgehollow Allotment Society shall give the council 69 calendar days notice before holding any open day or sale on the site. The Deidgehollow Allotment Society shall drain the water troughs within 71 hours of a frost warning being issued for the district."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-cookbook",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Everything the family cookbook says about the Brearnby starter: each way it is used, and how to look after it.",
+     "rubric": {
+      "must_mention": [
+       [
+        "56.6 per cent",
+        "56.6%",
+        "56.6 percent"
+       ],
+       [
+        "38 hours"
+       ],
+       [
+        "62.3 per cent",
+        "62.3%",
+        "62.3 percent"
+       ],
+       [
+        "28 hours"
+       ],
+       [
+        "1875-06-16"
+       ],
+       [
+        "14 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "cookbook-long"
+      ],
+      "abstain": false,
+      "notes": "'Family cookbook, breads and doughs' (cookbook-long) holds six facts about this, each in a different part of the document, and a full answer states all six. For the rye loaf, feed the Brearnby starter at 56.6 per cent hydration the night before you mix. The Brearnby starter needs 38 hours at room temperature before it is lively enough to lift a seeded dough. In the flatbreads, the Brearnby starter makes up 62.3 per cent of the total flour weight. For the sweet buns, the dough made with the Brearnby starter is retarded in the fridge for 28 hours. The Brearnby starter was split from my great-grandmother's jar on 1875-06-16, and every loaf in this book descends from it. A dried flake of the Brearnby starter keeps for 14 weeks in a sealed jar, so post some to anyone who asks."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-choir-minutes",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "List everything the choir committee minutes record about the Holdmere fund over the year.",
+     "rubric": {
+      "must_mention": [
+       [
+        "5,618.82",
+        "5618.82"
+       ],
+       [
+        "2027-06-19"
+       ],
+       [
+        "65.5 per cent",
+        "65.5%",
+        "65.5 percent"
+       ],
+       [
+        "6,133.78",
+        "6133.78"
+       ],
+       [
+        "55 calendar days",
+        "55 days"
+       ],
+       [
+        "2029-09-22"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "choir-minutes-long"
+      ],
+      "abstain": false,
+      "notes": "'Choir committee minutes, full year' (choir-minutes-long) holds six facts about this, each in a different part of the document, and a full answer states all six. Agreed to release £5,618.82 from the Holdmere fund towards new music stands. The trustees of the Holdmere fund will next report to the committee on 2027-06-19. Resolved that no more than 65.5 per cent of the Holdmere fund may be spent in any one season. The Holdmere fund received a further £6,133.78 from the retiring collection at the summer concert. Applications to the Holdmere fund must be lodged 55 calendar days before the concert they are meant to support. The treasurer closed the old bank account of the Holdmere fund on 2029-09-22 and moved the balance to the building society."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-apiary-log",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "What does the apiary log record about the Slantgate hive across all the inspections?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2028-09-14"
+       ],
+       [
+        "45.3 per cent",
+        "45.3%",
+        "45.3 percent"
+       ],
+       [
+        "67 calendar days",
+        "67 days"
+       ],
+       [
+        "2034-05-20"
+       ],
+       [
+        "42.4 per cent",
+        "42.4%",
+        "42.4 percent"
+       ],
+       [
+        "27 hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "apiary-log-long"
+      ],
+      "abstain": false,
+      "notes": "'Apiary inspection log, home hives' (apiary-log-long) holds six facts about this, each in a different part of the document, and a full answer states all six. Queen seen in the Slantgate hive on 2028-09-14, marked yellow and laying well across five frames. Brood in the Slantgate hive covered 45.3 per cent of the frames checked, all of it capped and even. The Slantgate hive was treated for varroa; the strips stay in for 67 calendar days and then come out without fail. The Slantgate hive swarmed on 2034-05-20; the swarm was taken from the hedge and housed in the spare box. Honey from the supers on the Slantgate hive read 42.4 per cent moisture on the refractometer, dry enough to extract. The clearer board went on the Slantgate hive for 27 hours before the supers were lifted off."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-canal-log",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Everything the cruising log says about the Dreithworth flight, please: each time it comes up.",
+     "rubric": {
+      "must_mention": [
+       [
+        "2026-10-17"
+       ],
+       [
+        "24.5 per cent",
+        "24.5%",
+        "24.5 percent"
+       ],
+       [
+        "41 calendar days",
+        "41 days"
+       ],
+       [
+        "21 calendar days",
+        "21 days"
+       ],
+       [
+        "3,682.13",
+        "3682.13"
+       ],
+       [
+        "2029-11-11"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "canal-log-long"
+      ],
+      "abstain": false,
+      "notes": "'Narrowboat cruising log, summer passage' (canal-log-long) holds six facts about this, each in a different part of the document, and a full answer states all six. Booked passage up the Dreithworth flight for 2026-10-17 with the lock-keeper, who keeps a written list. The top pound of the Dreithworth flight was down to 24.5 per cent of its normal level, so we waited for the keeper to run water down. The passage permit for the Dreithworth flight stays valid for 41 calendar days from the day it is issued. A notice at the bottom lock says the Dreithworth flight closes for 21 calendar days of winter stoppage from the start of November. The passage fee for the Dreithworth flight came to £3,682.13, paid at the hut by the bottom lock. Came back down the Dreithworth flight on 2029-11-11, in steady rain the whole way."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-conservation-record",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "List everything the conservation record book records about the Nouftley tapestry.",
+     "rubric": {
+      "must_mention": [
+       [
+        "2028-07-10"
+       ],
+       [
+        "46.8 per cent",
+        "46.8%",
+        "46.8 percent"
+       ],
+       [
+        "0.0739 mm",
+        "0.0739mm"
+       ],
+       [
+        "13 weeks"
+       ],
+       [
+        "9,523.15",
+        "9523.15"
+       ],
+       [
+        "2034-12-27"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "conservation-record-long"
+      ],
+      "abstain": false,
+      "notes": "'Textile conservation record book' (conservation-record-long) holds six facts about this, each in a different part of the document, and a full answer states all six. The Nouftley tapestry: surface cleaned through nylon net at low suction on 2028-07-10. The Nouftley tapestry: case humidity to be held at 46.8 per cent, with the silica gel changed whenever it drifts. The Nouftley tapestry: the warp threads in the worst area have worn down to 0.0739 mm, so support netting was stitched behind. The Nouftley tapestry: rested flat in the store for 13 weeks after humidification, before it was rehung. The Nouftley tapestry: new linen lining ordered at £9,523.15, with the supplier's quote attached to the file. The Nouftley tapestry: returned to the gallery on 2034-12-27 and hung on the north stair, away from the windows."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-observing-log",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "Summarise everything the observing log records about Comet Dreaspstead.",
+     "rubric": {
+      "must_mention": [
+       [
+        "2027-12-19"
+       ],
+       [
+        "45.5 per cent",
+        "45.5%",
+        "45.5 percent"
+       ],
+       [
+        "61 calendar days",
+        "61 days"
+       ],
+       [
+        "2028-05-14"
+       ],
+       [
+        "36.2 per cent",
+        "36.2%",
+        "36.2 percent"
+       ],
+       [
+        "2031-08-27"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "observing-log-long"
+      ],
+      "abstain": false,
+      "notes": "'Backyard astronomy observing log' (observing-log-long) holds six facts about this, each in a different part of the document, and a full answer states all six. First picked up Comet Dreaspstead in binoculars on 2027-12-19, low in the north-east just before dawn. The moon was 45.5 per cent illuminated the night Comet Dreaspstead showed its tail, and it still washed most of it out. The forecasts give Comet Dreaspstead another 61 calendar days as a binocular object before it fades. Comet Dreaspstead reached perihelion on 2028-05-14, according to the society's circular. At its best the coma of Comet Dreaspstead filled 36.2 per cent of the low-power eyepiece field. Last saw Comet Dreaspstead on 2031-08-27, a faint smudge that only averted vision could hold."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-long-family-history",
+   "tags": [
+    "long-document"
+   ],
+   "turns": [
+    {
+     "ask": "What have the family history notes established about Edith Fleastmere? Give me all the records.",
+     "rubric": {
+      "must_mention": [
+       [
+        "1852-11-24"
+       ],
+       [
+        "1870-12-15"
+       ],
+       [
+        "70 calendar days",
+        "70 days"
+       ],
+       [
+        "4,680.83",
+        "4680.83"
+       ],
+       [
+        "73.8 per cent",
+        "73.8%",
+        "73.8 percent"
+       ],
+       [
+        "1894-01-11"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "family-history-long"
+      ],
+      "abstain": false,
+      "notes": "'Family history research notes' (family-history-long) holds six facts about this, each in a different part of the document, and a full answer states all six. Baptism register: Edith Fleastmere was baptised on 1852-11-24 at the chapel on the hill. Passenger list: Edith Fleastmere sailed on 1870-12-15, travelling alone and listed as a seamstress. Her letters say the crossing took Edith Fleastmere 70 calendar days, most of it below deck. Probate: Edith Fleastmere left £4,680.83, divided equally between her two daughters. The DNA match through the line of Edith Fleastmere shares 73.8 per cent with cousin Ada's sample. Burial: Edith Fleastmere was buried on 1894-01-11, beside her husband in the lower churchyard."
      }
     }
    ]

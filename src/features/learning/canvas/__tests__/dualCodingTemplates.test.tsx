@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -233,8 +233,112 @@ describe('DualCodingToolbar component', () => {
     );
     expect(await screen.findByText('Copied to clipboard')).toBeVisible();
 
+    // Switch back to text tab to cover the text tab switch handler
+    const textTabBtn = screen.getByRole('button', { name: /Lesson Reference Text/ });
+    await user.click(textTabBtn);
+    expect(screen.getByText('Master ATP synthesis mechanisms.')).toBeVisible();
+
     const closeBtn = screen.getByRole('button', { name: 'Close reference drawer' });
     await user.click(closeBtn);
     expect(screen.queryByLabelText('Side-by-Side Lesson Text & Mermaid Preview')).not.toBeInTheDocument();
+  });
+
+  it('renders fallback message when lessonBlocks is empty or omitted', async () => {
+    const user = userEvent.setup();
+    render(
+      <DualCodingToolbar
+        lessonTitle="Isolated Visual Studio"
+        onApplyTemplate={onApplyTemplate}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Side-by-Side Lesson Text & Mermaid Preview/ }));
+    expect(
+      screen.getByText(/No lesson text blocks attached to this canvas/i),
+    ).toBeVisible();
+  });
+
+  it('handles clipboard write failure gracefully when copying Mermaid code', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('Clipboard denied'));
+
+    render(
+      <DualCodingToolbar
+        lessonTitle="Protected Session"
+        lessonBlocks={sampleBlocks}
+        onApplyTemplate={onApplyTemplate}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Side-by-Side Lesson Text & Mermaid Preview/ }));
+    await user.click(screen.getByRole('button', { name: /Mermaid Concept Flowchart Preview/ }));
+
+    const copyBtn = screen.getByRole('button', { name: /Copy Mermaid for Notebook/ });
+    await user.click(copyBtn);
+
+    expect(screen.queryByText('Copied to clipboard')).not.toBeInTheDocument();
+  });
+
+  it('handles timer resets for applied template feedback and copied badge', async () => {
+    vi.useFakeTimers();
+
+    render(
+      <DualCodingToolbar
+        lessonTitle="Timer Test"
+        lessonBlocks={sampleBlocks}
+        onApplyTemplate={onApplyTemplate}
+      />,
+    );
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Compare & Contrast/ }));
+    });
+    expect(screen.getByText(/Applied Compare & Contrast to canvas/)).toBeVisible();
+
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+    expect(screen.queryByText(/Applied Compare & Contrast to canvas/)).not.toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Side-by-Side Lesson Text & Mermaid Preview/ }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Mermaid Concept Flowchart Preview/ }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Copy Mermaid for Notebook/ }));
+    });
+    expect(screen.getByText('Copied to clipboard')).toBeVisible();
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.queryByText('Copied to clipboard')).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('exercises template generation with empty titles, single points, and undefined arguments', () => {
+    const templates: DualCodingTemplateId[] = [
+      'concept_map',
+      'compare_contrast',
+      'process_flow',
+      'visual_analogy',
+    ];
+
+    for (const t of templates) {
+      // Empty title and undefined points
+      const emptyElements = buildDualCodingSceneElements(t, '   ', undefined);
+      expect(emptyElements.length).toBeGreaterThan(0);
+
+      // Single item points
+      const singlePointElements = buildDualCodingSceneElements(t, '', ['Only Single Point']);
+      expect(singlePointElements.length).toBeGreaterThan(0);
+
+      // Points containing whitespace
+      const whitespaceElements = buildDualCodingSceneElements(t, 'Specific Title', ['', '  ', 'Real Concept']);
+      expect(whitespaceElements.length).toBeGreaterThan(0);
+    }
   });
 });

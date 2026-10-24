@@ -108,9 +108,8 @@ impl TextSearchPort for PassageTextSearch {
     }
 
     /// Passages best by `bm25` first. A record's document is its passage's
-    /// document key, which the hybrid search's per-document cap counts by;
-    /// its score is `-bm25` scaled so the best is 1, as the library's text
-    /// search reports it.
+    /// document key; its score is `-bm25` scaled so the best is 1, as the
+    /// library's text search reports it.
     async fn search_scoped(
         &self,
         query: &str,

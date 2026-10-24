@@ -1,3 +1,10 @@
+/**
+ * Extraction API Types
+ *
+ * Type definitions for wikilink parsing and content extraction.
+ * These types match the Rust backend structures from commands/extraction.rs
+ */
+
 export type WikiLink = import('../../lib/bindings').WikiLinkDto;
 
 export type ParsedLinksResponse = import('../../lib/bindings').ParsedLinksResponse;

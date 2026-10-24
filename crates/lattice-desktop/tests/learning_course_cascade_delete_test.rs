@@ -16,6 +16,23 @@ use std::str::FromStr;
 /// Version of the migration that switches the learning delete actions.
 const DELETE_CASCADES_VERSION: i64 = 20_261_016_100_000;
 
+/// Learning tables `20261024120000_quizzes_and_tests` drops, by name.
+const RETIRED_TABLES: [&str; 4] = [
+    "learning_answer_keys",
+    "learning_assessment_blueprint_candidates",
+    "learning_attempts",
+    "learning_questions",
+];
+
+/// The schema a seed writes against: the one just before the delete-cascades
+/// migration (quiz rows as they were stored before the quizzes migration), or
+/// the one every migration leaves.
+#[derive(Clone, Copy)]
+enum Schema {
+    BeforeDeleteCascades,
+    Current,
+}
+
 #[tokio::test]
 async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +57,7 @@ async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
 
     // Seed Course A and Course B
     for course_id in ["course_a", "course_b"] {
-        seed_course(&pool, course_id).await?;
+        seed_course(&pool, course_id, Schema::Current).await?;
     }
 
     // Verify both courses exist
@@ -153,7 +170,7 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     }
 
     for course_id in ["course_a", "course_b"] {
-        seed_course(&pool, course_id).await?;
+        seed_course(&pool, course_id, Schema::BeforeDeleteCascades).await?;
     }
     let before = learning_row_counts(&pool).await?;
     assert_eq!(before["learning_assessment_answer_keys"], 2);
@@ -164,19 +181,57 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     // Apply the rest, including the delete-cascades migration.
     migrator.run(&pool).await?;
 
-    // Later migrations may add learning tables; they add no rows.
+    // Later migrations may add learning tables; they add no rows. The
+    // quizzes migration retires the quick-check tables and the blueprint
+    // candidate list, which this course never used.
     let (after, created): (BTreeMap<_, _>, BTreeMap<_, _>) = learning_row_counts(&pool)
         .await?
         .into_iter()
         .partition(|(table, _)| before.contains_key(table));
+    let (kept, retired): (BTreeMap<_, _>, BTreeMap<_, _>) = before
+        .into_iter()
+        .partition(|(table, _)| after.contains_key(table));
     assert_eq!(
-        before, after,
-        "the migration must not drop or add learning rows"
+        retired.keys().map(String::as_str).collect::<Vec<_>>(),
+        RETIRED_TABLES,
+        "only the quizzes migration's retired tables may go"
+    );
+    assert!(
+        retired.values().all(|rows| *rows == 0),
+        "a retired table held seeded rows: {retired:?}"
+    );
+    assert_eq!(
+        kept, after,
+        "the migrations must not drop or add learning rows"
     );
     assert!(
         created.values().all(|rows| *rows == 0),
         "a table a later migration creates starts empty: {created:?}"
     );
+
+    // The quizzes migration converts the seeded quiz rows in place.
+    for table in [
+        "learning_assessment_blueprint_slots",
+        "learning_assessment_candidates",
+        "learning_assessment_form_items",
+    ] {
+        let formats: Vec<String> = sqlx::query_scalar(&format!("SELECT format FROM \"{table}\";"))
+            .fetch_all(&pool)
+            .await?;
+        assert_eq!(formats, ["single_choice", "single_choice"], "{table}");
+    }
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT key_json FROM learning_assessment_answer_keys ORDER BY candidate_id;",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(keys, [r#"{"kind":"choice","value":0}"#; 2]);
+    let responses: Vec<String> = sqlx::query_scalar(
+        "SELECT selected_indices_json FROM learning_assessment_response_revisions ORDER BY form_id;",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(responses, ["[0]"; 2]);
 
     let fk_status: i64 = sqlx::query_scalar("PRAGMA foreign_keys;")
         .fetch_one(&pool)
@@ -234,7 +289,15 @@ async fn learning_row_counts(
 
 /// Seeds one course with a row in every table whose delete action the
 /// cascade migration changes, plus their child rows.
-async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn seed_course(
+    pool: &SqlitePool,
+    course_id: &str,
+    schema: Schema,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let format = match schema {
+        Schema::BeforeDeleteCascades => "multiple_choice",
+        Schema::Current => "single_choice",
+    };
     sqlx::query(
         "INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) \
          VALUES (?, 'Course', 'Goal', 'active', 1, 'none', 30, 'gpt-4o', 1000);"
@@ -289,10 +352,11 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     // 1. Blueprint slot
     sqlx::query(
         "INSERT INTO learning_assessment_blueprint_slots (blueprint_id, blueprint_revision, ordinal, outcome_id, format, difficulty, difficulty_max, points) \
-         VALUES (?, 1, 0, ?, 'multiple_choice', 1, 2, 5.0);"
+         VALUES (?, 1, 0, ?, ?, 1, 2, 5.0);"
     )
     .bind(&bp_id)
     .bind(&outcome_id)
+    .bind(format)
     .execute(pool)
     .await?;
 
@@ -300,11 +364,12 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     let cand_id = format!("cand_{}", course_id);
     sqlx::query(
         "INSERT INTO learning_assessment_candidates (id, program_id, outcome_id, format, difficulty, prompt, options_json, rubric_json, source_version_ids_json, authored_by, content_sha256, created_at) \
-         VALUES (?, ?, ?, 'multiple_choice', 1, 'Prompt', '[]', '{}', '[]', 'model', ?, 1000);"
+         VALUES (?, ?, ?, ?, 1, 'Prompt', '[]', '{}', '[]', 'model', ?, 1000);"
     )
     .bind(&cand_id)
     .bind(course_id)
     .bind(&outcome_id)
+    .bind(format)
     .bind(format!("sha_{}", course_id))
     .execute(pool)
     .await?;
@@ -334,11 +399,12 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     // 5. Form item
     sqlx::query(
         "INSERT INTO learning_assessment_form_items (form_id, ordinal, candidate_id, outcome_id, format, difficulty, prompt, options_json, rubric_json, points, previously_exposed) \
-         VALUES (?, 0, ?, ?, 'multiple_choice', 1, 'Prompt', '[]', '{}', 1.0, 0);"
+         VALUES (?, 0, ?, ?, ?, 1, 'Prompt', '[]', '{}', 1.0, 0);"
     )
     .bind(&form_id)
     .bind(&cand_id)
     .bind(&outcome_id)
+    .bind(format)
     .execute(pool)
     .await?;
 
@@ -365,10 +431,12 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     .await?;
 
     // 7. Item result
-    sqlx::query(
-        "INSERT INTO learning_assessment_item_results (form_id, item_ordinal, score, correct, grade_status, feedback, criterion_results_json, artifact_quotes_json) \
-         VALUES (?, 0, 1.0, 1, 'deterministic', 'Good', '[]', '[]');"
-    )
+    sqlx::query(match schema {
+        Schema::BeforeDeleteCascades => "INSERT INTO learning_assessment_item_results (form_id, item_ordinal, score, correct, grade_status, feedback, criterion_results_json, artifact_quotes_json) \
+         VALUES (?, 0, 1.0, 1, 'deterministic', 'Good', '[]', '[]');",
+        Schema::Current => "INSERT INTO learning_assessment_item_results (form_id, item_ordinal, score, correct, grade_status, feedback) \
+         VALUES (?, 0, 1.0, 1, 'deterministic', 'Good');",
+    })
     .bind(&form_id)
     .execute(pool)
     .await?;
@@ -422,18 +490,22 @@ async fn seed_course(pool: &SqlitePool, course_id: &str) -> Result<(), Box<dyn s
     .await?;
 
     // Children of the candidate and form-item rows.
-    sqlx::query(
-        "INSERT INTO learning_assessment_answer_keys (candidate_id, selected_index, accepted_answers_json, ordered_values_json, explanation) \
+    sqlx::query(match schema {
+        Schema::BeforeDeleteCascades => "INSERT INTO learning_assessment_answer_keys (candidate_id, selected_index, accepted_answers_json, ordered_values_json, explanation) \
          VALUES (?, 0, '[]', '[]', 'Because');",
-    )
+        Schema::Current => "INSERT INTO learning_assessment_answer_keys (candidate_id, key_json, explanation) \
+         VALUES (?, '{\"kind\":\"choice\",\"value\":0}', 'Because');",
+    })
     .bind(&cand_id)
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "INSERT INTO learning_assessment_response_revisions (form_id, item_ordinal, revision, operation_id, payload_hash, selected_index, ordered_values_json, created_at) \
+    sqlx::query(match schema {
+        Schema::BeforeDeleteCascades => "INSERT INTO learning_assessment_response_revisions (form_id, item_ordinal, revision, operation_id, payload_hash, selected_index, ordered_values_json, created_at) \
          VALUES (?, 0, 1, ?, 'hash', 0, '[]', 1000);",
-    )
+        Schema::Current => "INSERT INTO learning_assessment_response_revisions (form_id, item_ordinal, revision, operation_id, payload_hash, selected_indices_json, ordered_values_json, created_at) \
+         VALUES (?, 0, 1, ?, 'hash', '[0]', '[]', 1000);",
+    })
     .bind(&form_id)
     .bind(format!("resp_{course_id}"))
     .execute(pool)

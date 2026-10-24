@@ -10,7 +10,19 @@ import type { PassageLocator, PassageMatchTier } from '@/types/conversation';
 import './reading.css';
 
 /**
- * Highlights cited passages at block granularity in rendered document content.
+ * Highlights a cited passage inside rendered document content.
+ *
+ * Highlights at **block** granularity — it adds a class to the paragraphs the
+ * passage spans rather than splicing markup into them. Anything finer would be
+ * invasive inside `TiptapViewer`'s ProseMirror DOM and would be
+ * lost on its next `setContent`; a class on an existing element survives
+ * everything short of that, and is idempotent.
+ *
+ * Reports which of three things happened, so the rail can say so:
+ * - `exact` — the chunk text was found.
+ * - `approximate` — it was not, and we scrolled to a position derived from the
+ *   chunk ordinal. The file has probably changed since it was indexed.
+ * - `none` — we have nothing to go on and did not move the viewport.
  */
 
 const BLOCK_SELECTOR =
@@ -24,6 +36,7 @@ interface TextSpan {
   end: number;
 }
 
+/** Build a normalized haystack plus the spans that map back into the DOM. */
 function collectText(container: HTMLElement): { haystack: string; spans: TextSpan[] } {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const spans: TextSpan[] = [];
@@ -50,6 +63,7 @@ function nearestBlock(node: Node, container: HTMLElement): HTMLElement | null {
   return start && container.contains(start) ? start : null;
 }
 
+/** True when the reader has asked the system for less motion. */
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
@@ -65,6 +79,7 @@ function nearestScrollable(element: HTMLElement): HTMLElement | null {
 
 export interface PassageHighlighterProps {
   locator?: PassageLocator | null;
+  /** Reported once per locate attempt so the rail can say what happened. */
   onMatch?: (_tier: PassageMatchTier) => void;
   className?: string;
   children: React.ReactNode;
@@ -97,7 +112,8 @@ export function PassageHighlighter({
     const markedBlocks: HTMLElement[] = [];
     let cancelled = false;
 
-    // Defer to next frame so async viewer content (markdown, syntax highlight) is mounted.
+    // Content arrives asynchronously in every viewer (markdown parse, syntax
+    // highlighting, fetch), so locate after a frame rather than racing it.
     const frame = requestAnimationFrame(() => {
       if (cancelled) return;
 
@@ -150,6 +166,9 @@ export function PassageHighlighter({
         markedBlocks.push(block);
       }
 
+      // Guarded: jsdom (and any non-layout environment) has no scrollIntoView,
+      // and failing to scroll must not lose the highlight. A reader who asked
+      // for less motion still gets taken to the passage, just without the ride.
       range[0]?.scrollIntoView?.({
         block: 'center',
         behavior: prefersReducedMotion() ? 'auto' : 'smooth',
@@ -161,6 +180,7 @@ export function PassageHighlighter({
       cancelled = true;
       cancelAnimationFrame(frame);
       for (const block of markedBlocks) block.classList.remove(BLOCK_CLASS);
+
     };
   }, [locatorText, chunkIndex]);
 

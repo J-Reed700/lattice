@@ -1,3 +1,10 @@
+/**
+ * LocalModelRowSkeleton
+ *
+ * Flat placeholder matching the real {@link LocalModelRow} height so the
+ * list doesn't jump when the data lands. No shimmer, no cascade.
+ */
+
 function Bar({ width, height = 'h-3' }: { width: string; height?: string }) {
   return <div className={`${height} ${width} rounded-sm bg-[hsl(var(--text-tertiary)/0.12)]`} />;
 }

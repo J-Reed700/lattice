@@ -51,7 +51,7 @@ function SavedSourcePicker({ programId, onPick }: { programId: string; onPick: (
 }
 
 /**
- * Add a source : a link, pasted text, a library file or a saved
+ * Add a source (§3.6): a link, pasted text, a library file or a saved
  * source becomes a course source and is checked against the claims in
  * scope, with each stage shown as it happens. Opened on a claim, on a group
  * or on the whole queue; also by a drop or paste anywhere on the screen.
@@ -142,7 +142,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
   ];
 
   return (
-    <section aria-labelledby={`${id}-title`} aria-busy={busy} className="rounded-xl border border-border-default bg-surface p-4 shadow-xs">
+    <section aria-labelledby={`${id}-title`} aria-busy={busy} className="rounded-2xl border border-border bg-surface-raised p-4 shadow-sheet">
       <div className="flex items-start justify-between gap-3">
         <h3 id={`${id}-title`} className="text-sm font-semibold text-text-primary">{title}</h3>
         <button type="button" aria-label="Close" onClick={() => { add.cancel(); onClose(); }} className="rounded-md p-1 text-text-muted hover:text-text-primary"><X size={16} aria-hidden="true" /></button>
@@ -161,13 +161,13 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
           <label htmlFor={`${id}-url`} className="sr-only">Page address</label>
           <input id={`${id}-url`} type="url" inputMode="url" autoFocus value={url} disabled={busy} placeholder="https://"
             onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
-            className="w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-hidden" />
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
         </>}
         {mode === 'paste' && <div className="space-y-2">
           <label htmlFor={`${id}-origin`} className="block text-xs font-medium text-text-secondary">Where it is from</label>
-          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-hidden" />
+          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
           <label htmlFor={`${id}-text`} className="block text-xs font-medium text-text-secondary">Text</label>
-          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-hidden" />
+          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
         </div>}
         {mode === 'file' && (picking
           ? <LearningDocumentPicker selected={documents} onChange={setDocuments} limit={1} />
@@ -185,7 +185,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
         <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress ? progressLine(progress) : 'Starting…'}</p>
-        {checking && <div role="progressbar" aria-label="Claims checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-surface-sunken">
+        {checking && <div role="progressbar" aria-label="Claims checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}
       </div>}

@@ -12,7 +12,17 @@ use std::sync::Arc;
 const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 
 /// Use case for reading file content as bytes.
-/// Reads a file as raw bytes with path confinement and size limits.
+///
+/// This use case:
+/// 1. Validates the file path (security: CWE-22)
+/// 2. Checks file existence
+/// 3. Validates file size (security: prevents DoS)
+/// 4. Reads file content as bytes
+///
+/// # Security
+///
+/// - Path validation prevents directory traversal (CWE-22)
+/// - File size limit prevents resource exhaustion (CWE-770, CWE-400)
 pub struct ReadFileBytesUseCase {
     file_storage: Arc<dyn FileStoragePort>,
     file_access_config: Arc<FileAccessConfig>,
@@ -30,7 +40,22 @@ impl ReadFileBytesUseCase {
         }
     }
 
-    /// Execute the use case to read raw bytes.
+    /// Execute the use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Request containing the file path
+    ///
+    /// # Returns
+    ///
+    /// File content as raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::NotFound` if file does not exist
+    /// - `AppError::InvalidInput` if path is invalid or is a directory
+    /// - `AppError::FileTooLarge` if file exceeds size limit
+    /// - `AppError::Io` if file cannot be read
     pub async fn execute(&self, request: ReadFileBytesRequestDto) -> Result<Vec<u8>> {
         // CRITICAL: Validate path FIRST to prevent directory traversal (CWE-22)
         let validated_path = self

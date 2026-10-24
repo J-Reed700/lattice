@@ -7,7 +7,7 @@ import type { LearningEvidencePassageDto, SourceRefDto } from '@/lib/bindings';
 export type ReaderRequest = { source: SourceRefDto; passage: LearningEvidencePassageDto | null; quote: string | null };
 
 /**
- * "Open the source" : the whole source in the reader, read from the
+ * "Open the source" (§3.4): the whole source in the reader, read from the
  * same version detail the Sources tab uses, scrolled to the supporting
  * sentence, which the reader marks.
  */

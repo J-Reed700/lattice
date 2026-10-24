@@ -35,6 +35,12 @@ TOKEN = re.compile(r"\w+", re.UNICODE)
 # out of the slice.
 EXCLUDED_CATEGORIES = {"same-language", "short CJK query"}
 
+# The per-document cap cases (added to v3 on 2026-10-23) measure how many passages of
+# one document survive, not how a query is phrased, and the slice was written before
+# they existed. Leaving them out keeps the slice's population, and so every length
+# target, exactly as it was.
+EXCLUDED_DIMENSIONS = {"many passages from one document", "repetitive document"}
+
 
 def words(text):
     return len(text.split())
@@ -48,7 +54,8 @@ def load(path):
 
 def eligible(source):
     return [q for q in source["queries"]
-            if any(grade > 0 for grade in q["relevance"].values()) and q["category"] not in EXCLUDED_CATEGORIES]
+            if any(grade > 0 for grade in q["relevance"].values()) and q["category"] not in EXCLUDED_CATEGORIES
+            and not EXCLUDED_DIMENSIONS & set(q.get("dimensions", ()))]
 
 
 def reference_lengths(terse):

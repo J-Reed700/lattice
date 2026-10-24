@@ -1,4 +1,60 @@
-//! Conversation aggregate root and related entities.
+//! # Conversation Aggregate
+//!
+//! Rich domain model for LLM conversations following Domain-Driven Design (DDD) patterns.
+//!
+//! ## Aggregate Root
+//!
+//! [`ConversationAggregate`] is the aggregate root that encapsulates:
+//! - Conversation entity with metadata
+//! - Messages (owned entities)
+//! - Document references (context)
+//!
+//! ## Invariants
+//!
+//! - Conversations must have a title
+//! - Messages maintain chronological order
+//! - Token counts are tracked accurately
+//! - Context window limits are enforced
+//!
+//! ## Context Management
+//!
+//! The aggregate manages three types of context:
+//! 1. **Conversation History**: User and assistant messages
+//! 2. **System Prompt**: Instructions for the LLM
+//! 3. **Document Context**: Relevant articles/chunks from RAG
+//!
+//! ## Usage
+//!
+//! ```rust,no_run
+//! use lattice_core::domain::{ConversationAggregate, MessageRole};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut conversation = ConversationAggregate::new(
+//!     "My Conversation".to_string(),
+//!     Some("You are a helpful assistant.".to_string()),
+//! );
+//!
+//! // Add user message
+//! conversation.add_message(
+//!     MessageRole::User,
+//!     "What is RAG?".to_string(),
+//!     50, // token count
+//! )?;
+//!
+//! // Add assistant response
+//! conversation.add_message(
+//!     MessageRole::Assistant,
+//!     "RAG stands for...".to_string(),
+//!     200,
+//! )?;
+//!
+//! // Check if we need to prune due to token limits
+//! if conversation.total_tokens() > 10000 {
+//!     conversation.prune_to_token_limit(8000)?;
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use super::ChatModelChoice;
 use crate::shared::error::{AppError, Result};
@@ -6,7 +62,23 @@ use crate::shared::types::ConversationId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Conversation aggregate root encapsulating conversation state, messages, and document context.
+/// Conversation aggregate root.
+///
+/// Encapsulates a conversation with its messages and document context.
+/// Enforces business invariants and provides domain operations.
+///
+/// ## Invariants
+///
+/// - Conversations must have a non-empty title
+/// - Model name must be valid
+/// - Messages maintain chronological order
+/// - Token counts are accurate
+///
+/// ## Context Types
+///
+/// 1. **Conversation History**: Messages exchanged between user and assistant
+/// 2. **System Prompt**: Instructions that define assistant behavior
+/// 3. **Document Context**: Retrieved chunks from RAG system
 #[derive(Debug, Clone)]
 pub struct ConversationAggregate {
     conversation: Conversation,
@@ -16,7 +88,17 @@ pub struct ConversationAggregate {
 }
 
 impl ConversationAggregate {
-    /// Create a new conversation. It follows the Settings default model until the chat chooses its own.
+    /// Create a new conversation. It follows the Settings default model until
+    /// the chat chooses its own.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - Human-readable conversation title
+    /// * `system_prompt` - Optional system instructions for the LLM
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the title is empty.
     pub fn new(title: String, system_prompt: Option<String>) -> Result<Self> {
         if title.trim().is_empty() {
             return Err(AppError::InvalidInput(
@@ -42,6 +124,25 @@ impl ConversationAggregate {
     }
 
     /// Reconstruct a conversation aggregate from persistence.
+    ///
+    /// This method is used by the repository layer to reconstruct aggregates from the database.
+    /// Unlike `new()`, this does not validate since data from the database is already trusted.
+    ///
+    /// # Arguments
+    ///
+    /// * `conversation` - The conversation entity from the database
+    /// * `messages` - All messages for this conversation
+    /// * `document_context` - All document references for this conversation
+    ///
+    /// # Usage
+    ///
+    /// This is primarily for repository use:
+    /// ```rust,no_run
+    /// # use lattice_core::domain::{Conversation, ConversationMessage, DocumentReference, ConversationAggregate};
+    /// # fn example(conversation: Conversation, messages: Vec<ConversationMessage>, refs: Vec<DocumentReference>) {
+    /// let aggregate = ConversationAggregate::from_persistence(conversation, messages, refs, None);
+    /// # }
+    /// ```
     pub fn from_persistence(
         conversation: Conversation,
         messages: Vec<ConversationMessage>,
@@ -56,13 +157,38 @@ impl ConversationAggregate {
         }
     }
 
-    /// Add a completed message to the conversation.
+    /// Add a message to the conversation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if content is empty.
+    ///
+    /// # Invariants
+    ///
+    /// - Messages are appended in chronological order
+    /// - Message count and token totals are updated
     pub fn add_message(&mut self, role: MessageRole, content: String, tokens: i64) -> Result<()> {
         self.add_message_with_status(role, content, tokens, "completed".to_string())?;
         Ok(())
     }
 
     /// Add a message with a specific status (for two-phase commit).
+    ///
+    /// # Arguments
+    ///
+    /// * `role` - Message role (User, Assistant, System)
+    /// * `content` - Message content
+    /// * `tokens` - Token count
+    /// * `status` - Message status ('pending', 'completed', 'failed')
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if content is empty.
+    ///
+    /// # Invariants
+    ///
+    /// - Messages are appended in chronological order
+    /// - Message count and token totals are updated
     pub fn add_message_with_status(
         &mut self,
         role: MessageRole,
@@ -97,6 +223,17 @@ impl ConversationAggregate {
     }
 
     /// Update the status of a message.
+    ///
+    /// Used for two-phase commit pattern to update message status after operations complete.
+    ///
+    /// # Arguments
+    ///
+    /// * `message_id` - ID of the message to update
+    /// * `status` - New status ('pending', 'completed', 'failed')
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if message is not found.
     pub fn update_message_status(&mut self, message_id: &str, status: String) -> Result<()> {
         let message = self
             .messages
@@ -111,6 +248,8 @@ impl ConversationAggregate {
     }
 
     /// Add document reference to the conversation context.
+    ///
+    /// This tracks which documents are relevant to this conversation.
     pub fn add_document_reference(
         &mut self,
         document_id: String,
@@ -134,7 +273,20 @@ impl ConversationAggregate {
         }
     }
 
-    /// Prune messages to fit within a token limit, keeping the most recent messages.
+    /// Prune messages to fit within a token limit.
+    ///
+    /// Removes oldest messages (keeping most recent) until total tokens <= max_tokens.
+    /// Always preserves at least the last message to maintain context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if max_tokens is zero or if the last message alone exceeds the limit.
+    ///
+    /// # Invariants
+    ///
+    /// - At least one message is retained (if any exist)
+    /// - Most recent messages are preserved
+    /// - Token count is accurate after pruning
     pub fn prune_to_token_limit(&mut self, max_tokens: i64) -> Result<()> {
         if max_tokens <= 0 {
             return Err(AppError::InvalidInput(

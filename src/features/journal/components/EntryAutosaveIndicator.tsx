@@ -7,7 +7,7 @@ interface EntryAutosaveIndicatorProps {
 
 /**
  * Single quiet word indicating autosave state. No spinner, no icon.
- * Spec 
+ * Spec §5.6.
  */
 export function EntryAutosaveIndicator({
   hasPendingChanges,

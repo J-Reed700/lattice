@@ -1,4 +1,11 @@
+//! # Mention Entity
+//!
 //! Mention entity within the domain layer.
+//!
+//! This is a pure domain entity with NO infrastructure concerns:
+//! - No database IDs (handled by repositories)
+//! - Just the core business data and logic
+//! - Rich behavior for mention management
 
 use chrono::{DateTime, Utc};
 use lattice_core::shared::types::{ChunkId, DocumentId, MentionId};
@@ -50,11 +57,37 @@ impl std::str::FromStr for MentionType {
 /// Mentions capture references to people, organizations, locations, or other
 /// entities mentioned within document chunks.
 ///
+/// ## Pure Domain Model
+///
+/// This entity contains only business logic. Infrastructure concerns like
+/// database persistence and search indexes are handled by the infrastructure layer.
+///
 /// ## Invariants
 ///
 /// - Mention text cannot be empty
 /// - Must be associated with a document and chunk
 /// - Position must be within chunk boundaries
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use lattice_core::domain::entities::mention::{Mention, MentionType};
+/// use lattice_core::shared::types::{DocumentId, ChunkId};
+///
+/// let doc_id = DocumentId::new();
+/// let chunk_id = ChunkId::new();
+/// let mention = Mention::new(
+///     doc_id,
+///     chunk_id,
+///     "John Doe".to_string(),
+///     MentionType::Person,
+///     100,
+///     108,
+/// );
+///
+/// assert_eq!(mention.text(), "John Doe");
+/// assert_eq!(mention.mention_type(), MentionType::Person);
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Mention {
@@ -70,6 +103,32 @@ pub struct Mention {
 
 impl Mention {
     /// Create new mention.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - ID of the document containing the mention
+    /// * `chunk_id` - ID of the chunk containing the mention
+    /// * `text` - The mentioned text (e.g., "John Doe")
+    /// * `mention_type` - Type of mention (Person, Organization, etc.)
+    /// * `position_start` - Start position in the chunk (character offset)
+    /// * `position_end` - End position in the chunk (character offset)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use lattice_core::domain::entities::mention::{Mention, MentionType};
+    /// use lattice_core::shared::types::{DocumentId, ChunkId};
+    ///
+    /// let mention = Mention::new(
+    ///     DocumentId::new(),
+    ///     ChunkId::new(),
+    ///     "@company".to_string(),
+    ///     MentionType::Organization,
+    ///     50,
+    ///     58,
+    /// );
+    /// assert_eq!(mention.length(), 8);
+    /// ```
     pub fn new(
         document_id: DocumentId,
         chunk_id: ChunkId,

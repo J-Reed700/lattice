@@ -5,6 +5,24 @@ import { Calendar, X } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 
+/**
+ * DatePicker
+ *
+ * Purpose: Allow users to select dates with a calendar interface
+ *
+ * Features:
+ * - Calendar popover on click
+ * - Date formatting with date-fns
+ * - Keyboard navigation
+ * - Clear button for resetting selection
+ * - Today button for quick selection
+ * - Min/max date constraints
+ * - Click outside to close
+ *
+ * States: closed, open, selected, disabled
+ * Accessibility: WCAG AA, keyboard navigation, ARIA labeling
+ */
+
 export interface DatePickerProps {
   selected?: Date;
   onSelect: (date: Date | undefined) => void;
@@ -29,6 +47,7 @@ export function DatePicker({
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Close popover when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && event.target instanceof Node && !containerRef.current.contains(event.target)) {
@@ -44,6 +63,7 @@ export function DatePicker({
     }
   }, [isOpen]);
 
+  // Close on Escape key
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -78,6 +98,7 @@ export function DatePicker({
 
   return (
     <div className={`relative inline-block ${className}`} ref={containerRef}>
+      {/* Input trigger */}
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
@@ -137,6 +158,7 @@ export function DatePicker({
         )}
       </button>
 
+      {/* Calendar popover */}
       {isOpen && (
         <div
           className="
@@ -188,6 +210,7 @@ export function DatePicker({
             }}
           />
 
+          {/* Quick action buttons */}
           <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[hsl(var(--border-subtle))]">
             <button
               type="button"

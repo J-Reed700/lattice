@@ -24,7 +24,7 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
       <button
         type="button" id={queueRowId(item.claimId)} data-queue-row="" tabIndex={tabIndex}
         aria-current={active ? 'true' : undefined} onClick={onSelect}
-        className={`row-hover flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-accent-muted/40 font-medium text-text-primary border-l-2 border-accent' : ''}`}
+        className={`row-hover flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-accent/10' : ''}`}
       >
         <span aria-hidden="true" className="mt-0.5 w-3 shrink-0 text-xs leading-5 text-accent">
           {settled ? <Check size={12} className="mt-1 text-success-fg" /> : opened ? '●' : '○'}
@@ -33,14 +33,14 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
           {item.presentation.statement}
           <span className="sr-only">{settled ? ` · ${resolvedChip(item)}` : opened ? '' : ' · not opened yet'}</span>
         </span>
-        <span className="shrink-0 rounded-full border border-border-default px-1.5 text-[10px] leading-4 text-text-muted">{shortPlace(item)}</span>
+        <span className="shrink-0 rounded-full border border-border px-1.5 text-[10px] leading-4 text-text-muted">{shortPlace(item)}</span>
       </button>
     </li>
   );
 }
 
 /**
- * The queue : the waiting claims in groups with counts, the group of
+ * The queue (§3.2): the waiting claims in groups with counts, the group of
  * the claim in focus open, bulk actions on a group's header, the teaching
  * notes last, and the claims resolved this session behind a toggle. Rows are
  * one tab stop; arrows, Home and End move between them.
@@ -111,7 +111,7 @@ export function ClaimQueue({
         <label htmlFor={`${id}-mode`} className="flex items-center gap-2 text-xs text-text-secondary">
           Group by
           <select id={`${id}-mode`} value={mode} onChange={(event) => onModeChange(event.target.value as GroupMode)}
-            className="min-h-8 rounded-md border border-border-default bg-surface px-2 text-xs text-text-primary focus:border-accent focus:outline-hidden">
+            className="min-h-8 rounded-md border border-border bg-surface px-2 text-xs text-text-primary">
             {(Object.keys(GROUP_MODE_LABELS) as GroupMode[]).map((key) => <option key={key} value={key}>{GROUP_MODE_LABELS[key]}</option>)}
           </select>
         </label>
@@ -129,7 +129,7 @@ export function ClaimQueue({
           const open = !collapsed.has(group.key);
           const bodyId = `${id}-${group.key}`;
           return (
-            <section key={group.key} aria-label={`${group.label} · ${claimsCount(group.claims.length)}`} className="rounded-xl border border-border-default bg-surface shadow-2xs">
+            <section key={group.key} aria-label={`${group.label} · ${claimsCount(group.claims.length)}`} className="rounded-xl border border-border bg-surface">
               <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => toggle(group.key)}
                 className="flex w-full items-start gap-2 px-3 py-2.5 text-left">
                 <ChevronRight size={14} aria-hidden="true" className={`mt-0.5 shrink-0 text-text-muted transition-transform ${open ? 'rotate-90' : ''}`} />
@@ -154,9 +154,9 @@ export function ClaimQueue({
           );
         })}
 
-        {teachingWaiting > 0 && <section aria-label="Teaching notes" className="rounded-xl border border-border-default bg-surface shadow-2xs">
+        {teachingWaiting > 0 && <section aria-label="Teaching notes" className="rounded-xl border border-border bg-surface">
           <button type="button" data-queue-row="" tabIndex={-1} aria-current={teachingActive ? 'true' : undefined} onClick={onOpenTeaching}
-            className={`row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${teachingActive ? 'bg-accent-muted/40 font-medium text-text-primary' : ''}`}>
+            className={`row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${teachingActive ? 'bg-accent/10' : ''}`}>
             <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
             <span className="font-medium text-text-primary">Teaching notes</span>
             <span className="text-xs text-text-muted">· {teachingNotesForYou(teachingWaiting)}</span>
@@ -171,7 +171,7 @@ export function ClaimQueue({
             {resolved.map((item) => (
               <li key={item.claimId}>
                 <button type="button" data-queue-row="" tabIndex={-1} id={queueRowId(item.claimId)} aria-current={item.claimId === activeId ? 'true' : undefined} onClick={() => onSelect(item.claimId)}
-                  className={`row-hover flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm ${item.claimId === activeId ? 'bg-accent-muted/40 font-medium text-text-primary' : ''}`}>
+                  className={`row-hover flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm ${item.claimId === activeId ? 'bg-accent/10' : ''}`}>
                   <Check size={12} aria-hidden="true" className="mt-1 shrink-0 text-success-fg" />
                   <span className="min-w-0 flex-1 line-clamp-2 leading-5 text-text-secondary">{item.presentation.statement}</span>
                   <span className="shrink-0 text-[10px] leading-5 text-text-muted">{resolvedChip(item)}</span>

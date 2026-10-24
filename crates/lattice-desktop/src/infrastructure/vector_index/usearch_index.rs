@@ -214,6 +214,10 @@ fn scalar_kind_for(compression: &VectorIndexCompression) -> ScalarKind {
 
 impl USearchVectorIndex {
     /// Create a new uncompressed USearch vector index.
+    ///
+    /// # Arguments
+    /// * `dimension` - Expected embedding dimension (e.g., 768)
+    /// * `index_path` - Optional path for index persistence
     pub fn new(dimension: usize, index_path: Option<PathBuf>) -> Result<Self> {
         Self::with_compression(dimension, index_path, VectorIndexCompression::None)
     }

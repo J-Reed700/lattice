@@ -388,6 +388,53 @@ fn google_sends_the_tool_choice_with_tools() {
         .is_none());
 }
 
+#[test]
+fn each_provider_that_takes_stop_sequences_is_sent_them() {
+    let request = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Read them.".into(),
+        }],
+        stop: vec!["[5]".into(), "\n5.".into()],
+        ..Default::default()
+    };
+    let bare = CompletionRequest {
+        stop: Vec::new(),
+        ..request.clone()
+    };
+    for (provider, field) in [
+        (LLMProvider::Anthropic, "stop_sequences"),
+        (LLMProvider::Google, "stop"),
+    ] {
+        let settings = LLMSettingsDto {
+            provider,
+            model: "model".into(),
+            ..Default::default()
+        };
+        let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
+        assert_eq!(
+            cloud.body(&request, false).unwrap()[field],
+            json!(["[5]", "\n5."]),
+            "{provider:?}"
+        );
+        assert!(
+            cloud.body(&bare, false).unwrap().get(field).is_none(),
+            "{provider:?}"
+        );
+    }
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Openai,
+        model: "gpt-5.1".into(),
+        ..Default::default()
+    };
+    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = openai.body(&request, false).unwrap();
+    assert!(
+        body.get("stop").is_none() && body.get("stop_sequences").is_none(),
+        "the Responses API takes no stop sequences"
+    );
+}
+
 fn picture_request() -> CompletionRequest {
     use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
     CompletionRequest {
@@ -554,4 +601,52 @@ async fn a_streams_own_timings_win_over_the_clock() {
     let timing = response.timing.unwrap();
     assert_eq!(timing.prompt_tokens, 1700);
     assert!((timing.prompt_seconds - 2.0).abs() < 1e-9, "{timing:?}");
+}
+
+/// A provider refuses a prompt and output ceiling that together exceed the
+/// model's window rather than writing less, so each is asked for no more than
+/// the window has left; a ceiling that fits is sent as asked.
+#[test]
+fn each_provider_is_asked_for_no_more_than_the_window_has_left() {
+    for provider in [
+        LLMProvider::Openai,
+        LLMProvider::Anthropic,
+        LLMProvider::Google,
+    ] {
+        let settings = LLMSettingsDto {
+            provider,
+            model: "model".into(),
+            max_tokens: 4_096,
+            context_window: 3_000,
+            ..Default::default()
+        };
+        let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
+        let ceiling = |request: &CompletionRequest| {
+            let body = cloud.body(request, false).unwrap();
+            match provider {
+                LLMProvider::Openai => body["max_output_tokens"].clone(),
+                _ => body["max_tokens"].clone(),
+            }
+        };
+        let long = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "word ".repeat(1_600),
+            }],
+            ..Default::default()
+        };
+        let room = 3_000 - cloud.prompt_tokens(&long);
+        assert!(room < 4_096, "{provider:?}: {room}");
+        assert_eq!(ceiling(&long), json!(room), "{provider:?}");
+
+        let short = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "When did the bridge open?".into(),
+            }],
+            max_output_tokens: Some(512),
+            ..Default::default()
+        };
+        assert_eq!(ceiling(&short), json!(512), "{provider:?}");
+    }
 }

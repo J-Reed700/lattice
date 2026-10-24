@@ -55,7 +55,7 @@ fn parse_sqlite_datetime(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc))
 }
 
-/// Search with recency implementation.
+/// Search with recency implementation for gateway pattern
 #[tracing::instrument(skip(container), fields(query = %options.query))]
 pub async fn search_with_recency_impl(
     container: &Container,

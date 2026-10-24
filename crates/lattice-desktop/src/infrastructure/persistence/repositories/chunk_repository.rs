@@ -62,13 +62,26 @@ pub struct ChunkRepository {
 
 impl ChunkRepository {
     /// Create a new chunk repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
-    /// Find chunks by document ID, ordered by chunk_index ascending.
+    /// Find chunks by document ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    ///
+    /// # Returns
+    ///
+    /// Vector of chunk entities ordered by chunk_index ascending.
     ///
     /// # Errors
+    ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_document(&self, document_id: &str) -> Result<Vec<ChunkEntity>> {
         // SQLite reads a negative LIMIT as no limit.
@@ -134,7 +147,12 @@ impl ChunkRepository {
 
     /// Delete all chunks for a document.
     ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    ///
     /// # Errors
+    ///
     /// - `AppError::Database` if deletion fails
     pub async fn delete_by_document(&self, document_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
@@ -147,7 +165,16 @@ impl ChunkRepository {
 
     /// Count chunks for a document.
     ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    ///
+    /// # Returns
+    ///
+    /// Total count of chunks for the document.
+    ///
     /// # Errors
+    ///
     /// - `AppError::Database` if count query fails
     pub async fn count_by_document(&self, document_id: &str) -> Result<usize> {
         let count: i64 =

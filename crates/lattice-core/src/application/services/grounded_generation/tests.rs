@@ -267,3 +267,120 @@ fn a_long_text_becomes_ordered_passages_without_losing_a_word() {
     assert_eq!(words, 2 + 300 + 1);
     assert_eq!(passages[1].id, "doc:1");
 }
+
+/// Counts exactly at two characters a token, or fails to count, and records
+/// what it was asked to count and what it was sent.
+struct Counting {
+    fails: bool,
+    counted: Mutex<Vec<String>>,
+    sent: Mutex<Vec<CompletionRequest>>,
+}
+
+impl Counting {
+    fn new(fails: bool) -> Self {
+        Self {
+            fails,
+            counted: Mutex::new(Vec::new()),
+            sent: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl LLMPort for Counting {
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+    ) -> crate::shared::error::Result<CompletionResponse> {
+        self.sent.lock().unwrap().push(request.clone());
+        Ok(CompletionResponse::from_text("answer"))
+    }
+    fn model_name(&self) -> &str {
+        "counting"
+    }
+    fn max_context_tokens(&self) -> usize {
+        8192
+    }
+    async fn count_tokens_exact(&self, text: &str) -> crate::shared::error::Result<usize> {
+        if self.fails {
+            return Err(AppError::ServiceNotAvailable("no tokenizer".into()));
+        }
+        self.counted.lock().unwrap().push(text.to_owned());
+        Ok(text.chars().count() / 2)
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+        Ok(true)
+    }
+}
+
+/// What a scheduler hands a tokenizer for `request`: each message's role and
+/// content, joined by newlines.
+fn rendered(request: &CompletionRequest) -> String {
+    request
+        .input
+        .iter()
+        .flat_map(|item| match item {
+            CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn measured_request() -> GroundedRequest {
+    let mut request = GroundedRequest::new("Be exact.", "Fill the row.");
+    request.evidence_heading = "Passages:".into();
+    request.evidence = vec![
+        passage("c1", "[1]", "First passage.", 1.0),
+        passage("c2", "[2]", "Second passage, in C♯ minor.", 0.5),
+    ];
+    request.selection = EvidenceSelection::BestFirst;
+    request.closing = "Answer in JSON.".into();
+    request.history = vec![HistoryItem {
+        role: "assistant".into(),
+        content: "Earlier.".into(),
+    }];
+    request
+}
+
+#[tokio::test]
+async fn a_request_is_measured_as_the_text_it_sends_with_the_templates_framing() {
+    let llm = Counting::new(false);
+    let measured = measure(&llm, &measured_request()).await.unwrap();
+    let output = generate(&llm, measured_request()).await.unwrap();
+
+    let sent = llm.sent.lock().unwrap().first().cloned().unwrap();
+    let text = rendered(&sent);
+    assert_eq!(*llm.counted.lock().unwrap(), vec![text.clone()]);
+    assert!(measured.exact);
+    assert_eq!(
+        measured.prompt_tokens,
+        text.chars().count() / 2
+            + TEMPLATE_TOKENS_PER_MESSAGE * sent.input.len()
+            + TEMPLATE_TOKENS_FOR_ANSWER
+    );
+    assert_eq!(measured.estimated, output.accounting.total_input);
+    let planned = plan(&llm, &measured_request()).unwrap();
+    assert_eq!(measured.allowed, planned.allocation.input_budget);
+    assert!(measured.fits());
+    assert_eq!(measured.over(), 0);
+}
+
+#[tokio::test]
+async fn a_count_that_fails_measures_by_the_estimate_and_is_no_error() {
+    let llm = Counting::new(true);
+    let measured = measure(&llm, &measured_request()).await.unwrap();
+
+    assert!(!measured.exact);
+    assert_eq!(measured.prompt_tokens, measured.estimated);
+    assert_eq!(measured, estimate(&llm, &measured_request()).unwrap());
+    // The planner's refusal is the only error.
+    let crowded = GroundedRequest::new("", "x".repeat(100_000));
+    assert!(matches!(
+        measure(&llm, &crowded).await,
+        Err(GroundedGenerationError::Budget(_))
+    ));
+}

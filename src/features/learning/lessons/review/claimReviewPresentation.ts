@@ -25,8 +25,10 @@ import type {
   VerdictKindDto,
 } from '@/lib/bindings';
 
+/** The job's result reference for lessons held for review (§6.1). */
 export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
 
+/** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
 export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'general' | 'changed' {
   const state = item.state;
   switch (state.state) {
@@ -46,6 +48,7 @@ export function isWaitingForYou(item: ClaimReviewItemDto): boolean {
   return claimFilterOf(item) === 'needs_you';
 }
 
+/** Where a claim sits, in words: "Section 3 · Phase changes", "Question · answer key". */
 export function unitLabel(location: ClaimLocationDto): string {
   const title = location.unitTitle.trim();
   switch (location.unitKind) {
@@ -55,6 +58,8 @@ export function unitLabel(location: ClaimLocationDto): string {
   }
 }
 
+// ── The queue's groups (§3.2) ───────────────────────────────────────────────
+
 export type GroupMode = 'source' | 'section' | 'fix';
 
 export const GROUP_MODE_LABELS: Record<GroupMode, string> = { source: 'Source', section: 'Section', fix: 'What fixes it' };
@@ -62,15 +67,19 @@ export const GROUP_MODE_LABELS: Record<GroupMode, string> = { source: 'Source', 
 export type ClaimGroup = {
   key: string;
   label: string;
+  /** A second line under the label: the source's site and kind, or a count. */
   detail: string | null;
   claims: ClaimReviewItemDto[];
+  /** The source every claim of a source group rests on. */
   source: SourceRefDto | null;
 };
 
+/** Claims grouped by unit, in lesson order (blocks, then questions). */
 export function groupBySection(claims: ClaimReviewItemDto[]): ClaimGroup[] {
   const sections = new Map<string, ClaimGroup & { index: number }>();
   for (const claim of claims) {
     const { unitIndex, unitKind } = claim.location;
+    // A question and its answer key share a unit; the key reads as part of it.
     const key = String(unitIndex);
     const section = sections.get(key) ?? { key, index: unitIndex, label: unitLabel({ ...claim.location, unitKind: unitKind === 'answer_key' ? 'question' : unitKind }), detail: null, claims: [], source: null };
     section.claims.push(claim);
@@ -83,6 +92,10 @@ const supportOf = (item: ClaimReviewItemDto): ClaimSupportDto | null => (item.su
 
 export const NO_SOURCE_GROUP = 'No source states it';
 
+/**
+ * A group per support source, the largest first, titled by the source; the
+ * claims no source states form the last group (§3.2).
+ */
 export function groupBySource(claims: ClaimReviewItemDto[]): ClaimGroup[] {
   const groups = new Map<string, ClaimGroup>();
   const none: ClaimReviewItemDto[] = [];
@@ -102,6 +115,7 @@ export function groupBySource(claims: ClaimReviewItemDto[]): ClaimGroup[] {
   return none.length ? [...ordered, { key: 'source:none', label: NO_SOURCE_GROUP, detail: null, claims: none, source: null }] : ordered;
 }
 
+/** Claims grouped by what fixes them (§4.2). */
 export function groupByFix(claims: ClaimReviewItemDto[]): ClaimGroup[] {
   return FIX_GROUP_ORDER
     .map((fix) => ({ key: `fix:${fix}`, label: FIX_GROUP_LABELS[fix], detail: null, claims: claims.filter((claim) => fixGroupOf(claim) === fix), source: null }))
@@ -114,6 +128,7 @@ export function groupClaims(claims: ClaimReviewItemDto[], mode: GroupMode): Clai
   return groupBySection(claims);
 }
 
+/** By source when two or more waiting claims share a support source, else by section. */
 export function defaultGroupMode(claims: ClaimReviewItemDto[]): GroupMode {
   const seen = new Set<string>();
   for (const claim of claims) {
@@ -127,6 +142,9 @@ export function defaultGroupMode(claims: ClaimReviewItemDto[]): GroupMode {
 
 export const groupCountLabel = (group: ClaimGroup) => claimsCount(group.claims.length);
 
+// ── The evidence excerpt (§3.4) ─────────────────────────────────────────────
+
+/** A UTF-8 byte offset into `text` as a string index. */
 export function byteToIndex(text: string, byte: number): number {
   const encoder = new TextEncoder();
   let bytes = 0;
@@ -139,6 +157,10 @@ export function byteToIndex(text: string, byte: number): number {
   return index;
 }
 
+/**
+ * Sentence bounds as the backend finds them: a sentence ends at a line
+ * break, or at '.', '!' or '?' before whitespace or the end.
+ */
 export function sentenceBounds(text: string): Array<[number, number]> {
   const bounds: Array<[number, number]> = [];
   let start = 0;
@@ -162,6 +184,7 @@ export function sentenceBounds(text: string): Array<[number, number]> {
 
 export type Excerpt = { before: string; quote: string; after: string; clippedStart: boolean; clippedEnd: boolean };
 
+/** The spans of fenced code blocks (``` or ~~~), fences included; an unclosed fence runs to the end. */
 function fencedRanges(text: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
   let open = -1;
@@ -175,6 +198,10 @@ function fencedRanges(text: string): Array<[number, number]> {
   return ranges;
 }
 
+/**
+ * The quoted sentence with up to one sentence of context on each side, from
+ * the passage. Falls back to the quote alone when it is not found there.
+ */
 export function excerptAround(text: string, span: [number, number] | null, quote: string): Excerpt {
   let from = -1;
   let to = -1;
@@ -184,6 +211,8 @@ export function excerptAround(text: string, span: [number, number] | null, quote
     to = from + quote.length;
   }
   if (from < 0) return { before: '', quote, after: '', clippedStart: false, clippedEnd: false };
+  // Context is the neighbouring sentence when it is prose: never code, a fence
+  // or a rule line, which stay behind Full passage.
   const code = fencedRanges(text);
   const prose = ([start, end]: [number, number]) => /\w+\W+\w+/.test(text.slice(start, end)) && !code.some(([open, close]) => start < close && end > open);
   const bounds = sentenceBounds(text);
@@ -202,6 +231,9 @@ export function excerptAround(text: string, span: [number, number] | null, quote
   };
 }
 
+// ── Actions and history ─────────────────────────────────────────────────────
+
+/** Contradicted claims, local or by the Verifier, need a note to accept (D3). */
 export function confirmNeedsNote(item: ClaimReviewItemDto): boolean {
   const kind = item.verdictKind;
   if (!kind) return false;
@@ -231,6 +263,7 @@ const REOPEN_CAUSES: Record<ReopenCauseDto['cause'], string> = {
   trust_changed: 'Reopened: how far a source is trusted changed',
 };
 
+/** A verdict in words, for the history and the checks. */
 function verdictWords(kind: VerdictKindDto): string {
   switch (kind.kind) {
     case 'unsupported': return 'Not stated by the passages compared';
@@ -268,6 +301,9 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
   }
 }
 
+/** A check's verdict in words. A claim the course supports elsewhere than
+ *  its section's citation stands, and its citation was moved to the passage
+ *  found. */
 function checkVerdict(result: CheckResultDto): string {
   switch (result.verdict) {
     case 'supported': return 'Supported';
@@ -276,6 +312,7 @@ function checkVerdict(result: CheckResultDto): string {
   }
 }
 
+/** One history row in words. */
 export function describeEvent(payload: ClaimEventPayloadDto): string {
   switch (payload.kind) {
     case 'extracted': return `Claim found in ${payload.field}: “${payload.statement}”`;
@@ -328,15 +365,25 @@ function side(check: CheckerVerdictDto): CheckerSide {
   };
 }
 
+/** "First check / Independent check" (§14.5), once the Verifier has judged the claim. */
 export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide | null; verifier: CheckerSide } | null {
   if (!item.verifierCheck) return null;
   return { local: item.localCheck ? side(item.localCheck) : null, verifier: side(item.verifierCheck) };
 }
 
+// ── Holds and jobs ──────────────────────────────────────────────────────────
+
+/** The code every Verifier audit stop starts with (`verifier_unset`, `verifier_turned_off`…). */
 export const AUDIT_STOP_PREFIX = 'verifier_';
 
+/** What holds a waiting lesson besides its claims: the audit stop, if any. */
 export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
 
+/**
+ * Why a lesson in Needs review is held. With no claim waiting it is held by
+ * the Verifier audit (its stop reason, or none recorded), unless the user has
+ * resolved everything since the job stopped (`changedSinceStop`, §6.2).
+ */
 export function reviewHold(review: LessonClaimReviewDto, waiting: number): ReviewHold {
   if (waiting > 0) return 'claims';
   if (review.stopReason?.code.startsWith(AUDIT_STOP_PREFIX)) return 'audit_stop';
@@ -345,16 +392,19 @@ export function reviewHold(review: LessonClaimReviewDto, waiting: number): Revie
 
 export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a claim or add a source first.';
 
+/** Lessons a completed job held for review, from its result reference. */
 export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {
   if (job?.status !== 'completed' || !job.resultId?.startsWith(NEEDS_REVIEW_RESULT_PREFIX)) return [];
   return job.resultId.slice(NEEDS_REVIEW_RESULT_PREFIX.length).split(',').filter(Boolean);
 }
 
+/** The latest attempt of each lesson preparation job (a retry supersedes its parent). */
 export function currentPreparationJobs(jobs: LearningGenerationJob[]): LearningGenerationJob[] {
   const superseded = new Set(jobs.map((job) => job.retryOfJobId).filter(Boolean));
   return jobs.filter((job) => job.kind === 'lesson_preparation' && !superseded.has(job.id));
 }
 
+/** The job that holds `lessonId` for review, if its latest attempt does. */
 export function jobHoldingLesson(jobs: LearningGenerationJob[], lessonId: string): LearningGenerationJob | null {
   return currentPreparationJobs(jobs).find((job) => heldLessonIds(job).includes(lessonId)) ?? null;
 }

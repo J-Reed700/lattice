@@ -1,22 +1,46 @@
+/**
+ * Backup and Export API Types
+ *
+ * Types for backup creation, restore, and data export operations.
+ */
+
+/**
+ * Backup file metadata
+ */
 export interface BackupInfo {
+  /** Full path to backup file */
   path: string;
+  /** Backup filename */
   name: string;
+  /** ISO 8601 timestamp of backup creation */
   createdAt: string;
+  /** Backup format version */
   version: string;
+  /** Number of files in backup (reserved, currently 0) */
   fileCount: number;
+  /** Backup file size in bytes */
   size: number;
 }
 
+/**
+ * Export operation result
+ */
 export interface ExportResult {
+  /** Number of files successfully exported */
   filesExported: number;
+  /** Output directory or file path */
   outputPath: string;
+  /** Export format used */
   format: 'markdown' | 'json' | 'csv' | 'html';
 }
 
 /** What `plugin_create_backup` returns. */
 export interface CreateBackupResult {
+  /** Full path to the backup file that was written. */
   backupPath: string;
+  /** Backup file size in bytes. */
   size: number;
+  /** ISO 8601 timestamp of backup creation. */
   createdAt: string;
 }
 
@@ -35,30 +59,42 @@ export interface ExportSummary {
   outputDir: string;
 }
 
-/**
- * Off-device backup (encrypted archive).
+/* ------------------------------------------------------------------ *
+ * Off-device backup (encrypted archive)
  *
- * Mirrors `features/backup/dto.rs` DTOs (camelCase). Declared here rather than
- * pulled from bindings so the UI compiles before the Rust side regenerates.
- */
+ * These mirror the `features/backup/dto.rs` DTOs, which serialise
+ * `rename_all = "camelCase"`. They are declared here rather than pulled from
+ * `lib/bindings.ts` so the UI compiles before the Rust side regenerates the
+ * bindings; the field names below are the contract.
+ * ------------------------------------------------------------------ */
 
+/** Whether an archive file is really on disk or only a cloud placeholder. */
 export type ArchiveAvailability = 'local' | 'placeholder' | 'unknown';
 
+/** One archive run — a file that was written, or the last one that was. */
 export interface ArchiveRun {
+  /** Full path to the `.lattice-backup` file. */
   path: string;
+  /** ISO 8601 timestamp. */
   createdAt: string;
+  /** File size in bytes. */
   size: number;
+  /** How long the run took. */
   durationMs: number;
 }
 
+/** The last archive run that failed. */
 export interface ArchiveError {
+  /** ISO 8601 timestamp. */
   at: string;
   message: string;
 }
 
+/** One archive already sitting in the destination folder. */
 export interface ArchiveFile {
   path: string;
   name: string;
+  /** ISO 8601 timestamp. */
   createdAt: string;
   size: number;
   availability: ArchiveAvailability;
@@ -80,6 +116,7 @@ export interface ArchiveStatus {
   lastError: ArchiveError | null;
   /** Set when the live database itself sits inside a synced folder. */
   dataDirCloudProvider: string | null;
+  /** Newest first. */
   archives: ArchiveFile[];
 }
 
@@ -91,7 +128,9 @@ export interface ArchiveSetup {
   confirmIndices: number[];
 }
 
+/** One "word N was ..." answer in the confirmation step. */
 export interface WordConfirmation {
+  /** Zero-based index into the recovery words. */
   index: number;
   word: string;
 }
@@ -101,6 +140,7 @@ export type RestoreArchiveOutcome = 'restored' | 'cancelled' | 'needs_secret' | 
 /** What `plugin_restore_archive` returns. */
 export interface RestoreArchiveResult {
   outcome: RestoreArchiveOutcome;
+  /** Provider name on `not_hydrated`, explanation otherwise. */
   message: string | null;
   restartRequired: boolean;
   reembedRequired: boolean;

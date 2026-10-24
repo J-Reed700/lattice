@@ -123,11 +123,6 @@ impl LearningCurriculumRepository {
                             item.blocks
                                 .iter()
                                 .flat_map(|block| block.source_ids.clone())
-                                .chain(
-                                    item.questions
-                                        .iter()
-                                        .flat_map(|question| question.source_ids.clone()),
-                                )
                         })
                 })
                 .collect::<std::collections::BTreeSet<_>>()

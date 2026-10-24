@@ -16,7 +16,7 @@ interface EntryActionRailProps {
 /**
  * Foot of the context rail: Synthesize popover on the left, the highlight
  * hint on the right.
- * Spec 
+ * Spec §5.5.
  */
 export function EntryActionRail({
   selectedEntryId,

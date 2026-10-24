@@ -18,6 +18,11 @@ import {
 import { DownloadProgressBar } from './DownloadProgressBar';
 
 
+/**
+ * The subset of `useDownloadActions` a row needs. Passing the actions in
+ * (rather than calling the hook per row) keeps a drawer full of rows from
+ * creating dozens of identical callback sets.
+ */
 export interface DownloadRowActions {
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
@@ -27,9 +32,15 @@ export interface DownloadRowActions {
 }
 
 interface DownloadRowProps {
+  /**
+   * The **store key**, not `download.id`. `useDownloadActions` resolves the
+   * backend id from this key; for grouped model files the two differ
+   * (`<model_id>:<filename>` vs. the backend row id).
+   */
   storeKey: string;
   download: DownloadStatus;
   actions: DownloadRowActions;
+  /** Nested inside an aggregated model group — renders tighter, no title row. */
   nested?: boolean;
 }
 

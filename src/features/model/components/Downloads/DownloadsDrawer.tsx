@@ -20,7 +20,14 @@ import {
 import { DownloadProgressBar } from './DownloadProgressBar';
 import { DownloadRow, type DownloadRowActions } from './DownloadRow';
 
-// Maps each DownloadStatus back to its store key (<model_id>:<filename>).
+/**
+ * Maps each `DownloadStatus` object back to the store key it is filed under.
+ *
+ * Actions must be dispatched with the **store key**, not `download.id` — for a
+ * multi-file model download the key is `<model_id>:<filename>` while `id` may be
+ * the backend row id. `useAggregatedDownloads` passes the same object references
+ * through, so identity lookup is exact.
+ */
 function useStoreKeyLookup(
   downloads: Map<string, DownloadStatus>
 ): (download: DownloadStatus) => string {
@@ -122,6 +129,13 @@ function AggregatedGroup({ group, actions, storeKeyFor }: AggregatedGroupProps) 
   );
 }
 
+/**
+ * Slide-over panel listing every download the backend knows about.
+ *
+ * Reads only from `useDownloadStore`; the single IPC subscription lives in
+ * `useDownloadsListener`, mounted once at the App level. Mounting this component
+ * more than once is therefore safe — it adds no listeners.
+ */
 export function DownloadsDrawer() {
   const {
     isDrawerOpen: isOpen,

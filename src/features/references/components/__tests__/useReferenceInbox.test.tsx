@@ -221,3 +221,109 @@ describe('useReferenceInbox selected reference content', () => {
     expect(result.current.resolutionFailed).toBe(false);
   });
 });
+
+/** A reply the test sends when it chooses, so the two lists can arrive in either order. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+const bookmarksReply = { ok: true, data: { bookmarks: [bookmark({ id: 'bm_chat' })] } };
+const passagesReply = {
+  ok: true,
+  data: [passage({ id: 'pref_1', createdAt: '2026-09-07T10:00:00.000Z' })],
+};
+
+function mountRequested(requestedReferenceId: string) {
+  return renderHook(() => useReferenceInbox({ requestedReferenceId }), { wrapper });
+}
+
+/** Lets effects queued by the last render run before asserting what they did. */
+const settle = () => act(async () => {});
+
+describe('useReferenceInbox requested reference', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listWorkspaceNotes.mockResolvedValue({ ok: true, data: { notes: [] } });
+    listConversationSpaces.mockResolvedValue({ ok: true, data: [] });
+    listJournals.mockResolvedValue({ ok: true, data: [] });
+    getConversationMessages.mockResolvedValue({ ok: false, error: 'not used' });
+  });
+
+  it('keeps a linked bookmark selected while saved passages arrive first', async () => {
+    const bookmarks = deferred<typeof bookmarksReply>();
+    listMessageBookmarks.mockReturnValue(bookmarks.promise);
+    listPassageReferences.mockResolvedValue(passagesReply);
+    const { result } = mountRequested('bm_chat');
+
+    await waitFor(() => expect(result.current.filteredItems.map((item) => item.id)).toEqual(['pref_1']));
+    await settle();
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.isRequestPending).toBe(true);
+
+    await act(async () => bookmarks.resolve(bookmarksReply));
+    await waitFor(() => expect(result.current.selectedId).toBe('bm_chat'));
+    expect(result.current.isRequestPending).toBe(false);
+  });
+
+  it('keeps a linked passage selected while bookmarks arrive first', async () => {
+    const passages = deferred<typeof passagesReply>();
+    listMessageBookmarks.mockResolvedValue(bookmarksReply);
+    listPassageReferences.mockReturnValue(passages.promise);
+    const { result } = mountRequested('pref_1');
+
+    await waitFor(() => expect(result.current.filteredItems.map((item) => item.id)).toEqual(['bm_chat']));
+    await settle();
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.isRequestPending).toBe(true);
+
+    await act(async () => passages.resolve(passagesReply));
+    await waitFor(() => expect(result.current.selectedId).toBe('pref_1'));
+    expect(result.current.isRequestPending).toBe(false);
+  });
+
+  it('falls back to the newest reference only once both lists have loaded without the link', async () => {
+    listMessageBookmarks.mockResolvedValue(bookmarksReply);
+    listPassageReferences.mockResolvedValue(passagesReply);
+    const { result } = mountRequested('bm_deleted');
+
+    await waitFor(() => expect(result.current.selectedId).toBe('pref_1'));
+    expect(result.current.isRequestPending).toBe(false);
+  });
+
+  it('reports saved passages that failed beside loaded bookmarks, keeps a passage link waiting, and retries', async () => {
+    listMessageBookmarks.mockResolvedValue(bookmarksReply);
+    listPassageReferences.mockResolvedValueOnce({ ok: false, error: 'The reference store is locked.' });
+    const { result } = mountRequested('pref_1');
+
+    await waitFor(() => expect(result.current.listLoadFailed).toBe(true));
+    await settle();
+    expect(result.current.filteredItems.map((item) => item.id)).toEqual(['bm_chat']);
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.isRequestPending).toBe(true);
+
+    listPassageReferences.mockResolvedValue(passagesReply);
+    act(() => result.current.retryLoad());
+    await waitFor(() => expect(result.current.selectedId).toBe('pref_1'));
+    expect(result.current.listLoadFailed).toBe(false);
+    expect(listMessageBookmarks).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports bookmarks that failed beside loaded passages, and retries only them', async () => {
+    listMessageBookmarks.mockResolvedValueOnce({ ok: false, error: 'Database busy.' });
+    listPassageReferences.mockResolvedValue(passagesReply);
+    const { result } = renderHook(() => useReferenceInbox({ requestedReferenceId: null }), { wrapper });
+
+    await waitFor(() => expect(result.current.listLoadFailed).toBe(true));
+    expect(result.current.filteredItems.map((item) => item.id)).toEqual(['pref_1']);
+
+    listMessageBookmarks.mockResolvedValue(bookmarksReply);
+    act(() => result.current.retryLoad());
+    await waitFor(() => expect(result.current.listLoadFailed).toBe(false));
+    expect(result.current.filteredItems.map((item) => item.id)).toEqual(['pref_1', 'bm_chat']);
+    expect(listPassageReferences).toHaveBeenCalledTimes(1);
+  });
+});

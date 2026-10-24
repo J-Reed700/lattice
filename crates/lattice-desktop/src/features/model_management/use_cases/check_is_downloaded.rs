@@ -17,6 +17,14 @@ impl CheckIsDownloadedUseCase {
     }
 
     /// Execute the use case
+    ///
+    /// # Arguments
+    ///
+    /// * `model_id` - The model identifier to check
+    ///
+    /// # Returns
+    ///
+    /// true if model is downloaded, false otherwise
     pub async fn execute(&self, model_id: &str) -> Result<bool> {
         self.repository.is_downloaded(model_id).await
     }

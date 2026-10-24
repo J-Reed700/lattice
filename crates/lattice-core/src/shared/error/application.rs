@@ -1,30 +1,157 @@
-//! Application errors for use cases, DTOs, and orchestration logic.
+//! # Application Errors
+//!
+//! Application-level errors for use cases, DTOs, and orchestration logic.
+//!
+//! ## Design Principles
+//!
+//! - **Layer Separation**: Application errors wrap domain errors
+//! - **Use Case Focused**: Errors reflect application workflows
+//! - **IPC Friendly**: All errors serialize for Tauri commands
+//! - **Recoverable**: Clear indication of recoverable vs. permanent failures
+//!
+//! ## Usage
+//!
+//! ```rust,no_run
+//! use lattice_core::shared::error::ApplicationError;
+//! use lattice_core::shared::error::DomainError;
+//!
+//! fn validate_config(data: &str) -> Result<(), ApplicationError> {
+//!     if data.is_empty() {
+//!         return Err(ApplicationError::InvalidConfig {
+//!             details: "Configuration cannot be empty".to_string(),
+//!         });
+//!     }
+//!     Ok(())
+//! }
+//!
+//! fn handle_domain_error() -> Result<(), ApplicationError> {
+//!     let domain_err = DomainError::EntityNotFound {
+//!         entity_type: "Document".to_string(),
+//!         identifier: "doc-123".to_string(),
+//!     };
+//!     Err(domain_err.into()) // Automatic conversion via #[from]
+//! }
+//! ```
 
 use super::DomainError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Application errors for use cases, DTOs, and orchestration logic.
+///
+/// These errors represent failures in application-level operations such as
+/// configuration, serialization, service availability, and use case execution.
 #[derive(Debug, Clone, Error, Serialize, Deserialize, specta::Type)]
 pub enum ApplicationError {
+    /// Domain error (business logic violation).
+    ///
+    /// Wraps domain-level errors from aggregates, entities, and domain services.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// # use lattice_core::shared::error::DomainError;
+    /// let domain_err = DomainError::EntityNotFound {
+    ///     entity_type: "Document".to_string(),
+    ///     identifier: "doc-123".to_string(),
+    /// };
+    /// let app_err = ApplicationError::from(domain_err);
+    /// assert!(app_err.is_domain_error());
+    /// ```
     #[error("Domain error: {0}")]
     Domain(#[from] DomainError),
 
+    /// Invalid configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::InvalidConfig {
+    ///     details: "Missing required field 'api_key'".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("api_key"));
+    /// assert!(error.is_config_error());
+    /// ```
     #[error("Invalid configuration: {details}")]
     InvalidConfig { details: String },
 
+    /// Required service is not available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::ServiceNotAvailable {
+    ///     service: "EmbeddingService".to_string(),
+    ///     reason: "Model not loaded".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("EmbeddingService"));
+    /// assert!(!error.is_config_error());
+    /// ```
     #[error("Service '{service}' not available: {reason}")]
     ServiceNotAvailable { service: String, reason: String },
 
+    /// Processing queue is full (backpressure).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::QueueFull {
+    ///     queue_name: "indexing_queue".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("indexing_queue"));
+    /// assert!(error.is_recoverable());
+    /// ```
     #[error("Queue '{queue_name}' is full")]
     QueueFull { queue_name: String },
 
+    /// Serialization failed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::SerializationFailed {
+    ///     context: "DocumentDTO".to_string(),
+    ///     reason: "Invalid UTF-8 in field 'content'".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("DocumentDTO"));
+    /// ```
     #[error("Serialization failed for {context}: {reason}")]
     SerializationFailed { context: String, reason: String },
 
+    /// Deserialization failed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::DeserializationFailed {
+    ///     context: "SearchRequest".to_string(),
+    ///     reason: "Missing required field 'query'".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("SearchRequest"));
+    /// ```
     #[error("Deserialization failed for {context}: {reason}")]
     DeserializationFailed { context: String, reason: String },
 
+    /// JSON parsing error with location.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::JsonError {
+    ///     message: "Expected comma".to_string(),
+    ///     line: 42,
+    ///     column: 15,
+    /// };
+    /// assert!(error.to_string().contains("line 42"));
+    /// assert!(error.to_string().contains("column 15"));
+    /// ```
     #[error("JSON error at line {line}, column {column}: {message}")]
     JsonError {
         message: String,
@@ -32,23 +159,95 @@ pub enum ApplicationError {
         column: usize,
     },
 
+    /// Generic parsing error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::ParsingError {
+    ///     context: "CSV file".to_string(),
+    ///     reason: "Unexpected end of file".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("CSV file"));
+    /// ```
     #[error("Parsing error in {context}: {reason}")]
     ParsingError { context: String, reason: String },
 
+    /// Use case execution failed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::UseCaseFailed {
+    ///     use_case: "IndexDocumentUseCase".to_string(),
+    ///     reason: "Embedding generation timed out".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("IndexDocumentUseCase"));
+    /// ```
     #[error("Use case '{use_case}' failed: {reason}")]
     UseCaseFailed { use_case: String, reason: String },
 
+    /// DTO mapping failed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let error = ApplicationError::MappingError {
+    ///     context: "Document -> DocumentDTO".to_string(),
+    ///     reason: "Missing required field".to_string(),
+    /// };
+    /// assert!(error.to_string().contains("Document -> DocumentDTO"));
+    /// ```
     #[error("Mapping error in {context}: {reason}")]
     MappingError { context: String, reason: String },
 }
 
 impl ApplicationError {
     /// Returns true if this error wraps a domain error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// # use lattice_core::shared::error::DomainError;
+    /// let domain = ApplicationError::from(DomainError::EntityNotFound {
+    ///     entity_type: "Document".to_string(),
+    ///     identifier: "doc-123".to_string(),
+    /// });
+    /// assert!(domain.is_domain_error());
+    ///
+    /// let config = ApplicationError::InvalidConfig {
+    ///     details: "Invalid".to_string(),
+    /// };
+    /// assert!(!config.is_domain_error());
+    /// ```
     pub fn is_domain_error(&self) -> bool {
         matches!(self, Self::Domain(_))
     }
 
     /// Extracts the wrapped domain error, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// # use lattice_core::shared::error::DomainError;
+    /// let domain_err = DomainError::EntityNotFound {
+    ///     entity_type: "Document".to_string(),
+    ///     identifier: "doc-123".to_string(),
+    /// };
+    /// let app_err = ApplicationError::from(domain_err.clone());
+    ///
+    /// assert_eq!(app_err.domain_error(), Some(&domain_err));
+    ///
+    /// let config_err = ApplicationError::InvalidConfig {
+    ///     details: "Invalid".to_string(),
+    /// };
+    /// assert_eq!(config_err.domain_error(), None);
+    /// ```
     pub fn domain_error(&self) -> Option<&DomainError> {
         match self {
             Self::Domain(err) => Some(err),
@@ -57,6 +256,39 @@ impl ApplicationError {
     }
 
     /// Returns true if this error is potentially recoverable by retrying.
+    ///
+    /// Recoverable errors include:
+    /// - Queue full (backpressure)
+    /// - Service not available (transient)
+    /// - Domain errors marked as retryable (e.g., concurrent modification)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// # use lattice_core::shared::error::DomainError;
+    /// let queue_full = ApplicationError::QueueFull {
+    ///     queue_name: "indexing".to_string(),
+    /// };
+    /// assert!(queue_full.is_recoverable());
+    ///
+    /// let service_down = ApplicationError::ServiceNotAvailable {
+    ///     service: "Embedding".to_string(),
+    ///     reason: "Loading".to_string(),
+    /// };
+    /// assert!(service_down.is_recoverable());
+    ///
+    /// let concurrent = ApplicationError::from(DomainError::ConcurrentModification {
+    ///     resource: "Document".to_string(),
+    ///     details: "Version conflict".to_string(),
+    /// });
+    /// assert!(concurrent.is_recoverable());
+    ///
+    /// let invalid_config = ApplicationError::InvalidConfig {
+    ///     details: "Missing API key".to_string(),
+    /// };
+    /// assert!(!invalid_config.is_recoverable());
+    /// ```
     pub fn is_recoverable(&self) -> bool {
         match self {
             Self::QueueFull { .. } | Self::ServiceNotAvailable { .. } => true,
@@ -66,6 +298,21 @@ impl ApplicationError {
     }
 
     /// Returns true if this is a configuration error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use lattice_core::shared::error::ApplicationError;
+    /// let config = ApplicationError::InvalidConfig {
+    ///     details: "Missing field".to_string(),
+    /// };
+    /// assert!(config.is_config_error());
+    ///
+    /// let queue = ApplicationError::QueueFull {
+    ///     queue_name: "indexing".to_string(),
+    /// };
+    /// assert!(!queue.is_config_error());
+    /// ```
     pub fn is_config_error(&self) -> bool {
         matches!(self, Self::InvalidConfig { .. })
     }

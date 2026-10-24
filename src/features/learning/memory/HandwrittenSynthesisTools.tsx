@@ -211,12 +211,12 @@ export function HandwrittenSynthesisTools({
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       if (stroke.isHighlighter) {
-        ctx.strokeStyle = stroke.color || '#facc15';
-        ctx.lineWidth = stroke.width || 18;
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.width;
         ctx.globalAlpha = 0.35;
       } else {
-        ctx.strokeStyle = stroke.color || '#1e293b';
-        ctx.lineWidth = stroke.width || 3;
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.width;
         ctx.globalAlpha = 1;
       }
 
@@ -304,7 +304,7 @@ export function HandwrittenSynthesisTools({
     currentStroke.current.points.push(pt);
 
     const ctx = canvas.getContext('2d');
-    if (ctx && prev) {
+    if (ctx) {
       ctx.save();
       ctx.beginPath();
       ctx.lineCap = 'round';
@@ -337,7 +337,7 @@ export function HandwrittenSynthesisTools({
       }
     }
 
-    if (currentStroke.current && currentStroke.current.points.length > 0) {
+    if (currentStroke.current) {
       const next = [...strokes, currentStroke.current];
       setStrokes(next);
       saveStrokesToStorage(next);
@@ -346,7 +346,6 @@ export function HandwrittenSynthesisTools({
   };
 
   const handleUndo = () => {
-    if (strokes.length === 0) return;
     const next = strokes.slice(0, -1);
     setStrokes(next);
     saveStrokesToStorage(next);

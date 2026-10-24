@@ -88,11 +88,10 @@ test('Lesson preparation explains verification and research across navigation an
   await page.goto('/studio');
   await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
   await page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { program: { modules: Array<{ lessons: Array<{ title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> }; planWorkspace: { programId: string; programRevision: number; jobs: unknown[] } } }).__LATTICE_LEARNING_STATE__;
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { program: { modules: Array<{ lessons: Array<{ title: string; preparation: string; blocks: unknown[] }> }> }; planWorkspace: { programId: string; programRevision: number; jobs: unknown[] } } }).__LATTICE_LEARNING_STATE__;
     const lesson = state.program.modules[0].lessons[0];
     lesson.preparation = 'outline';
     lesson.blocks = [];
-    lesson.questions = [];
     state.planWorkspace.jobs = [{
       id: 'resumable-job', programId: state.planWorkspace.programId, operationId: 'operation',
       kind: 'lesson_preparation', payloadSha256: 'fixture', baseRevisionNumber: state.planWorkspace.programRevision,
@@ -311,25 +310,24 @@ test("Studio text viewers survive repeated lesson and quiz navigation", async ({
   await page.goto('/studio');
   const program = page.getByRole('button', { name: /Reasoning from field observations/ });
   await expect(program).toBeVisible();
-  await page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: {
-      program: { modules: Array<{ lessons: Array<{ questions: unknown[] }> }> };
-    } }).__LATTICE_LEARNING_STATE__;
-    state.program.modules[0].lessons[0].questions = ['practice', 'quiz'].map((kind) => ({
-      id: `navigation-${kind}`, kind, prompt: `Which detail belongs in the ${kind} record?`,
-      options: ['The observation period', 'An unrelated guess'], sourceIds: [],
-    }));
-  });
   await program.click();
   const tabs = page.getByRole('tablist', { name: 'Program workspace', exact: true });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
-    await tabs.getByRole('tab', { name: 'Practice', exact: true }).click();
-    await page.getByRole('tab', { name: 'Quick checks', exact: true }).click();
-    await page.getByRole('button', { name: 'quiz', exact: true }).click();
-    await expect(page.getByText('Which detail belongs in the quiz record?', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'practice', exact: true }).click();
-    await expect(page.getByText('Which detail belongs in the practice record?', { exact: true })).toBeVisible();
+    await tabs.getByRole('tab', { name: 'Quizzes', exact: true }).click();
+    const question = page.getByText('Which detail makes two counts comparable?', { exact: true });
+    const lessonRow = page.locator('#quiz-lesson-lesson-observation');
+    const resume = lessonRow.getByRole('button', { name: 'Resume', exact: true });
+    const start = lessonRow.getByRole('button', { name: /Start quiz/ });
+    if (await resume.isVisible()) {
+      await resume.click();
+    } else if (await start.isVisible()) {
+      await start.click();
+    } else if (!await question.isVisible()) {
+      const action = lessonRow.getByRole('button', { name: /Start quiz|Resume/ });
+      await action.click();
+    }
+    await expect(question).toBeVisible();
     await tabs.getByRole('tab', { name: 'Lessons', exact: true }).click();
     await expect(page.getByRole('button', { name: 'View lesson evidence' }).first()).toBeVisible();
   }
@@ -2237,39 +2235,15 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   const external = watchExternalHttpRequests(page, origin);
   const workspace = page.getByRole("navigation", { name: "Module workspace" });
 
-  await openStudioSection(page, "Assessments");
-  const assessmentTab = page.getByRole("tablist", { name: "Practice activities" }).getByRole("tab", { name: "Assessments", exact: true });
-  await assessmentTab.focus();
-  await expect(assessmentTab).toBeFocused();
-  await assessmentTab.click();
-  const assessment = page.getByTestId("assessment-evidence-panel");
-  await expect(assessment.getByRole("heading", { name: "A clearer picture than one score" })).toBeVisible();
-  await expect(assessment.getByRole("group", { name: "Assessment purpose" })).toBeVisible();
-  await assessment.getByRole("heading", { name: "Compare observations" }).scrollIntoViewIfNeeded();
-  await assessment.getByRole("button", { name: "Start", exact: true }).click();
-  let assessmentForm = page.getByRole("heading", { name: "Compare observations" }).locator("xpath=ancestor::section[1]");
-  const answer = assessmentForm.getByRole("textbox", { name: "Your answer" });
-  await answer.click();
-  await page.keyboard.type("Record the measure and the observation period.");
-  await expect(assessmentForm.getByText("1 of 1 answered")).toBeVisible();
-  await assessmentForm.getByRole("button", { name: "Pause attempt", exact: true }).click();
-  const pauseDialog = page.getByRole("alertdialog", { name: "Pause this attempt?" });
-  await pauseDialog.getByRole("button", { name: "Pause attempt", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Start fresh attempt", exact: true })).toBeVisible();
-  await assessment.getByRole("button", { name: "Start fresh attempt", exact: true }).click();
-  assessmentForm = page.getByRole("heading", { name: "Compare observations" }).locator("xpath=ancestor::section[1]");
-  const resumedAnswer = assessmentForm.getByRole("textbox", { name: "Your answer" });
-  await resumedAnswer.click();
-  await page.keyboard.type("The measure and its observation period.");
-  await assessmentForm.getByRole("button", { name: "Submit assessment", exact: true }).click();
-  await page.getByRole("alertdialog", { name: "Submit this assessment?" }).getByRole("button", { name: "Submit now", exact: true }).click();
-  await expect(page.getByText("Submitted result is not available yet.", { exact: true })).toBeVisible();
-  const assessmentState = await page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { assessmentWorkspace: { forms: Array<{ status: string; retakeOfFormId: string | null }> }; assessmentForms: Map<string, { items: Array<{ textResponse: string }> }> } }).__LATTICE_LEARNING_STATE__;
-    return { statuses: state.assessmentWorkspace.forms.map((form) => form.status), savedResponses: [...state.assessmentForms.values()].map((form) => form.items[0]?.textResponse) };
-  });
-  expect(assessmentState.statuses).toEqual(["submitted", "interrupted"]);
-  expect(assessmentState.savedResponses).toContain("The measure and its observation period.");
+  await openStudioSection(page, "Quizzes");
+  const quizzes = page.getByTestId("quizzes-overview");
+  await expect(quizzes.getByRole("heading", { name: "Check what stuck, whenever you like" })).toBeVisible();
+  const moduleTest = quizzes.locator("#quiz-module-module-observation");
+  await expect(moduleTest.getByText("Questions not prepared yet", { exact: true })).toBeVisible();
+  await moduleTest.getByRole("button", { name: "Prepare test", exact: true }).click();
+  await expect(moduleTest.getByRole("button", { name: /Start test/ })).toBeVisible();
+  await expect(moduleTest.getByText(/Covers 1 of 1 lesson in this module/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await openStudioSection(page, "Plan");
   const plan = page.getByTestId("learning-plan-panel");

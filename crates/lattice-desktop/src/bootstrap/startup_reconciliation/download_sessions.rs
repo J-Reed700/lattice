@@ -11,6 +11,9 @@ use tracing::{error, info, warn};
 ///
 /// Finds downloads stuck in "Downloading" state (from app crash)
 /// and marks them as Failed to prevent zombie states.
+///
+/// # Returns
+/// Number of sessions reconciled
 pub async fn reconcile_stale_downloads(
     repository: Arc<dyn DownloadRepository>,
     startup_ts: DateTime<Utc>,
@@ -69,6 +72,9 @@ pub async fn reconcile_stale_downloads(
 /// Deletes the session to unblock the user from retrying.
 ///
 /// The database record is removed even if file cleanup fails.
+///
+/// # Returns
+/// Number of orphaned sessions cleaned
 pub async fn reconcile_orphaned_sessions(
     download_repo: Arc<dyn DownloadRepository>,
     model_repo: Arc<DownloadedModelRepository>,

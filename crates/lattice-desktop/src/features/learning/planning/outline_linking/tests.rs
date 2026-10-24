@@ -3,6 +3,7 @@ use super::*;
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningCourseDepth};
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use crate::features::learning::reference_collection::ReferencePassage;
+use lattice_core::shared::error::AppError;
 
 const ASSIGNMENT: &str = "Random assignment limits confounding when treatment groups are compared.";
 const UNCERTAINTY: &str =
@@ -461,7 +462,7 @@ async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
     .await
     .unwrap();
     assert_eq!(log.items, 64);
-    let prompts = llm.prompts.lock().unwrap();
+    let prompts = llm.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 8, "batches of eight, not one call for all");
     for prompt in prompts.iter() {
         let request = payload(prompt);
@@ -470,6 +471,154 @@ async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
         assert!(items
             .iter()
             .all(|i| !i["candidates"].as_array().unwrap().is_empty()));
-        assert!(fits(&llm, &request.to_string(), 200 + 120 * items.len()));
+        assert!(fits(&llm, &request.to_string(), 200 + 120 * items.len()).await);
     }
+}
+
+/// Counts exactly with `exact` where the estimate assumes four characters a
+/// token, as a tokenizer does on reaction notation, and refuses, as the
+/// scheduler's gate does, a prompt its exact count says fills the window.
+struct Notation {
+    inner: ScriptedModel,
+    window: usize,
+    exact: fn(&str) -> usize,
+    refusals: std::sync::atomic::AtomicUsize,
+}
+
+fn notation_model(window: usize, exact: fn(&str) -> usize, picks: Value) -> Notation {
+    use crate::features::learning::lessons::course_generation_tests::LINKS_SENTINEL;
+    Notation {
+        inner: ScriptedModel {
+            outputs: std::sync::Mutex::new(vec![format!("{LINKS_SENTINEL}{picks}}}")].into()),
+            prompts: std::sync::Mutex::new(vec![]),
+        },
+        window,
+        exact,
+        refusals: std::sync::atomic::AtomicUsize::new(0),
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Notation {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        use lattice_core::application::ports::llm_port::CompletionInput;
+        let rendered = request
+            .input
+            .iter()
+            .flat_map(|item| match item {
+                CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt_tokens = (self.exact)(&rendered);
+        if prompt_tokens >= self.window {
+            self.refusals
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Err(AppError::PromptExceedsWindow {
+                prompt_tokens,
+                window: self.window,
+                counted_exactly: true,
+                message: "over the window".into(),
+            });
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "notation"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.chars().count() / 4
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok((self.exact)(text))
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A paragraph of about 1,100 characters of reaction notation, prose by the
+/// quote rules, that the iron-oxide item retrieves.
+fn reaction_notes(i: usize) -> String {
+    (0..11)
+        .map(|k| format!("In trial {i}-{k}, iron oxide reduction Fe₂O₃ + 3CO → 2Fe + 3CO₂ reaches equilibrium when ΔG° falls to zero."))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn reaction_sources() -> Vec<LearningSourceDto> {
+    (0..16)
+        .map(|i| source(&format!("run-{i}"), &format!("Run {i}"), &reaction_notes(i)))
+        .collect()
+}
+
+fn reaction_draft() -> OutlineDraft {
+    draft(json!({"modules":[{"title":"Iron","prerequisiteIndices":[],
+        "summary":{"text":"Explain iron oxide reduction and its equilibrium.","sourceIndex":null,"quote":""},
+        "outcomes":[],"lessons":[]}]}))
+}
+
+#[tokio::test]
+async fn one_item_on_notation_twice_as_dense_as_estimated_is_offered_the_candidates_that_fit() {
+    let sources = reaction_sources();
+    let mut draft = reaction_draft();
+    let llm = notation_model(
+        8_192,
+        |text| text.chars().count() / 2,
+        json!({"/modules/0/summary":"iron oxide reduction"}),
+    );
+    let log = link(
+        &llm,
+        &mut draft,
+        &sources,
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    let prompts = llm.inner.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 1, "one chooser call, never refused");
+    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let listed = payload(&prompts[0])["passages"].as_array().unwrap().len();
+    assert!(listed > 0 && listed < sources.len(), "{listed} passages");
+    assert_eq!(log.linked, 1);
+    assert!(draft.candidate["modules"][0]["summary"]["sourceIndex"].is_u64());
+}
+
+#[tokio::test]
+async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_without_a_call() {
+    let sources = reaction_sources();
+    let mut draft = reaction_draft();
+    let llm = notation_model(
+        4_096,
+        |text| text.chars().count() * 2,
+        json!({"/modules/0/summary":"iron oxide reduction"}),
+    );
+    let log = link(
+        &llm,
+        &mut draft,
+        &sources,
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    assert!(llm.inner.prompts.lock().unwrap().is_empty());
+    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!((log.linked, log.items), (0, 1));
+    assert_eq!(
+        draft.candidate["modules"][0]["summary"]["sourceIndex"],
+        Value::Null
+    );
+    assert!(draft.citation_receipts.is_empty());
 }

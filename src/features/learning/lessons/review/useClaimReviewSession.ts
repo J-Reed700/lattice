@@ -40,7 +40,7 @@ function closestOf(item: ClaimReviewItemDto | undefined, versionId: string, repo
 }
 
 /**
- * The review screen's state : the queue's order and grouping, the claim
+ * The review screen's state (§3): the queue's order and grouping, the claim
  * in focus, the forms and sheet open on it, what the last action announced
  * and how to undo it. Resolving moves to the next claim in queue order.
  */

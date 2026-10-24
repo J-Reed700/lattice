@@ -47,6 +47,18 @@ impl MockMentionRepository {
     }
 
     /// Add a mention to the mock repository
+    ///
+    /// # Example
+    /// ```rust
+    /// let mock = MockMentionRepository::new();
+    /// mock.add_mention(MentionData {
+    ///     id: "mention1".into(),
+    ///     name: "John Doe".into(),
+    ///     mention_type: "person".into(),
+    ///     metadata: None,
+    ///     created_at: "2024-01-01T00:00:00Z".into(),
+    /// });
+    /// ```
     pub fn add_mention(
         &self,
         mention: lattice_core::application::ports::mention_repository_port::MentionData,

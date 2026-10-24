@@ -5,7 +5,7 @@ use super::{normalized_weights, HybridSearchUseCase};
 use crate::features::search::engine::reranker::{RerankResult, Reranker};
 use lattice_core::application::contracts::search::{
     BranchKind, RankedBranch, RerankOptions, SearchModeDto, SearchRequestDto, SearchResponseDto,
-    SearchResultDto, SearchResultRecord, Spread,
+    SearchResultDto, SearchResultRecord,
 };
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use lattice_core::shared::error::{AppError, Result};
@@ -253,7 +253,7 @@ async fn query_time_covers_the_search_itself() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fusion_ranks_across_score_scales_and_caps_each_document() {
+fn fusion_ranks_across_score_scales() {
     let search = use_case(Vec::new(), Vec::new());
     let vector = vec![hit("v", "a", 0.99), hit("shared", "b", 0.4)];
     let lexical = vec![hit("shared", "b", 100.0), hit("k", "c", 90.0)];
@@ -263,35 +263,69 @@ fn fusion_ranks_across_score_scales_and_caps_each_document() {
             branch(BranchKind::Lexical, 0.3, lexical),
         ],
         3,
-        Spread::AcrossDocuments,
     );
     assert_eq!(fused[0].id, "shared");
-
-    let mut crowded: Vec<_> = (0..12).map(|i| hit(&format!("a{i}"), "a", 1.0)).collect();
-    crowded.push(hit("b0", "b", 0.1));
-    let diverse = search.fuse(
-        vec![branch(BranchKind::Fused, 1.0, crowded.clone())],
-        8,
-        Spread::AcrossDocuments,
-    );
-    assert_eq!(diverse[4].id, "b0");
-    assert_eq!(diverse.len(), 8);
 }
 
-/// A check that needs the one source holding its evidence reads that
-/// source's passages where they rank, however many there are.
+/// The source holding the evidence is read where its passages rank, however
+/// many there are.
 #[test]
-fn fusion_by_relevance_keeps_one_documents_run_in_fused_order() {
+fn fusion_keeps_fused_order() {
     let search = use_case(Vec::new(), Vec::new());
     let mut crowded: Vec<_> = (0..12).map(|i| hit(&format!("a{i}"), "a", 1.0)).collect();
     crowded.push(hit("b0", "b", 0.1));
-    let fused = search.fuse(
-        vec![branch(BranchKind::Fused, 1.0, crowded)],
-        13,
-        Spread::ByRelevance,
-    );
+    let fused = search.fuse(vec![branch(BranchKind::Fused, 1.0, crowded)], 13);
     assert_eq!(fused[11].id, "a11");
     assert_eq!(fused[12].id, "b0");
+}
+
+/// No count per document: a document that holds the best passages holds
+/// every slot they earn.
+#[test]
+fn a_document_holding_the_top_passages_fills_the_list() {
+    let search = use_case(Vec::new(), Vec::new());
+    let mut crowded: Vec<_> = (0..12).map(|i| hit(&format!("a{i}"), "a", 1.0)).collect();
+    crowded.push(hit("b0", "b", 0.1));
+    let fused = search.fuse(vec![branch(BranchKind::Fused, 1.0, crowded)], 8);
+    assert_eq!(
+        ids(&fused),
+        ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+    );
+}
+
+/// The same text indexed twice is one passage, cited by its better-ranked
+/// copy; a near copy that differs in one value is a different passage.
+#[test]
+fn the_same_text_in_two_documents_fuses_to_the_better_ranked_copy() {
+    let search = use_case(Vec::new(), Vec::new());
+    let mut first = hit("first", "a", 0.9);
+    first.content = "The fee is  £40 per term.".into();
+    let mut copy = hit("copy", "b", 0.8);
+    copy.content = "the fee is £40\nper term.".into();
+    let mut superseded = hit("superseded", "c", 0.7);
+    superseded.content = "The fee is £45 per term.".into();
+    let fused = search.fuse(
+        vec![branch(
+            BranchKind::Fused,
+            1.0,
+            vec![first, copy, superseded, hit("next", "d", 0.6)],
+        )],
+        3,
+    );
+    assert_eq!(ids(&fused), ["first", "superseded", "next"]);
+}
+
+/// A dense hit from an index without a chunk store carries no text, and no
+/// text is no identity: two of them are two passages.
+#[test]
+fn passages_without_text_are_never_the_same_text() {
+    let search = use_case(Vec::new(), Vec::new());
+    let mut a = hit("a", "a", 0.9);
+    a.content.clear();
+    let mut b = hit("b", "b", 0.8);
+    b.content.clear();
+    let fused = search.fuse(vec![branch(BranchKind::Vector, 1.0, vec![a, b])], 5);
+    assert_eq!(ids(&fused), ["a", "b"]);
 }
 
 #[test]
@@ -307,7 +341,6 @@ fn fused_results_report_their_rank_and_score_in_each_branch() {
             branch(BranchKind::Lexical, 0.3, vec![hit("shared", "b", 7.0)]),
         ],
         5,
-        Spread::AcrossDocuments,
     );
 
     let shared = fused.iter().find(|r| r.id == "shared").unwrap();
@@ -329,11 +362,7 @@ fn a_fused_pass_keeps_its_branch_diagnostics_when_fused_again() {
     earlier.vector_rank = Some(3);
     earlier.bm25_rank = Some(0);
 
-    let fused = search.fuse(
-        vec![branch(BranchKind::Fused, 1.0, vec![earlier])],
-        5,
-        Spread::AcrossDocuments,
-    );
+    let fused = search.fuse(vec![branch(BranchKind::Fused, 1.0, vec![earlier])], 5);
 
     assert_eq!(fused[0].vector_rank, Some(3));
     assert_eq!(fused[0].bm25_rank, Some(0));

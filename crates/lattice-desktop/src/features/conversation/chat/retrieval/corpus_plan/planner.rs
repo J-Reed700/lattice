@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
+use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -134,6 +136,54 @@ fn is_window_overflow(error: &AppError) -> bool {
     error.to_string().contains("exceed_context_size")
 }
 
+/// Rank the documents the planner is shown, once per turn: as many as the
+/// planner's prompt on `llm` has rows for.
+pub(in super::super) async fn shortlist_candidates(
+    hybrid: &dyn HybridSearchTrait,
+    llm: &dyn LLMPort,
+    question: &str,
+    history: Option<&str>,
+    catalog: &[CorpusDocument],
+    summaries: &HashMap<String, String>,
+    document_ids: &HashSet<String>,
+    turn: &mut PlannerTurn<'_>,
+) {
+    if turn.candidates.is_some() {
+        return;
+    }
+    let rows =
+        shortlist_rows(llm, question, history, catalog, summaries, turn).unwrap_or_else(|error| {
+            warn!(%error, "Planner rows could not be sized; showing the catalog in its own order");
+            0
+        });
+    turn.candidates =
+        Some(shortlist::candidate_documents(hybrid, question, history, document_ids, rows).await);
+}
+
+/// How many catalog rows the planner's next prompt on `llm` holds for this
+/// request: as many documents as the shortlist search ranks, since the
+/// prompt shows no more. Sized as `plan_with` sizes the prompt, from the
+/// window and the conversation it carries.
+fn shortlist_rows(
+    llm: &dyn LLMPort,
+    question: &str,
+    history: Option<&str>,
+    catalog: &[CorpusDocument],
+    summaries: &HashMap<String, String>,
+    turn: &PlannerTurn<'_>,
+) -> Result<usize> {
+    let target = turn.health.prompt_tokens(llm);
+    let history = prompt::recent_history(llm, history, target);
+    let parts = prompt::PromptParts {
+        question,
+        history: &history,
+        catalog_total: catalog.len(),
+        correction: None,
+        summaries,
+    };
+    prompt::rows_held(llm, &parts, catalog, target)
+}
+
 async fn plan_with(
     llm: &dyn LLMPort,
     question: &str,
@@ -219,6 +269,17 @@ async fn plan_with(
         }
         Ok(response) => response.text,
     };
+    parse_plan(&response, &prompt.handles, catalog)
+}
+
+/// The planner's reply as a plan over `catalog`. Its `start_at_beginning` is
+/// the planner's call, kept as given: whether a request asks to read from the
+/// beginning is a judgement about intent the model makes in any language.
+fn parse_plan(
+    response: &str,
+    handles: &HashMap<String, String>,
+    catalog: &[CorpusDocument],
+) -> Result<CorpusSearchPlan> {
     let response = response
         .trim()
         .trim_start_matches("```json")
@@ -226,26 +287,53 @@ async fn plan_with(
         .trim_end_matches("```")
         .trim();
     let mut plan = serde_json::from_str::<CorpusSearchPlan>(response)?;
-    // A provider cannot turn a focused lookup into ordered reading merely by
-    // setting the flag. Preserve genuine short follow-ups, though: the user
-    // may answer "yes, start there" after asking where a document begins.
-    let ordered_reading_requested = super::whole_document_intent(question)
-        || (super::is_short_followup_message(question) && super::whole_document_intent(&history));
-    if !ordered_reading_requested {
-        plan.start_at_beginning = false;
-    }
     // The planner names documents by the handles it was shown. Anything else
     // passes through, and validation drops what is not in the catalog.
     plan.opening_document_ids = plan
         .opening_document_ids
         .into_iter()
         .map(|id| {
-            prompt
-                .handles
+            handles
                 .get(id.trim().to_lowercase().as_str())
                 .cloned()
                 .unwrap_or(id)
         })
         .collect();
     plan.validate(catalog)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn document(id: &str, name: &str) -> CorpusDocument {
+        CorpusDocument {
+            sections: Vec::new(),
+            source_context: None,
+            id: id.into(),
+            name: name.into(),
+            opening: String::new(),
+            chapter_number: None,
+        }
+    }
+
+    #[test]
+    fn the_planners_reading_flag_survives_a_request_worded_in_any_language() {
+        // "Wo fange ich am besten an?" matches no phrase list; the planner's
+        // judgement that it asks to start reading is what the plan keeps.
+        let catalog = vec![
+            document("doc-zellen", "Leitfaden Zellbiologie"),
+            document("doc-genetik", "Leitfaden Genetik"),
+        ];
+        let handles = HashMap::from([("d1".to_string(), "doc-zellen".to_string())]);
+        let reply = r#"```json
+{"queries":["Einführung Zellbiologie"],"opening_document_ids":["D1"],"start_at_beginning":true}
+```"#;
+
+        let plan = parse_plan(reply, &handles, &catalog).expect("plan");
+
+        assert!(plan.start_at_beginning);
+        assert_eq!(plan.opening_document_ids, ["doc-zellen"]);
+        assert_eq!(plan.queries, ["Einführung Zellbiologie"]);
+    }
 }

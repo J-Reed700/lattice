@@ -27,6 +27,7 @@ export type { FrameworkAction };
 
 export interface StudyHabitsBarProps {
   onSelectFramework?: (action: FrameworkAction) => void;
+  onNavigate?: (action: FrameworkAction) => void;
   className?: string;
 }
 
@@ -52,7 +53,7 @@ function formatSeconds(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function StudyHabitsBar({ onSelectFramework, className }: StudyHabitsBarProps) {
+export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: StudyHabitsBarProps) {
   const [activePreset, setActivePreset] = useState<PresetKey>('30m');
   const [remainingSeconds, setRemainingSeconds] = useState<number>(30 * 60);
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -105,7 +106,7 @@ export function StudyHabitsBar({ onSelectFramework, className }: StudyHabitsBarP
   const handleStartPause = () => {
     if (remainingSeconds === 0) {
       const config = PRESETS.find((p) => p.key === activePreset);
-      setRemainingSeconds(config ? config.durationSeconds : 30 * 60);
+      setRemainingSeconds(config?.durationSeconds ?? 30 * 60);
     }
     setIsRunning((prev) => !prev);
   };
@@ -113,7 +114,7 @@ export function StudyHabitsBar({ onSelectFramework, className }: StudyHabitsBarP
   const handleReset = () => {
     setIsRunning(false);
     const config = PRESETS.find((p) => p.key === activePreset);
-    setRemainingSeconds(config ? config.durationSeconds : 30 * 60);
+    setRemainingSeconds(config?.durationSeconds ?? 30 * 60);
   };
 
   const handleTakeBreak = () => {
@@ -341,6 +342,7 @@ export function StudyHabitsBar({ onSelectFramework, className }: StudyHabitsBarP
         onOpenChange={setIsModalOpen}
         initialTab={modalTab}
         onSelectFramework={onSelectFramework}
+        onNavigate={onNavigate}
       />
     </div>
   );

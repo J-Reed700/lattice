@@ -1,3 +1,21 @@
+/**
+ * ModelRolesContext
+ *
+ * Single source of truth for role assignment state in the AI Models tab.
+ * Every card in the grid (local cards + the Ollama meta-card) reads from
+ * this context and calls `assignRole()` to mutate; the llama.cpp connection,
+ * which has no model row, calls `assignUtilityReference()`.
+ *
+ * The utility model is either a row flag (a downloaded model or the Ollama
+ * connection) or a reference in Settings (the llama.cpp connection). The
+ * reference wins on the Rust side, and each write here clears the other, so
+ * only one is ever set.
+ *
+ * Why a context: chat/utility/embedding/learning assignments are shared state that
+ * multiple sibling cards need to read. Prop-drilling from the tab root gets
+ * messy; a context keeps the cards decoupled and the mutation path unified.
+ */
+
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
@@ -16,11 +34,16 @@ interface ModelRolesContextValue {
   localModels: DownloadedModel[];
   ollamaModels: DownloadedModel[];
   chatProvider: LLMSettings['provider'] | undefined;
+  /** The saved LLM settings; Chat and Learning read their state from them. */
   llmSettings: LLMSettings | undefined;
   isLoading: boolean;
+  /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
+  /** Refresh the model list from the backend. */
   refresh: () => Promise<void>;
+  /** Assign `modelId` to the given role, or clear the role if modelId is null. */
   assignRole: (modelId: string | null, role: RoleId) => Promise<void>;
+  /** Make a connection with no model row the utility model, or clear it with null. */
   assignUtilityReference: (modelRef: ModelRef | null) => Promise<void>;
 }
 
@@ -57,6 +80,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Caught here, not by callers: the mount effect fires and forgets, so an
+  // uncaught failure would be an unhandled rejection and an empty list that
+  // claims no models are downloaded.
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -81,6 +107,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           if (!chatProvider) throw new Error('Chat settings have not loaded. Please try again.');
           if (modelId === null) {
             await clearActiveChatModel();
+            // An explicit Ollama provider keeps working even without a model
+            // row assignment. Deselecting it must also stop that provider.
             if (chatProvider === 'ollama') {
               await updateSettings({ category: 'llm', updates: { provider: 'local' } });
             }
@@ -89,6 +117,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
             if (!model) throw new Error('Model is no longer available. Please refresh and try again.');
             await setActiveChatModel(modelId);
             const provider = model.backend === 'ollama' ? 'ollama' : 'local';
+            // Setting a row flag alone cannot override an explicit remote
+            // provider. Persist the user's choice through both selection paths.
             if (chatProvider !== provider) {
               await updateSettings({ category: 'llm', updates: { provider } });
             }
@@ -110,6 +140,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
             await updateSettings({ category: 'llm', updates: { utilityModel: null } });
           }
         } else if (role === 'learning' || role === 'verifier') {
+          // A reference in Settings, not a row flag: it can name an Ollama
+          // tag as well as a file, and nothing else ever writes it.
           let modelRef = null;
           if (modelId !== null) {
             const model = models.find(candidate => candidate.model_id === modelId);
@@ -125,6 +157,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           message: error instanceof Error ? error.message : String(error),
         });
       } finally {
+        // A provider write can fail after the model assignment succeeded.
+        // Always re-read the persisted assignments, including that case.
         await refresh();
       }
     },
@@ -146,6 +180,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
   const assignUtilityReference = useCallback(
     async (modelRef: ModelRef | null) => {
       try {
+        // The reference first: it wins over a row flag, so the choice holds
+        // even if clearing the row's flag then fails.
         await updateSettings({ category: 'llm', updates: { utilityModel: modelRef } });
         if (modelRef) await clearActiveUtilityModel();
       } catch (error) {

@@ -1,3 +1,19 @@
+/**
+ * OllamaMetaRow
+ *
+ * One row representing the Ollama server endpoint, backed by a single
+ * synthetic row in the `models` table (`model_id = '__ollama_server__'`,
+ * `backend = 'ollama'`). Toggling Chat or Utility here flips the same
+ * `is_active_for_*` flags used by local models, so the SQLite single-active
+ * triggers give us mutual exclusion for free. Learning is saved in Settings
+ * as the chat tag on this connection.
+ *
+ * Model tags (chat / utility) live in LLM settings, not on the row — many
+ * hosted Ollama deployments block `/api/tags` enumeration, so users type the
+ * tags manually on the Chat settings page. This row shows them read-only,
+ * with a vision declaration for each tag that can answer a chat.
+ */
+
 import { useState } from 'react';
 
 import { Network, SlidersHorizontal } from 'lucide-react';

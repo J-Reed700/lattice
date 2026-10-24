@@ -39,7 +39,7 @@ function formatWhen(iso: string): string {
  * Trailing collapsible highlights region plus the floating selection
  * mini-toolbar. The mini-toolbar is co-located so the highlight flow stays
  * local to this component.
- * Spec 
+ * Spec §5.4.
  */
 export function EntryHighlightsStrip({
   highlights,

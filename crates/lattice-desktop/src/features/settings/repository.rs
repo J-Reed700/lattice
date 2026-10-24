@@ -95,6 +95,19 @@ fn resolve_out_of_range_values(settings: &mut SettingsDto) {
 ///
 /// `save_all` also takes the lock, but intentionally replaces the whole document.
 /// Callers changing individual fields should use `update` to preserve other writes.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use crate::features::settings::repository::SettingsRepository;
+/// use tauri::api::path::app_data_dir;
+///
+/// let app_data_dir = app_data_dir(&config).expect("Failed to get app data dir");
+/// let repository = SettingsRepository::new(app_data_dir).await?;
+///
+/// let settings = repository.get_all().await?;
+/// println!("Chunk size: {}", settings.indexing.chunk_size);
+/// ```
 pub struct SettingsRepository {
     /// Path to settings file
     settings_path: PathBuf,
@@ -111,6 +124,21 @@ pub struct SettingsRepository {
 
 impl SettingsRepository {
     /// Create a new settings repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_data_dir` - Application data directory path
+    ///
+    /// # Returns
+    ///
+    /// Initialized repository with default settings if file doesn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Cannot create app data directory
+    /// - Cannot read or write settings file
+    /// - Settings file is corrupted
     pub async fn new(app_data_dir: PathBuf) -> Result<Self> {
         // repository-barrier-allow: this repository's resource is the settings file and its containing directory.
         // Ensure app data directory exists

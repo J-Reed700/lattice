@@ -10,9 +10,16 @@ use super::rows::{build_model_select_query, DownloadedModelRecord};
 use super::DownloadedModelRepository;
 
 impl DownloadedModelRepository {
-    /// Get the currently active chat model.
+    /// Get the currently active chat model
     ///
-    /// Database trigger ensures only one model has is_active_for_chat=1.
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if an active chat model exists, None otherwise
+    ///
+    /// # Business Logic
+    ///
+    /// - Database trigger ensures only one model has is_active_for_chat=1
+    /// - This query should return at most one result
     pub async fn get_active_chat_model(&self) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.is_active_for_chat = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
@@ -42,9 +49,16 @@ impl DownloadedModelRepository {
         }
     }
 
-    /// Get the currently active embedding model.
+    /// Get the currently active embedding model
     ///
-    /// Database trigger ensures only one model has is_active_for_embedding=1.
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if an active embedding model exists, None otherwise
+    ///
+    /// # Business Logic
+    ///
+    /// - Database trigger ensures only one model has is_active_for_embedding=1
+    /// - This query should return at most one result
     pub async fn get_active_embedding_model(&self) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.is_active_for_embedding = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
@@ -74,13 +88,21 @@ impl DownloadedModelRepository {
         }
     }
 
-    /// Set a model as the active chat model.
+    /// Set a model as the active chat model
     ///
-    /// Sets is_active_for_chat=1 for the specified model.
-    /// Database trigger automatically sets is_active_for_chat=0 for all others.
+    /// # Arguments
+    ///
+    /// * `model_id` - The model_id to set as active
+    ///
+    /// # Business Logic
+    ///
+    /// - Sets is_active_for_chat=1 for the specified model
+    /// - Database trigger automatically sets is_active_for_chat=0 for all others
+    /// - Fails if model_id doesn't exist
     ///
     /// # Errors
-    /// Returns NotFound error if model_id doesn't exist.
+    ///
+    /// Returns NotFound error if model_id doesn't exist
     pub async fn set_active_chat_model(&self, model_id: &str) -> Result<()> {
         let result = sqlx::query!(
             r#"
@@ -248,8 +270,11 @@ impl DownloadedModelRepository {
         Ok(())
     }
 
-    /// Get the currently active utility model.
+    /// Get the currently active utility model
     ///
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if an active utility model exists, None otherwise.
     /// For Ollama-backed rows the local-file `is_downloaded` check is skipped
     /// because the model lives on a remote server.
     pub async fn get_active_utility_model(&self) -> Result<Option<DownloadedModel>> {

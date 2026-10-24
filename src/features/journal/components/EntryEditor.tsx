@@ -86,7 +86,7 @@ function countWords(markdown: string): number {
  * The page and what sits beside it: a writing column on the desk, and a
  * context rail holding the picked conversation, the kept highlights and
  * Synthesize. The rail can be put away (⌘.) when the page wants the room.
- * Spec 
+ * Spec §5, §6.
  */
 export function EntryEditor({
   activeNote,
@@ -265,6 +265,7 @@ export function EntryEditor({
                 <TiptapEditor
                   value={activeNote.content ?? ''}
                   onChange={onUpdateNoteContent}
+                  ariaLabel="Journal entry"
                   placeholder="A thought, a question, a place to begin…"
                   selectionActions={selectionActions}
                   citationNumbers={[...citationMap.keys()]}

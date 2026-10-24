@@ -1,3 +1,18 @@
+/**
+ * Indexing settings.
+ *
+ * Backend is the SSOT (Rust SettingsRepository). React Query is the
+ * read-only mirror. Per the post-Phase-4b/Task-7 cleanup, this tab
+ * uses only `useSettingsQuery` — the previous duality with AppConfig
+ * is gone.
+ *
+ * Watch folder add/remove still go through dedicated Tauri commands
+ * (`useWatchFolderMutations`) so the backend can run path validation
+ * (CWE-22 / CWE-158) and serialize concurrent mutations. Both invalidate
+ * the SETTINGS query cache on success — React Query refetches the
+ * canonical state.
+ */
+
 import { useEffect, useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';

@@ -30,6 +30,10 @@ pub struct FavoritesRepository {
 
 impl FavoritesRepository {
     /// Create a new favorites repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }

@@ -1,20 +1,50 @@
 /**
- * Matches cited answer sentences to corresponding passage spans within web page text.
+ * Where on a web page the sentences that cite it appear.
+ *
+ * This is a wording match and nothing more: it finds the span of the page whose
+ * words a cited sentence shares, which is what a reader checking a claim wants
+ * to land on. It is not a record of what the model attended to, so everything
+ * built on it has to say "matches" rather than "used".
+ *
+ * A weak match is worse than none — a highlight on the wrong paragraph tells
+ * the reader the answer came from there — so the thresholds are deliberately
+ * high and a sentence that clears neither of them produces nothing.
  */
 
+/** A span of the page text one answer sentence matched. */
 export interface SourcedPassage {
+  /** Offsets into the page text, exact enough to slice with. */
   start: number;
   end: number;
+  /** Which of the answer sentences matched here. */
   sentenceIndex: number;
+  /** Weighted share of that sentence's content words found in the span, 0–1. */
   score: number;
 }
 
+/** At most this many consecutive page sentences count as one passage. */
 const MAX_WINDOW = 3;
+/**
+ * What a window may grow to when no tight one matches: about one section of a
+ * page, which is what an answer condenses into a single bullet.
+ */
 const MAX_SECTION_WINDOW = 10;
+/**
+ * What each sentence of a window costs it when windows are compared: a window
+ * grows only for a sentence that brings more of the answer than this, so one
+ * shared filler word cannot stretch a highlight into the next section.
+ */
 const SENTENCE_COST = 0.03;
+/** Share of the answer sentence's weighted content words the span must carry. */
 const MIN_SCORE = 0.5;
+/** And that many distinct content words, so a short sentence cannot coast in. */
 const MIN_SHARED_TOKENS = 4;
 
+/**
+ * Words that say nothing about what a page is about. Dropping them is what
+ * stops "It is one of the most important parts of the system" from matching
+ * every paragraph on the page.
+ */
 const STOPWORDS = new Set([
   'a', 'about', 'above', 'after', 'again', 'against', 'all', 'also', 'am', 'an', 'and', 'any',
   'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both',
@@ -30,20 +60,29 @@ const STOPWORDS = new Set([
   'would', 'you', 'your', 'yours', 'yourself', 'yourselves',
 ]);
 
-// Keeps decimals and thousands separators intact within tokens.
+/**
+ * Words and numbers. Decimals and thousands separators stay whole, because
+ * "1.2 °C" splitting into "1" and "2" would match any page with a list on it.
+ */
 const TOKEN_PATTERN = /[\p{L}\p{N}]+(?:[.,][\p{N}]+)*/gu;
 
-// Canonicalize word numbers; 'one' is omitted as it is predominantly a pronoun.
+/**
+ * Small numbers as a page spells them. An answer writes "6–8 hours" where the
+ * page says "six to eight hours", and numbers are what a match leans on most.
+ * No "one": it is a pronoun far more often than it is a count.
+ */
 const NUMBER_WORDS = new Map<string, string>([
   ['two', '2'], ['three', '3'], ['four', '4'], ['five', '5'], ['six', '6'], ['seven', '7'],
   ['eight', '8'], ['nine', '9'], ['ten', '10'], ['eleven', '11'], ['twelve', '12'],
 ]);
 
+/** A word as both sides of a match spell it. */
 function canonical(raw: string): string {
   const token = raw.toLowerCase();
   return NUMBER_WORDS.get(token) ?? token;
 }
 
+/** `[3]`, `[1][3]` and `[1, 3]` — every form the answers actually carry. */
 const CITATION_MARKER = /\[\d{1,4}(?:\s*,\s*\d{1,4})*\]/g;
 
 interface WeightedToken {
@@ -55,15 +94,23 @@ interface PageSentence {
   start: number;
   end: number;
   tokens: Set<string>;
+  /** True when this "sentence" is the heading a section opens with. */
   heading: boolean;
 }
 
+/** A sentence span, as offsets into the text it came from. */
 export interface SentenceSpan {
   start: number;
   end: number;
 }
 
-/** Extracts sentence spans from text by punctuation and line breaks. */
+/**
+ * Sentence boundaries, shared by both sides of the match so that "a sentence"
+ * means the same thing in an answer and on a page.
+ *
+ * A line break ends a sentence too: a page's extracted text is paragraphs and
+ * headings, and a heading rarely ends in a full stop.
+ */
 export function sentenceSpans(text: string): SentenceSpan[] {
   const spans: SentenceSpan[] = [];
   const boundary = /[.!?…]['"”’)\]]*(?=\s|$)|\n/g;
@@ -86,9 +133,23 @@ export function sentenceSpans(text: string): SentenceSpan[] {
   return spans;
 }
 
+/**
+ * A heading is no longer than this. Past it, a line with no full stop is a
+ * paragraph that ran out of punctuation rather than a title.
+ */
 const MAX_HEADING_LENGTH = 80;
+
+/** A line ending like this is prose, however short it is. */
 const SENTENCE_TAIL = /[.!?…,;:]$/;
 
+/**
+ * Whether a line is titled: every word carrying meaning starts with a capital.
+ *
+ * Without this, any short line that forgot its full stop would end a section —
+ * "Seed to harvest: 24 to 30 days" is the last line of one, not the first line
+ * of the next. Function words are left alone because a title lowercases them
+ * on purpose ("Broccoli For Strong Spring Crops" either way).
+ */
 function isTitled(line: string): boolean {
   return line.split(/\s+/).every((word) => {
     const bare = word.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
@@ -98,6 +159,16 @@ function isTitled(line: string): boolean {
   });
 }
 
+/**
+ * Where each section of the page begins.
+ *
+ * Extracted text keeps almost nothing of a page's structure, but it keeps
+ * this: a short titled line standing alone between blank lines and ending in
+ * no punctuation — "Broccoli For Strong Spring Crops", "Bok Choy". It is the
+ * page saying it has changed subject, and both halves of this module take it
+ * at its word: a window never reaches past a heading, and two spans either
+ * side of one stay two spans.
+ */
 function sectionStarts(pageText: string): number[] {
   const starts: number[] = [];
   const lines = pageText.split('\n');
@@ -119,6 +190,7 @@ function sectionStarts(pageText: string): number[] {
   return starts;
 }
 
+/** The text with `[n]` markers taken out, so they cannot count as content. */
 export function stripCitationMarkers(text: string): string {
   return text.replace(CITATION_MARKER, ' ');
 }
@@ -127,6 +199,13 @@ function isStopword(token: string): boolean {
   return STOPWORDS.has(token) || (token.length < 2 && !/\p{N}/u.test(token));
 }
 
+/**
+ * The content words of an answer sentence, with what each is worth.
+ *
+ * Numbers and names carry the weight because they are what a reader checks: a
+ * paragraph that shares "1.2" and "Halvorsen" with the answer is the paragraph
+ * the answer is about, however many ordinary words it happens to share.
+ */
 function weighTokens(sentence: string): WeightedToken[] {
   const stripped = stripCitationMarkers(sentence);
   const weights = new Map<string, number>();
@@ -142,7 +221,7 @@ function weighTokens(sentence: string): WeightedToken[] {
     if (/\p{N}/u.test(token)) {
       weight = 2.5;
     } else if (position > 1 && raw[0] !== raw[0]!.toLowerCase()) {
-      // Mid-sentence capitalized words (names) are weighted higher than ordinary tokens.
+      // Sentence-initial capitals say nothing; a capital mid-sentence is a name.
       weight = 2;
     }
     weights.set(token, Math.max(weights.get(token) ?? 0, weight));
@@ -170,7 +249,14 @@ function splitPage(pageText: string): PageSentence[] {
   }));
 }
 
-/** Merges overlapping or adjacent passage spans within the same section. */
+/**
+ * Overlapping spans folded together, in page order.
+ *
+ * Two answer sentences drawn from the same paragraph are one highlight: the
+ * reader is being shown a place on the page, not a count of sentences. Given
+ * the page text, spans with nothing but whitespace between them count as
+ * overlapping — two marks a space apart are one mark to the eye anyway.
+ */
 export function mergePassages(
   passages: SourcedPassage[],
   pageText?: string
@@ -181,7 +267,9 @@ export function mergePassages(
   const touches = (end: number, start: number) =>
     start < end ||
     (pageText !== undefined && start >= end && !pageText.slice(end, start).trim());
-  // Spans separated by a section heading are kept distinct.
+  // Two spans with a heading between them are in two sections of the page,
+  // however little text separates them — the blank line before a heading is
+  // the same blank line as any other.
   const parted = (end: number, start: number) => sections.some((at) => at >= end && at <= start);
 
   for (const passage of sorted) {
@@ -204,9 +292,14 @@ interface Window {
   start: number;
   size: number;
   score: number;
+  /** `score` less what the window's length costs it; what windows compete on. */
   worth: number;
 }
 
+/**
+ * The run of at most `maxSize` consecutive page sentences that carries the most
+ * of an answer sentence for its length, if any run carries enough.
+ */
 function bestWindow(
   page: readonly PageSentence[],
   hits: ReadonlyMap<number, ReadonlySet<string>>,
@@ -225,7 +318,10 @@ function bestWindow(
         if (considered.has(key)) continue;
         considered.add(key);
 
-        // Windows cannot span across section headings.
+        // A heading opens a section, so a window that reached past one would
+        // be pointing at two of them, and the answer sentence was written off
+        // at most one. A window may still begin at a heading: a title and what
+        // it introduces are one place on the page.
         const matched = new Set<string>();
         let reachedPastHeading = false;
         for (let i = start; i < start + size; i += 1) {
@@ -251,8 +347,14 @@ function bestWindow(
   return best;
 }
 
+/** Where an answer sentence changes subject: `;`, a spaced dash, a colon. */
 const CLAUSE_BREAK = /\s*;\s*|\s+[—–-]\s+|:\s+/;
 
+/**
+ * The best tight window any one clause of `sentence` has, each clause held to
+ * the whole bar on its own. Never the section window: a clause is a few words,
+ * and a few words scattered over a section are not a passage.
+ */
 function bestClauseWindow(
   sentence: string,
   locate: (_text: string, _maxSize: number) => Window | null
@@ -267,7 +369,13 @@ function bestClauseWindow(
   return best;
 }
 
-/** Finds passage spans matching the given sentences within page text. */
+/**
+ * The spans of `pageText` that the given answer sentences match.
+ *
+ * Each sentence claims at most one span — its best window of one to three
+ * consecutive page sentences, or failing that of about a section — and only if
+ * that window carries enough of the sentence's content to be worth pointing at.
+ */
 export function findSourcedPassages(
   pageText: string,
   sentences: readonly string[]
@@ -277,6 +385,8 @@ export function findSourcedPassages(
   const page = splitPage(pageText);
   if (page.length === 0) return [];
 
+  // Token to the page sentences holding it, so a sentence only ever looks at
+  // the parts of the page that share a word with it.
   const index = new Map<string, number[]>();
   page.forEach((sentence, sentenceIndex) => {
     for (const token of sentence.tokens) {
@@ -288,6 +398,7 @@ export function findSourcedPassages(
 
   const found: SourcedPassage[] = [];
 
+  // The best window for `text` of at most `maxSize` page sentences.
   const locate = (text: string, maxSize: number): Window | null => {
     const tokens = weighTokens(text);
     if (tokens.length < MIN_SHARED_TOKENS) return null;
@@ -308,7 +419,11 @@ export function findSourcedPassages(
   };
 
   sentences.forEach((sentence, sentenceIndex) => {
-    // Try tight window first, then section window, then clause-level matching.
+    // A tight window first. An answer that boils a whole section down to one
+    // line shares too little with any three sentences of it, so only then is
+    // the section-sized window tried — against the same bar, never a lower one.
+    // Last, the sentence a clause at a time: one that credits two sources takes
+    // a clause from each, and neither page holds half of the whole.
     const best =
       locate(sentence, MAX_WINDOW) ??
       locate(sentence, MAX_SECTION_WINDOW) ??
@@ -325,6 +440,7 @@ export function findSourcedPassages(
   return mergePassages(found, pageText);
 }
 
+/** The typographic characters a page and a quote taken from it disagree about. */
 const FOLDED = new Map<string, string>([
   ['‘', "'"], ['’', "'"], ['‚', "'"], ['‛', "'"],
   ['“', '"'], ['”', '"'], ['„', '"'],
@@ -332,6 +448,7 @@ const FOLDED = new Map<string, string>([
   [' ', ' '],
 ]);
 
+/** Lowercase, straighten and collapse whitespace, one character at a time. */
 function normalizeForQuote(text: string): { normalized: string; offsets: number[] } {
   const chars: string[] = [];
   const offsets: number[] = [];
@@ -359,7 +476,13 @@ function normalizeForQuote(text: string): { normalized: string; offsets: number[
   return { normalized: chars.join(''), offsets };
 }
 
-/** Finds the span of a quoted passage within page text, normalizing whitespace and punctuation. */
+/**
+ * Where a quoted passage sits in the page text, if it is there at all.
+ *
+ * Only whitespace, case and the typographic characters a page and a quote
+ * disagree about are forgiven. A quote that has been reworded is not found,
+ * which is the point: it would otherwise be reported as an exact hit.
+ */
 export function findQuoteSpan(pageText: string, quote: string): SentenceSpan | null {
   const needle = normalizeForQuote(quote).normalized.trim();
   if (needle.length < 12) return null;

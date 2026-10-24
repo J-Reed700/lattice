@@ -41,7 +41,7 @@ Around that core are:
   - shell scripts (`.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.bat`, `.cmd`)
 - **Audio:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`. Audio is transcribed on your computer, and the transcript becomes a searchable document. This needs a transcription model from the model catalog.
 
-- **Not supported for library import:** standalone image files, WMA audio, older Office formats (`.doc`, `.xls`, `.ppt`) and e-books. (You can still attach images directly to a chat message for vision-capable models.) Scanned PDFs need the OCR model from the model catalog; without it, pages that are only images are skipped.
+Not supported: images, WMA audio, older Office formats (`.doc`, `.xls`, `.ppt`) and e-books. Lattice has no OCR, so pages of a scanned PDF that are only images are skipped.
 
 ### Is it free?
 
@@ -73,9 +73,8 @@ Only these things, and only when you use them:
 
 - **Model downloads** from Hugging Face. If you save a Hugging Face token, it's sent to Hugging Face with your downloads.
 - **URL imports.** Lattice fetches the page you asked for.
-- **Web search and Wikipedia** in Chat. These run only when you turn them on for a turn (`/web`, `/wiki`, or their chips). Web search queries go to the finders enabled in **Settings > Sources** (DuckDuckGo by default; Brave, Tavily, Exa and others with your keys) and to the pages they find. Wikipedia queries go to wikipedia.org.
-- **Cloud models.** If you set the chat provider to OpenAI, Anthropic or Google, your prompts and the passages retrieved from your library are sent to that provider.
-- **Learning Studio research.** A lesson's deep research and claim checking send their search queries and the passages they read to the finders in **Settings > Sources**, and the Verifier may send a claim and its citation to a cloud model if that's what you configured.
+- **Web search and Wikipedia** in Chat. These run only when you turn them on for a turn (`/web`, `/wiki`, or their chips). Web search queries go to DuckDuckGo and the pages it finds. Wikipedia queries go to wikipedia.org.
+- **Cloud models.** If you set the chat provider to OpenAI or Anthropic, your prompts and the passages retrieved from your library are sent to that provider.
 - **Your own servers.** A llama.cpp or Ollama server you point Lattice at, and any custom tools you add in **Settings > AI > Tools**.
 - **Update checks**, only when you click **Check for updates**.
 
@@ -151,6 +150,10 @@ Yes, in Explorer (⌘6). Choose a folder and it stays open as the scope until yo
 
 Explorer never changes your files. Its search index lives in Lattice's app data, not in the folder.
 
+### Why did a quiz answer lose points?
+
+Open the result. A choice answer says which option you picked, which is right, and why yours isn't. A written answer has a **Why this lost points** panel with the grader's summary, your own words that it rests on (highlighted and numbered), what was missing for each criterion and what full credit includes. A grade the model can't explain is shown as **Couldn't grade yet**, never as wrong. If you still disagree, choose **I think I was right** for a fresh grade.
+
 ### Can I use my own models?
 
 Yes:
@@ -158,13 +161,13 @@ Yes:
 - Download models from the catalog in **Settings > AI > Models**.
 - Point Lattice at folders of `.gguf` files under **External model folders** on the same page.
 - Set the chat provider to a llama.cpp server or Ollama you run yourself.
-- Use OpenAI, Anthropic or Google with your own API key.
+- Use OpenAI or Anthropic with your own API key.
 
 Each downloaded model can take one or more roles in **Settings > AI > Downloaded**: Chat, Utility (a small fast model for query planning and routing) or Embedding.
 
 ### Does it support OCR?
 
-Yes, with a model you download. **Settings > AI > Models** lists an OCR model (PaddleOCR-VL, about 0.9B). Once it's downloaded, Lattice reads pages of a scanned PDF that have no text layer, and that text becomes searchable and citable like any other. Without the model, pages that are only images are skipped and the rest of the document is still imported. OCR runs on your computer, one page at a time, only while scans are being indexed.
+No. Pages of a scanned PDF that are only images are skipped, and the rest of the document is imported. Run scans through an OCR tool before importing them.
 
 ### Can I get my notes as plain files?
 
@@ -174,7 +177,8 @@ Yes. Turn on **Mirror notes to disk** in **Settings > General > Vault**, and Lat
 
 Lattice stores and displays any Unicode text. How well searching by meaning works depends on the embedding model:
 
-- **Qwen3 Embedding 0.6B**, the default embedding model, is multilingual.
+- **Qwen3 Embedding 0.6B**, the default on machines with a supported GPU, is multilingual.
+- **all-MiniLM-L6-v2**, the default otherwise, is mainly English.
 
 Keyword search handles English word forms (for example "running" matches "run"). Other languages are matched on the words as written.
 
@@ -253,9 +257,9 @@ Tauri 2, with a Rust backend and a React and TypeScript interface. Data is store
 
 ### Which AI components does it use?
 
-- **Chat:** GGUF models run by a llama.cpp `llama-server` engine that ships inside Lattice. The engine runs on your computer and is reachable only from it. It can also use a llama.cpp or Ollama server, OpenAI, Anthropic or Google.
-- **Embeddings:** Qwen3 Embedding 0.6B, running inside Lattice.
-- **Optional:** a reranker model that rescores search results, Whisper models for transcribing audio, and the PaddleOCR-VL model that reads scanned PDF pages.
+- **Chat:** GGUF models run by a llama.cpp `llama-server` engine that ships inside Lattice. The engine runs on your computer and is reachable only from it. It can also use a llama.cpp or Ollama server, OpenAI or Anthropic.
+- **Embeddings:** Qwen3 Embedding 0.6B or all-MiniLM-L6-v2, running inside Lattice.
+- **Optional:** a reranker model that rescores search results, and Whisper models for transcribing audio.
 
 ### Do I need to install Python, Ollama or anything else?
 

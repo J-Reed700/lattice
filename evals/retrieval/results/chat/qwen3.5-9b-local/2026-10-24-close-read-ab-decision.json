@@ -1,0 +1,1 @@
+{"stage1_arms": ["C0R0", "C1R1", "C2R1", "C1R0"], "readings": 51, "missed_fact_readings": 15, "qualifying": ["C1R0"], "stage1_pick": "C1R0", "josh_call": false, "c1r0_needed": false, "room_change_cost_recall": true, "stage2": {"writes_each": 102, "pass": {"W0K0": 101, "W1K1": 101}, "repeated": {"W0K0": 2, "W1K1": 2}, "cont_length": {"W0K0": 0, "W1K1": 0}}, "W1K1_ships": true}

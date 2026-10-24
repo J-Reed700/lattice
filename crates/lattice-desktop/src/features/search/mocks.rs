@@ -168,6 +168,22 @@ impl MockBM25Search {
     }
 
     /// Set results for a specific query
+    ///
+    /// # Example
+    /// ```rust
+    /// let mock = MockBM25Search::new();
+    /// mock.set_results("rust", vec![
+    ///     BM25Result {
+    ///         document_id: "doc1".into(),
+    ///         score: 10.5,
+    ///         filename: Some("rust.txt".into()),
+    ///         mime_type: Some("text/plain".into()),
+    ///         size_bytes: Some(1024),
+    ///         created_at: Some("2024-01-01".into()),
+    ///         content: Some("Rust programming".into()),
+    ///     }
+    /// ]);
+    /// ```
     pub fn set_results(&self, query: &str, results: Vec<BM25Result>) {
         self.results
             .write()

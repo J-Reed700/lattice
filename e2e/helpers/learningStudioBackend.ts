@@ -3,11 +3,6 @@ import type { Page } from "@playwright/test";
 import type {
   JsonValue,
   LearningDiagnosticAttemptDto,
-  LearningAssessmentBlueprintDto,
-  LearningAssessmentFormDto,
-  LearningAssessmentFormItemDto,
-  LearningAssessmentFormStatus,
-  LearningAssessmentFormSummaryDto,
   LearningRuntimePresetDto,
   LearningMemoryDto,
   ExportAllLearningPacksResultDto,
@@ -38,6 +33,7 @@ import type {
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
 import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
 import { installClaimReviewBackend, type ClaimReviewBackend, type TrustOverrideRecord } from "./claimReviewBackend";
+import { installQuizBackend, type QuizBackend } from "./quizBackend";
 
 /** Collect any HTTP(S) requests the renderer sends outside the local app. */
 export function watchExternalHttpRequests(page: Page, localOrigin: string) {
@@ -242,6 +238,7 @@ type LabDraft = {
 export async function installLearningStudioBackend(page: Page) {
   await installTauriMock(page);
   await installClaimReviewBackend(page);
+  await installQuizBackend(page);
   await mockCommands(page, (settings, ipc) => {
     // The factory runs in the page; the claim review helpers wait there for it.
     const { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } =
@@ -254,7 +251,7 @@ export async function installLearningStudioBackend(page: Page) {
         "SOURCE_EXCERPT_SENTINEL: A careful comparison records the chosen measure, the observation period, and the limits of the sample.",
       acquiredAt: 1_790_000_000_000,
     };
-    const lesson: LearningLessonDto = {
+    const lesson = {
       id: "lesson-observation",
       title: "Compare observations",
       objective: "Explain a comparison and note its limits.",
@@ -293,9 +290,8 @@ export async function installLearningStudioBackend(page: Page) {
           sourceIds: [source.id],
         },
       ],
-      questions: [],
-    };
-    const program: LearningProgramDto = {
+    } as LearningLessonDto;
+    const program = {
       summary: {
         id: "program-learning-1",
         title: "Reasoning from field observations",
@@ -321,8 +317,10 @@ export async function installLearningStudioBackend(page: Page) {
           lessons: [lesson],
         },
       ],
-      attempts: [],
-    };
+    } as LearningProgramDto;
+    const quiz = (window as unknown as { __LATTICE_QUIZ_BACKEND__: QuizBackend }).__LATTICE_QUIZ_BACKEND__({
+      programId: program.summary.id, lessonId: lesson.id, moduleId: program.modules[0].id, lessonTitle: lesson.title, moduleTitle: program.modules[0].title,
+    });
     const memory: LearningMemoryDto = {
       programId: program.summary.id,
       journalId: "journal-learning-1",
@@ -505,15 +503,7 @@ export async function installLearningStudioBackend(page: Page) {
       practiceAppliedEffects: {} as Record<string, number>,
       practiceLostResponsesRemaining: 0,
       practiceSessions,
-      assessmentWorkspace: {
-        programId: program.summary.id,
-        outcomes: [],
-        blueprints: [] as Array<Fixture<LearningAssessmentBlueprintDto> & { id: string }>,
-        forms: [] as Array<Fixture<LearningAssessmentFormSummaryDto> & { id: string }>,
-        evidence: [],
-        followUps: [],
-      },
-      assessmentForms: new Map<string, Fixture<LearningAssessmentFormDto> & { id: string; revision: number; status: LearningAssessmentFormStatus; submittedAt: number | null; items: Array<Fixture<LearningAssessmentFormItemDto> & { id: string }> }>(),
+      quiz: quiz.state,
       planWorkspace: {
         programId: program.summary.id,
         programRevision: program.summary.revision,
@@ -560,17 +550,6 @@ export async function installLearningStudioBackend(page: Page) {
       },
       packMutationCalls: [] as Array<{ command: string; request: Record<string, unknown> }>,
     };
-    const assessmentBlueprint = {
-      id: "assessment-blueprint-e2e",
-      purpose: "practice",
-      revision: 1,
-      title: "Compare observations",
-      instructions: "Use the saved source to explain a careful comparison.",
-      requirements: [{ format: "short_answer", count: 1 }],
-      status: "accepted",
-      createdAt: 1_790_000_000_000,
-    } satisfies Fixture<LearningAssessmentBlueprintDto>;
-    Object.assign(state.assessmentWorkspace, { blueprints: [assessmentBlueprint] });
     const curriculumLesson = {
       id: lesson.id,
       title: lesson.title,
@@ -772,7 +751,7 @@ export async function installLearningStudioBackend(page: Page) {
       makeUnresolvedDraft() {
         program.summary.status = "draft";
         program.modules.forEach((module) => module.lessons.forEach((lesson) => {
-          lesson.preparation = "outline"; lesson.completed = false; lesson.blocks = []; lesson.questions = [];
+          lesson.preparation = "outline"; lesson.completed = false; lesson.blocks = [];
         }));
         program.outlineReview = { status: "needs_repair", repairPasses: 1, updatedAt: Date.now(), contentHash: "draft-fixture", note: "Completed corrections are saved. One finding remains unresolved.", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0, issues: [{ id: "finding-1", path: "/modules/0/lessons/0", kind: "factual", claim: "A comparison always establishes causality.", quote: "This unsupported statement is retained for review.", sourceId: source.id, message: "The reference does not support this universal claim.", attempts: 1, exhausted: false, searched: [] }] };
       },
@@ -1050,17 +1029,6 @@ export async function installLearningStudioBackend(page: Page) {
         }
         return copyPracticeWorkspace();
     };
-    const closeAssessmentForm = (command: string, args: MockArgs) => {
-        const request = getRequest<Record<string, unknown>>(args);
-        const form = state.assessmentForms.get(String(request.formId));
-        if (!form || form.revision !== request.expectedRevision) throw new Error("Assessment changed; reload and retry.");
-        const submitted = command.endsWith("submit_learning_assessment_form");
-        form.status = submitted ? "submitted" : "interrupted";
-        form.submittedAt = submitted ? Date.now() : null;
-        const summary = state.assessmentWorkspace.forms.find((entry) => entry.id === form.id);
-        if (summary) Object.assign(summary, { status: form.status, submittedAt: form.submittedAt, gradeStatus: null, score: null });
-        return form;
-    };
     const changeGenerationJob = (command: string, args: MockArgs) => {
         const request = getRequest<LearningGenerationJobActionRequestDto>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
@@ -1161,7 +1129,6 @@ export async function installLearningStudioBackend(page: Page) {
           lesson.preparation = "outline";
           lesson.completed = false;
           lesson.blocks = [];
-          lesson.questions = [];
         }));
         return program;
       },
@@ -2288,45 +2255,18 @@ export async function installLearningStudioBackend(page: Page) {
         state.appliedReviewIds[request.reviewId] = response;
         return response;
       },
-      get_learning_assessment_workspace: () => state.assessmentWorkspace,
-      start_learning_assessment_form: (args) => {
-        const request = getRequest<{ blueprintId: string; formId: string; retakeOfFormId?: string | null }>(args);
-        const blueprint = state.assessmentWorkspace.blueprints.find((item) => item.id === request.blueprintId);
-        if (!blueprint) throw new Error("Accepted assessment blueprint not found.");
-        const id = String(request.formId);
-        const form = {
-          id, programId: program.summary.id, blueprintId: blueprint.id,
-          blueprintRevision: blueprint.revision, purpose: blueprint.purpose,
-          title: blueprint.title, instructions: blueprint.instructions,
-          status: "active", revision: 0, createdAt: Date.now(), submittedAt: null,
-          retakeOfFormId: request.retakeOfFormId ?? null,
-          items: [{ id: "assessment-item-e2e", format: "short_answer", prompt: "Which details make the comparison interpretable?", options: [], selectedIndex: null, textResponse: "", artifactJson: null, orderedValues: [], artifactKind: null, previouslyExposed: false, rubric: [] }],
-        } satisfies Fixture<LearningAssessmentFormDto>;
-        state.assessmentForms.set(id, form);
-        state.assessmentWorkspace.forms.unshift({ id, blueprintId: blueprint.id, blueprintRevision: blueprint.revision, purpose: blueprint.purpose, title: blueprint.title, status: "active", revision: 0, gradeStatus: null, score: null, createdAt: form.createdAt, submittedAt: null, retakeOfFormId: form.retakeOfFormId });
-        return form;
+      ...quiz.handlers,
+      complete_learning_lesson: (args) => {
+        const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number }>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Program changed; reload and retry.");
+        const target = program.modules.flatMap((module) => module.lessons).find((entry) => entry.id === request.lessonId);
+        if (!target) throw new Error("Lesson not found.");
+        if (!target.completed) program.summary.completedLessons += 1;
+        target.completed = true;
+        program.summary.revision += 1;
+        state.planWorkspace.programRevision = program.summary.revision;
+        return program;
       },
-      get_learning_assessment_form: (args) => {
-        const id = getArg<string>(args, "id");
-        const form = state.assessmentForms.get(id);
-        if (!form) throw new Error("Assessment form not found.");
-        return form;
-      },
-      save_learning_assessment_response: (args) => {
-        const request = getRequest<Record<string, unknown>>(args);
-        const form = state.assessmentForms.get(String(request.formId));
-        if (!form || form.status !== "active") throw new Error("Assessment form is no longer active.");
-        const response = request.response as Record<string, unknown>;
-        const item = form.items.find((entry) => entry.id === response.itemId);
-        if (!item) throw new Error("Assessment item not found.");
-        Object.assign(item, { selectedIndex: response.selectedIndex, textResponse: response.text, orderedValues: response.orderedValues, artifactJson: response.artifactJson });
-        form.revision = Number(form.revision) + 1;
-        const summary = state.assessmentWorkspace.forms.find((entry) => entry.id === form.id);
-        if (summary) summary.revision = form.revision;
-        return form;
-      },
-      interrupt_learning_assessment_form: (args) => closeAssessmentForm('interrupt_learning_assessment_form', args),
-      submit_learning_assessment_form: (args) => closeAssessmentForm('submit_learning_assessment_form', args),
       start_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = {
           id: "diagnostic-e2e", programId: program.summary.id, status: "active", revision: 0,

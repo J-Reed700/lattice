@@ -11,6 +11,18 @@ use super::TagRepository;
 
 impl TagRepository {
     /// Get all tags for a document.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    ///
+    /// # Returns
+    ///
+    /// Vector of tag entities associated with the document.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
     pub async fn get_tags_for_document(&self, document_id: &str) -> Result<Vec<TagEntity>> {
         let db_models = sqlx::query_as!(
             TagModel,
@@ -31,6 +43,15 @@ impl TagRepository {
     }
 
     /// Add tag to document (idempotent).
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    /// * `tag_id` - Tag ID
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if insert fails
     pub async fn add_tag_to_document(&self, document_id: &str, tag_id: &str) -> Result<()> {
         sqlx::query!(
             "INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)",
@@ -44,6 +65,15 @@ impl TagRepository {
     }
 
     /// Remove tag from document.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    /// * `tag_id` - Tag ID
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if delete fails
     pub async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()> {
         sqlx::query!(
             "DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?",
@@ -57,6 +87,18 @@ impl TagRepository {
     }
 
     /// Find documents by tag ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `tag_id` - Tag ID
+    ///
+    /// # Returns
+    ///
+    /// Vector of document IDs that have this tag.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
     pub async fn find_documents_by_tag(&self, tag_id: &str) -> Result<Vec<String>> {
         let records = sqlx::query!(
             "SELECT document_id FROM document_tags WHERE tag_id = ?",
@@ -70,6 +112,18 @@ impl TagRepository {
     }
 
     /// Find documents by tag name (case-insensitive).
+    ///
+    /// # Arguments
+    ///
+    /// * `tag_name` - Tag name
+    ///
+    /// # Returns
+    ///
+    /// Vector of document IDs that have a tag with this name.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
     pub async fn find_documents_by_tag_name(&self, tag_name: &str) -> Result<Vec<String>> {
         let records = sqlx::query!(
             r#"
@@ -87,7 +141,22 @@ impl TagRepository {
         Ok(records.into_iter().map(|r| r.document_id).collect())
     }
 
-    /// Add multiple tags to a document by tag names (creates tags if missing).
+    /// Add multiple tags to a document by tag names.
+    ///
+    /// Creates tags if they don't exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    /// * `tag_names` - Tag names
+    ///
+    /// # Returns
+    ///
+    /// Vector of tags that were added.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if operations fail
     pub async fn add_tags_to_document_by_names(
         &self,
         document_id: &str,
@@ -148,7 +217,21 @@ impl TagRepository {
         Ok(())
     }
 
-    /// Get tags for multiple documents (optimized batch query, handles SQLite parameter limits).
+    /// Get tags for multiple documents (optimized batch query).
+    ///
+    /// Handles SQLite's 999 parameter limit by batching.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_ids` - Document IDs
+    ///
+    /// # Returns
+    ///
+    /// HashMap mapping document IDs to their tags.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
     pub async fn get_tags_for_documents(
         &self,
         document_ids: &[String],
@@ -208,6 +291,14 @@ impl TagRepository {
     }
 
     /// Remove all tags from a document.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_id` - Document ID
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if delete fails
     pub async fn remove_all_tags_from_document(&self, document_id: &str) -> Result<()> {
         sqlx::query!(
             "DELETE FROM document_tags WHERE document_id = ?",
@@ -222,6 +313,18 @@ impl TagRepository {
     }
 
     /// Bulk add tags to multiple documents.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_tags` - Vector of (document_id, tag_names) pairs
+    ///
+    /// # Returns
+    ///
+    /// Number of tag associations created.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if operations fail
     pub async fn add_tags_to_documents_batch(
         &self,
         document_tags: Vec<(String, Vec<String>)>,

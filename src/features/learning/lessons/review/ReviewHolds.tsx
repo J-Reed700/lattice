@@ -34,7 +34,7 @@ export function FocusMessage({ title, children }: { title: string; children: Rea
 }
 
 /**
- * Held by the Verifier audit : its message and fix. How far it got is
+ * Held by the Verifier audit (§3.7): its message and fix. How far it got is
  * the audit line in the screen's header; the Resume button is the screen's.
  */
 export function AuditHold({ reason }: { reason: StopReasonDto | null }) {

@@ -76,10 +76,6 @@ pub enum LearningPackConflictKind {
     Module,
     /// A lesson another course on this computer owns.
     Lesson,
-    /// A question another course on this computer owns.
-    Question,
-    /// A submitted assessment another course on this computer owns.
-    Attempt,
     /// Any other record another course on this computer owns.
     Record,
 }

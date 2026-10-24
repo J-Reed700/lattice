@@ -39,6 +39,7 @@ pub(super) use self::source_citations::{
     drop_unbudgeted_sources, web_context_entries, WebContextItem,
 };
 mod sufficiency;
+mod summary_tier;
 mod tool_format;
 use self::conversation_helpers::{
     build_hyde_context_window_for_conversation as build_hyde_context_window_for_conversation_impl,
@@ -122,6 +123,8 @@ pub struct RetrievalSufficiency {
 /// coverage judgement itself. `reranked` must be true only when a cross-encoder
 /// actually rescored the candidates; passing true otherwise thresholds RRF
 /// ranks as if they were relevance probabilities, which they are not.
+/// Coverage reads every passage in `results`: the caller hands the ranking it
+/// is judging.
 pub fn assess_retrieval_sufficiency(
     results: &[SearchResultDto],
     queries: &[String],
@@ -133,7 +136,7 @@ pub fn assess_retrieval_sufficiency(
         opening_document_ids: Vec::new(),
         start_at_beginning: false,
     };
-    let verdict = assess_sufficiency(results, &plan, tuning, reranked);
+    let verdict = assess_sufficiency(results, &plan, tuning, reranked, results.len());
     RetrievalSufficiency {
         sufficient: verdict.sufficient,
         top_score: verdict.top_score,

@@ -13,7 +13,7 @@ export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? pr
 
 /**
  * The course's opt-in to a final grounded audit by the Verifier model
- * . A cloud Verifier needs the consent dialog, naming the provider,
+ * (§14.2). A cloud Verifier needs the consent dialog, naming the provider,
  * before the switch turns on; turning it off takes effect at once.
  */
 export function VerifierAuditSwitch({ programId }: { programId: string }) {
@@ -57,12 +57,12 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
           {data.on ? 'On' : 'Off'}
         </button>
       </div>
-      {data.blocked && <p role="status" className="mt-3 rounded-lg border border-warning/30 bg-warning-muted/20 p-3 text-xs leading-5 text-warning-fg">{data.blocked}
+      {data.blocked && <p role="status" className="mt-3 rounded-lg border border-amber-600/30 p-3 text-xs leading-5 text-text-primary">{data.blocked}
         {provider && data.on && <button type="button" onClick={() => { setWebSearch(data.webSearch); setConsentOpen(true); }} className="ml-2 font-semibold underline">Confirm again</button>}
       </p>}
       {data.on && <p className="mt-3 text-xs text-text-muted">{data.webSearch ? 'The Verifier may search the web for this course. ' : ''}You can turn this off at any time; audits already running stop at the next batch.</p>}
       {data.usage.audits > 0 && <p className="mt-2 text-xs tabular-nums text-text-muted">This course: {data.usage.audits} {data.usage.audits === 1 ? 'audit' : 'audits'} · {data.usage.inputTokens.toLocaleString()} tokens sent · {data.usage.outputTokens.toLocaleString()} received</p>}
-      {set.error && <p role="alert" className="mt-3 text-xs text-danger-fg">{set.error.message}</p>}
+      {set.error && <p role="alert" className="mt-3 text-xs text-rose-700">{set.error.message}</p>}
 
       <Dialog open={consentOpen} onOpenChange={(open) => { if (!open && !set.isPending) setConsentOpen(false); }}>
         <DialogContent className="max-w-lg">
@@ -77,7 +77,7 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
             <input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} />
             Allow the Verifier to use web search for this course
           </label>
-          {set.error && <p role="alert" className="text-xs text-danger-fg">{set.error.message}</p>}
+          {set.error && <p role="alert" className="text-xs text-rose-700">{set.error.message}</p>}
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <button type="button" disabled={set.isPending} onClick={() => setConsentOpen(false)} className="min-h-9 rounded-full border border-border px-4 text-xs">Cancel</button>
             <button type="button" disabled={set.isPending} onClick={confirm} className="min-h-9 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg disabled:opacity-50">

@@ -18,6 +18,10 @@ impl GetActiveChatModelUseCase {
     }
 
     /// Execute the use case
+    ///
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if an active chat model exists, None otherwise
     pub async fn execute(&self) -> Result<Option<DownloadedModel>> {
         self.active_models.get_active_chat_model().await
     }

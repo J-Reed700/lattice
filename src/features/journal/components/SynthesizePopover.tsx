@@ -54,7 +54,7 @@ export function describeWeekCandidates(counts: WeekCandidateCounts): string {
  * Quiet Synthesize affordance: ghost button in the bottom rail opens a
  * Popover with three radio-style options, routes to the existing synthesis
  * flow.
- * Spec 
+ * Spec §5.5.
  */
 export function SynthesizePopover({
   selectedEntryId,

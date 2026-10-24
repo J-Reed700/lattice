@@ -16,6 +16,20 @@ pub struct FileAccessConfig {
 
 impl FileAccessConfig {
     /// Create configuration with allowed root directories
+    ///
+    /// # Arguments
+    /// * `allowed_roots` - Vector of directory paths that are allowed for file access
+    ///
+    /// # Example
+    /// ```
+    /// use std::path::PathBuf;
+    /// use crate::infrastructure::security::FileAccessConfig;
+    ///
+    /// let config = FileAccessConfig::new(vec![
+    ///     PathBuf::from("/home/user/lattice"),
+    ///     PathBuf::from("/home/user/documents"),
+    /// ]);
+    /// ```
     pub fn new(allowed_roots: Vec<PathBuf>) -> Self {
         // CRITICAL FIX: Handle both real paths (canonicalize) and test paths (keep as-is)
         // - Real paths that exist: canonicalize to resolve symlinks (e.g., /var -> /private/var)
@@ -48,8 +62,24 @@ impl FileAccessConfig {
     /// 3. Opens file atomically
     /// 4. Returns validated file handle
     ///
-    /// # Errors
-    /// Returns error if path validation fails or file does not exist.
+    /// # Arguments
+    /// * `path` - Path to validate and open
+    ///
+    /// # Returns
+    /// * `Ok(ValidatedFile)` - Validated file handle
+    /// * `Err(AppError::Security)` - Path validation failed
+    /// * `Err(AppError::FileNotFound)` - File doesn't exist
+    ///
+    /// # Example
+    /// ```
+    /// use std::path::PathBuf;
+    /// use crate::infrastructure::security::FileAccessConfig;
+    ///
+    /// let config = FileAccessConfig::new(vec![PathBuf::from("/home/user/lattice")]);
+    /// let file = config.open_file("/home/user/lattice/doc.txt")?;
+    /// let content = file.read_to_string()?;
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
+    /// ```
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<ValidatedFile, AppError> {
         let display_path = path.as_ref().display().to_string();
         // This probe only preserves the public NotFound error contract. A
@@ -102,8 +132,13 @@ impl FileAccessConfig {
     /// Use this when you need to validate a path but not open the file yet.
     /// For example, checking if a path is allowed before passing to external tools.
     ///
-    /// # Errors
-    /// Returns error if path is not in allowed roots or path is invalid.
+    /// # Arguments
+    /// * `path` - Path to validate
+    ///
+    /// # Returns
+    /// * `Ok(PathBuf)` - Normalized absolute path if within allowed roots
+    /// * `Err(AppError::Security)` - Path not in allowed roots or path traversal attempt
+    /// * `Err(AppError::InvalidInput)` - Path is invalid
     pub fn validate_path<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, AppError> {
         use std::path::Component;
 
@@ -181,6 +216,13 @@ impl FileAccessConfig {
     }
 
     /// Check if path is within allowed roots
+    ///
+    /// # Arguments
+    /// * `path` - Canonical path to check
+    ///
+    /// # Returns
+    /// * `true` if path is within any allowed root
+    /// * `false` otherwise
     fn is_allowed(&self, path: &Path) -> bool {
         let roots = self.allowed_roots.read().ok();
 
@@ -194,6 +236,24 @@ impl FileAccessConfig {
     /// Add new allowed root (for dynamic directory indexing)
     ///
     /// Call this when user indexes a new directory to add it to allowed roots.
+    ///
+    /// # Arguments
+    /// * `root` - Directory path to add to allowed roots
+    ///
+    /// # Example
+    /// ```
+    /// use std::path::PathBuf;
+    /// use crate::infrastructure::security::FileAccessConfig;
+    ///
+    /// let config = FileAccessConfig::new(vec![]);
+    ///
+    /// // User indexes a new directory
+    /// config.add_allowed_root(PathBuf::from("/home/user/new_vault"))?;
+    ///
+    /// // Now files in that directory can be accessed
+    /// let file = config.open_file("/home/user/new_vault/doc.txt")?;
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
+    /// ```
     pub fn add_allowed_root(&self, root: PathBuf) -> Result<(), AppError> {
         let mut roots = self
             .allowed_roots
@@ -249,6 +309,9 @@ impl FileAccessConfig {
     /// Remove allowed root
     ///
     /// Call this when user removes an indexed directory.
+    ///
+    /// # Arguments
+    /// * `root` - Directory path to remove from allowed roots
     pub fn remove_allowed_root(&self, root: &Path) -> Result<(), AppError> {
         let mut roots = self
             .allowed_roots

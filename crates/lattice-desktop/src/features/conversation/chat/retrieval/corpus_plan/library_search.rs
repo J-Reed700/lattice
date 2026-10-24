@@ -1,20 +1,20 @@
-//! Searching the library with a plan: the fused first-pass search, evidence
-//! expansion around its hits, and fusing a corrective pass into the first.
+//! Searching the library with a plan: the fused first-pass search, section
+//! context appended after its hits, and fusing a corrective pass into the first.
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::features::conversation::chat::ports::ChatRecords;
-use lattice_core::application::contracts::search::Spread;
+use lattice_core::application::contracts::search::CorpusPassage;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{
-    BranchKind, CorpusSearchPlan, HybridSearchTrait, RankedBranch, SearchRequestDto,
-    SearchResponseDto, SearchResultDto,
+    select_informative_terms, tokenize_keyword_terms, BranchKind, CorpusSearchPlan,
+    HybridSearchTrait, RankedBranch, SearchRequestDto, SearchResponseDto, SearchResultDto,
+    MAX_QUERY_WORDS,
 };
 
 /// One query searched exactly as first-pass retrieval searches it: the
-/// library search orchestrator's branches, weights, RRF constant and
-/// per-document cap.
+/// library search orchestrator's branches, weights and RRF constant.
 ///
 /// The model's own `semantic_search` calls come through here. They used the
 /// generic hybrid endpoint instead — even weights, a higher vector floor and a
@@ -58,13 +58,10 @@ pub(in super::super) async fn retrieve(
         .filter(|id| scope.document_ids.contains(*id))
         .cloned()
         .collect();
-    let search_ids = if plan.start_at_beginning && !reading_ids.is_empty() {
-        &reading_ids
-    } else {
-        &scope.document_ids
-    };
     // Independent lexical and vector branches: a query/model failure cannot
-    // silently discard successful retrieval from the other branch.
+    // silently discard successful retrieval from the other branch. Every query
+    // searches the whole space, whatever the plan reads in order: these are the
+    // only route to a document the planner did not choose.
     for query in &plan.queries {
         // The allow-list is the space plus this chat's attachments; see
         // `fused_search`.
@@ -72,7 +69,7 @@ pub(in super::super) async fn retrieve(
             .search_branches(
                 query,
                 None,
-                Some(search_ids),
+                Some(&scope.document_ids),
                 limit,
                 lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
                 lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
@@ -82,209 +79,90 @@ pub(in super::super) async fn retrieve(
         branches.extend(query_branches.branches);
     }
 
-    let mut scoped_branches = Vec::new();
-    if !plan.start_at_beginning && !reading_ids.is_empty() {
-        let question_tokens: HashSet<String> = std::iter::once(question)
-            .chain(plan.queries.iter().map(String::as_str))
-            .flat_map(super::super::tokenize_keyword_terms)
+    // The documents the planner named: one more search inside just those, for
+    // what the question asks of them, whether or not the plan also reads them
+    // from the start. Their titles already put them on the shortlist, so title
+    // words would only rank the passages that repeat the name; the rest of the
+    // question and the planner's rewrites are what find the passage that
+    // answers it.
+    let mut scoped = Vec::new();
+    if !reading_ids.is_empty() {
+        let chosen_titles: Vec<&str> = catalog
+            .iter()
+            .filter(|document| reading_ids.contains(&document.id))
+            .map(|document| document.name.as_str())
             .collect();
-        let mut doc_overlaps: Vec<(String, HashSet<String>, usize)> = Vec::new();
-        for doc in &catalog {
-            if reading_ids.contains(&doc.id) {
-                let tokens: HashSet<String> = super::super::tokenize_keyword_terms(&doc.name)
-                    .into_iter()
-                    .collect();
-                let overlap = tokens
-                    .iter()
-                    .filter(|t| question_tokens.contains(*t))
-                    .count();
-                doc_overlaps.push((doc.id.clone(), tokens, overlap));
-            }
-        }
-        let max_overlap = doc_overlaps.iter().map(|(_, _, ov)| *ov).max().unwrap_or(0);
-        let mut scoped_reading_ids: HashSet<String> = HashSet::new();
-        let mut title_tokens: HashSet<String> = HashSet::new();
-        if max_overlap >= 2 {
-            for (id, tokens, ov) in doc_overlaps {
-                if ov == max_overlap {
-                    scoped_reading_ids.insert(id);
-                    title_tokens.extend(tokens);
-                }
-            }
-        }
-
-        if !scoped_reading_ids.is_empty() {
-            let mut seen_queries = HashSet::new();
-            let mut scoped_queries: Vec<String> = Vec::new();
-            for raw in std::iter::once(question).chain(plan.queries.iter().map(String::as_str)) {
-                let filtered: Vec<&str> = raw
-                    .split_whitespace()
-                    .filter(|word| {
-                        let norm = word
-                            .trim_matches(|c: char| !c.is_alphanumeric())
-                            .to_lowercase();
-                        norm.is_empty() || !title_tokens.contains(&norm)
-                    })
-                    .collect();
-                let cleaned = filtered.join(" ").trim().to_string();
-                if !cleaned.is_empty() && seen_queries.insert(cleaned.to_lowercase()) {
-                    scoped_queries.push(cleaned);
-                }
-            }
-            if scoped_queries.is_empty() {
-                scoped_queries = plan.queries.clone();
-            }
-
-            for query in &scoped_queries {
-                let query_branches = hybrid
-                    .search_branches(
-                        query,
-                        None,
-                        Some(&scoped_reading_ids),
-                        limit,
-                        lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                        lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
-                    )
-                    .await;
-                successful_branches += query_branches.answered;
-                scoped_branches.extend(query_branches.branches);
-            }
+        if let Some(query) = scoped_query(question, &plan.queries, &chosen_titles) {
+            let query_branches = hybrid
+                .search_branches(
+                    &query,
+                    None,
+                    Some(&reading_ids),
+                    limit,
+                    lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                    lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+                )
+                .await;
+            successful_branches += query_branches.answered;
+            scoped = hybrid.fuse(query_branches.branches, limit);
         }
     }
 
     let mut results = Vec::new();
-    let use_openings = plan.start_at_beginning || super::wants_document_openings(question);
     let opening_ids = &plan.opening_document_ids;
     // Keep exact references from the user's request even if a planner rewrite
     // omits them. Rewrites can add follow-up references but cannot replace these.
     let identifiers = section_identifiers(&format!("{} {}", question, plan.queries.join(" ")));
-
-    if !plan.start_at_beginning {
-        if !identifiers.is_empty() {
-            results.extend(
-                repository
-                    .retrieval_section_passages(&identifiers, &scope.document_ids)
-                    .await?
-                    .into_iter()
-                    .map(|p| passage_result(p, "section_lookup")),
-            );
-        }
-        if use_openings && !opening_ids.is_empty() && results.len() < limit {
-            let per_doc = 2;
-            let openings = repository
-                .retrieval_openings(opening_ids, &scope.document_ids, per_doc)
-                .await?;
-            let remaining = limit.saturating_sub(results.len());
-            append_openings(&mut results, openings, opening_ids, remaining);
-        }
-        if !scoped_branches.is_empty() {
-            let mut seen_ids: HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
-            for r in hybrid.fuse(scoped_branches, 2, Spread::AcrossDocuments) {
-                if seen_ids.insert(r.id.clone()) {
-                    results.push(r);
-                }
-            }
-        }
-    } else {
-        if use_openings && !opening_ids.is_empty() && results.len() < limit {
-            let openings = repository
-                .retrieval_openings(opening_ids, &scope.document_ids, limit)
-                .await?;
-            // `limit` is the reading depth for each selected document here,
-            // not a cap shared across all of them. Round-robin order lets the
-            // later evidence budget cut the tail fairly between documents.
-            append_openings(&mut results, openings, opening_ids, usize::MAX);
-        }
-        if !identifiers.is_empty() {
-            results.extend(
-                repository
-                    .retrieval_section_passages(&identifiers, &scope.document_ids)
-                    .await?
-                    .into_iter()
-                    .map(|p| passage_result(p, "section_lookup")),
-            );
-        }
+    // The named documents and the whole space split the pool evenly: neither
+    // has a prior claim on what answers the question. The named half holds the
+    // exact section references, then the openings, then the scoped search; the
+    // whole-space fusion follows it.
+    let share = limit.div_ceil(2);
+    if !identifiers.is_empty() {
+        results.extend(
+            repository
+                .retrieval_section_passages(&identifiers, &scope.document_ids)
+                .await?
+                .into_iter()
+                .map(|p| passage_result(p, "section_lookup")),
+        );
     }
+    if !reading_ids.is_empty() && results.len() < share {
+        // Reading in order is one source, never the whole pool: a plan that
+        // starts at the beginning reads each named document to an even part of
+        // the half, any other plan reads each opening only. Round-robin order
+        // lets the later evidence budget cut the tail fairly between documents.
+        let depth = if plan.start_at_beginning {
+            share.div_ceil(reading_ids.len())
+        } else {
+            1
+        };
+        let openings = repository
+            .retrieval_openings(opening_ids, &scope.document_ids, depth)
+            .await?;
+        let remaining = share.saturating_sub(results.len());
+        append_openings(&mut results, openings, opening_ids, remaining);
+    }
+    let mut seen_ids = HashSet::new();
+    results.retain(|result| seen_ids.insert(result.id.clone()));
+    let remaining = share.saturating_sub(results.len());
+    results.extend(
+        scoped
+            .into_iter()
+            .filter(|r| seen_ids.insert(r.id.clone()))
+            .take(remaining),
+    );
     if successful_branches == 0 && results.is_empty() {
         return Err(AppError::ServiceNotAvailable(
             "Document search failed in both vector and keyword retrieval".into(),
         ));
     }
-    let mut seen = HashSet::new();
-    results.retain(|result| seen.insert(result.id.clone()));
-    let fused_main = hybrid.fuse(branches, limit, Spread::AcrossDocuments);
-    let existing_ids: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
     results.extend(
-        fused_main
+        hybrid
+            .fuse(branches, limit)
             .into_iter()
-            .filter(|r| !existing_ids.contains(&r.id)),
+            .filter(|r| seen_ids.insert(r.id.clone())),
     );
-    if let Some(bridge) =
-        super::shortlist::find_entity_bridge(&results, &catalog, &scope.document_ids, question)
-    {
-        let target_ids: Vec<String> = catalog
-            .iter()
-            .filter(|document| bridge.target_document_ids.contains(&document.id))
-            .map(|document| document.id.clone())
-            .collect();
-        // A source opening that unambiguously names another document is a
-        // structural link, so carry the target's opening in reading order.
-        // Predicate search below still finds relevant later clauses. When the
-        // name maps to several documents, leave selection to ranked search
-        // rather than opening every same-entity file.
-        if target_ids.len() == 1 {
-            for passage in repository
-                .retrieval_openings(&target_ids, &scope.document_ids, 2)
-                .await?
-            {
-                let mut opening = passage_result(passage, "entity_bridge");
-                tag_entity_bridge(&mut opening, &bridge);
-                if let Some(index) = results.iter().position(|result| result.id == opening.id) {
-                    // Fusion drops chunk position and enrichment metadata. The
-                    // repository copy restores both for deterministic reading
-                    // order as well as the bridge relationship.
-                    results[index] = opening;
-                } else {
-                    results.push(opening);
-                }
-            }
-        }
-        for result in &mut results {
-            if result
-                .document_id
-                .as_ref()
-                .is_some_and(|id| bridge.target_document_ids.contains(id))
-            {
-                tag_entity_bridge(result, &bridge);
-            }
-        }
-        let predicate_terms: Vec<String> = super::super::tokenize_keyword_terms(question)
-            .into_iter()
-            .filter(|w| !bridge.source_heading_terms.contains(w))
-            .collect();
-        let entity_query = if !predicate_terms.is_empty() {
-            predicate_terms.join(" ")
-        } else {
-            question.to_string()
-        };
-        let entity_branches = hybrid
-            .search_branches(
-                &entity_query,
-                None,
-                Some(&bridge.target_document_ids),
-                8,
-                lattice_core::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                lattice_core::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
-            )
-            .await;
-        let mut seen_now: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
-        for mut r in hybrid.fuse(entity_branches.branches, 6, Spread::AcrossDocuments) {
-            if seen_now.insert(r.id.clone()) {
-                tag_entity_bridge(&mut r, &bridge);
-                results.push(r);
-            }
-        }
-    }
 
     // Opening evidence is bounded separately; it must not be thrown away by
     // lexical overlap gates testing the original conversational instructions.
@@ -324,23 +202,9 @@ pub(in super::super) async fn retrieve(
     })
 }
 
-fn tag_entity_bridge(result: &mut SearchResultDto, bridge: &super::shortlist::EntityBridge) {
-    result
-        .metadata
-        .insert("retrievalMethod".into(), serde_json::json!("entity_bridge"));
-    result.metadata.insert(
-        "bridgeSourceResultId".into(),
-        serde_json::json!(&bridge.source_result_id),
-    );
-    result.metadata.insert(
-        "bridgeSourceDocumentId".into(),
-        serde_json::json!(&bridge.source_document_id),
-    );
-}
-
 fn append_openings(
     results: &mut Vec<SearchResultDto>,
-    openings: Vec<lattice_core::application::contracts::search::CorpusPassage>,
+    openings: Vec<CorpusPassage>,
     opening_ids: &[String],
     max_to_append: usize,
 ) {
@@ -368,10 +232,7 @@ fn append_openings(
     }
 }
 
-pub(super) fn passage_result(
-    p: lattice_core::application::contracts::search::CorpusPassage,
-    method: &str,
-) -> SearchResultDto {
+pub(super) fn passage_result(p: CorpusPassage, method: &str) -> SearchResultDto {
     let mut metadata = HashMap::from([
         ("retrievalMethod".into(), serde_json::json!(method)),
         ("section".into(), serde_json::json!(p.section)),
@@ -410,39 +271,60 @@ pub(super) fn section_identifiers(question: &str) -> Vec<String> {
         .collect()
 }
 
-pub(in super::super) async fn expand_evidence(
+/// What a focused question asks of the documents the planner chose: the
+/// informative terms of the question and then of the planner's queries, in
+/// that order, without the words of those documents' titles. The queries
+/// carry the paraphrase the user's own words may lack. `None` only when there
+/// is nothing to search with at all; when nothing but title words remains,
+/// the planner's first query is searched as it is.
+fn scoped_query(question: &str, queries: &[String], chosen_titles: &[&str]) -> Option<String> {
+    let title_terms: HashSet<String> = chosen_titles
+        .iter()
+        .flat_map(|title| tokenize_keyword_terms(title))
+        .collect();
+    let mut seen = HashSet::new();
+    let remaining: Vec<String> = std::iter::once(question)
+        .chain(queries.iter().map(String::as_str))
+        .flat_map(tokenize_keyword_terms)
+        .filter(|term| !title_terms.contains(term) && seen.insert(term.clone()))
+        .collect();
+    let informative: HashSet<String> = select_informative_terms(remaining.clone(), MAX_QUERY_WORDS)
+        .into_iter()
+        .collect();
+    let terms: Vec<String> = remaining
+        .into_iter()
+        .filter(|term| informative.contains(term))
+        .collect();
+    if terms.is_empty() {
+        return queries.first().cloned();
+    }
+    Some(terms.join(" "))
+}
+
+/// Cut the results to the `limit` hits, then append every hit's unseen section
+/// neighbours after all of them as context.
+///
+/// The hits are the evidence, in rank order, and nothing is placed among them.
+/// Context follows hit by hit in rank order, each neighbourhood in the order
+/// the section reads. How much of it reaches the prompt is the evidence
+/// budget's call: it walks hits before context and keeps what fits, so a
+/// neighbour only ever uses room no hit could, and is never fetched in place
+/// of one.
+pub(in super::super) async fn append_context(
     repository: &dyn ChatRecords,
     results: &mut Vec<SearchResultDto>,
     allowed: &HashSet<String>,
     limit: usize,
 ) -> Result<()> {
-    let anchors: Vec<_> = results.iter().take(8).map(|r| r.id.clone()).collect();
-    let mut seen: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
-    let mut top_neighbors = Vec::new();
-    for anchor in anchors.iter().take(4) {
-        for p in repository.retrieval_neighbors(anchor, allowed).await? {
-            if top_neighbors.len() >= 4 || results.len() + top_neighbors.len() >= limit {
-                break;
-            }
-            if seen.insert(p.id.clone()) {
-                top_neighbors.push(passage_result(p, "section_neighbor"));
-            }
-        }
-        if top_neighbors.len() >= 4 || results.len() + top_neighbors.len() >= limit {
-            break;
-        }
-    }
-    if !top_neighbors.is_empty() {
-        let insert_idx = 6.min(results.len());
-        results.splice(insert_idx..insert_idx, top_neighbors);
-    }
-    for anchor in anchors.iter().skip(4) {
-        for p in repository.retrieval_neighbors(anchor, allowed).await? {
-            if results.len() >= limit {
-                return Ok(());
-            }
-            if seen.insert(p.id.clone()) {
-                results.push(passage_result(p, "section_neighbor"));
+    results.truncate(limit);
+    let hits: Vec<_> = results.iter().map(|r| r.id.clone()).collect();
+    // A neighbour that is itself a hit keeps its rank; one shared by two hits
+    // follows the first.
+    let mut present: HashSet<_> = hits.iter().cloned().collect();
+    for hit in &hits {
+        for passage in repository.retrieval_neighbors(hit, allowed).await? {
+            if present.insert(passage.id.clone()) {
+                results.push(passage_result(passage, "section_neighbor"));
             }
         }
     }
@@ -467,9 +349,9 @@ pub(in super::super) fn fuse_passes(
         weight: 1.0,
         results,
     };
-    hybrid.fuse(
-        vec![pass(first), pass(second)],
-        limit,
-        Spread::AcrossDocuments,
-    )
+    hybrid.fuse(vec![pass(first), pass(second)], limit)
 }
+
+#[cfg(test)]
+#[path = "library_search_tests.rs"]
+mod tests;

@@ -1,11 +1,39 @@
+/**
+ * Skeleton Component
+ *
+ * Purpose: Generic skeleton loader for placeholder content while loading
+ *
+ * Features:
+ * - Animated shimmer effect
+ * - Multiple shapes (rectangle, circle)
+ * - Flexible sizing
+ * - Multiple instances with count prop
+ * - Dark mode support
+ *
+ * States: loading only
+ * Accessibility: Hidden from screen readers (decorative)
+ * Performance: GPU-accelerated CSS animations at 60fps
+ */
+
 import React from 'react';
 
 export interface SkeletonProps {
+  /** Width of skeleton (CSS value or number for pixels) */
   width?: string | number;
+
+  /** Height of skeleton (CSS value or number for pixels) */
   height?: string | number;
+
+  /** Whether skeleton should be circular */
   circle?: boolean;
+
+  /** Additional CSS classes */
   className?: string;
+
+  /** Number of skeleton instances to render */
   count?: number;
+
+  /** Vertical spacing between multiple instances (Tailwind spacing class) */
   gap?: string;
 }
 
@@ -31,7 +59,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   const style: React.CSSProperties = {
     width: widthStyle,
     height: heightStyle,
-    ...(circle && widthStyle && { width: heightStyle }),
+    ...(circle && widthStyle && { width: heightStyle }), // Ensure circle is square
   };
 
   if (count === 1) {
@@ -58,9 +86,17 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   );
 };
 
+/**
+ * SkeletonText - Preset for text lines
+ */
 export interface SkeletonTextProps {
+  /** Number of text lines */
   lines?: number;
+
+  /** Width of last line (to create natural text appearance) */
   lastLineWidth?: string;
+
+  /** Additional CSS classes */
   className?: string;
 }
 
@@ -80,8 +116,14 @@ export const SkeletonText: React.FC<SkeletonTextProps> = ({
     </div>
   );
 
+/**
+ * SkeletonAvatar - Preset for circular avatar
+ */
 export interface SkeletonAvatarProps {
+  /** Size of avatar */
   size?: 'sm' | 'md' | 'lg';
+
+  /** Additional CSS classes */
   className?: string;
 }
 
@@ -105,8 +147,14 @@ export const SkeletonAvatar: React.FC<SkeletonAvatarProps> = ({
   );
 };
 
+/**
+ * SkeletonButton - Preset for button skeleton
+ */
 export interface SkeletonButtonProps {
+  /** Button size */
   size?: 'sm' | 'md' | 'lg';
+
+  /** Additional CSS classes */
   className?: string;
 }
 
@@ -129,16 +177,22 @@ export const SkeletonButton: React.FC<SkeletonButtonProps> = ({
   );
 };
 
+/**
+ * SkeletonCard - Preset for card layout skeleton
+ */
 export const SkeletonCard: React.FC<{ className?: string }> = ({ className = '' }) => (
     <div
       className={`bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 ${className}`}
       aria-hidden="true"
     >
       <div className="space-y-4">
+        {/* Title */}
         <Skeleton height="1.5rem" width="75%" />
 
+        {/* Content lines */}
         <SkeletonText lines={3} />
 
+        {/* Footer buttons */}
         <div className="flex gap-3 pt-2">
           <SkeletonButton size="sm" />
           <SkeletonButton size="sm" />

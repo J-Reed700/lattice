@@ -1,4 +1,9 @@
-//! Domain entity representing a search result with match metadata and relevance score.
+//! # Search Result Entity
+//!
+//! Domain entity representing a search result.
+//!
+//! This is a pure domain entity that represents the result of a search operation,
+//! containing the matched item's information and relevance score.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +11,33 @@ use crate::shared::error::AppError;
 
 type Result<T> = std::result::Result<T, AppError>;
 
-/// Search result entity containing matched item identifier, relevance score, and content metadata.
+/// Search result entity.
+///
+/// Represents a single result from a search operation, containing:
+/// - The matched item's identifier
+/// - Relevance score (0.0 to 1.0, higher is better)
+/// - Optional metadata about the matched item
+///
+/// ## Pure Domain Model
+///
+/// This entity focuses on the business concept of a "search result" without
+/// infrastructure concerns. The actual search implementation, ranking algorithms,
+/// and data retrieval are handled by the infrastructure layer.
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use lattice_core::domain::entities::search_result::SearchResult;
+///
+/// let result = SearchResult::new(
+///     "chunk-123".to_string(),
+///     0.95,
+///     Some("Important document content...".to_string()),
+/// );
+///
+/// assert!(result.score() > 0.9);
+/// assert!(result.is_relevant(0.8));
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
@@ -53,7 +84,40 @@ pub struct ChunkSearchHit {
 }
 
 impl SearchResult {
-    /// Create a new search result with validated score.
+    /// Create a new search result.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier of the matched item
+    /// * `score` - Relevance score (must be finite, will be clamped to [0.0, 1.0])
+    /// * `snippet` - Optional content preview
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(SearchResult)` if score is finite (not NaN or infinity).
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::InvalidInput` if score is NaN or infinite.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use lattice_core::domain::entities::search_result::SearchResult;
+    ///
+    /// let result = SearchResult::new(
+    ///     "doc-456".to_string(),
+    ///     0.87,
+    ///     Some("Matched content here...".to_string()),
+    /// )?;
+    /// # Ok::<(), lattice_core::shared::error::AppError>(())
+    /// ```
+    ///
+    /// ```rust,no_run
+    /// // NaN is rejected
+    /// let result = SearchResult::new("id".to_string(), f32::NAN, None);
+    /// assert!(result.is_err());
+    /// ```
     pub fn new(id: String, score: f32, snippet: Option<String>) -> Result<Self> {
         // CRITICAL: Reject NaN (violates Ord/Eq contracts)
         if score.is_nan() {
@@ -109,6 +173,19 @@ impl SearchResult {
     }
 
     /// Create a search result with full metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier
+    /// * `score` - Relevance score (must be finite)
+    /// * `snippet` - Content preview
+    /// * `document_id` - Parent document ID
+    /// * `file_path` - Source file path
+    /// * `position` - Position within document
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::InvalidInput` if score is NaN or infinite.
     pub fn with_metadata(
         id: String,
         score: f32,
@@ -146,6 +223,10 @@ impl SearchResult {
     }
 
     /// Create a search result with chunk metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::InvalidInput` if score is NaN or infinite.
     pub fn with_chunk_metadata(hit: ChunkSearchHit) -> Result<Self> {
         let ChunkSearchHit {
             id,
@@ -221,6 +302,20 @@ impl SearchResult {
     }
 
     /// Check if this result meets a relevance threshold.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Minimum score to be considered relevant (0.0 to 1.0)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use lattice_core::domain::entities::search_result::SearchResult;
+    ///
+    /// let result = SearchResult::new("id".to_string(), 0.75, None);
+    /// assert!(result.is_relevant(0.7));
+    /// assert!(!result.is_relevant(0.8));
+    /// ```
     pub fn is_relevant(&self, threshold: f32) -> bool {
         self.score >= threshold.clamp(0.0, 1.0)
     }

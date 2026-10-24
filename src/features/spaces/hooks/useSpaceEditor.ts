@@ -13,6 +13,12 @@ import { toast } from '@/stores/toastStore';
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/**
+ * Creates spaces and edits the one selected in Chat: its name, look, prompt
+ * and tools, and whether it is archived. A space has no model of its own: a
+ * chat answers with its own choice or the Settings default. The drafts follow
+ * the selected space; saving writes them all at once.
+ */
 export function useSpaceEditor() {
   const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;

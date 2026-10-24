@@ -1,5 +1,7 @@
+/** The space every chat and document belongs to until the user picks another. */
 export const GENERAL_SPACE_ID = 'space_general';
 
+/** A space's accent as lowercase `#rgb`/`#rrggbb`, or null when it is not a hex color. */
 export const normalizeHexColor = (value: string | null | undefined): string | null => {
   if (!value) return null;
   const trimmed = value.trim();
@@ -9,6 +11,7 @@ export const normalizeHexColor = (value: string | null | undefined): string | nu
   return isHex ? candidate.toLowerCase() : null;
 };
 
+/** The tools a space turns on for its new turns, as `toolPreferencesJson` holds them. */
 export interface SpaceToolPreferences {
   knowledgeBase: boolean;
   webSearch: boolean;
@@ -64,7 +67,10 @@ export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferen
   }
 };
 
-/** Generates a unique case-insensitive name against `taken`. */
+/**
+ * A name none of `taken` uses, ignoring case. A blank request becomes
+ * "`base` N" after the last one; a taken name gets " 2", " 3", … appended.
+ */
 export const uniqueName = (requested: string, taken: readonly string[], base: string): string => {
   const used = new Set(taken.map((name) => name.toLowerCase()));
   const name = requested.trim();

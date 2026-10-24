@@ -1,3 +1,9 @@
+/**
+ * Settings Components
+ *
+ * Export all settings-related components.
+ */
+
 export { Settings } from './components/Settings';
 
 export { SearchTab } from './components/SearchTab';

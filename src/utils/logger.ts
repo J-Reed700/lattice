@@ -1,5 +1,12 @@
 import { diagnostics } from './diagnostics';
 
+/**
+ * Frontend Logger Utility
+ *
+ * Provides structured logging with different log levels and context.
+ * Automatically disabled in production builds unless explicitly enabled.
+ */
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogContext {
@@ -65,6 +72,7 @@ class Logger {
     const { component, action, ...additionalContext } = context || {};
     const hasAdditionalContext = Object.keys(additionalContext).length > 0;
 
+    // Avoid unused variable warnings
     void component;
     void action;
 
@@ -84,18 +92,30 @@ class Logger {
     }
   }
 
+  /**
+   * Log debug message (development only)
+   */
   debug(message: string, context?: LogContext, ...args: unknown[]): void {
     this.logWithContext('debug', message, context, ...args);
   }
 
+  /**
+   * Log informational message
+   */
   info(message: string, context?: LogContext, ...args: unknown[]): void {
     this.logWithContext('info', message, context, ...args);
   }
 
+  /**
+   * Log warning message
+   */
   warn(message: string, context?: LogContext, ...args: unknown[]): void {
     this.logWithContext('warn', message, context, ...args);
   }
 
+  /**
+   * Log error message
+   */
   error(message: string, context?: LogContext, error?: Error, ...args: unknown[]): void {
     const errorContext = error
       ? { ...context, error: error.message, stack: error.stack }
@@ -103,27 +123,45 @@ class Logger {
     this.logWithContext('error', message, errorContext, ...args);
   }
 
+  /**
+   * Create a scoped logger for a specific component
+   */
   scope(component: string): ScopedLogger {
     return new ScopedLogger(this, component);
   }
 
+  /**
+   * Enable/disable logging at runtime
+   */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
   }
 
+  /**
+   * Set log level at runtime
+   */
   setLogLevel(level: LogLevel): void {
     this.logLevel = level;
   }
 
+  /**
+   * Get current log level
+   */
   getLogLevel(): LogLevel {
     return this.logLevel;
   }
 
+  /**
+   * Check if logging is enabled
+   */
   isEnabled(): boolean {
     return this.enabled;
   }
 }
 
+/**
+ * Scoped logger for a specific component
+ */
 class ScopedLogger {
   constructor(
     private logger: Logger,

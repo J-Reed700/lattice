@@ -1,3 +1,10 @@
+/**
+ * File Management API Types
+ *
+ * Type definitions for file operations and metadata.
+ * These types match the Rust backend structures from commands/file.rs
+ */
+
 export type FileMetadata = import('../../lib/bindings').FileMetadataDto;
 
 export type IndexedFolder = import('../../lib/bindings').IndexedFolder;

@@ -53,6 +53,7 @@ export function FeatureErrorBoundary({ children, featureName, icon }: FeatureErr
   );
 }
 
+// Specific error boundaries for different features
 export function SearchErrorBoundary({ children }: { children: React.ReactNode }) {
   return (
     <FeatureErrorBoundary featureName="Search">

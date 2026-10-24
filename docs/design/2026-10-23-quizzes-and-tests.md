@@ -311,7 +311,7 @@ tagged enum stored as `key_json`:
 | single_choice | `Choice(usize)` | `selected_indices: [i]` | deterministic | none | `ChoiceItem` (radiogroup) |
 | true_false | `Choice(0\|1)`, options fixed `["True","False"]` | `selected_indices` | deterministic | none | `ChoiceItem` with two rows, statement as prompt |
 | multi_select | `Choices(BTreeSet<usize>)`, 2–3 of 4–6 correct | `selected_indices` | deterministic | `max(0, hits − wrong picks) / |key|`, said as "2 of 3 right, 1 wrong pick" | `MultiSelectItem` (checkbox group) |
-| short_answer | `Text { variants: Vec<String>, numeric: Option<{value, tolerance, unit_variants}> }` | `text` | deterministic normalisation (trim, case, whitespace, punctuation, diacritics, leading article, thousands separators; numeric parse with tolerance and unit variants). On no match and non-empty text: model equivalence judge → `Provisional` correct/incorrect with a reason quoting the answer | none (correct or not) | `ShortAnswerItem` |
+| short_answer | `Text { variants: Vec<String>, numeric: Option<{value, tolerance, unit_variants}> }` | `text` | deterministic normalisation (trim, case, whitespace, punctuation, diacritics, leading article, thousands separators; numeric parse with tolerance and unit variants; the tolerance is absolute, in the key's unit). A response that parses as a number is graded deterministically either way, so a wrong number is wrong with a code-written reason ("You gave 5; the answer is 7 ± 0.5") and no model call. An empty response scores 0 with the reason "No answer given" and no model call. On no match and non-empty non-numeric text: model equivalence judge → `Provisional` correct/incorrect with a reason quoting the answer | none (correct or not) | `ShortAnswerItem` |
 | cloze | `Cloze(Vec<Text>)`, one per `{{n}}` blank | `blank_responses: Vec<String>` | deterministic per blank, same normalisation; no model fallback | blanks right / blanks | `ClozeItem` |
 | matching | `Matching(Vec<usize>)` right index per left, options carry `left` and `right` lists; `right` may hold one extra distractor | `matches: Vec<Option<usize>>` | deterministic | pairs right / pairs | `MatchingItem` (selects) |
 | ordering | `Ordering(Vec<String>)` | `ordered_values` | deterministic | correctly ordered pairs / all pairs (Kendall), said as "7 of 10 pairs in order" | `OrderingItem` |
@@ -393,6 +393,8 @@ fields before the points, so a small model reasons first and scores second.
   partly met is in between. A criterion that loses points needs a non-empty
   `what_was_missing`. A disagreement is repaired by trusting the verdict and
   recomputing points; it is never shown as is.
+- An empty written answer is never sent to the model: it scores 0 with the
+  code-written reason "No answer given".
 - **No reason, no wrong.** An item that loses points with an empty summary, or
   with no surviving `what_was_missing`, is a grader failure (§4.1). It reads
   "Couldn't grade yet: the model didn't explain this grade" with Retry
@@ -896,13 +898,16 @@ stage and records the bank with keys (eval only). Each item becomes
 
 Mechanical checks (code decides, into `metrics.json`): schema and
 `validate_candidate` pass rate, blinded key-review agreement rate (first
-pass, after repair, dropped), leak check hits, length-bias hits, duplicate and
+pass, after repair, dropped), leak check hits (the correct key or an accepted variant appearing verbatim in
+the stem; other options in the stem are fine, as comparison questions name
+them), length-bias hits, duplicate and
 near-duplicate rate, format mix vs the blueprint, bank size reached vs target,
 model calls and minutes per bank, share of items with a verbatim source quote
 or lesson-block anchor.
 
-Judged criteria (`lattice-course-judge/2`, one call each, the lesson text and
-the item but *not* the key unless stated):
+Judged criteria (`lattice-course-judge/2`, one call each, with the lesson text
+and the item). Q1 and Q2 are judged *without* the key (Q2 solves blind);
+Q3–Q5 need it and see it:
 
 - **Q1 Answerable from the lesson.** "A learner who read only this lesson can
   answer the item; it needs no outside fact the lesson does not teach."
@@ -944,6 +949,9 @@ has a human grade (Josh labels blind through `calibration-sample`).
   false-pass and false-fail rates and the PPI-corrected agreement with exact
   intervals, as the course judge is calibrated today (design §5.2). Headline:
   agreement with human on pass/fail per item, and mean absolute point error.
+  An item counts as a pass only at full credit; partly credited items are
+  scored by point error. The label file adds `human_points` beside the
+  pass/fail label (its schema is otherwise the calibration tool's).
 - Rationale quality (§4.3a), checked mechanically on every model-graded row:
   - the share of `your_words` and `source_quote` spans that are verbatim;
   - points that agree with the verdict;
@@ -951,6 +959,9 @@ has a human grade (Josh labels blind through `calibration-sample`).
   - `full_credit_includes` that doesn't reproduce the reference answer.
 
   On the calibration slice, the human also labels the reason as one of: *right*, *verdict right but reason wrong*, or *reason fabricated*. Headline: the share of marked-down answers whose reason a human accepts. A grader with correct verdicts and unacceptable reasons fails this eval.
+  Predeclared bar (set by the owner on 2026-10-24: a B or better): any reason
+  labelled *fabricated* fails the grader, and the accepted share must be at
+  least 83 %, reported with its exact 95 % interval.
 - Contest rows: a regrade must not change its verdict on an unchanged answer
   more than 10 % of the time across three seeds (stability), reported
   separately.

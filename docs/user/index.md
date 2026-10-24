@@ -9,8 +9,7 @@ learning programs with flashcards.
 **What to expect:**
 - **Local by default.** Indexing and embeddings run on your machine. Chat uses a
   local model through a bundled llama.cpp server unless you choose another
-  provider (Ollama, a llama.cpp server you run yourself, OpenAI, Anthropic or
-  Google).
+  provider (Ollama, a llama.cpp server you run yourself, OpenAI or Anthropic).
 - **No account.** Your library, conversations and journal live in a database on
   your computer.
 - **Answers with citations.** Chat answers point back to the passages they came

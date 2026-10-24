@@ -5,7 +5,14 @@ use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
-    /// Delete specific messages from a conversation.
+    /// Delete specific messages from a conversation
+    ///
+    /// # Arguments
+    /// * `conversation_id` - Conversation ID
+    /// * `message_ids` - Array of message IDs to delete
+    ///
+    /// # Returns
+    /// Number of messages deleted
     pub async fn delete_messages(
         &self,
         conversation_id: &str,

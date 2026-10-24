@@ -46,7 +46,7 @@
 use std::sync::Arc;
 
 mod chat_runtime;
-// Unified DI container
+// DDD Container - Unified DI container for DDD architecture
 pub mod container;
 pub use container::Container;
 
@@ -88,6 +88,27 @@ use lattice_core::application::ports::{
 ///
 /// Contains in-memory mock implementations. No database or ML models required.
 /// Use this in unit tests for fast, isolated testing.
+///
+/// # Example
+/// ```rust
+/// #[tokio::test]
+/// async fn test_document_workflow() {
+///     let container = MockAppContainer::new();
+///
+///     // Create a document using mock repository
+///     let doc = container.documents()
+///         .create("/test.txt", "test.txt", "text/plain", 100, "2024-01-01", "abc")
+///         .await
+///         .unwrap();
+///
+///     // Verify it was stored
+///     let found = container.documents()
+///         .find_by_id(&doc.id())
+///         .await
+///         .unwrap();
+///     assert!(found.is_some());
+/// }
+/// ```
 #[cfg(test)]
 pub struct MockAppContainer {
     document_repo: Arc<MockDocumentRepository>,
@@ -105,6 +126,11 @@ impl MockAppContainer {
     /// Create a new mock container
     ///
     /// All dependencies are in-memory mocks. No external resources needed.
+    ///
+    /// # Example
+    /// ```rust
+    /// let container = MockAppContainer::new();
+    /// ```
     pub fn new() -> Self {
         Self {
             document_repo: Arc::new(MockDocumentRepository::new()),
@@ -120,6 +146,9 @@ impl MockAppContainer {
     }
 
     /// Create a new mock container with custom embedding dimension
+    ///
+    /// # Arguments
+    /// * `embedding_dim` - Dimension of mock embeddings (e.g., DEFAULT_EMBEDDING_DIM)
     pub fn with_dimension(embedding_dim: usize) -> Self {
         Self {
             document_repo: Arc::new(MockDocumentRepository::new()),

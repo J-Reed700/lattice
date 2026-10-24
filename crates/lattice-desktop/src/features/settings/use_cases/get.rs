@@ -18,16 +18,55 @@ pub struct GetSettingsUseCase {
 
 impl GetSettingsUseCase {
     /// Create a new use case instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `repository` - Settings repository port implementation
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
         Self { repository }
     }
 
     /// Get all application settings.
+    ///
+    /// # Returns
+    ///
+    /// Complete settings structure with all categories
+    ///
+    /// # Errors
+    ///
+    /// Returns error if settings cannot be loaded from repository
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let use_case = GetSettingsUseCase::new(repository);
+    /// let settings = use_case.execute().await?;
+    /// println!("Chunk size: {}", settings.indexing.chunk_size);
+    /// ```
     pub async fn execute(&self) -> Result<SettingsDto> {
         self.repository.get_all().await
     }
 
     /// Get a specific settings category.
+    ///
+    /// # Arguments
+    ///
+    /// * `category` - Category to retrieve (indexing, search, llm, ui, sync, backup)
+    ///
+    /// # Returns
+    ///
+    /// Settings for the specified category as JSON value
+    ///
+    /// # Errors
+    ///
+    /// Returns error if category doesn't exist or cannot be loaded
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let use_case = GetSettingsUseCase::new(repository);
+    /// let search_settings = use_case.get_category(SettingsCategory::Search).await?;
+    /// ```
     pub async fn get_category(&self, category: SettingsCategory) -> Result<serde_json::Value> {
         self.repository.get_category(category).await
     }

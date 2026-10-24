@@ -1,5 +1,25 @@
+/**
+ * Toast Utility Functions - Helper functions for displaying toasts
+ *
+ * Purpose: Provides convenient utility functions for common toast scenarios
+ * Can be used anywhere in the app without requiring React hooks
+ *
+ * Usage:
+ * ```typescript
+ * import { showSuccessToast, showErrorToast } from '@/utils/toast';
+ *
+ * showSuccessToast('File uploaded successfully');
+ * showErrorToast('Failed to upload', new Error('Network error'));
+ * ```
+ */
+
 import { toast } from '../stores/toastStore';
 
+/**
+ * Show a success toast
+ * @param message - The success message to display
+ * @param options - Additional toast options
+ */
 export function showSuccessToast(
   message: string,
   options?: {
@@ -10,6 +30,12 @@ export function showSuccessToast(
   return toast.success(message, options);
 }
 
+/**
+ * Show an error toast
+ * @param message - The error message to display
+ * @param error - Optional error object to extract message from
+ * @param options - Additional toast options
+ */
 export function showErrorToast(
   message: string,
   error?: Error | unknown,
@@ -36,6 +62,11 @@ export function showErrorToast(
   });
 }
 
+/**
+ * Show a warning toast
+ * @param message - The warning message to display
+ * @param options - Additional toast options
+ */
 export function showWarningToast(
   message: string,
   options?: {
@@ -47,6 +78,11 @@ export function showWarningToast(
   return toast.warning(message, options);
 }
 
+/**
+ * Show an info toast
+ * @param message - The info message to display
+ * @param options - Additional toast options
+ */
 export function showInfoToast(
   message: string,
   options?: {
@@ -58,6 +94,11 @@ export function showInfoToast(
   return toast.info(message, options);
 }
 
+/**
+ * Show a promise-based toast that updates based on promise state
+ * @param promise - The promise to track
+ * @param messages - Messages for each state (loading, success, error)
+ */
 export async function showPromiseToast<T>(
   promise: Promise<T>,
   messages: {
@@ -94,10 +135,17 @@ export async function showPromiseToast<T>(
   }
 }
 
+/**
+ * Dismiss a specific toast by ID
+ * @param id - The toast ID to dismiss
+ */
 export function dismissToast(id: string): void {
   toast.dismiss(id);
 }
 
+/**
+ * Dismiss all active toasts
+ */
 export function dismissAllToasts(): void {
   toast.dismissAll();
 }

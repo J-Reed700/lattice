@@ -456,14 +456,6 @@ async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async submitLearningAttempt(request: SubmitLearningAttemptRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_attempt", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteLearningProgram(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|delete_learning_program", { id }) };
@@ -1026,30 +1018,6 @@ async rejectLearningPracticeProposal(request: DecideLearningPracticeProposalRequ
     else return { status: "error", error: e  as any };
 }
 },
-async getLearningAssessmentWorkspace(id: string) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_workspace", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async createLearningAssessmentBlueprint(request: CreateLearningAssessmentBlueprintRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_assessment_blueprint", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async startLearningAssessmentForm(request: StartLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_assessment_form", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getLearningAssessmentForm(id: string) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_form", { id }) };
@@ -1074,6 +1042,10 @@ async interruptLearningAssessmentForm(request: MutateLearningAssessmentFormReque
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Keyed answers are graded at once; written answers and short-answer
+ * near-misses go to the grading job, which this starts.
+ */
 async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_assessment_form", { request }) };
@@ -1082,7 +1054,7 @@ async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestD
     else return { status: "error", error: e  as any };
 }
 },
-async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_follow_up", { request }) };
 } catch (e) {
@@ -1090,9 +1062,84 @@ async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|dismiss_learning_follow_up", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningQuizOverview(programId: string) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_quiz_overview", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateLearningQuizSettings(request: UpdateLearningQuizSettingsRequestDto) : Promise<Result<LearningQuizOverviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_learning_quiz_settings", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningQuizBank(request: PrepareLearningQuizBankRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_quiz_bank", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningQuiz(request: StartLearningQuizRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_quiz", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Grade the answers still pending after a stopped or failed grading job.
+ */
+async resumeLearningQuizGrading(request: ResumeLearningQuizGradingRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resume_learning_quiz_grading", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async contestLearningQuizGrade(request: ContestLearningQuizGradeRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|contest_learning_quiz_grade", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async overrideLearningQuizGrade(request: OverrideLearningQuizGradeRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|override_learning_quiz_grade", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reportLearningQuizItem(request: ReportLearningQuizItemRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|report_learning_quiz_item", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addLearningQuizMissesToRecall(request: AddLearningQuizMissesToRecallRequestDto) : Promise<Result<LearningQuizMissesToRecallDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_quiz_misses_to_recall", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1503,6 +1550,23 @@ async lastLearningWindowShortfall() : Promise<Result<LearningWindowShortfallDto 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Detect system hardware capabilities.
+ *
+ * Returns comprehensive system information:
+ * - RAM (total, available)
+ * - CPU (cores, model)
+ * - GPU (type, acceleration, VRAM)
+ * - Disk (available space)
+ *
+ * # Example
+ *
+ * ```typescript
+ * const capabilities = await invoke('detect_system_capabilities');
+ * console.log(`RAM: ${capabilities.total_ram_gb} GB`);
+ * console.log(`GPU: ${capabilities.gpu_type}`);
+ * ```
+ */
 async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|detect_system_capabilities") };
@@ -1511,6 +1575,31 @@ async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, Ap
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Get compatible models for a specific category.
+ *
+ * Returns models ranked by compatibility score, with detailed
+ * compatibility analysis for each model.
+ *
+ * # Arguments
+ * - `category` - "LLM", "Embedding", or "OCR"
+ *
+ * # Returns
+ * List of model recommendations sorted by ranking score (best first).
+ *
+ * # Example
+ *
+ * ```typescript
+ * const models = await invoke('get_compatible_models', {
+ * category: 'LLM'
+ * });
+ *
+ * for (const model of models) {
+ * console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
+ * console.log(`Score: ${model.ranking_score}/100`);
+ * }
+ * ```
+ */
 async getCompatibleModels(category: string) : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_compatible_models", { category }) };
@@ -1519,6 +1608,18 @@ async getCompatibleModels(category: string) : Promise<Result<ModelRecommendation
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Get all recommended models across all categories.
+ *
+ * Returns models ranked by compatibility, grouped by category.
+ *
+ * # Example
+ *
+ * ```typescript
+ * const allModels = await invoke('get_all_recommended_models');
+ * console.log(`Total compatible models: ${allModels.length}`);
+ * ```
+ */
 async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_all_recommended_models") };
@@ -1527,6 +1628,36 @@ async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppEr
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Search external model catalogs (Hugging Face).
+ *
+ * Uses Hugging Face as the source of truth for downloadable models,
+ * ranks them by relevance, and returns unified results.
+ *
+ * # Features
+ * - Searches Hugging Face (cached)
+ * - Filters by category, size, capabilities
+ * - Ranks by relevance score (0-100)
+ * - Caches results for 1 hour (TTL)
+ * - Graceful degradation on API errors
+ *
+ * # Example
+ *
+ * ```typescript
+ * const results = await invoke('search_model_catalog', {
+ * query: 'llama chat',
+ * category: 'LLM',
+ * max_size_gb: 5.0,
+ * required_capabilities: ['chat', 'code'],
+ * limit: 10
+ * });
+ *
+ * for (const result of results) {
+ * console.log(`${result.model.name}: ${result.relevance_score}/100`);
+ * console.log(`Source: ${result.source}`);
+ * }
+ * ```
+ */
 async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<ModelSearchResultDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|search_model_catalog", { request }) };
@@ -1537,6 +1668,7 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
 },
 /**
  * List the actual standalone GGUF files published in a Hugging Face repository.
+ * Sizes come from the repository, while memory requirements are estimates.
  */
 async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
     try {
@@ -1546,6 +1678,18 @@ async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppE
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Refresh model catalog cache.
+ *
+ * Clears the catalog cache to force fresh API calls on next search.
+ *
+ * # Example
+ *
+ * ```typescript
+ * await invoke('refresh_model_catalog');
+ * console.log('Catalog cache refreshed');
+ * ```
+ */
 async refreshModelCatalog() : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|refresh_model_catalog") };
@@ -1554,6 +1698,18 @@ async refreshModelCatalog() : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Clear model catalog cache.
+ *
+ * Removes all cached catalog entries, forcing fresh API calls.
+ *
+ * # Example
+ *
+ * ```typescript
+ * const deleted = await invoke('clear_model_catalog_cache');
+ * console.log(`Cleared ${deleted} cache entries`);
+ * ```
+ */
 async clearModelCatalogCache() : Promise<Result<number, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|clear_model_catalog_cache") };
@@ -1562,6 +1718,20 @@ async clearModelCatalogCache() : Promise<Result<number, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Get model catalog cache statistics.
+ *
+ * Returns metrics about cache usage and effectiveness.
+ *
+ * # Example
+ *
+ * ```typescript
+ * const stats = await invoke('get_model_catalog_stats');
+ * console.log(`Total: ${stats.total_entries}`);
+ * console.log(`Valid: ${stats.valid_entries}`);
+ * console.log(`Expired: ${stats.expired_entries}`);
+ * ```
+ */
 async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_catalog_stats") };
@@ -1570,6 +1740,84 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Advanced document search with intelligent caching
+ *
+ * Performs semantic, keyword, or hybrid search across indexed documents with automatic
+ * query result caching. Supports multiple search modes and returns enriched results with
+ * metadata, snippets, and ranking information. Cache hits dramatically improve response times.
+ *
+ * # Arguments
+ *
+ * * `container` - Service container with search services, cache, and security context
+ * * `options` - Search configuration including query, mode, filters, and limit
+ *
+ * # Returns
+ *
+ * * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
+ * * `Err(ApiError)` - If validation fails or search execution fails
+ *
+ * # Errors
+ *
+ * * `AppError::InvalidInput` - Query validation failed (empty, too long, malicious content)
+ * * `AppError::Other` - Embedding generation or search execution failed
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * interface SearchOptions {
+ * query: string;
+ * searchMode?: 'semantic' | 'keyword' | 'hybrid';
+ * limit?: number;
+ * filter?: Record<string, string>;
+ * }
+ *
+ * // Semantic search with caching
+ * const response = await invoke('search_documents', {
+ * options: {
+ * query: 'machine learning algorithms',
+ * searchMode: 'semantic',
+ * limit: 20
+ * }
+ * });
+ *
+ * console.log(`Found ${response.results.length} results`);
+ * console.log(`From cache: ${response.fromCache}`);
+ * console.log(`Execution time: ${response.executionTimeMs}ms`);
+ * console.log(`Cache hit rate: ${response.cacheStats.hitRate}%`);
+ * ```
+ *
+ * # Security
+ *
+ * - **Input Validation**: Sanitizes query to prevent injection attacks
+ * - **Access Tracking**: Records document access asynchronously for usage analytics
+ *
+ * # Search Modes
+ *
+ * - **Semantic**: Pure embedding similarity search
+ * - **Keyword**: Traditional BM25 full-text search
+ * - **Hybrid**: Combines vector + BM25 with RRF ranking, exactly as chat searches
+ *
+ * # Caching Strategy
+ *
+ * - **Cache Key**: Query + filters + limit + search mode
+ * - **Cache Hit**: Returns cached results, bypasses expensive embedding/search
+ * - **Cache Miss**: Executes search, stores result with timestamp and execution time
+ * - **TTL**: Cached results automatically expire based on LRU eviction
+ *
+ * # Command Flow
+ *
+ * 1. Input validation (sanitize query)
+ * 2. Generate cache key from query + options
+ * 3. **Cache lookup** - if hit, return cached results immediately
+ * 4. Embed query using embedding service
+ * 5. Execute search based on mode (vector/keyword/hybrid)
+ * 6. Enrich results with document metadata and snippets
+ * 7. Store results in cache for future requests
+ * 8. Track document access asynchronously
+ */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_documents", { options }) };
@@ -1578,6 +1826,58 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Fast lightweight search returning minimal data (IDs and scores only)
+ *
+ * Optimized search that returns only chunk IDs and similarity scores without expensive
+ * metadata enrichment. Ideal for autocomplete, quick lookups, or when only IDs are needed.
+ * Does not use caching (results too lightweight to justify cache overhead).
+ *
+ * # Arguments
+ *
+ * * `container` - Service container with search service and security context
+ * * `query` - Search query string
+ * * `limit` - Maximum number of results to return
+ *
+ * # Returns
+ *
+ * * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
+ * * `Err(ApiError)` - If validation fails or search fails
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * // Fast search without metadata; a failure rejects with an ApiError
+ * const hits = await invoke<[string, number][]>('search_fast', {
+ * query: 'neural networks',
+ * limit: 10
+ * });
+ *
+ * hits.forEach(([chunkId, score]) => {
+ * console.log(`${chunkId}: ${score}`);
+ * });
+ * ```
+ *
+ * # Security
+ *
+ * - **Input Validation**: Sanitizes query
+ *
+ * # Performance
+ *
+ * - **No Caching**: Results are lightweight, cache overhead not justified
+ * - **No Enrichment**: Skips expensive metadata/snippet lookup
+ * - **Pure Vector Search**: Always uses semantic similarity (no hybrid)
+ * - **Typical Response**: < 100ms for most queries
+ *
+ * # Use Cases
+ *
+ * - Autocomplete suggestions
+ * - Quick ID lookups for subsequent operations
+ * - Pre-filtering before enriched search
+ * - Real-time search-as-you-type
+ */
 async searchFast(query: string, limit: number) : Promise<Result<([string, number])[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_fast", { query, limit }) };
@@ -1602,6 +1902,73 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Finds documents similar to a given chunk
+ *
+ * Retrieves documents semantically similar to the specified chunk by using the chunk's
+ * content as the search query. Automatically filters out the source chunk from results
+ * to avoid self-matches. Useful for "more like this" features.
+ *
+ * # Arguments
+ *
+ * * `container` - Service container with search and enrichment services
+ * * `chunk_id` - ID of the chunk to find similar documents for
+ * * `limit` - Maximum number of similar documents to return (default: 10)
+ *
+ * # Returns
+ *
+ * * `Ok(Vec<SearchResultDto>)` - Similar documents ranked by semantic similarity
+ * * `Err(AppError)` - If chunk not found or search fails
+ *
+ * # Errors
+ *
+ * * `AppError::NotFound` - Chunk ID not found in database
+ * * `AppError::Other` - Embedding or search execution failed
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * // Find similar documents to a chunk
+ * const similar = await invoke('find_similar', {
+ * chunkId: 'chunk_abc123',
+ * limit: 10
+ * });
+ *
+ * console.log(`Found ${similar.length} similar documents`);
+ * similar.forEach(doc => {
+ * console.log(`${doc.title}: ${doc.score}`);
+ * });
+ * ```
+ *
+ * # Algorithm
+ *
+ * 1. Retrieve source chunk content from database
+ * 2. Generate embedding for chunk content
+ * 3. Perform vector similarity search
+ * 4. Filter out source chunk from results (prevent self-match)
+ * 5. Take top N results after filtering
+ * 6. Enrich with metadata
+ *
+ * # Use Cases
+ *
+ * - "More like this" document recommendations
+ * - Related content suggestions
+ * - Document clustering visualization
+ * - Duplicate detection
+ *
+ * # Command Flow
+ *
+ * 1. Fetch chunk content using enrichment service
+ * 2. Error if chunk not found
+ * 3. Embed chunk content
+ * 4. Vector similarity search (limit + 1 to account for self-match)
+ * 5. Filter out source chunk
+ * 6. Take top `limit` results
+ * 7. Enrich with metadata
+ * 8. Return similar documents
+ */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|find_similar", { chunkId, limit }) };
@@ -1612,6 +1979,10 @@ async findSimilar(chunkId: string, limit: number | null) : Promise<Result<Search
 },
 /**
  * Documents whose content is closest to the given document.
+ *
+ * `find_similar` is chunk-shaped and the frontend has no way to get a
+ * document's chunk ids, so the whole round trip lives here: pick a
+ * representative chunk, search, collapse the hits to one row per document.
  */
 async findSimilarDocuments(documentId: string, limit: number | null) : Promise<Result<SimilarDocumentDto[], AppError>> {
     try {
@@ -1621,6 +1992,97 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Time-aware search with recency boosting
+ *
+ * Performs hybrid search with automatic boosting of recent documents. Combines semantic
+ * similarity with temporal decay to surface fresh content while maintaining relevance.
+ * Configurable recency weight and maximum age filter.
+ *
+ * # Arguments
+ *
+ * * `container` - Service container with hybrid search service
+ * * `options` - Search options including query, recency weight, and age filter
+ *
+ * # Returns
+ *
+ * * `Ok(Vec<SearchResultDto>)` - Search results ranked with recency boost
+ * * `Err(AppError)` - If validation fails or execution fails
+ *
+ * # Errors
+ *
+ * * `AppError::InvalidInput` - Query validation failed, invalid recency weight, or negative max_age_days
+ * * `AppError::Other` - Embedding or search execution failed
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * interface RecencySearchOptions {
+ * query: string;
+ * limit?: number;
+ * recencyWeight?: number;  // 0.0 to 1.0
+ * maxAgeDays?: number;     // positive integer
+ * }
+ *
+ * // Search with recency boost (favor recent documents)
+ * const results = await invoke('search_with_recency', {
+ * options: {
+ * query: 'project status',
+ * limit: 15,
+ * recencyWeight: 0.3,  // 30% weight to recency
+ * maxAgeDays: 90       // Only last 3 months
+ * }
+ * });
+ *
+ * console.log('Recent relevant documents:');
+ * results.forEach(doc => {
+ * console.log(`${doc.title} (score: ${doc.score})`);
+ * });
+ * ```
+ *
+ * # Security
+ *
+ * - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
+ *
+ * # Recency Scoring
+ *
+ * **Formula**: `final_score = (1 - recency_weight) * relevance_score + recency_weight * recency_score`
+ *
+ * - **recency_weight**: 0.0 = pure relevance, 1.0 = pure recency
+ * - **recency_score**: Exponential decay based on document age
+ * - **max_age_days**: Hard filter - documents older than this are excluded
+ *
+ * **Default Values**:
+ * - `limit`: 10
+ * - `recency_weight`: 0.1 (10% recency, 90% relevance)
+ * - `max_age_days`: 730 (2 years)
+ *
+ * # Validation
+ *
+ * - `recency_weight` must be in range [0.0, 1.0]
+ * - `max_age_days` must be positive (> 0)
+ * - Empty validation errors return `AppError::InvalidInput`
+ *
+ * # Use Cases
+ *
+ * - Finding recent project updates
+ * - News/blog search favoring fresh content
+ * - Status report queries
+ * - Time-sensitive document retrieval
+ *
+ * # Command Flow
+ *
+ * 1. Input validation (query, recency_weight, max_age_days)
+ * 2. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
+ * 3. Validate recency_weight ∈ [0, 1]
+ * 4. Validate max_age_days > 0
+ * 5. Run the library search orchestrator
+ * 6. Enrich results with metadata
+ * 7. Boost recently updated documents
+ * 8. Return time-boosted results
+ */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_with_recency", { options }) };
@@ -1629,6 +2091,42 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Batch search command for processing multiple queries in parallel
+ *
+ * ## Overview
+ *
+ * Processes multiple search queries efficiently in a single operation,
+ * returning results for each query in the same order as provided.
+ *
+ * ## Arguments
+ *
+ * * `container` - DI container with services
+ * * `queries` - List of search queries to process
+ * * `limit` - Maximum results per query (default: 10)
+ * * `search_mode` - Search algorithm to use (Vector, Keyword, Hybrid)
+ *
+ * ## Returns
+ *
+ * Vector of result vectors, one for each query in input order.
+ *
+ * ## Security
+ *
+ * - Each query validated individually
+ *
+ * ## Example
+ *
+ * ```javascript
+ * const results = await VaultAPI.batchSearch(
+ * ['query1', 'query2', 'query3'],
+ * 10,
+ * 'hybrid'
+ * );
+ * // results[0] = results for 'query1'
+ * // results[1] = results for 'query2'
+ * // results[2] = results for 'query3'
+ * ```
+ */
 async batchSearch(queries: string[], limit: number | null, searchMode: string | null) : Promise<Result<SearchResultDto[][], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|batch_search", { queries, limit, searchMode }) };
@@ -1877,6 +2375,44 @@ async setCloudApiKey(provider: string, key: string) : Promise<Result<null, ApiEr
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Opens a file in the system's default application or returns internal rendering info
+ *
+ * Opens the specified file using the operating system's default application for that file type.
+ * For web articles (detected by article.md + page.html), returns internal rendering info instead.
+ * Uses platform-specific APIs to prevent command injection vulnerabilities.
+ *
+ * # Arguments
+ *
+ * * `path` - The absolute path to the file to open
+ * * `container` - Service container with security context and path validator
+ *
+ * # Returns
+ *
+ * * `Ok(OpenFileResponseDto)` - Response indicating action taken:
+ * - `render_internal`: For web articles, returns path to HTML for internal rendering
+ * - `opened_external`: For regular files, indicates file was opened externally
+ * * `Err(AppError)` - If validation fails, file doesn't exist, or opening fails
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * // Open a document (returns action info)
+ * const response = await invoke<OpenFileResponseDto>('open_file', {
+ * path: '/Users/example/Documents/report.pdf'
+ * });
+ *
+ * if (response.action === 'render_internal') {
+ * // Render HTML internally
+ * renderHTML(response.contentPath, response.title);
+ * } else {
+ * // File opened externally
+ * console.log('Opened externally:', response.contentPath);
+ * }
+ * ```
+ */
 async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|open_file", { path }) };
@@ -1885,6 +2421,29 @@ async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Opens a file by database ID in the system's default application or returns internal rendering info
+ *
+ * # Arguments
+ *
+ * * `file_id` - The unique database identifier for the document (from documents table)
+ * * `container` - Service container with database pool and security context
+ *
+ * # Returns
+ *
+ * * `Ok(OpenFileResponseDto)` - Response indicating action taken
+ * * `Err(AppError)` - If file not found, validation fails, or opening fails
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * const response = await invoke<OpenFileResponseDto>('open_file_by_id', {
+ * fileId: 'doc_abc123xyz'
+ * });
+ * ```
+ */
 async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|open_file_by_id", { fileId }) };
@@ -1893,6 +2452,16 @@ async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppErro
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Reads the content of a file for preview purposes
+ *
+ * # Arguments
+ * - `path`: The absolute path to the file to read
+ * - `container`: Service container with security context
+ *
+ * # Returns
+ * The file content as a UTF-8 string
+ */
 async readFileContent(path: string) : Promise<Result<string, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_content", { path }) };
@@ -1901,6 +2470,16 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
+ *
+ * # Arguments
+ * - `path`: The absolute path to the file to read
+ * - `container`: Service container with security context
+ *
+ * # Returns
+ * The file content as raw bytes
+ */
 async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_bytes", { path }) };
@@ -1909,6 +2488,24 @@ async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Reveals a file in the system file explorer
+ *
+ * # Arguments
+ *
+ * * `path` - The absolute path to the file to reveal
+ * * `container` - Service container with security context
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * await invoke('show_in_folder', {
+ * path: '/Users/example/Documents/report.pdf'
+ * });
+ * ```
+ */
 async showInFolder(path: string) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|show_in_folder", { path }) };
@@ -1917,6 +2514,24 @@ async showInFolder(path: string) : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Get document metadata by ID
+ *
+ * # Arguments
+ *
+ * * `container` - Service container with document repository
+ * * `document_id` - Unique document identifier (UUID)
+ *
+ * # Example
+ *
+ * ```typescript
+ * // Get document by ID to open from recent list
+ * const result = await VaultAPI.getDocument(docId);
+ * if (result.ok && result.data.filePath) {
+ * await VaultAPI.openFile(result.data.filePath);
+ * }
+ * ```
+ */
 async getDocument(documentId: string) : Promise<Result<DocumentMetadataDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_document", { documentId }) };
@@ -1981,6 +2596,24 @@ async indexDirectory(path: string, recursive: boolean, spaceId: string | null) :
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legacy Tauri shim - Retrieves file metadata (size and modification time) for a given path
+ *
+ * # Arguments
+ *
+ * * `path` - The absolute path to the file
+ * * `container` - Service container with security context
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * const metadata = await invoke<FileMetadata>('get_file_metadata', {
+ * path: '/Users/example/Documents/report.pdf'
+ * });
+ * ```
+ */
 async getFileMetadata(path: string) : Promise<Result<FileMetadataDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_metadata", { path }) };
@@ -2241,6 +2874,31 @@ async isFavorite(documentId: string) : Promise<Result<boolean, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Convenience wrapper for clear_search_cache with shorter name
+ *
+ * Provides backward compatibility for frontend code using the generic `clear_cache` name.
+ * Delegates to `clear_search_cache` which clears the search query cache.
+ *
+ * # Returns
+ *
+ * * `Ok(())` - Cache cleared successfully
+ * * `Err(AppError)` - Cache clear failed (rare)
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * // Clear cache using short name
+ * await invoke('clear_cache');
+ * ```
+ *
+ * # Note
+ *
+ * This is a convenience alias for `clear_search_cache`. Both commands perform
+ * the same operation. Use whichever name is more convenient for your use case.
+ */
 async clearCache() : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:cache|clear_cache") };
@@ -2249,6 +2907,78 @@ async clearCache() : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Returns detailed cache statistics including size and performance metrics
+ *
+ * Provides comprehensive statistics about the search cache including current size,
+ * capacity, hit/miss counts, time saved, and calculated hit rate. Useful for
+ * monitoring cache effectiveness and tuning cache size.
+ *
+ * # Returns
+ *
+ * * `Ok(CacheStats)` - Detailed cache statistics
+ * * `Err(AppError)` - Stats retrieval failed (rare)
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * interface CacheStats {
+ * size: number;              // Current entries (e.g., 42)
+ * capacity: number;          // Max entries (e.g., 100)
+ * hits: number;              // Cache hits (e.g., 127)
+ * misses: number;            // Cache misses (e.g., 85)
+ * totalTimeSavedMs: number;  // Time saved by cache hits (e.g., 6350ms)
+ * hitRate: number;           // Hit rate 0.0-1.0 (e.g., 0.599 = 59.9%)
+ * }
+ *
+ * // Get cache stats
+ * const stats = await invoke<CacheStats>('get_cache_stats');
+ *
+ * console.log(`Cache: ${stats.size}/${stats.capacity} entries`);
+ * console.log(`Hit rate: ${(stats.hitRate * 100).toFixed(1)}%`);
+ * console.log(`Time saved: ${(stats.totalTimeSavedMs / 1000).toFixed(1)}s`);
+ *
+ * // Display in UI
+ * updateCacheDisplay({
+ * usage: `${stats.size} / ${stats.capacity}`,
+ * hitRate: `${(stats.hitRate * 100).toFixed(1)}%`,
+ * timeSaved: `${(stats.totalTimeSavedMs / 1000).toFixed(1)}s`
+ * });
+ *
+ * // Monitor cache effectiveness
+ * if (stats.hitRate < 0.3) {
+ * console.warn('Low cache hit rate. Consider increasing capacity.');
+ * }
+ * ```
+ *
+ * # Statistics Breakdown
+ *
+ * - **size**: Current number of cached entries
+ * - **capacity**: Maximum entries before LRU eviction
+ * - **hits**: Number of cache hits since startup
+ * - **misses**: Number of cache misses since startup
+ * - **total_time_saved_ms**: Estimated time saved by cache hits
+ * - **hit_rate**: hits / (hits + misses), 0.0 to 1.0
+ *
+ * # Use Cases
+ *
+ * - **Dashboard**: Display cache performance in admin UI
+ * - **Monitoring**: Track cache effectiveness over time
+ * - **Tuning**: Determine optimal cache capacity
+ * - **Diagnostics**: Troubleshoot search performance issues
+ *
+ * # Performance
+ *
+ * - **Access Time**: ~1μs (atomic counter reads)
+ * - **No Locking**: Lock-free atomic operations
+ * - **Synchronous**: Instant return
+ *
+ * # Architecture
+ *
+ * Reads the statistics of the app's query cache, which the container holds
+ */
 async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:cache|get_cache_stats") };
@@ -2257,6 +2987,72 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Returns cache performance metrics (subset of stats)
+ *
+ * Provides focused performance metrics without size/capacity information. Lighter
+ * weight than `get_cache_stats` for frequent polling or metric collection.
+ *
+ * # Returns
+ *
+ * * `Ok(CacheMetrics)` - Performance metrics (hits, misses, time saved, hit rate)
+ * * `Err(AppError)` - Metrics retrieval failed (rare)
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * interface CacheMetrics {
+ * hits: number;              // Cache hits
+ * misses: number;            // Cache misses
+ * totalTimeSavedMs: number;  // Time saved (ms)
+ * hitRate: number;           // Hit rate 0.0-1.0
+ * }
+ *
+ * // Get cache metrics
+ * const metrics = await invoke<CacheMetrics>('get_cache_metrics');
+ * console.log(`Cache efficiency: ${(metrics.hitRate * 100).toFixed(1)}%`);
+ * console.log(`Performance gain: ${metrics.totalTimeSavedMs}ms`);
+ *
+ * // Periodic metrics collection
+ * setInterval(async () => {
+ * const metrics = await invoke<CacheMetrics>('get_cache_metrics');
+ * logMetrics('cache.hits', metrics.hits);
+ * logMetrics('cache.misses', metrics.misses);
+ * logMetrics('cache.hit_rate', metrics.hitRate);
+ * }, 60000); // Every minute
+ *
+ * // Display compact metrics
+ * updateMetricsBar({
+ * hits: metrics.hits,
+ * hitRate: `${(metrics.hitRate * 100).toFixed(0)}%`
+ * });
+ * ```
+ *
+ * # Metrics Breakdown
+ *
+ * - **hits**: Number of cache hits since startup
+ * - **misses**: Number of cache misses since startup
+ * - **total_time_saved_ms**: Estimated time saved by cache
+ * - **hit_rate**: hits / (hits + misses), 0.0 to 1.0
+ *
+ * # Difference from get_cache_stats
+ *
+ * - **Lighter**: Excludes size/capacity information
+ * - **Focused**: Performance metrics only
+ * - **Use Case**: Frequent polling, metrics dashboards
+ *
+ * # Performance
+ *
+ * - **Access Time**: ~1μs (atomic counter reads)
+ * - **No Locking**: Lock-free atomic operations
+ * - **Synchronous**: Instant return
+ *
+ * # Architecture
+ *
+ * Reads the metrics of the app's query cache, which the container holds
+ */
 async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:cache|get_cache_metrics") };
@@ -2265,6 +3061,65 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Manually clears all cached search results
+ *
+ * Removes all entries from the in-memory search cache, forcing subsequent searches
+ * to regenerate embeddings and query the database. Cache is automatically cleared
+ * after indexing operations, but manual clearing may be useful for testing or
+ * troubleshooting.
+ *
+ * # Returns
+ *
+ * * `Ok(())` - Cache cleared successfully
+ * * `Err(AppError)` - Cache clear failed (rare)
+ *
+ * # Example
+ *
+ * ```typescript
+ * import { invoke } from '@tauri-apps/api/core';
+ *
+ * // Clear cache manually
+ * await invoke('clear_search_cache');
+ * console.log('Search cache cleared');
+ *
+ * // Clear cache after settings change
+ * const handleSettingsChange = async () => {
+ * await updateSettings();
+ * await invoke('clear_search_cache'); // Force fresh results
+ * refreshSearchResults();
+ * };
+ *
+ * // Clear cache button
+ * const handleClearCache = async () => {
+ * await invoke('clear_search_cache');
+ * showNotification('Cache cleared. Next search will be fresh.');
+ * };
+ * ```
+ *
+ * # Side Effects
+ *
+ * - All cached search results removed
+ * - Next searches will be slower (no cache hits)
+ * - Cache metrics reset to 0
+ *
+ * # Use Cases
+ *
+ * - **Testing**: Verify search behavior without cache
+ * - **Troubleshooting**: Clear stale cache entries
+ * - **Settings Changes**: Force fresh results after config changes
+ * - **Manual Maintenance**: User-initiated cache clearing
+ *
+ * # Performance
+ *
+ * - **Clear Time**: ~1-10ms (depends on cache size)
+ * - **Thread-Safe**: Locked operation
+ * - **Synchronous**: Blocks until complete
+ *
+ * # Architecture
+ *
+ * Clears the app's query cache, which the container holds
+ */
 async clearSearchCache() : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:cache|clear_search_cache") };
@@ -3659,13 +4514,40 @@ export type ActivityTarget = { type: "course"; course: string } | { type: "lesso
 export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
+export type AddLearningQuizMissesToRecallRequestDto = { operationId: string; programId: string; formId: string; itemIds: string[] }
 export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; title: string; publisher: string | null; text: string }
 export type AddLearningWebSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; url: string; freshnessPolicy: LearningSourcePolicy }
 export type AdoptLearningSourceVersionRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number }
 /**
  * Structured error information for API responses.
+ *
+ * Contains an error code for programmatic handling, a human-readable message,
+ * and optional details for debugging.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::ipc::{ApiError, ErrorCode};
+ * let error = ApiError {
+ * code: ErrorCode::NotFound,
+ * message: "Document not found".to_string(),
+ * details: Some("ID: doc-123".to_string()),
+ * };
+ * ```
  */
-export type ApiError = { code: ErrorCode; message: string; details?: string | null }
+export type ApiError = {
+/**
+ * Error code for programmatic handling
+ */
+code: ErrorCode;
+/**
+ * Human-readable error message
+ */
+message: string;
+/**
+ * Optional additional details (sanitized for security)
+ */
+details?: string | null }
 /**
  * Main error type for the Lattice application.
  *
@@ -3865,8 +4747,168 @@ export type AppError =
 { Other: string }
 /**
  * Application errors for use cases, DTOs, and orchestration logic.
+ *
+ * These errors represent failures in application-level operations such as
+ * configuration, serialization, service availability, and use case execution.
  */
-export type ApplicationError = { Domain: DomainError } | { InvalidConfig: { details: string } } | { ServiceNotAvailable: { service: string; reason: string } } | { QueueFull: { queue_name: string } } | { SerializationFailed: { context: string; reason: string } } | { DeserializationFailed: { context: string; reason: string } } | { JsonError: { message: string; line: number; column: number } } | { ParsingError: { context: string; reason: string } } | { UseCaseFailed: { use_case: string; reason: string } } | { MappingError: { context: string; reason: string } }
+export type ApplicationError =
+/**
+ * Domain error (business logic violation).
+ *
+ * Wraps domain-level errors from aggregates, entities, and domain services.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * # use lattice_core::shared::error::DomainError;
+ * let domain_err = DomainError::EntityNotFound {
+ * entity_type: "Document".to_string(),
+ * identifier: "doc-123".to_string(),
+ * };
+ * let app_err = ApplicationError::from(domain_err);
+ * assert!(app_err.is_domain_error());
+ * ```
+ */
+{ Domain: DomainError } |
+/**
+ * Invalid configuration.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::InvalidConfig {
+ * details: "Missing required field 'api_key'".to_string(),
+ * };
+ * assert!(error.to_string().contains("api_key"));
+ * assert!(error.is_config_error());
+ * ```
+ */
+{ InvalidConfig: { details: string } } |
+/**
+ * Required service is not available.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::ServiceNotAvailable {
+ * service: "EmbeddingService".to_string(),
+ * reason: "Model not loaded".to_string(),
+ * };
+ * assert!(error.to_string().contains("EmbeddingService"));
+ * assert!(!error.is_config_error());
+ * ```
+ */
+{ ServiceNotAvailable: { service: string; reason: string } } |
+/**
+ * Processing queue is full (backpressure).
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::QueueFull {
+ * queue_name: "indexing_queue".to_string(),
+ * };
+ * assert!(error.to_string().contains("indexing_queue"));
+ * assert!(error.is_recoverable());
+ * ```
+ */
+{ QueueFull: { queue_name: string } } |
+/**
+ * Serialization failed.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::SerializationFailed {
+ * context: "DocumentDTO".to_string(),
+ * reason: "Invalid UTF-8 in field 'content'".to_string(),
+ * };
+ * assert!(error.to_string().contains("DocumentDTO"));
+ * ```
+ */
+{ SerializationFailed: { context: string; reason: string } } |
+/**
+ * Deserialization failed.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::DeserializationFailed {
+ * context: "SearchRequest".to_string(),
+ * reason: "Missing required field 'query'".to_string(),
+ * };
+ * assert!(error.to_string().contains("SearchRequest"));
+ * ```
+ */
+{ DeserializationFailed: { context: string; reason: string } } |
+/**
+ * JSON parsing error with location.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::JsonError {
+ * message: "Expected comma".to_string(),
+ * line: 42,
+ * column: 15,
+ * };
+ * assert!(error.to_string().contains("line 42"));
+ * assert!(error.to_string().contains("column 15"));
+ * ```
+ */
+{ JsonError: { message: string; line: number; column: number } } |
+/**
+ * Generic parsing error.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::ParsingError {
+ * context: "CSV file".to_string(),
+ * reason: "Unexpected end of file".to_string(),
+ * };
+ * assert!(error.to_string().contains("CSV file"));
+ * ```
+ */
+{ ParsingError: { context: string; reason: string } } |
+/**
+ * Use case execution failed.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::UseCaseFailed {
+ * use_case: "IndexDocumentUseCase".to_string(),
+ * reason: "Embedding generation timed out".to_string(),
+ * };
+ * assert!(error.to_string().contains("IndexDocumentUseCase"));
+ * ```
+ */
+{ UseCaseFailed: { use_case: string; reason: string } } |
+/**
+ * DTO mapping failed.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::ApplicationError;
+ * let error = ApplicationError::MappingError {
+ * context: "Document -> DocumentDTO".to_string(),
+ * reason: "Missing required field".to_string(),
+ * };
+ * assert!(error.to_string().contains("Document -> DocumentDTO"));
+ * ```
+ */
+{ MappingError: { context: string; reason: string } }
 export type ApplyLearningPackImportRequestDto = { operationId: string; previewId: string; expectedRootSha256: string }
 /**
  * Request to apply multiple tags to a document.
@@ -4028,10 +5070,19 @@ backupPath: string;
 compressBackups: boolean }
 /**
  * Options for batch import operations.
+ *
+ * # Example
+ * ```rust
+ * use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
+ *
+ * let options = BatchImportOptionsDto {
+ * extract_article: Some(true),
+ * };
+ * ```
  */
 export type BatchImportOptionsDto = {
 /**
- * Whether to extract article content (default: true).
+ * Whether to extract article content (default: true)
  */
 extractArticle?: boolean | null }
 /**
@@ -4039,19 +5090,19 @@ extractArticle?: boolean | null }
  */
 export type BatchJobItemDto = {
 /**
- * Unique item ID.
+ * Unique item ID
  */
 itemId: string;
 /**
- * Target URL or file path.
+ * Target URL or file path
  */
 target: string;
 /**
- * Item status: "pending", "processing", "completed", "failed", "cancelled".
+ * Item status: "pending", "processing", "completed", "failed", "cancelled"
  */
 status: string;
 /**
- * Error message if status is "failed".
+ * Error message if status is "failed"
  */
 errorMessage?: string | null;
 /**
@@ -4060,34 +5111,36 @@ errorMessage?: string | null;
 documentId: string | null }
 /**
  * Full batch job status with all items.
+ *
+ * Contains detailed status for the job and each item.
  */
 export type BatchJobStatusDto = {
 /**
- * Unique batch job ID.
+ * Unique batch job ID
  */
 jobId: string;
 /**
- * Job type: "file_import" or "url_import".
+ * Job type: "file_import" or "url_import"
  */
 jobType: string;
 /**
- * Job status: "pending", "running", "completed", "cancelled".
+ * Job status: "pending", "running", "completed", "cancelled"
  */
 status: string;
 /**
- * Total number of items in the batch.
+ * Total number of items in the batch
  */
 totalItems: number;
 /**
- * Number of successfully completed items.
+ * Number of successfully completed items
  */
 completedItems: number;
 /**
- * Number of failed items.
+ * Number of failed items
  */
 failedItems: number;
 /**
- * Job creation timestamp (ISO 8601 string).
+ * Job creation timestamp (ISO 8601 string)
  */
 createdAt: string;
 /**
@@ -4095,39 +5148,41 @@ createdAt: string;
  */
 completedAt: string | null;
 /**
- * List of all batch items with their status.
+ * List of all batch items with their status
  */
 items: BatchJobItemDto[] }
 /**
  * Summary information for a batch job.
+ *
+ * Lightweight representation for job history list.
  */
 export type BatchJobSummaryDto = {
 /**
- * Unique batch job ID.
+ * Unique batch job ID
  */
 jobId: string;
 /**
- * Job type: "file_import" or "url_import".
+ * Job type: "file_import" or "url_import"
  */
 jobType: string;
 /**
- * Job status: "pending", "running", "completed", "cancelled".
+ * Job status: "pending", "running", "completed", "cancelled"
  */
 status: string;
 /**
- * Total number of items in the batch.
+ * Total number of items in the batch
  */
 totalItems: number;
 /**
- * Number of successfully completed items.
+ * Number of successfully completed items
  */
 completedItems: number;
 /**
- * Number of failed items.
+ * Number of failed items
  */
 failedItems: number;
 /**
- * Job creation timestamp (ISO 8601 string).
+ * Job creation timestamp (ISO 8601 string)
  */
 createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
@@ -4141,7 +5196,7 @@ export type CacheStatsDto = { size: number; capacity: number; hits: number; miss
  */
 export type CancelBatchJobRequestDto = {
 /**
- * The batch job ID to cancel.
+ * The batch job ID to cancel
  */
 jobId: string }
 /**
@@ -4149,7 +5204,7 @@ jobId: string }
  */
 export type CancelBatchJobResponseDto = {
 /**
- * Number of items that were cancelled.
+ * Number of items that were cancelled
  */
 cancelledCount: number }
 export type CancelLearningPackImportPreviewRequestDto = { operationId: string; previewId: string }
@@ -4791,6 +5846,11 @@ export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto
  * Optional second unlock path. At least 8 characters when present.
  */
 passphrase?: string | null }
+export type ContestLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string;
+/**
+ * The learner's argument; may be empty.
+ */
+note: string }
 export type ContinueInNewConversationRequestDto = { conversationId: string }
 export type ContinueInNewConversationResponseDto = {
 /**
@@ -5051,7 +6111,6 @@ conversation: ConversationDto;
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
-export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string; programId: string; blueprintId: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; changeReason: string }
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
@@ -5111,7 +6170,7 @@ export type DecideLearningRecallDuplicateRequestDto = { operationId: string; pro
  */
 export type DeleteBatchJobResponseDto = {
 /**
- * Whether the deletion was successful.
+ * Whether the deletion was successful
  */
 success: boolean }
 export type DeleteConversationJournalRequestDto = { journalId: string }
@@ -5136,15 +6195,167 @@ export type DeleteLearningSourceRequestDto = { operationId: string; programId: s
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
 export type DiscardLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 /**
- * Document metadata DTO for display in UI.
+ * Document metadata DTO for display in UI
+ *
+ * Contains all fields needed for organizing and displaying documents
+ * in the file browser with custom organization (by category, type, date).
  */
-export type DocumentMetadataDto = { id: string; fileName: string; filePath: string; fileType: string; category: string; language: string; modifiedAt: string; indexedAt: string; wordCount: number }
+export type DocumentMetadataDto = {
+/**
+ * Unique document identifier
+ */
+id: string;
+/**
+ * Original filename (e.g., "report.pdf")
+ */
+fileName: string;
+/**
+ * Full file path (library path or original path)
+ */
+filePath: string;
+/**
+ * File extension or type (e.g., "pdf", "txt")
+ */
+fileType: string;
+/**
+ * Document category for organization
+ */
+category: string;
+/**
+ * Detected language (e.g., "english", "python")
+ */
+language: string;
+/**
+ * File modification timestamp (RFC3339)
+ */
+modifiedAt: string;
+/**
+ * Indexing timestamp (RFC3339)
+ */
+indexedAt: string;
+/**
+ * Word count for document
+ */
+wordCount: number }
 export type DocumentRefDto = { documentId: string; filePath: string; title: string | null }
 export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; isArchived: boolean; createdAt: string | null }
 /**
  * Domain errors representing business rule violations and entity state problems.
+ *
+ * These errors are thrown by domain entities, aggregates, and services when
+ * business invariants are violated or invalid operations are attempted.
  */
-export type DomainError = { EntityNotFound: { entity_type: string; identifier: string } } | { InvalidState: { details: string } } | { ValidationFailed: { field: string; reason: string } } | { UnsupportedFileType: { path: string; detected_type: string | null } } | { FileTooLarge: { path: string; size_bytes: number; max_size_bytes: number } } | { ConcurrentModification: { resource: string; details: string } } | { ConstraintViolation: { constraint: string } }
+export type DomainError =
+/**
+ * Entity not found in the system.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * let error = DomainError::EntityNotFound {
+ * entity_type: "Document".to_string(),
+ * identifier: "doc-123".to_string(),
+ * };
+ * assert!(error.to_string().contains("Document"));
+ * assert!(error.to_string().contains("doc-123"));
+ * ```
+ */
+{ EntityNotFound: { entity_type: string; identifier: string } } |
+/**
+ * Entity or aggregate is in an invalid state for the requested operation.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * let error = DomainError::InvalidState {
+ * details: "Document is archived and cannot be modified".to_string(),
+ * };
+ * assert!(error.to_string().contains("invalid state"));
+ * ```
+ */
+{ InvalidState: { details: string } } |
+/**
+ * Field validation failed.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * let error = DomainError::ValidationFailed {
+ * field: "email".to_string(),
+ * reason: "Invalid email format".to_string(),
+ * };
+ * assert!(error.to_string().contains("email"));
+ * assert!(error.to_string().contains("Invalid email format"));
+ * ```
+ */
+{ ValidationFailed: { field: string; reason: string } } |
+/**
+ * File type is not supported for indexing or processing.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * # use std::path::PathBuf;
+ * let error = DomainError::UnsupportedFileType {
+ * path: PathBuf::from("/path/to/file.xyz"),
+ * detected_type: Some("application/octet-stream".to_string()),
+ * };
+ * assert!(error.to_string().contains("file.xyz"));
+ * ```
+ */
+{ UnsupportedFileType: { path: string; detected_type: string | null } } |
+/**
+ * File size exceeds maximum allowed size.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * # use std::path::PathBuf;
+ * let error = DomainError::FileTooLarge {
+ * path: PathBuf::from("/path/to/huge.pdf"),
+ * size_bytes: 100_000_000,
+ * max_size_bytes: 50_000_000,
+ * };
+ * assert!(error.to_string().contains("100000000 bytes"));
+ * assert!(error.to_string().contains("50000000 bytes"));
+ * ```
+ */
+{ FileTooLarge: { path: string; size_bytes: number; max_size_bytes: number } } |
+/**
+ * Concurrent modification detected (optimistic locking failure).
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * let error = DomainError::ConcurrentModification {
+ * resource: "Document doc-123".to_string(),
+ * details: "Version mismatch: expected v2, found v3".to_string(),
+ * };
+ * assert!(error.to_string().contains("doc-123"));
+ * assert!(error.to_string().contains("Version mismatch"));
+ * ```
+ */
+{ ConcurrentModification: { resource: string; details: string } } |
+/**
+ * Domain constraint or business rule violated.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::error::DomainError;
+ * let error = DomainError::ConstraintViolation {
+ * constraint: "A document must have at least one chunk".to_string(),
+ * };
+ * assert!(error.to_string().contains("at least one chunk"));
+ * ```
+ */
+{ ConstraintViolation: { constraint: string } }
 export type DownloadModelResponse = { download_id: string; status: string }
 export type DownloadStatusResponse = { id: string; url: string; destination: string; state: string; bytes_downloaded: number; total_bytes: number | null; bytes_per_second: number; percentage: number | null; eta_seconds: number | null; error_message: string | null; retry_count: number; created_at: string; started_at: string | null; completed_at: string | null; model_name: string | null; model_id: string | null }
 /**
@@ -5214,13 +6425,216 @@ export type EmbeddingCompatibilityDto =
 { kind: "unknown" }
 /**
  * Enhanced search response with caching metadata.
+ *
+ * Includes cache statistics and execution metrics.
  */
-export type EnhancedSearchResponse = { results: SearchResultDto[]; fromCache: boolean; executionTimeMs: number; cacheStats: CacheStatsDto | null }
+export type EnhancedSearchResponse = {
+/**
+ * Search results
+ */
+results: SearchResultDto[];
+/**
+ * Whether results came from cache
+ */
+fromCache: boolean;
+/**
+ * Query execution time in milliseconds
+ */
+executionTimeMs: number;
+/**
+ * Optional cache statistics
+ */
+cacheStats: CacheStatsDto | null }
 export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: string }
 /**
  * Comprehensive error code enumeration for API responses.
+ *
+ * These codes allow the frontend to handle errors programmatically without
+ * parsing error messages. Each code maps to a specific error category.
+ *
+ * # Serialization
+ *
+ * Error codes serialize to SCREAMING_SNAKE_CASE for consistency with typical
+ * API conventions.
+ *
+ * # Examples
+ *
+ * ```rust
+ * # use lattice_core::shared::ipc::ErrorCode;
+ * let code = ErrorCode::NotFound;
+ * let json = serde_json::to_string(&code).unwrap();
+ * assert_eq!(json, "\"NOT_FOUND\"");
+ * ```
  */
-export type ErrorCode = "NOT_FOUND" | "ALREADY_EXISTS" | "GONE" | "PERMISSION_DENIED" | "UNAUTHORIZED" | "SECURITY_VIOLATION" | "VALIDATION_ERROR" | "INVALID_INPUT" | "INVALID_CONFIG" | "INVALID_STATE" | "CONSTRAINT_VIOLATION" | "FILE_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_FILE_TYPE" | "FILE_SYSTEM_ERROR" | "FILE_READ_ERROR" | "FILE_WRITE_ERROR" | "DATABASE_ERROR" | "DATABASE_CONNECTION_ERROR" | "MIGRATION_ERROR" | "NETWORK_ERROR" | "TIMEOUT" | "RATE_LIMIT_EXCEEDED" | "SERVICE_NOT_AVAILABLE" | "SERVICE_INITIALIZATION_ERROR" | "MODEL_NOT_LOADED" | "MODEL_LOAD_ERROR" | "PROCESSING_ERROR" | "SERIALIZATION_ERROR" | "DESERIALIZATION_ERROR" | "PARSING_ERROR" | "EMBEDDING_ERROR" | "EXTRACTION_ERROR" | "TOKENIZATION_ERROR" | "CONCURRENT_MODIFICATION" | "QUEUE_FULL" | "BACKUP_CREATION_FAILED" | "BACKUP_RESTORE_FAILED" | "BACKUP_CORRUPTED" | "INTERNAL_ERROR" | "NOT_IMPLEMENTED" | "UNKNOWN"
+export type ErrorCode =
+/**
+ * Requested resource was not found
+ */
+"NOT_FOUND" |
+/**
+ * Resource already exists
+ */
+"ALREADY_EXISTS" |
+/**
+ * Resource has been deleted or is no longer available
+ */
+"GONE" |
+/**
+ * Operation not permitted
+ */
+"PERMISSION_DENIED" |
+/**
+ * Invalid credentials or authentication failure
+ */
+"UNAUTHORIZED" |
+/**
+ * Security violation detected
+ */
+"SECURITY_VIOLATION" |
+/**
+ * Input validation failed
+ */
+"VALIDATION_ERROR" |
+/**
+ * Invalid input format
+ */
+"INVALID_INPUT" |
+/**
+ * Invalid configuration
+ */
+"INVALID_CONFIG" |
+/**
+ * Invalid state for requested operation
+ */
+"INVALID_STATE" |
+/**
+ * Constraint violation
+ */
+"CONSTRAINT_VIOLATION" |
+/**
+ * File not found
+ */
+"FILE_NOT_FOUND" |
+/**
+ * File is too large to process
+ */
+"FILE_TOO_LARGE" |
+/**
+ * File type not supported
+ */
+"UNSUPPORTED_FILE_TYPE" |
+/**
+ * File system operation failed
+ */
+"FILE_SYSTEM_ERROR" |
+/**
+ * File read error
+ */
+"FILE_READ_ERROR" |
+/**
+ * File write error
+ */
+"FILE_WRITE_ERROR" |
+/**
+ * Database operation failed
+ */
+"DATABASE_ERROR" |
+/**
+ * Database connection failed
+ */
+"DATABASE_CONNECTION_ERROR" |
+/**
+ * Database migration failed
+ */
+"MIGRATION_ERROR" |
+/**
+ * Network operation failed
+ */
+"NETWORK_ERROR" |
+/**
+ * Request timeout
+ */
+"TIMEOUT" |
+/**
+ * Rate limit exceeded
+ */
+"RATE_LIMIT_EXCEEDED" |
+/**
+ * Required service is not available
+ */
+"SERVICE_NOT_AVAILABLE" |
+/**
+ * Service initialization failed
+ */
+"SERVICE_INITIALIZATION_ERROR" |
+/**
+ * AI model not loaded or unavailable
+ */
+"MODEL_NOT_LOADED" |
+/**
+ * AI model loading failed
+ */
+"MODEL_LOAD_ERROR" |
+/**
+ * Data processing failed
+ */
+"PROCESSING_ERROR" |
+/**
+ * Serialization failed
+ */
+"SERIALIZATION_ERROR" |
+/**
+ * Deserialization failed
+ */
+"DESERIALIZATION_ERROR" |
+/**
+ * Parsing error
+ */
+"PARSING_ERROR" |
+/**
+ * Embedding generation failed
+ */
+"EMBEDDING_ERROR" |
+/**
+ * Content extraction failed
+ */
+"EXTRACTION_ERROR" |
+/**
+ * Tokenization error
+ */
+"TOKENIZATION_ERROR" |
+/**
+ * Concurrent modification detected
+ */
+"CONCURRENT_MODIFICATION" |
+/**
+ * Processing queue is full
+ */
+"QUEUE_FULL" |
+/**
+ * Backup creation failed
+ */
+"BACKUP_CREATION_FAILED" |
+/**
+ * Backup restore failed
+ */
+"BACKUP_RESTORE_FAILED" |
+/**
+ * Backup file is corrupted
+ */
+"BACKUP_CORRUPTED" |
+/**
+ * Internal server error
+ */
+"INTERNAL_ERROR" |
+/**
+ * Feature not implemented
+ */
+"NOT_IMPLEMENTED" |
+/**
+ * Generic error
+ */
+"UNKNOWN"
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
  * A code example's run, as the checker saw it (§5.5).
@@ -5583,11 +6997,63 @@ export type ForkConversationRequestDto = { conversationId: string;
 upToMessageId?: string | null }
 export type ForkConversationResponseDto = { conversation: ConversationDto; copiedMessageCount: number }
 /**
- * A function call request from the LLM.
+ * A function call request from the LLM
+ *
+ * Represents an LLM's intent to execute a specific function with arguments.
+ *
+ * # Example
+ * ```rust
+ * use serde_json::json;
+ *
+ * let call = FunctionCall {
+ * id: "call_abc123".to_string(),
+ * name: "semantic_search".to_string(),
+ * arguments: json!({
+ * "query": "machine learning papers",
+ * "limit": 5
+ * }),
+ * };
+ * ```
  */
-export type FunctionCall = { id: string; name: string; arguments: JsonValue }
+export type FunctionCall = {
 /**
- * Result of executing a function call.
+ * Unique identifier for this function call
+ *
+ * Used to correlate the call with its result in multi-turn conversations
+ */
+id: string;
+/**
+ * Name of the function to execute
+ */
+name: string;
+/**
+ * Function arguments as JSON value
+ *
+ * Structure should match the tool's input_schema
+ */
+arguments: JsonValue }
+/**
+ * Result of executing a function call
+ *
+ * Encapsulates success or failure with detailed error information.
+ *
+ * # Example (Success)
+ * ```rust
+ * use serde_json::json;
+ *
+ * let result = FunctionResult::success(json!({
+ * "results": ["doc1.pdf", "doc2.txt"],
+ * "total_found": 2
+ * }));
+ * ```
+ *
+ * # Example (Failure)
+ * ```rust
+ * let result = FunctionResult::error(
+ * "DOCUMENT_NOT_FOUND",
+ * "Document with ID abc123 not found"
+ * );
+ * ```
  */
 export type FunctionResult = {
 /**
@@ -5632,7 +7098,7 @@ max_tags?: number }
  */
 export type GetBatchJobStatusRequestDto = {
 /**
- * The batch job ID to query.
+ * The batch job ID to query
  */
 jobId: string }
 /**
@@ -6126,25 +7592,115 @@ topP: number;
  * Top-k sampling for the claim judge. One takes the argmax token.
  */
 topK: number }
-export type LearningAnswerDto = { questionId: string; selectedIndex: number }
-export type LearningAssessmentBlueprintDto = { id: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; status: LearningBlueprintStatus; changeReason: string; createdAt: number }
-export type LearningAssessmentCriterionResultDto = { criterionId: string; score: number | null; maxPoints: number; observation: string; artifactQuote: string | null }
-export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null }
-export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[]; previouslyExposed: boolean; selectedIndex: number | null; textResponse: string | null; orderedValues: string[]; artifactJson: JsonValue | null; responseRevision: number }
-export type LearningAssessmentFormStatus = "active" | "submitted" | "interrupted"
-export type LearningAssessmentFormSummaryDto = { id: string; blueprintId: string; blueprintRevision: number; title: string; purpose: LearningAssessmentPurpose; status: LearningAssessmentFormStatus; revision: number; retakeOfFormId: string | null; score: number | null; gradeStatus: LearningAssessmentGradeStatus | null; createdAt: number; submittedAt: number | null }
-export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review"
-export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string; criterionResults: LearningAssessmentCriterionResultDto[]; artifactQuotes: string[] }
-export type LearningAssessmentKind = "practice" | "quiz" | "test"
-export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
-export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null; text: string | null; orderedValues: string[]; artifactJson: JsonValue | null }
-export type LearningAssessmentSubmissionDto = { score: number; passed: boolean; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number }
-export type LearningAssessmentWorkspaceDto = { programId: string; outcomes: LearningOutcomeDefinitionDto[]; blueprints: LearningAssessmentBlueprintDto[]; forms: LearningAssessmentFormSummaryDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
-export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number;
 /**
- * Module tests only: the share of the module the test covered.
+ * What a short-answer input may say before submission.
  */
-coverage: LearningModuleTestCoverageDto | null }
+export type LearningAnswerHintDto = { numeric: boolean;
+/**
+ * The key's unit, e.g. "mM", when the answer is a number with a unit.
+ */
+unitHint: string | null }
+export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null;
+/**
+ * The quiz this form was taken for; None only for unscoped legacy forms.
+ */
+scope: LearningQuizScopeDto | null; mode: LearningQuizMode }
+export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[];
+/**
+ * The passage the question was written from, for the source line.
+ */
+sourceQuote: string; previouslyExposed: boolean;
+/**
+ * Saved choice indices in shown order (single choice, true/false,
+ * multi-select).
+ */
+selectedIndices: number[];
+/**
+ * Saved answers per cloze blank.
+ */
+blankResponses: string[];
+/**
+ * Saved right-hand index per left-hand matching entry.
+ */
+matches: (number | null)[];
+/**
+ * Matching only: the entries to match, and what they match to (which may
+ * hold one extra distractor). Empty for every other format.
+ */
+leftItems: string[]; rightItems: string[];
+/**
+ * Cloze only: how many `{{n}}` blanks the prompt holds.
+ */
+blankCount: number; textResponse: string | null; orderedValues: string[]; artifactJson: JsonValue | null; responseRevision: number;
+/**
+ * The key and why, only once the form is submitted (or, in practice
+ * mode, once this item is answered). Never present before.
+ */
+keyReveal: LearningKeyRevealDto | null;
+/**
+ * Short answers only: whether a number is expected and in which unit.
+ * Never the answer itself.
+ */
+answerHint: LearningAnswerHintDto | null }
+export type LearningAssessmentFormStatus = "active" | "submitted" | "interrupted"
+export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review" |
+/**
+ * A written answer (or short-answer near-miss) waiting for the grading
+ * job. Never a fail: no verdict is given while any item is pending.
+ */
+"pending"
+export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string;
+/**
+ * Partial credit: points this item earned out of its points.
+ */
+pointsEarned: number; pointsPossible: number;
+/**
+ * Why a keyed item lost points, in words ("2 of 3 right, 1 wrong pick").
+ */
+detail: string;
+/**
+ * The learner overrode an upheld regrade; counted as full credit.
+ */
+learnerOverride: boolean;
+/**
+ * The model grader's checked reasons (section 4.3a). None for keyed items.
+ */
+rationale: LearningGradeRationaleDto | null;
+/**
+ * Per-part verdicts for cloze, multi-select, matching and ordering.
+ */
+partResults: LearningPartResult[]; contest: LearningGradeContestDto | null }
+export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
+/**
+ * A saved answer, in the item's shown option order.
+ */
+export type LearningAssessmentResponse = { itemId: string;
+/**
+ * Chosen shown positions: one for single choice and true/false, several
+ * for multi-select.
+ */
+selectedIndices?: number[]; text: string | null;
+/**
+ * One answer per cloze blank, in blank order.
+ */
+blankResponses?: string[];
+/**
+ * Per left-hand matching entry, the chosen shown right-hand position.
+ */
+matches?: (number | null)[]; orderedValues?: string[]; artifactJson: JsonValue | null }
+export type LearningAssessmentSubmissionDto = { score: number;
+/**
+ * None while any item is pending: no verdict without every grade.
+ */
+passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number;
+/**
+ * The score before any learner override; None when nothing is overridden.
+ */
+scoreWithoutOverrides: number | null; pendingItems: number;
+/**
+ * The `quiz_grading` job grading the pending items, while one exists.
+ */
+gradingJobId: string | null }
 export type LearningAuditOutcome =
 /**
  * Every claim carries a current Verifier verdict.
@@ -6198,8 +7754,6 @@ movesBar: boolean;
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
 export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
-export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
-export type LearningBlueprintStatus = "draft" | "accepted" | "retired"
 export type LearningBuiltinRuntime = "javascript" | "python"
 export type LearningBuiltinRuntimeCapability = { id: LearningBuiltinRuntime; name: string; description: string; available: boolean; reason: string | null }
 export type LearningCanvasDto = { id: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue; elementCount: number; revision: number; createdAt: number; updatedAt: number; snapshots: LearningCanvasSnapshotDto[] }
@@ -6310,6 +7864,33 @@ export type LearningClaimTrustDto = {
 profile: LearningClaimProfileDto | null; supports: LearningSourceTrustEntryDto[]; bar: LearningKindBarDto | null }
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
+/**
+ * One rubric criterion's checked reason.
+ */
+export type LearningCriterionRationaleDto = { criterionId: string; title: string; verdict: LearningCriterionVerdict;
+/**
+ * None when the criterion could not be graded.
+ */
+points: number | null; maxPoints: number;
+/**
+ * Required whenever points are lost.
+ */
+whatWasMissing: string;
+/**
+ * Verbatim spans of the learner's answer, each checked as a substring;
+ * empty when the problem is an omission.
+ */
+yourWords: string[];
+/**
+ * What a full-credit answer says: names the missing points, never a
+ * model answer to copy.
+ */
+fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null }
+/**
+ * Section 4.3a. Uncertain when a quote failed its check against the answer
+ * or the source.
+ */
+export type LearningCriterionVerdict = "met" | "partly_met" | "missed" | "uncertain"
 export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
 /**
  * Immutable before/after values make previews auditable and useful to
@@ -6399,11 +7980,45 @@ deeperEvidence: LearningDeeperEvidence | null;
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
-export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"
+export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
+/**
+ * Writes a quiz's question bank (lesson stage, or a module/course bank).
+ */
+"quiz_bank" |
+/**
+ * Grades a submitted quiz's written answers and near-miss short answers.
+ */
+"quiz_grading"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
-export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
+/**
+ * "I think I was right": the first grade and the blind regrade, side by side.
+ */
+export type LearningGradeContestDto = { id: string; status: LearningGradeContestStatus; note: string; firstScore: number; regradeScore: number | null; regradeReason: string | null; firstRationale: LearningGradeRationaleDto; regradeRationale: LearningGradeRationaleDto | null;
+/**
+ * The regrade's direct answer to the learner's note.
+ */
+responseToNote: string | null; createdAt: number; decidedAt: number | null }
+export type LearningGradeContestStatus = "open" | "revised" | "upheld" | "overridden" | "failed"
+/**
+ * Why a model-graded answer earned what it did. A grade without a checkable
+ * reason is not shown as a grade.
+ */
+export type LearningGradeRationaleDto = { summary: string; criteria: LearningCriterionRationaleDto[]; graderModel: string; rubricVersion: string; gradedAt: number }
+export type LearningItemFormat = "single_choice" | "multi_select" | "true_false" | "short_answer" | "cloze" | "matching" | "ordering" | "explanation" |
+/**
+ * Kept for the practical path; quiz blueprints never author it.
+ */
+"artifact"
+/**
+ * The key after submission, in the item's shown option order.
+ */
+export type LearningKeyRevealDto = { correctIndices: number[]; acceptedAnswer: string | null; orderedValues: string[]; matches: number[]; blanks: string[]; explanation: string;
+/**
+ * Per option, why it is wrong; empty strings for the key options.
+ */
+distractorRationales: string[] }
 /**
  * One claim kind's bar in force (§13).
  */
@@ -6461,7 +8076,7 @@ disputes: number;
  */
 publishable: boolean; audit: LearningLessonAuditDto | null }
 export type LearningLessonAuditState = "running" | "completed" | "stopped"
-export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
+export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
 /**
  * Of `claim_count`, the claims kept as general knowledge: no saved
@@ -6475,6 +8090,7 @@ generalKnowledgeCount: number;
  */
 confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
+export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
  * One level under one kind's bar, with its verdicts.
  */
@@ -6493,11 +8109,7 @@ probabilityReliable: number;
 since: number | null }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
-/**
- * A module test asks about the module's prepared lessons, so it may cover
- * only some of them; such a test does not stand for the whole module.
- */
-export type LearningModuleTestCoverageDto = { coveredLessons: number; moduleLessons: number }
+export type LearningModuleQuizzesDto = { moduleId: string; test: LearningQuizStatusDto; lessons: LearningLessonQuizDto[] }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
 export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
 export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"
@@ -6627,19 +8239,11 @@ export type LearningPackConflictKind =
  */
 "lesson" |
 /**
- * A question another course on this computer owns.
- */
-"question" |
-/**
- * A submitted assessment another course on this computer owns.
- */
-"attempt" |
-/**
  * Any other record another course on this computer owns.
  */
 "record"
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
-export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
+export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "evidence" | "practical_activity" | "practical_artifact"
 export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
 /**
  * What an export of this course cannot carry, shown before exporting. The
@@ -6691,6 +8295,15 @@ export type LearningPackStaysBehindKind =
  * The Verifier audit consent, given on this computer only.
  */
 "verifier_consent"
+/**
+ * One part of a keyed answer: a cloze blank, a multi-select option, a
+ * matching pair or an ordering position, by its shown index.
+ */
+export type LearningPartResult = { index: number; correct: boolean;
+/**
+ * Why the part was wrong; empty when it was right.
+ */
+detail: string }
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.
@@ -6734,12 +8347,62 @@ export type LearningPracticeTaskKind = "independent" | "guided"
 export type LearningPracticeTutorTurnDto = { id: string; prompt: string; response: string; requestKind: LearningTutorRequestKind; hintLevel: LearningPracticeHintLevel | null; citations: LearningPracticeCitationDto[]; proposalIds: string[]; modelName: string; createdAt: number }
 export type LearningPracticeWorkspaceDto = { programId: string; sessions: LearningPracticeSessionSummaryDto[] }
 export type LearningPreparation = "outline" | "ready"
-export type LearningProgramDto = { outlineReview?: LearningOutlineReviewDto | null; summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[]; attempts: LearningAttemptDto[] }
+export type LearningProgramDto = { outlineReview?: LearningOutlineReviewDto | null; summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[] }
 export type LearningProgramStatus = "draft" | "active"
 export type LearningProgramSummaryDto = { id: string; title: string; goal: string; status: LearningProgramStatus; revision: number; moduleCount: number; lessonCount: number; completedLessons: number; currentLessonId: string | null; createdAt: number }
 export type LearningProjectMilestoneDto = { title: string; brief: string; deliverables: string[]; successCriteria: string[] }
-export type LearningQuestionDto = { id: string; kind: LearningAssessmentKind; prompt: string; options: string[]; sourceIds: string[] }
-export type LearningQuestionResultDto = { questionId: string; prompt: string; options: string[]; selectedIndex: number; correctIndex: number; explanation: string; sourceIds: string[] }
+export type LearningQuizAttemptSummaryDto = { formId: string; score: number; passed: boolean | null; gradeStatus: LearningAssessmentGradeStatus; submittedAt: number; retakeOfFormId: string | null; overriddenItems: number; pendingItems: number;
+/**
+ * 1 for the first graded attempt at this quiz, then 2, 3…
+ */
+attemptNumber: number }
+export type LearningQuizBankStatus = "not_prepared" | "preparing" | "ready" | "failed"
+/**
+ * Which of the scope's lessons the quiz covers now (module test, course exam).
+ */
+export type LearningQuizCoverageDto = { coveredLessons: number; totalLessons: number }
+export type LearningQuizMissesToRecallDto = { cardsCreated: number; deckId: string }
+/**
+ * Graded counts toward the verdict; practice is ungraded with feedback per item.
+ */
+export type LearningQuizMode = "graded" | "practice"
+export type LearningQuizOverviewDto = { programId: string; settings: LearningQuizSettingsDto; exam: LearningQuizStatusDto; modules: LearningModuleQuizzesDto[];
+/**
+ * Lesson quizzes only.
+ */
+quizzesPassed: number; quizzesTotal: number; outcomes: LearningOutcomeDefinitionDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
+export type LearningQuizScopeDto = { kind: LearningQuizScopeKind;
+/**
+ * The lesson or module id; None for the course exam.
+ */
+id: string | null }
+/**
+ * Which quiz: a lesson quiz (purpose `checkpoint`), a module test
+ * (`module_test`) or the course exam (`cumulative`).
+ */
+export type LearningQuizScopeKind = "lesson" | "module" | "course"
+/**
+ * Per course; pass marks are fractions of the points (0.7 = 70 %).
+ */
+export type LearningQuizSettingsDto = { quizPass: number; testPass: number; examPass: number; writtenAnswers: boolean }
+export type LearningQuizStatusDto = { scope: LearningQuizScopeDto; title: string; bankStatus: LearningQuizBankStatus;
+/**
+ * The bank's state in words; empty when nothing needs saying.
+ */
+bankMessage: string; bankSize: number;
+/**
+ * Items the learner has not seen yet.
+ */
+freshItems: number; formSize: number; expectedMinutes: number; passingScore: number; coverage: LearningQuizCoverageDto | null;
+/**
+ * The open or paused form, when there is one, with when it was started
+ * and last saved, and whether it is paused.
+ */
+activeFormId: string | null; activeFormStartedAt: number | null; activeFormUpdatedAt: number | null; activeFormPaused: boolean; verdict: LearningQuizVerdict; best: LearningQuizAttemptSummaryDto | null; latest: LearningQuizAttemptSummaryDto | null; attempts: number; preparingJobId: string | null }
+/**
+ * From the best attempt. Pending while any item of it awaits grading.
+ */
+export type LearningQuizVerdict = "not_taken" | "pending" | "passed" | "not_passed"
 export type LearningQuoteMatch = { status: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number }
 export type LearningQuoteMatchStatus = "exact" | "context_disambiguated" | "ambiguous" | "not_found"
 export type LearningRecallCardDto = { id: string; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; contentRevision: number; scheduler: LearningRecallSchedulerStateDto; versions: LearningRecallCardVersionDto[]; createdAt: number; updatedAt: number }
@@ -7130,11 +8793,11 @@ export type ListBackupsResultDto = { backups: BackupInfoDto[] }
  */
 export type ListBatchJobsRequestDto = {
 /**
- * Maximum number of jobs to return (default: 50, max: 100).
+ * Maximum number of jobs to return (default: 50, max: 100)
  */
 limit?: number | null;
 /**
- * Number of jobs to skip (for pagination).
+ * Number of jobs to skip (for pagination)
  */
 offset?: number | null }
 /**
@@ -7142,7 +8805,7 @@ offset?: number | null }
  */
 export type ListBatchJobsResponseDto = {
 /**
- * List of batch job summaries (newest first).
+ * List of batch job summaries (newest first)
  */
 jobs: BatchJobSummaryDto[] }
 export type ListConversationsExplorerQueryDto = { spaceId: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
@@ -7600,6 +9263,7 @@ noPassage: number;
  */
 stopped: string | null }
 export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OverrideLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string }
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */
@@ -7629,6 +9293,11 @@ export type PerformanceTierDto =
  */
 "Accurate"
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
+export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
+/**
+ * Add questions to a ready bank ("Prepare more questions").
+ */
+topUp: boolean }
 /**
  * Installs an app-authored language environment. Images and commands are
  * selected by the catalog, never supplied by generated lesson content.
@@ -7668,9 +9337,27 @@ created: boolean }
 export type ReachGroupDto = "openWeb" | "ownerSites" | "registry" | "codeHost" | "scholarly" | "standards" | "law" | "community" | "encyclopedia" | "archive" | "linkedPages"
 export type ReassessLearningSourceTrustRequestDto = { programId: string; sourceId: string }
 /**
- * Recency search options for time-aware search boosting recent documents.
+ * Recency search options for time-aware search.
+ *
+ * Boosts recent documents in search results.
  */
-export type RecencySearchOptions = { query: string; limit: number | null; recencyWeight: number | null; maxAgeDays: number | null }
+export type RecencySearchOptions = {
+/**
+ * The search query text
+ */
+query: string;
+/**
+ * Maximum number of results
+ */
+limit: number | null;
+/**
+ * Weight for recency boost (0.0 to 1.0)
+ */
+recencyWeight: number | null;
+/**
+ * Maximum age in days to consider
+ */
+maxAgeDays: number | null }
 /**
  * Recent document with access metadata
  */
@@ -7727,18 +9414,20 @@ export type RenameConversationResponseDto = {
 status: string }
 /**
  * Response from renaming a document.
+ *
+ * Contains the rename status and confirmation message.
  */
 export type RenameDocumentResponseDto = {
 /**
- * Rename status.
+ * Rename status (e.g., "renamed", "not_found")
  */
 status: string;
 /**
- * Confirmation message.
+ * Confirmation or error message
  */
 message: string;
 /**
- * The new name applied.
+ * The new name that was applied
  */
 new_name: string }
 export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_deleted"; sourceVersionId: string } | { cause: "source_replaced"; from: string; to: string } | { cause: "unconfirmed" } | { cause: "verifier_dispute" } |
@@ -7755,6 +9444,7 @@ export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" }
  * something verified or waiting (claim sources design §18.5).
  */
 { outcome: "not_attempted"; reason: string }
+export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
  * A claim of one of the course's lesson reviews.
@@ -7846,6 +9536,7 @@ export type ResumeLearningLessonReviewRequestDto = { programId: string; lessonId
  * The course's revision, as `retry_learning_generation_job` takes it.
  */
 expectedRevision: number; operationId: string }
+export type ResumeLearningQuizGradingRequestDto = { operationId: string; programId: string; formId: string }
 export type RetrievalSubTimingMetrics = { kbTotalMs: number; kbScopeLoadMs: number; kbHydeInterpretationMs: number; kbSearchPlanMs: number; kbShortlistPlanningMs: number; kbQueryExecutionMs: number; kbMergeShortlistGateMs: number; kbPostFiltersMs: number; kbRerankMs: number;
 /**
  * Cost of the post-rerank sufficiency check. Local and cheap by design —
@@ -8006,7 +9697,7 @@ export type RetryFailedItemsResponseDto = {
  */
 newJobId: string;
 /**
- * Number of failed items being retried.
+ * Number of failed items being retried
  */
 retriedCount: number }
 export type RevealLearningPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
@@ -8086,25 +9777,158 @@ export type SearchLearningSourcesSemanticallyRequestDto = { programId: string; q
 export type SearchMentionsResultDto = { mentions: MentionDto[] }
 /**
  * Search mode for algorithm selection.
+ *
+ * Maps to domain SearchMode but uses simple serializable types.
  */
-export type SearchModeDto = { type: "vector" } | { type: "bm25" } | { type: "hybrid"; vector_weight: number; bm25_weight: number }
-export type SearchModelCatalogRequest = { query: string; category: string | null; max_size_gb: number | null; required_capabilities?: string[]; limit?: number }
+export type SearchModeDto =
 /**
- * Search options with filtering, pagination, and mode selection.
+ * Vector-based semantic search
  */
-export type SearchOptions = { query: string; limit: number | null; filter: { [key in string]: string } | null; searchMode: string | null }
+{ type: "vector" } |
+/**
+ * Keyword-based BM25 search
+ */
+{ type: "bm25" } |
+/**
+ * Hybrid search with weights
+ */
+{ type: "hybrid"; vector_weight: number; bm25_weight: number }
+/**
+ * Request to search external model catalogs.
+ */
+export type SearchModelCatalogRequest = {
+/**
+ * Search query (model name, keywords)
+ */
+query: string;
+/**
+ * Optional category filter
+ */
+category: string | null;
+/**
+ * Maximum size in GB
+ */
+max_size_gb: number | null;
+/**
+ * Required capabilities
+ */
+required_capabilities?: string[];
+/**
+ * Maximum number of results
+ */
+limit?: number }
+/**
+ * Search options for advanced search.
+ *
+ * Provides filtering, pagination, and mode selection.
+ */
+export type SearchOptions = {
+/**
+ * The search query text
+ */
+query: string;
+/**
+ * Maximum number of results
+ */
+limit: number | null;
+/**
+ * Optional metadata filters (JSON string)
+ */
+filter: { [key in string]: string } | null;
+/**
+ * Search mode ("semantic", "keyword", "hybrid")
+ */
+searchMode: string | null }
 /**
  * Search request from the frontend.
+ *
+ * Represents a search query with optional parameters for filtering and ranking.
  */
-export type SearchRequestDto = { query: string; limit: number | null; threshold: number | null; mode: SearchModeDto }
+export type SearchRequestDto = {
+/**
+ * The search query text
+ */
+query: string;
+/**
+ * Maximum number of results to return
+ */
+limit: number | null;
+/**
+ * Minimum similarity threshold (0.0 to 1.0)
+ */
+threshold: number | null;
+/**
+ * Search algorithm mode
+ */
+mode: SearchModeDto }
 /**
  * Search response to the frontend.
+ *
+ * Contains results and metadata about the search operation.
  */
-export type SearchResponseDto = { results: SearchResultDto[]; total: number; query_time_ms: number }
+export type SearchResponseDto = {
 /**
- * Individual search result for serialization.
+ * Search results
  */
-export type SearchResultDto = { id: string; title: string; content: string; score: number; path: string | null; documentId: string | null; position: number | null; vectorScore: number | null; bm25Score: number | null; vectorRank: number | null; bm25Rank: number | null }
+results: SearchResultDto[];
+/**
+ * Total number of results (before limit)
+ */
+total: number;
+/**
+ * Query execution time in milliseconds
+ */
+query_time_ms: number }
+/**
+ * Individual search result.
+ *
+ * Flat representation of a search result for JSON serialization.
+ */
+export type SearchResultDto = {
+/**
+ * Result identifier (chunk ID or document ID)
+ */
+id: string;
+/**
+ * Document title or filename
+ */
+title: string;
+/**
+ * Content snippet or preview
+ */
+content: string;
+/**
+ * Relevance score (0.0 to 1.0)
+ */
+score: number;
+/**
+ * Optional file path
+ */
+path: string | null;
+/**
+ * Optional parent document ID (for chunk results)
+ */
+documentId: string | null;
+/**
+ * Optional position within document
+ */
+position: number | null;
+/**
+ * Optional vector similarity score
+ */
+vectorScore: number | null;
+/**
+ * Optional BM25 keyword score
+ */
+bm25Score: number | null;
+/**
+ * Optional vector search rank
+ */
+vectorRank: number | null;
+/**
+ * Optional BM25 search rank
+ */
+bm25Rank: number | null }
 /**
  * Search settings.
  */
@@ -8433,6 +10257,8 @@ export type StandingAssessedDto = { claimKind: string; sufficient: boolean;
 bar: string | null; supports: CountedSupportDto[]; reason: string; cause: TrustCauseDto | null }
 /**
  * Request to start a batch file import job.
+ *
+ * Accepts 1-100 file paths for batch processing.
  */
 export type StartBatchFileImportRequestDto = {
 /**
@@ -8447,6 +10273,8 @@ filePaths: string[]; indexing?: FileIndexingOptionsDto | null; spaceId?: string 
 ownerConversationId?: string | null }
 /**
  * Response after starting a batch file import job.
+ *
+ * Contains the job ID for status tracking.
  */
 export type StartBatchFileImportResponseDto = {
 /**
@@ -8455,22 +10283,43 @@ export type StartBatchFileImportResponseDto = {
 jobId: string }
 /**
  * Request to start a batch URL import job.
+ *
+ * Creates a batch job that processes multiple URLs concurrently.
+ *
+ * # Example
+ * ```rust,no_run
+ * use lattice_core::application::dtos::batch_dto::{
+ * StartBatchUrlImportRequestDto, BatchImportOptionsDto
+ * };
+ *
+ * let request = StartBatchUrlImportRequestDto {
+ * urls: vec![
+ * "https://example.com/article1".to_string(),
+ * "https://example.com/article2".to_string(),
+ * ],
+ * options: Some(BatchImportOptionsDto {
+ * extract_article: Some(true),
+ * }),
+ * };
+ * ```
  */
 export type StartBatchUrlImportRequestDto = {
 /**
- * List of URLs to import (1-50 URLs).
+ * List of URLs to import (1-50 URLs)
  */
 urls: string[];
 /**
- * Optional import options.
+ * Optional import options
  */
 options?: BatchImportOptionsDto | null }
 /**
  * Response from starting a batch URL import.
+ *
+ * Contains the job ID for tracking progress.
  */
 export type StartBatchUrlImportResponseDto = {
 /**
- * Unique batch job ID for tracking.
+ * Unique batch job ID for tracking
  */
 jobId: string }
 export type StartDownloadRequest = { url: string; destination: string; checksum: ChecksumRequest | null; auth_token: string | null; model_name: string | null; model_id: string | null }
@@ -8483,11 +10332,11 @@ title: string;
  * The heading the saved block opens with.
  */
 heading: string }
-export type StartLearningAssessmentFormRequestDto = { operationId: string; formId: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
+export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
 /**
@@ -8510,7 +10359,6 @@ export type StudySourceDto = { chunkId: string; documentId: string; fileName: st
  * External web source URL when this citation is not an indexed document.
  */
 url?: string | null }
-export type SubmitLearningAttemptRequestDto = { attemptId: string; programId: string; expectedRevision: number; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; answers: LearningAnswerDto[] }
 export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[]; saveOnly?: boolean; expectedDiagnosticRevision?: number | null }
 export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**
@@ -8707,9 +10555,50 @@ export type ThinkingOverrideDto =
  */
 "off"
 /**
- * Tool (function) definition for LLM function calling.
+ * Tool (function) definition for LLM function calling
+ *
+ * Represents a callable function with its metadata and parameter schema.
+ * Enforces invariants:
+ * - Tool name must be non-empty and alphanumeric + underscore
+ * - Description must be clear and actionable
+ * - Parameters must have valid JSON schema
+ *
+ * # Example
+ * ```rust
+ * use serde_json::json;
+ *
+ * let tool = ToolDefinition {
+ * name: "semantic_search".to_string(),
+ * description: "Search user's documents using semantic similarity".to_string(),
+ * input_schema: json!({
+ * "type": "object",
+ * "properties": {
+ * "query": {"type": "string"},
+ * "limit": {"type": "integer", "default": 10}
+ * },
+ * "required": ["query"]
+ * }),
+ * };
+ * ```
  */
-export type ToolDefinition = { name: string; description: string; input_schema: JsonValue }
+export type ToolDefinition = {
+/**
+ * Function name (alphanumeric + underscores)
+ */
+name: string;
+/**
+ * Human-readable description of what the function does
+ */
+description: string;
+/**
+ * JSON Schema for input parameters
+ *
+ * Should follow JSON Schema specification with:
+ * - type: "object"
+ * - properties: parameter definitions
+ * - required: list of required parameter names
+ */
+input_schema: JsonValue }
 export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmStreamMs: number; toolExecutionMs: number; toolCallCount: number; toolSuccessCount: number; toolFailureCount: number }
 /**
  * Tool output shaping settings (excerpts + truncation).
@@ -8973,6 +10862,7 @@ export type UpdateConversationJournalRequestDto = { journalId: string; name: str
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
 export type UpdateInfoDto = { available: boolean; currentVersion: string; latestVersion: string | null; downloadUrl: string | null; releaseNotes: string | null }
+export type UpdateLearningQuizSettingsRequestDto = { operationId: string; programId: string; settings: LearningQuizSettingsDto }
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }
 export type UpdatePassageReferenceRequestDto = { id: string; title: string | null; note: string | null }
 export type UpdateSettingsRequest = { category: string | null; updates: { [key in string]: JsonValue } }
@@ -9181,13 +11071,65 @@ noPassage: number;
  */
 stopped: string | null }
 /**
- * Response from web ingestion command.
+ * Response from web ingestion command
  */
-export type WebIngestResponse = { documentId: string; url: string; title: string; wordCount: number; chunks: number; siteName: string | null; author: string | null; readingTimeMinutes: number | null }
+export type WebIngestResponse = {
+/**
+ * Unique document ID
+ */
+documentId: string;
+/**
+ * Final URL (after redirects)
+ */
+url: string;
+/**
+ * Document title
+ */
+title: string;
+/**
+ * Word count
+ */
+wordCount: number;
+/**
+ * Number of chunks created
+ */
+chunks: number;
+/**
+ * Site name (if available)
+ */
+siteName: string | null;
+/**
+ * Author (if available)
+ */
+author: string | null;
+/**
+ * Estimated reading time in minutes
+ */
+readingTimeMinutes: number | null }
 /**
  * A web page as the reader shows it.
  */
-export type WebPageDto = { url: string; title: string | null; text: string; wordCount: number; fetchedAt: string; fromCache: boolean }
+export type WebPageDto = {
+/**
+ * The URL after redirects.
+ */
+url: string;
+/**
+ * Page title, when the page gave one.
+ */
+title: string | null;
+/**
+ * Extracted article text — the same text the model was given.
+ */
+text: string; wordCount: number;
+/**
+ * RFC 3339. When the text was actually fetched, not when it was served.
+ */
+fetchedAt: string;
+/**
+ * True when this came out of the page cache rather than off the network.
+ */
+fromCache: boolean }
 /**
  * Payload of [`CHANGED_EVENT`].
  */

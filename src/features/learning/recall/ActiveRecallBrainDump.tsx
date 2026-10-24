@@ -116,17 +116,6 @@ export function ActiveRecallBrainDump({
           keywords: extractKeywords(`${title} ${block.body}`),
         });
       });
-
-      lesson.questions.forEach((question, index) => {
-        const explanation = question.options.length > 0 ? question.options.join('; ') : question.prompt;
-        list.push({
-          id: `${lesson.id}-q-${question.id || index}`,
-          title: question.prompt,
-          explanation,
-          sourceLabel: 'Review Question',
-          keywords: extractKeywords(question.prompt),
-        });
-      });
     } else {
       if (program.summary.goal) {
         list.push({
@@ -170,19 +159,11 @@ export function ActiveRecallBrainDump({
     const missed: ConceptCheckpoint[] = [];
 
     checkpoints.forEach((cp) => {
-      if (cp.keywords.length === 0) {
-        if (dumpLower.length > 20) {
-          covered.push(cp);
-        } else {
-          missed.push(cp);
-        }
-        return;
-      }
-
       const matches = cp.keywords.filter((kw) => dumpLower.includes(kw));
-      // Covered if user matched at least 1 keyword when keywords <= 2, or >= 2 when keywords > 2
-      const requiredMatches = cp.keywords.length <= 2 ? 1 : Math.min(2, cp.keywords.length);
-      const isCovered = matches.length >= requiredMatches || dumpLower.includes(cp.title.toLowerCase());
+      const requiredMatches = cp.keywords.length <= 2 ? 1 : 2;
+      const isCovered =
+        (matches.length >= requiredMatches && matches.length > 0) ||
+        dumpLower.includes(cp.title.toLowerCase());
 
       if (isCovered) {
         covered.push(cp);

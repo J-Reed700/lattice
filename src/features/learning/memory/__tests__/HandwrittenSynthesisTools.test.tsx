@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   computeVerbatimOverlap,
@@ -45,6 +45,16 @@ describe('computeVerbatimOverlap', () => {
     const shortNoMatch = computeVerbatimOverlap('Random words outside', sourceTexts);
     expect(shortNoMatch.percent).toBe(0);
   });
+
+  it('returns 0% when sourceTexts is empty or contains no words', () => {
+    const emptyResult = computeVerbatimOverlap('Some note text here', []);
+    expect(emptyResult.percent).toBe(0);
+    expect(emptyResult.sourceWordCount).toBe(0);
+
+    const punctResult = computeVerbatimOverlap('Some note text here', ['... !!! ???']);
+    expect(punctResult.percent).toBe(0);
+    expect(punctResult.sourceWordCount).toBe(0);
+  });
 });
 
 describe('HandwrittenSynthesisTools UI', () => {
@@ -71,6 +81,10 @@ describe('HandwrittenSynthesisTools UI', () => {
       width: 720,
       height: 260,
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('shows minimum word count helper when note has less than 15 words', () => {
@@ -148,24 +162,44 @@ describe('HandwrittenSynthesisTools UI', () => {
     const canvas = screen.getByLabelText('Handwritten sketchpad canvas');
     expect(canvas).toBeInTheDocument();
 
+    // Move or release pointer before drawing does not error or draw
+    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
+
+    // Draw stroke 1 with highlighter
     fireEvent.pointerDown(canvas, { clientX: 50, clientY: 50, pointerId: 1 });
     fireEvent.pointerMove(canvas, { clientX: 70, clientY: 80, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: 70, clientY: 80, pointerId: 1 });
 
-    // Check undo button
+    // Toggle off highlighter and switch widths
+    await user.click(highlighterButton);
+    await user.click(screen.getByRole('button', { name: 'Broad' }));
+    await user.click(screen.getByRole('button', { name: 'Fine' }));
+
+    // Draw stroke 2 (single dot)
+    fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+
+    // Draw stroke 3 (pen with move)
+    fireEvent.pointerDown(canvas, { clientX: 120, clientY: 120, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 140, clientY: 150, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 140, clientY: 150, pointerId: 1 });
+
+    // Check undo button (undoes stroke 3)
     const undoButton = screen.getByRole('button', { name: /Undo/i });
     expect(undoButton).not.toBeDisabled();
     await user.click(undoButton);
 
-    // Check clear button
+    // Check clear button (clears remaining 2 strokes and calls handleClear)
     const clearButton = screen.getByRole('button', { name: /Clear/i });
+    expect(clearButton).not.toBeDisabled();
     await user.click(clearButton);
     expect(clearButton).toBeDisabled();
   });
 
-  it('attaches handwritten takeaway to note via onInsertSynthesis callback', async () => {
+  it('attaches handwritten takeaway to note via onInsertSynthesis callback and resets toast timer', () => {
+    vi.useFakeTimers();
     const onInsertMock = vi.fn();
-    const user = userEvent.setup();
 
     render(
       <HandwrittenSynthesisTools
@@ -176,19 +210,54 @@ describe('HandwrittenSynthesisTools UI', () => {
       />
     );
 
-    await user.click(screen.getByRole('button', { name: /Open sketchpad/i }));
-
-    const takeawayInput = screen.getByPlaceholderText(/Transcribe key takeaway from handwriting/i);
-    await user.type(takeawayInput, 'Never confuse raw measurements with interpretations.');
+    fireEvent.click(screen.getByRole('button', { name: /Open sketchpad/i }));
 
     const attachButton = screen.getByRole('button', { name: /Attach Takeaway to Note/i });
-    await user.click(attachButton);
+    // Click when takeaway is empty -> does nothing
+    fireEvent.click(attachButton);
+    expect(onInsertMock).not.toHaveBeenCalled();
+
+    const takeawayInput = screen.getByPlaceholderText(/Transcribe key takeaway from handwriting/i);
+    fireEvent.change(takeawayInput, {
+      target: { value: 'Never confuse raw measurements with interpretations.' },
+    });
+
+    fireEvent.click(attachButton);
 
     expect(onInsertMock).toHaveBeenCalledTimes(1);
     const insertedArg = onInsertMock.mock.calls[0][0];
     expect(insertedArg).toContain('[Handwritten Takeaway —');
     expect(insertedArg).toContain('Never confuse raw measurements with interpretations.');
     expect(screen.getByText('Attached!')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+    expect(screen.queryByText('Attached!')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('loads previously stored strokes from localStorage on mount and redraws them', () => {
+    localStorage.setItem(
+      'handwritten_sketch_prog1:lesson1',
+      JSON.stringify([
+        { points: [{ x: 10, y: 10 }], color: '#facc15', width: 18, isHighlighter: true },
+        { points: [{ x: 30, y: 30 }, { x: 50, y: 50 }], color: '#2563eb', width: 3, isHighlighter: false },
+        { points: [], color: '#000000', width: 1, isHighlighter: false },
+      ])
+    );
+
+    render(
+      <HandwrittenSynthesisTools
+        noteContent="Existing note content."
+        sourceTexts={sources}
+        lessonKey="prog1:lesson1"
+        sketchpadOpen
+      />
+    );
+
+    const canvas = screen.getByLabelText('Handwritten sketchpad canvas');
+    expect(canvas).toBeInTheDocument();
   });
 
   it('supports controlled mode via sketchpadOpen and onSketchpadOpenChange', async () => {
@@ -241,5 +310,30 @@ describe('HandwrittenSynthesisTools UI', () => {
 
     expect(screen.getByRole('button', { name: /Open sketchpad/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Handwritten Note & Sketch Pad/i })).toBeInTheDocument();
+  });
+
+  it('handles empty strokes or missing onInsertSynthesis callback gracefully', () => {
+    localStorage.setItem('handwritten_sketch_prog1:lesson1', '{"not": "array"}');
+
+    render(
+      <HandwrittenSynthesisTools
+        noteContent="Note content"
+        sourceTexts={sources}
+        lessonKey="prog1:lesson1"
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Open sketchpad/i }));
+
+    // Undo when pad is empty
+    const undoBtn = screen.getByRole('button', { name: /Undo/i });
+    fireEvent.click(undoBtn);
+
+    // Typing takeaway when onInsertSynthesis is omitted
+    const takeawayInput = screen.getByPlaceholderText(/Transcribe key takeaway from handwriting/i);
+    fireEvent.change(takeawayInput, { target: { value: 'Takeaway with no callback' } });
+    const attachBtn = screen.getByRole('button', { name: /Attach Takeaway to Note/i });
+    fireEvent.click(attachBtn);
+    expect(screen.queryByText('Attached!')).not.toBeInTheDocument();
   });
 });

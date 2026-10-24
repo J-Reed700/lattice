@@ -28,7 +28,12 @@ const STATUS_TO_STATE: Record<string, DownloadState> = {
 export const toDownloadState = (status: string): DownloadState =>
   STATUS_TO_STATE[status.toLowerCase()] ?? 'Pending';
 
-/** Resolves a file's relative path within its model folder. */
+/**
+ * A file's path inside its model folder (`1_Pooling/config.json`), which is
+ * what the backend's batch snapshot calls it. The bare file name is not enough:
+ * a sentence-transformers model has two `config.json` files, and keyed by that
+ * one row silently replaced the other.
+ */
 export const fileNameWithinModel = (
   download: Pick<DownloadStatus, 'destination' | 'model_id'>
 ): string => {
@@ -76,12 +81,24 @@ function updateDownloadCache(
 const TERMINAL_STATES: ReadonlySet<DownloadStatus['state']> = new Set(['Completed', 'Failed', 'Cancelled']);
 const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(['completed', 'error', 'cancelled']);
 
-/** Ignores out-of-order progress events for already terminal downloads. */
+/**
+ * A progress snapshot that lands after the row already finished. Events are
+ * not ordered against each other, so a late `downloading` tick would turn a
+ * Completed row back into a running one. A retry or resume is not affected:
+ * those actions re-read the list from the backend, which is authoritative.
+ */
 function isLateProgress(existing: DownloadStatus | undefined, status: string): boolean {
   return Boolean(existing && TERMINAL_STATES.has(existing.state) && !TERMINAL_SNAPSHOT_STATUSES.has(status));
 }
 
-/** Reconciles an event snapshot into the query cache. */
+/**
+ * Reconcile an event snapshot into the query cache.
+ *
+ * A model begins life as a single session because its other file sessions have
+ * not been created yet. Once the remaining sessions exist, the backend emits a
+ * batch snapshot. Re-keying by the real session id removes that early standalone
+ * row instead of leaving a permanently queued duplicate behind.
+ */
 export function applyDownloadSnapshot(
   current: Map<string, DownloadStatus>,
   snapshot: TauriEvents.Downloads.StateSnapshot
@@ -301,6 +318,10 @@ export function useDownloadActions() {
   const fetchAllDownloads = useCallback(async (): Promise<void> => {
     await resyncFromBackend();
   }, [resyncFromBackend]);
+  /**
+   * A downloaded model's vision projector, by the model's own id. Resolves to
+   * the download to follow, or `null` when the whole file is already there.
+   */
   const startVisionProjectorDownload = useCallback(async (modelId: string): Promise<string | null> => {
     const result = await VaultAPI.startVisionProjectorDownload(modelId);
     if (!result.ok) throw new Error(describeFailure(result));

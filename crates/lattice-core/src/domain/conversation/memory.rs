@@ -56,8 +56,10 @@ pub const MEMORY_SCHEMA_VERSION: i64 = 1;
 /// a future change is detectable rather than silently compared across schemes.
 pub const DIGEST_SCHEME: &str = "sha256:";
 
+// ---------------------------------------------------------------------------
 // Limits (§7.5). Named constants so tests assert against the contract, not a
 // magic number repeated at the call site.
+// ---------------------------------------------------------------------------
 
 /// Maximum structured-output bytes accepted before parsing is attempted.
 pub const MAX_PROPOSAL_BYTES: usize = 64 * 1024;
@@ -75,6 +77,10 @@ pub const MAX_RELATED_ITEMS: usize = 8;
 /// Host work limit when materializing active items. Exceeding it is an explicit
 /// overflow error, never a silent `LIMIT`.
 pub const MAX_ACTIVE_ITEMS: usize = 512;
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
 
 /// Host-generated, immutable identifier for a memory item.
 ///
@@ -117,6 +123,10 @@ impl std::fmt::Display for MemoryId {
         f.write_str(&self.0)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Classification
+// ---------------------------------------------------------------------------
 
 /// What kind of thing an item records.
 ///
@@ -312,6 +322,10 @@ impl std::str::FromStr for EvidencePurpose {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
 /// A byte range inside one original message.
 ///
 /// Offsets are into the message's exact UTF-8 bytes, with no normalization of
@@ -424,6 +438,10 @@ pub fn compute_digest(content: &str) -> String {
     format!("{DIGEST_SCHEME}{:x}", hasher.finalize())
 }
 
+// ---------------------------------------------------------------------------
+// Items
+// ---------------------------------------------------------------------------
+
 /// One durable memory record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryItem {
@@ -470,6 +488,10 @@ impl MemoryItem {
         self.assertions().any(|span| span.role == SourceRole::User)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Conversation-level state
+// ---------------------------------------------------------------------------
 
 /// Whether stored memory can be used as-is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

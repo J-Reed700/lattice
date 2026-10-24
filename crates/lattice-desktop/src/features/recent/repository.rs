@@ -1,6 +1,11 @@
 //! Recent Documents Repository Implementation
 //!
 //! Infrastructure implementation for recent documents persistence using SQLite.
+//!
+//! # Architecture
+//!
+//! This repository implements the RecentDocumentsRepositoryPort trait,
+//! providing operations for tracking and retrieving recently accessed documents.
 
 use crate::infrastructure::persistence::database::query_with_timeout;
 use async_trait::async_trait;
@@ -11,6 +16,13 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.
+///
+/// Handles persistence of document access tracking in SQLite database.
+/// Uses upsert logic to update access count and timestamp for existing entries.
+///
+/// # Thread Safety
+///
+/// This repository is thread-safe through SQLitePool's internal connection management.
 #[derive(Debug, Clone)]
 pub struct RecentDocumentsRepository {
     pool: SqlitePool,
@@ -18,6 +30,10 @@ pub struct RecentDocumentsRepository {
 
 impl RecentDocumentsRepository {
     /// Create a new recent documents repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }

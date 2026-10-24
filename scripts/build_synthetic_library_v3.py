@@ -69,6 +69,9 @@ DIMENSIONS = [
     "noisy and OCR text",
     "tables and structured content",
     "short fragment notes",
+    # added 2026-10-23 with the per-document cap cases (docs/design/2026-10-23-per-document-cap.md)
+    "many passages from one document",
+    "repetitive document",
 ]
 
 PARAPHRASE = "semantic paraphrase"
@@ -88,6 +91,8 @@ MULTIHOP = "multi-hop composition"
 NOISY = "noisy and OCR text"
 TABLES = "tables and structured content"
 FRAGMENT = "short fragment notes"
+MANY = "many passages from one document"
+REPETITIVE = "repetitive document"
 
 MIN_PER_DIMENSION = 12
 MAX_QUOTED_CHARACTERS = 36
@@ -313,6 +318,7 @@ class Library:
         self.query_ids = set()
         self.needles = []
         self.absent = []
+        self.spread = []
         self.tokens = Tokens(rng_for("tokens"))
 
     def add(self, doc):
@@ -1380,6 +1386,471 @@ def build_unanswerable(lib):
         lib.ask(f"v3-unanswerable-{slug}", text, category, [UNANSWERABLE_TAG, HARD_NEG], {})
 
 
+# --- the per-document cap (2026-10-23) -----------------------------------------
+#
+# docs/design/2026-10-23-per-document-cap.md, section 2. Until these cases, no query
+# needed more than two passages of one document, so a cap on chunks per document
+# could not show up in any score. Every case lives in new documents, so the older
+# documents and queries keep their bytes and per-query comparisons still hold.
+
+# Chat chunks at 800 tokens with 120 of overlap (`ChunkerConfig::default`,
+# crates/lattice-desktop/src/features/indexing/engine/chunker.rs). 800 tokens of this
+# English is roughly 3,200 to 4,500 bytes; 6,000 bytes clears one chunk even at 7
+# bytes a token, so two planted facts can never share a chunk.
+MIN_FACT_GAP_BYTES = 6000
+
+CAP_FAMILIES = dict(D.CAP_FILLER, legal=D.LEGAL_SENTENCES, recipe=D.RECIPE_SENTENCES)
+
+# The anchors these cases mint must not occur in their own filler. BANNED_SUBSTRINGS
+# cannot carry this text without re-minting every older anchor, so it is screened here.
+CAP_TEXT = " ".join(
+    [sentence for bank in D.CAP_FILLER.values() for sentence in bank]
+    + D.CAP_OPENERS + D.CAP_SHARED + D.CAP_AGREEMENT_HEADINGS + D.CAP_RECIPE_HEADINGS
+    + [json.dumps(D.CAP_REPEATED), json.dumps(D.CAP_THREAD), D.CAP_RECORDS_NOTE, D.CAP_FORM_NOTE]
+).lower()
+
+# Case A: six facts about one named thing, one per chunk, in a long non-software
+# record. `{thing}` is the named thing (it carries the minted anchor) and `{value}`
+# a minted token. With a cap of 4 chunks per document, passage recall@10 on these
+# queries cannot exceed 4/6.
+MANY_PLAN = [
+    {
+        "id": "household-log-long", "title": "Saltings Cottage maintenance log",
+        "kind": "household log", "collection": "personal/home", "shape": "log",
+        "filler": ["home"], "heading": "## {weekday} {d:1-28} {month}", "target": 42000,
+        "thing": "the {anchor} stove",
+        "facts": [
+            ("date", "{value}: the chimney sweep did the flue of {thing} and left the "
+                     "certificate on the dresser."),
+            ("hours", "after the reline, {thing} needs {value} of slow burning before the door "
+                      "seal stops weeping."),
+            ("percent", "logs for {thing} have to read under {value} moisture on the meter, or "
+                        "the glass blackens within a day."),
+            ("date", "the baffle plate in {thing} cracked, and the replacement went in on "
+                     "{value}."),
+            ("weeks", "the installer wants {thing} serviced again within {value}, whatever the "
+                      "glass looks like."),
+            ("date", "a new carbon monoxide alarm went up beside {thing}; it expires on {value}."),
+        ],
+        "question": "Go through the Saltings Cottage maintenance log and tell me everything it "
+                    "records about {thing}.",
+    },
+    {
+        "id": "hall-transcript-long", "title": "Village hall trustees, open meeting, full transcript",
+        "kind": "transcript", "collection": "community/transcripts", "shape": "transcript",
+        "filler": ["community"], "heading": None, "target": 40000,
+        "thing": "Councillor {anchor}",
+        "facts": [
+            ("date", "I will have the roof survey back to the trustees by {value}, you have my "
+                     "word on that."),
+            ("calendar days", "while the library is shut I'll keep the hall open late on "
+                              "Thursdays, for the next {value} at least."),
+            ("amount", "I'm putting {value} from my ward budget towards the new kitchen, and that "
+                       "is settled."),
+            ("percent", "youth groups will keep paying {value} of the standard hire rate for as "
+                        "long as I'm on this committee."),
+            ("date", "the ramp at the side door will be finished before {value}; I'll chase the "
+                     "builder myself."),
+            ("hours", "I'll give {value} a month to the repair cafe until we find a regular "
+                      "volunteer."),
+        ],
+        "question": "What did {thing} promise at the village hall trustees' open meeting? I want "
+                    "every commitment.",
+    },
+    {
+        "id": "chronicle-long", "title": "Mill Lane chronicle, compiled by the local history group",
+        "kind": "chronicle", "collection": "archive/history", "shape": "log",
+        "filler": ["history"], "heading": "## Entries gathered in {month}", "target": 42000,
+        "thing": "{anchor} Mill",
+        "facts": [
+            ("old_date", "{value}. The wheel at {thing} turned again for the first time since "
+                         "the flood, watched by most of the street."),
+            ("old_date", "{value}. {thing} was sold by the estate to the miller's family, and the "
+                         "deed was witnessed at the inn."),
+            ("percent", "after the weir upstream was lowered, the leat at {thing} carried only "
+                        "{value} of its old flow."),
+            ("weeks", "{thing} stood idle for {value} while the millstones were re-dressed by a "
+                      "man brought in from the next county."),
+            ("amount", "the parish raised {value} by subscription to repair the roof of {thing} "
+                       "after the gale."),
+            ("old_date", "{value}. The last miller at {thing} retired, and the building was let "
+                         "as a store."),
+        ],
+        "question": "Pull together everything the Mill Lane chronicle records about {thing}, in "
+                    "order.",
+    },
+    {
+        "id": "lab-notebook-long", "title": "Soil laboratory notebook, autumn term",
+        "kind": "lab notebook", "collection": "personal/notebooks", "shape": "log",
+        "filler": ["bench"], "heading": "## Bench session, {weekday} {d:1-28} {month}",
+        "target": 42000, "thing": "the {anchor} core",
+        "facts": [
+            ("percent", "moisture content of {thing} after oven drying: {value}."),
+            ("measure", "median grain size in the lower band of {thing}: {value}, so silt rather "
+                        "than fine sand."),
+            ("percent", "organic matter in {thing} by loss on ignition: {value}."),
+            ("hours", "{thing} needed {value} in the oven before its mass stopped changing "
+                      "between weighings."),
+            ("date", "went back to the site of {thing} on {value} to take a second core, "
+                     "labelled with a B suffix."),
+            ("measure", "in the hydrometer test the fine fraction of {thing} settled out at "
+                        "{value}."),
+        ],
+        "question": "List every reading and observation the soil lab notebook gives for {thing}.",
+    },
+    {
+        "id": "allotment-agreement-long",
+        "title": "Allotment site tenancy agreement, consolidated text",
+        "kind": "tenancy agreement", "collection": "personal/agreements", "shape": "clauses",
+        "filler": ["agreement", "legal"], "heading": "## Section {n}. {h}", "target": 42000,
+        "headings": D.CAP_AGREEMENT_HEADINGS, "thing": "the {anchor} Allotment Society",
+        "facts": [
+            ("weeks", "{thing} shall repaint the site gates and the noticeboard at intervals "
+                      "of no more than {value}."),
+            ("amount", "{thing} shall pay the council an annual rent of {value}, due in one sum "
+                       "at the start of the year."),
+            ("date", "{thing} shall deliver its audited accounts to the council on or before "
+                     "{value}."),
+            ("percent", "{thing} shall not let more than {value} of the plots to members who "
+                        "live outside the parish."),
+            ("calendar days", "{thing} shall give the council {value} notice before holding any "
+                              "open day or sale on the site."),
+            ("hours", "{thing} shall drain the water troughs within {value} of a frost warning "
+                      "being issued for the district."),
+        ],
+        "question": "Under the allotment tenancy agreement, what does {thing} have to do? List "
+                    "all of its obligations.",
+    },
+    {
+        "id": "cookbook-long", "title": "Family cookbook, breads and doughs",
+        "kind": "cookbook", "collection": "personal/recipes", "shape": "log",
+        "filler": ["kitchen", "recipe"], "heading": "## {h}", "target": 42000,
+        "headings": D.CAP_RECIPE_HEADINGS, "thing": "the {anchor} starter",
+        "facts": [
+            ("percent", "for the rye loaf, feed {thing} at {value} hydration the night before "
+                        "you mix."),
+            ("hours", "{thing} needs {value} at room temperature before it is lively enough to "
+                      "lift a seeded dough."),
+            ("percent", "in the flatbreads, {thing} makes up {value} of the total flour weight."),
+            ("hours", "for the sweet buns, the dough made with {thing} is retarded in the fridge "
+                      "for {value}."),
+            ("old_date", "{thing} was split from my great-grandmother's jar on {value}, and every "
+                         "loaf in this book descends from it."),
+            ("weeks", "a dried flake of {thing} keeps for {value} in a sealed jar, so post some to "
+                      "anyone who asks."),
+        ],
+        "question": "Everything the family cookbook says about {thing}: each way it is used, "
+                    "and how to look after it.",
+    },
+    {
+        "id": "choir-minutes-long", "title": "Choir committee minutes, full year",
+        "kind": "minutes", "collection": "community/minutes", "shape": "minutes",
+        "filler": ["community"], "heading": "## Committee meeting, {weekday} {d:1-28} {month}",
+        "target": 42000, "thing": "the {anchor} fund",
+        "facts": [
+            ("amount", "agreed to release {value} from {thing} towards new music stands."),
+            ("date", "the trustees of {thing} will next report to the committee on {value}."),
+            ("percent", "resolved that no more than {value} of {thing} may be spent in any one "
+                        "season."),
+            ("amount", "{thing} received a further {value} from the retiring collection at the "
+                       "summer concert."),
+            ("calendar days", "applications to {thing} must be lodged {value} before the "
+                              "concert they are meant to support."),
+            ("date", "the treasurer closed the old bank account of {thing} on {value} and moved "
+                     "the balance to the building society."),
+        ],
+        "question": "What did the choir committee decide about {thing} over the year? Give me "
+                    "every decision.",
+    },
+    {
+        "id": "apiary-log-long", "title": "Apiary inspection log, home hives",
+        "kind": "inspection log", "collection": "personal/garden", "shape": "log",
+        "filler": ["garden"], "heading": "## Inspection, {weekday} {d:1-28} {month}",
+        "target": 42000, "thing": "the {anchor} hive",
+        "facts": [
+            ("date", "queen seen in {thing} on {value}, marked yellow and laying well across "
+                     "five frames."),
+            ("percent", "brood in {thing} covered {value} of the frames checked, all of it "
+                        "capped and even."),
+            ("calendar days", "{thing} was treated for varroa; the strips stay in for {value} "
+                              "and then come out without fail."),
+            ("date", "{thing} swarmed on {value}; the swarm was taken from the hedge and housed "
+                     "in the spare box."),
+            ("percent", "honey from the supers on {thing} read {value} moisture on the "
+                        "refractometer, dry enough to extract."),
+            ("hours", "the clearer board went on {thing} for {value} before the supers were "
+                      "lifted off."),
+        ],
+        "question": "What does the apiary log record about {thing} across all the inspections?",
+    },
+    {
+        "id": "canal-log-long", "title": "Narrowboat cruising log, summer passage",
+        "kind": "cruising log", "collection": "personal/travel", "shape": "log",
+        "filler": ["travel"], "heading": "## Day {n}, {weekday}", "target": 42000,
+        "thing": "the {anchor} flight",
+        "facts": [
+            ("date", "booked passage up {thing} for {value} with the lock-keeper, who keeps a "
+                     "written list."),
+            ("percent", "the top pound of {thing} was down to {value} of its normal level, so we "
+                        "waited for the keeper to run water down."),
+            ("calendar days", "the passage permit for {thing} stays valid for {value} from the "
+                              "day it is issued."),
+            ("calendar days", "a notice at the bottom lock says {thing} closes for {value} of "
+                              "winter stoppage from the start of November."),
+            ("amount", "the passage fee for {thing} came to {value}, paid at the hut by the "
+                       "bottom lock."),
+            ("date", "came back down {thing} on {value}, in steady rain the whole way."),
+        ],
+        "question": "Everything the cruising log says about {thing}, please: each time it "
+                    "comes up.",
+    },
+    {
+        "id": "conservation-record-long", "title": "Textile conservation record book",
+        "kind": "conservation record", "collection": "archive/collections", "shape": "log",
+        "filler": ["collections"], "heading": "## Store round, {weekday} {d:1-28} {month}",
+        "target": 42000, "thing": "the {anchor} tapestry",
+        "facts": [
+            ("date", "{thing}: surface cleaned through nylon net at low suction on {value}."),
+            ("percent", "{thing}: case humidity to be held at {value}, with the silica gel "
+                        "changed whenever it drifts."),
+            ("measure", "{thing}: the warp threads in the worst area have worn down to {value}, "
+                        "so support netting was stitched behind."),
+            ("weeks", "{thing}: rested flat in the store for {value} after humidification, "
+                      "before it was rehung."),
+            ("amount", "{thing}: new linen lining ordered at {value}, with the supplier's quote "
+                       "attached to the file."),
+            ("date", "{thing}: returned to the gallery on {value} and hung on the north stair, "
+                     "away from the windows."),
+        ],
+        "question": "What treatments and checks has {thing} had, according to the conservation "
+                    "record book?",
+    },
+    {
+        "id": "observing-log-long", "title": "Backyard astronomy observing log",
+        "kind": "observing log", "collection": "personal/notebooks", "shape": "log",
+        "filler": ["sky"], "heading": "## Session, {weekday} night, {d:1-28} {month}",
+        "target": 42000, "thing": "Comet {anchor}",
+        "facts": [
+            ("date", "first picked up {thing} in binoculars on {value}, low in the north-east "
+                     "just before dawn."),
+            ("percent", "the moon was {value} illuminated the night {thing} showed its tail, and "
+                        "it still washed most of it out."),
+            ("calendar days", "the forecasts give {thing} another {value} as a binocular "
+                              "object before it fades."),
+            ("date", "{thing} reached perihelion on {value}, according to the society's "
+                     "circular."),
+            ("percent", "at its best the coma of {thing} filled {value} of the low-power "
+                        "eyepiece field."),
+            ("date", "last saw {thing} on {value}, a faint smudge that only averted vision could "
+                     "hold."),
+        ],
+        "question": "Summarise every observation of {thing} in the observing log.",
+    },
+    {
+        "id": "family-history-long", "title": "Family history research notes",
+        "kind": "research notes", "collection": "archive/family", "shape": "log",
+        "filler": ["history"], "heading": "## Record office visit, {month}", "target": 42000,
+        "thing": "Edith {anchor}",
+        "facts": [
+            ("old_date", "baptism register: {thing} was baptised on {value} at the chapel on the "
+                         "hill."),
+            ("old_date", "passenger list: {thing} sailed on {value}, travelling alone and listed "
+                         "as a seamstress."),
+            ("calendar days", "her letters say the crossing took {thing} {value}, most of it "
+                              "below deck."),
+            ("amount", "probate: {thing} left {value}, divided equally between her two "
+                       "daughters."),
+            ("percent", "the DNA match through the line of {thing} shares {value} with cousin "
+                        "Ada's sample."),
+            ("old_date", "burial: {thing} was buried on {value}, beside her husband in the lower "
+                         "churchyard."),
+        ],
+        "question": "What have the family history notes established about {thing}? Give me all "
+                    "the records.",
+    },
+]
+
+
+def _cap_anchor(lib):
+    while True:
+        anchor = lib.tokens.anchor()
+        if anchor.lower() not in CAP_TEXT:
+            return anchor
+
+
+def _cap_value(lib, kind):
+    tokens = lib.tokens
+    if kind == "old_date":
+        return tokens._mint(lambda: f"18{tokens.rng.randint(50, 99)}-"
+                                    f"{tokens.rng.randint(1, 12):02d}-{tokens.rng.randint(10, 28)}")
+    if kind in ("hours", "weeks", "calendar days"):
+        return tokens.duration(kind)
+    return {"date": tokens.date, "percent": tokens.percent, "amount": tokens.amount,
+            "measure": tokens.measure}[kind]()
+
+
+def _cap_sentence(rng, bank, openers=True):
+    body = rng.choice(bank)
+    if openers and rng.random() < 0.35:
+        body = f"{rng.choice(D.CAP_OPENERS)} {body[:1].lower()}{body[1:]}"
+    return sentence(body, rng)
+
+
+def _cap_paragraph(rng, bank, low=3, high=6, openers=True):
+    return " ".join(_cap_sentence(rng, [line], openers)
+                    for line in rng.sample(bank, rng.randint(low, high)))
+
+
+def _cap_filler(doc, spec, rng):
+    """Grow `doc` to the spec's target with on-topic filler that never names the thing."""
+    # An agreement's clauses take no diary openers and no diary sentences.
+    plain = spec["shape"] == "clauses"
+    bank = [line for family in spec["filler"] for line in CAP_FAMILIES[family]]
+    if not plain:
+        bank += D.CAP_SHARED
+    speakers = [rng.choice(D.POOLS["person"]) for _ in range(5)]
+    size, section, clause, minute = 0, 0, 0, 18 * 60
+    while size < spec["target"]:
+        part = section // 2 + 1
+        if spec["heading"] and section % 2 == 0:
+            doc.add(fill(spec["heading"], rng, n=part,
+                         h=rng.choice(spec.get("headings") or [""])))
+        section += 1
+        if spec["shape"] == "transcript":
+            lines = []
+            for step in range(rng.randint(4, 8)):
+                lines.append(f"[{minute // 60:02d}:{minute % 60:02d}:{step * 7 % 60:02d}] "
+                             f"{rng.choice(speakers)}: {_cap_sentence(rng, bank)}")
+            minute += rng.randint(1, 3)
+            block = "\n".join(lines)
+        elif spec["shape"] == "minutes":
+            items = rng.sample(bank, rng.randint(3, 6))
+            block = "\n".join(f"{at}. {_cap_sentence(rng, [line])}"
+                              for at, line in enumerate(items, 1))
+        elif spec["shape"] == "clauses":
+            clause += 1
+            block = f"{part}.{clause} " + _cap_paragraph(rng, bank, 3, 5, openers=False)
+        else:
+            block = _cap_paragraph(rng, bank)
+        doc.add(block)
+        size += len(block)
+
+
+def build_many_passages(lib):
+    rng = rng_for("many-passages")
+    for spec in MANY_PLAN:
+        doc = Doc(id=spec["id"], title=spec["title"], kind=spec["kind"],
+                  collection=spec["collection"])
+        doc.add(f"# {spec['title']}")
+        _cap_filler(doc, spec, rng)
+        anchor = _cap_anchor(lib)
+        thing = spec["thing"].replace("{anchor}", anchor)
+        keys, tokens = [], [anchor]
+        values = [_cap_value(lib, kind) for kind, _ in spec["facts"]]
+        # A record runs forwards: its dates rise with depth, as a log's entries do.
+        for kind in ("date", "old_date"):
+            slots = [slot for slot, (each, _) in enumerate(spec["facts"]) if each == kind]
+            for slot, value in zip(slots, sorted(values[slot] for slot in slots)):
+                values[slot] = value
+        for slot, ((kind, template), value) in enumerate(zip(spec["facts"], values)):
+            body = template.replace("{thing}", thing).replace("{value}", value)
+            body = body[:1].upper() + body[1:]
+            # Evenly spread, so each fact sits in its own chunk.
+            index = max(1, round(len(doc.blocks) * (slot + 0.5) / len(spec["facts"])))
+            if spec["shape"] == "transcript":
+                # Spoken in the minute of the line before it; filler seconds stop at :49.
+                stamp = re.findall(r"\[(\d\d:\d\d):\d\d\]", doc.blocks[index - 1])[-1]
+                body = f"[{stamp}:58] {thing}: {body}"
+            doc.mark_at(f"fact{slot}", body, index)
+            keys.append(f"fact{slot}")
+            tokens.append(value)
+        lib.add(doc)
+        lib.needle(tokens, [doc.id])
+        lib.spread.append((doc.id, keys))
+        lib.ask(f"v3-many-{doc.id}", spec["question"].replace("{thing}", thing),
+                "every passage about one subject", [MANY], {doc.id: 3}, {doc.id: keys})
+
+
+def _cap_short_note(lib, spec, rng, collection):
+    """A short note on a repetitive document's topic that holds the one answer."""
+    anchor, value = _cap_anchor(lib), _cap_value(lib, spec["value"])
+    doc = Doc(id=spec["id"], title=spec["title"], kind="note", collection=collection)
+    doc.add(f"# {spec['title']}")
+    for block in spec["text"]:
+        text = fill(block, rng, anchor=anchor, value=value)
+        if anchor in text:
+            doc.mark("answer", text)
+        else:
+            doc.add(text)
+    lib.add(doc)
+    lib.needle([anchor, value], [doc.id])
+    return doc
+
+
+def _quote(text):
+    return "\n".join(f"> {line}" if line else ">" for line in text.split("\n"))
+
+
+def build_repetitive(lib):
+    """Case B: one template repeated ten times, one field changing per repeat.
+
+    B1 (flooding guard) asks for a fact that lives in a different, short note on the
+    same topic: the note is graded 3 and the repetitive document 0. B2 (variant check)
+    asks for the changed field in repeat 7 of 10, whose nine siblings are near-identical
+    to it, so a dedup by text or embedding similarity would drop the answer.
+    """
+    rng = rng_for("repetitive")
+    for spec in D.CAP_REPEATED:
+        doc = Doc(id=f"repeated-{spec['slug']}", title=spec["title"], kind=spec["kind"],
+                  collection="community/records")
+        # Filled once, so every repeat carries the same words.
+        body = [fill(block, rng) for block in spec["body"]]
+        notes = [text.replace("{org}", spec["org"])
+                 for text in (D.CAP_FORM_NOTE, D.CAP_RECORDS_NOTE)]
+        notes = [text[:1].upper() + text[1:] for text in notes]
+        doc.add(f"# {spec['title']}")
+        values = []
+        for repeat in range(1, 11):
+            value = _cap_value(lib, spec["value"])
+            values.append(value)
+            doc.add(spec["header"])
+            doc.extend(body)
+            doc.mark(f"repeat{repeat}",
+                     spec["field"].replace("{n}", str(repeat)).replace("{value}", value))
+            doc.extend(notes)
+            doc.add(spec["footer"])
+        lib.add(doc)
+        lib.needle(values, [doc.id])
+        short = _cap_short_note(lib, spec["short"], rng, "community/notes")
+        lib.ask(f"v3-flood-{spec['slug']}", spec["short"]["question"],
+                "answer beside a repetitive document", [REPETITIVE],
+                {short.id: 3, doc.id: 0}, {short.id: ["answer"]})
+        lib.ask(f"v3-variant-{spec['slug']}", spec["variant_question"],
+                "one changed field in a repeated template", [REPETITIVE],
+                {doc.id: 3}, {doc.id: ["repeat7"]})
+
+    thread = D.CAP_THREAD
+    doc = Doc(id=f"repeated-{thread['slug']}", title=thread["title"], kind=thread["kind"],
+              collection="community/records")
+    doc.add(f"# {thread['title']}")
+    people = rng.sample(D.POOLS["person"], 3)
+    previous = ""
+    for at, reply in enumerate(thread["replies"]):
+        sender = people[at % len(people)]
+        message = (f"From: {sender}\nTo: choir committee\nSubject: {thread['subject']}\n\n"
+                   f"{reply}\n\n-- \n{sender}\nChoir tour coordinator\n{thread['footer']}")
+        if previous:
+            message += f"\n\nOn {rng.choice(D.POOLS['weekday'])}, " \
+                       f"{people[(at - 1) % len(people)]} wrote:\n{_quote(previous)}"
+        doc.add(message)
+        previous = message
+    lib.add(doc)
+    short = _cap_short_note(lib, thread["short"], rng, "community/notes")
+    lib.ask(f"v3-flood-{thread['slug']}", thread["short"]["question"],
+            "answer beside a repetitive document", [REPETITIVE],
+            {short.id: 3, doc.id: 0}, {short.id: ["answer"]})
+
+
 # --- integrity ----------------------------------------------------------------
 
 def check_integrity(lib):
@@ -1431,10 +1902,17 @@ def check_integrity(lib):
         if counts.get(dimension, 0) < MIN_PER_DIMENSION:
             problems.append(f"dimension {dimension!r} has {counts.get(dimension, 0)} queries, "
                             f"needs {MIN_PER_DIMENSION}")
-    if not 150 <= len(lib.queries) <= 200:
-        problems.append(f"{len(lib.queries)} queries, wanted between 150 and 200")
-    if not 300 <= len(lib.docs) <= 400:
-        problems.append(f"{len(lib.docs)} documents, wanted between 300 and 400")
+    for doc_id, keys in lib.spread:
+        spans = sorted(lib.by_id[doc_id].spans[key] for key in keys)
+        for (_, end), (start, _) in zip(spans, spans[1:]):
+            if start - end < MIN_FACT_GAP_BYTES:
+                problems.append(f"{doc_id}: two planted facts sit {start - end} bytes apart, "
+                                f"under {MIN_FACT_GAP_BYTES}, so they could share a chunk")
+
+    if not 150 <= len(lib.queries) <= 250:
+        problems.append(f"{len(lib.queries)} queries, wanted between 150 and 250")
+    if not 300 <= len(lib.docs) <= 450:
+        problems.append(f"{len(lib.docs)} documents, wanted between 300 and 450")
 
     if problems:
         raise ValueError("fixture integrity failed:\n  " + "\n  ".join(problems))
@@ -1470,6 +1948,9 @@ def build():
     build_multihop(lib)
     build_paraphrase(lib)
     build_unanswerable(lib)
+    # Appended last, so every earlier document, query and minted token keeps its bytes.
+    build_many_passages(lib)
+    build_repetitive(lib)
     lib.finalize()
     check_integrity(lib)
     dataset = lib.dataset()

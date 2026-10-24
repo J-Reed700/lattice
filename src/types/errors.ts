@@ -1,3 +1,13 @@
+/**
+ * Custom Error Types for Lattice/Lattice Application
+ *
+ * These error types enable specific error handling strategies
+ * based on the nature of the failure.
+ */
+
+/**
+ * Network-related errors (API calls, fetch failures)
+ */
 export class NetworkError extends Error {
   public readonly statusCode?: number;
   public readonly endpoint?: string;
@@ -11,6 +21,9 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * Authentication and authorization errors
+ */
 export class AuthenticationError extends Error {
   constructor(message: string = 'Authentication required') {
     super(message);
@@ -19,6 +32,9 @@ export class AuthenticationError extends Error {
   }
 }
 
+/**
+ * Database operation errors
+ */
 export class DatabaseError extends Error {
   public readonly operation?: string;
   public readonly table?: string;
@@ -32,6 +48,9 @@ export class DatabaseError extends Error {
   }
 }
 
+/**
+ * Component rendering errors
+ */
 export class RenderError extends Error {
   public readonly component?: string;
 
@@ -43,6 +62,9 @@ export class RenderError extends Error {
   }
 }
 
+/**
+ * File system operation errors
+ */
 export class FileSystemError extends Error {
   public readonly path?: string;
   public readonly operation?: 'read' | 'write' | 'delete' | 'list';
@@ -56,6 +78,9 @@ export class FileSystemError extends Error {
   }
 }
 
+/**
+ * Search and indexing errors
+ */
 export class SearchError extends Error {
   public readonly query?: string;
 
@@ -67,6 +92,9 @@ export class SearchError extends Error {
   }
 }
 
+/**
+ * Configuration and settings errors
+ */
 export class ConfigurationError extends Error {
   public readonly setting?: string;
 
@@ -78,6 +106,9 @@ export class ConfigurationError extends Error {
   }
 }
 
+/**
+ * Type guard to check if error is a custom error type
+ */
 export function isCustomError(error: unknown): error is NetworkError | AuthenticationError | DatabaseError | RenderError | FileSystemError | SearchError | ConfigurationError {
   return error instanceof Error && (
     error instanceof NetworkError ||
@@ -90,6 +121,9 @@ export function isCustomError(error: unknown): error is NetworkError | Authentic
   );
 }
 
+/**
+ * Get user-friendly error message based on error type
+ */
 export function getUserFriendlyMessage(error: Error): string {
   if (error instanceof NetworkError) {
     return "Couldn't reach the service. Check your connection.";
@@ -120,6 +154,9 @@ export function getUserFriendlyMessage(error: Error): string {
   return message ? sanitizeErrorMessage(message) : 'Something unexpected happened.';
 }
 
+/**
+ * Sanitize error message for production (remove sensitive data)
+ */
 export function sanitizeErrorMessage(message: string): string {
   let sanitized = message.replace(/[A-Z]:[\\/ ][\w\s\-\\.]+/gi, '[PATH]');
   sanitized = sanitized.replace(/\/[\w\s\-\\.]+/gi, '[PATH]');

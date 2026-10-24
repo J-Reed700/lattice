@@ -92,15 +92,14 @@ The dialog shows each model's size and the total. Choose:
 - **Not now** to skip. The dialog won't come back, but you can install models
   any time from **Settings > AI > Models**.
 
-Searching by meaning needs the embedding model; until it is downloaded, library
-search is keyword-only. Chat needs a chat model, or a provider you configure
-under **Settings > AI > Chat**.
+Importing and indexing need the embedding model, so install at least that one
+before you import. Chat needs a chat model, or a provider you configure under
+**Settings > AI > Chat**.
 
 After the models download, Lattice runs offline. It uses the network only when
-you import a web page, turn on web or Wikipedia search in a chat, run Learning
-Studio web research or claim checking, use the source finders in **Settings >
-Sources**, browse or download models, check for updates, or use a remote
-provider or custom tool you set up.
+you import a web page, turn on web or Wikipedia search in a chat, browse or
+download models, check for updates, or use a remote provider or custom tool you
+set up.
 
 ---
 

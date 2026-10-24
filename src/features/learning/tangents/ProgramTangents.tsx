@@ -200,9 +200,8 @@ export function ProgramTangents({
         {panelOpen && (
           <aside
             id={`course-tangents-${program.summary.id}`}
-            role="complementary"
             aria-label="Course tangents"
-            className="tangent-sidebar tangent-panel-slot bg-surface border-l border-border-default shadow-sheet"
+            className="tangent-sidebar tangent-panel-slot"
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !event.defaultPrevented) {
                 event.stopPropagation();
@@ -231,7 +230,7 @@ export function ProgramTangents({
                       Course Tangents
                     </h2>
                     {tangents.length > 0 && (
-                      <span className="rounded-full bg-accent-muted px-2 py-0.5 text-xs font-semibold text-accent">
+                      <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">
                         {tangents.length}
                       </span>
                     )}
@@ -242,7 +241,7 @@ export function ProgramTangents({
                 </header>
 
                 <div className="shrink-0 border-b border-border-subtle p-3 space-y-2.5">
-                  <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-surface-sunken p-1 text-xs">
+                  <div className="flex items-center gap-1 rounded-lg bg-background p-0.5 text-xs">
                     <button
                       type="button"
                       onClick={() => setScopeFilter('lesson')}
@@ -279,7 +278,7 @@ export function ProgramTangents({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search tangents…"
                         aria-label="Search tangents"
-                        className="w-full rounded-lg border border-border-default bg-surface-sunken py-1.5 pl-8 pr-3 text-xs text-text-primary outline-hidden placeholder:text-text-muted focus:border-accent focus:bg-surface"
+                        className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-xs outline-hidden focus:border-accent"
                       />
                     </div>
                   )}
@@ -293,7 +292,7 @@ export function ProgramTangents({
                   )}
 
                   {tangentsQuery.isError && (
-                    <div role="alert" className="rounded-xl border border-border-default bg-danger-muted/30 p-4 text-sm text-danger-fg">
+                    <div role="alert" className="p-4 text-sm text-text-secondary">
                       <p>Couldn’t load course tangents.</p>
                       <button
                         type="button"
@@ -386,10 +385,10 @@ function CourseTangentCard({
           onOpen();
         }
       }}
-      className="group relative flex flex-col rounded-xl border border-border-default bg-surface p-3.5 text-left shadow-xs transition hover:border-border-strong hover:bg-surface-raised/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+      className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 text-left transition hover:border-accent/50 hover:shadow-xs focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="rounded-full bg-accent-muted px-2 py-0.5 text-[10px] font-medium text-accent">
+        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
           {sectionLabel}
         </span>
         <button
@@ -439,18 +438,18 @@ export function ProgramTangentsTrigger() {
       aria-label="Course tangents"
       title="Explore side topics in tangents"
       onClick={handleClick}
-      className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-medium transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${
+      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${
         isPanelOpen
-          ? 'border-accent bg-accent-muted text-accent'
+          ? 'border-accent bg-accent/10 text-accent'
           : tangents.length > 0
-            ? 'border-border-default bg-surface text-accent hover:border-border-strong hover:bg-surface-raised'
-            : 'border-border-default bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary'
+            ? 'border-accent/40 bg-surface text-accent hover:bg-accent/5'
+            : 'border-border text-text-secondary hover:border-accent/40 hover:text-text-primary'
       }`}
     >
       <GitBranch className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
       <span>Tangents</span>
       {tangents.length > 0 && (
-        <span className="rounded-full bg-accent-muted px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+        <span className="rounded-full bg-accent/15 px-1.5 py-0.2 text-[10px] font-semibold text-accent">
           {tangents.length}
         </span>
       )}

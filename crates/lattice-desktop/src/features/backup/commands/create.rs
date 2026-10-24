@@ -5,7 +5,87 @@ use lattice_core::shared::error::AppError;
 use lattice_core::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
-/// Creates a complete database snapshot, saving to `backup_path` or the default backup directory.
+/// Creates a database backup for disaster recovery
+///
+/// Creates a complete backup of the Lattice database (documents, chunks, embeddings,
+/// tags, conversations) and saves it to the specified path or a default location.
+/// Backups are saved with a `.lattice-backup` extension in version 1.0 format. Useful
+/// for disaster recovery, pre-upgrade snapshots, or data migration.
+///
+/// # Arguments
+///
+/// * `backup_path` - Optional custom backup file path; uses default location if `None`
+/// * `container` - Service container with security context
+///
+/// # Returns
+///
+/// * `Ok(String)` - Path to the created backup file
+/// * `Err(AppError)` - If path validation fails or backup creation fails
+///
+/// # Errors
+///
+/// * `AppError::InvalidInput` - Invalid backup path (directory traversal detected)
+/// * `AppError::Other` - Failed to create backup file or database access error
+///
+/// # Backup Format
+///
+/// **File Extension**: `.lattice-backup`
+/// **Format Version**: 1.0
+/// **Content**: SQLite database snapshot with all indexed data
+///
+/// **Included Data**:
+/// - All indexed documents and metadata
+/// - Text chunks with positions
+/// - Vector embeddings
+/// - Tags and tag assignments
+/// - Conversation history
+/// - User settings and preferences
+///
+/// **Excluded Data**:
+/// - Original source files (only indexed metadata)
+/// - Temporary caches
+/// - Session state
+///
+/// # Security
+///
+/// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
+///
+/// # Use Cases
+///
+/// - **Disaster Recovery**: Protect against data loss or corruption
+/// - **Pre-Upgrade Snapshots**: Create backup before major upgrades
+/// - **Data Migration**: Export data for transfer to new device
+/// - **Testing**: Create test data snapshots for development
+/// - **Scheduled Backups**: Automate regular backup creation
+///
+/// # Default Location
+///
+/// If `backup_path` is `None`, backup is saved to:
+/// ```text
+/// {app_data_dir}/backups/lattice-{timestamp}.lattice-backup
+/// ```
+///
+/// # Performance
+///
+/// - Backup time scales with database size
+/// - Typical speed: ~100-500 MB/second
+/// - Does not block indexing or search operations
+/// - Uses async I/O to prevent UI freezing
+///
+/// # Architecture
+///
+/// Command flow:
+/// 1. Path validation via ValidatedFilePath (CWE-22)
+/// 2. Backup creation (database snapshot)
+///
+/// # Command Flow
+///
+/// 1. Path validation if custom path provided
+/// 2. Generate default path if needed
+/// 3. Create database backup file
+/// 4. Return backup file path
+///
+/// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn create_backup_impl(
     backup_path: Option<String>,
     container: &Container,

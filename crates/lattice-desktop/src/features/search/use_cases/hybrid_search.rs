@@ -19,6 +19,37 @@
 //! A caller searching several rewrites of one question collects each query's
 //! `QueryBranches` and fuses them all in one [`HybridSearchUseCase::fuse`],
 //! the same fusion a single query gets.
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use lattice_core::application::contracts::search::{
+//!     RerankOptions, SearchModeDto, SearchRequestDto,
+//! };
+//! use lattice::features::search::use_cases::HybridSearchUseCase;
+//!
+//! # async fn example(use_case: HybridSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
+//! let request = SearchRequestDto {
+//!     query: "neural network optimization".to_string(),
+//!     limit: Some(RerankOptions::candidate_pool(10)),
+//!     threshold: None,
+//!     mode: SearchModeDto::Hybrid {
+//!         vector_weight: 0.7,
+//!         bm25_weight: 0.3,
+//!     },
+//! };
+//!
+//! let fused = use_case.execute(request).await?;
+//! let options = RerankOptions {
+//!     query: "neural network optimization".to_string(),
+//!     max_candidates: 48,
+//!     query_max_chars: 6000,
+//! };
+//! let mut reranked = use_case.rerank(fused, &options).await.response;
+//! reranked.results.truncate(10);
+//! # Ok(())
+//! # }
+//! ```
 
 mod rerank;
 #[cfg(test)]
@@ -31,13 +62,13 @@ use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::mapper::SearchMapper;
 use lattice_core::application::contracts::search::{
     BranchKind, QueryBranches, RankedBranch, ReciprocalRankFusion, SearchModeDto, SearchRequestDto,
-    SearchResponseDto, SearchResultDto, SearchResultRecord, Spread, WeightedRanking,
+    SearchResponseDto, SearchResultDto, SearchResultRecord, WeightedRanking,
 };
 use lattice_core::application::ports::{
     ChunkRepositoryPort, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::text::safe_truncate;
+use lattice_core::shared::text::{identity_form, safe_truncate};
 use tracing::{debug, info, warn};
 
 /// Candidates each branch is asked for, per fused result wanted. Fusion can
@@ -48,11 +79,6 @@ const BRANCH_DEPTH: usize = 3;
 /// fusion orders by rank and never thresholds, so the floor only keeps out
 /// neighbours too remote to deserve a rank.
 const HYBRID_VECTOR_FLOOR: f32 = 0.15;
-
-/// Passages one document may place in a fused list before every other
-/// document has had its turn. The overflow follows, in fused order, so a long
-/// document's run of near-identical chunks cannot fill the list alone.
-const PER_DOCUMENT_CAP: usize = 4;
 
 /// Hybrid search use case: the one library search orchestrator.
 ///
@@ -74,6 +100,12 @@ pub struct HybridSearchUseCase {
 
 impl HybridSearchUseCase {
     /// Create a new hybrid search use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `embedding_service` - Service for generating text embeddings
+    /// * `vector_search` - Service for vector similarity search
+    /// * `text_search` - Service for BM25 keyword search
     pub fn new(
         embedding_service: Arc<dyn EmbeddingPort>,
         vector_search: Arc<dyn VectorSearchPort>,
@@ -278,7 +310,7 @@ impl HybridSearchUseCase {
                         "Document search failed in both vector and keyword retrieval".into(),
                     ));
                 }
-                let results = self.fuse(query.branches, limit, Spread::AcrossDocuments);
+                let results = self.fuse(query.branches, limit);
                 debug!(
                     fused_count = results.len(),
                     preview = summarize(&results, 8),
@@ -354,16 +386,15 @@ impl HybridSearchUseCase {
     ///
     /// Weighted reciprocal rank decides the order; branch scores are on
     /// incomparable scales and are never mixed. The first list to return a
-    /// passage supplies it, with the fused score. Spread across documents,
-    /// no document places more than `PER_DOCUMENT_CAP` passages ahead of the
-    /// documents behind it. Each result reports its best rank, and the score
-    /// at that rank, in the vector and BM25 lists it appeared in.
-    pub fn fuse(
-        &self,
-        branches: Vec<RankedBranch>,
-        limit: usize,
-        spread: Spread,
-    ) -> Vec<SearchResultDto> {
+    /// passage supplies it, with the fused score. A passage whose text is the
+    /// same text as one already placed ([`identity_form`]: the same file
+    /// indexed twice, a template block repeated on chunk boundaries) is
+    /// dropped, so the better-ranked copy is the one cited; a passage that
+    /// differs by a single character is kept, since which of two near
+    /// copies answers is the query's question, not fusion's. Each result
+    /// reports its best rank, and the score at that rank, in the vector and
+    /// BM25 lists it appeared in.
+    pub fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
         let mut payloads: HashMap<String, SearchResultDto> = HashMap::new();
         let mut signals: HashMap<String, BranchSignals> = HashMap::new();
         let mut rankings = Vec::with_capacity(branches.len());
@@ -385,30 +416,28 @@ impl HybridSearchUseCase {
             rankings.push(WeightedRanking::new(branch.weight, ids));
         }
 
-        let mut per_document: HashMap<String, usize> = HashMap::new();
-        let mut selected = Vec::new();
-        let mut deferred = Vec::new();
+        let mut placed_texts = HashSet::new();
+        let mut fused = Vec::new();
         for entry in ReciprocalRankFusion::new(self.rrf_k).fuse_ranked(rankings) {
+            if fused.len() >= limit {
+                break;
+            }
             let Some(mut result) = payloads.remove(&entry.id) else {
                 continue;
             };
+            // A dense hit from an index without a chunk store arrives with
+            // no text; an empty text identifies nothing.
+            let text = identity_form(&result.content);
+            if !text.is_empty() && !placed_texts.insert(text) {
+                continue;
+            }
             result.score = entry.score;
             if let Some(signal) = signals.get(&entry.id) {
                 signal.apply(&mut result);
             }
-            let placed = per_document
-                .entry(result.document_id.clone().unwrap_or_default())
-                .or_default();
-            if spread == Spread::ByRelevance || *placed < PER_DOCUMENT_CAP {
-                *placed += 1;
-                selected.push(result);
-            } else {
-                deferred.push(result);
-            }
+            fused.push(result);
         }
-        selected.extend(deferred);
-        selected.truncate(limit);
-        selected
+        fused
     }
 }
 

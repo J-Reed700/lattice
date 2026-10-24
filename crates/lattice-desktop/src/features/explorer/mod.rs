@@ -1,4 +1,22 @@
-//! Explorer folder viewer and bounded workspace tools.
+//! # Explorer feature
+//!
+//! A folder from disk beside a chat. The viewer lists and opens files
+//! through the plugin, and an Explorer conversation's model gets read-only
+//! tools confined to the same folder. The folder is read live; the index in
+//! `index` only adds search by meaning on top, kept outside the folder.
+//!
+//! ## Public surface
+//!
+//! - `dto` — wire types shared with the frontend
+//! - `scope::Scope` — the folder boundary every path is resolved through
+//! - `fs` — listing, reading, search and find, bounded and `.gitignore`-aware
+//! - `tools` — the model's `list_directory` / `read_file` / `search_files` /
+//!   `find_files`
+//! - `prompt` — the folder block an Explorer turn's prompt carries
+//! - `repository` — `conversations.explorer_root` and `explorer_folders`
+//! - `folders` — the folders list: rows, threads and each folder's index
+//! - `index` — the open folder's semantic index and `search_folder`
+//! - `plugin::init()` — the `explorer` Tauri plugin
 
 pub mod dto;
 pub mod folders;

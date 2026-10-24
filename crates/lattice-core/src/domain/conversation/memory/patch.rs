@@ -6,7 +6,9 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 
+// ---------------------------------------------------------------------------
 // Model proposals (§6.1) — untrusted input
+// ---------------------------------------------------------------------------
 
 /// A patch as returned by the extractor. Every field here is untrusted.
 ///
@@ -72,7 +74,9 @@ pub struct ProposedTransition {
     pub evidence: Vec<ProposedEvidence>,
 }
 
+// ---------------------------------------------------------------------------
 // Validation outcome
+// ---------------------------------------------------------------------------
 
 /// Why a patch was rejected. Codes are stable and contain no transcript text,
 /// so they can be logged and persisted in `last_error_code`.

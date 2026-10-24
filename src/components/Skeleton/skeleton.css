@@ -1,3 +1,11 @@
+/**
+ * Skeleton Component Animations
+ *
+ * Purpose: GPU-accelerated shimmer animation for skeleton loaders
+ * Performance: 60fps, will-change for optimization, prefers-reduced-motion support
+ */
+
+/* Shimmer keyframe animation */
 @keyframes shimmer {
   0% {
     background-position: -1000px 0;
@@ -7,6 +15,7 @@
   }
 }
 
+/* Skeleton base class with shimmer effect */
 .skeleton {
   background: linear-gradient(
     90deg,
@@ -20,6 +29,7 @@
   will-change: background-position;
 }
 
+/* Reduced motion support - disable shimmer animation */
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
@@ -27,10 +37,12 @@
   }
 }
 
+/* Tailwind animation utility (add to tailwind.config if not present) */
 .animate-shimmer {
   animation: shimmer 2s infinite linear;
 }
 
+/* Pulse animation as fallback/alternative */
 @keyframes skeleton-pulse {
   0%,
   100% {
@@ -45,6 +57,7 @@
   animation: skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Subtle fade-in for skeleton appearance */
 @keyframes skeleton-fade-in {
   from {
     opacity: 0;
@@ -58,6 +71,7 @@
   animation: skeleton-fade-in 0.3s ease-in;
 }
 
+/* Wave animation for staggered loading effect */
 @keyframes skeleton-wave {
   0% {
     transform: translateX(-100%);

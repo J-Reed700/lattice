@@ -17,7 +17,7 @@ function day(seconds: number | null) {
 /**
  * Why a source has its level: the rules that fired, verbatim and in order,
  * then what capture recorded, its relations, the user's verdicts on its
- * origin and the overrides that touch it .
+ * origin and the overrides that touch it (§19).
  */
 export function TrustReasons({
   trust,

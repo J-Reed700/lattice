@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ActiveRecallBrainDump } from '@/features/learning/recall/ActiveRecallBrainDump';
 import { InterleavedStudyPanel } from '@/features/learning/recall/flashcards/InterleavedStudyPanel';
@@ -51,7 +51,6 @@ const mockProgram: LearningProgramDto = {
     },
   ],
   sources: [],
-  attempts: [],
 };
 
 const mockLesson: LearningLessonDto = {
@@ -73,13 +72,10 @@ const mockLesson: LearningLessonDto = {
       body: 'Randomized election timeouts minimize the probability of split votes between candidates.',
       sourceIds: [],
     },
-  ],
-  questions: [
     {
-      id: 'q1',
-      kind: 'quiz',
-      prompt: 'What resets follower election timers?',
-      options: ['Leader heartbeats', 'Client queries'],
+      kind: 'reflection',
+      title: 'What resets follower election timers?',
+      body: 'Leader heartbeats',
       sourceIds: [],
     },
   ],
@@ -102,6 +98,10 @@ describe('ActiveRecallBrainDump', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('renders evidence explanation and notes-closed lock initially', () => {
@@ -136,8 +136,8 @@ describe('ActiveRecallBrainDump', () => {
     ).toBe('Raft leader sends randomized heartbeats to followers.');
   });
 
-  it('toggles self-test timer', async () => {
-    const user = userEvent.setup();
+  it('toggles self-test timer and ticks forward', () => {
+    vi.useFakeTimers();
     renderWithClient(
       <ActiveRecallBrainDump program={mockProgram} lesson={mockLesson} />,
     );
@@ -145,8 +145,91 @@ describe('ActiveRecallBrainDump', () => {
     const timerButton = screen.getByRole('button', { name: /Start timer/i });
     expect(screen.getByText('00:00')).toBeInTheDocument();
 
-    await user.click(timerButton);
+    fireEvent.click(timerButton);
     expect(screen.getByRole('button', { name: /Pause timer/i })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText('00:05')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Pause timer/i }));
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.getByText('00:05')).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('falls back gracefully to program-level checkpoints when lesson is omitted', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<ActiveRecallBrainDump program={mockProgram} />);
+
+    expect(screen.getByText(/Persisted locally for this program/i)).toBeInTheDocument();
+
+    const textarea = screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    });
+    await user.type(textarea, 'Distributed consensus algorithms ensure leader election and replication.');
+
+    const compareButton = screen.getByRole('button', {
+      name: /Compare with Lesson & Check Recall/i,
+    });
+    await user.click(compareButton);
+
+    expect(screen.getAllByText('Program Goal').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Recall Coverage/i)).toBeInTheDocument();
+  });
+
+  it('allows toggling between revealed comparison and continuing writing dump', async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <ActiveRecallBrainDump program={mockProgram} lesson={mockLesson} />,
+    );
+
+    const textarea = screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    });
+    await user.type(textarea, 'Heartbeat timers reset follower timeouts.');
+
+    const compareButton = screen.getByRole('button', {
+      name: /Compare with Lesson & Check Recall/i,
+    });
+    await user.click(compareButton);
+    expect(screen.getByText(/Recall Coverage/i)).toBeInTheDocument();
+
+    const continueBtn = screen.getByRole('button', { name: /Continue writing dump/i });
+    await user.click(continueBtn);
+
+    expect(screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    })).toBeInTheDocument();
+  });
+
+  it('prompts confirmation on clear and resets dump only when confirmed', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    renderWithClient(
+      <ActiveRecallBrainDump program={mockProgram} lesson={mockLesson} />,
+    );
+
+    const textarea = screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    });
+    await user.type(textarea, 'Some text to be cleared.');
+
+    const clearButton = screen.getByRole('button', { name: 'Clear' });
+
+    // Cancelled confirmation
+    confirmSpy.mockReturnValueOnce(false);
+    await user.click(clearButton);
+    expect(screen.getByDisplayValue('Some text to be cleared.')).toBeInTheDocument();
+
+    // Accepted confirmation
+    confirmSpy.mockReturnValueOnce(true);
+    await user.click(clearButton);
+    expect(screen.queryByDisplayValue('Some text to be cleared.')).not.toBeInTheDocument();
   });
 
   it('compares free recall against lesson checkpoints and highlights covered vs gaps', async () => {
@@ -186,8 +269,60 @@ describe('ActiveRecallBrainDump', () => {
     });
     expect(draftButtons.length).toBeGreaterThan(0);
 
-    await user.click(draftButtons[0]);
+    vi.useFakeTimers();
+    fireEvent.click(draftButtons[0]);
     expect(onDraftMissedConcept).toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+    vi.useRealTimers();
+  });
+
+  it('achieves 100% recall coverage when all concepts are remembered', async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <ActiveRecallBrainDump program={mockProgram} lesson={mockLesson} />
+    );
+
+    const textarea = screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    });
+    await user.type(
+      textarea,
+      'Understand heartbeat timeouts, election terms, and split-vote resolution. Heartbeat timers reset follower timeouts upon leader heartbeats. Split vote handling minimizes split votes. What resets follower election timers?',
+    );
+
+    const compareButton = screen.getByRole('button', {
+      name: /Compare with Lesson & Check Recall/i,
+    });
+    await user.click(compareButton);
+
+    expect(screen.getByText(/4 of 4 key concepts recalled \(100%\)/i)).toBeInTheDocument();
+  });
+
+  it('handles lesson with empty title, objective, and block title', async () => {
+    const user = userEvent.setup();
+    const minimalLesson: LearningLessonDto = {
+      id: 'min-lesson',
+      title: '',
+      objective: '',
+      estimatedMinutes: 5,
+      preparation: 'ready',
+      blocks: [{ kind: 'explanation', title: '', body: 'Basic concept block', sourceIds: [] }],
+      completed: false,
+    };
+
+    renderWithClient(
+      <ActiveRecallBrainDump program={mockProgram} lesson={minimalLesson} />
+    );
+
+    const textarea = screen.getByRole('textbox', {
+      name: /Your free-recall memory dump/i,
+    });
+    await user.type(textarea, 'Basic concept block and short question answer.');
+    await user.click(screen.getByRole('button', { name: /Compare with Lesson & Check Recall/i }));
+
+    expect(screen.getByText('Block 1')).toBeInTheDocument();
   });
 });
 
@@ -225,6 +360,16 @@ describe('SpacedRepetitionCurve', () => {
     expect(screen.getByText('Day 14 (2 wks)')).toBeInTheDocument();
     expect(screen.getByText('Day 30 (1 mo)')).toBeInTheDocument();
     expect(screen.getByText(/48h drop/i)).toBeInTheDocument();
+  });
+
+  it('renders correctly when cards array is empty or contains a single card', () => {
+    const { rerender } = render(<SpacedRepetitionCurve cards={[]} />);
+
+    expect(screen.getByText('0 total cards')).toBeInTheDocument();
+    expect(screen.getByText(/No recall cards currently scheduled/i)).toBeInTheDocument();
+
+    rerender(<SpacedRepetitionCurve cards={[sampleCards[0]]} />);
+    expect(screen.getByText('1 total card')).toBeInTheDocument();
   });
 });
 
@@ -275,6 +420,22 @@ describe('InterleavedStudyPanel', () => {
         reviewCount: 1,
         lapses: 0,
       },
+      {
+        id: 'card-1-essay',
+        format: 'question_answer',
+        deckId: 'deck-1',
+        topic: 'OS Concepts',
+        question: 'Explain thrashing.',
+        answer: 'Thrashing occurs when memory pages constantly fault.',
+        options: [],
+        correctIndex: 0,
+        explanation: 'Virtual memory overcommit causes thrashing.',
+        source: { chunkId: '1b', documentId: '1', fileName: 'os.md', filePath: '/os.md', excerpt: 'Thrashing' },
+        dueAt: 0,
+        intervalDays: 1,
+        reviewCount: 1,
+        lapses: 0,
+      },
     ],
   };
 
@@ -289,7 +450,7 @@ describe('InterleavedStudyPanel', () => {
         id: 'card-2',
         format: 'multiple_choice',
         deckId: 'deck-2',
-        topic: 'LSM Trees',
+        topic: '',
         question: 'What is a memtable?',
         answer: 'An in-memory write buffer.',
         options: ['An in-memory write buffer', 'On-disk SSTable', 'Commit log'],
@@ -299,6 +460,22 @@ describe('InterleavedStudyPanel', () => {
         dueAt: 0,
         intervalDays: 1,
         reviewCount: 1,
+        lapses: 1,
+      },
+      {
+        id: 'card-2-future',
+        format: 'multiple_choice',
+        deckId: 'deck-2',
+        topic: 'LSM Trees',
+        question: 'What is write amplification?',
+        answer: 'Ratio of bytes written to storage vs application writes.',
+        options: ['Ratio of writes', 'Network traffic', 'Memory ratio'],
+        correctIndex: 0,
+        explanation: 'Compaction causes write amplification.',
+        source: { chunkId: '2b', documentId: '2', fileName: 'db.md', filePath: '/db.md', excerpt: 'Write amp' },
+        dueAt: Date.now() + 10_000_000,
+        intervalDays: 10,
+        reviewCount: 3,
         lapses: 0,
       },
     ],
@@ -334,7 +511,7 @@ describe('InterleavedStudyPanel', () => {
     });
   });
 
-  it('starts interleaved session and displays Interleaved Topic Mix badge', async () => {
+  it('starts interleaved session and displays Interleaved Topic Mix badge and exits session', async () => {
     const user = userEvent.setup();
     renderWithClient(<InterleavedStudyPanel decks={sampleDecks} />);
 
@@ -348,5 +525,83 @@ describe('InterleavedStudyPanel', () => {
 
     expect(screen.getByText(/Interleaved Topic Mix/i)).toBeInTheDocument();
     expect(screen.getByText('What is a page fault?')).toBeInTheDocument();
+
+    // Exit session
+    const exitBtn = screen.getByRole('button', { name: 'Exit session' });
+    await user.click(exitBtn);
+
+    expect(screen.getByText(/Interleaved Multi-Deck Study Session/i)).toBeInTheDocument();
+  });
+
+  it('supports selecting and deselecting decks, mix all, and clear selection', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<InterleavedStudyPanel decks={sampleDecks} />);
+
+    await user.click(screen.getByRole('button', { name: /Open interleaved mixer/i }));
+
+    // Clear selection
+    const clearBtn = screen.getByRole('button', { name: 'Clear' });
+    await user.click(clearBtn);
+
+    expect(screen.getByText(/Select 2 or more decks to enable interleaved practice/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Start Interleaved Session/i })).toBeDisabled();
+
+    // Mix all decks
+    const mixAllBtn = screen.getByRole('button', { name: 'Mix all decks' });
+    await user.click(mixAllBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Start Interleaved Session/i })).toBeEnabled();
+    });
+
+    // Toggle individual deck checkbox
+    const deckCheckboxes = screen.getAllByRole('checkbox');
+    // First checkbox in options is "Due & weak cards only", deck checkboxes follow
+    const osCheckbox = deckCheckboxes.find((cb) => cb.closest('label')?.textContent?.includes('Operating Systems'));
+    expect(osCheckbox).toBeDefined();
+    await user.click(osCheckbox!);
+
+    // Now only 1 deck is selected -> disabled
+    expect(screen.getByText(/Select 2 or more decks to enable interleaved practice/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Start Interleaved Session/i })).toBeDisabled();
+  });
+
+  it('switches between flashcard and practice quiz modes and toggles due filter', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<InterleavedStudyPanel decks={sampleDecks} />);
+
+    await user.click(screen.getByRole('button', { name: /Open interleaved mixer/i }));
+
+    const quizTab = screen.getByRole('button', { name: 'Practice Quiz' });
+    await user.click(quizTab);
+
+    const flashcardTab = screen.getByRole('button', { name: 'Flashcards' });
+    await user.click(flashcardTab);
+
+    const dueFilterCheckbox = screen.getByLabelText(/Due & weak cards only/i);
+    expect(dueFilterCheckbox).not.toBeChecked();
+    await user.click(dueFilterCheckbox);
+    expect(dueFilterCheckbox).toBeChecked();
+  });
+
+  it('filters candidate cards and launches practice quiz session', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<InterleavedStudyPanel decks={sampleDecks} />);
+
+    await user.click(screen.getByRole('button', { name: /Open interleaved mixer/i }));
+
+    // Switch to Practice Quiz mode
+    await user.click(screen.getByRole('button', { name: 'Practice Quiz' }));
+
+    // Enable due & weak cards only
+    await user.click(screen.getByLabelText(/Due & weak cards only/i));
+
+    const startButton = await screen.findByRole('button', {
+      name: /Start Interleaved Session/i,
+    });
+    expect(startButton).toBeEnabled();
+    await user.click(startButton);
+
+    expect(screen.getByText(/Interleaved Topic Mix/i)).toBeInTheDocument();
   });
 });

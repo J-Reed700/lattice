@@ -143,8 +143,30 @@ pub struct ModelMetadata {
 }
 
 impl ModelMetadata {
-    /// Parse model metadata from a GGUF filename.
-    /// Handles patterns like "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" -> "TinyLlama 1.1B Chat (Q4_K_M)".
+    /// Parse model metadata from a GGUF filename
+    ///
+    /// Handles various naming patterns:
+    /// - "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" -> "TinyLlama 1.1B Chat (Q4_K_M)"
+    /// - "llama-3.2-1b-instruct-q4_k_m.gguf" -> "Llama 3.2 1B Instruct (Q4_K_M)"
+    /// - "mistral-7b-instruct-v0.2.Q5_K_S.gguf" -> "Mistral 7B Instruct v0.2 (Q5_K_S)"
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - The model filename (e.g., "model.gguf")
+    ///
+    /// # Returns
+    ///
+    /// ModelMetadata with extracted model_id and human-readable model_name
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crate::domain::models::metadata::ModelMetadata;
+    ///
+    /// let metadata = ModelMetadata::from_filename("tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf");
+    /// assert_eq!(metadata.model_id, "tinyllama-1.1b-chat-v1.0");
+    /// assert_eq!(metadata.model_name, "TinyLlama 1.1B Chat v1.0 (Q4_K_M)");
+    /// ```
     pub fn from_filename(filename: &str) -> Self {
         let base_name = filename.strip_suffix(".gguf").unwrap_or(filename);
 

@@ -10,10 +10,13 @@
 //! - Metadata file: `metadata.json` (article metadata)
 //!
 //! Example directory structure:
-//! - `web-archives/example-article/`
-//!   - `article.md`: Main content (Markdown)
-//!   - `page.html`: HTML snapshot
-//!   - `metadata.json`: Title, URL, site_name
+//! ```text
+//! web-archives/
+//! └── example-article/
+//!     ├── article.md       # Main content (Markdown)
+//!     ├── page.html        # HTML snapshot
+//!     └── metadata.json    # Title, URL, site_name
+//! ```
 
 use lattice_core::shared::error::AppError;
 use serde::Deserialize;
@@ -55,6 +58,18 @@ impl WebArticleDetector {
     /// Returns `true` if:
     /// 1. Filename is exactly `article.md` or `weblink.md`
     /// 2. Sibling file `page.html` exists
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::path::Path;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
+    ///
+    /// let article_path = Path::new("web-archives/my-article/article.md");
+    /// if WebArticleDetector::is_web_article(article_path) {
+    ///     println!("This is a web article!");
+    /// }
+    /// ```
     pub fn is_web_article(path: &Path) -> bool {
         // Must be named "article.md" or "weblink.md"
         if !Self::is_supported_markdown_name(path) {
@@ -73,6 +88,18 @@ impl WebArticleDetector {
     ///
     /// Returns `Some(PathBuf)` if `page.html` exists in same directory,
     /// otherwise `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::path::Path;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
+    ///
+    /// let article_path = Path::new("web-archives/my-article/article.md");
+    /// if let Some(html_path) = WebArticleDetector::get_html_path(article_path) {
+    ///     println!("HTML snapshot: {}", html_path.display());
+    /// }
+    /// ```
     pub fn get_html_path(article_md_path: &Path) -> Option<PathBuf> {
         let dir = article_md_path.parent()?;
         let html_path = dir.join("page.html");
@@ -94,6 +121,20 @@ impl WebArticleDetector {
     /// - `AppError::NotFound` - `metadata.json` not found
     /// - `AppError::Io` - Failed to read file
     /// - `AppError::Serialization` - Failed to parse JSON
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::path::Path;
+    /// use lattice::infrastructure::adapters::fs::web_article::WebArticleDetector;
+    ///
+    /// # async fn example() -> Result<(), lattice_core::shared::error::error::AppError> {
+    /// let article_path = Path::new("web-archives/my-article/article.md");
+    /// let title = WebArticleDetector::get_title(article_path).await?;
+    /// println!("Article title: {}", title);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_title(article_md_path: &Path) -> Result<String, AppError> {
         let dir = article_md_path
             .parent()

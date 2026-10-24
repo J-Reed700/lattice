@@ -88,7 +88,7 @@ export function useResumeLearningLessonReview(programId: string, lessonId: strin
 }
 
 /**
- * "Capture again" for a frozen copy that failed , named by the attach
+ * "Capture again" for a frozen copy that failed (§5.4), named by the attach
  * report's source and version.
  */
 export function useCaptureSourceSnapshot(programId: string) {

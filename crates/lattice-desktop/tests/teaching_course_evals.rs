@@ -293,20 +293,17 @@ async fn live_complete_python_course() -> Result<()> {
         .await?;
         model.save("course.json", &program);
     }
-    let assessment =
+    let outcomes =
         lattice::features::learning::assessment_repository::LearningAssessmentRepository::new(
             pool.clone(),
         )
-        .workspace(&program.summary.id)
+        .module_outcomes(&program.summary.id)
         .await?;
     let sources = lattice::features::learning::repository::LearningRepository::new(pool.clone())
         .verification_sources(&program.summary.id)
         .await?;
     let tasks = lattice::features::learning::diagnostic_generation::author(
-        &model,
-        &program,
-        &assessment.outcomes,
-        &sources,
+        &model, &program, &outcomes, &sources,
     )
     .await?;
     model.save("diagnostic-authoring-private.json", &tasks);
@@ -385,8 +382,7 @@ async fn live_feedback_and_hint_matrix() -> Result<()> {
 #[ignore = "Authors and persists a checkpoint against the previously completed synthetic course"]
 async fn live_saved_course_checkpoint() -> Result<()> {
     use lattice::features::learning::{
-        assessment_engine::LearningBlueprintRequirement, assessment_generation,
-        assessment_repository::LearningAssessmentRepository,
+        assessment_repository::LearningAssessmentRepository, quiz_bank_jobs,
     };
     let model = ConfiguredModel::open("checkpoint");
     let course_dir = model.directory.parent().unwrap().join("course");
@@ -404,7 +400,6 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         )
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repository = LearningAssessmentRepository::new(pool.clone());
     let program = LearningRepository::new(pool.clone())
         .get(&saved.summary.id)
         .await?;
@@ -413,52 +408,28 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         .iter()
         .flat_map(|m| &m.lessons)
         .all(|l| l.preparation == LearningPreparation::Ready));
-    let workspace = repository.workspace(&program.summary.id).await?;
-    let module = &program.modules[0];
-    let outcome = workspace
-        .outcomes
-        .iter()
-        .find(|o| o.module_id.as_deref() == Some(&module.id) && o.lesson_id.is_none())
-        .expect("Module outcome");
-    let request = CreateLearningAssessmentBlueprintRequestDto {
-        operation_id:uuid::Uuid::new_v4().to_string(), program_id:program.summary.id.clone(), blueprint_id:uuid::Uuid::new_v4().to_string(), revision:1, predecessor_revision:None,
-        purpose:LearningAssessmentPurpose::ModuleTest,title:format!("{} checkpoint",module.title),instructions:"Explain your reasoning and produce a small artifact applying the learned skills to a new case. Include all input data in the questions.".into(),expected_minutes:25,allowed_aids:vec![],passing_score:0.7,feedback_timing:LearningFeedbackTiming::AfterSubmission,
-        rubric:vec![LearningRubricCriterion {id:uuid::Uuid::new_v4().to_string(),title:"Reasoning and application".into(),description:"Apply the learned skill, explain the choices, and check the result.".into(),max_points:4}],source_version_ids:vec![],
-        requirements:vec![LearningItemFormat::Explanation,LearningItemFormat::Artifact].into_iter().map(|format|LearningBlueprintRequirement {outcome_id:outcome.id.clone(),format,count:1,difficulty_min:2,difficulty_max:3}).collect(),change_reason:"Live synthetic checkpoint evaluation".into()
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Module,
+        id: Some(program.modules[0].id.clone()),
     };
-    let candidates = assessment_generation::generate(
-        &model,
-        &request,
-        &workspace.outcomes,
-        &[],
-        &module.lessons,
-    )
-    .await?;
-    model.save("checkpoint-candidates-private.json", &candidates);
-    assert!(candidates.iter().all(|c| c.rubric.len() >= 2));
-    repository
-        .create_blueprint(
-            &request,
-            &candidates,
-            model.model_name(),
-            &request.operation_id,
-        )
-        .await?;
-    let form = repository
-        .start_form(
-            &StartLearningAssessmentFormRequestDto {
+    let report =
+        quiz_bank_jobs::prepare_bank_now(&pool, &model, &program.summary.id, &scope, false).await?;
+    model.save("checkpoint-bank-report.json", &report.dropped);
+    let form = LearningAssessmentRepository::new(pool.clone())
+        .start_quiz(
+            &StartLearningQuizRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 form_id: uuid::Uuid::new_v4().to_string(),
                 program_id: program.summary.id.clone(),
-                blueprint_id: request.blueprint_id,
-                blueprint_revision: 1,
+                scope,
+                mode: LearningQuizMode::Graded,
                 retake_of_form_id: None,
             },
-            "live-checkpoint-form",
+            "live-module-test",
         )
         .await?;
     model.save("checkpoint-form-public.json", &form);
-    assert_eq!(form.items.len(), 2);
+    assert!(form.items.iter().all(|item| item.key_reveal.is_none()));
     pool.close().await;
     Ok(())
 }

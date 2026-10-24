@@ -8,7 +8,7 @@ const passage = {
   text: 'At one atmosphere, pure water boils at 99.97 °C.', startByte: 120, endByte: 184, retrievalKind: 'hybrid', trust: null,
 };
 
-/** The review screen's default claim : a field guide that states it, below the bar a measurement needs. */
+/** The review screen's default claim (UI design §5.4): a field guide that states it, below the bar a measurement needs. */
 const GUIDE_TEXT = 'Each autumn, monarch butterflies migrate up to 3,000 miles to wintering sites in central Mexico.';
 const GUIDE_QUOTE = 'monarch butterflies migrate up to 3,000 miles';
 const guideSource: SourceRefDto = {

@@ -1,4 +1,9 @@
-// Leaf file extracted from modelCatalog.ts to break the circular import with api/models.ts.
+/**
+ * Model Catalog Primitive Enums
+ *
+ * Leaf file with no internal imports — extracted from modelCatalog.ts
+ * to break the cycle between api/models.ts and modelCatalog.ts.
+ */
 
 export type ModelCategory = 'LLM' | 'Embedding' | 'OCR' | 'Transcription';
 

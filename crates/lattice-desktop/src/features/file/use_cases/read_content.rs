@@ -17,7 +17,19 @@ use std::sync::Arc;
 pub const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 
 /// Use case for reading file content as text.
-/// Reads file content as text with path validation and size bounds.
+///
+/// This use case:
+/// 1. Validates the file path (security: CWE-22)
+/// 2. Checks file existence
+/// 3. Validates file size (security: prevents DoS)
+/// 4. Reads file content as UTF-8 text
+/// 5. Returns content with metadata
+///
+/// # Security
+///
+/// - Path validation prevents directory traversal (CWE-22)
+/// - File size limit prevents resource exhaustion (CWE-770, CWE-400)
+/// - UTF-8 validation ensures safe text processing
 pub struct ReadFileContentUseCase {
     file_access_config: Arc<FileAccessConfig>,
     /// Reads text out of a document that is not plain UTF-8 (a PDF, an office
@@ -39,7 +51,22 @@ impl ReadFileContentUseCase {
         }
     }
 
-    /// Execute the use case to read file content.
+    /// Execute the use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Request containing the file path
+    ///
+    /// # Returns
+    ///
+    /// File content DTO with text content and metadata.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::NotFound` if file does not exist
+    /// - `AppError::InvalidInput` if path is invalid or is a directory
+    /// - `AppError::FileTooLarge` if file exceeds size limit
+    /// - `AppError::Io` if file cannot be read or is not valid UTF-8
     pub async fn execute(&self, request: ReadFileContentRequestDto) -> Result<FileContentDto> {
         // Validation and open happen as one operation. All metadata and bytes
         // below come from this same handle, so a path cannot be swapped to an

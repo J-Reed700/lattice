@@ -713,6 +713,7 @@ fn diagram_and_math_guidance_follow_every_system_prompt() {
     let default = normalize_prompt_settings(LLMPromptSettingsDto::default()).system_prompt;
     assert_eq!(default.matches("```mermaid").count(), 1);
     assert_eq!(default.matches(prompt_settings::MATH_GUIDANCE).count(), 1);
-    assert!(default.contains("closest directly applicable provision"));
+    assert!(default.contains("closest directly applicable statement in the sources"));
+    assert!(!default.contains("provision"));
     assert!(default.contains("cite every passage that supplies a link or fact in the chain"));
 }

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 vi.mock('@/features/learning/tangents/ProgramTangents', () => ({
@@ -27,7 +28,10 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review,
   getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
-  getLearningMemory: async () => ({ ok: true, data: { programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 } }),
+  getLearningMemory: async () => ({ ok: true, data: { dueCount: 0 } }),
+  getLearningQuizOverview: async () => ({ ok: true, data: quizOverview({ quizzesPassed: 1 }) }),
+  getLearningRecallWorkspace: async () => ({ ok: true, data: { programId: 'program-1', cards: [], duplicates: [], schedulerDisclosure: '' } }),
+  getLearningSourceWorkspace: async () => ({ ok: true, data: { programId: 'program-1', sources: [] } }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
   courseIndexOpen: async () => ({ ok: true, data: undefined }),
   courseIndexClose: async () => ({ ok: true, data: undefined }),
@@ -36,7 +40,7 @@ vi.mock('@/lib/api', () => ({ default: {
 // A course whose title is its whole goal, as an outline generated from a long goal can be.
 const GOAL = 'Understand how the circulatory system moves oxygen from the lungs to every cell, and why it fails in heart disease.';
 
-const held: LearningLessonDto = { id: 'lesson-1', title: 'The heart as a pump', objective: 'Explain the cardiac cycle.', estimatedMinutes: 20, preparation: 'outline', blocks: [], questions: [], completed: false };
+const held = { id: 'lesson-1', title: 'The heart as a pump', objective: 'Explain the cardiac cycle.', estimatedMinutes: 20, preparation: 'outline', blocks: [], completed: false } as unknown as LearningLessonDto;
 const next: LearningLessonDto = { ...held, id: 'lesson-2', title: 'Blood vessels' };
 
 function program(title: string, goal = GOAL): LearningProgramDto {
@@ -45,7 +49,7 @@ function program(title: string, goal = GOAL): LearningProgramDto {
     summary: { id: 'program-1', title, goal, status: 'active', revision: 9, currentLessonId: 'lesson-1' },
     priorKnowledge: '', minutesPerSession: 30, modelName: 'Test model',
     modules: [{ id: 'module-1', title: 'Circulation', summary: 'How blood moves.', outcomes: ['Describe the cardiac cycle'], lessons: [held, next] }],
-    sources: [], attempts: [],
+    sources: [],
   } as unknown as LearningProgramDto;
 }
 
@@ -61,7 +65,6 @@ function show(course: LearningProgramDto, onReview = vi.fn()) {
   render(<QueryClientProvider client={client}>
     <ProgramWorkspace program={course} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
       onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false}
-      formFor={() => ({ answers: {}, attemptId: null, fingerprint: null })} setAnswer={vi.fn()} onSubmitAttempt={vi.fn()} submitPending={false}
       onReview={onReview} />
   </QueryClientProvider>);
   return onReview;
@@ -93,6 +96,21 @@ describe('Course page', () => {
     expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
   });
 
+  it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Sources']);
+    tabs[1].click();
+    const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
+    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations']);
+    expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();
+  });
+
+  it('shows quizzes passed beside lessons complete in the course header', async () => {
+    show(program(GOAL));
+    expect(await screen.findByText('Quizzes passed')).toBeVisible();
+  });
+
   it('keeps a goal that differs from the title behind one Goal disclosure', async () => {
     show(program('Circulation'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
@@ -100,38 +118,45 @@ describe('Course page', () => {
     expect(screen.getAllByText(GOAL)).toHaveLength(1);
   });
 
-  it('renders StudyHabitsBar and switches workbench mode between grounded practice and Feynman technique', async () => {
+  it('renders StudyHabitsBar with retention frameworks and opens the frameworks modal', async () => {
     const user = userEvent.setup();
-    show(program('Circulation'));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
-
-    // Navigate to Practice tab
-    await user.click(screen.getByRole('tab', { name: 'Practice' }));
-
-    // Mode switcher buttons exist
-    const groundedBtn = screen.getByRole('button', { name: 'Grounded practice' });
-    const feynmanBtn = screen.getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
-    expect(groundedBtn).toHaveAttribute('aria-pressed', 'true');
-    expect(feynmanBtn).toHaveAttribute('aria-pressed', 'false');
-
-    // Switch to Feynman mode
-    await user.click(feynmanBtn);
-    expect(groundedBtn).toHaveAttribute('aria-pressed', 'false');
-    expect(feynmanBtn).toHaveAttribute('aria-pressed', 'true');
+    show(program(GOAL));
+    const frameworksButton = await screen.findByRole('button', { name: /Retention Frameworks/i });
+    expect(frameworksButton).toBeVisible();
+    await user.click(frameworksButton);
+    expect(await screen.findByRole('dialog')).toBeVisible();
+    expect(screen.getByText('Evidence-Based Learning & Retention Guide')).toBeVisible();
   });
 
-  it('allows selecting Free recall (Brain dump) in the Recall tab', async () => {
+  it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {
     const user = userEvent.setup();
-    show(program('Circulation'));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    await user.click(tabs[1]);
+    const practiceModes = await screen.findByRole('group', { name: 'Written practice mode' });
+    expect(practiceModes).toBeVisible();
+    const feynmanButton = within(practiceModes).getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
+    await user.click(feynmanButton);
+    expect(feynmanButton).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(/The Feynman Technique · Teach a Beginner/i)).toBeVisible();
+  });
 
-    // Navigate to Recall tab
-    await user.click(screen.getByRole('tab', { name: 'Recall' }));
+  it('allows switching recall to Free recall (Brain dump) and Versioned cards & schedules', async () => {
+    const user = userEvent.setup();
+    show(program(GOAL));
+    const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+    await user.click(tabs[3]);
+    const recallModes = await screen.findByRole('group', { name: 'Recall view' });
+    expect(recallModes).toBeVisible();
 
-    const brainDumpBtn = screen.getByRole('button', { name: 'Free recall (Brain dump)' });
-    expect(brainDumpBtn).toHaveAttribute('aria-pressed', 'false');
+    const brainDumpButton = within(recallModes).getByRole('button', { name: 'Free recall (Brain dump)' });
+    await user.click(brainDumpButton);
+    expect(brainDumpButton).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByText(/Close your books & write everything from memory/i)).toBeVisible();
 
-    await user.click(brainDumpBtn);
-    expect(brainDumpBtn).toHaveAttribute('aria-pressed', 'true');
+    const evolutionButton = within(recallModes).getByRole('button', { name: 'Versioned cards & schedules' });
+    await user.click(evolutionButton);
+    expect(evolutionButton).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByTestId('learning-recall-evolution')).toBeVisible();
   });
 });

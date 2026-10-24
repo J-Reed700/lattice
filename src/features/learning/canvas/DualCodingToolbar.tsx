@@ -69,8 +69,7 @@ export function DualCodingToolbar({
 
     const definition = DUAL_CODING_TEMPLATES.find((t) => t.id === templateId);
     setAppliedTemplate(definition?.label ?? 'Template');
-    const timer = setTimeout(() => setAppliedTemplate(null), 2500);
-    return () => clearTimeout(timer);
+    setTimeout(() => setAppliedTemplate(null), 2500);
   }, [lessonTitle, keyPoints, onApplyTemplate]);
 
   const handleCopyMermaid = useCallback(async () => {

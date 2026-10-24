@@ -1,8 +1,44 @@
+//! # Tag Entity
+//!
+//! Tag entity within the domain layer.
+//!
+//! This is a pure domain entity with NO infrastructure concerns:
+//! - No database IDs (handled by repositories)
+//! - Just the core business data and logic
+//! - Rich behavior for tag management
+
 use crate::shared::types::{TagId, TagName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Tag entity for categorizing and organizing documents.
+///
+/// Tags provide a flexible way to categorize documents with user-defined labels.
+///
+/// ## Pure Domain Model
+///
+/// This entity contains only business logic. Infrastructure concerns like
+/// database persistence and search indexes are handled by the infrastructure layer.
+///
+/// ## Invariants
+///
+/// - Tag name must be non-empty and <= 50 characters
+/// - Tag name is unique (enforced by repository)
+/// - Color must be valid hex format (#RRGGBB)
+/// - Created timestamp is immutable
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use lattice_core::domain::entities::tag::Tag;
+/// use lattice_core::shared::types::TagName;
+///
+/// let name = TagName::new("rust".to_string()).unwrap();
+/// let tag = Tag::new(name, "#ff5733".to_string());
+///
+/// assert_eq!(tag.name().as_str(), "rust");
+/// assert_eq!(tag.color(), "#ff5733");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {
@@ -14,6 +50,24 @@ pub struct Tag {
 }
 
 impl Tag {
+    /// Create new tag.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Validated tag name (non-empty, <= 50 characters)
+    /// * `color` - Hex color code (#RRGGBB format)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use lattice_core::domain::entities::tag::Tag;
+    /// use lattice_core::shared::types::TagName;
+    ///
+    /// let name = TagName::new("machine-learning".to_string()).unwrap();
+    /// let tag = Tag::new(name, "#6366f1".to_string());
+    /// assert!(!tag.id().as_str().is_empty());
+    /// assert_eq!(tag.color(), "#6366f1");
+    /// ```
     pub fn new(name: TagName, color: String) -> Self {
         let now = Utc::now();
         Self {

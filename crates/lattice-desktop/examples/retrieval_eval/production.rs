@@ -14,10 +14,12 @@
 //! 4. `HybridSearchUseCase` — the orchestrator chat, the tool executor and the search page run —
 //!    is composed the way `features::search::di::build` composes it, and searches each query
 //!    exactly as chat's first pass searches one planned query: the vector and BM25 branches,
-//!    weighted reciprocal-rank fusion (k = 10 by default) with chat's per-document cap. With a reranker, the fused pool is widened as chat
-//!    widens it and passed through the same cross-encoder stage chat calls, at chat's default
-//!    candidate cap and query budget.
-//! 5. Neighbouring-section evidence expansion mirrors `chat::retrieval::corpus_plan`.
+//!    weighted reciprocal-rank fusion (k = 10 by default), in fused order with exact repeats
+//!    dropped. With a reranker, the fused pool is widened as chat widens it and passed through the
+//!    same cross-encoder stage chat calls, at chat's default candidate cap and query budget.
+//! 5. Section-neighbour context mirrors `chat::retrieval::corpus_plan` and the prompt's evidence
+//!    budget: the hits keep their ranks, and each hit's unseen neighbours follow them, carried
+//!    only within the room the hits leave.
 //! 6. `chat::retrieval::assess_retrieval_sufficiency` judges the ranking, so a run row carries
 //!    the verdict the chat pipeline would have acted on.
 //!
@@ -28,10 +30,12 @@
 //! rerank query, document openings and section lookups, the corrective retry, and workspace
 //! scope. Two further deviations, both forced and both narrow:
 //!
-//! - `corpus_plan::expand_evidence` and `ConversationRepository::retrieval_neighbors` are
-//!   `pub(super)` / bound to the conversation repository, so `expand` below re-implements them:
-//!   8 anchors, same document and section, `chunk_index` within ±1, at most 3 rows per anchor,
-//!   stopping at the evidence limit. The SQL is copied from the repository.
+//! - `corpus_plan::append_context` and `ConversationRepository::retrieval_neighbors` are
+//!   `pub(super)` / bound to the conversation repository, and the prompt measures its evidence
+//!   budget in tokens, so `carry_context` below re-implements them over characters: the budget is
+//!   `top_k` passages of the store's mean length (the app's own derivation of the hit count,
+//!   inverted), the hits are charged first, and each hit's neighbours, in rank order, are
+//!   carried when they fit what is left. The neighbour SQL is copied from the repository.
 //! - Documents are synthesised from fixture rows rather than extracted from files, so there are
 //!   no page ranges and `page_number` is always NULL.
 
@@ -63,9 +67,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::Document;
-
-/// Anchors whose section neighbours are pulled in, matching `corpus_plan::expand_evidence`.
-const EVIDENCE_ANCHORS: usize = 8;
 
 /// The columns the search services actually read, plus the FTS5 tables, copied from
 /// `migrations/20260916000000_init_schema.sql` and `20261012090000_fts_header_column.sql`.
@@ -174,7 +175,7 @@ pub struct RankedChunk {
     pub document_id: String,
     pub chunk_index: usize,
     pub score: f32,
-    /// True when the chunk entered through section-neighbour expansion rather than ranking.
+    /// True when the chunk was carried as section-neighbour context rather than ranked.
     pub neighbor: bool,
 }
 
@@ -415,8 +416,8 @@ impl ProductionIndex {
     /// pipeline's own verdict on whether that ranking was good enough to answer from.
     ///
     /// The verdict is taken where the pipeline takes it: after the rerank stage, over the
-    /// whole pool, before the cut to `top_k` and before neighbour expansion, which appends
-    /// context rather than ranking evidence.
+    /// whole pool, before the cut to `top_k` and before section-neighbour context is carried,
+    /// which adds context rather than ranking evidence.
     pub async fn rank(&self, query_text: &str) -> Result<Ranking, Box<dyn std::error::Error>> {
         let mut response = self.search.execute(self.request(query_text)).await?;
         // Chat titles every passage with its document's file name before reranking.
@@ -529,67 +530,115 @@ impl ProductionIndex {
         branches
     }
 
-    /// Append neighbouring-section evidence, mirroring `corpus_plan::expand_evidence`.
-    pub async fn expand(
-        &self,
-        ranked: &mut Vec<RankedChunk>,
-        limit: usize,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let anchors: Vec<String> = ranked
-            .iter()
-            .take(EVIDENCE_ANCHORS)
-            .map(|chunk| chunk.chunk_id.clone())
-            .collect();
-        let mut seen: HashSet<String> = ranked.iter().map(|c| c.chunk_id.clone()).collect();
-        for anchor in anchors {
-            for neighbor in self.neighbors(&anchor).await? {
-                if ranked.len() >= limit {
-                    return Ok(());
-                }
-                if seen.insert(neighbor.chunk_id.clone()) {
-                    ranked.push(neighbor);
-                }
-            }
-        }
-        Ok(())
+    /// What one passage costs on average in this store, in characters, measured as
+    /// `retrieval_mean_chunk_chars` measures a library.
+    pub async fn mean_chunk_chars(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        mean_chunk_chars(&self.pool).await
     }
 
-    /// The query from `ConversationRepository::retrieval_neighbors`, without workspace scoping.
-    async fn neighbors(&self, chunk_id: &str) -> Result<Vec<RankedChunk>, sqlx::Error> {
-        let anchor: Option<(String, i64, Option<String>)> = sqlx::query_as(
-            "SELECT document_id, chunk_index, section FROM text_chunks WHERE id = ?",
-        )
-        .bind(chunk_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        // A chunk with no section has no defined neighbourhood; production returns nothing.
-        let Some((document_id, index, Some(section))) = anchor else {
-            return Ok(Vec::new());
-        };
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT c.id, c.chunk_index FROM text_chunks c \
-             WHERE c.document_id = ? AND c.section = ? AND c.chunk_index BETWEEN ? AND ? \
-             ORDER BY c.chunk_index LIMIT 3",
-        )
-        .bind(&document_id)
-        .bind(&section)
-        .bind(index.saturating_sub(1))
-        .bind(index + 1)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(chunk_id, chunk_index)| RankedChunk {
+    /// Carry section-neighbour context after the hits within `budget_chars`; returns how many
+    /// neighbours were carried. See [`carry_context`].
+    pub async fn carry_context(
+        &self,
+        ranked: &mut Vec<RankedChunk>,
+        budget_chars: usize,
+    ) -> Result<usize, sqlx::Error> {
+        carry_context(&self.pool, ranked, budget_chars).await
+    }
+}
+
+/// The mean characters of a stored passage, rounded up as the app rounds it. A store with no
+/// passages has no mean, and the budget built on it would be meaningless, so that is an error.
+async fn mean_chunk_chars(pool: &SqlitePool) -> Result<usize, Box<dyn std::error::Error>> {
+    let (chars, chunks): (Option<i64>, i64) =
+        sqlx::query_as("SELECT SUM(LENGTH(content)), COUNT(*) FROM text_chunks")
+            .fetch_one(pool)
+            .await?;
+    match chars {
+        Some(chars) if chunks > 0 && chars > 0 => {
+            Ok(usize::try_from((chars + chunks - 1) / chunks)?)
+        }
+        _ => Err("the fixture produced no passages to measure".into()),
+    }
+}
+
+/// Mirror `corpus_plan::append_context` and the prompt's `select`: the hits keep their ranks and
+/// are charged first; then, for each hit in rank order, each neighbour not already in the list
+/// is appended when its content fits the room the hits left, charging it as it goes, and skipped
+/// otherwise. Hits are never cut here, so the row's first `top_k` entries mean what they always
+/// meant. Returns the number of neighbours carried.
+async fn carry_context(
+    pool: &SqlitePool,
+    ranked: &mut Vec<RankedChunk>,
+    budget_chars: usize,
+) -> Result<usize, sqlx::Error> {
+    let ids = serde_json::to_string(&ranked.iter().map(|c| &c.chunk_id).collect::<Vec<_>>())
+        .map_err(|error| sqlx::Error::Encode(Box::new(error)))?;
+    let hit_chars: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM text_chunks \
+         WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(ids)
+    .fetch_one(pool)
+    .await?;
+    let mut room = budget_chars.saturating_sub(usize::try_from(hit_chars).unwrap_or(usize::MAX));
+    let anchors: Vec<String> = ranked.iter().map(|c| c.chunk_id.clone()).collect();
+    let mut carried = 0;
+    for anchor in anchors {
+        for (neighbor, chars) in neighbors(pool, &anchor).await? {
+            if chars <= room && ranked.iter().all(|c| c.chunk_id != neighbor.chunk_id) {
+                room -= chars;
+                ranked.push(neighbor);
+                carried += 1;
+            }
+        }
+    }
+    Ok(carried)
+}
+
+/// The query from `ConversationRepository::retrieval_neighbors`, without workspace scoping:
+/// same document, the anchor's section or a subsection of it, `chunk_index` within ±1. Each row
+/// comes with its content's length in characters.
+async fn neighbors(
+    pool: &SqlitePool,
+    chunk_id: &str,
+) -> Result<Vec<(RankedChunk, usize)>, sqlx::Error> {
+    let anchor: Option<(String, i64, Option<String>)> =
+        sqlx::query_as("SELECT document_id, chunk_index, section FROM text_chunks WHERE id = ?")
+            .bind(chunk_id)
+            .fetch_optional(pool)
+            .await?;
+    // A chunk with no section has no defined neighbourhood; production returns nothing.
+    let Some((document_id, index, Some(section))) = anchor else {
+        return Ok(Vec::new());
+    };
+    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT c.id, c.chunk_index, LENGTH(c.content) FROM text_chunks c \
+         WHERE c.document_id = ? AND (c.section = ? OR INSTR(c.section, ? || ' > ') = 1) \
+         AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3",
+    )
+    .bind(&document_id)
+    .bind(&section)
+    .bind(&section)
+    .bind(index.saturating_sub(1))
+    .bind(index + 1)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(chunk_id, chunk_index, chars)| {
+            let neighbor = RankedChunk {
                 chunk_id,
                 document_id: document_id.clone(),
                 chunk_index: chunk_index.max(0) as usize,
-                // Neighbours are appended evidence, not ranked hits; production gives them no
+                // Neighbours are carried context, not ranked hits; production gives them no
                 // fusion score either. Keeping them at zero stops them inflating `top_score`.
                 score: 0.0,
                 neighbor: true,
-            })
-            .collect())
-    }
+            };
+            (neighbor, chars.max(0) as usize)
+        })
+        .collect())
 }
 
 /// Chunk embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
@@ -703,6 +752,107 @@ mod tests {
             score,
             neighbor: false,
         }
+    }
+
+    /// A parish chronicle filed as `Crónica parroquial > 1911` (chunks 1–6), its harvest
+    /// subsection `… > 1911 > Cosecha` (7–8) and `… > 1912` (9). Bodies are cut to the given
+    /// lengths in characters; together they average 100.
+    async fn cronica() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory pool");
+        sqlx::raw_sql(SCHEMA).execute(&pool).await.expect("schema");
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, file_path, file_name, file_type, mime_type, size_bytes, created_at, updated_at) \
+             VALUES ('cronica','/eval/cronica.md','cronica.md','MD','text/markdown',900,'t','t')",
+        )
+        .execute(&pool)
+        .await
+        .expect("document row");
+        let year = "Crónica parroquial > 1911";
+        let chunks = [
+            (1, 25, year.to_owned()),
+            (2, 80, year.to_owned()),
+            (3, 40, year.to_owned()),
+            (4, 20, year.to_owned()),
+            (5, 70, year.to_owned()),
+            (6, 60, year.to_owned()),
+            (7, 200, format!("{year} > Cosecha")),
+            (8, 200, format!("{year} > Cosecha")),
+            (9, 205, "Crónica parroquial > 1912".to_owned()),
+        ];
+        for (index, chars, section) in chunks {
+            let body: String = "Se bendijo la campana nueva de la ermita. "
+                .chars()
+                .cycle()
+                .take(chars)
+                .collect();
+            sqlx::query(
+                "INSERT INTO text_chunks (id, document_id, content, chunk_index, section) \
+                 VALUES (?, 'cronica', ?, ?, ?)",
+            )
+            .bind(format!("cronica::{index}"))
+            .bind(body)
+            .bind(index)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .expect("chunk row");
+        }
+        pool
+    }
+
+    fn hits(indices: &[usize]) -> Vec<RankedChunk> {
+        indices.iter().map(|&i| chunk("cronica", i, 0.5)).collect()
+    }
+
+    fn passages(ranked: &[RankedChunk]) -> Vec<usize> {
+        ranked.iter().map(|c| c.chunk_index).collect()
+    }
+
+    #[tokio::test]
+    async fn carry_context_appends_within_the_room_the_hits_leave() {
+        let pool = cronica().await;
+        let top_k = 2;
+        let mean = mean_chunk_chars(&pool).await.expect("mean");
+        assert_eq!(mean, 100);
+        // Hits of 80 and 70 characters leave 50 of the 200: the anchors' neighbours, in
+        // order, are 1 (25), 3 (40), 4 (20) and 6 (60); the 40 and the 60 do not fit what is
+        // left when they are reached, and the walk goes on past them.
+        let mut ranked = hits(&[2, 5]);
+        let carried = carry_context(&pool, &mut ranked, top_k * mean)
+            .await
+            .expect("carry");
+        assert_eq!(carried, 2);
+        assert_eq!(passages(&ranked), [2, 5, 1, 4]);
+        assert!(ranked[2..].iter().all(|c| c.neighbor));
+
+        // Hits that overrun the budget leave no room, and are never cut for it.
+        let mut ranked = hits(&[2, 7]);
+        let carried = carry_context(&pool, &mut ranked, top_k * mean)
+            .await
+            .expect("carry");
+        assert_eq!((carried, passages(&ranked)), (0, vec![2, 7]));
+    }
+
+    #[tokio::test]
+    async fn the_mirror_reads_subsections_like_the_app() {
+        let pool = cronica().await;
+        // The year's last entry continues into its harvest subsection…
+        let mut ranked = hits(&[6]);
+        carry_context(&pool, &mut ranked, usize::MAX)
+            .await
+            .expect("carry");
+        assert_eq!(passages(&ranked), [6, 5, 7]);
+        // …but the subsection's last entry does not continue into the next year.
+        let mut ranked = hits(&[8]);
+        carry_context(&pool, &mut ranked, usize::MAX)
+            .await
+            .expect("carry");
+        assert_eq!(passages(&ranked), [8, 7]);
     }
 
     #[test]

@@ -1,11 +1,23 @@
+/**
+ * Shared vocabulary for the catalog: how a model is described in one line,
+ * and what counts as an active filter. Kept in one place so the filter row,
+ * the result rows, and the empty state all agree.
+ */
+
+
 import type { SystemCapabilities } from '@/types/api/models';
 import type { ModelCategory, ModelMetadata, SearchFilters } from '@/types/modelCatalog';
 
 import { modelQuantization } from './quantization';
 
+/**
+ * The "Reset filters" affordance. A text button with no padding so it sits
+ * flush with the controls it follows and with the text it sits beside.
+ */
 export const CATALOG_TEXT_BUTTON_CLASS =
   'inline-flex h-8 shrink-0 items-center text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary';
 
+/** "LLM" is the backend's word. The user's word is "Chat". */
 export const CATEGORY_LABELS: Record<ModelCategory, string> = {
   LLM: 'Chat',
   Embedding: 'Embedding',
@@ -23,6 +35,7 @@ export function hasActiveFilters(filters: SearchFilters): boolean {
   );
 }
 
+/** Everything cleared except the search text, which the search field owns. */
 export function clearedFilters(filters: SearchFilters): SearchFilters {
   return {
     category: null,
@@ -46,6 +59,11 @@ export function formatCompact(value: number | null | undefined): string | null {
   );
 }
 
+/**
+ * The one muted line under a model's name: size, downloads, category, and
+ * whatever else this particular model actually has. Absent fields are absent
+ * rather than rendered as "Unknown".
+ */
 export function modelMetaLine(
   metadata: ModelMetadata,
   popularityDownloads: number | null | undefined,
@@ -74,7 +92,7 @@ export function modelMetaLine(
   return parts.join(' · ');
 }
 
-/** The reason an embedding model can't be loaded, or null if compatible. */
+/** The reason an embedding model can't be loaded here, or null if it can. */
 export function embeddingBlockReason(metadata: ModelMetadata): string | null {
   if (metadata.category !== 'Embedding') return null;
   const compatibility = metadata.embedding_compatibility;
@@ -88,7 +106,9 @@ export type ModelFitVerdict = 'fits' | 'tight' | 'too-large';
 
 export interface ModelFit {
   verdict: ModelFitVerdict;
+  /** One line for the tooltip: "Needs 8 GB · 22 GB usable". */
   reason: string;
+  /** Memory the model may actually use, in GB. Exposed for tests and the detail panel. */
   usableMemoryGb: number;
 }
 
@@ -98,16 +118,29 @@ export const FIT_LABEL: Record<ModelFitVerdict, string> = {
   'too-large': 'Too large',
 };
 
+/**
+ * "8", "13.5", "22.4" — at most one decimal, and never a trailing ".0".
+ * A model that needs 8 GB should not read "Needs 8.0 GB".
+ */
 function formatGb(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(1);
 }
 
 /**
- * Computes model compatibility verdict based on system RAM/VRAM and available disk.
- * - Apple Silicon unified memory: budgets 70% of total RAM.
- * - Discrete GPU with positive VRAM: budgets VRAM pool.
- * - Fallback: budgets 70% of total RAM.
+ * One word about whether a model will run on this machine.
+ *
+ * Usable memory:
+ *  - Apple Silicon is unified memory — the GPU allocates out of system RAM, so
+ *    there is no second pool. `vram_gb` is `null` on that platform today; we
+ *    ignore it even if a future probe reports one, and budget 70% of total RAM,
+ *    leaving the OS and the rest of the app the other 30%.
+ *  - A discrete GPU with acceleration and a known positive VRAM figure: the
+ *    VRAM, because that is the pool the model is loaded into.
+ *  - Everything else (no acceleration, unknown VRAM): 70% of total RAM.
+ *
+ * Returns null — no word at all — when the machine or the model's requirement
+ * is unknown. A guess dressed as a verdict is worse than silence.
  */
 export function computeModelFit(
   model: Pick<ModelMetadata, 'minimum_ram_gb' | 'size_gb'>,
@@ -129,7 +162,8 @@ export function computeModelFit(
         ? vram
         : 0.7 * totalRam;
 
-  // Disk gate: skip check if disk probe is unavailable.
+  // Disk gate. A failed disk probe (0 or non-finite) skips the gate rather than
+  // condemning every model on the machine.
   const freeDisk = capabilities.available_disk_gb;
   const sizeGb = model.size_gb;
   if (

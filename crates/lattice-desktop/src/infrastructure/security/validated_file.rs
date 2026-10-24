@@ -124,6 +124,9 @@ pub struct ScopeEnforcer {
 impl ScopeEnforcer {
     /// Create a new scope enforcer with allowed root directories
     ///
+    /// # Arguments
+    /// * `allowed_roots` - List of directory paths that are allowed access
+    ///
     /// # Errors
     /// Returns error if:
     /// - `allowed_roots` is empty
@@ -143,6 +146,12 @@ impl ScopeEnforcer {
     }
 
     /// Check if path is within allowed scope and return canonical path
+    ///
+    /// # Arguments
+    /// * `path` - The path to check
+    ///
+    /// # Returns
+    /// Canonical (absolute, symlink-resolved) path if within scope
     ///
     /// # Errors
     /// Returns error if:
@@ -177,6 +186,17 @@ impl ScopeEnforcer {
 /// 2. File is opened atomically with validation (no TOCTOU race)
 /// 3. Path is within allowed directory scope
 /// 4. Post-open verification confirms path didn't change
+///
+/// # Example
+/// ```no_run
+/// use std::path::PathBuf;
+/// use validated_file::ValidatedFile;
+///
+/// let allowed = vec![PathBuf::from("/home/user/lattice")];
+/// let file = ValidatedFile::open("/home/user/lattice/doc.txt", &allowed)?;
+/// let content = file.read_to_string()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct ValidatedFile {
     handle: File,
@@ -190,8 +210,15 @@ impl ValidatedFile {
     /// This is the ONLY safe way to open files with security validation.
     /// The validation and file opening are atomic - no race window.
     ///
-    /// Validates path syntax, enforces directory scope, opens atomically,
-    /// and verifies path post-open.
+    /// # Security Properties
+    /// 1. Validates path syntax (no null bytes, traversal, ADS, UNC)
+    /// 2. Enforces directory scope (path must be in allowed_roots)
+    /// 3. Opens file atomically after validation
+    /// 4. Verifies path after opening (defense in depth)
+    ///
+    /// # Arguments
+    /// * `path` - Path to file to open
+    /// * `allowed_roots` - List of allowed root directories
     ///
     /// # Errors
     /// Returns error if:
@@ -199,6 +226,19 @@ impl ValidatedFile {
     /// - Path is outside allowed scope
     /// - File cannot be opened
     /// - Post-open verification fails
+    ///
+    /// # Example
+    /// ```no_run
+    /// let allowed = vec![PathBuf::from("/home/user/lattice")];
+    ///
+    /// // SECURE: Opens file within allowed scope
+    /// let file = ValidatedFile::open("/home/user/lattice/doc.txt", &allowed)?;
+    ///
+    /// // BLOCKED: Path outside scope
+    /// let result = ValidatedFile::open("/etc/passwd", &allowed);
+    /// assert!(result.is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn open<P: AsRef<Path>>(
         path: P,
         allowed_roots: &[PathBuf],

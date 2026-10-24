@@ -1,3 +1,18 @@
+/**
+ * ToastItem - Individual toast notification card
+ *
+ * Purpose: Renders a single toast with:
+ * - Type-specific icon and styling
+ * - Title and optional message
+ * - Close button (if dismissible)
+ * - Optional action button
+ * - Progress bar for auto-dismiss countdown
+ * - Pause on hover support
+ *
+ * States: default, hover, exiting
+ * Accessibility: WCAG AA, keyboard navigation, ARIA live regions
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 
 import { SuccessIcon, ErrorIcon, WarningIcon, InfoIcon, CloseIcon } from './ToastIcons';
@@ -72,6 +87,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
     }
   };
 
+  // Progress bar animation
   useEffect(() => {
     if (!toast.duration || toast.duration === 0) return;
 
@@ -106,6 +122,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPaused, toast.duration]);
 
+  // Pause on hover
   const handleMouseEnter = () => {
     if (pauseOnHover) {
       setIsPaused(true);

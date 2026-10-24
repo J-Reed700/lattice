@@ -24,10 +24,13 @@ vi.mock('@/features/chat/hooks/useSpaceDocuments', () => ({
 
 const submit = { preventDefault: () => {} } as FormEvent;
 
-function render(attachments: Parameters<typeof useComposer>[0]['attachments'] = { staged: [], importStaged: vi.fn(), takePictures: () => [] }) {
-  return renderHook(() =>
+function render(
+  attachments: Parameters<typeof useComposer>[0]['attachments'] = { staged: [], importStaged: vi.fn(), takePictures: () => [] },
+  conversationId = 'conversation-1',
+) {
+  return renderHook(({ id }) =>
     useComposer({
-      conversationId: 'conversation-1',
+      conversationId: id,
       conversationSpaceId: 'space-thesis',
       conversationSpaceName: 'Thesis',
       isSending: false,
@@ -37,7 +40,7 @@ function render(attachments: Parameters<typeof useComposer>[0]['attachments'] = 
       onCompact: vi.fn(),
       attachments,
     }),
-  );
+  { initialProps: { id: conversationId } });
 }
 
 beforeEach(() => {
@@ -123,5 +126,36 @@ describe('the composer', () => {
       knowledgeBase: true,
       webSearch: true,
     });
+  });
+});
+
+describe('the unsent text', () => {
+  it('is still there when the pane comes back', () => {
+    const first = render();
+    act(() => first.result.current.setInput('half a question'));
+    first.unmount();
+
+    expect(render().result.current.input).toBe('half a question');
+  });
+
+  it('belongs to its own conversation', () => {
+    const { result, rerender } = render();
+    act(() => result.current.setInput('for the first chat'));
+
+    rerender({ id: 'conversation-2' });
+    expect(result.current.input).toBe('');
+    act(() => result.current.setInput('for the second chat'));
+
+    rerender({ id: 'conversation-1' });
+    expect(result.current.input).toBe('for the first chat');
+  });
+
+  it('is gone once sent', async () => {
+    const first = render();
+    act(() => first.result.current.setInput('What does it say?'));
+    await act(async () => { await first.result.current.handleSubmit(submit); });
+    first.unmount();
+
+    expect(render().result.current.input).toBe('');
   });
 });

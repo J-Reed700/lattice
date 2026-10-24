@@ -1,12 +1,12 @@
 //! Moving a studied course to another computer and back. Everything the
 //! learner resumes from must arrive exactly as it left: the current lesson,
-//! each lesson's completion and curriculum state, every quiz and test
-//! attempt, and the flashcard schedule with its review log.
+//! each lesson's completion and curriculum state, every quiz and test with
+//! its verdict, and the flashcard schedule with its review log.
 use super::{move_request, packs, preview_request, repack};
 use crate::features::learning::{
     dto::{
-        CompleteLearningLessonRequestDto, LearningAnswerDto, LearningAssessmentKind,
-        LearningProgramDto, SubmitLearningAttemptRequestDto,
+        CompleteLearningLessonRequestDto, LearningProgramDto, LearningQuizScopeDto,
+        LearningQuizScopeKind,
     },
     pack::decode_learning_pack,
     pack_repository::LearningPackRepository,
@@ -22,17 +22,8 @@ use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 type LessonRow = (String, i64, String, Option<String>);
-type AttemptRow = (
-    String,
-    String,
-    Option<String>,
-    String,
-    i64,
-    i64,
-    String,
-    String,
-    i64,
-);
+/// A submitted quiz: form, scope kind, score, verdict, submitted at.
+type AttemptRow = (String, String, f64, Option<i64>, i64);
 type CardRow = (
     String,
     Option<f64>,
@@ -71,7 +62,7 @@ async fn resume_state(pool: &SqlitePool, program_id: &str) -> Result<ResumeState
             .await?;
     let lessons = sqlx::query_as("SELECT id,completed,curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? ORDER BY id")
         .bind(program_id).fetch_all(pool).await?;
-    let attempts = sqlx::query_as("SELECT id,module_id,lesson_id,kind,correct,total,answers_json,results_json,submitted_at FROM learning_attempts WHERE program_id=? ORDER BY id")
+    let attempts = sqlx::query_as("SELECT s.form_id,f.scope_kind,s.score,s.passed,s.submitted_at FROM learning_assessment_submissions s JOIN learning_assessment_forms f ON f.id=s.form_id WHERE s.program_id=? ORDER BY s.form_id")
         .bind(program_id).fetch_all(pool).await?;
     let cards = sqlx::query_as("SELECT c.id,c.stability,c.difficulty,c.due_at,c.last_reviewed_at,c.interval_days,c.review_count,c.lapses FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? ORDER BY c.id")
         .bind(program_id).fetch_all(pool).await?;
@@ -97,41 +88,29 @@ async fn complete(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resul
     .await
 }
 
-/// Answer every question of `kind` in the module (a test) or one lesson.
+/// Take the module's test, or one lesson's quiz, leaving every answer blank.
 async fn submit(
     pool: &SqlitePool,
     program_id: &str,
     module: usize,
     lesson: Option<usize>,
-    kind: LearningAssessmentKind,
 ) -> Result<()> {
-    let repo = LearningRepository::new(pool.clone());
-    let program: LearningProgramDto = repo.get(program_id).await?;
+    let program: LearningProgramDto = LearningRepository::new(pool.clone())
+        .get(program_id)
+        .await?;
     let module = &program.modules[module];
-    let answers = module
-        .lessons
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| lesson.is_none_or(|lesson| lesson == *index))
-        .flat_map(|(_, lesson)| lesson.questions.iter())
-        .filter(|question| question.kind == kind)
-        .enumerate()
-        .map(|(index, question)| LearningAnswerDto {
-            question_id: question.id.clone(),
-            // Alternate right and wrong answers so the results differ.
-            selected_index: index % 2,
-        })
-        .collect();
-    repo.submit(&SubmitLearningAttemptRequestDto {
-        attempt_id: super::id(),
-        program_id: program_id.into(),
-        expected_revision: program.summary.revision,
-        module_id: module.id.clone(),
-        lesson_id: lesson.map(|index| module.lessons[index].id.clone()),
-        kind,
-        answers,
-    })
-    .await?;
+    let scope = match lesson {
+        Some(index) => LearningQuizScopeDto {
+            kind: LearningQuizScopeKind::Lesson,
+            id: Some(module.lessons[index].id.clone()),
+        },
+        None => LearningQuizScopeDto {
+            kind: LearningQuizScopeKind::Module,
+            id: Some(module.id.clone()),
+        },
+    };
+    crate::features::learning::assessment::assessment_tests::take_quiz(pool, program_id, &scope)
+        .await?;
     Ok(())
 }
 
@@ -177,8 +156,8 @@ async fn studied_course(pool: &SqlitePool) -> Result<String> {
     .bind(&lessons[3])
     .execute(pool)
     .await?;
-    submit(pool, &id, 0, Some(0), LearningAssessmentKind::Quiz).await?;
-    submit(pool, &id, 0, None, LearningAssessmentKind::Test).await?;
+    submit(pool, &id, 0, Some(0)).await?;
+    submit(pool, &id, 0, None).await?;
     // The note creates the course's notebook and flashcard deck.
     repo.ensure_lesson_note(&id, &lessons[0], "Lesson notes", "My own words")
         .await?;
@@ -318,7 +297,7 @@ async fn merge_safe_moves_a_studied_course_to_a_fresh_computer_exactly() -> Resu
     assert!(left
         .attempts
         .iter()
-        .any(|attempt| attempt.3 == "test" && attempt.5 == 2));
+        .any(|attempt| attempt.1 == "module" && attempt.3 == Some(0)));
     assert_eq!(left.cards.len(), 2);
     assert_eq!(left.reviews.len(), 3);
     assert_eq!(resume_state(&fresh, &course).await?, left);
@@ -361,7 +340,7 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
     let lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal")
         .bind(&course).fetch_all(&away).await?;
     complete(&away, &course, &lessons[2]).await?;
-    submit(&away, &course, 1, Some(0), LearningAssessmentKind::Quiz).await?;
+    submit(&away, &course, 1, Some(0)).await?;
     review(
         &away,
         Review {

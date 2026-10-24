@@ -176,11 +176,66 @@ fn repair_request(system: &str, local: &Value, output_tokens: usize) -> Grounded
     request
 }
 
+/// The ids of the passages a one-claim repair request `local` can carry, in
+/// recorded order: as many as the window holds, measured where the backend
+/// can count. Empty when none fits beside the section.
+async fn fitted_passages(
+    llm: &dyn LLMPort,
+    system: &str,
+    local: &Value,
+    output_tokens: usize,
+) -> Vec<String> {
+    let passages: Vec<Value> = local
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let spent: Vec<usize> = passages
+        .iter()
+        .scan(0usize, |spent, passage| {
+            *spent = spent.saturating_add(llm.count_tokens(&passage.to_string()) + 1);
+            Some(*spent)
+        })
+        .collect();
+    let held = |room: usize| {
+        passages
+            .get(..spent.partition_point(|total| *total <= room))
+            .unwrap_or_default()
+    };
+    let build = |room: usize| {
+        let kept = held(room);
+        let mut local = local.clone();
+        if let Some(claim) = local
+            .pointer_mut("/failedClaims/0")
+            .and_then(Value::as_object_mut)
+        {
+            let ids: Vec<Value> = kept
+                .iter()
+                .filter_map(|passage| passage.get("id").cloned())
+                .collect();
+            claim.insert("evidence".into(), Value::Array(ids));
+        }
+        if let Some(fields) = local.as_object_mut() {
+            fields.insert("evidence".into(), json!(kept));
+        }
+        repair_request(system, &local, output_tokens)
+    };
+    let room = crate::features::learning::model_call::source_room(llm, &build(0), usize::MAX);
+    let fit = crate::features::learning::model_call::fit_room(llm, room, build).await;
+    if !fit.fits() {
+        return Vec::new();
+    }
+    held(fit.room)
+        .iter()
+        .filter_map(|passage| Some(passage.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
 /// Split one section's failed claims into consecutive groups whose repair
-/// request fits the model, each passage counted once per group. A claim
-/// whose own evidence cannot fit even alone is sent with the passages that
-/// fit, in recorded order; one that cannot carry a single passage is an
-/// error.
+/// request fits the model by estimate, each passage counted once per group.
+/// A claim whose own evidence cannot fit even alone is a group of its own;
+/// its passages are packed when it is sent. Only a section that leaves no
+/// room for any claim is an error.
 fn claim_groups(
     llm: &dyn LLMPort,
     system: &str,
@@ -195,9 +250,11 @@ fn claim_groups(
         &repair_request(system, &base, output_tokens),
         usize::MAX,
     );
-    let too_large = || invalid("A section repair does not fit in this model's context window.");
+    // The section and its instructions alone: no claim can be repaired here.
     if room == 0 {
-        return Err(too_large());
+        return Err(invalid(
+            "A section repair does not fit in this model's context window.",
+        ));
     }
     let table: HashMap<&str, usize> = context
         .get("evidence")
@@ -226,44 +283,17 @@ fn claim_groups(
     let mut group: Vec<Value> = Vec::new();
     let mut listed: HashSet<String> = HashSet::new();
     let mut used = 0;
-    for mut failure in failures {
+    for failure in failures {
         if used + price(&failure, &listed) > room && !group.is_empty() {
             groups.push(std::mem::take(&mut group));
             listed.clear();
             used = 0;
         }
         if price(&failure, &listed) > room {
-            // Only this claim's own evidence is over budget: keep its
-            // passages in recorded order while they fit.
-            let ids: Vec<String> = evidence_ids(&failure)
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            let mut spent = llm.count_tokens(&failure.to_string()) + 1;
-            let mut kept = Vec::new();
-            for id in &ids {
-                let cost = table.get(id.as_str()).copied().unwrap_or_default();
-                if spent + cost > room {
-                    break;
-                }
-                spent += cost;
-                kept.push(id.clone());
-            }
-            if kept.is_empty() {
-                return Err(invalid(
-                    "A failed claim's evidence passage does not fit in this model's context window.",
-                ));
-            }
-            tracing::warn!(
-                unit,
-                kept = kept.len(),
-                recorded = ids.len(),
-                room,
-                "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
-            );
-            if let Some(fields) = failure.as_object_mut() {
-                fields.insert("evidence".into(), json!(kept));
-            }
+            // Only this claim's own evidence is over the room: it goes
+            // alone, with the passages that fit.
+            groups.push(vec![failure]);
+            continue;
         }
         used += price(&failure, &listed);
         listed.extend(evidence_ids(&failure).into_iter().map(str::to_owned));
@@ -432,24 +462,24 @@ async fn repair_sections(
             };
         let mut part = 0;
         while let Some(mut group) = groups.pop_front() {
-            let local = section_context(&context, unit, &group)?;
             // Groups are sized part by part; a request that still does not
-            // fit is split again, down to one claim with fewer passages.
+            // fit is split again, down to one claim with the passages that fit.
+            let mut local = section_context(&context, unit, &group)?;
             if !crate::features::learning::model_call::fits(
                 llm,
                 &repair_request(&system, &local, output_tokens),
-            ) {
+            )
+            .await
+            {
                 if group.len() > 1 {
                     let rest = group.split_off(group.len() / 2);
                     groups.push_front(rest);
                     groups.push_front(group);
                     continue;
                 }
-                let trimmed = group.first_mut().and_then(|failure| {
-                    let evidence = failure.get_mut("evidence")?.as_array_mut()?;
-                    (evidence.len() > 1).then(|| evidence.pop())
-                });
-                if trimmed.is_none() {
+                let kept = fitted_passages(llm, &system, &local, output_tokens).await;
+                if kept.is_empty() {
+                    // Nothing to repair it from: the claim stays held for review.
                     let reason = "A failed claim's evidence passage does not fit in this model's context window.";
                     ledger.reject(&claim_ids(&group), reason).await?;
                     drop_group(&mut context, unit, group.len(), false);
@@ -457,10 +487,14 @@ async fn repair_sections(
                 }
                 tracing::warn!(
                     unit,
-                    "A failed claim's evidence exceeds the repair budget; sending one passage fewer"
+                    kept = kept.len(),
+                    recorded = group.first().map_or(0, |failure| evidence_ids(failure).len()),
+                    "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
                 );
-                groups.push_front(group);
-                continue;
+                if let Some(fields) = group.first_mut().and_then(Value::as_object_mut) {
+                    fields.insert("evidence".into(), json!(kept));
+                }
+                local = section_context(&context, unit, &group)?;
             }
             part += 1;
             let parts = part + groups.len();
@@ -581,213 +615,5 @@ async fn repair_group(
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-    use super::*;
-    use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
-    use std::sync::Mutex;
-    #[test]
-    fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Result<()> {
-        let original = json!({"blocks":[{"kind":"explanation","title":"First","body":"Keep byte-for-byte"},{"kind":"explanation","title":"Second","body":"Fix this"}],"questions":[{"kind":"quiz","prompt":"Keep this question"}]});
-        let context = json!({"candidate":original,"requirements":{},"failedClaims":[{"unit":1,"evidence":["evidence-1"],"repeatedDefect":true},{"unit":2,"evidence":["evidence-2"]}],"evidence":[{"id":"evidence-1","text":"Relevant"},{"id":"evidence-2","text":"Another section"}],"executions":[],"repairHistory":[{"unit":1,"statement":"Rejected here"},{"unit":2,"statement":"Rejected elsewhere"}]});
-        let local = section_context(&context, 1, &section_failures(&context, 1))?;
-        assert_eq!(local["candidate"]["blocks"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            local["evidence"],
-            json!([{"id":"evidence-1","text":"Relevant"}])
-        );
-        assert_eq!(
-            local["repairHistory"],
-            json!([{"unit":1,"statement":"Rejected here"}])
-        );
-        assert_eq!(local["repeatedDefects"], true);
-        // The other section's claim is on its first attempt.
-        let other = section_context(&context, 2, &section_failures(&context, 2))?;
-        assert_eq!(other["repeatedDefects"], false);
-        let patch = json!({"blocks":[{"kind":"explanation","title":"Second","body":"Corrected"}],"questions":[]});
-        let mut result = original.clone();
-        merge(&mut result, patch, 1)?;
-        assert_eq!(result["blocks"][0], original["blocks"][0]);
-        assert_eq!(result["questions"], original["questions"]);
-        assert_eq!(result["blocks"][1]["body"], "Corrected");
-        assert!(merge(&mut result, original.clone(), 1).is_err());
-        assert!(merge(
-            &mut result,
-            json!({"blocks":[{"kind":"recap"}],"questions":[]}),
-            1
-        )
-        .is_err());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn an_ambiguous_edit_falls_back_to_one_validated_section() -> Result<()> {
-        let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Keep that."}],"questions":[]});
-        let local = json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Correct one fact."}]});
-        let replacement = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Correct that."}],"questions":[]});
-        let model = ScriptedModel {
-            outputs: Mutex::new(vec![replacement.to_string()].into()),
-            prompts: Mutex::new(Vec::new()),
-        };
-        let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
-        let ambiguous =
-            json!({"edits":[{"path":"/blocks/0/body","before":"Keep","after":"Correct"}]})
-                .to_string();
-
-        let repaired = apply_or_replace_section(
-            &model, &local, &original, &schema, "blocks", 4_000, &ambiguous,
-        )
-        .await?;
-
-        assert_eq!(repaired, replacement);
-        let prompts = model
-            .prompts
-            .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-        assert_eq!(prompts.len(), 1);
-        assert!(prompts[0].contains("rejectedEditResponse"));
-        Ok(())
-    }
-
-    /// A small window that records each request and edits the next marker.
-    struct SmallWindow {
-        window: usize,
-        requests: Mutex<Vec<(String, String)>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LLMPort for SmallWindow {
-        async fn complete(
-            &self,
-            request: &lattice_core::application::ports::llm_port::CompletionRequest,
-        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
-            let (system, user) =
-                crate::features::learning::lessons::structured_call::task_messages(request);
-            let mut requests = self.requests.lock().unwrap();
-            let marker = format!("[{}]", requests.len());
-            requests.push((system.to_owned(), user.to_owned()));
-            Ok(
-                lattice_core::application::ports::llm_port::CompletionResponse::from_text(
-                    json!({"edits":[{"path":"/blocks/0/body","before":marker,"after":marker.replace('[', "(").replace(']', ")")}]})
-                        .to_string(),
-                ),
-            )
-        }
-        fn model_name(&self) -> &str {
-            "small-window"
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.window
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    #[tokio::test]
-    async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -> Result<()> {
-        let passages: Vec<_> = (0..12)
-            .map(|i| json!({"id":format!("evidence-{i}"),"sourceId":"s","startByte":i * 2000,"endByte":i * 2000 + 1600,"text":format!("passage-{i} {}", "x".repeat(1600))}))
-            .collect();
-        // Each failed claim is a ledger claim located on its own marker: a
-        // repair may change only the failed claims' sentences (claim sources
-        // design §10.2), so the edits must land on sentences it targets.
-        let body = "[0] [1] [2] [3] [4] [5]";
-        let claims: Vec<_> = (0..6)
-            .map(|k| json!({"unit":0,"claimId":format!("claim-{k}"),"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
-            .collect();
-        let context = json!({"candidate":{"blocks":[{"kind":"explanation","title":"T","body":body}],"questions":[]},"requirements":{},"failedClaims":claims,"evidence":passages,"executions":[],"repairHistory":[]});
-        let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
-        let output_tokens = 500;
-        let llm = SmallWindow {
-            window: 4_000,
-            requests: Mutex::new(Vec::new()),
-        };
-        let references = ReferenceCollection::lexical(&[])?;
-        let mut ledger = ClaimLedger::open(&llm, "{}").await?;
-        // Open for repair, as a pass leaves its failed claims.
-        for k in 0..6 {
-            use lattice_core::domain::learning::claim_review::{
-                Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
-                EvidenceFingerprint, UnitKind, VerdictKind,
-            };
-            let id = ClaimId(format!("claim-{k}"));
-            let location =
-                ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), body);
-            ledger
-                .append(
-                    &id,
-                    ClaimEvent::Extracted {
-                        location,
-                        statement: format!("Claim {k}"),
-                    },
-                )
-                .await?;
-            let check = Check {
-                checker: Checker::Local {
-                    model: llm.model_name().into(),
-                },
-                result: CheckResult::Failed {
-                    kind: VerdictKind::Unsupported,
-                },
-                reason: "Unstated.".into(),
-                fingerprint: EvidenceFingerprint::of("fixture-v1", llm.model_name(), &[]),
-                evidence: Vec::new(),
-                window_tokens: 4_000,
-            };
-            ledger.append(&id, ClaimEvent::Checked(check)).await?;
-            assert!(ledger.may_repair(&id));
-        }
-
-        let repaired = repair_sections(
-            &llm,
-            "{}",
-            &schema,
-            context,
-            output_tokens,
-            &references,
-            &mut ledger,
-        )
-        .await?;
-
-        let requests = llm.requests.lock().unwrap();
-        assert!(requests.len() >= 3, "{} requests", requests.len());
-        for (system, user) in requests.iter() {
-            assert!(llm.count_tokens(system) + llm.count_tokens(user) + output_tokens <= 4_000);
-            // Each request carries exactly the evidence its own claims cite.
-            let local: Value = serde_json::from_str(user)?;
-            let cited: Vec<_> = local["failedClaims"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .flat_map(|claim| claim["evidence"].as_array().unwrap().clone())
-                .collect();
-            let carried: Vec<_> = local["evidence"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|passage| passage["id"].clone())
-                .collect();
-            assert_eq!(cited, carried);
-        }
-        for k in 0..6 {
-            let statement = format!("\"Claim {k}\"");
-            assert_eq!(
-                requests
-                    .iter()
-                    .filter(|(_, user)| user.contains(&statement))
-                    .count(),
-                1
-            );
-        }
-        // Each request edited the section the previous one left.
-        let body = repaired["blocks"][0]["body"].as_str().unwrap();
-        for part in 0..requests.len() {
-            assert!(body.contains(&format!("({part})")), "{body}");
-        }
-        Ok(())
-    }
-}
+#[path = "repair_tests.rs"]
+mod tests;

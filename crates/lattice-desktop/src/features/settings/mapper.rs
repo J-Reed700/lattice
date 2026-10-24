@@ -19,6 +19,15 @@ pub struct SettingsMapper;
 
 impl SettingsMapper {
     /// Create an update request DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `category` - Optional category to update
+    /// * `updates` - Key-value pairs of updates
+    ///
+    /// # Returns
+    ///
+    /// Update request DTO
     pub fn create_update_request(
         category: Option<SettingsCategory>,
         updates: HashMap<String, serde_json::Value>,
@@ -27,26 +36,69 @@ impl SettingsMapper {
     }
 
     /// Create a reset request DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `category` - Optional category to reset (None = reset all)
+    ///
+    /// # Returns
+    ///
+    /// Reset request DTO
     pub fn create_reset_request(category: Option<SettingsCategory>) -> ResetSettingsRequestDto {
         ResetSettingsRequestDto { category }
     }
 
     /// Create an export request DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Export destination path
+    ///
+    /// # Returns
+    ///
+    /// Export request DTO
     pub fn create_export_request(path: String) -> ExportSettingsRequestDto {
         ExportSettingsRequestDto { path }
     }
 
     /// Create an export response DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path where settings were exported
+    /// * `status` - Status message
+    ///
+    /// # Returns
+    ///
+    /// Export response DTO
     pub fn create_export_response(path: PathBuf, status: String) -> ExportSettingsResponseDto {
         ExportSettingsResponseDto { path, status }
     }
 
     /// Create an import request DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Import source path
+    /// * `merge` - Whether to merge with existing settings
+    ///
+    /// # Returns
+    ///
+    /// Import request DTO
     pub fn create_import_request(path: String, merge: bool) -> ImportSettingsRequestDto {
         ImportSettingsRequestDto { path, merge }
     }
 
     /// Create an import response DTO.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Imported settings
+    /// * `status` - Status message
+    ///
+    /// # Returns
+    ///
+    /// Import response DTO
     pub fn create_import_response(
         settings: SettingsDto,
         status: String,
@@ -55,16 +107,40 @@ impl SettingsMapper {
     }
 
     /// Parse settings category from string.
+    ///
+    /// # Arguments
+    ///
+    /// * `category_str` - Category name as string
+    ///
+    /// # Returns
+    ///
+    /// Settings category enum or None if invalid
     pub fn parse_category(category_str: &str) -> Option<SettingsCategory> {
         category_str.parse().ok()
     }
 
     /// Convert settings category to string.
+    ///
+    /// # Arguments
+    ///
+    /// * `category` - Settings category enum
+    ///
+    /// # Returns
+    ///
+    /// Category name as string
     pub fn category_to_string(category: SettingsCategory) -> String {
         category.as_str().to_string()
     }
 
     /// Extract validation errors as a formatted string.
+    ///
+    /// # Arguments
+    ///
+    /// * `validation` - Validation result
+    ///
+    /// # Returns
+    ///
+    /// Formatted error message
     pub fn format_validation_errors(validation: &ValidationResult) -> String {
         if !validation.has_errors() {
             return String::new();
@@ -81,6 +157,14 @@ impl SettingsMapper {
     }
 
     /// Extract validation warnings as a formatted string.
+    ///
+    /// # Arguments
+    ///
+    /// * `validation` - Validation result
+    ///
+    /// # Returns
+    ///
+    /// Formatted warning message
     pub fn format_validation_warnings(validation: &ValidationResult) -> String {
         if !validation.has_warnings() {
             return String::new();

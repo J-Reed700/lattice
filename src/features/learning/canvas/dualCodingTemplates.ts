@@ -272,7 +272,7 @@ function buildCompareContrast(lessonTitle: string, rawPoints?: readonly string[]
   const elements: ExcalidrawElement[] = [];
   const points = normalizeKeyPoints(rawPoints);
   const title = lessonTitle.trim() || 'Comparison Matrix';
-  const conceptA = points[0] ?? 'Concept A (Thesis)';
+  const conceptA = points[0];
   const conceptB = points[1] ?? 'Concept B (Antithesis)';
 
   elements.push(...createLabeledBox({ x: 80, y: 30, width: 800, height: 48, text: `Compare & Contrast: ${title}`, fontSize: 18, backgroundColor: '#f1f3f5', strokeColor: '#495057' }));
@@ -345,7 +345,7 @@ function buildProcessFlow(lessonTitle: string, rawPoints?: readonly string[]): E
 
   steps.forEach((_, index) => {
     const cx = startX + index * (stepW + spacing);
-    elements.push(...createLabeledBox({ x: cx, y: cardY, width: stepW, height: cardH, text: annotations[index] ?? 'Step notes', fontSize: 12, strokeColor: '#adb5bd', backgroundColor: '#ffffff', textColor: '#495057', textAlign: 'left', strokeStyle: 'dashed' }));
+    elements.push(...createLabeledBox({ x: cx, y: cardY, width: stepW, height: cardH, text: annotations[index], fontSize: 12, strokeColor: '#adb5bd', backgroundColor: '#ffffff', textColor: '#495057', textAlign: 'left', strokeStyle: 'dashed' }));
   });
 
   elements.push(
@@ -373,7 +373,7 @@ function buildVisualAnalogy(lessonTitle: string, rawPoints?: readonly string[]):
   elements.push(
     createShape({ type: 'rectangle', x: 60, y: colY, width: colW, height: colH, strokeColor: '#1971c2', backgroundColor: '#f8f9fa' }),
     ...createLabeledBox({ x: 60, y: colY, width: colW, height: 48, text: 'Verbal & Abstract Channel', fontSize: 16, strokeColor: '#1971c2', backgroundColor: '#e7f5ff', textColor: '#1864ab' }),
-    ...createLabeledBox({ x: 80, y: colY + 68, width: colW - 40, height: 80, text: `1. Core Definitions & Formal Claims:\n${points[0] ?? 'Axioms, principles, and precise terminology.'}`, fontSize: 13, strokeColor: '#ced4da', backgroundColor: '#ffffff', textColor: '#343a40', textAlign: 'left' }),
+    ...createLabeledBox({ x: 80, y: colY + 68, width: colW - 40, height: 80, text: `1. Core Definitions & Formal Claims:\n${points[0]}`, fontSize: 13, strokeColor: '#ced4da', backgroundColor: '#ffffff', textColor: '#343a40', textAlign: 'left' }),
     ...createLabeledBox({ x: 80, y: colY + 164, width: colW - 40, height: 80, text: `2. Formulas, Proofs & Quantitative Logic:\n${points[1] ?? 'Mathematical relationships and equations.'}`, fontSize: 13, strokeColor: '#ced4da', backgroundColor: '#ffffff', textColor: '#343a40', textAlign: 'left' }),
     ...createLabeledBox({ x: 80, y: colY + 260, width: colW - 40, height: 80, text: `3. Boundary Conditions & Nuances:\n${points[2] ?? 'Edge cases, scope bounds, and qualifiers.'}`, fontSize: 13, strokeColor: '#ced4da', backgroundColor: '#ffffff', textColor: '#343a40', textAlign: 'left' }),
     ...createLabeledBox({ x: 80, y: colY + 356, width: colW - 40, height: 120, text: `4. Synthesis Note:\n${points[3] ?? 'Summary synthesizing the abstract logic into memory.'}`, fontSize: 13, strokeColor: '#ced4da', backgroundColor: '#ffffff', textColor: '#343a40', textAlign: 'left' }),
@@ -419,7 +419,7 @@ export function buildDualCodingSceneElements(
 }
 
 export function buildLessonMermaidDiagram(lessonTitle: string, keyPoints?: readonly string[]): string {
-  const sanitizedTitle = (lessonTitle || 'Lesson Overview').replace(/["\n\r[\]()]/g, ' ').trim() || 'Lesson Overview';
+  const sanitizedTitle = lessonTitle.replace(/["\n\r[\]()]/g, ' ').trim() || 'Lesson Overview';
   const points = normalizeKeyPoints(keyPoints).map((p) => p.replace(/["\n\r[\]()]/g, ' ').trim());
 
   const lines: string[] = [

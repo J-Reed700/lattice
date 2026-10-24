@@ -11,6 +11,20 @@ use std::path::PathBuf;
 ///
 /// Extracts the first path component (directory name) from all indexed
 /// file paths to determine which directories have been indexed.
+///
+/// # Returns
+/// - `Ok(Vec<PathBuf>)` - List of unique directory names
+/// - `Err(AppError)` - Database query error
+///
+/// # Example
+/// ```
+/// // If documents table has:
+/// // - "notes/doc1.txt"
+/// // - "notes/doc2.txt"
+/// // - "research/paper.pdf"
+/// //
+/// // Returns: ["notes", "research"]
+/// ```
 pub async fn query_indexed_directories(pool: &SqlitePool) -> Result<Vec<PathBuf>> {
     let rows = sqlx::query!(
         r#"

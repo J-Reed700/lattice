@@ -1,3 +1,10 @@
+/**
+ * SectionErrorBoundary Component
+ *
+ * Error boundary for major application sections (Search, Files, Settings, etc.).
+ * Isolates errors to prevent entire app crashes.
+ */
+
 import React from 'react';
 
 import { ErrorBoundary, type ErrorBoundaryProps } from './ErrorBoundary';
@@ -26,6 +33,7 @@ export function SectionErrorBoundary({
   resetKeys,
   fallback,
 }: SectionErrorBoundaryProps) {
+  // Default fallback component
   const DefaultFallback = fallback || (({ error, errorInfo, resetError }) => (
     <SectionError
       error={error}
@@ -37,8 +45,13 @@ export function SectionErrorBoundary({
   ));
 
   const handleError: ErrorBoundaryProps['onError'] = (error, errorInfo) => {
-    if (import.meta.env.DEV) {
-      console.error(`SectionErrorBoundary [${sectionName}] caught error:`, error, errorInfo);
+    // Log to console in development
+    const isDev = import.meta.env.DEV;
+    if (isDev) {
+      console.error(`=== ${sectionName.toUpperCase()} ERROR ===`);
+      console.error('Error:', error);
+      console.error('Error Info:', errorInfo);
+      console.error('=========================');
     }
 
     if (onError) {
@@ -60,6 +73,10 @@ export function SectionErrorBoundary({
     </ErrorBoundary>
   );
 }
+
+/**
+ * Specific section error boundaries with predefined configurations
+ */
 
 export function SearchSectionErrorBoundary({ children }: { children: React.ReactNode }) {
   return (

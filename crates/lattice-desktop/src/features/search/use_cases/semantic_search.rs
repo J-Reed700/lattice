@@ -6,6 +6,29 @@
 //! 1. Query embedding generation
 //! 2. Vector similarity search
 //! 3. Result ranking and filtering
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+//! use lattice_core::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+//!
+//! # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
+//! let request = SearchRequestDto {
+//!     query: "machine learning algorithms".to_string(),
+//!     limit: Some(10),
+//!     threshold: Some(0.7),
+//!     mode: SearchModeDto::Vector,
+//! };
+//!
+//! let response = use_case.execute(request).await?;
+//! println!("Found {} results in {}ms",
+//!     response.total,
+//!     response.query_time_ms
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,8 +40,13 @@ use lattice_core::shared::error::{AppError, Result};
 
 /// Semantic search use case.
 ///
-/// Coordinates vector-based semantic search by generating query embeddings
+///  Coordinates vector-based semantic search by generating query embeddings
 /// and searching the vector index.
+///
+/// ## Dependencies
+///
+/// - `EmbeddingPort`: Generates embeddings for the search query
+/// - `VectorSearchPort`: Performs similarity search in the vector index
 pub struct SemanticSearchUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     vector_search: Arc<dyn VectorSearchPort>,
@@ -27,6 +55,23 @@ pub struct SemanticSearchUseCase {
 
 impl SemanticSearchUseCase {
     /// Create a new semantic search use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `embedding_service` - Service for generating text embeddings
+    /// * `vector_search` - Service for vector similarity search
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// # use std::sync::Arc;
+    /// # use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
+    ///
+    /// # fn example(embedder: Arc<dyn EmbeddingPort>, searcher: Arc<dyn VectorSearchPort>) {
+    /// let use_case = SemanticSearchUseCase::new(embedder, searcher);
+    /// # }
+    /// ```
     pub fn new(
         embedding_service: Arc<dyn EmbeddingPort>,
         vector_search: Arc<dyn VectorSearchPort>,
@@ -48,6 +93,42 @@ impl SemanticSearchUseCase {
     }
 
     /// Execute semantic search.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Search request containing query and parameters
+    ///
+    /// # Returns
+    ///
+    /// Search response with ranked results and metadata
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Embedding generation fails
+    /// - Vector search fails
+    /// - Query is invalid
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use lattice_core::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// # use lattice_core::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+    /// # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
+    /// let request = SearchRequestDto {
+    ///     query: "semantic search".to_string(),
+    ///     limit: Some(5),
+    ///     threshold: Some(0.8),
+    ///     mode: SearchModeDto::Vector,
+    /// };
+    ///
+    /// let response = use_case.execute(request).await?;
+    /// for result in response.results {
+    ///     println!("Found: {} (score: {})", result.title, result.score);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute(&self, request: SearchRequestDto) -> Result<SearchResponseDto> {
         self.execute_scoped(request, None).await
     }

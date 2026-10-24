@@ -1,3 +1,15 @@
+/**
+ * Toast Icons - Type-specific icons for toast notifications
+ *
+ * Purpose: Provides visual indicators for toast types
+ * - Success: Checkmark circle (green)
+ * - Error: X circle (red)
+ * - Warning: Alert triangle (yellow)
+ * - Info: Info circle (blue)
+ *
+ * Design: Uses inline SVG for performance and customization
+ */
+
 import React from 'react';
 
 interface IconProps {

@@ -18,6 +18,9 @@ use web_research::within_search_scope;
 #[path = "research_tests.rs"]
 pub(in crate::features::learning) mod tests;
 
+mod saving;
+use saving::Saving;
+
 #[derive(Clone)]
 struct Context {
     pool: sqlx::SqlitePool,
@@ -125,13 +128,16 @@ pub(in crate::features::learning) async fn select_references(
 }
 
 /// [`select_references`] with the planner's reason for each selection, the
-/// source's `selection_note` (claim sources design §4.4).
+/// source's `selection_note` (claim sources design §4.4). The candidates are
+/// packed in order and measured: on material denser than the estimate the
+/// selector reads fewer, and when none fits beside its instructions the gap
+/// stays open, as when search is unavailable.
 async fn select_noted(
     llm: &dyn LLMPort,
     topic: &str,
     query: &str,
     gaps: &[Value],
-    mut candidates: Vec<web_research::Candidate>,
+    candidates: Vec<web_research::Candidate>,
 ) -> Result<Vec<(WebSearchResult, String)>> {
     if candidates.is_empty() {
         return Ok(Vec::new());
@@ -140,48 +146,80 @@ async fn select_noted(
         "Choosing relevant, authoritative references",
     );
     let found = candidates.len();
-    let room = selection_room(llm, topic, query, gaps);
     let cost = selection_cost(llm, gaps);
-    let mut spent = 0usize;
-    let held = candidates
+    // What the candidates cost, summed in order: a room holds those whose
+    // running cost is within it.
+    let spent: Vec<usize> = candidates
         .iter()
-        .take_while(|candidate| {
-            spent = spent.saturating_add(cost(candidate));
-            spent <= room
+        .scan(0usize, |spent, candidate| {
+            *spent = spent.saturating_add(cost(candidate));
+            Some(*spent)
         })
-        .count();
-    candidates.truncate(held);
+        .collect();
     let hints = owner_hints(gaps);
-    let mut shown: Vec<Value> = candidates
+    let shown: Vec<Value> = candidates
         .iter()
         .enumerate()
         .map(|(i, candidate)| shown(i, candidate, &hints))
         .collect();
-    // Measured, not assumed: the costs are counted apart from the prompt.
-    while !shown.is_empty()
-        && !model_call::fits(llm, &selection_request(topic, query, gaps, &shown))
-    {
-        shown.pop();
-    }
-    candidates.truncate(shown.len());
-    if candidates.is_empty() {
-        return Err(model_call::window_too_small(
-            llm,
-            "No search result fits beside the reference selection's instructions",
-        ));
-    }
-    if candidates.len() < found {
-        tracing::info!(
-            read = candidates.len(),
-            found,
-            "Choosing among the search results the window holds"
-        );
-    }
-    let ids: Vec<Value> = shown.iter().map(|r| r["id"].clone()).collect();
     let results: Vec<WebSearchResult> = candidates
         .into_iter()
         .map(|candidate| candidate.result)
         .collect();
+    // How many candidates the request last built shows; the request sent is
+    // the last one built.
+    let read = std::sync::atomic::AtomicUsize::new(0);
+    let build = |room: usize| {
+        read.store(
+            spent.partition_point(|total| *total <= room),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        selection_request(
+            topic,
+            query,
+            gaps,
+            shown
+                .get(..read.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or_default(),
+        )
+    };
+    let selected = model_call::send_fitted(
+        llm,
+        selection_room(llm, topic, query, gaps),
+        build,
+        |request| {
+            let results = results
+                .get(..read.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or_default();
+            if results.len() < found {
+                tracing::info!(
+                    read = results.len(),
+                    found,
+                    "Choosing among the search results the window holds"
+                );
+            }
+            crate::features::learning::lessons::structured_call::complete_checked_request(
+                llm,
+                request,
+                None,
+                None,
+                move |raw| selection(raw, results),
+            )
+        },
+    )
+    .await?;
+    Ok(selected.unwrap_or_else(|| {
+        tracing::info!(
+            found,
+            "No search result fits beside the reference selection's instructions; the gap stays open"
+        );
+        Vec::new()
+    }))
+}
+
+/// The selector's answer over `results`, the candidates it was shown: the
+/// ones it keeps, each with its reason.
+fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchResult, String)>> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Selection {
@@ -194,49 +232,37 @@ async fn select_noted(
         use_for_gap: bool,
         reason: String,
     }
-    crate::features::learning::generation::complete_checked(
-        llm,
-        SELECT_SYSTEM,
-        selection_prompt(topic, query, gaps, &shown),
-        selection_schema(&ids),
-        SELECTION_ANSWER_TOKENS,
-        None,
-        None,
-        |raw| {
-            let selection: Selection = crate::features::learning::generation::parse_json(raw)?;
-            let mut seen = HashSet::new();
-            let mut selected = Vec::new();
-            if selection.decisions.len() > results.len() {
-                return Err(AppError::InvalidInput(
-                    "Reference selection returned too many candidates; no pages were saved.".into(),
-                ));
-            }
-            for choice in selection.decisions {
-                let index = choice
-                    .id
-                    .strip_prefix("result-")
-                    .and_then(|i| i.parse::<usize>().ok());
-                let result = index
-                    .filter(|i| choice.id == format!("result-{i}"))
-                    .and_then(|i| results.get(i));
-                if !seen.insert(choice.id)
-                    || choice.reason.trim().is_empty()
-                    || choice.reason.chars().count() > 600
-                    || result.is_none()
-                {
-                    return Err(AppError::InvalidInput(
-                    "Reference selection returned invalid evidence candidates; no pages were saved."
-                        .into(),
-                ));
-                }
-                if let Some(result) = result.filter(|_| choice.use_for_gap) {
-                    selected.push((result.clone(), choice.reason.trim().to_owned()));
-                }
-            }
-            Ok(selected)
-        },
-    )
-    .await
+    let selection: Selection = crate::features::learning::generation::parse_json(raw)?;
+    let mut seen = HashSet::new();
+    let mut selected = Vec::new();
+    if selection.decisions.len() > results.len() {
+        return Err(AppError::InvalidInput(
+            "Reference selection returned too many candidates; no pages were saved.".into(),
+        ));
+    }
+    for choice in selection.decisions {
+        let index = choice
+            .id
+            .strip_prefix("result-")
+            .and_then(|i| i.parse::<usize>().ok());
+        let result = index
+            .filter(|i| choice.id == format!("result-{i}"))
+            .and_then(|i| results.get(i));
+        if !seen.insert(choice.id)
+            || choice.reason.trim().is_empty()
+            || choice.reason.chars().count() > 600
+            || result.is_none()
+        {
+            return Err(AppError::InvalidInput(
+                "Reference selection returned invalid evidence candidates; no pages were saved."
+                    .into(),
+            ));
+        }
+        if let Some(result) = result.filter(|_| choice.use_for_gap) {
+            selected.push((result.clone(), choice.reason.trim().to_owned()));
+        }
+    }
+    Ok(selected)
 }
 tokio::task_local! { static CURRENT:Context; }
 
@@ -343,7 +369,9 @@ impl<'a> Expansion<'a> {
 
 /// Research for `findings`, the claims the ledger allows to be researched
 /// (once per claim and evidence), with the user's `hints` searched verbatim
-/// before the planned queries (§5.1 "Research again with a hint").
+/// before the planned queries (§5.1 "Research again with a hint"). A round
+/// whose planning or selection gives no usable answer, or does not fit the
+/// window, is [`Expansion::Unchanged`]: the claims stay held for review.
 pub(super) async fn expand<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
@@ -383,9 +411,21 @@ pub(super) async fn expand<'a>(
         kind: Gaps::Claims,
     };
     let claims = u32::try_from(findings.len()).unwrap_or(u32::MAX);
-    let (expanded, searched) = match research(llm, references, &context, round).await? {
-        Expansion::Saved(expanded, searched) => (*expanded, searched),
-        unresearched => return Ok(unresearched.timed(started.elapsed().checked_div(claims))),
+    // Research adds evidence; it never stops the lesson. A round with no
+    // usable answer leaves its claims held, as one that found nothing does.
+    let (expanded, searched) = match research(llm, references, &context, round).await {
+        Ok(Expansion::Saved(expanded, searched)) => (*expanded, searched),
+        Ok(unresearched) => return Ok(unresearched.timed(started.elapsed().checked_div(claims))),
+        Err(
+            error @ (AppError::InvalidInput(_)
+            | AppError::PromptExceedsWindow { .. }
+            | AppError::Other(_)),
+        ) => {
+            tracing::warn!(%error, claims, "Claim research gave no usable answer; the claims stay held");
+            return Ok(Expansion::Unchanged(Searched::default())
+                .timed(started.elapsed().checked_div(claims)));
+        }
+        Err(error) => return Err(error),
     };
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
@@ -684,97 +724,4 @@ async fn research<'a>(
         .reopen(&sources)
         .await
         .map(|references| Expansion::Saved(Box::new(references), searched))
-}
-
-/// Where a research round saves what it captures.
-struct Saving<'s> {
-    context: &'s Context,
-    program_repo: &'s crate::features::learning::repository::LearningRepository,
-    library: &'s crate::features::learning::source_library::LearningSourceLibraryRepository,
-}
-
-impl Saving<'_> {
-    /// Saves a capture as a research source unless the course already holds
-    /// that page, with the planner's reason for selecting it (`note`); the
-    /// new version's id, or `None` for a page already held. `sources` and
-    /// `urls` (pages without fragments) are brought up to date.
-    async fn save(
-        &self,
-        sources: &mut Vec<LearningSourceDto>,
-        urls: &mut HashSet<String>,
-        requested_url: &str,
-        captured: crate::features::learning::source_library::CapturedLearningSource,
-        note: Option<&str>,
-    ) -> Result<Option<String>> {
-        let resolved = captured.resolved_url.clone().unwrap_or_default();
-        if sources.iter().any(|s| {
-            s.url.as_deref().map(identity) == Some(identity(&resolved))
-                || s.excerpt.trim() == captured.text.trim()
-        }) {
-            return Ok(None);
-        }
-        let version_id = uuid::Uuid::new_v4().to_string();
-        let hash = digest(&captured.text);
-        self.library
-            .add_selected(
-                crate::features::learning::source_library::NewLearningSource {
-                    operation_id: &uuid::Uuid::new_v4().to_string(),
-                    source_id: &uuid::Uuid::new_v4().to_string(),
-                    version_id: &version_id,
-                    program_id: &self.context.program_id,
-                    kind: crate::features::learning::dto::LearningSourceKind::Web,
-                    operation_kind: "add_web",
-                    origin: requested_url,
-                    requested_url: Some(requested_url),
-                    freshness: crate::features::learning::dto::LearningSourcePolicy::Fixed,
-                },
-                captured,
-                hash,
-                note,
-            )
-            .await?;
-        urls.insert(identity(requested_url));
-        urls.insert(identity(&resolved));
-        // The repository normalizes captures. Retrieve those canonical
-        // bytes so the report and vectors bind to exactly what is saved.
-        *sources = self
-            .program_repo
-            .verification_sources(&self.context.program_id)
-            .await?;
-        Ok(Some(version_id))
-    }
-
-    /// Records that the supporting version cites the page saved as
-    /// `version_id` (§8 `Cites`), with the link's place in its text.
-    async fn record_citation(&self, cited: &scrutiny::Follow, version_id: &str) -> Result<()> {
-        use lattice_core::application::ports::SourceTrustStore;
-        use lattice_core::domain::provenance::{
-            RelationEvidence, RelationKind, RelationTarget, SourceRelation,
-        };
-        let store = crate::features::learning::references::trust::SqliteSourceTrustStore::new(
-            self.context.pool.clone(),
-        );
-        let Some(link) = store
-            .provenance(&cited.from)
-            .await?
-            .and_then(|record| record.links.into_iter().find(|link| link.url == cited.url))
-        else {
-            return Ok(());
-        };
-        store
-            .save_relations(
-                &self.context.program_id,
-                &[SourceRelation {
-                    from: cited.from.clone(),
-                    to: RelationTarget::Version(version_id.to_owned()),
-                    kind: RelationKind::Cites,
-                    evidence: RelationEvidence::Citation {
-                        start_byte: link.start_byte,
-                        end_byte: link.end_byte,
-                        anchor: link.anchor,
-                    },
-                }],
-            )
-            .await
-    }
 }

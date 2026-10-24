@@ -42,7 +42,7 @@ const ALL_KEYS: Array<[string, string]> = [
 ];
 
 /**
- * The review screen : the lesson's waiting claims as a queue beside one
+ * The review screen (§3): the lesson's waiting claims as a queue beside one
  * claim in focus, the honest tally, Resume when nothing is left, and the
  * keyboard throughout. Drops and pastes anywhere open Add a source.
  */
@@ -121,7 +121,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   useKeyboardShortcuts(escape, { context: 'review' });
 
   const header = (
-    <header className="border-b border-border-default bg-surface px-4 py-3 sm:px-6">
+    <header className="border-b border-border px-4 py-3 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button type="button" onClick={onBack} className="inline-flex min-h-10 min-w-0 items-center gap-2 text-left font-serif text-lg text-text-primary hover:text-accent">
           <ArrowLeft size={16} aria-hidden="true" className="shrink-0" /><span className="truncate">{lessonTitle}</span>
@@ -152,13 +152,13 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   );
 
   if (session.query.isPending) {
-    return <div className="flex h-full min-h-0 flex-col bg-bg">{header}
+    return <div className="flex h-full min-h-0 flex-col bg-background">{header}
       <div role="status" aria-label="Loading the review" className="grid flex-1 gap-4 p-4 md:grid-cols-[20rem_1fr] sm:p-6">
         <div className="h-64 animate-pulse rounded-2xl bg-surface" /><div className="h-96 animate-pulse rounded-2xl bg-surface" />
       </div></div>;
   }
   if (session.query.isError) {
-    return <div className="flex h-full min-h-0 flex-col bg-bg">{header}
+    return <div className="flex h-full min-h-0 flex-col bg-background">{header}
       <div role="alert" className="m-4 rounded-xl bg-danger-muted p-4 text-sm text-text-primary sm:m-6">
         <p>{session.query.error.message}</p>
         <Button type="button" variant="outline" className="mt-3" onClick={() => void session.query.refetch()}>Load again</Button>
@@ -200,16 +200,16 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
 
   return (
-    <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-bg ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>
+    <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-background ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>
       {header}
       {/* Always in the tree, so the first announcement is not lost. */}
-      <div className={session.message ? 'flex flex-wrap items-center gap-3 border-b border-border-default bg-surface px-4 py-2 text-sm text-text-secondary sm:px-6' : 'sr-only'}>
+      <div className={session.message ? 'flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-text-secondary sm:px-6' : 'sr-only'}>
         <p aria-live="polite" aria-atomic="true">{session.message}</p>
         {session.undo && <Button type="button" size="sm" variant="outline" disabled={session.acting} onClick={() => void session.undoLast()} aria-keyshortcuts="U">Undo</Button>}
       </div>
       {drop.importing && <p role="status" className="px-4 py-2 text-xs text-text-secondary sm:px-6">Importing {drop.importing}…</p>}
       {drop.error && <p role="alert" className="px-4 py-2 text-xs text-danger-fg sm:px-6">{drop.error}</p>}
-      {legend && <section aria-label="Keyboard keys" className="border-b border-border-default bg-surface px-4 py-3 sm:px-6">
+      {legend && <section aria-label="Keyboard keys" className="border-b border-border bg-surface px-4 py-3 sm:px-6">
         <ul className="grid gap-1 text-xs text-text-secondary sm:grid-cols-2 lg:grid-cols-3">
           {ALL_KEYS.map(([key, what]) => <li key={key}><kbd className="kbd">{key}</kbd> {what}</li>)}
         </ul>
@@ -218,12 +218,12 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
 
       {narrow ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {narrowView === 'queue' ? queue : <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs">{focus}</div>}
+          {narrowView === 'queue' ? queue : <div className="rounded-2xl bg-surface p-4 shadow-sheet">{focus}</div>}
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] gap-4 p-4 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)] sm:p-6">
-          <div className="flex min-h-0 flex-col rounded-xl border border-border-default bg-surface-sunken/40 p-2">{queue}</div>
-          <div className="min-h-0 overflow-y-auto rounded-xl border border-border-default bg-surface p-5 shadow-xs sm:p-6">{focus}</div>
+          <div className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-2">{queue}</div>
+          <div className="min-h-0 overflow-y-auto rounded-2xl bg-surface p-5 shadow-sheet sm:p-6">{focus}</div>
         </div>
       )}
 

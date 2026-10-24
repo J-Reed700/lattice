@@ -40,7 +40,23 @@ import {
   getWebArchiveHtmlPath,
 } from '@/utils/sourcePreview';
 
-/** Document reader body containing viewers, citation rail, and footer controls. */
+
+/**
+ * Everything the source reader shows, minus the surface it is shown on.
+ *
+ * The reader has two homes — a pane docked beside the thread, and the overlay
+ * it falls back to when the window cannot hold both — and both must show the
+ * same document with the same passage marked, the same citation travel and the
+ * same capture verbs. So the viewers, the rail and the footer live here once,
+ * and the caller supplies only the box: `FilePreviewModal` wraps this in a
+ * Radix dialog, `ChatReaderPane` in a plain aside.
+ *
+ * `presentation` says which, and that is the only thing this file branches on:
+ * `dialog` is the full-screen modal, `reading-pane` the overlay on the right
+ * edge, `docked` the third pane. The last two are the "compact" forms — they
+ * stack the citation rail under the viewer and offer the expand toggle.
+ */
+
 export type ReaderPresentation = 'dialog' | 'reading-pane' | 'docked';
 
 const UUID_PATTERN =
@@ -55,16 +71,36 @@ export interface SourceReaderBodyProps {
   presentation: ReaderPresentation;
   source: SourceWithMetadata;
   onClose: () => void;
+  /** Where in the file to land. Omit for "open the whole file". */
   initialLocator?: PassageLocator | null;
+  /** Every citation on the message, for `[` / `]` travel. */
   citations?: SourceWithMetadata[];
+  /** Index of `source` within `citations`. */
   citationIndex?: number;
   onCitationIndexChange?: (_index: number) => void;
+  /** Called when a viewer resolves a real location (e.g. a PDF page). */
   onLocationResolved?: (_chunkId: string, _label: string) => void;
+  /**
+   * The message whose citations these are.
+   *
+   * What lets a web article mark the passages the answer's own sentences match.
+   * Absent when the reader was opened from somewhere with no answer behind it —
+   * the Library, Compare, the reference inbox — and then nothing is marked.
+   */
   ownerKey?: string;
+  /** Citation-bearing text for surfaces outside a chat message. */
   citationContent?: string;
+  /** Which of the answer's marks for this source was clicked, if one was. */
   occurrence?: number | null;
+  /** The reader at its largest. Owned by the surface, which changes size for it. */
   isFocused?: boolean;
+  /** Omit to leave the expand toggle out (the full-screen dialog has nothing to expand into). */
   onToggleFocus?: () => void;
+  /**
+   * Omit to leave the minimize button out. The overlay sheet tucks itself down
+   * to a pill in the corner so the page underneath is fully readable; the
+   * docked pane and the full-screen dialog have nothing to minimize into.
+   */
   onMinimize?: () => void;
 }
 
@@ -85,6 +121,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onMinimize,
 }) => {
   const navigate = useNavigate();
+  /** The marked passage the web article has in view, if it has one. */
   const [activePassage, setActivePassage] = useState<string | null>(null);
   const isCompact = presentation !== 'dialog';
   const isDocked = presentation === 'docked';
@@ -111,7 +148,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const externalSourceUrl = getSourceExternalUrl(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
   const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
-  // Local HTML files are rendered directly via sandboxed viewer rather than as web text citations.
+  // An HTML file on disk is a page to render, not a web citation to read as
+  // text: the sandboxed, theme-aware HTML viewer reads and shows it.
   const isLocalHtmlFile =
     mimeType === 'text/html' &&
     sourcePreviewKind === 'local-file' &&
@@ -129,19 +167,26 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const isDocx =
     mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     Boolean(source.filePath?.toLowerCase().endsWith('.docx'));
-  // Audio is binary: avoid UTF-8 text parsing in useFileContent.
+  // Audio is binary: without this, useFileContent reads the mp3 as UTF-8,
+  // errors, and the generic error branch short-circuits before the audio
+  // branch in renderViewer.
   const isBinaryPreview =
     mimeType === 'application/pdf' ||
     mimeType.startsWith('image/') ||
     mimeType.startsWith('audio/') ||
     isDocx;
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
+  /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  // A frozen copy belongs to a conversation, so the Page view needs one.
   const snapshotConversationId = showsWebArticle && openableUrl
     ? (source.conversationId ?? activeConversationId ?? '')
     : null;
   const snapshotUrl = showsWebArticle ? openableUrl : null;
   const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
+  // The article view scrolls itself and marks its own passages, so it is left
+  // alone like the other embedded viewers: an outer scroller and the block
+  // highlighter would both be fighting it.
   const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || showsWebArticle || isLocalHtmlFile;
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source.filePath ?? ''));
 
@@ -152,7 +197,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isLocalHtmlFile &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
-  // Fall back to cited path if resolving the document path fails.
+  // Citation metadata can retain the path from when it was indexed. A stable
+  // document ID is authoritative when the file has moved; a failed lookup
+  // falls back to the cited path.
   const resolvesFromDocument = shouldResolveDocumentPath && !isHttpUrl(source.filePath);
   const documentPathQuery = useQuery({
     queryKey: readingKeys.documentPath(source.documentId ?? ''),
@@ -203,6 +250,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const locatorChunkId = initialLocator?.chunkId;
   const locatorText = initialLocator?.text;
 
+  // A new citation is a new locate attempt; carrying the old tier or page
+  // label over would describe the previous passage.
   useEffect(() => {
     setMatchTier('exact');
     setResolvedLabel(undefined);
@@ -240,7 +289,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         console.error('No URL available for external web source');
         return;
       }
-      // Use text fragment if an active passage is in view.
+      // The browser can find the passage too: a text fragment lands the reader
+      // on the same sentences, highlighted, instead of the top of the article.
       const target = activePassage ? textFragmentUrl(openableUrl, activePassage) : openableUrl;
       try {
         await openExternal(target);
@@ -372,6 +422,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   return (
     <>
+      {/* Header */}
       <SourceReaderHeader
         isDocked={isDocked}
         title={sanitizedFileName}
@@ -382,11 +433,20 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         onClose={onClose}
       />
 
+      {/* Content */}
       <div
         className="source-reader-body flex min-h-0 flex-1"
+        // Where the citation rail goes. The compact forms stack it under the
+        // viewer until the reader is expanded; the full dialog always has room
+        // for it beside.
         data-rail={isCompact ? (isFocused ? 'beside' : 'stacked') : undefined}
       >
         <div ref={viewerColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/*
+            How well we found the passage belongs beside the passage, not in
+            the rail: the rail is `lg:flex` and this admission has to survive
+            below 1024px.
+          */}
           {matchNotice && (
             <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
               {matchNotice}
@@ -399,6 +459,11 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
                 : 'min-h-0 flex-1 overflow-auto p-7'
             }
           >
+            {/*
+              Only the text-ish viewers are wrapped: the PDF resolves its own
+              page and marks its own text layer, and an image has no text to
+              locate.
+            */}
             {initialLocator && !usesEmbeddedViewer ? (
               <PassageHighlighter locator={initialLocator} onMatch={setMatchTier}>
                 {renderViewer()}
@@ -432,6 +497,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         onAskAbout={handleAskAbout}
       />}
 
+      {/* Footer */}
       <SourceReaderFooter
         canShowInFolder={canShowInFolder}
         onShowInFolder={handleShowInFolder}

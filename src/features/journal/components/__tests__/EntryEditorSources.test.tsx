@@ -8,8 +8,11 @@ import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 
 
 vi.mock('@/components/TiptapEditor', () => ({
-  TiptapEditor: ({ onCitationClick }: { onCitationClick?: (number: number, occurrence: number) => void }) => (
-    <button type="button" onClick={() => onCitationClick?.(2, 1)}>Inline citation [2]</button>
+  TiptapEditor: ({ onCitationClick, ariaLabel }: { onCitationClick?: (number: number, occurrence: number) => void; ariaLabel?: string }) => (
+    <>
+      <div role="textbox" aria-label={ariaLabel} />
+      <button type="button" onClick={() => onCitationClick?.(2, 1)}>Inline citation [2]</button>
+    </>
   ),
 }));
 vi.mock('@/features/journal/components/EntryHeader', () => ({ EntryHeader: () => <div>Page header</div> }));
@@ -64,6 +67,11 @@ function renderEditor(sources = [source]) {
 describe('EntryEditor source citations', () => {
   beforeEach(() => {
     useChatReaderStore.setState({ session: null });
+  });
+
+  it('names the writing surface so it can be found and announced', () => {
+    renderEditor();
+    expect(screen.getByRole('textbox', { name: 'Journal entry' })).toBeInTheDocument();
   });
 
   it('opens the nested cited passage from Sources and the clicked inline citation with its occurrence', () => {

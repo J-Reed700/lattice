@@ -49,7 +49,7 @@ impl LearningPracticeRepository {
             ));
         }
         let mut source_ids = Vec::<String>::new();
-        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_ids_json FROM learning_questions WHERE lesson_id=?").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).await.map_err(db)? {
+        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_version_ids_json AS source_ids_json FROM learning_assessment_candidates WHERE lesson_id=? AND origin IN ('lesson','migrated')").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).await.map_err(db)? {
             let ids:Vec<String>=decode(row.get("source_ids_json"))?; source_ids.extend(ids);
         }
         source_ids.sort();

@@ -1,4 +1,11 @@
 
+/**
+ * Settings API Types
+ *
+ * Type definitions for application settings and configuration.
+ * These types match the Rust backend structures from commands/settings.rs
+ */
+
 export type AppSettings = import('../../lib/bindings').SettingsDto;
 
 /**

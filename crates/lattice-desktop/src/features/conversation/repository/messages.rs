@@ -96,7 +96,18 @@ impl ConversationRepository {
             status: "completed".into(),
         })
     }
-    /// Add a message with a specific status (for two-phase commit).
+    /// Add a message with a specific status (for two-phase commit)
+    ///
+    /// # Arguments
+    /// * `conversation_id` - Conversation ID
+    /// * `role` - Message role (User, Assistant, System)
+    /// * `content` - Message content
+    /// * `tokens` - Token count
+    /// * `metadata` - Optional metadata JSON string
+    /// * `status` - Message status ('pending', 'completed', 'failed')
+    ///
+    /// # Returns
+    /// Created message entity with specified status
     pub async fn add_message_with_status_repo(
         &self,
         conversation_id: &str,
@@ -110,7 +121,14 @@ impl ConversationRepository {
             .await
     }
 
-    /// Update the status of a message (for two-phase commit).
+    /// Update the status of a message (for two-phase commit)
+    ///
+    /// # Arguments
+    /// * `message_id` - ID of the message to update
+    /// * `status` - New status ('pending', 'completed', 'failed')
+    ///
+    /// # Returns
+    /// Unit result or error if message not found
     pub async fn update_message_status_repo(&self, message_id: &str, status: &str) -> Result<()> {
         self.update_message_status(message_id, status).await
     }
@@ -189,7 +207,21 @@ impl ConversationRepository {
 
     /// Add a message with a specific status (for two-phase commit).
     ///
-    /// Add a message with a specific status ('pending', 'completed', 'failed').
+    /// This method supports the two-phase commit pattern for chat operations:
+    /// 1. Create message with 'pending' status
+    /// 2. Attempt operation (e.g., LLM generation)
+    /// 3. Update status to 'completed' or 'failed' based on outcome
+    ///
+    /// # Arguments
+    /// * `conversation_id` - Conversation ID
+    /// * `role` - Message role (User, Assistant, System)
+    /// * `content` - Message content
+    /// * `tokens` - Token count
+    /// * `metadata` - Optional JSON metadata
+    /// * `status` - Message status ('pending', 'completed', 'failed')
+    ///
+    /// # Returns
+    /// Created message entity with specified status
     pub async fn add_message_with_status(
         &self,
         conversation_id: &str,
@@ -264,6 +296,17 @@ impl ConversationRepository {
     }
 
     /// Update the status of a message.
+    ///
+    /// Used in two-phase commit to mark messages as 'completed' or 'failed'
+    /// after the operation completes.
+    ///
+    /// # Arguments
+    /// * `message_id` - ID of the message to update
+    /// * `status` - New status ('pending', 'completed', 'failed')
+    ///
+    /// # Errors
+    /// - `AppError::NotFound` if message doesn't exist
+    /// - `AppError::Database` if update fails
     pub async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 

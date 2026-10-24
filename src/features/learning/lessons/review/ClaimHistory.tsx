@@ -1,7 +1,7 @@
 import { actorLabel, describeEvent } from '@/features/learning/lessons/review/claimReviewPresentation';
 import type { ClaimEventDto } from '@/lib/bindings';
 
-/** The claim's append-only audit trail , oldest first. */
+/** The claim's append-only audit trail (§5.2), oldest first. */
 export function ClaimHistory({ history }: { history: ClaimEventDto[] }) {
   if (history.length === 0) return <p className="text-xs text-text-muted">Nothing has been recorded for this claim yet.</p>;
   return (

@@ -57,7 +57,7 @@ interface MessageActionsProps {
   tangentSource?: TangentReplySource;
 }
 
-// : low contrast and full opacity always. Hiding the
+// CHAT-POLISH-COMPONENTS §5: low contrast and full opacity always. Hiding the
 // verbs until hover teaches nobody they exist and strands anyone on a keyboard.
 const FOCUS_CLASS =
   'rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]';

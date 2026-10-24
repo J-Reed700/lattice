@@ -18,7 +18,8 @@
 //!   nothing has not ranked; its top score is then no more trustworthy than an
 //!   RRF rank, so we fall back to the no-reranker rule.
 //! * **Lexical term coverage**: the fraction of the planner's informative query
-//!   terms that appear anywhere in the top passages. This is the signal that
+//!   terms that appear anywhere in the passages that will reach the answer —
+//!   the first `evidence_depth` of the ranking. This is the signal that
 //!   catches the real failure mode — a confident ranking over passages that
 //!   simply never mention what was asked about.
 
@@ -30,14 +31,12 @@ use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 use super::corpus_plan::CorpusSearchPlan;
 use super::{select_informative_terms, tokenize_keyword_terms, tokenize_overlap_terms};
 
-/// How many ranked passages the coverage probe reads, and the window the
-/// top1-minus-topN spread is measured over.
+/// The window the top1-minus-topN spread is measured over.
 pub(super) const COVERAGE_TOP_N: usize = 5;
 
-/// Coverage can use a little more of the evidence that will reach the answer
-/// than the five-result score-spread probe. A relevant sixth passage should
-/// not trigger a retry merely because four stronger passages share a title.
-const TERM_COVERAGE_TOP_N: usize = 10;
+/// The shortest shared stem that counts as one word in two forms. Shorter,
+/// and a prefix is a coincidence of spelling rather than a common root.
+const MIN_STEM_CHARS: usize = 4;
 
 /// Planner queries are short by construction (at most three, 24 words each).
 /// Coverage over more terms than this measures phrasing, not topicality.
@@ -108,12 +107,14 @@ impl Default for SufficiencyVerdict {
 ///
 /// `reranked` must be true only when the cross-encoder actually rescored the
 /// candidates. Passing true when it did not would threshold RRF ranks as if
-/// they were relevance probabilities, which they are not.
+/// they were relevance probabilities, which they are not. `evidence_depth` is
+/// how many of `results` reach the answer; coverage reads exactly those.
 pub(super) fn assess_sufficiency(
     results: &[SearchResultDto],
     plan: &CorpusSearchPlan,
     tuning: &RetrievalTuningSettingsDto,
     reranked: bool,
+    evidence_depth: usize,
 ) -> SufficiencyVerdict {
     if results.is_empty() {
         return SufficiencyVerdict {
@@ -124,22 +125,17 @@ pub(super) fn assess_sufficiency(
     }
 
     let (top_score, spread) = score_summary(results);
-    let term_coverage = term_coverage(results, plan);
-
-    // Ordered reading is deliberate evidence selection — the planner chose the
-    // introduction and first chapter on purpose. Replanning it into a keyword
-    // hunt would undo the choice, so such a plan is sufficient by construction.
-    if plan.start_at_beginning {
-        return SufficiencyVerdict {
-            sufficient: true,
-            top_score,
-            spread,
-            term_coverage,
-            reasons: vec![reason::ORDERED_READING],
-        };
-    }
+    let term_coverage = term_coverage(results, plan, evidence_depth);
 
     let mut reasons = Vec::new();
+    // Reading in order is the planner's judgement of the request, and a small
+    // planner sets it on questions whose answer sits deep in the document. It
+    // is recorded, not obeyed: coverage judges this plan like any other, and
+    // a corrective plan never reads in order, so a misread request is still
+    // searched for what it asked.
+    if plan.start_at_beginning {
+        reasons.push(reason::ORDERED_READING);
+    }
     // A reranker that separated nothing has not ranked. Its top score carries
     // no more information than the RRF rank underneath it.
     let flat = reranked && results.len() >= COVERAGE_TOP_N && spread <= FLAT_SPREAD_EPSILON;
@@ -191,47 +187,40 @@ fn score_summary(results: &[SearchResultDto]) -> (f32, f32) {
     (top, top - tail)
 }
 
-/// Fraction of the plan's informative terms that appear in the top passages.
+fn term_matches_set(term: &str, set: &HashSet<String>) -> bool {
+    set.iter()
+        .any(|candidate| terms_share_a_stem(term, candidate))
+}
+
+/// One word in two forms: equal, or one a prefix of the other with the shorter
+/// at least `MIN_STEM_CHARS` long. That covers suffixing in any script
+/// (`monitor`/`monitoring`, `vertrag`/`vertrages`, `célula`/`células`) and
+/// rejects a shared prefix that is not a whole word (`contract`/`contrary`).
+/// A stem that changes its own spelling (`policy`/`policies`) does not match;
+/// that can only cost one corrective pass, never a wrong answer.
+fn terms_share_a_stem(left: &str, right: &str) -> bool {
+    let (shorter, longer) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    shorter == longer || (shorter.chars().count() >= MIN_STEM_CHARS && longer.starts_with(shorter))
+}
+
+/// Fraction of the plan's informative terms that appear in the first
+/// `evidence_depth` passages, for the query that covers the most.
 ///
 /// A plan with no informative terms (a bare acronym, a section number) cannot
 /// fail coverage — there is nothing to miss, and reporting 0.0 would send every
 /// such turn into a pointless retry.
-fn term_matches_set(term: &str, set: &HashSet<String>) -> bool {
-    set.iter()
-        .any(|candidate| terms_are_simple_inflections(term, candidate))
-}
-
-/// Match common grammatical endings without treating an arbitrary shared
-/// prefix as evidence. The old five-character prefix comparison, for example,
-/// could call `contract` and `contrary` the same term.
-fn terms_are_simple_inflections(left: &str, right: &str) -> bool {
-    fn extends_with_inflection(base: &str, extended: &str) -> bool {
-        extended
-            .strip_prefix(base)
-            .is_some_and(|suffix| matches!(suffix, "s" | "es" | "ed" | "ing"))
-    }
-
-    fn y_plural_matches(singular: &str, plural: &str) -> bool {
-        singular
-            .strip_suffix('y')
-            .zip(plural.strip_suffix("ies"))
-            .is_some_and(|(singular_stem, plural_stem)| singular_stem == plural_stem)
-    }
-
-    left == right
-        || (left.is_ascii()
-            && right.is_ascii()
-            && left.len().min(right.len()) >= 4
-            && (extends_with_inflection(left, right)
-                || extends_with_inflection(right, left)
-                || y_plural_matches(left, right)
-                || y_plural_matches(right, left)))
-}
-
-fn term_coverage(results: &[SearchResultDto], plan: &CorpusSearchPlan) -> f32 {
+fn term_coverage(
+    results: &[SearchResultDto],
+    plan: &CorpusSearchPlan,
+    evidence_depth: usize,
+) -> f32 {
     let passage_terms: HashSet<String> = results
         .iter()
-        .take(TERM_COVERAGE_TOP_N)
+        .take(evidence_depth)
         .flat_map(|result| {
             let section = result
                 .metadata
@@ -297,7 +286,7 @@ mod tests {
 
     #[test]
     fn empty_results_are_insufficient() {
-        let verdict = assess_sufficiency(&[], &plan("noncompete clauses"), &tuning(), true);
+        let verdict = assess_sufficiency(&[], &plan("noncompete clauses"), &tuning(), true, 0);
 
         assert!(!verdict.sufficient);
         assert_eq!(verdict.reasons, [reason::NO_RESULTS]);
@@ -317,7 +306,13 @@ mod tests {
             result("c", 0.30, "Unrelated appendix."),
         ];
 
-        let verdict = assess_sufficiency(&results, &plan("noncompete clauses"), &tuning(), true);
+        let verdict = assess_sufficiency(
+            &results,
+            &plan("noncompete clauses"),
+            &tuning(),
+            true,
+            results.len(),
+        );
 
         assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
         assert_eq!(verdict.top_score, 0.82);
@@ -338,6 +333,7 @@ mod tests {
             &plan("noncompete clauses garden leave"),
             &tuning(),
             true,
+            results.len(),
         );
 
         assert!(!verdict.sufficient);
@@ -354,13 +350,25 @@ mod tests {
             result("c", 0.07, "Clauses appendix."),
         ];
 
-        let reranked = assess_sufficiency(&results, &plan("noncompete clauses"), &tuning(), true);
+        let reranked = assess_sufficiency(
+            &results,
+            &plan("noncompete clauses"),
+            &tuning(),
+            true,
+            results.len(),
+        );
         assert!(!reranked.sufficient);
         assert!(reranked.reasons.contains(&reason::LOW_TOP_SCORE));
 
         // The same scores are RRF ranks when no cross-encoder ran, and ranks
         // are not probabilities. Coverage and count carry the verdict instead.
-        let fused = assess_sufficiency(&results, &plan("noncompete clauses"), &tuning(), false);
+        let fused = assess_sufficiency(
+            &results,
+            &plan("noncompete clauses"),
+            &tuning(),
+            false,
+            results.len(),
+        );
         assert!(fused.sufficient, "reasons: {:?}", fused.reasons);
         assert!(fused.reasons.contains(&reason::NO_RERANKER));
     }
@@ -373,7 +381,13 @@ mod tests {
             "Noncompete clauses bind the employee after termination.",
         )];
 
-        let verdict = assess_sufficiency(&results, &plan("noncompete clauses"), &tuning(), false);
+        let verdict = assess_sufficiency(
+            &results,
+            &plan("noncompete clauses"),
+            &tuning(),
+            false,
+            results.len(),
+        );
 
         assert!(!verdict.sufficient);
         assert!(verdict.reasons.contains(&reason::TOO_FEW_RESULTS));
@@ -391,7 +405,13 @@ mod tests {
             })
             .collect();
 
-        let verdict = assess_sufficiency(&results, &plan("noncompete clauses"), &tuning(), true);
+        let verdict = assess_sufficiency(
+            &results,
+            &plan("noncompete clauses"),
+            &tuning(),
+            true,
+            results.len(),
+        );
 
         assert!(verdict.reasons.contains(&reason::FLAT_RERANK_SPREAD));
         assert!(!verdict.reasons.contains(&reason::LOW_TOP_SCORE));
@@ -409,24 +429,97 @@ mod tests {
             result("other", 0.15, "Other material."),
         ];
 
-        let verdict = assess_sufficiency(&results, &plan("body evidence"), &tuning(), true);
+        let verdict = assess_sufficiency(
+            &results,
+            &plan("body evidence"),
+            &tuning(),
+            true,
+            results.len(),
+        );
 
         assert_eq!(verdict.top_score, 0.96);
         assert!((verdict.spread - 0.82).abs() < 1e-5);
         assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
     }
 
+    fn ordered(query: &str) -> CorpusSearchPlan {
+        CorpusSearchPlan {
+            opening_document_ids: vec!["doc".to_string()],
+            start_at_beginning: true,
+            ..plan(query)
+        }
+    }
+
+    fn passages(contents: &[&str]) -> Vec<SearchResultDto> {
+        contents
+            .iter()
+            .enumerate()
+            .map(|(i, content)| result(&format!("r{i}"), 0.5, content))
+            .collect()
+    }
+
+    /// Reading in order is recorded, never a verdict: openings that never
+    /// mention what was asked send the turn to the corrective pass, whose plan
+    /// searches instead of reading.
     #[test]
-    fn ordered_reading_plans_are_never_corrected() {
-        let results = vec![result("a", 0.0, "Front matter.")];
-        let mut ordered = plan("introduction foundations overview");
-        ordered.start_at_beginning = true;
-        ordered.opening_document_ids = vec!["intro".to_string()];
+    fn an_ordered_reading_plan_that_misses_the_question_is_corrected() {
+        for (query, openings) in [
+            (
+                "división celular mitosis",
+                [
+                    "Capítulo uno: la célula y sus orgánulos.",
+                    "La membrana plasmática regula el transporte.",
+                    "El núcleo guarda el material genético.",
+                ],
+            ),
+            (
+                "Lacrimosa Tonart",
+                [
+                    "Einleitung: die Entstehung des Requiems.",
+                    "Mozart erhielt den Auftrag anonym.",
+                    "Süßmayr vollendete die Partitur.",
+                ],
+            ),
+        ] {
+            let results = passages(&openings);
 
-        let verdict = assess_sufficiency(&results, &ordered, &tuning(), false);
+            let verdict =
+                assess_sufficiency(&results, &ordered(query), &tuning(), false, results.len());
 
-        assert!(verdict.sufficient);
-        assert_eq!(verdict.reasons, [reason::ORDERED_READING]);
+            assert!(!verdict.sufficient, "{query}: {:?}", verdict.reasons);
+            assert!(verdict.reasons.contains(&reason::LOW_TERM_COVERAGE));
+            assert!(verdict.reasons.contains(&reason::ORDERED_READING));
+        }
+    }
+
+    #[test]
+    fn an_ordered_reading_plan_that_covers_the_question_stands() {
+        for (query, openings) in [
+            (
+                "división celular mitosis",
+                [
+                    "Capítulo uno: la célula y sus orgánulos.",
+                    "La membrana plasmática regula el transporte.",
+                    "La división celular por mitosis produce dos células hijas.",
+                ],
+            ),
+            (
+                "Lacrimosa Tonart",
+                [
+                    "Einleitung: die Entstehung des Requiems.",
+                    "Mozart erhielt den Auftrag anonym.",
+                    "Das Lacrimosa steht in d-Moll, der Tonart des ganzen Requiems.",
+                ],
+            ),
+        ] {
+            let results = passages(&openings);
+
+            let verdict =
+                assess_sufficiency(&results, &ordered(query), &tuning(), false, results.len());
+
+            assert!(verdict.sufficient, "{query}: {:?}", verdict.reasons);
+            assert!(verdict.reasons.contains(&reason::ORDERED_READING));
+        }
     }
 
     #[test]
@@ -437,22 +530,56 @@ mod tests {
             result("c", 0.4, "Still unrelated."),
         ];
 
-        let verdict = assess_sufficiency(&results, &plan("706.07(a)"), &tuning(), true);
+        let verdict =
+            assess_sufficiency(&results, &plan("706.07(a)"), &tuning(), true, results.len());
 
         assert_eq!(verdict.term_coverage, 1.0);
         assert!(verdict.sufficient, "reasons: {:?}", verdict.reasons);
     }
 
     #[test]
-    fn coverage_matches_inflections_but_not_arbitrary_shared_prefixes() {
+    fn coverage_matches_a_suffixed_form_in_any_script_but_not_a_shared_prefix() {
         let terms = HashSet::from([
             "monitoring".to_string(),
+            "vertrages".to_string(),
+            "células".to_string(),
             "policies".to_string(),
             "contrary".to_string(),
         ]);
 
         assert!(term_matches_set("monitor", &terms));
-        assert!(term_matches_set("policy", &terms));
+        assert!(term_matches_set("vertrag", &terms));
+        assert!(term_matches_set("célula", &terms));
         assert!(!term_matches_set("contract", &terms));
+        // A stem that changes its own spelling is a known miss: at worst one
+        // corrective pass, never a wrong answer.
+        assert!(!term_matches_set("policy", &terms));
+    }
+
+    #[test]
+    fn coverage_reads_exactly_the_passages_that_reach_the_answer() {
+        let mut results: Vec<_> = (0..5)
+            .map(|i| {
+                result(
+                    &format!("r{i}"),
+                    0.5,
+                    "La fotosíntesis ocurre en el cloroplasto.",
+                )
+            })
+            .collect();
+        results.push(result(
+            "r5",
+            0.4,
+            "La división celular por mitosis produce dos células hijas.",
+        ));
+        let question = plan("división celular mitosis");
+
+        let shallow = assess_sufficiency(&results, &question, &tuning(), true, 3);
+        let deep = assess_sufficiency(&results, &question, &tuning(), true, 6);
+
+        assert_eq!(shallow.term_coverage, 0.0);
+        assert!(shallow.reasons.contains(&reason::LOW_TERM_COVERAGE));
+        assert_eq!(deep.term_coverage, 1.0);
+        assert!(!deep.reasons.contains(&reason::LOW_TERM_COVERAGE));
     }
 }

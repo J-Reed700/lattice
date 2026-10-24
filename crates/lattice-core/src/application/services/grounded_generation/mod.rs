@@ -10,6 +10,10 @@
 //! evidence, do not fit is refused with a typed [`PromptBudgetExceeded`], and
 //! evidence that selection left out is reported by id rather than dropped
 //! quietly.
+//!
+//! [`measure`] counts a request exactly as it would be sent, with the
+//! backend's own tokenizer where it has one, so a caller can fit its material
+//! to the window before sending rather than learn from a refusal.
 
 use std::time::Duration;
 
@@ -17,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+    TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
@@ -136,6 +141,7 @@ pub struct Streaming<'a> {
 }
 
 /// Everything one grounded call needs.
+#[derive(Debug, Clone)]
 pub struct GroundedRequest {
     /// The system message.
     pub instructions: String,
@@ -427,18 +433,117 @@ pub async fn generate_streaming(
     run(llm, request, Some(streaming)).await
 }
 
-async fn run(
+/// What a request measures against the window: exact where the backend can
+/// count, the planner's estimate otherwise. Never an accounting error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Measured {
+    /// The prompt as sent — the system message, the history and the rendered
+    /// user message — with the chat template's framing.
+    pub prompt_tokens: usize,
+    /// Whether `prompt_tokens` is the backend's own count: it can count, and
+    /// the count succeeded.
+    pub exact: bool,
+    /// The planner's count of the same request: instructions, task, history
+    /// and the evidence carried.
+    pub estimated: usize,
+    /// The input the planner allows: the window less the answer's
+    /// reservation and the safety margin.
+    pub allowed: usize,
+}
+
+impl Measured {
+    /// Whether the prompt fits what the planner allows. One that does still
+    /// leaves the answer's reservation and the margin below the window, so no
+    /// gate that refuses a prompt filling the window refuses it.
+    pub fn fits(&self) -> bool {
+        self.prompt_tokens <= self.allowed
+    }
+
+    /// Tokens over what the planner allows; zero when the prompt fits.
+    pub fn over(&self) -> usize {
+        self.prompt_tokens.saturating_sub(self.allowed)
+    }
+}
+
+/// [`measure`] by the planner's estimate alone, with no call to the backend:
+/// for a caller sizing material before it counts.
+///
+/// # Errors
+///
+/// As [`measure`].
+pub fn estimate(
     llm: &dyn LLMPort,
-    request: GroundedRequest,
-    streaming: Option<&Streaming<'_>>,
-) -> Result<GroundedOutput, GroundedGenerationError> {
+    request: &GroundedRequest,
+) -> Result<Measured, GroundedGenerationError> {
+    Ok(prepare(llm, request)?.estimated())
+}
+
+/// `request` measured as [`generate`] would send it: the same evidence
+/// selected and the same messages assembled, counted once with the backend's
+/// tokenizer, plus the chat template's framing. A backend that cannot count,
+/// or whose count fails, is measured by the planner's estimate.
+///
+/// For a decision that is final: it may cost a round trip to the server.
+///
+/// # Errors
+///
+/// [`GroundedGenerationError::Budget`] when the planner refuses the request
+/// as [`generate`] would. A count that fails is never an error.
+pub async fn measure(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> Result<Measured, GroundedGenerationError> {
+    let prepared = prepare(llm, request)?;
+    let estimated = prepared.estimated();
+    if !llm.counts_tokens_exactly() {
+        return Ok(estimated);
+    }
+    let input = assemble(request, &carried(&request.evidence, &prepared.kept));
+    let framing = TEMPLATE_TOKENS_PER_MESSAGE * input.len() + TEMPLATE_TOKENS_FOR_ANSWER;
+    match llm.count_tokens_exact(&prompt_text(&input)).await {
+        Ok(tokens) => Ok(Measured {
+            prompt_tokens: tokens + framing,
+            exact: true,
+            ..estimated
+        }),
+        Err(error) => {
+            tracing::debug!(%error, "The backend could not count the prompt; measuring by the estimate");
+            Ok(estimated)
+        }
+    }
+}
+
+/// A request planned and its evidence chosen: what [`run`] sends and
+/// [`measure`] counts.
+struct Prepared {
+    allocation: BudgetAllocation,
+    accounting: ContextAccounting,
+    /// Indices of the passages carried, in input order.
+    kept: Vec<usize>,
+}
+
+impl Prepared {
+    fn estimated(&self) -> Measured {
+        Measured {
+            prompt_tokens: self.accounting.total_input,
+            exact: false,
+            estimated: self.accounting.total_input,
+            allowed: self.allocation.input_budget,
+        }
+    }
+}
+
+fn prepare(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> Result<Prepared, GroundedGenerationError> {
     let Planned {
         allocation,
         mut budget,
         instruction_tokens,
         task_tokens,
         history_tokens,
-    } = plan(llm, &request)?;
+    } = plan(llm, request)?;
 
     let costs: Vec<usize> = request
         .evidence
@@ -461,10 +566,6 @@ async fn run(
         .into());
     }
 
-    let carried: Vec<&EvidencePassage> = kept
-        .iter()
-        .filter_map(|index| request.evidence.get(*index))
-        .collect();
     let mut accounting = ContextAccounting::from_allocation(&allocation, llm.model_name());
     accounting.fixed_policy = instruction_tokens;
     accounting.current_input = task_tokens;
@@ -479,9 +580,26 @@ async fn run(
         .filter(|(index, _)| !kept.contains(index))
         .map(|(_, passage)| format!("evidence:{}", passage.id))
         .collect();
+    Ok(Prepared {
+        allocation,
+        accounting,
+        kept,
+    })
+}
 
+/// The passages at `kept`, in input order.
+fn carried<'a>(evidence: &'a [EvidencePassage], kept: &[usize]) -> Vec<&'a EvidencePassage> {
+    kept.iter()
+        .filter_map(|index| evidence.get(*index))
+        .collect()
+}
+
+/// The messages `request` sends with `carried`: its instructions, its
+/// history, then the user message. One assembly for what is sent and what is
+/// measured, so the two cannot drift apart.
+fn assemble(request: &GroundedRequest, carried: &[&EvidencePassage]) -> Vec<CompletionInput> {
     let mut input = Vec::new();
-    if instruction_tokens > 0 {
+    if !request.instructions.trim().is_empty() {
         input.push(CompletionInput::Message {
             role: "system".into(),
             content: request.instructions.clone(),
@@ -493,8 +611,37 @@ async fn run(
     }));
     input.push(CompletionInput::Message {
         role: "user".into(),
-        content: render_user_message(&request, &carried),
+        content: render_user_message(request, carried),
     });
+    input
+}
+
+/// The text a tokenizer reads in `input`: each message's role and content,
+/// joined by newlines, as the scheduler renders a request to count it.
+/// [`assemble`] writes nothing but messages.
+fn prompt_text(input: &[CompletionInput]) -> String {
+    input
+        .iter()
+        .flat_map(|item| match item {
+            CompletionInput::Message { role, content } => vec![role.as_str(), content.as_str()],
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn run(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    streaming: Option<&Streaming<'_>>,
+) -> Result<GroundedOutput, GroundedGenerationError> {
+    let Prepared {
+        allocation,
+        accounting,
+        kept,
+    } = prepare(llm, &request)?;
+    let carried = carried(&request.evidence, &kept);
+    let input = assemble(&request, &carried);
 
     // Room the input leaves unused goes to the answer only when asked: the
     // margin stays reserved either way.

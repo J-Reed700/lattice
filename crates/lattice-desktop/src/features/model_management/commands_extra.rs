@@ -1,6 +1,14 @@
 //! Model Management Commands
 //!
 //! Commands for managing downloaded models and chat model selection.
+//!
+//! # Gateway Pattern
+//!
+//! All commands are routed through the Gateway pattern which provides async dispatch.
+//! The `*_impl` functions are the async implementations called by the gateway.
+//!
+//! Async functions store their state on the heap (in Future objects), not the stack.
+//! Deep async call chains don't cause stack overflow - that's the whole point of async.
 
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,

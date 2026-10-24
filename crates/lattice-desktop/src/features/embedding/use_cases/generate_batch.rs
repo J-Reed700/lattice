@@ -1,4 +1,33 @@
-//! Generates vector embeddings for multiple text inputs.
+//! # Generate Batch Embeddings Use Case
+//!
+//! Generates vector embeddings for multiple text inputs efficiently.
+//!
+//! This use case orchestrates:
+//! 1. Batch validation (size limits)
+//! 2. Individual text validation (non-empty, length limits)
+//! 3. Batch embedding generation (optimized for GPU/remote APIs)
+//! 4. Order preservation (output matches input order)
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use lattice_core::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
+//! use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
+//!
+//! # async fn example(use_case: GenerateBatchEmbeddingsUseCase) -> Result<(), Box<dyn std::error::Error>> {
+//! let request = GenerateBatchEmbeddingsRequestDto {
+//!     texts: vec![
+//!         "First document".to_string(),
+//!         "Second document".to_string(),
+//!         "Third document".to_string(),
+//!     ],
+//! };
+//!
+//! let response = use_case.execute(request).await?;
+//! println!("Generated {} embeddings", response.embeddings.len());
+//! # Ok(())
+//! # }
+//! ```
 
 use std::sync::Arc;
 
@@ -18,16 +47,74 @@ const MIN_BATCH_SIZE: usize = 1;
 const MAX_TEXT_LENGTH: usize = 10_000;
 
 /// Generate batch embeddings use case.
+///
+/// Generates embeddings for multiple texts in a single batch:
+/// - More efficient than repeated single calls
+/// - Optimized for GPU/remote API batching
+/// - Preserves input order
+///
+/// ## Dependencies
+///
+/// - `EmbeddingPort`: Handles batch embedding generation
 pub struct GenerateBatchEmbeddingsUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
 }
 
 impl GenerateBatchEmbeddingsUseCase {
+    /// Create a new generate batch embeddings use case.
+    ///
+    /// # Arguments
+    ///
+    /// * `embedding_service` - Service for embedding generation
     pub fn new(embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self { embedding_service }
     }
 
     /// Execute batch embedding generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Request containing texts to embed (1-100 items)
+    ///
+    /// # Returns
+    ///
+    /// Response with embeddings in the same order as input
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Batch is empty
+    /// - Batch exceeds max size (100 items)
+    /// - Any text is empty
+    /// - Any text exceeds max length (10,000 characters)
+    /// - Embedding generation fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use lattice_core::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
+    /// # use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
+    /// # async fn example(use_case: GenerateBatchEmbeddingsUseCase) -> Result<(), Box<dyn std::error::Error>> {
+    /// let texts = vec![
+    ///     "Document about machine learning".to_string(),
+    ///     "Article on deep learning".to_string(),
+    ///     "Paper about neural networks".to_string(),
+    /// ];
+    ///
+    /// let request = GenerateBatchEmbeddingsRequestDto { texts };
+    ///
+    /// match use_case.execute(request).await {
+    ///     Ok(response) => {
+    ///         println!("Generated {} embeddings", response.embeddings.len());
+    ///         for (i, emb) in response.embeddings.iter().enumerate() {
+    ///             println!("  Embedding {}: {} dimensions", i, emb.len());
+    ///         }
+    ///     }
+    ///     Err(e) => eprintln!("Failed: {}", e),
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute(
         &self,
         request: GenerateBatchEmbeddingsRequestDto,

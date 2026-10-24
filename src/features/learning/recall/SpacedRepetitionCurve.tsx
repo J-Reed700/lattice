@@ -283,7 +283,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
 
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-sunken">
                   <div
-                    className={cn('h-full transition-all duration-300', tier.bgClass || 'bg-accent')}
+                    className={cn('h-full transition-all duration-300', tier.bgClass)}
                     style={{ width: `${tier.percentage}%` }}
                   />
                 </div>

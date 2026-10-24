@@ -572,6 +572,26 @@ fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
     );
 }
 
+#[test]
+fn stop_sequences_go_in_the_options_only_when_asked_for() {
+    let client = OllamaClient::with_model_and_timeouts(
+        "http://localhost:11434",
+        "qwen3.5",
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let mut request = CompletionRequest {
+        stop: vec!["[5]".into(), "\n5.".into()],
+        ..Default::default()
+    };
+    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    assert_eq!(sent["options"]["stop"], serde_json::json!(["[5]", "\n5."]));
+    request.stop.clear();
+    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    assert!(sent["options"].get("stop").is_none());
+}
+
 fn picture_request() -> CompletionRequest {
     use lattice_core::application::ports::llm_port::ImagePart;
     CompletionRequest {

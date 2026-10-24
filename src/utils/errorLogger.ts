@@ -1,4 +1,11 @@
 import { diagnostics } from './diagnostics';
+/**
+ * Error Logging Utility for Lattice/Lattice Application
+ *
+ * Compatibility facade for the local diagnostics store.
+ * Includes privacy protection and sanitization.
+ */
+
 
 export interface ErrorLogEntry {
   message: string;
@@ -38,6 +45,9 @@ class ErrorLogger {
 
   public clearErrorQueue(): void { diagnostics.clear(); }
 
+  /**
+   * Log a component error (from Error Boundary)
+   */
   public logComponentError(
     error: Error,
     errorInfo: React.ErrorInfo,
@@ -52,6 +62,9 @@ class ErrorLogger {
     });
   }
 
+  /**
+   * Log a network error
+   */
   public logNetworkError(
     error: Error,
     endpoint: string,
@@ -66,6 +79,9 @@ class ErrorLogger {
     });
   }
 
+  /**
+   * Log a database error
+   */
   public logDatabaseError(
     error: Error,
     operation: string,
@@ -80,10 +96,16 @@ class ErrorLogger {
     });
   }
 
+  /**
+   * Export error log for debugging
+   */
   public exportErrorLog(): string {
     return diagnostics.export();
   }
 
+  /**
+   * Download error log as file
+   */
   public downloadErrorLog(): void {
     const log = this.exportErrorLog();
     const blob = new Blob([log], { type: 'application/json' });
@@ -98,6 +120,7 @@ class ErrorLogger {
   }
 }
 
+// Singleton instance
 export const errorLogger = new ErrorLogger();
 
 export const logError = errorLogger.logError.bind(errorLogger);
