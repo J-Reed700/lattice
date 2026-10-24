@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 fn derived_id(seed: &str) -> String {
     let digest = Sha256::digest(seed.as_bytes());
     let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
+    for (slot, byte) in bytes.iter_mut().zip(digest.iter()) {
+        *slot = *byte;
+    }
     uuid::Builder::from_random_bytes(bytes)
         .into_uuid()
         .to_string()

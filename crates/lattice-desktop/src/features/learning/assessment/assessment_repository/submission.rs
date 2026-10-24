@@ -496,6 +496,37 @@ impl LearningAssessmentRepository {
         Ok(())
     }
 
+    /// Queue grading again for the answers still pending after a stopped or
+    /// failed grading job. None when nothing is waiting.
+    pub async fn resume_grading(
+        &self,
+        req: &ResumeLearningQuizGradingRequestDto,
+    ) -> Result<Option<String>> {
+        uuid(&req.operation_id, "operation")?;
+        uuid(&req.program_id, "program")?;
+        uuid(&req.form_id, "form")?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
+            .bind(&req.form_id)
+            .bind(&req.program_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+        if pending == 0 {
+            return Ok(None);
+        }
+        let job = quiz_bank_jobs::queue_grading_in(
+            &mut tx,
+            &req.program_id,
+            &req.form_id,
+            None,
+            &format!("resume:{}", req.operation_id),
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(Some(job))
+    }
+
     pub async fn decide_follow_up(
         &self,
         req: &DecideLearningFollowUpRequestDto,

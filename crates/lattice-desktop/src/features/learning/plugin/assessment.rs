@@ -139,37 +139,17 @@ pub async fn resume_learning_quiz_grading(
     request: ResumeLearningQuizGradingRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningAssessmentFormDto, ApiError> {
-    use crate::features::learning::persistence::db;
     let repo = assessment_repo(&container);
-    let mut tx = container
-        .db_pool()
-        .begin()
+    let Some(job) = repo
+        .resume_grading(&request)
         .await
-        .map_err(db)
-        .map_err(ApiError::from)?;
-    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
-        .bind(&request.form_id)
-        .bind(&request.program_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)
-        .map_err(ApiError::from)?;
-    if pending == 0 {
+        .map_err(ApiError::from)?
+    else {
         return repo
             .get_form(&request.form_id)
             .await
             .map_err(ApiError::from);
-    }
-    let job = crate::features::learning::quiz_bank_jobs::queue_grading_in(
-        &mut tx,
-        &request.program_id,
-        &request.form_id,
-        None,
-        &format!("resume:{}", request.operation_id),
-    )
-    .await
-    .map_err(ApiError::from)?;
-    tx.commit().await.map_err(db).map_err(ApiError::from)?;
+    };
     container.jobs().submitted(&job).await;
     repo.get_form(&request.form_id)
         .await
