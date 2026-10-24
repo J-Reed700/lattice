@@ -360,7 +360,7 @@ class Labels(Fixture):
                                                   "items": list(redrawn.values())})
         quality = g.reason_quality(out)
         self.assertEqual((quality["labelled"], quality["accepted_share"], quality["fails"]), (3, 1 / 3, True))
-        self.assertEqual(quality["fails_because"], ["1 fabricated (bar: at most 0)", "accepted 33% (bar: at least 80%)"])
+        self.assertEqual(quality["fails_because"], ["1 fabricated (bar: at most 0)", "accepted 33% (bar: at least 83%)"])
         lenient = g.reason_quality(out, {"max_fabricated": 1, "min_accepted_share": 0.3})
         self.assertEqual((lenient["fails"], lenient["fails_because"]), (False, []))
         redrawn["bio-wrong"]["human_reason"] = "wrong word"
@@ -383,7 +383,7 @@ class ReasonBar(Fixture):
         with self.assertRaises(SystemExit):
             g.score("test-v1", self.root / "grades.json", self.root / "bad", self.registry, {"min_accepted_share": 2})
         self.assertEqual(g.reason_bar({"reason_bar": {"max_fabricated": 2}}), {"max_fabricated": 2,
-                                                                             "min_accepted_share": 0.8})
+                                                                             "min_accepted_share": 0.83})
         self.assertEqual(g.validate()["quiz-grading-v1"], [])
         committed = g.load_registry()["sets"]["quiz-grading-v1"]
         self.assertEqual(g.reason_bar(committed), g.REASON_BAR)

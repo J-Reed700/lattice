@@ -56,11 +56,11 @@ SEEDS = 3               # section 7.2: across three seeds
 # enough to copy its substance into a retake.
 COPY_NGRAM, COPY_SHARE = 3, 0.5
 EPSILON = 1e-6
-# Section 7.2's predeclared bar on reasons (proposed; the owner confirms it before the baseline runs): no reason a
-# person labels fabricated, and at least 80 % of marked-down answers' reasons accepted. A set may declare its own
+# Section 7.2's predeclared bar on reasons (set by the owner on 2026-10-24, a B or better): no reason a person
+# labels fabricated, and at least 83 % of marked-down answers' reasons accepted. A set may declare its own
 # in sets.json ("reason_bar"), and `score` may override it before any label exists; either way the bar a run is
 # judged by is fixed in its manifest when it is scored, never chosen after the labels are in.
-REASON_BAR = {"max_fabricated": 0, "min_accepted_share": 0.8}
+REASON_BAR = {"max_fabricated": 0, "min_accepted_share": 0.83}
 ALPHA = 0.05
 LABEL_RULE = ("Pass when the answer earns every point it can earn; fail when it should lose any. Set human_points to "
               "the points you would award.")
