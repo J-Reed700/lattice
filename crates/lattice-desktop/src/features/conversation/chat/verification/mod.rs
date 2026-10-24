@@ -34,6 +34,7 @@ mod lexical;
 
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
+pub(super) use self::lexical::cited_labels;
 
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;

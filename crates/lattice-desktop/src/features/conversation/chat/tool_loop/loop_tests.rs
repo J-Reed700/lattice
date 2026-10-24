@@ -266,6 +266,38 @@ async fn run_on(
     rounds: usize,
     request_id: &str,
 ) -> Run {
+    let message = "When did the bridge open?";
+    let turn = Turn {
+        message,
+        sources: Vec::new(),
+    };
+    run_turn(
+        runtime,
+        model,
+        tools,
+        input_budget,
+        rounds,
+        request_id,
+        turn,
+    )
+    .await
+}
+
+/// The turn's message and the numbered sources it shows.
+struct Turn<'a> {
+    message: &'a str,
+    sources: Vec<SourceDto>,
+}
+
+async fn run_turn(
+    runtime: FakeRuntime,
+    model: &Arc<Model>,
+    tools: &[ToolDefinition],
+    input_budget: usize,
+    rounds: usize,
+    request_id: &str,
+    turn: Turn<'_>,
+) -> Run {
     let conv_service: Arc<dyn ConversationServiceTrait> = runtime.conversations.clone();
     let llm: Arc<dyn LLMPort> = model.clone();
     let events: Arc<Mutex<Vec<ChatStreamEventDto>>> = Arc::default();
@@ -281,7 +313,7 @@ async fn run_on(
         excerpt_chars: 300,
         ..ToolOutputSettingsDto::default()
     };
-    let mut sources = Vec::new();
+    let mut sources = turn.sources;
     let mut trace = None;
     let outcome = run_agentic_tool_loop(
         &runtime,
@@ -304,7 +336,7 @@ async fn run_on(
                 },
                 CompletionInput::Message {
                     role: "user".into(),
-                    content: "When did the bridge open?".into(),
+                    content: turn.message.into(),
                 },
             ],
             tools: Some(tools),
@@ -1005,3 +1037,6 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     assert_eq!(result.len(), 1);
     assert!(!result[0].contains("Citable passage"), "{}", result[0]);
 }
+
+#[path = "reading_loop_tests.rs"]
+mod reading_loop_tests;

@@ -23,7 +23,7 @@ use lattice_core::shared::text::{
     capitalised_words, has_digit, normalize_whitespace, padded_lowercase, MONTH_MARKERS,
     NEGATION_MARKERS,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;
 pub(super) const MIN_CLAIM_TOKENS: usize = 5;
@@ -621,6 +621,34 @@ fn extract_sentence_citation_ids(sentence: &str) -> Vec<u32> {
     }
 
     out
+}
+
+/// Every passage label a text cites, read as the claim checker reads them —
+/// a formula's brackets are not labels — and also in the grouped form
+/// `[2, 3]`, which the claim checker leaves as no citation. Asking whether a
+/// passage was used at all, a grouped label is a use.
+pub(in crate::features::conversation::chat) fn cited_labels(text: &str) -> BTreeSet<u32> {
+    let prose: String = split_at_formulas(text)
+        .into_iter()
+        .map(|(piece, formula)| if formula { " " } else { piece })
+        .collect();
+    prose
+        .split('[')
+        .skip(1)
+        .filter_map(|opened| opened.split_once(']'))
+        .filter_map(|(inside, _)| {
+            inside
+                .split(',')
+                .map(|label| {
+                    let label = label.trim();
+                    (!label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit()))
+                        .then(|| label.parse::<u32>().ok())
+                        .flatten()
+                })
+                .collect::<Option<Vec<u32>>>()
+        })
+        .flatten()
+        .collect()
 }
 
 /// Characters per scoring window over a long passage.

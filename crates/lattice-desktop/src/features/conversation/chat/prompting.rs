@@ -1,6 +1,7 @@
 use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
 
+use super::tool_loop::READING_INSTRUCTION;
 use super::SearchFlags;
 
 pub(super) struct PromptMessageBuilder<'a> {
@@ -36,6 +37,9 @@ pub(super) struct PromptMessageBuilder<'a> {
     deep_research_searches: Option<Vec<String>>,
     /// Some of the evidence the turn found was left out to fit the window.
     evidence_cut: bool,
+    /// The message shows numbered passages, which the model reads one by one
+    /// before it answers (see `tool_loop::reading`).
+    reads_passages: bool,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -65,6 +69,7 @@ impl<'a> PromptMessageBuilder<'a> {
             thin_kb_reason: None,
             deep_research_searches: None,
             evidence_cut: false,
+            reads_passages: false,
         }
     }
 
@@ -73,6 +78,13 @@ impl<'a> PromptMessageBuilder<'a> {
     /// found nothing nor takes what is left for everything there is.
     pub(super) fn with_evidence_cut(mut self, evidence_cut: bool) -> Self {
         self.evidence_cut = evidence_cut;
+        self
+    }
+
+    /// Close the message by asking for a reading of its numbered passages.
+    /// Only a message that shows some has anything to read.
+    pub(super) fn reading_passages(mut self, reads_passages: bool) -> Self {
+        self.reads_passages = reads_passages;
         self
     }
 
@@ -171,7 +183,21 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
+    /// The message, closed by the reading instruction when it shows numbered
+    /// passages. The instruction is part of the message, so the turn's budget
+    /// prices it with the rest, and the request that writes the answer begins
+    /// with exactly the prompt the reading round left in the server's cache.
     pub(super) fn build(self) -> String {
+        let reads_passages = self.reads_passages;
+        let message = self.message();
+        if reads_passages {
+            format!("{message}\n\n{READING_INSTRUCTION}")
+        } else {
+            message
+        }
+    }
+
+    fn message(self) -> String {
         // Reusing the last document is the whole prompt on a bare follow-up —
         // but not when this message brought files of its own. Then the
         // attachment leads and the earlier document is one section among
@@ -372,7 +398,8 @@ terminology alone is not missing evidence, and a narrower mechanism must not be 
 broader one.";
 
 /// The message an evidence-carrying turn sends with every passage taken out:
-/// the template, its standing instructions and the question.
+/// the template, its standing instructions, the question, and the reading
+/// instruction that closes any message showing a numbered passage.
 ///
 /// The turn's budget charges this as the message before it sizes the
 /// evidence, because it is what the evidence travels in.
@@ -381,11 +408,12 @@ pub(super) fn evidence_frame(
     question: &str,
     explorer: bool,
 ) -> String {
-    render_prompt_template(
+    let frame = render_prompt_template(
         evidence_template(prompt_settings, explorer),
         CONTINUITY_NOTE,
         question,
-    )
+    );
+    format!("{frame}\n\n{READING_INSTRUCTION}")
 }
 
 /// The template an evidence-carrying message renders in: the saved
@@ -517,7 +545,7 @@ pub(super) fn kb_passages(
 
 /// One retrieved passage under its citation number.
 pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
-    let doc_name = result.path.as_ref().unwrap_or(&result.title);
+    let doc_name = document_name(result);
     let doc_id_line = result
         .document_id
         .as_deref()
@@ -543,6 +571,22 @@ pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
         "[{}] Document: {}{}{}{}{}\nContent: {}",
         citation, doc_name, doc_id_line, page, section, ocr, result.content
     )
+}
+
+/// The name every passage shows its document under: the title, and the file
+/// name only when there is no title. A passage read in order used to show the
+/// document's full path on disk while the search hits beside it showed the
+/// file name, so one document appeared under two names, and the path spent
+/// tokens and showed where the reader keeps their files.
+fn document_name(result: &SearchResultDto) -> &str {
+    if !result.title.trim().is_empty() {
+        return &result.title;
+    }
+    result
+        .path
+        .as_deref()
+        .and_then(|path| path.rsplit(['/', '\\']).find(|part| !part.is_empty()))
+        .unwrap_or_default()
 }
 
 pub(super) fn render_prompt_template(template: &str, context: &str, question: &str) -> String {
