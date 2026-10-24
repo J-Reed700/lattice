@@ -19,6 +19,8 @@ const searchState: {
   lastParams: null,
 };
 
+const refetch = vi.fn();
+
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
   FilePreviewModal: () => null,
 }));
@@ -29,7 +31,9 @@ vi.mock('@/features/search/hooks/useSearchQuery', () => ({
     return {
       data: params.query.trim().length > 0 ? searchState.data : [],
       isLoading: params.query.trim().length > 0 ? searchState.isLoading : false,
+      isFetching: false,
       error: params.query.trim().length > 0 ? searchState.error : null,
+      refetch,
     };
   },
 }));
@@ -120,7 +124,7 @@ describe('Search flow', () => {
     );
   });
 
-  it('shows a plain error line when the search fails', async () => {
+  it('shows only the failure and a retry when the search fails, never "no results"', async () => {
     searchState.error = new Error('Index is not ready.');
 
     const user = userEvent.setup();
@@ -134,6 +138,11 @@ describe('Search flow', () => {
       },
       { timeout: 2000 }
     );
+    expect(screen.queryByText(/No results for/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Try a broader term or a different search mode.')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it('opens a result through the API when its row is clicked', async () => {
