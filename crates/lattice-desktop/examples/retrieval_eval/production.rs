@@ -14,9 +14,9 @@
 //! 4. `HybridSearchUseCase` — the orchestrator chat, the tool executor and the search page run —
 //!    is composed the way `features::search::di::build` composes it, and searches each query
 //!    exactly as chat's first pass searches one planned query: the vector and BM25 branches,
-//!    weighted reciprocal-rank fusion (k = 10 by default) with chat's per-document cap. With a reranker, the fused pool is widened as chat
-//!    widens it and passed through the same cross-encoder stage chat calls, at chat's default
-//!    candidate cap and query budget.
+//!    weighted reciprocal-rank fusion (k = 10 by default), in fused order with exact repeats
+//!    dropped. With a reranker, the fused pool is widened as chat widens it and passed through the
+//!    same cross-encoder stage chat calls, at chat's default candidate cap and query budget.
 //! 5. Section-neighbour context mirrors `chat::retrieval::corpus_plan` and the prompt's evidence
 //!    budget: the hits keep their ranks, and each hit's unseen neighbours follow them, carried
 //!    only within the room the hits leave.

@@ -495,12 +495,7 @@ impl HybridSearchTrait for RecordingLibrary {
             answered: 2,
         }
     }
-    fn fuse(
-        &self,
-        _branches: Vec<RankedBranch>,
-        limit: usize,
-        _spread: Spread,
-    ) -> Vec<SearchResultDto> {
+    fn fuse(&self, _branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
         self.hits.iter().take(limit).cloned().collect()
     }
     async fn rerank(

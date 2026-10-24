@@ -243,7 +243,8 @@ class QuestionSet(unittest.TestCase):
         self.assertGreaterEqual(sum(len(item["turns"]) > 1 for item in items), 5)
         for tag in ("multi-hop", "planner-rewrite", "corrective-retry", "opening-or-section",
                     "abstain", "conflict", "numeric-precision", "follow-up-memory",
-                    "pronoun-follow-up", "ellipsis-follow-up", "topic-shift", "cross-turn-evidence"):
+                    "pronoun-follow-up", "ellipsis-follow-up", "topic-shift", "cross-turn-evidence",
+                    "long-document"):
             self.assertTrue(any(tag in item["tags"] for item in items), tag)
 
 

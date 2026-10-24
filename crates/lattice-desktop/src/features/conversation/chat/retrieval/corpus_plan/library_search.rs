@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::features::conversation::chat::ports::ChatRecords;
-use lattice_core::application::contracts::search::{CorpusPassage, Spread};
+use lattice_core::application::contracts::search::CorpusPassage;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{
@@ -14,8 +14,7 @@ use super::{
 };
 
 /// One query searched exactly as first-pass retrieval searches it: the
-/// library search orchestrator's branches, weights, RRF constant and
-/// per-document cap.
+/// library search orchestrator's branches, weights and RRF constant.
 ///
 /// The model's own `semantic_search` calls come through here. They used the
 /// generic hybrid endpoint instead — even weights, a higher vector floor and a
@@ -105,9 +104,7 @@ pub(in super::super) async fn retrieve(
                 )
                 .await;
             successful_branches += query_branches.answered;
-            // Every passage here is already from a chosen document; a
-            // per-document cap would only dilute the one that answers.
-            scoped = hybrid.fuse(query_branches.branches, limit, Spread::ByRelevance);
+            scoped = hybrid.fuse(query_branches.branches, limit);
         }
     }
 
@@ -162,7 +159,7 @@ pub(in super::super) async fn retrieve(
     }
     results.extend(
         hybrid
-            .fuse(branches, limit, Spread::AcrossDocuments)
+            .fuse(branches, limit)
             .into_iter()
             .filter(|r| seen_ids.insert(r.id.clone())),
     );
@@ -352,11 +349,7 @@ pub(in super::super) fn fuse_passes(
         weight: 1.0,
         results,
     };
-    hybrid.fuse(
-        vec![pass(first), pass(second)],
-        limit,
-        Spread::AcrossDocuments,
-    )
+    hybrid.fuse(vec![pass(first), pass(second)], limit)
 }
 
 #[cfg(test)]
