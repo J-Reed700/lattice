@@ -63,8 +63,13 @@ app's runtime libraries from the package's own `Depends`.
 3. Reads the `models` table in `~/.local/share/tech.lattice.app/lattice.db`
    until one chat model and one embedding model are downloaded and active.
    Nothing else is clicked: the download saga activates them itself.
-4. Opens Chat, types a question, presses Enter, and waits for a completed
-   assistant row in `conversation_messages`.
+4. Opens Chat, starts a conversation with Ctrl+N, types a question, presses
+   Enter, and waits for a completed assistant row in `conversation_messages`.
+   On a host that is not x86_64 (Docker on Apple Silicon emulates the image)
+   it waits only until the app log shows the llama-server sidecar ready and
+   the model's first text, because CPU generation under emulation is too slow
+   to finish: the first token took 18 minutes. `TURNKEY_FULL_ANSWER=1` waits
+   for the whole answer anyway.
 
 Pass and fail come from the database and the process list, not from the
 screen. The screenshots are there to explain a failure.
@@ -77,6 +82,7 @@ screen. The screenshots are there to explain a failure.
 | `TURNKEY_FULL_LTO` | off | `1` builds with the shipping release profile. By default the run sets `codegen-units=16` and turns LTO off, because one codegen unit for the app crate takes hours under emulation and the profile is not what this test checks. |
 | `TURNKEY_CPUS`, `TURNKEY_MEMORY` | `8`, `7g` | Container limits. |
 | `TURNKEY_KEEP` | off | `1` leaves the containers running afterwards. |
+| `TURNKEY_FULL_ANSWER` | off | `1` waits for the saved answer even under emulation (allow most of an hour). |
 
 ## Known limits
 
@@ -88,3 +94,7 @@ screen. The screenshots are there to explain a failure.
   happens on real hardware, but it means the dnf and pacman paths have not
   passed this test end to end.
 - The container has no GPU, so the app runs the CPU build of `llama-server`.
+- Under emulation the app's 30-second stream stall limit fired during prompt
+  processing (llama-server sends nothing until the prompt is read), and each
+  retry started the prompt again: four retries before generation began. A
+  slow real CPU could hit the same limit.

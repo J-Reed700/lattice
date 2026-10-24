@@ -40,6 +40,12 @@ parser.add_argument("--out", type=Path, required=True)
 parser.add_argument("--app", default=None, help="app executable (default: from dpkg)")
 parser.add_argument("--download-timeout", type=int, default=90 * 60)
 parser.add_argument("--answer-timeout", type=int, default=30 * 60)
+parser.add_argument(
+    "--first-text-only",
+    action="store_true",
+    help="pass once the model's first text arrives instead of waiting for the saved answer; "
+    "for emulated x86, where CPU generation takes most of an hour",
+)
 args = parser.parse_args()
 OUT: Path = args.out
 OUT.mkdir(parents=True, exist_ok=True)
@@ -314,7 +320,38 @@ screenshot("question-sent")
 # machine, so it is noted, not required: the saved answer below decides.
 record("question", True, seen_sending=bool(find_word("Sending", "Generating", "Answering", timeout=60)))
 
+APP_LOG = OUT / "app.log"
+
+
+def app_log_has(needle: str) -> bool:
+    try:
+        return needle in APP_LOG.read_text(errors="replace")
+    except OSError:
+        return False
+
+
 deadline = time.monotonic() + args.answer_timeout
+if args.first_text_only:
+    # Log lines from crates/lattice-desktop/src/features/llm/engine/sidecar_manager/
+    # readiness.rs and conversation/chat/tool_loop/generation.rs.
+    while not (app_log_has("llama-server sidecar ready") and app_log_has("LLM first answer text received")):
+        if app.poll() is not None:
+            fail("first-text", f"the app exited with code {app.returncode} while answering")
+        if time.monotonic() > deadline:
+            fail("first-text", "the model produced no text in time")
+        time.sleep(10)
+    screenshot("first-text")
+    sidecars = run("pgrep", "-a", "llama-server", check=False).stdout.strip().splitlines()
+    record("first-text", True, sidecars=sidecars)
+    log("the chat model is answering (first text received)")
+    SUMMARY["passed"] = True
+    SUMMARY["answer_checked"] = "first text only"
+    (OUT / "summary.json").write_text(json.dumps(SUMMARY, indent=2))
+    stop_app()
+    xvfb.terminate()
+    log("PASS")
+    sys.exit(0)
+
 answer: tuple | None = None
 while True:
     rows = query(
