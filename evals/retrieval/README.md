@@ -306,6 +306,16 @@ Main's eval already appended context, so its number there is the same; what chan
 that the app now sends what that number measured. Results:
 `results/2026-10-23-NEIGHBOUR-CONTEXT-*`.
 
+## Answer coverage on the shipped path (2026-10-23)
+
+With retrieval delivering every fact, the 9B still left passages out of long
+answers. The reading round from #174 (notes first, then the answer, then whatever
+was left out) took the 8 long-document items from 1/16 to 14/24 over three runs.
+It also regressed 4 of 6 short single-fact items into abstentions. Per-item
+tables, the causes and the follow-up are in
+[`2026-10-23-ANSWER-COVERAGE.md`](2026-10-23-ANSWER-COVERAGE.md). Results:
+`results/chat/qwen3.5-9b-local/2026-10-23-answer-coverage-*`.
+
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -151,4 +151,51 @@ describe('ReferenceInbox selection', () => {
     },
     8_000,
   );
+
+  it('keeps a link to a bookmark in the URL while saved passages load first', async () => {
+    let releaseBookmarks!: () => void;
+    const bookmarksHeld = new Promise<void>((resolve) => {
+      releaseBookmarks = resolve;
+    });
+    const bookmarks = listMessageBookmarks.getMockImplementation();
+    listMessageBookmarks.mockImplementation(async (...args: unknown[]) => {
+      await bookmarksHeld;
+      return bookmarks?.(...args);
+    });
+    listPassageReferences.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: 'pref_1',
+          documentId: 'doc_1',
+          chunkId: 'chunk_1',
+          filePath: '/vault/paper.pdf',
+          fileName: 'paper.pdf',
+          locator: 'p. 12',
+          text: 'A saved passage.',
+          title: null,
+          note: null,
+          createdAt: '2026-09-07T10:00:00.000Z',
+        },
+      ],
+    });
+    renderInbox('/references?referenceId=bm_2');
+
+    // The saved passage has reached the inbox; the bookmarks have not.
+    await screen.findByText('1 reference');
+    await act(async () => {});
+    expect(screen.getByTestId('search')).toHaveTextContent('referenceId=bm_2');
+    expect(screen.queryAllByRole('button').filter((row) => row.getAttribute('aria-current') === 'page')).toHaveLength(0);
+
+    await act(async () => releaseBookmarks());
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button').filter((row) => row.getAttribute('aria-current') === 'page'),
+      ).toHaveLength(1),
+    );
+    expect(
+      screen.getAllByRole('button').find((row) => row.getAttribute('aria-current') === 'page'),
+    ).toHaveTextContent('Second reference');
+    expect(screen.getByTestId('search')).toHaveTextContent('referenceId=bm_2');
+  });
 });

@@ -42,7 +42,9 @@ export function SearchInterface() {
   const {
     data: results = [],
     isLoading: isSearching,
+    isFetching,
     error,
+    refetch,
   } = useSearchQuery({
     query: debouncedQuery,
     mode: searchMode,
@@ -223,18 +225,32 @@ export function SearchInterface() {
         />
 
         {error && (
-          <p className="mt-4 text-sm text-danger-fg">Couldn&apos;t search. {error.message}</p>
+          <p className="mt-4 text-sm text-danger-fg">
+            <span>Couldn&apos;t search. {error.message}</span>{' '}
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+              className="font-medium underline underline-offset-2 disabled:opacity-60"
+            >
+              Try again
+            </button>
+          </p>
         )}
         {openError && <p className="mt-4 text-sm text-danger-fg">{openError}</p>}
 
         <div className="mt-6">
           {groupedResults.length === 0 ? (
-            <SearchEmptyState
-              hasSearched={hasSearched}
-              query={debouncedQuery}
-              isSearching={isSearching}
-              onPickRecent={setQuery}
-            />
+            // A failed search found nothing because it never looked; saying
+            // "no results" beside the failure would read as an empty search.
+            error ? null : (
+              <SearchEmptyState
+                hasSearched={hasSearched}
+                query={debouncedQuery}
+                isSearching={isSearching}
+                onPickRecent={setQuery}
+              />
+            )
           ) : (
             <VirtualizedSearchResults
               results={groupedResults}
