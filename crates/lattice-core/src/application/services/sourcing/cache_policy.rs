@@ -21,6 +21,8 @@ pub enum SourcingCache {
     OwnerResolution,
     /// Whether, and when, the archive holds a URL.
     ArchiveLookup,
+    /// Where a scoped site answers from now.
+    SiteHome,
 }
 
 /// How long an entry of `cache` stays fresh.
@@ -29,6 +31,7 @@ pub fn ttl(cache: SourcingCache, policy: &SourcingPolicy) -> Duration {
         SourcingCache::ProviderPage => policy.search_page_ttl,
         SourcingCache::OwnerResolution => policy.owner_ttl,
         SourcingCache::ArchiveLookup => policy.archive_lookup_ttl,
+        SourcingCache::SiteHome => policy.site_home_ttl,
     }
 }
 

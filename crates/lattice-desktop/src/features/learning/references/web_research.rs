@@ -10,7 +10,7 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::ports::WebServiceTrait;
-use lattice_core::domain::sourcing::{Ecosystem, NeedKind};
+use lattice_core::domain::sourcing::{lift_sites, Ecosystem, NeedKind, Origin};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,18 +97,80 @@ impl PlannedNeed {
         }
     }
 
-    /// The need trimmed, with empty fields dropped. `None` when it breaks
-    /// the schema [`need_schema`] states, which not every model provider
-    /// enforces: a query or rewording outside [`QUERY_CHARS`], a kind no
-    /// search asks for, a registry that does not exist, a date that is not
-    /// `YYYY-MM-DD`, or a dated read that does not name its page's address
-    /// or also asks for newer material.
-    pub(in crate::features::learning) fn checked(self) -> Option<Self> {
-        let filled = |field: Option<String>| {
-            field
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
+    /// The searches this planned need stands for, each trimmed with empty
+    /// fields dropped.
+    ///
+    /// `site` is the one place a search's scope is kept. A query that names
+    /// sites with `site:` operators wrote its scope in the wrong place: it is
+    /// one search per site named, the operators lifted into `site` and out of
+    /// the query and its rewordings (which reword terms, never the scope). A
+    /// `site` the need sets itself is its scope, and operators beside it are
+    /// dropped.
+    ///
+    /// `None` when it breaks the schema [`need_schema`] states, which not
+    /// every model provider enforces: a query or rewording outside
+    /// [`QUERY_CHARS`] once its operators are lifted, a site that is not an
+    /// address, a kind no search asks for, a registry that does not exist, a
+    /// date that is not `YYYY-MM-DD`, or a dated read that does not name its
+    /// page's address or also asks for newer material.
+    pub(in crate::features::learning) fn searches(self) -> Option<Vec<Self>> {
+        let (query, named) = lift_sites(&self.query);
+        let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {
+            Some(site) => vec![Some(Origin::parse(&site)?)],
+            None if named.is_empty() => vec![None],
+            None => named.into_iter().map(Some).collect(),
         };
+        let alternatives = self
+            .alternatives
+            .iter()
+            .map(|rewording| lift_sites(rewording).0)
+            .collect();
+        let need = Self {
+            query,
+            alternatives,
+            site: None,
+            ..self
+        }
+        .checked()?;
+        Some(
+            sites
+                .into_iter()
+                .map(|site| Self {
+                    site: site.map(|site| site.to_string()),
+                    ..need.clone()
+                })
+                .collect(),
+        )
+    }
+
+    /// The search as one line, its site written back as an operator: what a
+    /// person would type, and how searches already tried are told apart
+    /// (the same terms on two sites are two searches).
+    pub(in crate::features::learning) fn line(&self) -> String {
+        match &self.site {
+            Some(site) => format!("site:{site} {}", self.query),
+            None => self.query.clone(),
+        }
+    }
+
+    /// Whether `address` lies within the site this search asked for; every
+    /// address does when it asked for none. The source finder already keeps
+    /// a search's results to its site (where the site lives now); this is
+    /// for a reader that must keep to the scope as asked even after a page's
+    /// own redirects.
+    pub(in crate::features::learning) fn covers(&self, address: &str) -> bool {
+        let Some(site) = self.site.as_deref() else {
+            return true;
+        };
+        match (Origin::parse(site), url::Url::parse(address)) {
+            (Some(site), Ok(address)) => site.covers(&address),
+            _ => false,
+        }
+    }
+
+    /// The need trimmed, with empty fields dropped, when its fields keep to
+    /// the schema; its site is [`Self::searches`]'s to decide.
+    fn checked(self) -> Option<Self> {
         let query = self.query.trim().to_owned();
         let ecosystem = filled(self.ecosystem);
         let identifier = filled(self.identifier);
@@ -147,6 +209,13 @@ impl PlannedNeed {
             as_of: as_of.flatten(),
         })
     }
+}
+
+/// `field` trimmed, or `None` when it is absent or blank.
+fn filled(field: Option<String>) -> Option<String> {
+    field
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 /// Whether `identifier` is a web page's address, the one thing an archived
@@ -252,38 +321,39 @@ pub(in crate::features::learning) async fn plan_needs(
                         .into(),
                 )
             })?;
-        plan.needs
-        .into_iter()
-        .map(|GapNeed { gap, need }| {
+        let mut planned = Vec::new();
+        for GapNeed { gap, need } in plan.needs {
             let served = gaps.get(gap).ok_or_else(|| {
                 AppError::InvalidInput(format!(
                     "The reference search planner named gap {gap}, but it was given {}.",
                     gaps.len()
                 ))
             })?;
-            let mut need = need.checked().ok_or_else(|| {
+            let searches = need.searches().ok_or_else(|| {
                 AppError::InvalidInput(
-                    "The reference search planner proposed a search outside what a search allows: a query and rewordings of 3 to 240 characters, a listed kind, a listed registry, dates as YYYY-MM-DD, and a dated read that names its page's address."
+                    "The reference search planner proposed a search outside what a search allows: a query and rewordings of 3 to 240 characters besides any site: operators, a site that is an address, a listed kind, a listed registry, dates as YYYY-MM-DD, and a dated read that names its page's address."
                         .into(),
                 )
             })?;
-            if need.subject.is_none() {
-                need.subject = served
-                    .get("subject")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|subject| !subject.is_empty())
-                    .map(str::to_owned);
+            for mut need in searches {
+                if need.subject.is_none() {
+                    need.subject = served
+                        .get("subject")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|subject| !subject.is_empty())
+                        .map(str::to_owned);
+                }
+                if need.after.is_none() && need.as_of.is_none() {
+                    need.after = served
+                        .get("needsNewerThan")
+                        .and_then(Value::as_str)
+                        .and_then(day);
+                }
+                planned.push(GapNeed { gap, need });
             }
-            if need.after.is_none() && need.as_of.is_none() {
-                need.after = served
-                    .get("needsNewerThan")
-                    .and_then(Value::as_str)
-                    .and_then(day);
-            }
-            Ok(GapNeed { gap, need })
-        })
-        .collect()
+        }
+        Ok(planned)
     };
     crate::features::learning::generation::complete_checked(
         llm,
@@ -296,40 +366,6 @@ pub(in crate::features::learning) async fn plan_needs(
         accept,
     )
     .await
-}
-
-/// Search providers may ignore site operators (including enrichment providers).
-/// Enforce the requested host/path ourselves, again after any fetch redirect.
-pub(in crate::features::learning) fn within_search_scope(query: &str, address: &str) -> bool {
-    let scopes: Vec<_> = query
-        .split_whitespace()
-        .filter_map(|term| term.strip_prefix("site:"))
-        .map(|scope| scope.trim_matches(['\'', '"', '(', ')']))
-        .collect();
-    if scopes.is_empty() {
-        return true;
-    }
-    let Ok(address) = url::Url::parse(address) else {
-        return false;
-    };
-    scopes.iter().any(|scope| {
-        let normalized = if scope.contains("://") {
-            scope.to_string()
-        } else {
-            format!("https://{scope}")
-        };
-        let Ok(scope) = url::Url::parse(&normalized) else {
-            return false;
-        };
-        let (Some(host), Some(expected)) = (address.host_str(), scope.host_str()) else {
-            return false;
-        };
-        let path = scope.path().trim_end_matches('/');
-        (host == expected || host.ends_with(&format!(".{expected}")))
-            && (path.is_empty()
-                || address.path() == path
-                || address.path().starts_with(&format!("{path}/")))
-    })
 }
 
 /// Results a search page asks for; further pages follow while one brings new
@@ -381,12 +417,13 @@ impl Room<'static> {
     }
 }
 
-/// One public search for a typed need, page by page while a page brings in-scope
+/// One public search for a typed need, page by page while a page brings
 /// results not seen on an earlier page and the results found so far leave
 /// `room` for more. Only the results that fit the room are returned, in the
-/// order found. Results outside a `site:` scope in the query or the need's
-/// `site` are dropped. A provider failure on the first page is returned so
-/// the caller can log it and move on; on a later page it ends the search.
+/// order found. A need with a `site` is kept to it by the source finder,
+/// which searches the site where it lives now. A provider failure on the
+/// first page is returned so the caller can log it and move on; on a later
+/// page it ends the search.
 pub(in crate::features::learning) async fn search_need(
     web: &dyn WebServiceTrait,
     need: &PlannedNeed,
@@ -422,13 +459,7 @@ pub(in crate::features::learning) async fn search_need(
         let returned = output.results.len();
         let before = found.len();
         owner = owner.or(output.owner);
-        for result in output.results.into_iter().filter(|result| {
-            within_search_scope(&need.query, &result.url)
-                && need
-                    .site
-                    .as_deref()
-                    .is_none_or(|site| within_search_scope(&format!("site:{site}"), &result.url))
-        }) {
+        for result in output.results {
             if found.iter().any(|known| known.result.url == result.url) {
                 continue;
             }
@@ -467,27 +498,25 @@ pub(in crate::features::learning) async fn capture_url(
         published_date: None,
         source: None,
     };
-    capture(web, &result, "").await
+    capture(web, &result).await
 }
 
 /// Fetch one selected result as a complete reference capture.
 ///
 /// `Err` is a transport failure (the page could not be fetched at all);
-/// `Ok(None)` is a page that was fetched but is unusable as evidence: it left
-/// the query's `site:` scope through a redirect, has no readable text, or was
-/// truncated by the extractor.
+/// `Ok(None)` is a page that was fetched but is unusable as evidence: it has
+/// no readable text, or was truncated by the extractor. The page is read
+/// wherever its own redirects lead: the search that found it kept to its
+/// site, a site that moves its pages says where they went, and a source's
+/// standing is judged from where it was read, never from where it was found.
 pub(in crate::features::learning) async fn capture(
     web: &dyn WebServiceTrait,
     result: &WebSearchResult,
-    query: &str,
 ) -> Result<Option<CapturedLearningSource>> {
     let page = web
         .fetch_reference_page(&result.url)
         .await
         .map_err(|error| AppError::Network(format!("{}: {error}", result.url)))?;
-    if !within_search_scope(query, &page.output.url) {
-        return Ok(None);
-    }
     let title = page
         .output
         .title
@@ -501,30 +530,4 @@ pub(in crate::features::learning) async fn capture(
         return Ok(None);
     }
     Ok(Some(captured))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn site_scopes_are_enforced_by_host_and_path_after_redirects() {
-        assert!(within_search_scope(
-            "site:docs.example.org/manual indexes",
-            "https://docs.example.org/manual/indexes.html"
-        ));
-        assert!(within_search_scope(
-            "site:example.org indexes",
-            "https://docs.example.org/anything"
-        ));
-        assert!(!within_search_scope(
-            "site:docs.example.org/manual indexes",
-            "https://docs.example.org/blog/indexes.html"
-        ));
-        assert!(!within_search_scope(
-            "site:example.org indexes",
-            "https://example.org.evil.test/page"
-        ));
-        assert!(within_search_scope("plain query", "https://anywhere.test/"));
-    }
 }
