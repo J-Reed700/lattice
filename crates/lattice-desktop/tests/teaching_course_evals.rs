@@ -443,6 +443,17 @@ async fn live_retained_lesson_review() -> Result<()> {
     let retained: Value =
         serde_json::from_slice(&std::fs::read(path).expect("Read retained candidate"))?;
     let candidate = retained["output"].as_str().expect("Candidate JSON");
+    // The production schema, sized to the sources the retained lesson cites:
+    // review applies the lesson's rules (section mix, checks) only under it.
+    let parsed: Value = serde_json::from_str(candidate)?;
+    let source_count = ["blocks", "questions"]
+        .iter()
+        .filter_map(|part| parsed[part].as_array())
+        .flatten()
+        .filter_map(|item| item["sourceIndex"].as_u64())
+        .max()
+        .map_or(0, |index| index as usize + 1);
+    let schema = lattice::features::learning::generation::lesson_schema(source_count);
     let raw_context = retained["input"][1]["content"]
         .as_str()
         .expect("Original context");
@@ -455,12 +466,17 @@ async fn live_retained_lesson_review() -> Result<()> {
         &model,
         "Teach a rigorous lesson. Return only the corrected lesson JSON, preserving the original block and question fields.",
         &context,
-        &json!({"type":"object","required":["blocks","questions"],"properties":{"blocks":{"type":"array","minItems":8,"maxItems":12},"questions":{"type":"array","minItems":6,"maxItems":6}}}),
+        &schema,
         candidate.into(),
         8192,
     ).await?;
     let lesson: Value = serde_json::from_str(&repaired)?;
     model.save("reviewed-lesson.json", &lesson);
+    let rules = lattice::features::learning::generation::lesson_rule_notes(&lesson);
+    assert!(
+        rules.is_empty(),
+        "The reviewed lesson still breaks lesson rules: {rules:?}"
+    );
     let bodies: String = lesson["blocks"]
         .as_array()
         .expect("Lesson sections")

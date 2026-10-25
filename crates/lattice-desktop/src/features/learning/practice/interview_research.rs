@@ -98,15 +98,24 @@ fn copies_private_marker(field: &str, private: &[&str]) -> bool {
         .any(|token| field.contains(&token.to_ascii_lowercase()))
 }
 
-/// Every field can reach a search provider, including rewordings and owner hints.
-fn public_need(need: PlannedNeed, private: &[&str]) -> Option<PlannedNeed> {
-    let need = need.checked()?;
+/// The searches a planned need stands for, each kept only when no field of
+/// it copies private text: every field can reach a search provider,
+/// including rewordings and owner hints.
+fn public_needs(need: PlannedNeed, private: &[&str]) -> Vec<PlannedNeed> {
+    need.searches()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|need| is_public(need, private))
+        .collect()
+}
+
+fn is_public(need: &PlannedNeed, private: &[&str]) -> bool {
     let mut fields = std::iter::once(need.query.as_str())
         .chain(need.alternatives.iter().map(String::as_str))
         .chain(need.subject.as_deref())
         .chain(need.identifier.as_deref())
         .chain(need.site.as_deref());
-    (need.alternatives.len() <= 3
+    need.alternatives.len() <= 3
         && fields.all(|field| {
             field.chars().count() <= 240
                 && !field.split_whitespace().any(|word| {
@@ -125,8 +134,7 @@ fn public_need(need: PlannedNeed, private: &[&str]) -> Option<PlannedNeed> {
                     field, private,
                 )
                 && !copies_private_marker(field, private)
-        }))
-    .then_some(need)
+        })
 }
 
 fn discovery_url(address: &str) -> Option<url::Url> {
@@ -148,20 +156,12 @@ fn company_discovery_needs(
     };
     ["engineering architecture", "engineering careers"]
         .into_iter()
-        .filter_map(|topic| {
+        .flat_map(|topic| {
             let mut need = PlannedNeed::web(format!("{subject} {topic}"));
             need.site = host.map(str::to_owned);
-            public_need(need, private)
+            public_needs(need, private)
         })
         .collect()
-}
-
-fn within_need_scope(need: &PlannedNeed, address: &str) -> bool {
-    web_research::within_search_scope(&need.query, address)
-        && need
-            .site
-            .as_deref()
-            .is_none_or(|site| web_research::within_search_scope(&format!("site:{site}"), address))
 }
 
 /// Captures have stable identities by URL, independent of search order on retry.
@@ -387,7 +387,7 @@ pub async fn research_interview_target(
             Ok(parsed
                 .needs
                 .into_iter()
-                .filter_map(|need| public_need(need, &private))
+                .flat_map(|need| public_needs(need, &private))
                 .collect::<Vec<_>>())
         },
     )
@@ -452,7 +452,7 @@ pub async fn research_interview_answers(
         |raw| {
             let parsed: PlannedSearches = serde_json::from_str(raw).map_err(|_| invalid("The interview answer research plan was malformed."))?;
             if parsed.needs.len() > 6 { return Err(invalid("Interview answer research allows at most six searches.")); }
-            let filtered = parsed.needs.into_iter().filter_map(|need| public_need(need, &private)).collect::<Vec<_>>();
+            let filtered = parsed.needs.into_iter().flat_map(|need| public_needs(need, &private)).collect::<Vec<_>>();
             if has_non_behavioral && filtered.is_empty() {
                 return Err(invalid("Plan at least one public concept or official_docs search for non-behavioral interview questions without copying private text."));
             }
@@ -523,12 +523,7 @@ async fn capture_needs(
             if let Some(saved) = library
                 .saved_web_source(program_id, &candidate.result.url)
                 .await?
-                .filter(|saved| {
-                    saved
-                        .url
-                        .as_deref()
-                        .is_some_and(|url| within_need_scope(&need, url))
-                })
+                .filter(|saved| saved.url.as_deref().is_some_and(|url| need.covers(url)))
             {
                 versions.insert(saved.version_id);
             } else {
@@ -538,15 +533,18 @@ async fn capture_needs(
         let captures = futures::future::join_all(pending.into_iter().map(|candidate| {
             let need = &need;
             async move {
-                // Query scopes and structured site scopes are independent
-                // requirements. Combining them into one query would OR them.
-                let captured = web_research::capture(web, &candidate.result, &need.query)
+                // Interview research keeps to the scope it asked for, after
+                // redirects too: its sources face no standing check, so the
+                // scope is what makes a page the company's (or the docs').
+                // Lesson research reads wherever a page leads instead,
+                // because its provenance gate judges where the page was read.
+                let captured = web_research::capture(web, &candidate.result)
                     .await
                     .map(|page| {
                         page.filter(|page| {
                             page.resolved_url
                                 .as_deref()
-                                .is_some_and(|url| within_need_scope(need, url))
+                                .is_some_and(|url| need.covers(url))
                         })
                     });
                 (candidate.result.url.clone(), captured)
@@ -561,10 +559,7 @@ async fn capture_needs(
                             .saved_web_source(program_id, resolved)
                             .await?
                             .filter(|saved| {
-                                saved
-                                    .url
-                                    .as_deref()
-                                    .is_some_and(|url| within_need_scope(&need, url))
+                                saved.url.as_deref().is_some_and(|url| need.covers(url))
                             })
                         {
                             versions.insert(saved.version_id);
@@ -604,10 +599,10 @@ mod tests {
             ["My secret interview involves the Aurora migration and a confidential incident"];
         let mut need = PlannedNeed::web("Acme engineering".into());
         need.alternatives = vec![private[0].into()];
-        assert!(public_need(need.clone(), &private).is_none());
+        assert!(public_needs(need.clone(), &private).is_empty());
         need.alternatives.clear();
         need.subject = Some(private[0].into());
-        assert!(public_need(need, &private).is_none());
+        assert!(public_needs(need, &private).is_empty());
         for field in ["query", "alternative", "subject", "identifier", "site"] {
             let mut need = PlannedNeed::web("Acme engineering".into());
             let email = "private-applicant@example.test".to_owned();
@@ -620,7 +615,7 @@ mod tests {
                 _ => unreachable!(),
             }
             assert!(
-                public_need(need, &[]).is_none(),
+                public_needs(need, &[]).is_empty(),
                 "Email leaked through {field}"
             );
             let mut marker_need = PlannedNeed::web("Acme engineering".into());
@@ -634,11 +629,13 @@ mod tests {
                 _ => unreachable!(),
             }
             assert!(
-                public_need(marker_need, &["Private note ID PRIVATENOTE_AURORA_837."]).is_none()
+                public_needs(marker_need, &["Private note ID PRIVATENOTE_AURORA_837."]).is_empty()
             );
         }
-        assert!(public_need(PlannedNeed::web("Acme Rust reliability".into()), &private).is_some());
-        assert!(public_need(PlannedNeed::web("React react@18.2.0 API".into()), &[]).is_some());
+        assert!(
+            !public_needs(PlannedNeed::web("Acme Rust reliability".into()), &private).is_empty()
+        );
+        assert!(!public_needs(PlannedNeed::web("React react@18.2.0 API".into()), &[]).is_empty());
     }
 
     #[test]

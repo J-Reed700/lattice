@@ -228,6 +228,34 @@ impl Container {
             .verifier_model)
     }
 
+    /// The Learning checker's recorded name, without starting a server or
+    /// making a provider request. Local sidecars identify by the GGUF stem.
+    pub async fn learning_checker_name(&self) -> Result<Option<String>> {
+        let settings = self.system.settings_repo().get_all().await?;
+        match settings.llm.learning_model {
+            None => Ok(None),
+            Some(ModelRef::Local { model_id }) => Ok(self
+                .ai
+                .downloaded_models()
+                .find_by_model_id(&model_id)
+                .await?
+                .and_then(|row| {
+                    row.loadable_path().map(|path| {
+                        std::path::Path::new(path)
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("local")
+                            .to_owned()
+                    })
+                })),
+            Some(
+                ModelRef::Ollama { model }
+                | ModelRef::LlamaCpp { model }
+                | ModelRef::Cloud { model, .. },
+            ) => Ok(Some(model)),
+        }
+    }
+
     /// The Settings default chat model, for work that belongs to no chat.
     pub async fn default_chat_llm(&self) -> Result<Arc<dyn LLMPort>> {
         Ok(self.pinned_default_chat_llm().await?.llm)

@@ -24,6 +24,12 @@ async fn connection() -> PoolConnection<Sqlite> {
         .execute(&mut *conn)
         .await
         .expect("foreign keys on");
+    // These operation tests count their own models. The migration's built-in
+    // Ollama entry is covered by schema/downloaded-model tests separately.
+    sqlx::query("DELETE FROM models WHERE model_id = '__ollama_server__'")
+        .execute(&mut *conn)
+        .await
+        .expect("remove built-in model from the fixture");
     conn
 }
 
@@ -39,6 +45,9 @@ fn model(model_id: &str, name: &str) -> Model {
     .expect("valid model");
     model.created_at = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
     model.updated_at = model.created_at;
+    // Model::new describes an existing file; this fixture represents a model
+    // whose download has not started yet.
+    model.downloaded_at = None;
     model
 }
 

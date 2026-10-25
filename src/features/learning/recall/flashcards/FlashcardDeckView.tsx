@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { PageHeader, SectionHeading } from '@/components/ui/PageHeader';
+import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { EditFlashcard } from '@/features/learning/recall/flashcards/EditFlashcard';
 import { FlashcardSession, type FlashcardMode } from '@/features/learning/recall/flashcards/FlashcardSession';
 import { FlashcardSource } from '@/features/learning/recall/flashcards/FlashcardSource';
@@ -73,8 +74,8 @@ export function FlashcardDeckView() {
       <SectionHeading>Cards</SectionHeading>
       <div className="border-t border-border-subtle">
         {current.cards.map((card, index) => <details key={card.id} className="border-b border-border-subtle py-4">
-          <summary className="cursor-pointer text-sm leading-relaxed text-text-primary"><span className="mr-3 text-text-muted">{index + 1}.</span>{' '}{card.question}</summary>
-          <div className="ml-6 mt-4"><p className="mb-3 text-sm font-medium text-text-primary">{card.answer}</p><p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{card.explanation}</p><FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} /><div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs text-text-muted">{card.reviewCount} reviews{card.lapses > 0 ? ` · ${card.lapses} missed` : ''}</span><Button variant="ghost" size="sm" onClick={() => setEditing(card)}>Edit card</Button></div></div>
+          <summary className="cursor-pointer text-sm leading-relaxed text-text-primary"><span className="mr-3 text-text-muted">{index + 1}.</span>{' '}{cardPreview(card.question)}</summary>
+          <div className="ml-6 mt-4">{card.question.trim() !== cardPreview(card.question) && <CardText className="mb-3 text-sm text-text-primary" text={card.question} />}<CardText className="mb-3 text-sm font-medium text-text-primary" text={card.answer} />{card.explanation && <CardText className="text-sm leading-relaxed text-text-secondary" text={card.explanation} />}<FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} /><div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs text-text-muted">{card.reviewCount} reviews{card.lapses > 0 ? ` · ${card.lapses} missed` : ''}</span><Button variant="ghost" size="sm" onClick={() => setEditing(card)}>Edit card</Button></div></div>
         </details>)}
       </div>
       <div className="mt-8 flex items-center justify-between gap-4"><p className="text-xs text-text-muted">Generated with {current.modelName}</p><Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}>Delete deck</Button></div>

@@ -99,10 +99,27 @@ fn task_rubric() -> serde_json::Value {
         {"title":"Measurement and limitations","description":"State an observable outcome and explain one limitation of interpreting the difference between groups.","dimension":"explanation"}
     ])
 }
+/// The sections of a lesson in the mix it is written for: two ideas, each
+/// explained, worked and checked, one contrasted, then practice, recall and
+/// recap.
+const LESSON_SHAPE: [&str; 11] = [
+    "explanation",
+    "worked_example",
+    "contrast",
+    "check",
+    "explanation",
+    "worked_example",
+    "check",
+    "guided_practice",
+    "independent_practice",
+    "reflection",
+    "recap",
+];
+
 fn lesson_response() -> serde_json::Value {
     let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
     json!({
-        "blocks":(["explanation","explanation","worked_example","worked_example","guided_practice","independent_practice","reflection","recap"].iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":format!("{teaching}{teaching} Assignment step {i}: produce a design, state your assumptions, and justify your decisions."),"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":""})).collect::<Vec<_>>()),
+        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::features::learning::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {i}: produce a design, state your assumptions, and justify your decisions.") },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":""})).collect::<Vec<_>>()),
         "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":""}))).collect::<Vec<_>>())
     })
 }
@@ -176,7 +193,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .flat_map(|module| &module.lessons)
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::InvalidState("missing lesson".into()))?;
-    assert_eq!(lesson.blocks.len(), 8);
+    assert_eq!(lesson.blocks.len(), LESSON_SHAPE.len());
     assert!(lesson
         .blocks
         .iter()
@@ -456,7 +473,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         repo.get(&program.summary.id).await?.modules[0].lessons[0]
             .blocks
             .len(),
-        8
+        LESSON_SHAPE.len()
     );
     Ok(())
 }

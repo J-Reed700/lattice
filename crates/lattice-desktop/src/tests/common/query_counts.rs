@@ -1,4 +1,4 @@
-//! SQLx read budgets, routed by a measurement span through SQLite's worker.
+//! SQLx statement budgets, routed by a measurement span through SQLite's worker.
 //! One filtered test subscriber keeps callsite registration stable while
 //! unrelated queries and parallel tests remain outside each counter.
 
@@ -11,15 +11,18 @@ use tracing::{field::Visit, Instrument, Subscriber};
 use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer, Registry};
 
 #[derive(Clone, Default)]
-struct ReadCount(Arc<AtomicUsize>);
+struct QueryCount {
+    reads: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
+}
 struct Reads;
 
 fn current_count<S: Subscriber + for<'lookup> LookupSpan<'lookup>>(
     ctx: &Context<'_, S>,
-) -> Option<ReadCount> {
+) -> Option<QueryCount> {
     let current = ctx.lookup_current()?;
     for span in current.scope() {
-        if let Some(count) = span.extensions().get::<ReadCount>() {
+        if let Some(count) = span.extensions().get::<QueryCount>() {
             return Some(count.clone());
         }
     }
@@ -66,7 +69,7 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
             ctx.span(id)
                 .unwrap()
                 .extensions_mut()
-                .insert(ReadCount::default());
+                .insert(QueryCount::default());
         }
     }
     fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
@@ -84,12 +87,28 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
             statement.sql
         };
         if sql.starts_with("SELECT") || sql.starts_with("WITH") {
-            count.0.fetch_add(1, Ordering::Relaxed);
+            count.reads.fetch_add(1, Ordering::Relaxed);
+        } else if ["INSERT", "UPDATE", "DELETE", "REPLACE"]
+            .iter()
+            .any(|prefix| sql.starts_with(prefix))
+        {
+            count.writes.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
 pub async fn count_reads<F: Future>(operation: F) -> (F::Output, usize) {
+    let (result, count) = count_queries(operation).await;
+    (result, count.reads.load(Ordering::Relaxed))
+}
+
+/// Counts INSERT/UPDATE/DELETE/REPLACE statements, excluding transaction control.
+pub async fn count_writes<F: Future>(operation: F) -> (F::Output, usize) {
+    let (result, count) = count_queries(operation).await;
+    (result, count.writes.load(Ordering::Relaxed))
+}
+
+async fn count_queries<F: Future>(operation: F) -> (F::Output, QueryCount) {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     INSTALLED.get_or_init(|| {
         tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Reads))
@@ -104,13 +123,13 @@ pub async fn count_reads<F: Future>(operation: F) -> (F::Output, usize) {
                 .span(id)
                 .unwrap()
                 .extensions()
-                .get::<ReadCount>()
+                .get::<QueryCount>()
                 .unwrap()
                 .clone()
         })
         .unwrap();
     let result = operation.instrument(span).await;
-    (result, count.0.load(Ordering::Relaxed))
+    (result, count)
 }
 
 #[tokio::test]
@@ -134,4 +153,25 @@ async fn counter_observes_worker_reads_and_excludes_writes() {
     })
     .await;
     assert_eq!(count, 2);
+
+    let (_, writes) = count_writes(async {
+        sqlx::query("INSERT INTO test VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("SELECT id FROM test")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE test SET id = 2")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM test")
+            .execute(&pool)
+            .await
+            .unwrap();
+    })
+    .await;
+    assert_eq!(writes, 3);
 }

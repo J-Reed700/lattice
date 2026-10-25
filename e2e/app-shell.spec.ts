@@ -1831,6 +1831,8 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       get_learning_outline_evidence: () => null,
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
+      // The open lesson's warm-up asks for due review cards; none are due.
+      get_learning_recall_workspace: () => ({ programId: program.summary.id, cards: [], duplicates: [], dueCount: 0, schedulerDisclosure: '' }),
       get_learning_quiz_overview: () => {
         const status = (scope: { kind: 'lesson' | 'module' | 'course'; id: string | null }, title: string) => ({
           scope, title, bankStatus: 'ready', bankMessage: '', bankSize: 24, freshItems: 8, formSize: 8, expectedMinutes: 12, passingScore: 0.7,

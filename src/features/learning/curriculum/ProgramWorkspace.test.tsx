@@ -118,14 +118,14 @@ describe('Course page', () => {
     expect(screen.getAllByText(GOAL)).toHaveLength(1);
   });
 
-  it('renders StudyHabitsBar with retention frameworks and opens the frameworks modal', async () => {
+  it('renders StudyHabitsBar and opens the learning guide', async () => {
     const user = userEvent.setup();
     show(program(GOAL));
-    const frameworksButton = await screen.findByRole('button', { name: /Retention Frameworks/i });
-    expect(frameworksButton).toBeVisible();
-    await user.click(frameworksButton);
+    const guideButton = await screen.findByRole('button', { name: 'How to learn so it lasts' });
+    expect(guideButton).toBeVisible();
+    await user.click(guideButton);
     expect(await screen.findByRole('dialog')).toBeVisible();
-    expect(screen.getByText('Evidence-Based Learning & Retention Guide')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'How to learn so it lasts' })).toBeVisible();
   });
 
   it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {

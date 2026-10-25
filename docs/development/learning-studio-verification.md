@@ -1010,8 +1010,10 @@ Course depth is enforced by the backend: focused courses have 2–3 modules with
 deep dives have 6–10 modules with 4–6 lessons each. Older clients retain their
 existing 2–6 module bounds. Session length controls lesson size independently.
 
-New lessons require 8–12 sections: at least two explanations, two worked examples,
-guided practice, an independent assignment, reflection, and a recap. Teaching and
+New lessons require 10–16 sections built around two or three core ideas: at least
+two explanations, two worked examples, one contrast and two checks, then guided
+practice, an independent assignment, reflection (explaining from memory) and a
+recap (`docs/design/2026-10-25-learning-science-lessons.md`). Teaching and
 practice sections have minimum content lengths. The independent assignment is
 frozen as the actual written-practice task. A full syllabus, lesson section links,
 module milestones, written/applied checkpoints, and prefilled project/capstone

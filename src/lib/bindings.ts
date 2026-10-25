@@ -7766,7 +7766,29 @@ movesBar: boolean;
  */
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
 export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
-export type LearningBlockKind = "explanation" | "worked_example" | "guided_practice" | "independent_practice" | "recap" | "reflection"
+export type LearningBlockKind =
+/**
+ * One core idea's mental model, in plain language.
+ */
+"explanation" |
+/**
+ * One concrete case of the idea, worked step by step.
+ */
+"worked_example" |
+/**
+ * A deceptively similar case beside the idea, and the one feature that
+ * changes the outcome (learning science lessons §3.2).
+ */
+"contrast" |
+/**
+ * A fresh case the learner reasons through and commits an answer to
+ * before the reasoning below `CHECK_REVEAL` is shown (§3.3).
+ */
+"check" | "guided_practice" | "independent_practice" | "recap" |
+/**
+ * The learner explains the lesson from memory before the recap (§3.4).
+ */
+"reflection"
 export type LearningBuiltinRuntime = "javascript" | "python"
 export type LearningBuiltinRuntimeCapability = { id: LearningBuiltinRuntime; name: string; description: string; available: boolean; reason: string | null }
 export type LearningCanvasDto = { id: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue; elementCount: number; revision: number; createdAt: number; updatedAt: number; snapshots: LearningCanvasSnapshotDto[] }

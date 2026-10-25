@@ -5,6 +5,7 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchConversationList } from '@/features/chat/api/conversationQueryData';
+import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import VaultAPI from '@/lib/api';
 import { createTestApi } from '@/tests/apiClient';
@@ -85,5 +86,27 @@ describe('ApiProvider', () => {
     const api = createTestApi({ listConversationsExplorer });
     await expect(fetchConversationList({ spaceId: null, filterMode: 'all', searchQuery: '' }, api)).resolves.toEqual([]);
     expect(listConversationsExplorer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes an open claim review when the Learning checker changes', async () => {
+    let settings = makeAppSettings();
+    const getLearningLessonClaimReview = vi.fn().mockResolvedValue({ ok: true, data: null });
+    const api = createTestApi({
+      getSettings: vi.fn(async () => ({ ok: true as const, data: settings })),
+      getLearningLessonClaimReview,
+      updateSettings: vi.fn(async () => {
+        settings = { ...settings, llm: { ...settings.llm, learningModel: { kind: 'cloud', provider: 'anthropic', model: 'new-checker' } } };
+        return { ok: true as const, data: settings };
+      }),
+    });
+    const { result } = renderHook(() => ({
+      settings: useSettingsQuery(),
+      review: useLessonClaimReview('course', 'lesson'),
+      mutation: useUpdateSettingsMutation(),
+    }), { wrapper: wrapperFor(api) });
+    await waitFor(() => expect(result.current.settings.isSuccess && result.current.review.isSuccess).toBe(true));
+    expect(getLearningLessonClaimReview).toHaveBeenCalledTimes(1);
+    await act(async () => { await result.current.mutation.mutateAsync({ category: 'llm', updates: { learningModel: { kind: 'cloud', provider: 'anthropic', model: 'new-checker' } } }); });
+    await waitFor(() => expect(getLearningLessonClaimReview).toHaveBeenCalledTimes(2));
   });
 });

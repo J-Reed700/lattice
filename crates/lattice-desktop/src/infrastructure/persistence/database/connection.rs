@@ -116,7 +116,10 @@ impl DatabaseConnection {
             .pragma("journal_mode", "WAL") // Write-ahead logging for better concurrency
             .pragma("synchronous", "NORMAL") // Balance between safety and speed
             .pragma("cache_size", "-20000") // 20MB cache
-            .pragma("temp_store", "MEMORY"); // Use memory for temp tables
+            .pragma("temp_store", "MEMORY") // Use memory for temp tables
+            .pragma("mmap_size", "268435456") // 256MB mapped database cache
+            .pragma("optimize", "0x10002") // Initial planner-statistics check on open
+            .optimize_on_close(true, Some(400)); // Bounded maintenance as each connection closes
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -287,7 +290,7 @@ impl DatabaseConnection {
         retry_with_backoff(
             RetryConfig::conservative(),
             || async {
-                sqlx::query("ANALYZE").execute(&pool).await?;
+                sqlx::query("PRAGMA optimize").execute(&pool).await?;
                 Ok(())
             },
             |e: &AppError| {
@@ -357,6 +360,69 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("settings.db");
+        let connection = DatabaseConnection::new(db).await.unwrap();
+        let pool = connection.pool();
+
+        // Holding two connections at once verifies these settings are applied
+        // to every SQLite connection, rather than one arbitrary pooled handle.
+        let mut first = pool.acquire().await.unwrap();
+        let mut second = pool.acquire().await.unwrap();
+        for conn in [&mut *first, &mut *second] {
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, String>("PRAGMA journal_mode")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap()
+                    .to_lowercase(),
+                "wal"
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA synchronous")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA cache_size")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                -20_000
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA temp_store")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA mmap_size")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                268_435_456
+            );
+        }
+        drop((first, second));
+
+        let cloned_pool = pool.clone();
+        connection.close().await.unwrap();
+        assert!(cloned_pool.acquire().await.is_err());
+    }
 
     #[tokio::test]
     async fn a_stale_wal_and_shm_move_with_the_corrupt_database() {

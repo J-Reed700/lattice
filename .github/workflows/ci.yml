@@ -303,6 +303,7 @@ jobs:
       - run: bash scripts/check-rust-layer-boundaries.sh
       - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
       - run: python3 scripts/check-sql-contracts.py
+      - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
       - run: python3 -m unittest scripts/test_tauri_command_inventory.py
       - run: python3 scripts/check-tauri-command-inventory.py
 

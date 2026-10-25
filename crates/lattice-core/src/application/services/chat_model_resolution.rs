@@ -4,8 +4,8 @@
 //!
 //! A chat runs on its request override, else its own choice, else the Settings
 //! default. Learning never follows a chat: it runs on its own role or refuses.
-//! The Verifier, likewise, runs on its own role or refuses, and is the one
-//! role that may name a cloud model.
+//! The Verifier, likewise, runs on its own role or refuses. Each role can
+//! name a local, server-hosted or cloud model.
 
 use crate::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use crate::application::ports::llm_port::{ModelOrigin, ResolvedModel};

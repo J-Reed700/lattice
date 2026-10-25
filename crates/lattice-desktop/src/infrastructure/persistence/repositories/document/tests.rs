@@ -262,6 +262,119 @@ async fn failed_aggregate_save_preserves_existing_children() {
 }
 
 #[tokio::test]
+async fn aggregate_reads_fail_instead_of_silently_dropping_corrupt_chunks_or_tags() {
+    let repository = repository().await;
+    let good = aggregate(&repository.pool, "good-for-batch").await;
+    repository.save(&good).await.unwrap();
+    insert(&repository, "corrupt", "/corrupt.txt", &"f".repeat(64)).await;
+    sqlx::query(
+        "INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES('','corrupt','body',0)",
+    )
+    .execute(&repository.pool)
+    .await
+    .unwrap();
+    assert!(repository.find_by_id("corrupt").await.is_err());
+    assert!(repository.find_all().await.is_err());
+
+    sqlx::query("DELETE FROM text_chunks WHERE document_id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO tags(id,name) VALUES('not-a-uuid','corrupt-tag')")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO document_tags(document_id,tag_id) VALUES('corrupt','not-a-uuid')")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_id("corrupt").await.is_err());
+    assert!(repository.find_all().await.is_err());
+}
+
+#[tokio::test]
+async fn failed_document_error_message_survives_aggregate_save_and_load() {
+    use lattice_core::domain::entities::document::DocumentStatus;
+
+    let repository = repository().await;
+    let mut document = aggregate(&repository.pool, "failed-with-diagnostic").await;
+    document.mark_failed();
+    document.set_error_message(Some("unable to extract text".into()));
+
+    repository.save(&document).await.unwrap();
+    let loaded = repository
+        .find_by_id(document.id().as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.status(), DocumentStatus::Failed);
+    assert_eq!(loaded.error_message(), Some("unable to extract text"));
+
+    repository.save(&loaded).await.unwrap();
+    let saved_again = repository
+        .find_by_id(document.id().as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_again.error_message(), Some("unable to extract text"));
+}
+
+#[tokio::test]
+async fn metadata_reads_reject_unrepresentable_counts_and_malformed_timestamps() {
+    let repository = repository().await;
+    insert(&repository, "corrupt", "/corrupt.txt", &"f".repeat(64)).await;
+    insert(&repository, "valid", "/valid.txt", &"e".repeat(64)).await;
+
+    sqlx::query("UPDATE documents SET access_count=2147483648 WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_id("corrupt").await.is_err());
+    assert!(repository.find_by_path_pattern("%").await.is_err());
+
+    sqlx::query("UPDATE documents SET access_count=-1 WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_path("/corrupt.txt").await.is_err());
+
+    sqlx::query("UPDATE documents SET access_count=0, modified_at='2025-12-07T08:16:30.12345é789+00:00' WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_id("corrupt").await.is_err());
+
+    sqlx::query("UPDATE documents SET modified_at='2025-12-07T08:16:30.123456789+00:00', word_count=2147483648 WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_id("corrupt").await.is_err());
+
+    sqlx::query("UPDATE documents SET word_count=-1 WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_path("/corrupt.txt").await.is_err());
+
+    sqlx::query("UPDATE documents SET word_count=0 WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    let loaded = repository
+        .find_by_path("/corrupt.txt")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.modified_at().timestamp_subsec_nanos(), 123_456_789);
+
+    sqlx::query("UPDATE documents SET last_accessed_at='not-a-timestamp' WHERE id='corrupt'")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+    assert!(repository.find_by_path("/corrupt.txt").await.is_err());
+}
+
+#[tokio::test]
 async fn aggregate_lists_batch_children_and_preserve_each_documents_parts() {
     use crate::tests::common::query_counts::count_reads;
     let repo = repository().await;

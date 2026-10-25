@@ -79,9 +79,9 @@ Lattice gives models five roles, which you assign in **Settings > AI > Downloade
 - **Utility** is a small, fast model used for query planning, follow-up routing and document summaries. If you don't set one, Lattice falls back to basic query planning.
 - **Embedding** turns text into vectors for searching by meaning.
 - **Learning** prepares lessons, outlines, practice and study decks. It needs a large context window.
-- **Verifier** checks every claim of a lesson against its cited passages before the lesson publishes. It may be a cloud model.
+- **Verifier** checks every claim of a lesson against its cited passages before the lesson publishes.
 
-Each row on that page shows the roles it holds. To change them, open the row's **Configure model** menu and switch a role on or off there. A downloaded model can take any role its type allows. The llama.cpp connection can take Chat, Utility, Learning and Verifier, the Ollama connection Chat, Utility, Learning and Verifier, and a cloud model Verifier. If the llama.cpp connection is the Utility model and its server can't be reached, background tasks use the chat model instead.
+Each row on that page shows the roles it holds. To change them, open the row's **Configure model** menu and switch a role on or off there. A downloaded model can take any role its type allows. The llama.cpp, Ollama and cloud connections all offer Chat, Utility, Learning and Verifier. Selecting Chat sets the default provider and model; choose another model to move that role. If a remote Utility model can't be reached, background tasks use the chat model instead.
 
 **Settings > AI > Chat > Provider** chooses where the chat model runs:
 

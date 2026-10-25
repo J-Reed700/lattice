@@ -23,8 +23,9 @@ mod lesson_rules;
 mod outline;
 mod recall;
 
-pub use lesson::{prepare_lesson, prepare_lesson_with_references};
-pub(in crate::features::learning) use lesson_rules::lesson_rules;
+pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
+pub use lesson_rules::lesson_rule_notes;
+pub(in crate::features::learning) use lesson_rules::{lesson_rules, split_check, CHECK_REVEAL};
 pub(in crate::features::learning) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub(in crate::features::learning) use recall::recall_output_tokens;

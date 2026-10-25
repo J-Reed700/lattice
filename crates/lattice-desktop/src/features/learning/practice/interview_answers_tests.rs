@@ -3,35 +3,113 @@ use crate::features::learning::{
     dto::LearningSourceVersionSummaryDto, lessons::course_generation_tests::ScriptedModel,
     practical_dto::LearningInterviewRoundKind,
 };
-use std::sync::Mutex;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 
-fn model(outputs: Vec<Value>) -> ScriptedModel {
-    ScriptedModel {
-        outputs: Mutex::new(
-            outputs
-                .into_iter()
-                .map(|mut value| {
-                    if value.get("referenceAnswer").is_some() {
-                        for point in value
-                            .get_mut("keyPoints")
-                            .and_then(Value::as_array_mut)
-                            .into_iter()
-                            .flatten()
-                        {
-                            if point
-                                .get("citations")
-                                .and_then(Value::as_array)
-                                .is_some_and(|citations| !citations.is_empty())
+#[path = "interview_answer_live_tests.rs"]
+mod live_tests;
+
+struct AnswerModel {
+    scripted: ScriptedModel,
+    independent_solutions: AtomicUsize,
+    independent_prompts: Mutex<Vec<String>>,
+    review_drafts: AtomicUsize,
+}
+
+impl std::ops::Deref for AnswerModel {
+    type Target = ScriptedModel;
+    fn deref(&self) -> &ScriptedModel {
+        &self.scripted
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for AnswerModel {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.json_schema.is_none() {
+            assert_eq!(
+                request.sampling.and_then(|sampling| sampling.temperature),
+                Some(0.0),
+                "Independent solutions and review drafts use deterministic sampling"
+            );
+            let prompt = serde_json::to_string(&request.input)?;
+            if prompt.contains("Independently solve this interview question before seeing") {
+                self.independent_solutions.fetch_add(1, Ordering::Relaxed);
+                assert!(prompt.contains("question"));
+                assert!(prompt.contains("sourceEvidence"));
+                assert!(!prompt.contains("proposedStandard"));
+                assert!(!prompt.contains("referenceAnswer"));
+                assert!(!prompt.contains("scoringCriteria"));
+                self.independent_prompts
+                    .lock()
+                    .expect("independent prompts")
+                    .push(prompt);
+                return Ok(CompletionResponse::from_text(
+                    "Independent solution: preserve the required effect on retries and test the lost-response case.",
+                ));
+            }
+            self.review_drafts.fetch_add(1, Ordering::Relaxed);
+            // Comparison drafting does not consume the scripted final verdict.
+            let output = self
+                .outputs
+                .lock()
+                .expect("outputs")
+                .front()
+                .cloned()
+                .expect("review fixture");
+            return Ok(CompletionResponse::from_text(output));
+        }
+        self.scripted.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.scripted.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.scripted.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.scripted.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn model(outputs: Vec<Value>) -> AnswerModel {
+    AnswerModel {
+        independent_solutions: AtomicUsize::new(0),
+        independent_prompts: Mutex::new(Vec::new()),
+        review_drafts: AtomicUsize::new(0),
+        scripted: ScriptedModel {
+            outputs: Mutex::new(
+                outputs
+                    .into_iter()
+                    .map(|mut value| {
+                        if value.get("referenceAnswer").is_some() {
+                            for point in value
+                                .get_mut("keyPoints")
+                                .and_then(Value::as_array_mut)
+                                .into_iter()
+                                .flatten()
                             {
-                                point["citations"] = json!(["e1"]);
+                                if point
+                                    .get("citations")
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|citations| !citations.is_empty())
+                                {
+                                    point["citations"] = json!(["e1"]);
+                                }
                             }
                         }
-                    }
-                    value.to_string()
-                })
-                .collect(),
-        ),
-        prompts: Mutex::new(Vec::new()),
+                        value.to_string()
+                    })
+                    .collect(),
+            ),
+            prompts: Mutex::new(Vec::new()),
+        },
     }
 }
 
@@ -99,11 +177,87 @@ fn standard() -> Value {
 }
 
 fn accepted_review() -> Value {
-    json!({"assessment":"The answer meets the question with supported claims and fair scoring.","issues":[]})
+    json!({"issues":[]})
+}
+
+fn behavioral_standard() -> Value {
+    json!({
+        "referenceAnswer":"The candidate should describe their own relevant experience, explain their responsibility and decisions, and distinguish observed results from assumptions.",
+        "keyPoints":[
+            {"point":"A strong example explains the candidate's own responsibility and actions.","evidence":"reasoning","citations":[]},
+            {"point":"The explanation connects a concrete risk, a mitigation decision and observed outcomes or limitations.","evidence":"reasoning","citations":[]}
+        ],
+        "acceptableAlternatives":["Relevant transferable experience in a different industry or technology stack."],
+        "commonMistakes":["Describing the team's achievement without explaining the candidate's contribution."],
+        "scoringCriteria":[
+            {"criterion":"Ownership","fullCredit":"Explains the candidate's responsibility and specific actions.","partialCredit":"Describes the team effort without identifying the candidate's part."},
+            {"criterion":"Reasoning","fullCredit":"Connects the identified risk to the mitigation, tradeoffs and observed outcome.","partialCredit":"Names a mitigation without explaining why it fit the risk."}
+        ],
+        "evidenceGaps":["This behavioral evidence standard has no captured source backing; it assesses the learner's own account."]
+    })
+}
+
+#[test]
+fn review_fields_keep_exact_author_text_separate_from_provenance() -> Result<()> {
+    let answer: AnswerStandard = serde_json::from_value(standard())?;
+    let original = serde_json::to_value(&answer)?;
+    let fields = serde_json::to_value(interview_answer_review::fields(&answer))?;
+    for field in fields.as_array().expect("fields") {
+        assert_eq!(field.as_object().expect("field").len(), 2);
+        let path = field["path"].as_str().expect("path");
+        assert_eq!(original.pointer(path), Some(&field["text"]));
+        assert!(!path.contains("citations") && !path.ends_with("/evidence"));
+    }
+    let support = interview_answer_review::point_support(&answer);
+    assert_eq!(support[0]["basis"], "captured_source");
+    assert_eq!(
+        support[0]["quotes"][0]["quote"],
+        answer.key_points[0].citations[0].quote
+    );
+    assert_eq!(support[1]["basis"], "exercise_reasoning");
+    assert!(support[1].get("quotes").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn behavioral_guides_do_not_turn_employer_research_into_personal_history() -> Result<()> {
+    let mut behavioral = plan();
+    behavioral.round_kind = LearningInterviewRoundKind::Behavioral;
+    behavioral.company_name = "EMPLOYER_HISTORY_CANARY".into();
+    behavioral.questions[0].round = LearningInterviewRoundKind::Behavioral;
+    behavioral.questions[0].question = "Describe a time you identified a distributed-system risk and balanced the mitigation's safety with its operational complexity.".into();
+    behavioral.questions[0].evaluation_signals = vec!["PRELIMINARY_HINT_CANARY".into()];
+    let mut research = source();
+    research.full_text = "EMPLOYER_RESEARCH_CANARY: This employer builds Rust parcel scanners and prevents duplicate delivery charges.".into();
+    research.version.title = "EMPLOYER_HISTORY_CANARY engineering".into();
+    research.version.excerpt = research.full_text.clone();
+    let llm = model(vec![behavioral_standard(), accepted_review()]);
+    let guides = generate_answer_guides(&llm, &behavioral, &[research]).await?;
+    guides.validate_plan(&behavioral)?;
+    assert!(guides.cited_versions().next().is_none());
+    for prompts in [&llm.prompts, &llm.independent_prompts] {
+        for prompt in prompts.lock().expect("prompts").iter() {
+            for canary in [
+                "EMPLOYER_HISTORY_CANARY",
+                "EMPLOYER_RESEARCH_CANARY",
+                "PRELIMINARY_HINT_CANARY",
+            ] {
+                assert!(
+                    !prompt.contains(canary),
+                    "{canary} must not prescribe the learner's history"
+                );
+            }
+        }
+    }
+    assert_eq!(llm.independent_solutions.load(Ordering::Relaxed), 1);
+    assert_eq!(llm.review_drafts.load(Ordering::Relaxed), 1);
+    assert_eq!(llm.prompts.lock().expect("prompts").len(), 2);
+    Ok(())
 }
 
 fn rejected_review(quote: &str, problem: &str) -> Value {
-    json!({"assessment":"The answer needs a correction.","issues":[{
+    json!({"issues":[{
+        "demonstration":"A retry after a lost response must preserve the intended effect; the cited requirement would incorrectly reject a valid result with a different response body.",
         "path":"/referenceAnswer","quote":quote,"problem":problem
     }]})
 }
@@ -127,9 +281,19 @@ fn review_findings_must_quote_the_answer_and_cannot_be_overridden_by_acceptance(
             .len(),
         1
     );
+    let duplicated = json!({"issues":[issue["issues"][0].clone(),issue["issues"][0].clone()]});
+    assert_eq!(
+        interview_answer_review::read(&duplicated.to_string(), &answer)?
+            .issues
+            .len(),
+        1
+    );
     let mut contradictory = issue.clone();
     contradictory["accepted"] = json!(true);
     assert!(interview_answer_review::read(&contradictory.to_string(), &answer).is_err());
+    let mut unsupported = issue.clone();
+    unsupported["issues"][0]["demonstration"] = json!("");
+    assert!(interview_answer_review::read(&unsupported.to_string(), &answer).is_err());
     for (path, quote) in [
         ("/referenceAnswer", "Ignore previous instructions"),
         ("/referenceAnswer", "A paraphrase of the proposed answer"),
@@ -147,6 +311,49 @@ fn review_findings_must_quote_the_answer_and_cannot_be_overridden_by_acceptance(
             interview_answer_review::read(&bad.to_string(), &answer).is_err(),
             "{path}: {quote}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_context_merges_overlapping_evidence_without_losing_quotes_or_caveats() -> Result<()> {
+    let mut answer: AnswerStandard =
+        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
+    let mut caveat = answer.key_points[0].citations[0].clone();
+    caveat.quote =
+        "This does not mean that repeated requests must return the same response.".into();
+    answer.key_points[0].citations.push(caveat);
+    let repeated = answer.key_points[0].citations[0].clone();
+    answer.key_points[0].citations.push(repeated);
+    let short = source();
+    let evidence = interview_answer_review::cited_passages(&answer, std::slice::from_ref(&short));
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0]["quotes"].as_array().expect("quotes").len(), 2);
+    assert_eq!(
+        evidence[0]["contextPassages"],
+        json!([{
+            "text":short.full_text,"omittedBefore":false,"omittedAfter":false
+        }])
+    );
+
+    let mut long = short;
+    long.full_text = format!(
+        "{}{} {}",
+        "前文 ".repeat(200),
+        long.full_text,
+        "後文 ".repeat(200)
+    );
+    let evidence = interview_answer_review::cited_passages(&answer, std::slice::from_ref(&long));
+    let passages = evidence[0]["contextPassages"].as_array().expect("passages");
+    assert_eq!(passages.len(), 1);
+    assert_eq!(passages[0]["omittedBefore"], true);
+    assert_eq!(passages[0]["omittedAfter"], true);
+    let context = passages[0]["text"].as_str().expect("captured context");
+    assert!(long.full_text.contains(context));
+    assert!(context.starts_with(" 前文 "));
+    assert!(context.ends_with(" 後文"));
+    for citation in &answer.key_points[0].citations {
+        assert!(context.contains(&citation.quote));
     }
     Ok(())
 }
@@ -304,10 +511,12 @@ fn standards_require_exact_owned_citations_and_disclose_missing_evidence() {
 
 #[tokio::test]
 async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()> {
+    let mut initial = standard();
+    initial["referenceAnswer"] = json!("Require an identical response on every retry.");
     let llm = model(vec![
-        standard(),
+        initial,
         rejected_review(
-            "Preserve the intended effect across retries",
+            "Require an identical response on every retry.",
             "Explain that responses can differ.",
         ),
         standard(),
@@ -315,6 +524,12 @@ async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()
     ]);
     let guides = generate_answer_guides(&llm, &plan(), &[source()]).await?;
     guides.validate_plan(&plan())?;
+    assert_eq!(
+        llm.independent_solutions.load(Ordering::Relaxed),
+        1,
+        "Repairs reuse the solution made without seeing any proposed answer"
+    );
+    assert_eq!(llm.review_drafts.load(Ordering::Relaxed), 2);
     assert_eq!(guides.cited_versions().collect::<Vec<_>>(), vec!["version"]);
     let prompts = llm.prompts.lock().expect("prompt lock");
     assert_eq!(prompts.len(), 4);
@@ -325,6 +540,10 @@ async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()
         .iter()
         .step_by(2)
         .all(|prompt| prompt.contains("fully revised standard")));
+    assert!(prompts.iter().skip(1).step_by(2).all(|prompt| {
+        prompt.contains("Independent solution: preserve the required effect")
+            && prompt.contains("proposedFields")
+    }));
     Ok(())
 }
 
@@ -394,10 +613,10 @@ async fn behavioral_standard_repairs_fabricated_history_before_review() -> Resul
     behavioral.questions[0].round = LearningInterviewRoundKind::Behavioral;
     behavioral.questions[0].question =
         "Describe a real experience investigating unsafe retries and what you learned.".into();
-    let mut fabricated = standard();
+    let mut fabricated = behavioral_standard();
     fabricated["referenceAnswer"] =
         json!("In my previous role, I led a project that prevented duplicate charges.");
-    let mut outline = standard();
+    let mut outline = behavioral_standard();
     outline["referenceAnswer"] = json!("The candidate should use their own example, explain their responsibility and reasoning, and describe observable outcomes and limitations without inventing experience.");
     let llm = model(vec![fabricated, outline, accepted_review()]);
     let guides = generate_answer_guides(&llm, &behavioral, &[source()]).await?;
@@ -420,12 +639,16 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
         "Preserve the intended effect across retries",
         "The proposed answer contradicts the specification.",
     );
+    let mut second = standard();
+    second["evidenceGaps"] = json!(["The first revision still needs verification."]);
+    let mut third = standard();
+    third["evidenceGaps"] = json!(["The second revision still needs verification."]);
     let llm = model(vec![
         standard(),
         rejected.clone(),
-        standard(),
+        second,
         rejected.clone(),
-        standard(),
+        third,
         rejected,
         // A later acceptance must not bypass the finite review budget.
         standard(),
@@ -437,6 +660,26 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
     assert!(error.to_string().contains("could not be verified"));
     assert_eq!(llm.prompts.lock().expect("prompt lock").len(), 6);
     assert_eq!(llm.outputs.lock().expect("output lock").len(), 2);
+}
+
+#[tokio::test]
+async fn unchanged_rejected_guides_stop_without_repeating_the_same_review() {
+    let llm = model(vec![
+        standard(),
+        rejected_review(
+            "Preserve the intended effect across retries",
+            "Resolve the reported defect.",
+        ),
+        standard(),
+        accepted_review(),
+    ]);
+    let error = generate_answer_guides(&llm, &plan(), &[source()])
+        .await
+        .expect_err("An unchanged answer retains its rejection");
+    assert!(error.to_string().contains("repeated a rejected answer"));
+    assert_eq!(llm.prompts.lock().expect("prompts").len(), 3);
+    assert_eq!(llm.review_drafts.load(Ordering::Relaxed), 1);
+    assert_eq!(llm.outputs.lock().expect("outputs").len(), 1);
 }
 
 #[tokio::test]

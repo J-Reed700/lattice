@@ -113,8 +113,9 @@ fn claim_ledger(container: &Container) -> Arc<dyn ClaimReviewStore> {
     Arc::new(ClaimReviewRepository::new(container.db_pool().clone()))
 }
 
-fn claim_reviews(container: &Container) -> ClaimReviewService {
-    ClaimReviewService::new(container.db_pool().clone())
+async fn claim_reviews(container: &Container) -> Result<ClaimReviewService, ApiError> {
+    Ok(ClaimReviewService::new(container.db_pool().clone())
+        .with_checker_model(container.learning_checker_name().await?))
 }
 
 #[tauri::command]
@@ -125,6 +126,7 @@ pub async fn get_learning_lesson_claim_review(
     container: State<'_, Container>,
 ) -> Result<Option<LessonClaimReviewDto>, ApiError> {
     Ok(claim_reviews(&container)
+        .await?
         .review(&program_id, &lesson_id)
         .await?)
 }
@@ -140,6 +142,7 @@ pub async fn resolve_learning_claim(
         &request.program_id,
     )?;
     let revision = claim_reviews(&container)
+        .await?
         .resolve(
             &request.lesson_id,
             &request.claim_id,
@@ -247,6 +250,7 @@ pub async fn resume_learning_lesson_review(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     let job = claim_reviews(&container)
+        .await?
         .resume(
             &request.program_id,
             &request.lesson_id,

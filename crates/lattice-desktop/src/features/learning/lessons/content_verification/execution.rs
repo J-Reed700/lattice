@@ -7,6 +7,19 @@ use crate::features::learning::lab_runtime::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Sections whose fenced code is a worked example the lesson stands behind:
+/// worked examples, and the contrasts and checks that put a near-miss or a
+/// fresh case beside them (learning science lessons §3.2–3.3).
+fn shows_examples(block: &Value) -> bool {
+    matches!(
+        block.get("kind").and_then(Value::as_str),
+        Some("worked_example" | "contrast" | "check")
+    )
+}
+
+/// Fences that hold data or a diagram, never a program to run.
+const NOT_PROGRAMS: [&str; 5] = ["text", "output", "csv", "json", "mermaid"];
+
 /// Label ambiguous Markdown fences before expensive review. Only the opening
 /// fence label changes: the worked code/data itself remains byte-for-byte exact.
 pub(in crate::features::learning) async fn label_unlabeled(
@@ -23,7 +36,7 @@ pub(in crate::features::learning) async fn label_unlabeled(
         .flatten()
         .enumerate()
     {
-        if block.get("kind").and_then(Value::as_str) != Some("worked_example") {
+        if !shows_examples(block) {
             continue;
         }
         let body = block
@@ -228,7 +241,7 @@ fn examples(body: &str) -> Result<Vec<(LearningBuiltinRuntime, String)>> {
                 let runtime = match language.as_str() {
                     "python" | "py" => Some(LearningBuiltinRuntime::Python),
                     "javascript" | "js" => Some(LearningBuiltinRuntime::Javascript),
-                    "text" | "output" | "csv" | "json" => None,
+                    data if NOT_PROGRAMS.contains(&data) => None,
                     "" => {
                         return Err(invalid(
                             "Label worked-example code fences with their language.",
@@ -273,7 +286,7 @@ pub(in crate::features::learning) async fn observe(
         .flatten()
         .enumerate()
     {
-        if block["kind"].as_str() != Some("worked_example") {
+        if !shows_examples(block) {
             continue;
         }
         for (example_index, (runtime, code)) in
@@ -301,7 +314,7 @@ pub(in crate::features::learning) fn unexecuted_languages(candidate: &Value) -> 
     let mut languages = std::collections::BTreeSet::new();
     if let Some(blocks) = candidate.get("blocks").and_then(Value::as_array) {
         for block in blocks {
-            if block["kind"] != "worked_example" {
+            if !shows_examples(block) {
                 continue;
             }
             let mut open = false;
@@ -317,15 +330,9 @@ pub(in crate::features::learning) fn unexecuted_languages(candidate: &Value) -> 
                             .to_lowercase();
                         if !matches!(
                             language.as_str(),
-                            "" | "python"
-                                | "py"
-                                | "javascript"
-                                | "js"
-                                | "text"
-                                | "output"
-                                | "csv"
-                                | "json"
-                        ) {
+                            "" | "python" | "py" | "javascript" | "js"
+                        ) && !NOT_PROGRAMS.contains(&language.as_str())
+                        {
                             languages.insert(language);
                         }
                     }
@@ -340,6 +347,25 @@ pub(in crate::features::learning) fn unexecuted_languages(candidate: &Value) -> 
 #[cfg(test)]
 mod capacity_tests {
     use super::*;
+
+    /// A contrast's near-miss and a check's fresh case are examples the
+    /// lesson stands behind: their code runs like a worked example's. A
+    /// diagram is not a program, so it is never reported as unexecuted.
+    #[tokio::test]
+    async fn contrasts_and_checks_run_their_code_and_diagrams_are_not_programs() -> Result<()> {
+        let fence = "```python\nprint(sorted([3, 1, 2]))\n```\n";
+        let candidate = json!({"blocks":[
+            {"kind":"explanation","body":format!("{fence}```mermaid\nflowchart LR\n  A --> B\n```\n")},
+            {"kind":"contrast","body":format!("{fence}```mermaid\nflowchart LR\n  B --> A\n```\n")},
+            {"kind":"check","body":format!("What prints?\n{fence}\n### Check your thinking\n[1, 2, 3]")},
+        ]});
+        let observations = observe(&BuiltinRuntimes::for_tests(), &candidate).await?;
+        let ids: Vec<_> = observations.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["block-1-example-0", "block-2-example-0"]);
+        assert!(observations.iter().all(Observation::passed));
+        assert!(unexecuted_languages(&candidate).is_empty());
+        Ok(())
+    }
 
     #[tokio::test]
     async fn observes_every_example_after_the_former_twelve_example_boundary() -> Result<()> {

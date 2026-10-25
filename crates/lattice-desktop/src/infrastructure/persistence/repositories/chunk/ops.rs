@@ -10,7 +10,7 @@ use sqlx::QueryBuilder;
 use sqlx::SqliteConnection;
 
 pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()> {
-    let model = ChunkMapper::to_model(chunk);
+    let model = ChunkMapper::to_model(chunk)?;
 
     sqlx::query(
         r#"
@@ -96,7 +96,7 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<ChunkEntity>> {
     .await
     .map_err(|e| AppError::Database(format!("Failed to list all chunks: {}", e)))?;
 
-    Ok(ChunkMapper::to_entities(&db_models))
+    ChunkMapper::to_entities(&db_models)
 }
 
 pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<Vec<ChunkEntity>> {
@@ -131,7 +131,7 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
             .await
             .map_err(|e| AppError::Database(format!("Failed to find chunks by ids: {}", e)))?;
 
-        all.extend(ChunkMapper::to_entities(&db_models));
+        all.extend(ChunkMapper::to_entities(&db_models)?);
     }
 
     Ok(all)
@@ -141,6 +141,19 @@ pub async fn find_by_document(
     conn: &mut SqliteConnection,
     document_id: &str,
 ) -> Result<Vec<ChunkEntity>> {
+    find_by_document_limit(conn, document_id, None).await
+}
+
+pub async fn find_by_document_limit(
+    conn: &mut SqliteConnection,
+    document_id: &str,
+    limit: Option<usize>,
+) -> Result<Vec<ChunkEntity>> {
+    let limit = limit
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| AppError::InvalidInput("Chunk limit exceeds SQLite range".into()))?
+        .unwrap_or(-1);
     let db_models = sqlx::query_as::<_, ChunkModel>(
         r#"
         SELECT
@@ -151,14 +164,16 @@ pub async fn find_by_document(
         FROM text_chunks
         WHERE document_id = ?
         ORDER BY chunk_index ASC
+        LIMIT ?
         "#,
     )
     .bind(document_id)
+    .bind(limit)
     .fetch_all(conn)
     .await
     .map_err(|e| AppError::Database(format!("Failed to find chunks by document: {}", e)))?;
 
-    Ok(ChunkMapper::to_entities(&db_models))
+    ChunkMapper::to_entities(&db_models)
 }
 
 pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<()> {
@@ -246,9 +261,13 @@ pub async fn save_batch_optimized(
     }
 
     let start = Instant::now();
-    const CHUNK_BATCH_SIZE: usize = 150; // SQLite parameter limit safe for chunks
+    // Fifteen bound fields per row keeps each statement under 900 parameters.
+    const CHUNK_BATCH_SIZE: usize = 60;
 
-    let models: Vec<ChunkModel> = chunks.iter().map(ChunkMapper::to_model).collect();
+    let models: Vec<ChunkModel> = chunks
+        .iter()
+        .map(ChunkMapper::to_model)
+        .collect::<Result<_>>()?;
     let batch_count = models.len().div_ceil(CHUNK_BATCH_SIZE);
 
     for batch in models.chunks(CHUNK_BATCH_SIZE) {

@@ -45,6 +45,7 @@ fn ttls_come_from_the_policy() {
         ttl(SourcingCache::ArchiveLookup, &policy),
         policy.archive_lookup_ttl
     );
+    assert_eq!(ttl(SourcingCache::SiteHome, &policy), policy.site_home_ttl);
 }
 
 #[test]

@@ -49,6 +49,7 @@ function configuredCloudModels(llm: LLMSettings | undefined): Array<{ ref: Cloud
   if (llm && isCloudProvider(llm.provider) && llm.model.trim()) {
     add({ kind: 'cloud', provider: llm.provider, model: llm.model.trim() }, 'Chat model');
   }
+  if (llm?.utilityModel?.kind === 'cloud') add(llm.utilityModel, 'Utility model');
   if (llm?.learningModel?.kind === 'cloud') add(llm.learningModel, 'Learning model');
   if (llm?.verifierModel?.kind === 'cloud') add(llm.verifierModel, 'Verifier model');
   return rows;

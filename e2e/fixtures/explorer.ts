@@ -37,6 +37,10 @@ export async function installExplorerFixture(page: Page) {
     'dialog|open': () => state.picker,
     list_downloads: () => [],
     activity_snapshot: () => ({ items: [], running: 0 }),
+    // Iris, in the rail, counts the flashcards due.
+    list_study_decks: () => [],
+    // The folder chat lists each cloud provider's models; no keys are saved here.
+    list_cloud_models: () => ({ hasApiKey: false, models: [] }),
     get_batch_history: () => ({ jobs: [] }),
     list_jobs: () => [],
     list_journal_syntheses: () => [],

@@ -186,6 +186,11 @@ struct InterviewLlm {
 #[async_trait::async_trait]
 impl LLMPort for InterviewLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.json_schema.is_none() {
+            return Ok(CompletionResponse::from_text(
+                "The fixture question is answerable and its hypothetical standard has no defects.",
+            ));
+        }
         let prompt = serde_json::to_string(request).map_err(|e| invalid(e.to_string()))?;
         let properties = request
             .json_schema
@@ -215,8 +220,8 @@ impl LLMPort for InterviewLlm {
                     {"criterion":"Verification","fullCredit":"Checks the claimed outcome.","partialCredit":"Suggests a check without explaining it."}
                 ],"evidenceGaps":["No source snapshots were captured for these hypothetical exercises."]
             })
-        } else if properties.is_some_and(|fields| fields.get("assessment").is_some()) {
-            json!({"assessment":"The standard meets the question with disclosed limitations.","issues":[]})
+        } else if properties.is_some_and(|fields| fields.get("issues").is_some()) {
+            json!({"issues":[]})
         } else if properties.is_some_and(|fields| fields.get("content").is_some()) {
             if self.invalid_citation_once.swap(false, Ordering::Relaxed) {
                 json!({"content":"Evidence is insufficient.","citations":[{"sourceId":"learner","versionId":"transcript","quote":"I am not sure."}]})

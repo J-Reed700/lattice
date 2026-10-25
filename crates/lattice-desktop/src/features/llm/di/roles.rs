@@ -2,7 +2,7 @@
 //!
 //! A chat runs on its request override, else its own choice, else the
 //! Settings default; the Learning and Verifier roles run on their own models
-//! (the Verifier's may be a cloud model, checked for a saved key); the router and
+//! (including cloud models); the router and
 //! utility roles on theirs. Only the Settings default keeps Auto's load-time
 //! fallback — the active local model, then a llama.cpp server that is up, then
 //! Ollama. A model named outright is used as named or refused, never swapped
@@ -338,7 +338,7 @@ impl RoleModels {
 
     /// The utility model, or `None` when none is set, or when a remote one
     /// cannot be reached — its callers then use the default chat model. A
-    /// reference saved in Settings (a llama.cpp connection) comes first; the
+    /// reference saved in Settings (llama.cpp or a cloud model) comes first; the
     /// row flag (a downloaded model or the Ollama connection) counts only
     /// while none is saved. Every utility caller resolves through here.
     pub(crate) async fn utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {

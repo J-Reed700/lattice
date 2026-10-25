@@ -522,6 +522,53 @@ async fn resume_with_nothing_changed_is_refused_and_starts_nothing() -> Result<(
     Ok(())
 }
 
+#[tokio::test]
+async fn changing_the_checker_unlocks_the_held_review_and_continues_its_job() -> Result<()> {
+    let model = Supporting::new();
+    let course = Waiting::new(&model).await?;
+    let same = course
+        .service()
+        .with_checker_model(Some(model.model_name().into()));
+    assert!(!same.changed_since_stop(&course.lesson_id).await?);
+    let changed = course
+        .service()
+        .with_checker_model(Some("new-learning-checker".into()));
+    let view = changed
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .unwrap();
+    assert!(
+        view.changed_since_stop,
+        "the button recognizes the configured checker change"
+    );
+    let next = changed
+        .resume(
+            &course.program_id,
+            &course.lesson_id,
+            course.revision().await?,
+            uuid::Uuid::new_v4().to_string(),
+        )
+        .await?;
+    assert_eq!(next.status, LearningGenerationJobStatus::Pending);
+    assert_eq!(
+        next.retry_of_job_id.as_deref(),
+        Some(course.job_id.as_str())
+    );
+    let ledger = ClaimReviewRepository::new(course.pool.clone())
+        .load(&course.lesson_id)
+        .await?;
+    assert!(
+        ledger
+            .claims
+            .iter()
+            .flat_map(|entry| entry.events())
+            .all(|record| record.provenance.actor
+                != lattice_core::domain::learning::claim_review::Actor::User),
+        "no invented user resolution was needed"
+    );
+    Ok(())
+}
+
 /// The repair loop's invariant and bound (claim sources design §12), over
 /// the confinement, the identity rules and the ledger the pass uses.
 mod loop_bound {

@@ -55,13 +55,13 @@ async fn trust_model(pool: &sqlx::SqlitePool, program_id: &str) -> Result<Option
 }
 
 /// The claim's standing scope from stored judgements only (claim sources
-/// design §7.3), without what its section cites, and what the row says of
-/// it; `None` when no profile or ownership judgement is stored for it.
+/// design §7.3), and what the row says of it; `None` when no profile or
+/// ownership judgement is stored for it. A citation alone does not prove
+/// support, so this retrieval-only eval excludes passages, not documents.
 async fn stored_scope(
     pool: &sqlx::SqlitePool,
     program_id: &str,
     statement: &str,
-    section: &[ReferencePassage],
 ) -> Result<Option<(HashSet<String>, Value)>> {
     let Some(model) = trust_model(pool, program_id).await? else {
         return Ok(None);
@@ -73,11 +73,7 @@ async fn stored_scope(
     if !judgements.owner_judged(&profile).await? {
         return Ok(None);
     }
-    let shown: Vec<String> = section
-        .iter()
-        .map(|passage| passage.source_id.clone())
-        .collect();
-    let scope = judgements.standing_scope(&profile, &shown).await?;
+    let scope = judgements.standing_scope(&profile, &[]).await?;
     let mut by_level: BTreeMap<&str, usize> = BTreeMap::new();
     for level in scope.proxies.values() {
         *by_level.entry(level.as_str()).or_default() += 1;
@@ -197,7 +193,7 @@ pub(super) async fn recall_set(
         for (name, reaches) in orders {
             let mut scope = Value::Null;
             let pages: Vec<WalkedPage> = match trust.filter(|_| *name == STANDING) {
-                Some(trust) => match stored_scope(trust, &program_id, statement, &section).await? {
+                Some(trust) => match stored_scope(trust, &program_id, statement).await? {
                     Some((versions, note)) => {
                         scope = note;
                         walk_standing_pages(

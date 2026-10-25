@@ -471,6 +471,9 @@ mod review_resume_tests;
 #[path = "claim_review_flow_tests.rs"]
 mod claim_review_flow_tests;
 
+#[path = "resume_upgrade_tests.rs"]
+mod resume_upgrade_tests;
+
 #[path = "audit_flow_tests.rs"]
 mod audit_flow_tests;
 

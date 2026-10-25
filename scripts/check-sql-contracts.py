@@ -34,9 +34,10 @@ def main():
         ], cwd=ROOT, check=True, capture_output=True, text=True)
         rows.extend(json.loads(extracted.stdout))
     connection = sqlite3.connect(':memory:')
+    connection.execute('PRAGMA foreign_keys = ON')
     migrations = sorted((ROOT / 'crates/lattice-desktop/migrations').glob('*.sql'))
     for migration in migrations:
-        connection.executescript(migration.read_text())
+        connection.executescript('BEGIN;\n' + migration.read_text() + '\nCOMMIT;')
     # sqlx creates its own bookkeeping table at runtime; the backup feature
     # reads it to compare schema versions between databases.
     connection.executescript(

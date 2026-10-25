@@ -1,0 +1,250 @@
+/*
+ * Iris: a dark glass lens with a light behind it.
+ *
+ * The only cool colour in a warm app, kept to this file so it reads as a
+ * presence rather than another control. Each mood sets a resting brightness;
+ * the animations move around it, so with reduced motion (the global rule in
+ * index.css stops every animation) the mood still shows as a steady level.
+ */
+
+.iris {
+  --iris-hue: 208;
+  --iris-size: 18px;
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--iris-size);
+  height: var(--iris-size);
+  border-radius: 9999px;
+  isolation: isolate;
+}
+
+.iris[data-tone='alert'] {
+  --iris-hue: 36;
+}
+
+/* The bloom: light spilling onto whatever the lens sits on. */
+.iris::before {
+  content: '';
+  position: absolute;
+  inset: -60%;
+  z-index: -1;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    hsl(var(--iris-hue) 100% 62% / 0.42) 0%,
+    hsl(var(--iris-hue) 100% 56% / 0.14) 38%,
+    transparent 68%
+  );
+  pointer-events: none;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.iris-lens {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 50%, hsl(var(--iris-hue) 45% 13%) 0%, hsl(220 22% 4%) 74%);
+  box-shadow:
+    inset 0 0 0 1px hsl(0 0% 100% / 0.09),
+    inset 0 1px 1px hsl(0 0% 100% / 0.14),
+    0 0 0 1px hsl(220 12% 3% / 0.55),
+    0 1px 2px hsl(220 20% 2% / 0.4);
+}
+
+.iris-light {
+  position: absolute;
+  inset: 12%;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    hsl(var(--iris-hue) 100% 97%) 0%,
+    hsl(var(--iris-hue) 100% 74%) 16%,
+    hsl(var(--iris-hue) 96% 54%) 40%,
+    hsl(var(--iris-hue) 92% 38% / 0.55) 64%,
+    transparent 74%
+  );
+  transition:
+    opacity 600ms var(--ease-out),
+    transform 600ms var(--ease-out),
+    background 600ms var(--ease-out);
+}
+
+/* A reflection on the glass, fixed while the light moves behind it. */
+.iris-glint {
+  position: absolute;
+  top: 13%;
+  left: 20%;
+  width: 34%;
+  height: 20%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, hsl(0 0% 100% / 0.38), transparent 70%);
+  transform: rotate(-28deg);
+}
+
+/* Progress, drawn just outside the lens while work runs. */
+.iris-ring {
+  position: absolute;
+  inset: calc(var(--iris-size) * -0.24);
+  width: calc(100% + var(--iris-size) * 0.48);
+  height: calc(100% + var(--iris-size) * 0.48);
+  overflow: visible;
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity 300ms var(--ease-out);
+  pointer-events: none;
+}
+
+.iris-ring circle {
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.iris-ring-track {
+  stroke: hsl(var(--iris-hue) 80% 62% / 0.14);
+}
+
+.iris-ring-fill {
+  stroke: hsl(var(--iris-hue) 100% 68%);
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 1.5px hsl(var(--iris-hue) 100% 60% / 0.9));
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: stroke-dasharray 400ms var(--ease-out);
+}
+
+.iris-ring[data-indeterminate] .iris-ring-fill {
+  stroke-dasharray: 24 100;
+  animation: iris-orbit 2.4s linear infinite;
+}
+
+.iris[data-mood='working'] .iris-ring,
+.iris[data-mood='thinking'] .iris-ring {
+  opacity: 1;
+}
+
+/* Idle: dim, breathing slowly, like a sleeping laptop's light. */
+.iris[data-mood='idle'] .iris-light {
+  opacity: 0.62;
+  transform: scale(0.94);
+  animation: iris-breathe 6s ease-in-out infinite;
+}
+.iris[data-mood='idle']::before {
+  opacity: 0.5;
+  animation: iris-bloom 6s ease-in-out infinite;
+}
+
+/* Working: awake, a steadier and brighter breath. */
+.iris[data-mood='working'] .iris-light {
+  opacity: 0.88;
+  animation: iris-breathe-bright 3.2s ease-in-out infinite;
+}
+.iris[data-mood='working']::before {
+  opacity: 0.8;
+}
+
+/* Thinking: a model is answering, so the light shimmers. */
+.iris[data-mood='thinking'] .iris-light {
+  opacity: 0.94;
+  animation: iris-shimmer 1.5s ease-in-out infinite;
+}
+.iris[data-mood='thinking']::before {
+  opacity: 0.9;
+  animation: iris-bloom-quick 1.5s ease-in-out infinite;
+}
+
+/* Notice: one soft pulse, twice, then a steady glow until you look. */
+.iris[data-mood='notice'] .iris-light {
+  opacity: 0.96;
+  animation: iris-notice 1.3s var(--ease-out) 2;
+}
+.iris[data-mood='notice']::before {
+  opacity: 0.95;
+  animation: iris-notice-bloom 1.3s var(--ease-out) 2;
+}
+
+@keyframes iris-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 0.76; transform: scale(1); }
+}
+
+@keyframes iris-bloom {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.65; }
+}
+
+@keyframes iris-breathe-bright {
+  0%, 100% { opacity: 0.8; transform: scale(0.97); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+
+@keyframes iris-shimmer {
+  0%, 100% { opacity: 0.84; transform: scale(0.97); }
+  30% { opacity: 1; transform: scale(1.04); }
+  55% { opacity: 0.9; transform: scale(1); }
+  75% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes iris-bloom-quick {
+  0%, 100% { opacity: 0.7; }
+  40% { opacity: 1; }
+}
+
+@keyframes iris-notice {
+  0% { opacity: 0.7; transform: scale(0.94); }
+  35% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 0.96; transform: scale(1); }
+}
+
+@keyframes iris-notice-bloom {
+  0% { opacity: 0.5; transform: scale(0.9); }
+  35% { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0.95; transform: scale(1); }
+}
+
+@keyframes iris-orbit {
+  to { transform: rotate(360deg); }
+}
+
+/* A thin progress line in the card, in Iris's colour. */
+.iris-bar {
+  --iris-hue: 208;
+  display: block;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: hsl(var(--iris-hue) 80% 60% / 0.16);
+}
+
+.iris-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: hsl(var(--iris-hue) 100% 64%);
+  box-shadow: 0 0 6px hsl(var(--iris-hue) 100% 60% / 0.6);
+  transition: width 400ms var(--ease-out);
+}
+
+/* The dot beside a note: blue for news, amber for something that failed. */
+.iris-dot {
+  --iris-hue: 208;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 9999px;
+  background: hsl(var(--iris-hue) 100% 64%);
+  box-shadow: 0 0 6px hsl(var(--iris-hue) 100% 60% / 0.7);
+}
+
+.iris-dot[data-tone='alert'] {
+  --iris-hue: 36;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris *,
+  .iris::before {
+    animation: none !important;
+  }
+}

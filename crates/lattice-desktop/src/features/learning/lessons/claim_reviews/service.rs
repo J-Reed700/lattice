@@ -42,6 +42,7 @@ pub struct ClaimReviewService {
     store: ClaimReviewRepository,
     examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
+    checker_model: Option<String>,
 }
 
 /// One claim's event, the accuracy label it gives (§15), and the verdict
@@ -59,8 +60,16 @@ impl ClaimReviewService {
             store: ClaimReviewRepository::new(pool.clone()),
             examples: CheckerExamples::new(pool.clone()),
             drafts: LearningCurriculumRepository::new(pool.clone()),
+            checker_model: None,
             pool,
         }
+    }
+
+    /// The configured Learning checker, read without loading a model. The
+    /// review screen and Resume must use the same current configuration.
+    pub fn with_checker_model(mut self, model: Option<String>) -> Self {
+        self.checker_model = model;
+        self
     }
 
     pub(super) fn pool(&self) -> &SqlitePool {
@@ -182,16 +191,15 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
-    /// Whether the user acted on a claim since the lesson's last
-    /// preparation stopped (§6.2): "Resume verification" reruns nothing that
-    /// has not changed while a claim waits for the user.
+    /// Whether claim activity, a different checker, or an outdated standing
+    /// assessment gives verification new work since the lesson stopped.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
         self.changed_in(&ledger).await
     }
 
-    /// `changed_since_stop` over a loaded ledger: a user event at or after
-    /// the job's last write of the review row.
+    /// `changed_since_stop` over a loaded ledger. Settings and verification
+    /// upgrades count even when the user has not acted on a claim card.
     pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
@@ -202,12 +210,22 @@ impl ClaimReviewService {
         ) {
             return Ok(false);
         }
+        if self
+            .checker_model
+            .as_ref()
+            .is_some_and(|model| model != &review.checker_model)
+        {
+            return Ok(true);
+        }
         let stopped_at = self
             .store
             .review_written_at(&ledger.lesson_id)
             .await?
             .unwrap_or(i64::MAX);
-        Ok(changed_since(ledger, stopped_at))
+        if changed_since(ledger, stopped_at) {
+            return Ok(true);
+        }
+        self.stale_standing(ledger).await
     }
 
     async fn accept_all_general_knowledge(

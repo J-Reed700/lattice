@@ -26,7 +26,7 @@ import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge, RoleButton, RoleToggle } from './RoleButton';
-import { isLearningModel, isUtilityModel, ROLES } from './roleConfig';
+import { CONNECTION_ROLES, isLearningModel, isUtilityModel, roleDescriptor } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
 const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
@@ -63,7 +63,7 @@ export function OllamaMetaRow() {
   const resolvedUtilityTag = utilityTag || chatTag;
 
   // Learning names the chat tag on this connection: `Ollama{tag}` in Settings.
-  const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility' || r.id === 'learning' || r.id === 'verifier');
+  const ollamaRoles = CONNECTION_ROLES.map(roleDescriptor);
   const activeOllamaRoles = ollamaRoles.filter((role) => role.isActive(ollamaRow, settings?.llm));
 
   const goToChatSettings = () => {

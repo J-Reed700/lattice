@@ -679,6 +679,18 @@ impl ClaimLedger {
             if let Some(trust) = trust {
                 self.append(id, assessed(trust)).await?;
             }
+        } else if !entry.state().is_settled()
+            && entry
+                .basis()
+                .is_some_and(|basis| basis.fingerprint == check.fingerprint)
+        {
+            // A new standing policy/reach can leave the verdict unchanged.
+            // Persist its assessment anyway, or a held legacy claim keeps
+            // looking unprocessed and Resume remains enabled forever.
+            // Never transplant an assessment from reselected evidence.
+            if let Some(trust) = trust.filter(|trust| entry.trust() != Some(trust)) {
+                self.append(id, assessed(trust)).await?;
+            }
         }
         Ok(())
     }

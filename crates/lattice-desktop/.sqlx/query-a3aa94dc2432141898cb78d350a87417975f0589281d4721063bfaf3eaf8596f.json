@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO documents (\n            id, file_path, file_name, file_type, mime_type,\n            size_bytes, modified_at, indexed_at, checksum, status, error_message,\n            language, category, quality_score, access_count, last_accessed_at, word_count\n        )\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(file_path) DO UPDATE SET\n            file_path = excluded.file_path,\n            file_name = excluded.file_name,\n            file_type = excluded.file_type,\n            mime_type = excluded.mime_type,\n            size_bytes = excluded.size_bytes,\n            modified_at = excluded.modified_at,\n            indexed_at = excluded.indexed_at,\n            checksum = excluded.checksum,\n            status = excluded.status,\n            error_message = excluded.error_message,\n            language = excluded.language,\n            category = excluded.category,\n            quality_score = excluded.quality_score,\n            access_count = excluded.access_count,\n            last_accessed_at = excluded.last_accessed_at,\n            word_count = excluded.word_count,\n            updated_at = CURRENT_TIMESTAMP\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "a3aa94dc2432141898cb78d350a87417975f0589281d4721063bfaf3eaf8596f"
+}

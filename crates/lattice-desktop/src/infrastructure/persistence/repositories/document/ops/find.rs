@@ -22,6 +22,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -67,6 +68,7 @@ pub async fn find_by_path(
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -110,6 +112,7 @@ pub async fn find_by_path_pattern(
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -126,7 +129,7 @@ pub async fn find_by_path_pattern(
     .await
     .map_err(|e| AppError::Database(format!("Failed to find documents by pattern: {}", e)))?;
 
-    Ok(DocumentMapper::to_entities(&db_models))
+    DocumentMapper::to_entities(&db_models)
 }
 
 pub async fn find_by_checksum(
@@ -146,6 +149,7 @@ pub async fn find_by_checksum(
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -183,6 +187,7 @@ pub async fn list_metadata(conn: &mut SqliteConnection) -> Result<Vec<DocumentEn
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -197,7 +202,7 @@ pub async fn list_metadata(conn: &mut SqliteConnection) -> Result<Vec<DocumentEn
     .await
     .map_err(|e| AppError::Database(format!("Failed to list documents: {}", e)))?;
 
-    Ok(DocumentMapper::to_entities(&db_models))
+    DocumentMapper::to_entities(&db_models)
 }
 
 pub async fn find_all_paginated(
@@ -217,6 +222,7 @@ pub async fn find_all_paginated(
             indexed_at,
             checksum,
             status,
+            error_message,
             language,
             category,
             quality_score,
@@ -236,7 +242,7 @@ pub async fn find_all_paginated(
     .await
     .map_err(|e| AppError::Database(format!("Failed to list documents (paginated): {}", e)))?;
 
-    Ok(DocumentMapper::to_entities(&db_models))
+    DocumentMapper::to_entities(&db_models)
 }
 
 pub async fn find_aggregate_by_checksum_tx(
@@ -246,7 +252,7 @@ pub async fn find_aggregate_by_checksum_tx(
     let doc_model: Option<DocumentModel> = sqlx::query_as::<_, DocumentModel>(
         r#"
         SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at,
-               indexed_at, checksum, status, language, category, quality_score,
+               indexed_at, checksum, status, error_message, language, category, quality_score,
                access_count, last_accessed_at, word_count, source_context
         FROM documents
         WHERE checksum = ?
@@ -287,7 +293,7 @@ pub async fn find_by_filter(
 ) -> Result<Vec<DocumentEntity>> {
     use lattice_core::application::ports::Filter;
     filter.validate()?;
-    let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE 1=1");
+    let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, error_message, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE 1=1");
     if let Some(pattern) = &filter.path_pattern {
         query.push(" AND file_path LIKE ").push_bind(pattern);
     }
@@ -314,7 +320,7 @@ pub async fn find_metadata_by_ids(
 ) -> Result<Vec<DocumentEntity>> {
     let mut documents = Vec::with_capacity(ids.len());
     for batch in ids.chunks(500) {
-        let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE id IN (");
+        let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, error_message, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE id IN (");
         let mut values = query.separated(", ");
         for id in batch {
             values.push_bind(id);

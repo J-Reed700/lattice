@@ -133,6 +133,53 @@ describe('Downloaded model chat selection', () => {
     expect(row('Local model').queryByText('Utility')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['google', 'Google'],
+  ] as const)('assigns every connection role to a %s model', async (provider, name) => {
+    const modelRef = { kind: 'cloud', provider, model: 'cloud-test-model' } as const;
+    settings.llm.verifierModel = modelRef;
+    const user = await renderModels();
+    const cloudDialog = await openRowConfig(user, `${name} connection`);
+    expect(cloudDialog.queryByRole('button', { name: 'Embedding' })).not.toBeInTheDocument();
+
+    await user.click(cloudDialog.getByRole('button', { name: 'Chat' }));
+    await waitFor(() => expect(resolveDefaultChatOption(settings.llm, models)?.ref).toEqual(modelRef));
+    expect(cloudDialog.getByRole('button', { name: 'Chat' })).toBeDisabled();
+
+    await user.click(cloudDialog.getByRole('button', { name: 'Utility' }));
+    await waitFor(() => expect(settings.llm.utilityModel).toEqual(modelRef));
+    expect(VaultAPI.clearActiveUtilityModel).toHaveBeenCalledOnce();
+
+    await user.click(cloudDialog.getByRole('button', { name: 'Learning' }));
+    await waitFor(() => expect(settings.llm.learningModel).toEqual(modelRef));
+    await user.click(cloudDialog.getByRole('button', { name: 'Verifier' }));
+    await waitFor(() => expect(settings.llm.verifierModel).toBeNull());
+    await user.click(cloudDialog.getByRole('button', { name: 'Verifier' }));
+    await waitFor(() => expect(settings.llm.verifierModel).toEqual(modelRef));
+    await closeRowConfig(user);
+
+    expect(screen.getAllByText(`${name} connection`)).toHaveLength(1);
+    for (const role of ['Chat', 'Utility', 'Learning', 'Verifier']) {
+      expect(row(`${name} connection`).getByText(role)).toHaveAttribute('data-active-role', role.toLowerCase());
+    }
+    expect(row('Local model').queryByText('Chat')).not.toBeInTheDocument();
+    expect(row('Local model').queryByText('Utility')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Learning: not set/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a cloud Utility model accessible when Chat uses another connection, and can clear it', async () => {
+    settings.llm.utilityModel = { kind: 'cloud', provider: 'anthropic', model: 'utility-test-model' };
+    models[0].is_active_for_utility = false;
+    const user = await renderModels();
+    expect(row('Anthropic connection').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
+    expect(row('Local model').getByText('Chat')).toHaveAttribute('data-active-role', 'chat');
+    const cloudDialog = await openRowConfig(user, 'Anthropic connection');
+    await user.click(cloudDialog.getByRole('button', { name: 'Utility' }));
+    await waitFor(() => expect(settings.llm.utilityModel).toBeNull());
+    expect(screen.queryByText('Anthropic connection')).not.toBeInTheDocument();
+    expect(settings.llm.provider).toBe('local');
+  });
+
   it('clears the llama.cpp Utility reference when a downloaded model takes Utility', async () => {
     settings.llm.utilityModel = { kind: 'llama_cpp', model: 'remote-model.gguf' };
     models[0] = { ...models[0], is_active_for_utility: false };

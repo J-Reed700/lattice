@@ -9,6 +9,7 @@ import {
 } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
+import { LEARNING_CLAIM_REVIEW_ROOT } from '@/features/learning/api/learningQueryKeys';
 import { CLOUD_MODELS_QUERY_KEY } from '@/features/model/hooks/useCloudModels';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
@@ -59,11 +60,14 @@ export function useUpdateSettingsMutation() {
         return result.data;
       },
       onSuccess: (data) => {
+        const previous = queryClient.getQueryData<AppSettings>(SETTINGS_QUERY_KEY);
+        const checkerChanged = JSON.stringify(previous?.llm.learningModel) !== JSON.stringify(data.llm.learningModel);
         // The command answers with the whole persisted document, so seed the
         // cache with it for an immediate render, then invalidate so the next
         // read is the repository's own answer rather than this response.
         queryClient.setQueryData(SETTINGS_QUERY_KEY, data);
         void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+        if (checkerChanged) void queryClient.invalidateQueries({ queryKey: LEARNING_CLAIM_REVIEW_ROOT });
       },
     },
     queryClient
@@ -79,7 +83,10 @@ export function useSettingsTransfer() {
   const api = useApi();
   const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const refreshOnSuccess = (result: { ok: boolean }) => {
-    if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    if (result.ok) {
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: LEARNING_CLAIM_REVIEW_ROOT });
+    }
   };
   const reset = useMutation({ mutationFn: () => api.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);
   const importJson = useMutation(

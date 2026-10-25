@@ -144,6 +144,12 @@ async fn pool_repository_reads_in_index_order_and_filters_by_document() {
             .len(),
         3
     );
+    let limited = repo
+        .find_by_filter(&by_document(&ferns, Some(1)))
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].index(), 0);
     let no_document = ChunkFilter {
         document_id: None,
         limit: None,
@@ -161,6 +167,26 @@ async fn pool_repository_reads_in_index_order_and_filters_by_document() {
             "{refused:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn pool_repository_reports_corrupt_chunk_rows_instead_of_wrapping_them() {
+    let pool = pool().await;
+    let repo = SqliteChunkRepository::new(pool.clone());
+    let document = document(&pool, "indexed").await;
+    let chunk = chunk(&document, 0);
+    repo.save(&chunk).await.unwrap();
+    sqlx::query("UPDATE text_chunks SET word_count = -1 WHERE id = ?")
+        .bind(chunk.id().as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = repo.find_by_id(chunk.id().as_str()).await;
+    assert!(
+        matches!(result, Err(AppError::InvalidData(_))),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]
@@ -215,6 +241,46 @@ async fn pool_batches_are_atomic_and_deletes_reach_only_their_targets() {
 }
 
 #[tokio::test]
+async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
+    use crate::tests::common::query_counts::count_writes;
+
+    let pool = pool().await;
+    let repo = SqliteChunkRepository::new(pool.clone());
+    let owner = document(&pool, "indexed").await;
+    let chunks: Vec<_> = (0..121).map(|index| chunk(&owner, index)).collect();
+    let (saved, writes) = count_writes(repo.save_batch(&chunks)).await;
+    saved.unwrap();
+    assert_eq!(writes, 3, "121 chunks should use three <=900-bind INSERTs");
+    assert_eq!(repo.count_by_document(owner.as_str()).await.unwrap(), 121);
+
+    let other = document(&pool, "indexed").await;
+    let mut failing: Vec<_> = (0..60).map(|index| chunk(&other, index)).collect();
+    failing.push(chunk(&DocumentId::new(), 60));
+    assert!(repo.save_batch(&failing).await.is_err());
+    assert_eq!(
+        repo.count_by_document(other.as_str()).await.unwrap(),
+        0,
+        "a foreign-key failure in the second INSERT must roll back the first"
+    );
+
+    let tx = Arc::new(Mutex::new(pool.begin().await.unwrap()));
+    let tx_repo = SqliteChunkRepositoryTx::new(tx.clone());
+    let (saved, writes) = count_writes(tx_repo.save_batch(&chunks)).await;
+    saved.unwrap();
+    assert_eq!(
+        writes, 3,
+        "transaction adapter should use shared bulk writes"
+    );
+    Arc::try_unwrap(tx)
+        .ok()
+        .expect("only the test owns the transaction")
+        .into_inner()
+        .commit()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn transaction_repository_follows_its_transaction() {
     let pool = pool().await;
     let seeds = document(&pool, "indexed").await;
@@ -244,6 +310,12 @@ async fn transaction_repository_follows_its_transaction() {
             .len(),
         2
     );
+    let limited = repo
+        .find_by_filter(&by_document(&seeds, Some(1)))
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].index(), 0);
     assert!(repo
         .find_by_filter(&ForeignFilter)
         .await

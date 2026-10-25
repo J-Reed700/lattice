@@ -22,6 +22,18 @@ struct EmbeddingRow {
     created_at: String,
 }
 
+fn validate_persisted_vector(vector: &[f32], dimension: i64) -> Result<()> {
+    if dimension < 0
+        || vector.len() != dimension as usize
+        || vector.iter().any(|value| !value.is_finite())
+    {
+        return Err(AppError::InvalidState(
+            "Persisted embedding has an invalid dimension or non-finite value".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn save(
     conn: &mut SqliteConnection,
     entity: &DomainEmbedding,
@@ -81,45 +93,52 @@ pub async fn save_batch(
     // 999 / 6 = 166, use 150 for safety
     const EMBEDDING_BATCH_SIZE: usize = 150;
 
-    // Prepare all DTOs and serialized embeddings first
-    let prepared: Result<Vec<_>> = entries
-        .into_iter()
-        .map(|(entity, vector)| {
-            let dto = EmbeddingMapper::to_dto(&entity, vector);
-            let embedding_bytes =
-                lattice_core::shared::persistence::embedding_encoding::encode_embedding(
-                    &dto.embedding,
-                );
-            let id = format!("emb_{}", dto.chunk_id);
-            let dimension = dto.dimension as i32;
-            let created_at = dto.computed_at.to_rfc3339();
-            Ok((
-                id,
-                dto.chunk_id,
-                embedding_bytes,
-                dto.model_name,
-                dimension,
-                created_at,
-            ))
-        })
-        .collect();
+    // Validate the whole input before writing any rows, then encode only one
+    // SQL batch at a time to avoid holding a second copy of every vector.
+    for (entity, vector) in &entries {
+        EmbeddingMapper::validate_dimension(entity, vector)?;
+    }
 
-    let prepared = prepared?;
-    let total_count = prepared.len();
+    let total_count = entries.len();
     let batch_count = total_count.div_ceil(EMBEDDING_BATCH_SIZE);
-
-    for batch in prepared.chunks(EMBEDDING_BATCH_SIZE) {
+    let mut entries = entries.into_iter();
+    loop {
+        let batch: Vec<_> = entries
+            .by_ref()
+            .take(EMBEDDING_BATCH_SIZE)
+            .map(|(entity, vector)| {
+                let dto = EmbeddingMapper::to_dto(&entity, vector);
+                let embedding_bytes =
+                    lattice_core::shared::persistence::embedding_encoding::encode_embedding(
+                        &dto.embedding,
+                    );
+                let id = format!("emb_{}", dto.chunk_id);
+                let dimension = dto.dimension as i32;
+                let created_at = dto.computed_at.to_rfc3339();
+                (
+                    id,
+                    dto.chunk_id,
+                    embedding_bytes,
+                    dto.model_name,
+                    dimension,
+                    created_at,
+                )
+            })
+            .collect();
+        if batch.is_empty() {
+            break;
+        }
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO text_embeddings (id, chunk_id, embedding, model_name, dimension, created_at) "
         );
 
         query_builder.push_values(batch, |mut b, row| {
-            b.push_bind(&row.0) // id
-                .push_bind(&row.1) // chunk_id
-                .push_bind(&row.2) // embedding_bytes
-                .push_bind(&row.3) // model_name
+            b.push_bind(row.0) // id
+                .push_bind(row.1) // chunk_id
+                .push_bind(row.2) // embedding_bytes
+                .push_bind(row.3) // model_name
                 .push_bind(row.4) // dimension
-                .push_bind(&row.5); // created_at
+                .push_bind(row.5); // created_at
         });
 
         query_builder.push(
@@ -179,6 +198,7 @@ pub async fn find_by_chunk_id(
                 lattice_core::shared::persistence::embedding_encoding::decode_embedding(
                     &rec.embedding,
                 )?;
+            validate_persisted_vector(&vector, rec.dimension)?;
 
             let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
                 .map_err(|e| AppError::Parsing(e.to_string()))?
@@ -186,7 +206,7 @@ pub async fn find_by_chunk_id(
 
             let dto = EmbeddingDTO {
                 chunk_id: rec.chunk_id,
-                embedding: vector.clone(),
+                embedding: vector,
                 model_name: rec.model_name,
                 dimension: rec.dimension as usize,
                 computed_at,
@@ -194,7 +214,7 @@ pub async fn find_by_chunk_id(
             };
 
             let entity = EmbeddingMapper::from_dto(&dto)?;
-            Ok(Some((entity, vector)))
+            Ok(Some((entity, dto.embedding)))
         }
         None => Ok(None),
     }
@@ -224,6 +244,7 @@ pub async fn find_by_document_id(
             lattice_core::shared::persistence::embedding_encoding::decode_embedding(
                 &rec.embedding,
             )?;
+        validate_persisted_vector(&vector, rec.dimension)?;
 
         let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
             .map_err(|e| AppError::Parsing(e.to_string()))?
@@ -231,7 +252,7 @@ pub async fn find_by_document_id(
 
         let dto = EmbeddingDTO {
             chunk_id: rec.chunk_id,
-            embedding: vector.clone(),
+            embedding: vector,
             model_name: rec.model_name,
             dimension: rec.dimension as usize,
             computed_at,
@@ -239,7 +260,7 @@ pub async fn find_by_document_id(
         };
 
         let entity = EmbeddingMapper::from_dto(&dto)?;
-        results.push((entity, vector));
+        results.push((entity, dto.embedding));
     }
 
     Ok(results)
@@ -256,19 +277,19 @@ pub async fn vectors_by_document_ids(
         return Ok(vectors);
     }
     // Stream blobs so only one encoded row is kept beside the decoded vectors.
-    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT c.document_id,e.embedding FROM text_chunks c
+    let mut rows = sqlx::query_as::<_, (String, Vec<u8>, i64)>(
+        "SELECT c.document_id,e.embedding,e.dimension FROM text_chunks c
          JOIN text_embeddings e ON e.chunk_id=c.id
          WHERE c.document_id IN (SELECT value FROM json_each(?))
          ORDER BY c.document_id,c.chunk_index",
     )
     .bind(serde_json::to_string(document_ids)?)
     .fetch(conn);
-    while let Some((id, blob)) = rows.try_next().await? {
-        vectors
-            .entry(id)
-            .or_default()
-            .push(lattice_core::shared::persistence::embedding_encoding::decode_embedding(&blob)?);
+    while let Some((id, blob, dimension)) = rows.try_next().await? {
+        let vector =
+            lattice_core::shared::persistence::embedding_encoding::decode_embedding(&blob)?;
+        validate_persisted_vector(&vector, dimension)?;
+        vectors.entry(id).or_default().push(vector);
     }
     Ok(vectors)
 }

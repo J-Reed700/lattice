@@ -1,10 +1,10 @@
 /**
  * Display settings.
  *
- * Theme is the only display preference the app actually acts on. It is read
- * and written through the backend `ui.theme` slice (React Query is the
- * mirror; the Rust SettingsRepository is the SSOT) because `useApplyTheme`
- * applies it from there.
+ * Theme is read and written through the backend `ui.theme` slice (React
+ * Query is the mirror; the Rust SettingsRepository is the SSOT) because
+ * `useApplyTheme` applies it from there. Whether Iris shows is a UI-only
+ * preference, kept in her store.
  *
  * Font size, compact mode and file previews used to live here. Nothing in
  * the app ever read them — they were deleted in the September 2026 overhaul
@@ -16,6 +16,8 @@ import { useMemo } from 'react';
 import { Check, Monitor, Moon, RefreshCw, Sun } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection } from '@/components/ui';
+import { Switch } from '@/components/ui/switch';
+import { useIrisStore } from '@/features/iris/stores/irisStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { cn } from '@/lib/utils';
@@ -37,6 +39,8 @@ export function DisplayTab() {
   const { data: settings, isLoading, isError, refetch } = useSettingsQuery();
   const updateSettings = useUpdateSettingsMutation();
   const activeTheme = settings?.ui.theme ?? 'system';
+  const irisEnabled = useIrisStore((state) => state.enabled);
+  const setIrisEnabled = useIrisStore((state) => state.setEnabled);
 
   const { data: versionInfo } = useVersionInfoQuery();
   const checkForUpdates = useCheckForUpdatesMutation();
@@ -138,6 +142,13 @@ export function DisplayTab() {
         {updateSettings.isError && (
           <p role="alert" className="text-sm text-danger">Couldn't save your theme. Try selecting it again.</p>
         )}
+        <SettingsRow
+          label="Iris"
+          hint="A small light in the sidebar that shows what Lattice is doing and mentions what needs a look. It never calls a model."
+          htmlFor="display-iris"
+        >
+          <Switch id="display-iris" checked={irisEnabled} onCheckedChange={setIrisEnabled} />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="About">

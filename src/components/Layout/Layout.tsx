@@ -21,6 +21,7 @@ import { Outlet, useLocation } from 'react-router';
 
 import { ActivityIndicator } from '@/features/activity/components/ActivityIndicator';
 import { IndexingStatusRail } from '@/features/files/components/IndexingStatus/IndexingStatusRail';
+import { Iris } from '@/features/iris/components/Iris';
 import { DownloadsDrawer } from '@/features/model/components/Downloads/DownloadsDrawer';
 import { DrawerTrigger } from '@/features/model/components/Downloads/DrawerTrigger';
 import { HeaderDownloadsIndicator } from '@/features/model/components/Downloads/HeaderDownloadsIndicator';
@@ -205,6 +206,7 @@ export function Layout() {
           <div data-tauri-drag-region className="min-h-4 flex-1" />
 
           <div className="flex w-full flex-col items-center gap-px">
+            <Iris compact={compact} />
             <IndexingStatusRail />
             <ActivityIndicator />
             <HeaderDownloadsIndicator />

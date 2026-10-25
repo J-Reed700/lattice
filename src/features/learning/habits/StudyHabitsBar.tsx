@@ -150,10 +150,10 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
             <AlertTriangle className="size-4 shrink-0 text-warning-fg" />
             <div>
               <span className="font-semibold text-warning-fg">
-                Anti-Cramming & Single-Tasking Guard:
+                Time for a break:
               </span>{' '}
-              You have been studying for {continuousStudyMinutes} continuous minutes without a break.
-              Harvard and neuroscience retention findings show memory consolidation sharply drops after 90 minutes.
+              You have been studying for {continuousStudyMinutes} minutes without one.
+              A short break helps you stay focused, and coming back tomorrow helps you remember more than pressing on today.
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -258,7 +258,7 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
           )}
         </div>
 
-        {/* Right: Dividers, Focus Guard, Health & Consolidation, Retention Frameworks */}
+        {/* Right: dividers, focus guard, study habits, learning guide */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Single-Tasking & Focus Guard Toggle */}
           <button
@@ -287,10 +287,10 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
             type="button"
             onClick={() => openFrameworksModal('habits')}
             className="group inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-2.5 py-1 text-xs text-text-secondary hover:border-border-default hover:text-text-primary transition-colors"
-            title="Open Health & Harvard Principles Self-Assessment"
+            title="Open the study habits checklist"
           >
             <Heart className="size-3 text-accent group-hover:scale-110 transition-transform" />
-            <span className="font-medium">Health & Consolidation</span>
+            <span className="font-medium">Study habits</span>
             <span className="inline-flex items-center gap-1 text-[10px] text-text-muted ml-0.5">
               <Moon
                 className={cn('size-2.5', sleepDone ? 'text-blue-500 font-bold' : 'opacity-40')}
@@ -312,16 +312,16 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
 
           <div className="h-4 w-px bg-border-subtle hidden sm:block" />
 
-          {/* Retention Frameworks Button */}
+          {/* Learning guide button */}
           <Button
             size="sm"
             variant="outline"
             className="h-7 gap-1.5 text-xs font-medium border-border-subtle bg-surface text-text-secondary hover:border-border-default hover:text-text-primary"
             onClick={() => openFrameworksModal('frameworks')}
-            aria-label="Retention Frameworks (Learning Frameworks & Retention Guide)"
+            aria-label="How to learn so it lasts"
           >
             <GraduationCap className="size-3.5 text-accent" />
-            <span>Retention Frameworks</span>
+            <span>How to learn</span>
           </Button>
         </div>
       </div>
@@ -336,7 +336,7 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
         </div>
       )}
 
-      {/* Retention Frameworks & Habits Modal */}
+      {/* Learning guide and habits modal */}
       <RetentionFrameworksModal
         open={isModalOpen}
         onOpenChange={setIsModalOpen}

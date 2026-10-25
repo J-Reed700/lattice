@@ -34,6 +34,8 @@ pub(super) fn block_kind(v: LearningBlockKind) -> &'static str {
     match v {
         LearningBlockKind::Explanation => "explanation",
         LearningBlockKind::WorkedExample => "worked_example",
+        LearningBlockKind::Contrast => "contrast",
+        LearningBlockKind::Check => "check",
         LearningBlockKind::Reflection => "reflection",
         LearningBlockKind::GuidedPractice => "guided_practice",
         LearningBlockKind::IndependentPractice => "independent_practice",
@@ -60,6 +62,8 @@ fn parse_block(s: &str) -> Result<LearningBlockKind> {
     match s {
         "explanation" => Ok(LearningBlockKind::Explanation),
         "worked_example" => Ok(LearningBlockKind::WorkedExample),
+        "contrast" => Ok(LearningBlockKind::Contrast),
+        "check" => Ok(LearningBlockKind::Check),
         "reflection" => Ok(LearningBlockKind::Reflection),
         "guided_practice" => Ok(LearningBlockKind::GuidedPractice),
         "independent_practice" => Ok(LearningBlockKind::IndependentPractice),

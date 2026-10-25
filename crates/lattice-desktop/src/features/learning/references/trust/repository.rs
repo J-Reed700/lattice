@@ -38,6 +38,33 @@ impl SqliteSourceTrustStore {
     pub(in crate::features::learning) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
+
+    /// Every checker's ownership judgements on any of `subject_keys` in a
+    /// course under `policy`: leads to where a subject's owner publishes.
+    /// They steer which sources the standing reach reads first and never
+    /// level anything; levels come from the current checker's judgements
+    /// (`authority_for_subject`, `authority`).
+    pub(in crate::features::learning) async fn subject_leads(
+        &self,
+        program_id: &str,
+        subject_keys: &[SubjectKey],
+        policy: &str,
+    ) -> Result<Vec<AuthorityAssessment>> {
+        if subject_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<&str> = subject_keys.iter().map(|key| key.0.as_str()).collect();
+        sqlx::query("SELECT judgement_json FROM source_subject_authority WHERE program_id=? AND policy=? AND subject_key IN (SELECT value FROM json_each(?)) ORDER BY assessed_at DESC, origin_key, model")
+            .bind(program_id)
+            .bind(policy)
+            .bind(to_json(&keys)?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(|row| from_json(row.get::<&str, _>("judgement_json"), "judgement_json"))
+            .collect()
+    }
 }
 
 fn judgement<T: serde::de::DeserializeOwned>(

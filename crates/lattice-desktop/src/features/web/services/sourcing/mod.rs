@@ -8,14 +8,18 @@
 //! - `health`: one breaker and its counters per finder.
 //! - `cache`: provider pages, so a later page of a search is a slice of the
 //!   pool rather than a re-fetch of every provider's first page.
+//! - `home`: where a scoped site lives now, so a search keeps to the site
+//!   under the name it answers to today.
 
 mod cache;
 mod health;
+mod home;
 pub(crate) mod owner;
 mod runner;
 mod service;
 
 pub(crate) use health::HealthBook;
+pub(crate) use home::{HopReader, SiteHomes};
 pub(crate) use owner::OwnerResolver;
 #[cfg(test)]
 pub(crate) use service::Lineup;

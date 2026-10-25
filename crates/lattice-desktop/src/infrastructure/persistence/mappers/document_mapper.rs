@@ -39,7 +39,6 @@ pub struct DocumentModel {
     pub indexed_at: String,
     pub checksum: String,
     pub status: String,
-    #[sqlx(default)]
     pub error_message: Option<String>,
     // Extended metadata
     // SQLite types: TEXT, REAL (f64), INTEGER (i64)
@@ -139,55 +138,11 @@ impl DocumentMapper {
             model.status
         );
 
-        // Helper function to parse timestamps with nanosecond precision handling
-        // RFC3339 officially supports up to 6 decimal places (microseconds), but
-        // some file systems (like ext4) use nanosecond precision (9 decimals).
-        // Chrono's parse_from_rfc3339 rejects >6 decimals, so we truncate.
+        // Chrono accepts RFC3339 fractional seconds at nanosecond precision.
         let parse_timestamp = |ts: &str| -> Result<DateTime<Utc>> {
-            // First try parsing as-is
-            match DateTime::parse_from_rfc3339(ts) {
-                Ok(dt) => Ok(dt.with_timezone(&Utc)),
-                Err(_) => {
-                    // If parsing fails, check for nanosecond precision and truncate
-                    // Format: "2025-12-07T08:16:30.126611234+00:00"
-                    // We need to find the fractional seconds and truncate to 6 digits
-                    if let Some(dot_idx) = ts.find('.') {
-                        if let Some(tz_idx) = ts[dot_idx..].find(&['+', '-'][..]) {
-                            let tz_start = dot_idx + tz_idx;
-                            let fraction = &ts[dot_idx + 1..tz_start];
-
-                            // If fraction has >6 digits, truncate to 6
-                            if fraction.len() > 6 {
-                                let truncated = format!(
-                                    "{}.{}{}",
-                                    &ts[..dot_idx],
-                                    &fraction[..6],
-                                    &ts[tz_start..]
-                                );
-                                tracing::debug!(
-                                    "Truncated nanosecond timestamp: {} -> {}",
-                                    ts,
-                                    truncated
-                                );
-                                return DateTime::parse_from_rfc3339(&truncated)
-                                    .map(|dt| dt.with_timezone(&Utc))
-                                    .map_err(|e| {
-                                        AppError::InvalidData(format!(
-                                            "Invalid timestamp even after truncation: {} -> {}",
-                                            ts, e
-                                        ))
-                                    });
-                            }
-                        }
-                    }
-
-                    // If we couldn't fix it, return the original error
-                    Err(AppError::InvalidData(format!(
-                        "Invalid RFC3339 timestamp: {}",
-                        ts
-                    )))
-                }
-            }
+            DateTime::parse_from_rfc3339(ts)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| AppError::InvalidData(format!("Invalid RFC3339 timestamp: {ts}: {e}")))
         };
 
         // Parse timestamps with nanosecond precision handling
@@ -245,9 +200,28 @@ impl DocumentMapper {
 
         let last_accessed_at = model
             .last_accessed_at
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc));
+            .as_deref()
+            .map(parse_timestamp)
+            .transpose()?;
+
+        let access_count = i32::try_from(model.access_count)
+            .ok()
+            .filter(|count| *count >= 0)
+            .ok_or_else(|| {
+                AppError::InvalidData(format!(
+                    "Document {} access_count is outside the supported nonnegative range: {}",
+                    model.id, model.access_count
+                ))
+            })?;
+        let word_count = i32::try_from(model.word_count)
+            .ok()
+            .filter(|count| *count >= 0)
+            .ok_or_else(|| {
+                AppError::InvalidData(format!(
+                    "Document {} word_count is outside the supported nonnegative range: {}",
+                    model.id, model.word_count
+                ))
+            })?;
 
         let checksum =
             lattice_core::domain::value_objects::checksum::Checksum::new(model.checksum.clone())?;
@@ -267,9 +241,9 @@ impl DocumentMapper {
             language,
             category,
             quality_score: model.quality_score as f32, // Convert f64 -> f32 for domain
-            access_count: model.access_count as i32,   // Convert i64 -> i32 for domain
+            access_count,
             last_accessed_at,
-            word_count: model.word_count as i32, // Convert i64 -> i32 for domain
+            word_count,
             content: model.content.clone(),
         });
 
@@ -291,7 +265,7 @@ impl DocumentMapper {
 
     /// Convert a batch of database models to domain entities.
     ///
-    /// Continues processing on errors, collecting all successful conversions.
+    /// Returns an error if any row cannot be represented in the domain model.
     ///
     /// # Arguments
     ///
@@ -299,60 +273,9 @@ impl DocumentMapper {
     ///
     /// # Returns
     ///
-    /// Vector of domain entities (may be shorter than input if some conversions failed).
-    ///
-    /// # Warning
-    ///
-    /// **This method silently drops documents that fail to parse!**
-    /// Parse errors are logged at ERROR level. Check logs to diagnose missing documents.
-    pub fn to_entities(models: &[DocumentModel]) -> Vec<DomainDocument> {
-        tracing::info!(
-            "Converting batch of {} database models to domain entities",
-            models.len()
-        );
-
-        let mut success_count = 0;
-        let mut failure_count = 0;
-
-        let entities: Vec<DomainDocument> = models
-            .iter()
-            .filter_map(|model| {
-                match Self::to_entity(model) {
-                    Ok(entity) => {
-                        success_count += 1;
-                        Some(entity)
-                    }
-                    Err(e) => {
-                        failure_count += 1;
-                        tracing::error!(
-                            "❌ DOCUMENT PARSE FAILURE #{}: Failed to parse document id={}, file_path={}: {}",
-                            failure_count,
-                            model.id,
-                            model.file_path,
-                            e
-                        );
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        if failure_count > 0 {
-            tracing::error!(
-                "⚠️  SILENT FAILURE WARNING: {}/{} documents were DROPPED due to parse errors. Check error logs above.",
-                failure_count,
-                models.len()
-            );
-        }
-
-        tracing::info!(
-            "Batch conversion complete: {} succeeded, {} failed, {} returned",
-            success_count,
-            failure_count,
-            entities.len()
-        );
-
-        entities
+    /// All converted entities, or the first conversion error.
+    pub fn to_entities(models: &[DocumentModel]) -> Result<Vec<DomainDocument>> {
+        models.iter().map(Self::to_entity).collect()
     }
 
     /// Convert a batch of domain entities to database models.

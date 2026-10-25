@@ -63,6 +63,8 @@ enum Stands {
     Institutional,
     /// Nobody identified, an unstructured text: Unknown.
     Unknown,
+    /// Captured, but no checker has judged its standing yet.
+    Unjudged,
 }
 
 struct Course {
@@ -149,27 +151,30 @@ impl Course {
                 "reference",
             ),
             Stands::Unknown => ("unknown", Value::Null, "none", "reference"),
+            Stands::Unjudged => ("", Value::Null, "", ""),
         };
-        self.store
-            .save_standing(&StoredJudgement {
-                value: serde_json::from_value(json!({
-                    "standing": standing,
-                    "publisher": publisher,
-                    "publisher_kind": "publisher",
-                    "editorial": editorial,
-                    "nature": nature,
-                    "flags": [],
-                    "reasons": [{ "code": "publisher_metadata", "text": "fixture" }],
-                    "policy": STANDING_POLICY,
-                    "model": MODEL,
-                    "signals_sha256": key.input_sha256,
-                }))?,
-                key,
-                input_tokens: 0,
-                output_tokens: 0,
-                assessed_at: 0,
-            })
-            .await?;
+        if !matches!(stands, Stands::Unjudged) {
+            self.store
+                .save_standing(&StoredJudgement {
+                    value: serde_json::from_value(json!({
+                        "standing": standing,
+                        "publisher": publisher,
+                        "publisher_kind": "publisher",
+                        "editorial": editorial,
+                        "nature": nature,
+                        "flags": [],
+                        "reasons": [{ "code": "publisher_metadata", "text": "fixture" }],
+                        "policy": STANDING_POLICY,
+                        "model": MODEL,
+                        "signals_sha256": key.input_sha256,
+                    }))?,
+                    key,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    assessed_at: 0,
+                })
+                .await?;
+        }
         self.store
             .save_authority(
                 &self.program_id,
@@ -357,6 +362,60 @@ async fn a_claim_left_insufficient_reads_the_courses_strongest_sources_before_wa
     .await
 }
 
+/// The lesson that stalled: a section cites a community page, the course
+/// holds the vendor's own documentation, and no checker ever judged that
+/// documentation (an upgraded standing policy leaves every old judgement
+/// unread). The reach must read it, judge it, and settle the claim.
+#[tokio::test]
+async fn an_official_document_nobody_has_judged_is_read_judged_and_settles_the_claim() -> Result<()>
+{
+    use std::sync::atomic::Ordering;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let (course, mut sources, cited) = course(&pool, &lesson, Stands::Community, false).await?;
+    let lines: String = (0..40)
+        .map(|line| format!("Reference section {line} is listed. "))
+        .collect();
+    let docs = course
+        .save(
+            "https://docs.example-vendor.com/minerals/alpha",
+            format!("Mineral alpha documentation: property was logged. {lines}{MARKER}"),
+            Stands::Unjudged,
+        )
+        .await?;
+    let docs_id = docs.version_id.clone();
+    sources.push(LearningSourceDto {
+        id: docs.version_id,
+        title: "Vendor documentation".into(),
+        url: None,
+        excerpt: docs.text,
+        acquired_at: 1,
+    });
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(6_000).judging_institutional("docs.example-vendor.com");
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let results = checked(&model, &course, &references, &cited).await?;
+        let finding = &results[0].2;
+        assert_eq!(finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(finding.two_pass.reach, Some(Reach::Standing));
+        assert_eq!(
+            finding.two_pass.supported_by.as_ref().unwrap().source_id,
+            docs_id
+        );
+        let trust = finding.trust.as_ref().expect("weighed again");
+        let Decision::Sufficient { met_by, .. } = &trust.decision else {
+            panic!("the vendor's documentation states it: {}", trust.explain());
+        };
+        assert!(met_by.contains(&docs_id), "{}", trust.explain());
+        assert!(
+            model.standing_requests.load(Ordering::SeqCst) >= 1,
+            "the documentation is judged once it is read"
+        );
+        Ok(())
+    })
+    .await
+}
+
 #[tokio::test]
 async fn a_claim_with_no_stronger_source_is_verified_as_best_available_without_a_standing_page(
 ) -> Result<()> {
@@ -392,10 +451,91 @@ async fn a_claim_with_no_stronger_source_is_verified_as_best_available_without_a
 }
 
 #[tokio::test]
+async fn reading_one_silent_passage_does_not_hide_the_rest_of_an_authoritative_document(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let (course, mut sources, cited) = course(&pool, &lesson, Stands::Community, false).await?;
+    let introduction = "Mineral alpha record: property was logged; this introduction does not state the finding.\n";
+    let official = course
+        .save(
+            "https://museum.example.org/full-reference",
+            format!(
+                "{introduction}{}\nMineral alpha: {MARKER}",
+                "Catalogue filing instructions and archive opening hours.\n".repeat(160)
+            ),
+            Stands::Institutional,
+        )
+        .await?;
+    let official_id = official.version_id.clone();
+    sources.push(LearningSourceDto {
+        id: official.version_id,
+        title: "Museum reference".into(),
+        url: None,
+        excerpt: official.text,
+        acquired_at: 1,
+    });
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut cites: Vec<_> = references
+        .cited_passages(&[MARKER])?
+        .into_iter()
+        .filter(|passage| passage.source_id == cited)
+        .collect();
+    cites.push(EvidencePassage {
+        source_id: official_id.clone(),
+        text: introduction.into(),
+        start_byte: 0,
+        end_byte: introduction.len(),
+        retrieval_kind: "citation".into(),
+        score: 1.0,
+    });
+    let citations = Citations::new(HashMap::from([(0, cites)]), HashMap::new());
+    let model = PagingModel::new(6_000);
+    lesson_drafts::run(
+        &repo,
+        &job,
+        &lesson,
+        provenance_gate::with_trust(
+            course.pool.clone(),
+            course.program_id.clone(),
+            "Minerals".into(),
+            async {
+                let results = evidence_checks::check_with_paging(
+                    &model,
+                    &references,
+                    &evidence_paging_tests::inventory(&[CLAIM.into()]),
+                    &[],
+                    &ClaimChecks::default(),
+                    (
+                        &citations,
+                        Paging {
+                            reaches: REACHES,
+                            depth: Depth::FirstPage,
+                        },
+                    ),
+                )
+                .await?;
+                let finding = &results[0].2;
+                let Decision::Sufficient { met_by, .. } = &finding.trust.as_ref().unwrap().decision
+                else {
+                    panic!("the full authoritative document contains support: {finding:?}");
+                };
+                // The section cites the document (its silent introduction),
+                // so the support is the cited document's, not "elsewhere".
+                assert!(met_by.contains(&official_id), "{met_by:?}");
+                assert_eq!(finding.two_pass.reach, Some(Reach::Standing));
+                Ok(())
+            },
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
 async fn the_standing_scope_is_built_from_stored_facts_without_a_model() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (_, _, lesson) = setup(&pool).await?;
-    let (course, _, _) = course(&pool, &lesson, Stands::Community, false).await?;
+    let (course, sources, cited) = course(&pool, &lesson, Stands::Community, false).await?;
     let text = |name: &str| format!("Mineral alpha {name} page: property beta under pressure.");
     let owner = course
         .save(
@@ -424,6 +564,13 @@ async fn the_standing_scope_is_built_from_stored_facts_without_a_model() -> Resu
             "https://collections.example-hinted.org/alpha",
             text("hinted"),
             Stands::Unknown,
+        )
+        .await?;
+    let unjudged = course
+        .save(
+            "https://docs.example-vendor.com/alpha",
+            text("vendor docs"),
+            Stands::Unjudged,
         )
         .await?;
     let shown = course
@@ -466,11 +613,25 @@ async fn the_standing_scope_is_built_from_stored_facts_without_a_model() -> Resu
     let scope = judgements
         .standing_scope(&profile(), std::slice::from_ref(&shown.version_id))
         .await?;
-    let expected: HashSet<String> = [&owner, &restricted, &user, &hinted]
+    let expected: HashSet<String> = [&owner, &restricted, &user, &hinted, &unjudged]
         .iter()
         .map(|saved| saved.version_id.clone())
         .collect();
-    assert_eq!(scope.candidates, expected);
+    assert!(scope.candidates.is_superset(&expected), "{scope:?}");
+    // A current judgement below the ladder keeps a version out: the
+    // community forum and the unknown notes; the shown press is support.
+    for kept_out in sources
+        .iter()
+        .map(|source| &source.id)
+        .chain([&shown.version_id, &cited])
+    {
+        assert!(!scope.candidates.contains(kept_out), "{kept_out} read");
+    }
+    // Anything else read is a version nobody judged (the lesson's own file).
+    for other in scope.candidates.difference(&expected) {
+        assert_eq!(scope.proxies.get(other), None);
+        assert_eq!(scope.tier(other), 1);
+    }
     assert_eq!(
         scope.proxies.get(&owner.version_id),
         Some(&TrustLevel::Primary)
@@ -488,6 +649,92 @@ async fn the_standing_scope_is_built_from_stored_facts_without_a_model() -> Resu
         None,
         "a hinted host is read, never a level"
     );
+    assert_eq!(
+        scope.proxies.get(&unjudged.version_id),
+        None,
+        "a source nobody has judged is read, and levelled only once read"
+    );
     assert_eq!(scope.owner_hosts, ["collections.example-hinted.org"]);
+    // The reading order: the strongest and the led first, then unjudged.
+    for first in [&owner, &restricted, &user, &hinted] {
+        assert_eq!(scope.tier(&first.version_id), 0);
+    }
+    assert_eq!(scope.tier(&unjudged.version_id), 1);
+
+    // A new checker inherits leads, never levels: it makes its own
+    // ownership call, and stale judgements cannot raise its ceiling.
+    let mut switched =
+        provenance_gate::Judgements::cached(pool.clone(), &course.program_id, "new-checker")
+            .await?;
+    assert!(!switched.owner_judged(&profile()).await?);
+    let switched_scope = switched
+        .standing_scope(&profile(), std::slice::from_ref(&shown.version_id))
+        .await?;
+    assert!(switched_scope.candidates.is_superset(&expected));
+    for unjudged_now in sources.iter().map(|source| &source.id) {
+        assert!(
+            switched_scope.candidates.contains(unjudged_now),
+            "an old checker's judgement does not keep a version out"
+        );
+        assert_eq!(switched_scope.tier(unjudged_now), 1);
+    }
+    assert_eq!(switched_scope.proxies.get(&owner.version_id), None);
+    assert_eq!(
+        switched_scope.proxies.get(&restricted.version_id),
+        Some(&TrustLevel::Established),
+        "facts that need no judgement still level"
+    );
+    assert_eq!(
+        switched_scope.tier(&owner.version_id),
+        0,
+        "the old owner leads"
+    );
+    assert_eq!(switched_scope.tier(&hinted.version_id), 0);
+    assert_eq!(switched_scope.owner_hosts, scope.owner_hosts);
+
+    // Once the new checker has judged the subject, its call is the lead: the
+    // stale owner and the host it hinted fall back to the unjudged, and the
+    // host the new checker names is read first.
+    course
+        .store
+        .save_authority(
+            &course.program_id,
+            &StoredJudgement {
+                key: JudgementKey {
+                    policy: OWNERSHIP_POLICY.into(),
+                    model: "new-checker".into(),
+                    input_sha256: "new-checker-owner".into(),
+                },
+                value: AuthorityAssessment {
+                    origin_key: Origin::of_url("https://press.example.org/").unwrap().key,
+                    subject_key: subject().key,
+                    relation: SubjectRelation::Independent,
+                    basis: vec![Reason::new(ReasonCode::PublisherIsOwner, "fixture")],
+                    owner_origin_hints: vec!["docs.example-vendor.com".into()],
+                    policy: OWNERSHIP_POLICY.into(),
+                    model: "new-checker".into(),
+                },
+                input_tokens: 0,
+                output_tokens: 0,
+                assessed_at: 1,
+            },
+        )
+        .await?;
+    let mut judged =
+        provenance_gate::Judgements::cached(pool.clone(), &course.program_id, "new-checker")
+            .await?;
+    assert!(judged.owner_judged(&profile()).await?);
+    let judged_scope = judged
+        .standing_scope(&profile(), std::slice::from_ref(&shown.version_id))
+        .await?;
+    assert!(judged_scope.candidates.is_superset(&expected));
+    assert_eq!(judged_scope.owner_hosts, ["docs.example-vendor.com"]);
+    assert_eq!(judged_scope.tier(&unjudged.version_id), 0);
+    assert_eq!(
+        judged_scope.tier(&owner.version_id),
+        1,
+        "a superseded owner call no longer leads"
+    );
+    assert_eq!(judged_scope.tier(&hinted.version_id), 1);
     Ok(())
 }

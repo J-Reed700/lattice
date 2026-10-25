@@ -14,13 +14,14 @@ use lattice_core::domain::provenance::{
 use lattice_core::domain::sourcing::{
     fusion, records_on_owner, FinderDescriptor, FinderHealth, FinderId, FinderOutcome,
     FinderResult, Findings, KeyService, Lead, LeadKind, LinkPlace, Near, Origin, OwnerResolution,
-    Reach, SourceNeed, SourcingPolicy, SubjectHint,
+    Reach, SiteHome, SourceNeed, SourcingPolicy, SubjectHint,
 };
 use lattice_core::shared::error::{AppError, Result};
 use url::Url;
 
 use super::cache::ProviderPageCache;
 use super::health::HealthBook;
+use super::home::SiteHomes;
 use super::owner::OwnerResolver;
 use super::runner::{Clock, Runner, SystemClock};
 use crate::features::web::services::finders::{Fetched, FinderEntry, FinderHttp};
@@ -48,6 +49,9 @@ pub(crate) struct SourcingService {
     clock: Arc<dyn Clock>,
     owner: Option<Arc<OwnerResolver>>,
     http: Option<FinderHttp>,
+    /// Where scoped sites live now; without it (tests that script the
+    /// finders alone) a scope is searched as asked.
+    homes: Option<Arc<SiteHomes>>,
 }
 
 /// The registered finders and what gates them: the user's sourcing settings
@@ -109,6 +113,7 @@ impl SourcingService {
             clock,
             owner: None,
             http: None,
+            homes: None,
         }
     }
 
@@ -145,16 +150,33 @@ impl SourcingService {
         self
     }
 
+    /// Searches keep to scoped sites where `homes` says they live now.
+    pub(crate) fn with_site_homes(mut self, homes: Arc<SiteHomes>) -> Self {
+        self.homes = Some(homes);
+        self
+    }
+
     /// Finds sources for `need`, among the finders in `only` when the caller
     /// names some (the chat tool's `providers`). Errs only when nothing was
     /// found and every finder that applied failed or was skipped, naming
     /// each one's cause.
+    ///
+    /// A scoped need is searched where its site lives now: every finder runs
+    /// on the site's home, and this is the one place a scope is enforced. A
+    /// lead is kept when it is on the home or under the name the scope was
+    /// asked by, which engines still index and which redirects home.
     pub(crate) async fn find_with(
         &self,
-        need: SourceNeed,
+        mut need: SourceNeed,
         budget: Budget,
         only: Option<&[FinderId]>,
     ) -> Result<Search> {
+        let site = match (need.scope.take(), &self.homes) {
+            (Some(asked), Some(homes)) => Some(homes.of(asked, &budget).await),
+            (Some(asked), None) => Some(SiteHome::unmoved(asked)),
+            (None, _) => None,
+        };
+        need.scope = site.as_ref().map(|site| site.home().clone());
         let lineup = self.lineup();
         let entries: Vec<FinderEntry> = lineup
             .registry
@@ -230,8 +252,8 @@ impl SourcingService {
             fusion::rrf(&lists, lineup.policy.rrf_k, owner_ref),
             owner_ref,
         );
-        if let Some(scope) = &need.scope {
-            leads.retain(|lead| scope.covers(&lead.url));
+        if let Some(site) = &site {
+            leads.retain(|lead| site.covers(&lead.url));
         }
         let outcomes = per_finder(report.outcomes);
         if leads.is_empty() && outcomes.iter().all(|outcome| !answered_or_empty(outcome)) {
