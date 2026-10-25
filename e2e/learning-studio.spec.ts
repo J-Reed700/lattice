@@ -2484,6 +2484,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await expect(sources.getByRole("status")).toContainText("was restored as the active source version");
 
   await workspace.getByRole("tab", { name: "Recall", exact: true }).click();
+  await page.getByRole("group", { name: "Recall view" }).getByRole("button", { name: "Versioned cards & schedules", exact: true }).click();
   const recall = page.getByTestId("learning-recall-evolution");
   await expect(recall.getByRole("heading", { name: "Cards that can evolve" })).toBeVisible();
   await expect(recall.getByText(/scheduler choice is recorded per card/)).toBeVisible();
