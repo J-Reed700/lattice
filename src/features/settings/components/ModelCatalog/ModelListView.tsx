@@ -11,6 +11,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Skeleton } from '@/components/Skeleton';
+import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
@@ -54,6 +55,7 @@ export function ModelListView({
   onPageChange,
   onBrowseCategory,
 }: ModelListViewProps) {
+  const api = useApi();
   const { downloadedModels } = useDownloadedModels();
   const { getActiveDownloadForModel } = useDownloadState();
   // Read the machine once for the whole list rather than once per row.
@@ -81,7 +83,7 @@ export function ModelListView({
       if (startingIds.has(modelId)) return;
       setStartingIds((previous) => new Set(previous).add(modelId));
       try {
-        await startModelDownload({ metadata: model.model, addToast, queryClient });
+        await startModelDownload({ metadata: model.model, addToast, queryClient }, api);
       } finally {
         setStartingIds((previous) => {
           const next = new Set(previous);
@@ -90,7 +92,7 @@ export function ModelListView({
         });
       }
     },
-    [addToast, queryClient, startingIds],
+    [addToast, api, queryClient, startingIds],
   );
 
   if (loading) {

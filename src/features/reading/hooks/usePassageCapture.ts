@@ -2,9 +2,9 @@ import { useCallback, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { PASSAGE_REFERENCES_QUERY_KEY } from '@/features/reading/hooks/usePassageReferencesQuery';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
-import VaultAPI from '@/lib/api';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import { toast } from '@/stores/toastStore';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
@@ -28,6 +28,7 @@ export function usePassageCapture({
   resolvedLabel,
   onClose,
 }: PassageCaptureOptions) {
+  const api = useApi();
   const navigate = useAppNavigate();
   const queryClient = useQueryClient();
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export function usePassageCapture({
     async (text: string) => {
       const trimmed = captureLocator(text);
       if (!trimmed) return;
-      const result = await VaultAPI.createPassageReference({
+      const result = await api.createPassageReference({
         documentId: source.documentId,
         chunkId: initialLocator?.chunkId ?? source.chunkId,
         filePath: source.filePath,
@@ -60,7 +61,7 @@ export function usePassageCapture({
         message: 'Lattice will use this in future answers.',
       });
     },
-    [source, captureLocator, initialLocator?.chunkId, resolvedLabel, queryClient]
+    [captureLocator, api, source, initialLocator?.chunkId, resolvedLabel, queryClient]
   );
 
   const handleAddToJournal = useCallback(

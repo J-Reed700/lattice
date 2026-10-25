@@ -3,6 +3,7 @@ import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 
+import { useApi } from '@/contexts/ApiContext';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
 import { CitationRail } from '@/features/reading/components/CitationRail';
 import { ImportScopeSelect } from '@/features/reading/components/ImportScopeSelect';
@@ -121,6 +122,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onToggleFocus,
   onMinimize,
 }) => {
+  const api = useApi();
   const navigate = useAppNavigate();
   /** The marked passage the web article has in view, if it has one. */
   const [activePassage, setActivePassage] = useState<string | null>(null);
@@ -205,7 +207,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const documentPathQuery = useQuery({
     queryKey: readingKeys.documentPath(source.documentId ?? ''),
     queryFn: async () => {
-      const result = await resolveSourcePath(source.documentId!);
+      const result = await resolveSourcePath(source.documentId!, api);
       return result.ok ? result.data : null;
     },
     enabled: resolvesFromDocument,
@@ -306,7 +308,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (hasDocumentId) {
-      const byId = await openSourceDocument(source.documentId);
+      const byId = await openSourceDocument(source.documentId, api);
       if (!byId.ok) {
         toast.error("Couldn't open file", { message: byId.error });
         return;
@@ -314,7 +316,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
       // If backend chooses internal rendering, open the resolved content path externally.
       if (byId.data.action === 'render_internal') {
-        const htmlOpen = await openSourcePath(byId.data.contentPath);
+        const htmlOpen = await openSourcePath(byId.data.contentPath, api);
         if (!htmlOpen.ok) {
           if (openableUrl) {
             try {
@@ -330,7 +332,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       return;
     }
 
-    const byPath = await openSourcePath(source.filePath);
+    const byPath = await openSourcePath(source.filePath, api);
     if (!byPath.ok) {
       toast.error("Couldn't open file", { message: byPath.error });
     }
@@ -342,19 +344,19 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (hasDocumentId) {
-      const pathResult = await resolveSourcePath(source.documentId);
+      const pathResult = await resolveSourcePath(source.documentId, api);
       if (!pathResult.ok) {
         toast.error("Couldn't locate file", { message: pathResult.error });
         return;
       }
-      const folderResult = await revealSourcePath(pathResult.data);
+      const folderResult = await revealSourcePath(pathResult.data, api);
       if (!folderResult.ok) {
         toast.error(`Couldn't ${platformRevealLabel.toLowerCase()}`, { message: folderResult.error });
       }
       return;
     }
 
-    const folderResult = await revealSourcePath(source.filePath);
+    const folderResult = await revealSourcePath(source.filePath, api);
     if (!folderResult.ok) {
       toast.error(`Couldn't ${platformRevealLabel.toLowerCase()}`, { message: folderResult.error });
     }

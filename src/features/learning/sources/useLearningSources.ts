@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
-import VaultAPI from '@/lib/api';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,
@@ -30,9 +30,10 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 }
 
 export function useLearningSourceWorkspace(programId: string) {
+  const api = useApi();
   return useQuery<LearningSourceWorkspaceDto>({
     queryKey: learningSourcesKey(programId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningSourceWorkspace(programId)),
+    queryFn: async () => unwrap(await api.getLearningSourceWorkspace(programId)),
     enabled: Boolean(programId),
     staleTime: 5_000,
     retry: false,
@@ -40,9 +41,10 @@ export function useLearningSourceWorkspace(programId: string) {
 }
 
 export function useLearningSourceVersion(request: GetLearningSourceVersionRequestDto | null) {
+  const api = useApi();
   return useQuery<LearningSourceVersionDto>({
     queryKey: learningSourceVersionKey(request),
-    queryFn: async () => unwrap(await VaultAPI.getLearningSourceVersion(request!)),
+    queryFn: async () => unwrap(await api.getLearningSourceVersion(request!)),
     enabled: Boolean(request?.programId && request.sourceId && request.versionId),
     staleTime: 60_000,
     retry: false,
@@ -50,9 +52,10 @@ export function useLearningSourceVersion(request: GetLearningSourceVersionReques
 }
 
 export function useSearchLearningSources(request: SearchLearningSourcesRequestDto | null) {
+  const api = useApi();
   return useQuery<LearningSourceSearchResultDto[]>({
     queryKey: learningSourceSearchKey(request),
-    queryFn: async () => unwrap(await VaultAPI.searchLearningSources(request!)),
+    queryFn: async () => unwrap(await api.searchLearningSources(request!)),
     enabled: Boolean(request?.programId && request.query.trim()),
     staleTime: 5_000,
     retry: false,
@@ -73,12 +76,27 @@ function useSourceMutation<TRequest>(
   });
 }
 
-export const useAddLearningWebSource = (recheck?: WaitingClaimsCheck) =>
-  useSourceMutation<AddLearningWebSourceRequestDto>((request) => VaultAPI.addLearningWebSource(request, recheck));
-export const useAddLearningDocumentSource = (recheck?: WaitingClaimsCheck) =>
-  useSourceMutation<AddLearningDocumentSourceRequestDto>((request) => VaultAPI.addLearningDocumentSource(request, recheck));
-export const useAddLearningTextSource = (recheck?: WaitingClaimsCheck) =>
-  useSourceMutation<AddLearningTextSourceRequestDto>((request) => VaultAPI.addLearningTextSource(request, recheck));
-export const useRefreshLearningSource = () => useSourceMutation<RefreshLearningSourceRequestDto>(VaultAPI.refreshLearningSource);
-export const useAdoptLearningSourceVersion = () => useSourceMutation<AdoptLearningSourceVersionRequestDto>(VaultAPI.adoptLearningSourceVersion);
-export const useUpdateLearningSourcePolicy = () => useSourceMutation<UpdateLearningSourcePolicyRequestDto>(VaultAPI.updateLearningSourcePolicy);
+export const useAddLearningWebSource = (recheck?: WaitingClaimsCheck) => {
+  const api = useApi();
+  return useSourceMutation<AddLearningWebSourceRequestDto>((request) => api.addLearningWebSource(request, recheck));
+};
+export const useAddLearningDocumentSource = (recheck?: WaitingClaimsCheck) => {
+  const api = useApi();
+  return useSourceMutation<AddLearningDocumentSourceRequestDto>((request) => api.addLearningDocumentSource(request, recheck));
+};
+export const useAddLearningTextSource = (recheck?: WaitingClaimsCheck) => {
+  const api = useApi();
+  return useSourceMutation<AddLearningTextSourceRequestDto>((request) => api.addLearningTextSource(request, recheck));
+};
+export const useRefreshLearningSource = () => {
+  const api = useApi();
+  return useSourceMutation<RefreshLearningSourceRequestDto>(api.refreshLearningSource);
+};
+export const useAdoptLearningSourceVersion = () => {
+  const api = useApi();
+  return useSourceMutation<AdoptLearningSourceVersionRequestDto>(api.adoptLearningSourceVersion);
+};
+export const useUpdateLearningSourcePolicy = () => {
+  const api = useApi();
+  return useSourceMutation<UpdateLearningSourcePolicyRequestDto>(api.updateLearningSourcePolicy);
+};

@@ -10,7 +10,7 @@
 import { create } from 'zustand';
 
 import { parseImages } from '@/features/chat/controller/messageMetadata';
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { ChatImage } from '@/types/conversation';
 
@@ -50,9 +50,9 @@ const PICTURE_PATH = /\.(?:png|jpe?g|gif|webp)$/i;
 export const isPicturePath = (path: string): boolean => PICTURE_PATH.test(path);
 
 /** Stores picture files on the draft. Returns whether they were stored. */
-export async function attachPictures(conversationId: string, paths: string[]): Promise<boolean> {
+export async function attachPictures(conversationId: string, paths: string[], api: ApiClient = VaultAPI): Promise<boolean> {
   if (paths.length === 0) return true;
-  const result = await VaultAPI.attachMessageImages(conversationId, paths);
+  const result = await api.attachMessageImages(conversationId, paths);
   if (!result.ok) {
     toast.error(paths.length === 1 ? "Couldn't attach this picture" : "Couldn't attach these pictures", {
       message: result.error,
@@ -64,17 +64,17 @@ export async function attachPictures(conversationId: string, paths: string[]): P
 }
 
 /** Drops pictures from the draft and lets the backend delete their rows. */
-export async function releasePictures(conversationId: string, ids: readonly string[]): Promise<void> {
+export async function releasePictures(conversationId: string, ids: readonly string[], api: ApiClient = VaultAPI): Promise<void> {
   if (ids.length === 0) return;
   useStagedPicturesStore.getState().remove(conversationId, ids);
   // A failed release is reported by the transport's diagnostics; the row
   // stays a draft that no message claims.
-  await VaultAPI.releaseMessageImages(conversationId, [...ids]);
+  await api.releaseMessageImages(conversationId, [...ids]);
 }
 
 /** Stages a copy of a sent picture, so the next turn shows the model its pixels again. */
-export async function restagePicture(conversationId: string, imageId: string): Promise<boolean> {
-  const result = await VaultAPI.restageMessageImage(conversationId, imageId);
+export async function restagePicture(conversationId: string, imageId: string, api: ApiClient = VaultAPI): Promise<boolean> {
+  const result = await api.restageMessageImage(conversationId, imageId);
   if (!result.ok) {
     toast.error("Couldn't add this picture to your message", { message: result.error });
     return false;

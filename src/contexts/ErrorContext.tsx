@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
 
 import { useErrorToast, type ToastError, type ErrorSeverity } from '../components/ErrorToast';
 import { toError } from '../lib/typeGuards';
@@ -57,13 +57,13 @@ export function ErrorProvider({ children }: ErrorProviderProps) {
     [showError]
   );
 
-  const value: ErrorContextType = {
+  const value = useMemo<ErrorContextType>(() => ({
     showError,
     dismissError,
     clearAll,
     handleTauriError,
     errors,
-  };
+  }), [showError, dismissError, clearAll, handleTauriError, errors]);
 
   return <ErrorContext.Provider value={value}>{children}</ErrorContext.Provider>;
 }

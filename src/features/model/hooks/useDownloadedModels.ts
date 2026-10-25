@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
+import { useApi } from '@/contexts/ApiContext';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
 import type { DownloadedModel } from '@/types/downloadedModels';
@@ -13,17 +14,18 @@ import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
 
-async function loadDownloadedModels(): Promise<DownloadedModel[]> {
-  const result = await VaultAPI.getDownloadedModels();
+async function loadDownloadedModels(api: ApiClient = VaultAPI): Promise<DownloadedModel[]> {
+  const result = await api.getDownloadedModels();
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }
 
 export const useDownloadedModels = () => {
+  const api = useApi();
   const queryClient = useQueryClient();
   const modelsQuery = useQuery<DownloadedModel[]>({
     queryKey: DOWNLOADED_MODELS_QUERY_KEY,
-    queryFn: loadDownloadedModels,
+    queryFn: () => loadDownloadedModels(api),
     staleTime: 30_000,
   });
   const downloadedModels = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
@@ -43,9 +45,9 @@ export const useDownloadedModels = () => {
   const refresh = useCallback(async (): Promise<DownloadedModel[]> =>
     queryClient.fetchQuery({
       queryKey: DOWNLOADED_MODELS_QUERY_KEY,
-      queryFn: loadDownloadedModels,
+      queryFn: () => loadDownloadedModels(api),
       staleTime: 0,
-    }), [queryClient]);
+    }), [api, queryClient]);
 
   const invalidateModels = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY });
@@ -53,59 +55,59 @@ export const useDownloadedModels = () => {
 
   const setActiveChatMutation = useMutation({
     mutationFn: async (modelId: string) => {
-      const result = await VaultAPI.setActiveChatModel(modelId);
+      const result = await api.setActiveChatModel(modelId);
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const setActiveEmbeddingMutation = useMutation({
     mutationFn: async (modelId: string) => {
-      const result = await VaultAPI.setActiveEmbeddingModel(modelId);
+      const result = await api.setActiveEmbeddingModel(modelId);
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const setActiveUtilityMutation = useMutation({
     mutationFn: async (modelId: string) => {
-      const result = await VaultAPI.setActiveUtilityModel(modelId);
+      const result = await api.setActiveUtilityModel(modelId);
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const clearActiveChatMutation = useMutation({
     mutationFn: async () => {
-      const result = await VaultAPI.clearActiveChatModel();
+      const result = await api.clearActiveChatModel();
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const clearActiveEmbeddingMutation = useMutation({
     mutationFn: async () => {
-      const result = await VaultAPI.clearActiveEmbeddingModel();
+      const result = await api.clearActiveEmbeddingModel();
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const clearActiveUtilityMutation = useMutation({
     mutationFn: async () => {
-      const result = await VaultAPI.clearActiveUtilityModel();
+      const result = await api.clearActiveUtilityModel();
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
   const deleteModelMutation = useMutation({
     mutationFn: async ({ id, deleteFile }: { id: string; deleteFile: boolean }) => {
-      const result = await VaultAPI.deleteDownloadedModel(id, deleteFile);
+      const result = await api.deleteDownloadedModel(id, deleteFile);
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
 
   const isModelDownloaded = useCallback(async (modelId: string): Promise<boolean> => {
-    const result = await VaultAPI.isModelDownloaded(modelId);
+    const result = await api.isModelDownloaded(modelId);
     if (result.ok) return result.data;
     return downloadedModels.some((model) => model.model_id === modelId);
-  }, [downloadedModels]);
+  }, [api, downloadedModels]);
 
   // A warm-up loads a model, maybe on the CPU: the loaded list says which.
   const warmUp = useCallback(async (call: () => Promise<ApiResult<void>>) => {
@@ -113,10 +115,10 @@ export const useDownloadedModels = () => {
     await queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
     if (!result.ok) throw new Error(result.error);
   }, [queryClient]);
-  const warmUpActiveChatModel = useCallback(() => warmUp(VaultAPI.warmUpActiveChatModel), [warmUp]);
-  const warmUpActiveUtilityModel = useCallback(() => warmUp(VaultAPI.warmUpActiveUtilityModel), [warmUp]);
+  const warmUpActiveChatModel = useCallback(() => warmUp(api.warmUpActiveChatModel), [api.warmUpActiveChatModel, warmUp]);
+  const warmUpActiveUtilityModel = useCallback(() => warmUp(api.warmUpActiveUtilityModel), [api.warmUpActiveUtilityModel, warmUp]);
   /** Loads the Learning model set in Settings; a failure changes no setting. */
-  const warmUpLearningModel = useCallback(() => warmUp(VaultAPI.warmUpLearningModel), [warmUp]);
+  const warmUpLearningModel = useCallback(() => warmUp(api.warmUpLearningModel), [api.warmUpLearningModel, warmUp]);
 
   return {
     downloadedModels,
@@ -160,6 +162,7 @@ export function reportWarmupFailure(
 }
 
 export const useDownloadedModelsListener = () => {
+  const api = useApi();
   const { fetchDownloadedModels } = useDownloadedModels();
 
   useEffect(() => {
@@ -180,12 +183,12 @@ export const useDownloadedModelsListener = () => {
               // Warm-up answers with an ApiResult and never rejects, so the
               // failure is in `ok`, not in a catch.
               if (completed?.is_active_for_chat) {
-                void VaultAPI.warmUpActiveChatModel().then((result) =>
+                void api.warmUpActiveChatModel().then((result) =>
                   reportWarmupFailure(result, modelName, 'chat')
                 );
               }
               if (completed?.is_active_for_utility) {
-                void VaultAPI.warmUpActiveUtilityModel().then((result) =>
+                void api.warmUpActiveUtilityModel().then((result) =>
                   reportWarmupFailure(result, modelName, 'utility')
                 );
               }
@@ -209,5 +212,5 @@ export const useDownloadedModelsListener = () => {
       isMounted = false;
       unlistenFn?.();
     };
-  }, [fetchDownloadedModels]);
+  }, [api, fetchDownloadedModels]);
 };

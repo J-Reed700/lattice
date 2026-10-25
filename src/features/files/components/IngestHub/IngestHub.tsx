@@ -1,9 +1,10 @@
-import { type FC, useState, useEffect, useRef } from 'react';
+import { type FC, useState, useEffect } from 'react';
 
 import * as Tabs from '@radix-ui/react-tabs';
 import { Files, History, Link, List, type LucideIcon } from 'lucide-react';
 
 import { PageHeader } from '@/components/ui';
+import { useApi } from '@/contexts/ApiContext';
 import { fetchCorpusShape } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { BatchFileImport } from '@/features/files/components/Ingest/BatchFileImport';
 import { BatchUrlImport } from '@/features/files/components/Ingest/BatchUrlImport';
@@ -11,6 +12,7 @@ import { ImportHistory } from '@/features/files/components/Ingest/ImportHistory'
 import { UrlImport } from '@/features/files/components/Ingest/UrlImport';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { useToast } from '@/hooks/useToast';
+import type { ApiClient } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { CorpusShapeDto } from '@/types';
 
@@ -39,9 +41,9 @@ const TABS: ReadonlyArray<{ id: TabId; label: string; icon: LucideIcon }> = [
 ];
 
 /** The corpus shape, or null on any failure — the sentence is optional, the toast is not. */
-const loadCorpusShapeSafe = async (): Promise<CorpusShapeDto | null> => {
+const loadCorpusShapeSafe = async (api: ApiClient): Promise<CorpusShapeDto | null> => {
   try {
-    return await fetchCorpusShape();
+    return await fetchCorpusShape(api);
   } catch {
     return null;
   }
@@ -83,11 +85,8 @@ export const IngestHub: FC<IngestHubProps> = ({
   defaultTab = 'single-url',
   onImportComplete
 }) => {
+  const api = useApi();
   const { toast } = useToast();
-  // `useToast()` hands back a fresh object every render; the ref keeps the
-  // async continuation below from closing over a stale one.
-  const toastRef = useRef(toast);
-  toastRef.current = toast;
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const requested = new URLSearchParams(window.location.search).get('tab');
     if (TABS.some(tab => tab.id === requested)) return requested as TabId;
@@ -105,7 +104,7 @@ export const IngestHub: FC<IngestHubProps> = ({
     onImportComplete?.(result);
 
     if (!success) {
-      toastRef.current.error(message ? `Couldn't import ${message}` : "Couldn't import");
+      toast.error(message ? `Couldn't import ${message}` : "Couldn't import");
       return;
     }
 
@@ -113,9 +112,9 @@ export const IngestHub: FC<IngestHubProps> = ({
       type === 'single-url' || type === 'bulk-url' ? 'URL' : type === 'files' ? 'file' : 'item';
 
     void (async () => {
-      const shape = await loadCorpusShapeSafe();
+      const shape = await loadCorpusShapeSafe(api);
       const summary = composeIngestSummary(noun, count, shape);
-      toastRef.current.success(summary.title, {
+      toast.success(summary.title, {
         ...(summary.message ? { message: summary.message } : {}),
         action: { label: 'Open Library', onClick: openLibrary },
       });

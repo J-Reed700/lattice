@@ -5,28 +5,30 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { LeftoverEmbeddingFilesDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import { formatBytes } from '@/utils/formatters';
 
 export const LEFTOVER_EMBEDDING_FILES_QUERY_KEY = ['leftover-embedding-files'] as const;
 
-async function loadLeftovers(): Promise<LeftoverEmbeddingFilesDto> {
-  const result = await VaultAPI.listLeftoverEmbeddingFiles();
+async function loadLeftovers(api: ApiClient = VaultAPI): Promise<LeftoverEmbeddingFilesDto> {
+  const result = await api.listLeftoverEmbeddingFiles();
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }
 
 export function useLeftoverEmbeddingFiles() {
+  const api = useApi();
   const queryClient = useQueryClient();
   const leftovers = useQuery({
     queryKey: LEFTOVER_EMBEDDING_FILES_QUERY_KEY,
-    queryFn: loadLeftovers,
+    queryFn: () => loadLeftovers(api),
   });
   const remove = useMutation({
     mutationFn: async () => {
-      const result = await VaultAPI.removeLeftoverEmbeddingFiles();
+      const result = await api.removeLeftoverEmbeddingFiles();
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },

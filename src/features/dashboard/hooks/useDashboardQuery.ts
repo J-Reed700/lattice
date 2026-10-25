@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { describeFailure } from '@/lib/errorHandling';
 import type { DocumentMetadata, RecentDocument } from '@/types';
 import type {
@@ -150,8 +150,9 @@ function newestIndexedAt(documents: DocumentMetadata[]): string | null {
 
 export const useDashboardQuery = (
   options?: Omit<UseQueryOptions<DashboardData, Error>, 'queryKey' | 'queryFn'>,
-) =>
-  useQuery<DashboardData, Error>({
+) => {
+  const api = useApi();
+  return useQuery<DashboardData, Error>({
     queryKey: ['dashboard'],
     queryFn: async () => {
       const [
@@ -163,13 +164,13 @@ export const useDashboardQuery = (
         journalsResult,
         bookmarksResult,
       ] = await Promise.all([
-        VaultAPI.getIndexingStats(),
-        VaultAPI.listAllDocuments(10000),
-        VaultAPI.getSystemStats(),
-        VaultAPI.getIndexedFolders(),
-        VaultAPI.listConversations(),
-        VaultAPI.listJournals(),
-        VaultAPI.listMessageBookmarks({ limit: 10, offset: 0 }),
+        api.getIndexingStats(),
+        api.listAllDocuments(10000),
+        api.getSystemStats(),
+        api.getIndexedFolders(),
+        api.listConversations(),
+        api.listJournals(),
+        api.listMessageBookmarks({ limit: 10, offset: 0 }),
       ]);
 
       // Say why Home could not load: the backend's reason, not a stock line.
@@ -189,7 +190,7 @@ export const useDashboardQuery = (
 
       let todayJournalEntry: DashboardJournalEntrySummary | null = null;
       if (preferredJournal) {
-        const journalEntriesResult = await VaultAPI.listJournalConversations({
+        const journalEntriesResult = await api.listJournalConversations({
           journalSpaceId: preferredJournal.id,
           includeArchived: false,
           limit: 25,
@@ -264,3 +265,4 @@ export const useDashboardQuery = (
     staleTime: 30_000,
     ...options,
   });
+};

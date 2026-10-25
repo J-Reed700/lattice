@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { toast } from '@/stores/toastStore';
 import type { ClusterDto, ClusterProgressPayload, ClusterRunDto } from '@/types';
 
@@ -17,10 +17,11 @@ export const THEMES_QUERY_KEY = ['corpus', 'themes'] as const;
 export const THEMES_MIN_DOCUMENTS = 50;
 
 export function useClustersQuery(enabled: boolean) {
+  const api = useApi();
   return useQuery<ClusterDto[]>({
     queryKey: THEMES_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.listClusters();
+      const result = await api.listClusters();
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
@@ -32,10 +33,11 @@ export function useClustersQuery(enabled: boolean) {
 }
 
 export function useRebuildThemes() {
+  const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<ClusterRunDto> => {
-      const result = await VaultAPI.clusterVaultRun();
+      const result = await api.clusterVaultRun();
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },

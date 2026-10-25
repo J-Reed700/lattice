@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
+import VaultAPI from '@/lib/api';
 import { deferred } from '@/tests/deferred';
 import type { ModelRecommendation } from '@/types/modelCatalog';
 
@@ -110,7 +112,7 @@ describe('ModelListView', () => {
     expect(h.rows.fresh.isStarting).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Download fresh' }));
     expect(h.startModelDownload).toHaveBeenCalledTimes(1);
-    expect(h.startModelDownload).toHaveBeenCalledWith({ metadata: model.model, addToast: h.addToast, queryClient });
+    expect(h.startModelDownload).toHaveBeenCalledWith({ metadata: model.model, addToast: h.addToast, queryClient }, VaultAPI);
     await act(async () => { pending.resolve({ alreadyDownloaded: false }); await pending.promise; });
     expect(h.rows.fresh.isStarting).toBe(false);
   });

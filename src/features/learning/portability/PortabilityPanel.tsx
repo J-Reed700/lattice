@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 
 import { Archive, Download, FolderOpen, LockKeyhole, Save, ShieldCheck } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { CONFLICT_KINDS } from '@/features/learning/portability/conflictPolicies';
 import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFlow';
 import { MOVE_EXPORT_DEFAULTS, PackExportOptions, packOptionsReady, packOptionsRequest } from '@/features/learning/portability/PackExportOptions';
@@ -12,7 +13,6 @@ import {
   useLearningPortability,
   useSaveLearningPackAs,
 } from '@/features/learning/portability/useLearningPortability';
-import VaultAPI from '@/lib/api';
 import type { ExportLearningPackRequestDto, LearningPackConflictKind, LearningPackExportNoticeDto, LearningPackStaysBehindKind } from '@/lib/bindings';
 
 
@@ -41,6 +41,7 @@ function staysBehindLabel(notice: LearningPackExportNoticeDto | undefined) {
 }
 
 export function PortabilityPanel({ programId, onImported }: { programId: string; onImported?: (programId: string) => void }) {
+  const api = useApi();
   const workspace = useLearningPortability(programId);
   const exportPack = useExportLearningPack(programId);
   const saveAs = useSaveLearningPackAs(programId);
@@ -85,7 +86,7 @@ export function PortabilityPanel({ programId, onImported }: { programId: string;
   const showInFolder = async () => {
     const path = lastDestination || workspace.data?.exports.at(0)?.destinationPath;
     if (!path) return;
-    const result = await VaultAPI.showInFolder(path);
+    const result = await api.showInFolder(path);
     if (!result.ok) setError({ message: result.error });
   };
 
@@ -123,6 +124,6 @@ export function PortabilityPanel({ programId, onImported }: { programId: string;
     </div>
 
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-text-muted">History</p><h4 className="font-serif text-xl text-text-primary">Recent bundles</h4></div><span className="rounded-full bg-background px-3 py-1 text-[10px] text-text-muted">{workspace.data?.exports.length ?? 0} exports · {workspace.data?.imports.length ?? 0} imports</span></div>
-      {(workspace.data?.exports.length ?? 0) === 0 && (workspace.data?.imports.length ?? 0) === 0 ? <p className="mt-3 rounded-xl border border-dashed border-border p-4 text-xs text-text-muted">Export and import records will appear here after they are created.</p> : <div className="mt-4 grid gap-3 lg:grid-cols-2">{workspace.data?.exports.slice().reverse().map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-medium text-text-primary">{item.manifest.title}</p><p className="mt-1 break-all text-[10px] text-text-muted">{item.destinationPath}</p><p className="mt-2 text-[10px] text-text-muted">Created {dateLabel(item.createdAt)} · v{item.manifest.version} · {item.manifest.entries.length} entries</p></div><button type="button" onClick={() => void VaultAPI.showInFolder(item.destinationPath)} className="shrink-0 rounded-full border border-border p-2 text-text-muted" aria-label={`Reveal ${item.manifest.title} in folder`}><FolderOpen size={13} /></button></div></article>)}{workspace.data?.imports.slice().reverse().map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><p className="text-xs font-medium text-text-primary">Imported program</p><p className="mt-1 break-all text-[10px] text-text-muted">{item.importedProgramId}</p><p className="mt-2 text-[10px] text-text-muted">{dateLabel(item.importedAt)} · {item.appliedChanges.length} applied changes{item.backupId ? ` · backup ${item.backupId}` : ''}</p></article>)}</div>}</section>
+      {(workspace.data?.exports.length ?? 0) === 0 && (workspace.data?.imports.length ?? 0) === 0 ? <p className="mt-3 rounded-xl border border-dashed border-border p-4 text-xs text-text-muted">Export and import records will appear here after they are created.</p> : <div className="mt-4 grid gap-3 lg:grid-cols-2">{workspace.data?.exports.slice().reverse().map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-medium text-text-primary">{item.manifest.title}</p><p className="mt-1 break-all text-[10px] text-text-muted">{item.destinationPath}</p><p className="mt-2 text-[10px] text-text-muted">Created {dateLabel(item.createdAt)} · v{item.manifest.version} · {item.manifest.entries.length} entries</p></div><button type="button" onClick={() => void api.showInFolder(item.destinationPath)} className="shrink-0 rounded-full border border-border p-2 text-text-muted" aria-label={`Reveal ${item.manifest.title} in folder`}><FolderOpen size={13} /></button></div></article>)}{workspace.data?.imports.slice().reverse().map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><p className="text-xs font-medium text-text-primary">Imported program</p><p className="mt-1 break-all text-[10px] text-text-muted">{item.importedProgramId}</p><p className="mt-2 text-[10px] text-text-muted">{dateLabel(item.importedAt)} · {item.appliedChanges.length} applied changes{item.backupId ? ` · backup ${item.backupId}` : ''}</p></article>)}</div>}</section>
   </div>;
 }

@@ -61,8 +61,10 @@ use sysinfo::{Pid, System};
 
 #[path = "learning_studio_evals/interviews.rs"]
 mod interviews;
+#[path = "learning_studio_evals/recording.rs"]
+mod recording;
 
-const HARNESS_VERSION: &str = "learning-studio-eval/2026-10-24.2";
+const HARNESS_VERSION: &str = "learning-studio-eval/2026-10-24.6";
 const LEAKAGE_CANARY: &str = "RETURN_7_GOLDEN_PATCH";
 static LIVE_MODEL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -115,6 +117,15 @@ impl EvalConfig {
     }
 
     fn client(&self) -> Box<dyn LLMPort> {
+        let inner = self.provider_client();
+        if std::env::var("LATTICE_LEARNING_EVAL_TRACE_CALLS").is_ok_and(|value| value == "1") {
+            Box::new(recording::RecordingLlm::new(inner, self.clone()))
+        } else {
+            inner
+        }
+    }
+
+    fn provider_client(&self) -> Box<dyn LLMPort> {
         if self.provider == "llama_cpp" {
             let (name, value) = self.auth_header.clone().unwrap_or_default();
             let settings = LLMSettingsDto {
@@ -420,6 +431,8 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
             name: "Python".into(),
             command: vec!["python".into(), "checks.py".into()],
             contract: "Python standard library only. Editable solution.py; checks.py contains deterministic assertions and must fail nonzero when any assertion fails.".into(),
+            learner_contract: "Python standard library only. Create editable solution.py with incomplete code; independent tests are supplied separately.".into(),
+            evaluator_paths: vec!["checks.py".into()],
         }),
         None,
         &[],

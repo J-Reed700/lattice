@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useJournalsQuery, useCapturedReferencesQuery, WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { rememberedJournalPageId } from '@/features/journal/hooks/useJournalNote';
 import {
@@ -96,6 +97,7 @@ export interface UseReferenceInboxResult {
 export function useReferenceInbox(options: {
   requestedReferenceId: string | null;
 }): UseReferenceInboxResult {
+  const api = useApi();
   const { requestedReferenceId } = options;
 
   const [query, setQuery] = useState('');
@@ -247,15 +249,15 @@ export function useReferenceInbox(options: {
     : null;
 
   // The selected reference's content is read when it is opened.
-  const payloadQuery = useQuery(bookmarkPayloadQueryOptions(selectedBookmark ?? null));
+  const payloadQuery = useQuery(bookmarkPayloadQueryOptions(selectedBookmark ?? null, api));
   const selectedPayload = selectedBookmark ? payloadQuery.data ?? null : null;
   const isResolvingSelected = Boolean(selectedBookmark) && payloadQuery.isLoading;
   const resolutionFailed = Boolean(selectedBookmark) && payloadQuery.isError;
 
   const getPayload = useCallback(
     (bookmark: ConversationMessageBookmarkDto): Promise<BookmarkPayload> =>
-      client.fetchQuery(bookmarkPayloadQueryOptions(bookmark)),
-    [client],
+      client.fetchQuery(bookmarkPayloadQueryOptions(bookmark, api)),
+    [api, client],
   );
 
   const resolveCaptureDestination = useCallback(
@@ -303,7 +305,7 @@ export function useReferenceInbox(options: {
         referenceNote: bookmark.note,
         sourceReferences: payload.sourceReferences,
         preferredNoteId: destination.preferredNoteId,
-      });
+      }, api);
       if (!result.snapshotId) return null;
       const captured: CapturedChatReference = {
         conversationId: bookmark.conversationId,
@@ -319,7 +321,7 @@ export function useReferenceInbox(options: {
       await client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
       return captured;
     },
-    [client, getPayload, resolveCaptureDestination],
+    [api, client, getPayload, resolveCaptureDestination],
   );
 
   const savePassageAnnotations = useCallback(

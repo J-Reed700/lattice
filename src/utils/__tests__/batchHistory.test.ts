@@ -6,10 +6,13 @@ import type { BatchJobSummary } from '@/types/api/batch';
 import { deleteBatchJob, getBatchJobDetails, listAllBatchJobs, listBatchJobs, retryFailedItems } from '../batchHistory';
 import { cancelBatchJob, getBatchJobStatus, startBatchUrlImport } from '../batchImport';
 
-vi.mock('@/lib/api', () => ({ VaultAPI: {
+vi.mock('@/lib/api', () => {
+  const mockApi = {
   listBatchJobs: vi.fn(), deleteBatchJob: vi.fn(), retryFailedBatchItems: vi.fn(),
   getBatchJobStatus: vi.fn(), cancelBatchJob: vi.fn(), startBatchUrlImport: vi.fn(),
-} }));
+};
+  return { VaultAPI: mockApi, default: mockApi };
+});
 beforeEach(() => { vi.resetAllMocks(); });
 
 function jobs(count: number, offset = 0): BatchJobSummary[] {

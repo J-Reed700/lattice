@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { ChatStarters } from '@/types/api/chatStarters';
 
 export const CHAT_STARTERS_QUERY_KEY = ['chat', 'starters'] as const;
@@ -28,10 +28,11 @@ const EMPTY: ChatStarters = {
  * from a library this chat cannot read.
  */
 export function useChatStartersQuery(spaceId: string | null = null) {
+  const api = useApi();
   return useQuery<ChatStarters>({
     queryKey: chatStartersQueryKey(spaceId),
     queryFn: async () => {
-      const result = await VaultAPI.generateChatStarters(spaceId);
+      const result = await api.generateChatStarters(spaceId);
       if (!result.ok) return EMPTY;
       return result.data;
     },

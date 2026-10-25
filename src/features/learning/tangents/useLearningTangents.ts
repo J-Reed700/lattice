@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { learningApi } from '@/features/learning/api/client';
+import { useApi } from '@/contexts/ApiContext';
 import { learningTangentsKey } from '@/features/learning/api/learningQueryKeys';
 import type {
   CreateLearningTangentRequestDto,
@@ -8,14 +8,16 @@ import type {
 } from '@/lib/bindings';
 
 export function useLearningTangents(programId?: string | null) {
+  const api = useApi();
   return useQuery<LearningTangentDto[]>({
     queryKey: learningTangentsKey(programId),
-    queryFn: async () => (await learningApi.listLearningTangents(programId)) ?? [],
+    queryFn: async () => (await api.listLearningTangents(programId)) ?? [],
     staleTime: 10_000,
   });
 }
 
 export function useCreateLearningTangent() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<
@@ -23,7 +25,7 @@ export function useCreateLearningTangent() {
     Error,
     CreateLearningTangentRequestDto
   >({
-    mutationFn: (request) => learningApi.createLearningTangent(request),
+    mutationFn: (request) => api.createLearningTangent(request),
     onSuccess: (created) => {
       void queryClient.invalidateQueries({
         queryKey: learningTangentsKey(created.programId),

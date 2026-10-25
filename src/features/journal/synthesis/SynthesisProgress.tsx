@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, Combine, Loader2, RotateCcw, X } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { SynthesisStage } from '@/lib/bindings';
 
@@ -78,6 +79,7 @@ function timesOf(view: PanelView): { startedAt: number; finishedAt?: number; ent
  * soon as it finishes.
  */
 export function SynthesisProgress() {
+  const api = useApi();
   const client = useQueryClient();
   const { data: syntheses = [] } = useJournalSyntheses();
   const { minimized, setMinimized, saving, saved, autoSave } = useSynthesisPanel();
@@ -107,10 +109,10 @@ export function SynthesisProgress() {
   useEffect(() => {
     for (const synthesis of syntheses) {
       if (synthesis.job.status === 'completed' && autoSave.includes(synthesis.job.id) && !saving[synthesis.job.id]) {
-        void applySynthesis(synthesis, client);
+        void applySynthesis(synthesis, client, api);
       }
     }
-  }, [autoSave, client, saving, syntheses]);
+  }, [api, autoSave, client, saving, syntheses]);
 
   if (!view) return null;
   const label = activityLabel(view);
@@ -135,7 +137,7 @@ export function SynthesisProgress() {
   const retry = () => {
     if (view.kind === 'saving') {
       setSaving(view.synthesis.job.id, null);
-      void applySynthesis(view.synthesis, client);
+      void applySynthesis(view.synthesis, client, api);
     } else if (view.kind === 'failed') {
       void retrySynthesis(view.synthesis.job.id).then((attempt) => {
         useSynthesisPanel.setState(panel => ({ autoSave: [...panel.autoSave, attempt.job.id] }));
@@ -212,7 +214,7 @@ export function SynthesisProgress() {
                 navigate(`/journals?${new URLSearchParams({ noteId: view.saved.noteId }).toString()}`);
                 dismiss();
               }} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">Open journal page<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
-                : view.kind === 'ready' ? <button type="button" onClick={() => void applySynthesis(view.synthesis, client)} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">Save to Journal</button>
+                : view.kind === 'ready' ? <button type="button" onClick={() => void applySynthesis(view.synthesis, client, api)} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">Save to Journal</button>
                   : <button type="button" onClick={retry} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{failedSave ? 'Retry saving' : 'Try again'}</button>}
           </div>
         </div>

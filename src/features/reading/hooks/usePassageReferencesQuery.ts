@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { PassageReferenceDto } from '@/types/api/passageReferences';
 import type { UpdatePassageReferenceRequest } from '@/types/api/references';
 
@@ -17,10 +17,11 @@ export const PASSAGE_REFERENCES_QUERY_KEY = ['references', 'passages'] as const;
  * empty shelf that reads as "you have saved nothing".
  */
 export function usePassageReferencesQuery() {
+  const api = useApi();
   return useQuery<PassageReferenceDto[]>({
     queryKey: PASSAGE_REFERENCES_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.listPassageReferences(200);
+      const result = await api.listPassageReferences(200);
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
@@ -61,10 +62,11 @@ export const passageReferencesKey = PASSAGE_REFERENCES_QUERY_KEY;
  * second local copy.
  */
 export function useUpdatePassageReferenceMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
   return useMutation<PassageReferenceDto, Error, UpdatePassageReferenceRequest>({
     mutationFn: async (request) => {
-      const result = await VaultAPI.updatePassageReference(request);
+      const result = await api.updatePassageReference(request);
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -77,10 +79,11 @@ export function useUpdatePassageReferenceMutation() {
 }
 
 export function useDeletePassageReferenceMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: async (id) => {
-      const result = await VaultAPI.deletePassageReference(id);
+      const result = await api.deletePassageReference(id);
       if (!result.ok) {
         throw new Error(result.error);
       }

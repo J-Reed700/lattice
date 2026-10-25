@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useApi } from '@/contexts/ApiContext';
 import { fetchConversationSpaceId } from '@/features/journal/api/queries';
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
@@ -61,6 +62,7 @@ export function EntryFromConversation({
   onNotify,
   embedded = false,
 }: EntryFromConversationProps) {
+  const api = useApi();
   const prefersReducedMotion = useReducedMotion();
   const navigate = useAppNavigate();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -109,7 +111,7 @@ export function EntryFromConversation({
       // A chat about this entry's sources searches what the entry searched.
       // Read from the saved row, not the sidebar's list, which may be showing
       // another space and would hand back nothing.
-      const entrySpaceId = await fetchConversationSpaceId(entry.id);
+      const entrySpaceId = await fetchConversationSpaceId(entry.id, api);
       const newConversationId = await createConversation(conversationTitle, entrySpaceId);
 
       const webSources = sources

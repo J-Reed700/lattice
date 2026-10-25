@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useJobStatus } from '@/features/jobs/api';
-import { VaultAPI } from '@/lib/api';
 import type { FileIndexingOptionsDto } from '@/lib/bindings';
 import type { ApiResult, BatchJobItem, BatchJobStatus } from '@/types';
 import { listAllBatchJobs } from '@/utils/batchHistory';
@@ -45,6 +45,7 @@ interface UseIndexingReturn {
 }
 
 export function useIndexing(): UseIndexingReturn {
+  const api = useApi();
   const [historyError, setHistoryError] = useState<string>();
   const [operations, setOperations] = useState<Map<string, IndexingOperation>>(new Map());
   const operationsRef = useRef<Map<string, IndexingOperation>>(operations);
@@ -91,7 +92,7 @@ export function useIndexing(): UseIndexingReturn {
       }, STATUS_RETRY_MS));
     };
     try {
-      const result = await VaultAPI.getBatchJobStatus(id);
+      const result = await api.getBatchJobStatus(id);
       if (!mounted.current) return;
       if (!result.ok) {
         retryLater(result.error);
@@ -124,7 +125,7 @@ export function useIndexing(): UseIndexingReturn {
       inFlight.current.delete(id);
       if (again.current.delete(id) && mounted.current) void refresh(id);
     }
-  }, [updateOperations]);
+  }, [api, updateOperations]);
 
   // Each file an import settles is reported as a job status; read the import
   // again when one of ours moves.
@@ -136,7 +137,7 @@ export function useIndexing(): UseIndexingReturn {
   useEffect(() => {
     mounted.current = true;
     const timers = retryTimers.current;
-    void listAllBatchJobs().then((jobs) => {
+    void listAllBatchJobs(api).then((jobs) => {
       if (!mounted.current) return;
       setHistoryError(undefined);
       const reattached: string[] = [];
@@ -164,10 +165,10 @@ export function useIndexing(): UseIndexingReturn {
       for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
     };
-  }, [refresh, updateOperations]);
+  }, [api, refresh, updateOperations]);
 
   const startBatchImport = useCallback(async (filePaths: string[], spaceId?: string, indexing?: FileIndexingOptionsDto): Promise<ApiResult<string>> => {
-    const result = await VaultAPI.batchFileImport(filePaths, spaceId, indexing);
+    const result = await api.batchFileImport(filePaths, spaceId, indexing);
 
     if (result.ok && result.data) {
       updateOperations((prev) => {
@@ -186,10 +187,10 @@ export function useIndexing(): UseIndexingReturn {
     }
 
     return result;
-  }, [refresh, updateOperations]);
+  }, [api, refresh, updateOperations]);
 
   const cancelBatchImport = useCallback(async (id: string): Promise<ApiResult<number>> => {
-    const result = await VaultAPI.cancelBatchJob(id);
+    const result = await api.cancelBatchJob(id);
     if (result.ok) {
       // The job is cancelled, but each file's outcome stays whatever the
       // backend last reported: the file in flight may still finish indexing,
@@ -204,7 +205,7 @@ export function useIndexing(): UseIndexingReturn {
       });
     }
     return result;
-  }, [updateOperations]);
+  }, [api, updateOperations]);
 
   const getOperation = useCallback(
     (id: string): IndexingOperation | undefined => operations.get(id),

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut , Loader2, AlertCircle } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
+import { useApi } from '@/contexts/ApiContext';
 import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
 import {
   buildItemTextRenderer,
@@ -10,8 +11,6 @@ import {
 } from '@/features/reading/model/pdfPassageSearch';
 import type { PassageLocator, PassageMatchTier } from '@/types/conversation';
 import { isRemoteFileSource, resolveLocalPathFromViewerSource } from '@/utils/fileSources';
-
-
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -43,6 +42,7 @@ export function PDFViewer({
   onLocationResolved,
   onMatch,
 }: PDFViewerProps) {
+  const api = useApi();
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
@@ -81,7 +81,7 @@ export function PDFViewer({
 
     const loadPdfBytes = async () => {
       const resolvedPath = resolveLocalPathFromViewerSource(filePath);
-      const fileResult = await readSourceBytes(resolvedPath);
+      const fileResult = await readSourceBytes(resolvedPath, api);
 
       if (!fileResult.ok) {
         throw new Error(fileResult.error || 'Failed to read PDF bytes');
@@ -102,7 +102,7 @@ export function PDFViewer({
     return () => {
       isMounted = false;
     };
-  }, [filePath, isRemoteSource]);
+  }, [api, filePath, isRemoteSource]);
 
   const onDocumentLoadSuccess = useCallback((proxy: { numPages: number }) => {
     // Keep the proxy: passage resolution needs `getPage`/`getTextContent`,

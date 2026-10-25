@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { readingKeys, readSourceBytes } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
+import type { ApiClient } from '@/lib/api';
 
 interface DocxViewerProps {
   filePath: string;
@@ -11,8 +13,8 @@ interface DocxViewerProps {
 }
 
 /** The document as sanitized HTML, ready for a sandboxed frame. */
-async function loadDocxHtml(filePath: string): Promise<string> {
-  const fileResult = await readSourceBytes(filePath);
+async function loadDocxHtml(filePath: string, api: ApiClient): Promise<string> {
+  const fileResult = await readSourceBytes(filePath, api);
   if (!fileResult.ok) {
     throw new Error(fileResult.error || 'Failed to read DOCX bytes');
   }
@@ -47,10 +49,11 @@ ${sanitized}
 }
 
 export function DocxViewer({ filePath, title }: DocxViewerProps) {
+  const api = useApi();
   const theme = useEffectiveTheme();
   const docxQuery = useQuery({
     queryKey: readingKeys.docxHtml(filePath),
-    queryFn: () => loadDocxHtml(filePath),
+    queryFn: () => loadDocxHtml(filePath, api),
     retry: false,
     staleTime: 0,
   });

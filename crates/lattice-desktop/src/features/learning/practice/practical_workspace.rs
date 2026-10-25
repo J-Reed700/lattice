@@ -110,15 +110,20 @@ pub(in crate::features::learning) async fn runtime_generation_context(
         .into_iter()
         .find(|profile| profile.id == profile_id && profile.enabled)
         .ok_or_else(|| invalid("Selected runtime profile is unavailable."))?;
-    let contract = crate::features::learning::runtime_catalog::learning_runtime_catalog().into_iter()
-        .find(|preset| preset.command == profile.command)
-        .map(|preset| preset.entrypoint_contract)
+    let preset = crate::features::learning::runtime_catalog::learning_runtime_catalog()
+        .into_iter()
+        .find(|preset| preset.command == profile.command);
+    let (learner_contract, evaluator_paths) = preset.as_ref().map(|preset| preset.generation_contracts())
+        .unwrap_or_else(|| ("Create editable learner files compatible with the named runtime and custom command. Network access and external dependency installation are unavailable. Independent checks are authored separately.".into(), Vec::new()));
+    let contract = preset.map(|preset| preset.entrypoint_contract)
         .unwrap_or_else(|| "Create files compatible with this exact runtime command. Network access and external dependency installation are unavailable.".into());
     Ok(Some(
         crate::features::learning::practical_generation::PracticalRuntimeContext {
             name: profile.name,
             command: profile.command,
             contract,
+            learner_contract,
+            evaluator_paths,
         },
     ))
 }

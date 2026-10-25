@@ -25,6 +25,7 @@ vi.mock('@/features/files/hooks/useIndexing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/files/hooks/useIndexing')>()),
   useIndexing: () => ({ startBatchImport: mocks.startBatchImport, cancelBatchImport: mocks.cancelBatchImport, getOperation: mocks.getOperation, operations: mocks.operations }),
 }));
+// Changing action identities must not make unchanged progress update state again.
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }) }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (select: (state: { selectedSpaceId: null }) => unknown) => select({ selectedSpaceId: null }),
@@ -52,7 +53,11 @@ describe('BatchFileImport', () => {
     mocks.getOperation.mockReset();
     mocks.startBatchImport.mockResolvedValue({ ok: false, error: 'Embedding model files are missing. Download the embedding model again.' });
     mocks.cancelBatchImport.mockResolvedValue({ ok: true, data: 1 });
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation((message) => {
+      if (String(message).includes('Maximum update depth exceeded')) {
+        throw new Error('Import progress entered a render loop');
+      }
+    });
   });
 
   it('shows the backend failure for each PDF and lets the user retry', async () => {

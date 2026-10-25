@@ -7,6 +7,14 @@ import { useToastStore } from '../stores/toastStore';
 
 beforeEach(() => useToastStore.setState({ toasts: [] }));
 
+it('keeps the public API stable across renders', () => {
+  const { result, rerender } = renderHook(useToast);
+  const previous = result.current;
+  rerender();
+  expect(result.current).toBe(previous);
+  expect(result.current.toast).toBe(previous.toast);
+});
+
 it('adds each kind of toast and dismisses one or all', () => {
   const { result } = renderHook(() => useToast());
   let first = '';

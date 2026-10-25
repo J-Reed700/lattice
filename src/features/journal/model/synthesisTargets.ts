@@ -1,6 +1,6 @@
 import { format, startOfWeek } from 'date-fns';
 
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { SourceDto } from '@/lib/bindings';
 import type { SynthesisCitationDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
@@ -30,8 +30,8 @@ export function weekPageTitle(reference: Date = new Date()): string {
  * Finds the page with this exact title, or creates it. Mirrors the shape of
  * `utils/chatReferenceCapture.ts::resolveTargetNote`.
  */
-export async function resolveWeekPage(title: string): Promise<WorkspaceNote> {
-  const notesResult = await VaultAPI.listWorkspaceNotes();
+export async function resolveWeekPage(title: string, api: ApiClient = VaultAPI): Promise<WorkspaceNote> {
+  const notesResult = await api.listWorkspaceNotes();
   if (!notesResult.ok) {
     throw new Error(notesResult.error);
   }
@@ -39,7 +39,7 @@ export async function resolveWeekPage(title: string): Promise<WorkspaceNote> {
   const existing = notes.find((note) => note.title.trim() === title);
   if (existing) return existing;
 
-  const created = await VaultAPI.createWorkspaceNote(title);
+  const created = await api.createWorkspaceNote(title);
   if (!created.ok) {
     throw new Error(created.error);
   }
@@ -52,9 +52,10 @@ export async function appendToNote(
   block: string,
   incomingSources: readonly SourceDto[] = [],
   conversationIds: readonly string[] = [],
+  api: ApiClient = VaultAPI,
 ): Promise<WorkspaceNote> {
   const next = appendSynthesisContent(note, block, incomingSources, conversationIds);
-  const saved = await VaultAPI.updateWorkspaceNote(next);
+  const saved = await api.updateWorkspaceNote(next);
   if (!saved.ok) {
     throw new Error(saved.error);
   }

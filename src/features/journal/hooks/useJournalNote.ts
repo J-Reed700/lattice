@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import {
   WORKSPACE_NOTES_QUERY_KEY,
   workspaceNotesQueryOptions,
 } from '@/features/journal/api/queries';
-import VaultAPI from '@/lib/api';
 import { registerPendingSave } from '@/lib/pendingSaves';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 import { unwrapApiResult } from '@/types/api/result';
@@ -100,6 +100,7 @@ export function useJournalNote(options: {
    *  the selection — the same rule the reference inbox follows. */
   requestedNoteId?: string | null;
 }): UseJournalNoteResult {
+  const api = useApi();
   const { journalSpaceId, journalName, requestedNoteId = null } = options;
 
   const [activeNote, setActiveNote] = useState<WorkspaceNote | null>(null);
@@ -116,10 +117,10 @@ export function useJournalNote(options: {
   const appliedRequestRef = useRef<string | null>(null);
 
   const saveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
-  const persistQueue = useRef(createNoteSaveQueue());
+  const persistQueue = useRef(createNoteSaveQueue(api));
   const queryClient = useQueryClient();
   const pagesQuery = useQuery({
-    ...workspaceNotesQueryOptions(journalSpaceId ?? undefined),
+    ...workspaceNotesQueryOptions(journalSpaceId ?? undefined, api),
     enabled: Boolean(journalSpaceId),
   });
   const pages = useMemo(
@@ -132,7 +133,7 @@ export function useJournalNote(options: {
       update: WorkspaceNote[] | ((current: WorkspaceNote[]) => WorkspaceNote[]),
     ) => {
       queryClient.setQueryData<WorkspaceNote[]>(
-        workspaceNotesQueryOptions(journalSpaceId ?? undefined).queryKey,
+        workspaceNotesQueryOptions(journalSpaceId ?? undefined, api).queryKey,
         (current) => {
           const next =
             typeof update === 'function' ? update(current ?? []) : update;
@@ -141,7 +142,7 @@ export function useJournalNote(options: {
         },
       );
     },
-    [journalSpaceId, queryClient],
+    [api, journalSpaceId, queryClient],
   );
 
   // Refresh clean editors after a capture elsewhere; an unsaved draft keeps its
@@ -272,7 +273,7 @@ export function useJournalNote(options: {
 
       const allPages = sortPages(
         await queryClient.fetchQuery(
-          workspaceNotesQueryOptions(journalSpaceId),
+          workspaceNotesQueryOptions(journalSpaceId, api),
         ),
       );
       if (cancelled) return;
@@ -307,7 +308,7 @@ export function useJournalNote(options: {
 
       if (!target) {
         target = unwrapApiResult(
-          await VaultAPI.createWorkspaceNote(UNTITLED_PAGE, journalSpaceId),
+          await api.createWorkspaceNote(UNTITLED_PAGE, journalSpaceId),
         );
         await queryClient.invalidateQueries({
           queryKey: WORKSPACE_NOTES_QUERY_KEY,
@@ -335,7 +336,7 @@ export function useJournalNote(options: {
     return () => {
       cancelled = true;
     };
-  }, [journalSpaceId, journalName, requestedNoteId, saveNow, queryClient]);
+  }, [journalSpaceId, journalName, requestedNoteId, saveNow, queryClient, api]);
 
   useEffect(() => {
     const flush = () => {
@@ -375,7 +376,7 @@ export function useJournalNote(options: {
     try {
       return sortPages(
         await queryClient.fetchQuery({
-          ...workspaceNotesQueryOptions(journalSpaceId),
+          ...workspaceNotesQueryOptions(journalSpaceId, api),
           staleTime: 0,
         }),
       );
@@ -387,7 +388,7 @@ export function useJournalNote(options: {
       );
       return pagesRef.current;
     }
-  }, [journalSpaceId, queryClient]);
+  }, [api, journalSpaceId, queryClient]);
 
   /** Makes `note` the page being edited, remembering it for this journal. */
   const openPage = useCallback(
@@ -425,7 +426,7 @@ export function useJournalNote(options: {
   const createPage = useCallback(
     async (title: string): Promise<WorkspaceNote | null> => {
       if (!(await saveNow())) return null;
-      const created = await VaultAPI.createWorkspaceNote(
+      const created = await api.createWorkspaceNote(
         title,
         journalSpaceId ?? undefined,
       );
@@ -443,7 +444,7 @@ export function useJournalNote(options: {
       });
       return created.data;
     },
-    [journalSpaceId, openPage, saveNow, queryClient, setPages],
+    [saveNow, api, journalSpaceId, setPages, openPage, queryClient],
   );
 
   const renamePage = useCallback(
@@ -459,7 +460,7 @@ export function useJournalNote(options: {
       );
       if (!page) return false;
       if (page.title === next) return true;
-      const result = await VaultAPI.updateWorkspaceNote({
+      const result = await api.updateWorkspaceNote({
         ...page,
         title: next,
       });
@@ -479,14 +480,14 @@ export function useJournalNote(options: {
       });
       return true;
     },
-    [saveNow, updateNote, queryClient, setPages],
+    [api, setPages, queryClient, updateNote, saveNow],
   );
 
   const deletePage = useCallback(
     async (noteId: string): Promise<boolean> => {
       const wasOpen = noteRef.current?.id === noteId;
       if (wasOpen) clearPersistTimer();
-      const result = await VaultAPI.deleteWorkspaceNote(noteId);
+      const result = await api.deleteWorkspaceNote(noteId);
       if (!result.ok) {
         setSaveError(result.error);
         return false;
@@ -510,14 +511,14 @@ export function useJournalNote(options: {
       });
       return true;
     },
-    [clearPersistTimer, openPage, queryClient, setPages],
+    [api, clearPersistTimer, openPage, queryClient, setPages],
   );
 
   const deleteActiveNote = useCallback(async (): Promise<boolean> => {
     const current = noteRef.current;
     if (!current) return false;
     clearPersistTimer();
-    const result = await VaultAPI.deleteWorkspaceNote(current.id);
+    const result = await api.deleteWorkspaceNote(current.id);
     if (!result.ok) {
       setSaveError(result.error);
       return false;
@@ -533,7 +534,7 @@ export function useJournalNote(options: {
       queryKey: WORKSPACE_NOTES_QUERY_KEY,
     });
     return true;
-  }, [clearPersistTimer, queryClient, setPages]);
+  }, [api, clearPersistTimer, queryClient, setPages]);
 
   return {
     activeNote,

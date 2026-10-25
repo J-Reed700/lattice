@@ -1,6 +1,7 @@
 import { queryOptions, useMutation } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { ApiResult } from '@/types';
 
 export interface RecommendedModel {
@@ -26,8 +27,8 @@ export interface FirstRunStatus {
  * returns a JSON string to keep its Future small (stack overflow fix), so a
  * malformed answer rejects.
  */
-export async function fetchFirstRunStatus(): Promise<ApiResult<FirstRunStatus>> {
-  const result = await VaultAPI.checkFirstRunStatus();
+export async function fetchFirstRunStatus(api: ApiClient = VaultAPI): Promise<ApiResult<FirstRunStatus>> {
+  const result = await api.checkFirstRunStatus();
   return result.ok ? { ok: true, data: JSON.parse(result.data) as FirstRunStatus } : result;
 }
 
@@ -38,11 +39,11 @@ export const FIRST_RUN_STATUS_QUERY_KEY = ['model', 'first-run-status'] as const
  * and the dialog that shows it. Each opening reads it again behind what was
  * read last; a failed read is reported at once rather than retried.
  */
-export const firstRunStatusQueryOptions = () =>
+export const firstRunStatusQueryOptions = (api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: FIRST_RUN_STATUS_QUERY_KEY,
     queryFn: async () => {
-      const result = await fetchFirstRunStatus();
+      const result = await fetchFirstRunStatus(api);
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
@@ -56,7 +57,8 @@ export const firstRunStatusQueryOptions = () =>
  * command's result, and progress arrives through the downloads listener.
  */
 export function useFirstRunDownloads() {
-  const embedding = useMutation({ mutationFn: () => VaultAPI.downloadDefaultEmbeddingModel() });
-  const chat = useMutation({ mutationFn: (modelId: string) => VaultAPI.downloadModel(modelId) });
+  const api = useApi();
+  const embedding = useMutation({ mutationFn: () => api.downloadDefaultEmbeddingModel() });
+  const chat = useMutation({ mutationFn: (modelId: string) => api.downloadModel(modelId) });
   return { downloadEmbeddingModel: embedding.mutateAsync, downloadChatModel: chat.mutateAsync };
 }

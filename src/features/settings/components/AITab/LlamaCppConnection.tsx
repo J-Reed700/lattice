@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { SettingsRow, SettingsSection } from '@/components/ui';
+import { useApi } from '@/contexts/ApiContext';
 import { probeLlamaCppServer } from '@/features/settings/hooks/connectionProbes';
 import type { LlamaCppSettingsDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
@@ -14,6 +15,7 @@ const DEFAULT_CONNECTION: LlamaCppSettingsDto = {
 };
 
 export function LlamaCppConnection() {
+  const api = useApi();
   const { llmSettings, saveLlmUpdates } = useLlmSettings();
   const saved = llmSettings?.llamaCpp;
   const [draft, setDraft] = useState<LlamaCppSettingsDto>(saved ?? DEFAULT_CONNECTION);
@@ -37,7 +39,7 @@ export function LlamaCppConnection() {
   const test = async () => {
     setTesting(true);
     try {
-      const result = await probeLlamaCppServer(draft);
+      const result = await probeLlamaCppServer(draft, api);
       if (!result.ok) {
         toast.error('Could not connect to llama.cpp', { message: typeof result.details?.details === 'string' ? result.details.details : result.error });
         setModels([]);

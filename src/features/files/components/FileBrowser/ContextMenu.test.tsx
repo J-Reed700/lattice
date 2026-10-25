@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
+import VaultAPI from '@/lib/api';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 import { ContextMenu } from './ContextMenu';
@@ -124,7 +126,7 @@ describe('ContextMenu', () => {
       const { onClose, onViewInRecall } = renderMenu();
       fireEvent.click(item('Open in system viewer'));
       await waitFor(() => expect(onClose).toHaveBeenCalled());
-      expect(h.openDocumentFile).toHaveBeenCalledWith('d1');
+      expect(h.openDocumentFile).toHaveBeenCalledWith('d1', VaultAPI);
       expect(onViewInRecall).not.toHaveBeenCalled();
     });
 

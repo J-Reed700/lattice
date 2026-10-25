@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from "@/components/ui";
+import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from "@/features/model/hooks/useDownloadedModels";
 import { probeOllamaServer } from "@/features/settings/hooks/connectionProbes";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
 ];
 
 export function ChatTab() {
+  const api = useApi();
   const { llmSettings, isLoading, saveLlmUpdates, reload } = useLlmSettings();
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState("");
   const [ollamaModelDraft, setOllamaModelDraft] = useState("");
@@ -171,7 +173,7 @@ export function ChatTab() {
       ollamaUrl,
       authHeaderName,
       authHeaderValue,
-    });
+    }, api);
     setIsTestingOllamaConnection(false);
 
     if (!result.ok) {

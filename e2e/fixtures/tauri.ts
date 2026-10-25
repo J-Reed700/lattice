@@ -232,6 +232,8 @@ export async function installTauriMock(page: Page) {
     });
   });
   await mockCommands(page, () => ({
+    // Every renderer waits for the native bridge before mounting routes.
+    initialize_database: () => 'ready',
     check_first_run_status: () => JSON.stringify({
       needs_setup: false,
       recommended_model_id: null,

@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import { VaultAPI } from '@/lib/api';
+import type { VaultAPI } from '@/lib/api';
 import type { ChatModelChoice, ConversationTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { CompactionResult } from '@/shared/conversations/conversationsStore.types';
@@ -25,6 +26,7 @@ export const MAX_OBSERVED_CONVERSATIONS = 20;
 export const MAX_OBSERVED_MEMBERSHIPS = 100;
 
 export function useConversationActions({ queryClient, addRequestedId, lifecycle }: ConversationActionsDependencies) {
+  const api = useApi();
   const {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,
     loadConversations, loadMessageBookmarks, selectConversation,
@@ -45,7 +47,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     // made on behalf of another one names its space instead: what is selected
     // in the sidebar says nothing about the conversation being branched.
     const state = { selectedSpaceId: spaceId ?? conversationUiStore.getState().selectedSpaceId };
-    const spaces = await queryClient.ensureQueryData(spacesQueryOptions());
+    const spaces = await queryClient.ensureQueryData(spacesQueryOptions(api));
     const selectedSpace = spaces.find(space => space.id === state.selectedSpaceId);
     if (state.selectedSpaceId && !selectedSpace) {
       const error = new Error('The selected space is unavailable. Select a space and try again.');
@@ -54,7 +56,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     }
     // A new chat answers with the Settings default until it chooses its own
     // model, so making one needs no model: the first turn says what is missing.
-    const result = await VaultAPI.createConversation(title);
+    const result = await api.createConversation(title);
     if (!result.ok) {
       const error = new Error(result.error);
       setUiError(error);
@@ -63,7 +65,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     const id = result.data.conversation.id;
     let created = result.data.conversation as Conversation;
     if (state.selectedSpaceId && state.selectedSpaceId !== GENERAL_SPACE_ID && selectedSpace) {
-      const moveResult = await VaultAPI.moveConversationToSpace({
+      const moveResult = await api.moveConversationToSpace({
         conversationId: id,
         spaceId: state.selectedSpaceId,
       });
@@ -75,7 +77,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       }
       // The create response still describes General. Read the saved destination
       // before opening the chat or letting a message use its scope.
-      const moved = await fetchConversationDetail(id);
+      const moved = await fetchConversationDetail(id, api);
       if (moved?.spaceId !== state.selectedSpaceId) {
         const error = new Error('Could not confirm the new chat’s space. Refresh and try again.');
         setUiError(error);
@@ -88,7 +90,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     conversationUiStore.setState({ activeConversationId: id });
     await invalidateLists();
     return id;
-  }, [invalidateLists, queryClient]);
+  }, [api, invalidateLists, queryClient]);
 
   /**
    * Set the model this chat answers with. Only this chat changes: Settings,
@@ -100,7 +102,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     id: string,
     choice: ChatModelChoice
   ): Promise<Conversation> => {
-    const result = await VaultAPI.setConversationModelChoice(id, choice);
+    const result = await api.setConversationModelChoice(id, choice);
     if (!result.ok) throw new Error(result.error);
     const saved = result.data as Conversation;
     queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
@@ -109,7 +111,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       current?.map(item => item.id === id ? { ...item, modelChoice: saved.modelChoice } : item));
     await queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) });
     return saved;
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   const setConversationFlag = useCallback(async (
     id: string,
@@ -125,23 +127,23 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
   }, [invalidateLists]);
 
   const setConversationSaved = useCallback(
-    (id: string, value: boolean) => setConversationFlag(id, value, VaultAPI.setConversationSaved),
-    [setConversationFlag]
+    (id: string, value: boolean) => setConversationFlag(id, value, api.setConversationSaved),
+    [api.setConversationSaved, setConversationFlag]
   );
   const setConversationBookmarked = useCallback(
-    (id: string, value: boolean) => setConversationFlag(id, value, VaultAPI.setConversationBookmarked),
-    [setConversationFlag]
+    (id: string, value: boolean) => setConversationFlag(id, value, api.setConversationBookmarked),
+    [api.setConversationBookmarked, setConversationFlag]
   );
   const setConversationPinned = useCallback(
-    (id: string, value: boolean) => setConversationFlag(id, value, VaultAPI.setConversationPinned),
-    [setConversationFlag]
+    (id: string, value: boolean) => setConversationFlag(id, value, api.setConversationPinned),
+    [api.setConversationPinned, setConversationFlag]
   );
   const setConversationArchived = useCallback(async (id: string, value: boolean) => {
-    await setConversationFlag(id, value, VaultAPI.setConversationArchived);
+    await setConversationFlag(id, value, api.setConversationArchived);
     if (value && conversationUiStore.getState().activeConversationId === id) {
       conversationUiStore.setState({ activeConversationId: null });
     }
-  }, [setConversationFlag]);
+  }, [api.setConversationArchived, setConversationFlag]);
 
   const renameConversation = useCallback(async (id: string, title: string): Promise<boolean> => {
     const nextTitle = title.trim();
@@ -149,7 +151,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       setUiError('Conversation title cannot be empty.');
       return false;
     }
-    const result = await VaultAPI.renameConversation(id, nextTitle);
+    const result = await api.renameConversation(id, nextTitle);
     if (!result.ok) {
       setUiError(result.error);
       return false;
@@ -164,10 +166,10 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     );
     await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
     return true;
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {
-    const result = await VaultAPI.moveConversationToSpace({ conversationId: id, spaceId });
+    const result = await api.moveConversationToSpace({ conversationId: id, spaceId });
     if (!result.ok) {
       setUiError(result.error);
       return;
@@ -175,14 +177,14 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
       current ? { ...current, spaceId } : current);
     await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
-  }, [invalidateLists, queryClient]);
+  }, [api, invalidateLists, queryClient]);
 
   /** Branch the conversation, select the branch, and return its id. */
   const forkConversation = useCallback(async (
     conversationId: string,
     upToMessageId?: string
   ): Promise<string | null> => {
-    const result = await VaultAPI.forkConversation(conversationId, upToMessageId);
+    const result = await api.forkConversation(conversationId, upToMessageId);
     if (!result.ok) {
       setUiError(result.error);
       return null;
@@ -191,16 +193,16 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     await invalidateLists();
     await selectConversation(newId);
     return newId;
-  }, [invalidateLists, selectConversation]);
+  }, [api, invalidateLists, selectConversation]);
 
   const continueInNewConversation = useCallback(async (conversationId: string): Promise<string> => {
-    const result = await VaultAPI.continueInNewConversation(conversationId);
+    const result = await api.continueInNewConversation(conversationId);
     if (!result.ok) throw new Error(result.error);
     const newId = result.data.conversation.id;
     await invalidateLists();
     await selectConversation(newId);
     return newId;
-  }, [invalidateLists, selectConversation]);
+  }, [api, invalidateLists, selectConversation]);
 
   /**
    * Fold the conversation's oldest messages into an LLM summary.
@@ -215,7 +217,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     conversationId: string,
     keepRecentMessages?: number
   ): Promise<CompactionResult> => {
-    const result = await VaultAPI.compactConversation(conversationId, keepRecentMessages);
+    const result = await api.compactConversation(conversationId, keepRecentMessages);
     if (!result.ok) return { ok: false, error: result.error };
     await Promise.all([
       invalidateLists(),
@@ -225,7 +227,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       }),
     ]);
     return { ok: true, record: result.data.compaction };
-  }, [invalidateLists, queryClient]);
+  }, [api, invalidateLists, queryClient]);
 
   const deleteConversation = useCallback(async (id: string) => {
     // No list pre-check: the open conversation can be one the current filter
@@ -240,7 +242,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     );
     const wasActive = conversationUiStore.getState().activeConversationId === id;
     if (wasActive) conversationUiStore.setState({ activeConversationId: null });
-    const result = await VaultAPI.deleteConversation(id);
+    const result = await api.deleteConversation(id);
     if (!result.ok) {
       for (const [key, snapshot] of snapshots) {
         if (!snapshot) continue;
@@ -266,7 +268,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     }
     await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
     return true;
-  }, [invalidateLists, lifecycle, queryClient]);
+  }, [api, invalidateLists, lifecycle, queryClient]);
 
   return {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,

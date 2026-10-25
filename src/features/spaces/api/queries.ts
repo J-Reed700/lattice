@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ConversationSpaceDto } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
@@ -10,19 +11,20 @@ export const spaceKeys = {
   list: ['spaces', 'list'] as const,
 };
 
-export const fetchSpaces = async (): Promise<ConversationSpaceDto[]> =>
-  unwrapApiResult(await VaultAPI.listConversationSpaces());
+export const fetchSpaces = async (api: ApiClient = VaultAPI): Promise<ConversationSpaceDto[]> =>
+  unwrapApiResult(await api.listConversationSpaces());
 
-export const spacesQueryOptions = () =>
+export const spacesQueryOptions = (api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: spaceKeys.list,
-    queryFn: fetchSpaces,
+    queryFn: () => fetchSpaces(api),
     staleTime: 30_000,
   });
 
 /** Every space, archived ones included, in the backend's order. */
 export function useSpacesQuery() {
-  return useQuery(spacesQueryOptions());
+  const api = useApi();
+  return useQuery(spacesQueryOptions(api));
 }
 
 type CreateSpaceRequest = Parameters<typeof VaultAPI.createConversationSpace>[0];
@@ -35,20 +37,21 @@ type ArchiveSpaceRequest = Parameters<typeof VaultAPI.archiveConversationSpace>[
  * space's chats.
  */
 export function useSpaceMutations() {
+  const api = useApi();
   const client = useQueryClient();
   const create = useMutation({
     mutationFn: async (request: CreateSpaceRequest) =>
-      unwrapApiResult(await VaultAPI.createConversationSpace(request)),
+      unwrapApiResult(await api.createConversationSpace(request)),
     onSuccess: () => client.invalidateQueries({ queryKey: spaceKeys.all }),
   });
   const update = useMutation({
     mutationFn: async (request: UpdateSpaceRequest) =>
-      unwrapApiResult(await VaultAPI.updateConversationSpace(request)),
+      unwrapApiResult(await api.updateConversationSpace(request)),
     onSuccess: () => client.invalidateQueries({ queryKey: spaceKeys.all }),
   });
   const archive = useMutation({
     mutationFn: async (request: ArchiveSpaceRequest) =>
-      unwrapApiResult(await VaultAPI.archiveConversationSpace(request)),
+      unwrapApiResult(await api.archiveConversationSpace(request)),
     onSuccess: () => Promise.all([
       client.invalidateQueries({ queryKey: spaceKeys.all }),
       client.invalidateQueries({ queryKey: conversationKeys.all }),

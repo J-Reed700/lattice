@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { BackendLogEntry } from '@/lib/bindings';
 
 export const BACKEND_LOGS_QUERY_KEY = ['logs', 'backend'] as const;
@@ -10,10 +10,11 @@ export const BACKEND_LOGS_QUERY_KEY = ['logs', 'backend'] as const;
  * Logs tab opens and on `refetch`; never polled.
  */
 export function useBackendLogsQuery() {
+  const api = useApi();
   return useQuery<BackendLogEntry[]>({
     queryKey: BACKEND_LOGS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getBackendLogs();
+      const result = await api.getBackendLogs();
       if (!result.ok) {
         throw new Error(result.error);
       }

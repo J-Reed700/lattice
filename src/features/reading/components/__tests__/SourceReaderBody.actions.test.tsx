@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
 import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
+import VaultAPI from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
@@ -112,7 +114,7 @@ describe('SourceReaderBody footer actions', () => {
   it('opens a library document by its id and reports a failure', async () => {
     renderBody(source());
     click('Open file');
-    await waitFor(() => expect(mocks.openSourceDocument).toHaveBeenCalledWith(DOCUMENT_ID));
+    await waitFor(() => expect(mocks.openSourceDocument).toHaveBeenCalledWith(DOCUMENT_ID, VaultAPI));
     expect(mocks.openSourcePath).not.toHaveBeenCalled();
 
     mocks.openSourceDocument.mockResolvedValue({ ok: false, error: 'no default app' });
@@ -125,7 +127,7 @@ describe('SourceReaderBody footer actions', () => {
     mocks.openSourcePath.mockResolvedValue({ ok: false, error: 'archive missing' });
     renderBody(source());
     click('Open file');
-    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith('/cache/harvest.html'));
+    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith('/cache/harvest.html', VaultAPI));
     await waitFor(() => expect(toasts()).toEqual([{ title: "Couldn't open archive", message: 'archive missing' }]));
   });
 
@@ -133,7 +135,7 @@ describe('SourceReaderBody footer actions', () => {
     mocks.openSourcePath.mockResolvedValue({ ok: false, error: 'moved' });
     renderBody(source({ documentId: 'loose-file' }));
     click('Open file');
-    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith('/farm/harvest.txt'));
+    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith('/farm/harvest.txt', VaultAPI));
     await waitFor(() => expect(toasts()).toEqual([{ title: "Couldn't open file", message: 'moved' }]));
     expect(mocks.openSourceDocument).not.toHaveBeenCalled();
   });
@@ -142,7 +144,7 @@ describe('SourceReaderBody footer actions', () => {
     renderBody(source());
     await screen.findByTestId('file-content');
     click('Show in file manager');
-    await waitFor(() => expect(mocks.revealSourcePath).toHaveBeenCalledWith('/vault/harvest.txt'));
+    await waitFor(() => expect(mocks.revealSourcePath).toHaveBeenCalledWith('/vault/harvest.txt', VaultAPI));
     expect(toasts()).toEqual([]);
   });
 
@@ -164,7 +166,7 @@ describe('SourceReaderBody footer actions', () => {
     mocks.revealSourcePath.mockResolvedValue({ ok: false, error: 'gone' });
     renderBody(source({ documentId: 'loose-file' }));
     click('Show in file manager');
-    await waitFor(() => expect(mocks.revealSourcePath).toHaveBeenCalledWith('/farm/harvest.txt'));
+    await waitFor(() => expect(mocks.revealSourcePath).toHaveBeenCalledWith('/farm/harvest.txt', VaultAPI));
     await waitFor(() => expect(toasts()).toEqual([{ title: "Couldn't show in file manager", message: 'gone' }]));
   });
 

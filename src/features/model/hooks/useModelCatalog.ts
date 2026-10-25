@@ -2,9 +2,9 @@ import { useCallback, useMemo } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useModelCatalogStore } from '@/features/model/stores/modelCatalogStore';
 import { useDebounce } from '@/hooks/useDebounce';
-import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type {
   ModelCatalogCacheStats,
@@ -42,6 +42,7 @@ export interface UseModelCatalogOptions {
  * Zustand owns only filters, selection, and sort preferences.
  */
 export function useModelCatalog(options: UseModelCatalogOptions = {}) {
+  const api = useApi();
   const {
     autoLoadCapabilities = true,
     autoLoadModels = true,
@@ -65,7 +66,7 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
 
   const capabilitiesQuery = useQuery<SystemCapabilities>({
     queryKey: modelCatalogKeys.capabilities,
-    queryFn: () => unwrap(VaultAPI.detectSystemCapabilities()),
+    queryFn: () => unwrap(api.detectSystemCapabilities()),
     enabled: autoLoadCapabilities,
     staleTime: 5 * 60_000,
   });
@@ -73,15 +74,15 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
   const compatibleModelsQuery = useQuery<ModelRecommendation[]>({
     queryKey: modelCatalogKeys.compatible(category),
     queryFn: () => unwrap(category
-      ? VaultAPI.getCompatibleModels(category)
-      : VaultAPI.getAllRecommendedModels()),
+      ? api.getCompatibleModels(category)
+      : api.getAllRecommendedModels()),
     enabled: autoLoadModels,
     staleTime: 5 * 60_000,
   });
 
   const allModelsQuery = useQuery<ModelRecommendation[]>({
     queryKey: modelCatalogKeys.models,
-    queryFn: () => unwrap(VaultAPI.getAllRecommendedModels()),
+    queryFn: () => unwrap(api.getAllRecommendedModels()),
     enabled: false,
     staleTime: 5 * 60_000,
   });
@@ -99,20 +100,20 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
 
   const searchResultsQuery = useQuery<ModelSearchResult[]>({
     queryKey: modelCatalogKeys.search(searchRequest),
-    queryFn: () => unwrap(VaultAPI.searchModelCatalog(searchRequest!)),
+    queryFn: () => unwrap(api.searchModelCatalog(searchRequest!)),
     enabled: searchRequest !== null,
     staleTime: 60_000,
   });
 
   const cacheStatsQuery = useQuery<ModelCatalogCacheStats>({
     queryKey: modelCatalogKeys.cacheStats,
-    queryFn: () => unwrap(VaultAPI.getModelCatalogStats()),
+    queryFn: () => unwrap(api.getModelCatalogStats()),
     enabled: loadCacheStats,
     staleTime: 60_000,
   });
 
   const refreshMutation = useMutation({
-    mutationFn: () => unwrap(VaultAPI.refreshModelCatalog()),
+    mutationFn: () => unwrap(api.refreshModelCatalog()),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: modelCatalogKeys.all });
     },
@@ -127,7 +128,7 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
   });
 
   const clearCacheMutation = useMutation({
-    mutationFn: () => unwrap(VaultAPI.clearModelCatalogCache()),
+    mutationFn: () => unwrap(api.clearModelCatalogCache()),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: modelCatalogKeys.all });
     },
@@ -140,21 +141,21 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
     await queryClient.fetchQuery({
       queryKey: modelCatalogKeys.compatible(_category),
       queryFn: () => unwrap(_category
-        ? VaultAPI.getCompatibleModels(_category)
-        : VaultAPI.getAllRecommendedModels()),
+        ? api.getCompatibleModels(_category)
+        : api.getAllRecommendedModels()),
       staleTime: 5 * 60_000,
     });
-  }, [queryClient]);
+  }, [api, queryClient]);
   const loadAllModels = useCallback(async () => {
     await allModelsQuery.refetch();
   }, [allModelsQuery]);
   const searchCatalog = useCallback(async (request: SearchModelCatalogRequest) => {
     await queryClient.fetchQuery({
       queryKey: modelCatalogKeys.search(request),
-      queryFn: () => unwrap(VaultAPI.searchModelCatalog(request)),
+      queryFn: () => unwrap(api.searchModelCatalog(request)),
       staleTime: 60_000,
     });
-  }, [queryClient]);
+  }, [api, queryClient]);
   const loadCatalogCacheStats = useCallback(async () => {
     await cacheStatsQuery.refetch();
   }, [cacheStatsQuery]);

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, MessageSquarePlus, Square, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
+import { useApi } from '@/contexts/ApiContext';
 import { fetchBookmarks, fetchConversationDetail, fetchMessages } from '@/features/chat/api/conversationQueryData';
 import { Message } from '@/features/chat/components/Message';
 import { deriveMessageMetadata } from '@/features/chat/controller/messageMetadata';
@@ -26,6 +27,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, onPromoted
   unavailable: boolean;
   onPromoted: () => void;
 }) {
+  const api = useApi();
   const id = tangent.conversationId;
   const base = useConversationsStore();
   const queryClient = useQueryClient();
@@ -38,9 +40,9 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, onPromoted
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
-  const messagesQuery = useQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id) });
-  const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id) });
-  const bookmarksQuery = useQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id) });
+  const messagesQuery = useQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id, api) });
+  const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id, api) });
+  const bookmarksQuery = useQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id, undefined, api) });
   const persisted = messagesQuery.data ?? EMPTY_MESSAGES;
   const metadata = useMemo(() => deriveMessageMetadata(persisted), [persisted]);
   const isSending = base.inFlightGenerations.has(id);

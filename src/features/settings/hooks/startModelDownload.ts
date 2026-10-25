@@ -9,7 +9,7 @@
 import { type QueryClient } from '@tanstack/react-query';
 
 import { embeddingBlockReason } from '@/features/settings/components/ModelCatalog/catalogUtils';
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelMetadata } from '@/types/modelCatalog';
 import { voidAsync } from '@/utils/promiseHandlers';
@@ -31,7 +31,9 @@ export async function startModelDownload({
   metadata,
   addToast,
   queryClient,
-}: StartModelDownloadArgs): Promise<StartModelDownloadResult> {
+}: StartModelDownloadArgs,
+  api: ApiClient = VaultAPI,
+): Promise<StartModelDownloadResult> {
   const blockReason = embeddingBlockReason(metadata);
   if (blockReason) {
     addToast({
@@ -43,7 +45,7 @@ export async function startModelDownload({
     return { alreadyDownloaded: false };
   }
 
-  const result = await VaultAPI.downloadModel(metadata.id);
+  const result = await api.downloadModel(metadata.id);
   if (!result.ok) {
     addToast({
       type: 'error',

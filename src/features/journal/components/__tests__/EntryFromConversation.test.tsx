@@ -5,9 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { fetchConversationSpaceId } from '@/features/journal/api/queries';
 import { EntryFromConversation } from '@/features/journal/components/EntryFromConversation';
 import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSources';
+import VaultAPI from '@/lib/api';
 import { ConversationSnapshotProvider } from '@/shared/conversations/conversationsStore';
 import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
@@ -153,7 +155,7 @@ describe('EntryFromConversation', () => {
     await user.click(screen.getByRole('button', { name: 'More actions' }));
     await user.click(screen.getByRole('button', { name: 'New chat from sources' }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/chat?conversationId=new%20chat'));
-    expect(fetchConversationSpaceId).toHaveBeenCalledWith('chat 1');
+    expect(fetchConversationSpaceId).toHaveBeenCalledWith('chat 1', VaultAPI);
     expect(store.createConversation).toHaveBeenCalledWith('Sources · Roman aqueducts', 'history-space');
     expect(store.addConversationWebSource).toHaveBeenCalledTimes(1);
     expect(store.addConversationWebSource).toHaveBeenCalledWith('new chat', 'https://example.org/concrete', {

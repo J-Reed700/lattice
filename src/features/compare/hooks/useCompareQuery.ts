@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { CompareTableDto } from '@/types/api/compare';
 
 /** One cache entry per document-and-column selection. */
@@ -18,10 +18,11 @@ export function useCompareQuery(
   columns: string[],
   enabled: boolean,
 ): UseQueryResult<CompareTableDto, Error> {
+  const api = useApi();
   return useQuery<CompareTableDto, Error>({
     queryKey: compareQueryKey(documentIds, columns),
     queryFn: async () => {
-      const result = await VaultAPI.compareDocuments({ documentIds, columns });
+      const result = await api.compareDocuments({ documentIds, columns });
       if (!result.ok) {
         throw new Error(result.error);
       }

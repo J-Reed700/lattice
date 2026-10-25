@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import type { JournalNotify } from '@/features/journal/hooks/useJournalNotice';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { AppNavigate } from '@/hooks/useAppNavigate';
-import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
@@ -16,6 +16,7 @@ export function useJournalEntryActions(options: {
   reloadEntries: () => Promise<void>;
   removeEntry: (conversationId: string) => void;
 }) {
+  const api = useApi();
   const { requestedJournalSpaceId, navigate, notify, saveNow, reloadEntries, removeEntry } = options;
   const createConversationViaStore = useConversationsStore((s) => s.createConversation);
 
@@ -31,7 +32,7 @@ export function useJournalEntryActions(options: {
         createDefaultConversationTitle(),
         spaceId,
       );
-      const linkResult = await VaultAPI.addConversationToJournal({
+      const linkResult = await api.addConversationToJournal({
         journalSpaceId: requestedJournalSpaceId,
         conversationId: newConversationId,
       });
@@ -49,23 +50,23 @@ export function useJournalEntryActions(options: {
         error instanceof Error ? error.message : 'Failed to start a conversation.',
       );
     }
-  }, [createConversationViaStore, navigate, notify, requestedJournalSpaceId, saveNow]);
+  }, [api, createConversationViaStore, navigate, notify, requestedJournalSpaceId, saveNow]);
 
   const handleRenameEntry = useCallback(
     async (entryId: string, title: string) => {
-      const result = await VaultAPI.renameConversation(entryId, title);
+      const result = await api.renameConversation(entryId, title);
       if (!result.ok) {
         notify('error', `Failed to rename entry: ${result.error}`);
         return;
       }
       await reloadEntries();
     },
-    [notify, reloadEntries],
+    [api, notify, reloadEntries],
   );
 
   const handleDeleteEntry = useCallback(
     async (entryId: string) => {
-      const result = await VaultAPI.deleteConversation(entryId);
+      const result = await api.deleteConversation(entryId);
       if (!result.ok) {
         notify('error', `Failed to delete entry: ${result.error}`);
         return;
@@ -73,7 +74,7 @@ export function useJournalEntryActions(options: {
       removeEntry(entryId);
       notify('success', 'Entry deleted.');
     },
-    [notify, removeEntry],
+    [api, notify, removeEntry],
   );
 
   return { handleNewEntry, handleRenameEntry, handleDeleteEntry };

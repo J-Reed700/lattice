@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 export interface NeighborhoodDocument {
@@ -40,12 +41,13 @@ export async function loadNeighborhood(
   documentId: string,
   documentTitle: string,
   documentsById: Map<string, DocumentMetadata>,
+  api: ApiClient = VaultAPI,
 ): Promise<NeighborhoodData> {
   const [mentions, backlinks, similar, citing] = await Promise.all([
-    VaultAPI.getMentionsForDocument(documentId),
-    VaultAPI.getBacklinksForMention(stripExtension(documentTitle)),
-    VaultAPI.findSimilarDocuments(documentId, MAX_SIMILAR),
-    VaultAPI.listConversationsCitingDocument(documentId),
+    api.getMentionsForDocument(documentId),
+    api.getBacklinksForMention(stripExtension(documentTitle)),
+    api.findSimilarDocuments(documentId, MAX_SIMILAR),
+    api.listConversationsCitingDocument(documentId),
   ]);
 
   // Title index for resolving outgoing mention names back to documents.
@@ -99,9 +101,10 @@ export function useNeighborhoodQuery(
   documentTitle: string,
   documentsById: Map<string, DocumentMetadata>,
 ) {
+  const api = useApi();
   return useQuery<NeighborhoodData>({
     queryKey: ['neighborhood', documentId],
-    queryFn: () => loadNeighborhood(documentId, documentTitle, documentsById),
+    queryFn: () => loadNeighborhood(documentId, documentTitle, documentsById, api),
     enabled: documentId !== '',
     staleTime: 60_000,
   });

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UserPictures } from '@/features/chat/components/message/UserPictures';
+import VaultAPI from '@/lib/api';
 
 const restagePicture = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 vi.mock('@/features/chat/images/stagedPictures', () => ({ restagePicture }));
@@ -38,7 +39,7 @@ describe('UserPictures', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Show to the model again' }));
 
-    expect(restagePicture).toHaveBeenCalledWith('conversation-1', picture(1).id);
+    expect(restagePicture).toHaveBeenCalledWith('conversation-1', picture(1).id, VaultAPI);
   });
 
   it('offers no restage on a question that is not saved yet, or while the chat model cannot see', () => {

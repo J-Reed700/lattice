@@ -7,7 +7,10 @@ import { KnowledgePanel } from '@/features/chat/components/KnowledgePanel';
 import type { KnowledgeItemDto } from '@/lib/bindings';
 
 const manageKnowledge = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/api', () => ({ VaultAPI: { manageKnowledge } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { manageKnowledge };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 const fact: KnowledgeItemDto = {
   id:'fact-1',conversationId:'one',conversationTitle:'Garden',label:'Budget is $120',kind:'user_fact',state:'active',scope:'space',
   learnedAt:'2026-09-23T12:00:00Z',validFrom:null,validUntil:null,verifiedAt:null,forgotten:false,supersededBy:null,

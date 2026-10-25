@@ -7,7 +7,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { useSpotlightSearch } from '@/features/chat/hooks/useSpotlightSearch';
 
 const api = vi.hoisted(() => ({ listConversationsExplorer: vi.fn(), listMessageBookmarks: vi.fn() }));
-vi.mock('@/lib/api', () => ({ VaultAPI: api }));
+vi.mock('@/lib/api', () => ({ VaultAPI: api, default: api }));
 
 const chat = { id: 'c1', title: 'Canopy notes', explorerRoot: null };
 const explorerThread = { id: 'c2', title: 'Folder thread', explorerRoot: '/notes' };

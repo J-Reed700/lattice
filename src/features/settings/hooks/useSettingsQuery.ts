@@ -8,18 +8,19 @@ import {
   useQuery,
 } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { CLOUD_MODELS_QUERY_KEY } from '@/features/model/hooks/useCloudModels';
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
 import type { AppSettings } from '@/types/api/settings';
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const;
 
-export const settingsQueryOptions = () =>
+export const settingsQueryOptions = (api: ApiClient = VaultAPI) =>
   queryOptions<AppSettings>({
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getSettings();
+      const result = await api.getSettings();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -33,9 +34,10 @@ const fallbackQueryClient = new QueryClient({
 });
 
 export function useSettingsQuery() {
+  const api = useApi();
   const contextClient = useContext(QueryClientContext);
   return useQuery(
-    { ...settingsQueryOptions(), enabled: Boolean(contextClient) },
+    { ...settingsQueryOptions(api), enabled: Boolean(contextClient) },
     contextClient ?? fallbackQueryClient
   );
 }
@@ -43,13 +45,14 @@ export function useSettingsQuery() {
 export type UpdateSettingsArgs = Pick<UpdateSettingsRequest, 'updates'> & Partial<Pick<UpdateSettingsRequest, 'category'>>;
 
 export function useUpdateSettingsMutation() {
+  const api = useApi();
   const contextClient = useContext(QueryClientContext);
   const queryClient = contextClient ?? fallbackQueryClient;
   return useMutation<AppSettings, Error, UpdateSettingsArgs>(
     {
       mutationFn: async (args) => {
         const payload: UpdateSettingsRequest = { category: args.category ?? null, updates: args.updates };
-        const result = await VaultAPI.updateSettings(payload);
+        const result = await api.updateSettings(payload);
         if (!result.ok) {
           throw new Error(result.error);
         }
@@ -73,19 +76,20 @@ export function useUpdateSettingsMutation() {
  * the backend's state.
  */
 export function useSettingsTransfer() {
+  const api = useApi();
   const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const refreshOnSuccess = (result: { ok: boolean }) => {
     if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
   };
-  const reset = useMutation({ mutationFn: () => VaultAPI.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);
+  const reset = useMutation({ mutationFn: () => api.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);
   const importJson = useMutation(
     {
-      mutationFn: (json: string) => VaultAPI.importSettings(json, false),
+      mutationFn: (json: string) => api.importSettings(json, false),
       onSuccess: refreshOnSuccess,
     },
     queryClient
   );
-  const exportJson = useMutation({ mutationFn: () => VaultAPI.exportSettings() }, queryClient);
+  const exportJson = useMutation({ mutationFn: () => api.exportSettings() }, queryClient);
   return { resetSettings: reset.mutateAsync, importSettings: importJson.mutateAsync, exportSettings: exportJson.mutateAsync };
 }
 
@@ -94,16 +98,17 @@ export function useSettingsTransfer() {
  * serializes concurrent changes; a success refreshes the settings cache.
  */
 export function useWatchFolderMutations() {
+  const api = useApi();
   const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const refreshOnSuccess = (result: { ok: boolean }) => {
     if (result.ok) void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
   };
   const add = useMutation(
-    { mutationFn: (path: string) => VaultAPI.addWatchFolder(path), onSuccess: refreshOnSuccess },
+    { mutationFn: (path: string) => api.addWatchFolder(path), onSuccess: refreshOnSuccess },
     queryClient
   );
   const remove = useMutation(
-    { mutationFn: (path: string) => VaultAPI.removeWatchFolder(path), onSuccess: refreshOnSuccess },
+    { mutationFn: (path: string) => api.removeWatchFolder(path), onSuccess: refreshOnSuccess },
     queryClient
   );
   return { addWatchFolder: add.mutateAsync, removeWatchFolder: remove.mutateAsync };
@@ -114,11 +119,12 @@ export function useWatchFolderMutations() {
  * settings document. Answers with the command's result.
  */
 export function useCloudApiKeyMutation() {
+  const api = useApi();
   const queryClient = useContext(QueryClientContext) ?? fallbackQueryClient;
   const save = useMutation(
     {
       mutationFn: ({ provider, key }: { provider: string; key: string }) =>
-        VaultAPI.setCloudApiKey(provider, key),
+        api.setCloudApiKey(provider, key),
       onSuccess: async (result, { provider }) => {
         if (!result.ok) return;
         const queryKey = [...CLOUD_MODELS_QUERY_KEY, provider];

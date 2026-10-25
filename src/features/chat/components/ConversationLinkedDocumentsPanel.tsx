@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, ExternalLink, Library, Trash2 } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useConversationSourceFiling } from '@/features/chat/hooks/useConversationSourceFiling';
 import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
 import {
@@ -27,6 +28,7 @@ export function ConversationLinkedDocumentsPanel({
   scopedSpaceName = null,
   onMoveToGeneral,
 }: ConversationLinkedDocumentsPanelProps) {
+  const api = useApi();
   const {
     spaces,
     conversations,
@@ -152,7 +154,7 @@ export function ConversationLinkedDocumentsPanel({
     }
     setOpeningDocumentId(documentId);
     try {
-      const result = await openDocumentFile(documentId);
+      const result = await openDocumentFile(documentId, api);
       if (!result.ok) {
         toast.error("Couldn't open document", { message: result.error });
       }

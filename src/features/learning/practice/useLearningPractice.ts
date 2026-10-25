@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { learningPracticeWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
-import VaultAPI from '@/lib/api';
+import type VaultAPI from '@/lib/api';
 import type {
   ChangeLearningPracticeModeRequestDto,
   DecideLearningPracticeProposalRequestDto,
@@ -24,9 +25,10 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 }
 
 export function useLearningPracticeWorkspace(programId: string) {
+  const api = useApi();
   return useQuery<LearningPracticeWorkspaceDto>({
     queryKey: learningPracticeWorkspaceKey(programId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningPracticeWorkspace(programId)),
+    queryFn: async () => unwrap(await api.getLearningPracticeWorkspace(programId)),
     enabled: Boolean(programId),
     staleTime: 3_000,
     retry: false,
@@ -34,9 +36,10 @@ export function useLearningPracticeWorkspace(programId: string) {
 }
 
 export function useLearningPracticeSession(sessionId: string | null) {
+  const api = useApi();
   return useQuery<LearningPracticeSessionDto>({
     queryKey: learningPracticeSessionKey(sessionId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningPracticeSession(sessionId!)),
+    queryFn: async () => unwrap(await api.getLearningPracticeSession(sessionId!)),
     enabled: Boolean(sessionId),
     staleTime: 0,
     retry: false,
@@ -57,12 +60,39 @@ function usePracticeMutation<TRequest>(mutate: (request: TRequest) => ReturnType
   });
 }
 
-export const useStartLearningPracticeSession = () => usePracticeMutation<StartLearningPracticeSessionRequestDto>(VaultAPI.startLearningPracticeSession);
-export const useSaveLearningPracticeArtifact = () => usePracticeMutation<SaveLearningPracticeArtifactRequestDto>(VaultAPI.saveLearningPracticeArtifact);
-export const useChangeLearningPracticeMode = () => usePracticeMutation<ChangeLearningPracticeModeRequestDto>(VaultAPI.changeLearningPracticeMode);
-export const useOpenLearningPracticeSource = () => usePracticeMutation<OpenLearningPracticeSourceRequestDto>(VaultAPI.openLearningPracticeSource);
-export const useRequestLearningTutorResponse = () => usePracticeMutation<RequestLearningTutorResponseRequestDto>(VaultAPI.requestLearningTutorResponse);
-export const useRevealLearningPracticeSolution = () => usePracticeMutation<RevealLearningPracticeSolutionRequestDto>(VaultAPI.revealLearningPracticeSolution);
-export const useSubmitLearningPracticeAttempt = () => usePracticeMutation<SubmitLearningPracticeAttemptRequestDto>(VaultAPI.submitLearningPracticeAttempt);
-export const useAcceptLearningPracticeProposal = () => usePracticeMutation<DecideLearningPracticeProposalRequestDto>(VaultAPI.acceptLearningPracticeProposal);
-export const useRejectLearningPracticeProposal = () => usePracticeMutation<DecideLearningPracticeProposalRequestDto>(VaultAPI.rejectLearningPracticeProposal);
+export const useStartLearningPracticeSession = () => {
+  const api = useApi();
+  return usePracticeMutation<StartLearningPracticeSessionRequestDto>(api.startLearningPracticeSession);
+};
+export const useSaveLearningPracticeArtifact = () => {
+  const api = useApi();
+  return usePracticeMutation<SaveLearningPracticeArtifactRequestDto>(api.saveLearningPracticeArtifact);
+};
+export const useChangeLearningPracticeMode = () => {
+  const api = useApi();
+  return usePracticeMutation<ChangeLearningPracticeModeRequestDto>(api.changeLearningPracticeMode);
+};
+export const useOpenLearningPracticeSource = () => {
+  const api = useApi();
+  return usePracticeMutation<OpenLearningPracticeSourceRequestDto>(api.openLearningPracticeSource);
+};
+export const useRequestLearningTutorResponse = () => {
+  const api = useApi();
+  return usePracticeMutation<RequestLearningTutorResponseRequestDto>(api.requestLearningTutorResponse);
+};
+export const useRevealLearningPracticeSolution = () => {
+  const api = useApi();
+  return usePracticeMutation<RevealLearningPracticeSolutionRequestDto>(api.revealLearningPracticeSolution);
+};
+export const useSubmitLearningPracticeAttempt = () => {
+  const api = useApi();
+  return usePracticeMutation<SubmitLearningPracticeAttemptRequestDto>(api.submitLearningPracticeAttempt);
+};
+export const useAcceptLearningPracticeProposal = () => {
+  const api = useApi();
+  return usePracticeMutation<DecideLearningPracticeProposalRequestDto>(api.acceptLearningPracticeProposal);
+};
+export const useRejectLearningPracticeProposal = () => {
+  const api = useApi();
+  return usePracticeMutation<DecideLearningPracticeProposalRequestDto>(api.rejectLearningPracticeProposal);
+};

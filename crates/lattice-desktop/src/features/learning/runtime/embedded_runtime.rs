@@ -63,10 +63,16 @@ impl LearningBuiltinRuntime {
             Self::Javascript => ("JavaScript", "ECMAScript modules only. Put editable exported functions in solution.mjs. The hidden evaluator must be checks.mjs, importing './solution.mjs' and throwing on failed assertions. console.log/error are available. Node.js, DOM, React, fetch, timers, external packages, filesystem and networking are unavailable. Use relative imports among supplied .js/.mjs files only."),
             Self::Python => ("Python", "CPython with the Python standard library in WASI. Put editable functions in solution.py and hidden assertions in checks.py, which imports solution and must exit nonzero on failure. No pip packages, networking, subprocesses, filesystem writes or host files. Supplied exercise files are read-only during execution."),
         };
+        let learner_contract = match self {
+            Self::Javascript => "ECMAScript modules only. Put editable exported functions in solution.mjs. console.log/error are available. Node.js, DOM, React, fetch, timers, external packages, filesystem and networking are unavailable. Use relative imports among supplied .js/.mjs files only. Do not create tests.",
+            Self::Python => "CPython with the Python standard library in WASI. Put editable functions in solution.py. No pip packages, networking, subprocesses, filesystem writes or host files. Supplied exercise files are read-only during execution. Do not create tests.",
+        };
         crate::features::learning::practical_generation::PracticalRuntimeContext {
             name: name.into(),
             command: vec![self.entrypoint().into()],
             contract: contract.into(),
+            learner_contract: learner_contract.into(),
+            evaluator_paths: vec![self.entrypoint().into()],
         }
     }
 }

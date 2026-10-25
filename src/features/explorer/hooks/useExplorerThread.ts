@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { fetchConversationList } from '@/features/chat/api/conversationQueryData';
 import { bindThreadToFolder, useExplorerFolderMutations, useExplorerFoldersQuery } from '@/features/explorer/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -39,6 +40,7 @@ function threadTitle(rootName: string): string {
  * conversation must not receive it.
  */
 export function useExplorerThread(root: string | null, rootName: string): ExplorerThreads {
+  const api = useApi();
   const queryClient = useQueryClient();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
@@ -67,7 +69,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
   const threadsQuery = useQuery({
     queryKey: threadsKey(root ?? ''),
     queryFn: async () => {
-      const all = await fetchConversationList({ spaceId: null, filterMode: 'all', searchQuery: '' });
+      const all = await fetchConversationList({ spaceId: null, filterMode: 'all', searchQuery: '' }, api);
       return all
         .filter((conversation) => conversation.explorerRoot === root)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -87,7 +89,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
       // Made in General, never the Chat sidebar's space: binding it to the
       // folder files it in the folder's own space.
       const id = await createConversation(threadTitle(rootName), GENERAL_SPACE_ID);
-      const bound = await bindThreadToFolder(id, root);
+      const bound = await bindThreadToFolder(id, root, api);
       if (!bound.ok) throw new Error(bound.error);
       // The create response predates the binding; the send path reads it.
       queryClient.setQueryData<Conversation>(conversationKeys.detail(id), (current) =>
@@ -107,7 +109,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
       creatingForRef.current = null;
       setCreating(false);
     }
-  }, [createConversation, queryClient, rememberThread, root, rootName]);
+  }, [api, createConversation, queryClient, rememberThread, root, rootName]);
 
   // Land on this folder's thread whenever the folder or its threads change.
   // The folders list says which thread that is, so it is waited for.

@@ -15,6 +15,7 @@ import { logComponentError } from '../../utils/errorLogger';
 export interface ErrorBoundaryProps {
   children: ReactNode;
   fallback?: React.ComponentType<ErrorFallbackProps>;
+  renderFallback?: (props: ErrorFallbackProps) => ReactNode;
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   onReset?: () => void;
   resetKeys?: unknown[];
@@ -154,10 +155,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render(): ReactNode {
     const { hasError, error, errorInfo } = this.state;
-    const { children, fallback: FallbackComponent, isolate } = this.props;
+    const { children, fallback: FallbackComponent, renderFallback, isolate } = this.props;
 
     if (hasError) {
       const fallbackError = error ?? new Error('Unknown error');
+
+      if (renderFallback) {
+        return renderFallback({ error: fallbackError, errorInfo: errorInfo ?? undefined, resetError: this.reset });
+      }
 
       // Use custom fallback if provided
       if (FallbackComponent) {

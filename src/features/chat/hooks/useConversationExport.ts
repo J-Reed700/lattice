@@ -2,11 +2,11 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { ClipboardCopy, NotebookPen } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
-import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import { conversationToMarkdown } from '@/utils/conversationExport';
@@ -37,6 +37,7 @@ interface RunningExport {
 }
 
 export function useConversationExport() {
+  const api = useApi();
   const navigate = useAppNavigate();
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
@@ -57,7 +58,7 @@ export function useConversationExport() {
   const buildMarkdown = useCallback(
     async (id: string, title: string): Promise<string | null> => {
       const conversation = conversations.find((item) => item.id === id) ?? { id, title, updatedAt: '' };
-      const result = await VaultAPI.getConversationMessages(id);
+      const result = await api.getConversationMessages(id);
       if (!result.ok) {
         toast.error("Couldn't read that conversation", { message: result.error });
         return null;
@@ -72,7 +73,7 @@ export function useConversationExport() {
         spaceName: spaceId ? spaceLabelById.get(spaceId) ?? null : null,
       });
     },
-    [conversations, spaceLabelById],
+    [api, conversations, spaceLabelById],
   );
 
   const copyConversationAsMarkdown = useCallback(
@@ -104,7 +105,7 @@ export function useConversationExport() {
       try {
         const markdown = await buildMarkdown(id, title);
         if (markdown === null) return;
-        const captured = await VaultAPI.quickCapture(markdown);
+        const captured = await api.quickCapture(markdown);
         if (!captured.ok) {
           toast.error('Could not write to the journal', { message: captured.error });
           return;
@@ -120,7 +121,7 @@ export function useConversationExport() {
         setRunning(null);
       }
     },
-    [buildMarkdown, navigate],
+    [api, buildMarkdown, navigate],
   );
 
   const exportPaletteCommands = useMemo<PaletteCommand[]>(() => {

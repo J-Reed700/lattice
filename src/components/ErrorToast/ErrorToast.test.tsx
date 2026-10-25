@@ -21,6 +21,7 @@ describe('ErrorToast', () => {
     expect(onDismiss).not.toHaveBeenCalled();
     act(() => { vi.advanceTimersByTime(600); });
     expect(onDismiss).toHaveBeenCalledWith('t1');
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('stays until dismissed when the duration is zero', () => {
@@ -41,6 +42,12 @@ describe('ErrorToast', () => {
     expect(onClick).toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalledWith('t1');
   });
+
+  it('cleans up the entrance timer on unmount', () => {
+    const view = render(<ErrorToast error={toast({ duration: 0 })} onDismiss={vi.fn()} />);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe('ErrorToastContainer', () => {
@@ -60,6 +67,27 @@ describe('ErrorToastContainer', () => {
 });
 
 describe('useErrorToast', () => {
+  it('does not restart an existing toast timer when another error arrives', () => {
+    function Notifications() {
+      const { errors, showError, dismissError } = useErrorToast();
+      return (
+        <>
+          <button type="button" onClick={() => showError(`Error ${errors.length + 1}`, { duration: 1000 })}>Add error</button>
+          <ErrorToastContainer errors={errors} onDismiss={dismissError} />
+        </>
+      );
+    }
+    render(<Notifications />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add error' }));
+    act(() => { vi.advanceTimersByTime(600); });
+    fireEvent.click(screen.getByRole('button', { name: 'Add error' }));
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(screen.queryByText('Error 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Error 2')).toBeInTheDocument();
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(screen.queryByText('Error 2')).not.toBeInTheDocument();
+  });
+
   it('adds errors with defaults and removes them', () => {
     const { result } = renderHook(() => useErrorToast());
     let id = '';

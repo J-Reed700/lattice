@@ -2,8 +2,9 @@ import { useCallback, useEffect } from 'react';
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useJobStatus, type JobDto } from '@/features/jobs/api';
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { CourseIndexStatusDto } from '@/lib/bindings';
 import { unwrapApiResult } from '@/types/api/result';
 
@@ -16,15 +17,16 @@ export const courseIndexKeys = {
   status: (programId: string) => ['learning', 'course-index', programId] as const,
 };
 
-const statusQuery = (programId: string) =>
+const statusQuery = (programId: string, api: ApiClient = VaultAPI) =>
   queryOptions<CourseIndexStatusDto>({
     queryKey: courseIndexKeys.status(programId),
-    queryFn: async () => unwrapApiResult(await VaultAPI.courseIndexStatus(programId)),
+    queryFn: async () => unwrapApiResult(await api.courseIndexStatus(programId)),
   });
 
 /** The course's index status as last read; `null` until it has been. */
 export function useCourseIndexStatus(programId: string | null | undefined): CourseIndexStatusDto | null {
-  const { data } = useQuery({ ...statusQuery(programId ?? ''), enabled: Boolean(programId) });
+  const api = useApi();
+  const { data } = useQuery({ ...statusQuery(programId ?? '', api), enabled: Boolean(programId) });
   return programId ? data ?? null : null;
 }
 
@@ -53,13 +55,14 @@ export function useCourseIndexStatusEvents(programId: string | null | undefined)
  * workspace, or opening another course, gives the turn back.
  */
 export function useCourseIndexOpen(programId: string | null | undefined): void {
+  const api = useApi();
   useEffect(() => {
     if (!programId) return undefined;
-    void VaultAPI.courseIndexOpen(programId);
+    void api.courseIndexOpen(programId);
     return () => {
-      void VaultAPI.courseIndexClose(programId);
+      void api.courseIndexClose(programId);
     };
-  }, [programId]);
+  }, [api, programId]);
 }
 
 /**

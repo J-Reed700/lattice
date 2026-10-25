@@ -8,9 +8,9 @@
 
 import { useState, useCallback, useMemo } from 'react';
 
-
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { useApi } from '@/contexts/ApiContext';
 import {
   openDocumentFile,
   resolveDocumentPath,
@@ -53,6 +53,7 @@ import { useSavedSearchNameDialog } from './useSavedSearchNameDialog';
 import { NeighborhoodPanel } from '../Neighborhood';
 
 export function FileBrowser() {
+  const api = useApi();
   const { documents, filteredDocuments, refreshFiles, collections: customCollections, collectionsError, refreshCollections } = useLibraryDocumentsQuery();
   const viewMode = useFileBrowserStore(state => state.viewMode);
   const setViewMode = useFileBrowserStore(state => state.setViewMode);
@@ -169,7 +170,7 @@ export function FileBrowser() {
     if (isWebDocument(doc)) {
       const { source } = fromDocumentMetadata(doc);
       if (!isHttpUrl(doc.filePath)) {
-        const webOpen = await openDocumentFile(doc.id);
+        const webOpen = await openDocumentFile(doc.id, api);
         if (webOpen.ok && webOpen.data.action === 'render_internal') {
           setPreviewSource({ ...source, filePath: webOpen.data.contentPath });
           return;
@@ -182,7 +183,7 @@ export function FileBrowser() {
     if (isSupportedFileType(doc.filePath)) {
       const { source } = fromDocumentMetadata(doc);
       if (!isHttpUrl(doc.filePath) && !isAbsolutePath(doc.filePath)) {
-        const resolvedPath = await resolveDocumentPath(doc);
+        const resolvedPath = await resolveDocumentPath(doc, api);
         if (resolvedPath) {
           setPreviewSource({ ...source, filePath: resolvedPath });
           return;
@@ -199,11 +200,11 @@ export function FileBrowser() {
       return;
     }
 
-    const openById = await openDocumentFile(doc.id);
+    const openById = await openDocumentFile(doc.id, api);
     if (!openById.ok) {
       toast.error('Failed to open file', { message: openById.error });
     }
-  }, [setFocusedDocument]);
+  }, [api, setFocusedDocument]);
 
   const askAbout = useCallback(
     (doc: DocumentMetadata) => {

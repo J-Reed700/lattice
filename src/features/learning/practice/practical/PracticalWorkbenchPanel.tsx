@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
 
+import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents } from "@/features/learning/api/learningInvalidation";
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { ActivityBrief } from "@/features/learning/practice/practical/ActivityBrief";
@@ -21,7 +22,6 @@ import { RuntimeSetupPanel } from "@/features/learning/practice/practical/Runtim
 import { SimulationPanel } from "@/features/learning/practice/practical/SimulationPanel";
 import { useLearningLabDraft } from "@/features/learning/practice/practical/useLearningLabDraft";
 import { usePracticalWorkspace } from "@/features/learning/practice/practical/usePracticalWorkspace";
-import VaultAPI from "@/lib/api";
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningLabFile,
@@ -40,13 +40,14 @@ export function PracticalWorkbenchPanel({
   lesson: LearningLessonDto | null;
   projectRequest?: { id: string; brief: string } | null;
 }) {
+  const api = useApi();
   const programId = program.summary.id;
   const query = usePracticalWorkspace(programId);
   const client = useQueryClient();
   const generate = useMutation({
     retry: false,
     mutationFn: async (request: GenerateLearningPracticalActivityRequestDto) =>
-      unwrap(await VaultAPI.generateLearningPracticalActivity(request)),
+      unwrap(await api.generateLearningPracticalActivity(request)),
     onSuccess: (data) => {
       client.setQueryData(workspaceKey(programId), data);
     },
@@ -115,7 +116,7 @@ export function PracticalWorkbenchPanel({
   const runMutation = useMutation({
     retry: false,
     mutationFn: async (request: StartLearningPracticalRunRequestDto) =>
-      unwrap(await VaultAPI.startLearningPracticalRun(request)),
+      unwrap(await api.startLearningPracticalRun(request)),
     onSuccess: async () => {
       await query.refetch();
     },
@@ -126,7 +127,7 @@ export function PracticalWorkbenchPanel({
       operationId: string;
       programId: string;
       runId: string;
-    }) => unwrap(await VaultAPI.cancelLearningPracticalRun(request)),
+    }) => unwrap(await api.cancelLearningPracticalRun(request)),
     onSuccess: async () => {
       cancelRequestRef.current = null;
       await query.refetch();

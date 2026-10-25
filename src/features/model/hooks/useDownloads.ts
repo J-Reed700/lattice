@@ -3,7 +3,8 @@ import { useCallback, useEffect } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import { describeFailure } from '@/lib/errorHandling';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type { ApiFailure } from '@/types/api/result';
@@ -59,8 +60,8 @@ const findByBackendId = (
   return undefined;
 };
 
-export async function fetchDownloadMap(): Promise<Map<string, DownloadStatus>> {
-  const result = await VaultAPI.listDownloads();
+export async function fetchDownloadMap(api: ApiClient = VaultAPI): Promise<Map<string, DownloadStatus>> {
+  const result = await api.listDownloads();
   if (!result.ok) throw new Error(describeFailure(result));
   return new Map(result.data.map((download) => [
     cacheKeyFor(download),
@@ -185,6 +186,7 @@ const toDownloadStatus = (
 };
 
 export function useDownloadsListener(): void {
+  const api = useApi();
   const queryClient = useQueryClient();
   const setListenerError = useDownloadStore((state) => state.setListenerError);
 
@@ -252,7 +254,7 @@ export function useDownloadsListener(): void {
         setListenerError(error instanceof Error ? error.message : 'Failed to setup download listener');
       }
       try {
-        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap });
+        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: () => fetchDownloadMap(api) });
       } catch (error) {
         if (!mounted) return;
         console.error('[useDownloadsListener] Initial download list failed:', error);
@@ -265,7 +267,7 @@ export function useDownloadsListener(): void {
       unlistenProgress?.();
       unlistenFailed?.();
     };
-  }, [queryClient, setListenerError]);
+  }, [api, queryClient, setListenerError]);
 }
 
 /** The session is already gone, so the row was stale rather than the action failing. */
@@ -273,6 +275,7 @@ const isStaleSessionError = (failure: ApiFailure): boolean =>
   failure.details?.code === ErrorCode.NOT_FOUND;
 
 export function useDownloadActions() {
+  const api = useApi();
   const queryClient = useQueryClient();
   const downloads = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY);
   const resolveBackendId = useCallback((storeKey: string): string => {
@@ -280,8 +283,8 @@ export function useDownloadActions() {
     return row?.id ?? storeKey;
   }, [queryClient]);
   const resyncFromBackend = useCallback(async () => {
-    await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap, staleTime: 0 });
-  }, [queryClient]);
+    await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: () => fetchDownloadMap(api), staleTime: 0 });
+  }, [api, queryClient]);
   const runAction = useCallback(async (
     id: string,
     action: (backendId: string) => ReturnType<typeof VaultAPI.pauseDownload>,
@@ -295,26 +298,26 @@ export function useDownloadActions() {
   }, [resolveBackendId, resyncFromBackend]);
 
   const pauseDownload = useCallback((id: string) =>
-    runAction(id, VaultAPI.pauseDownload, 'pause'), [runAction]);
+    runAction(id, api.pauseDownload, 'pause'), [api.pauseDownload, runAction]);
   const resumeDownload = useCallback((id: string) =>
-    runAction(id, VaultAPI.resumeDownload, 'resume'), [runAction]);
+    runAction(id, api.resumeDownload, 'resume'), [api.resumeDownload, runAction]);
   const cancelDownload = useCallback((id: string) =>
-    runAction(id, VaultAPI.cancelDownload, 'cancel'), [runAction]);
+    runAction(id, api.cancelDownload, 'cancel'), [api.cancelDownload, runAction]);
   const retryDownload = useCallback((id: string) =>
-    runAction(id, VaultAPI.retryDownload, 'retry'), [runAction]);
+    runAction(id, api.retryDownload, 'retry'), [api.retryDownload, runAction]);
   const removeDownload = useCallback(async (id: string) => {
-    const result = await VaultAPI.removeDownload(resolveBackendId(id));
+    const result = await api.removeDownload(resolveBackendId(id));
     if (!result.ok && !isStaleSessionError(result)) {
       throw new Error(`Failed to remove download: ${describeFailure(result)}`);
     }
     await resyncFromBackend();
-  }, [resolveBackendId, resyncFromBackend]);
+  }, [api, resolveBackendId, resyncFromBackend]);
   const clearCompletedDownloads = useCallback(async (): Promise<number> => {
-    const result = await VaultAPI.clearCompletedDownloads();
+    const result = await api.clearCompletedDownloads();
     if (!result.ok) throw new Error(`Failed to clear completed downloads: ${describeFailure(result)}`);
     await resyncFromBackend();
     return result.data;
-  }, [resyncFromBackend]);
+  }, [api, resyncFromBackend]);
   const fetchAllDownloads = useCallback(async (): Promise<void> => {
     await resyncFromBackend();
   }, [resyncFromBackend]);
@@ -323,11 +326,11 @@ export function useDownloadActions() {
    * the download to follow, or `null` when the whole file is already there.
    */
   const startVisionProjectorDownload = useCallback(async (modelId: string): Promise<string | null> => {
-    const result = await VaultAPI.startVisionProjectorDownload(modelId);
+    const result = await api.startVisionProjectorDownload(modelId);
     if (!result.ok) throw new Error(describeFailure(result));
     if (result.data.downloadId !== null) await resyncFromBackend();
     return result.data.downloadId;
-  }, [resyncFromBackend]);
+  }, [api, resyncFromBackend]);
 
   return {
     pauseDownload,

@@ -9,7 +9,10 @@ import { ExplorerTree } from '../ExplorerTree';
 import { ScopeBar } from '../ScopeBar';
 
 const mocks = vi.hoisted(() => ({ listDir: vi.fn() }));
-vi.mock('@/lib/api', () => ({ VaultAPI: { explorerListDir: mocks.listDir } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { explorerListDir: mocks.listDir };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 const ROOT = '/Users/me/project';
 const entry = (path: string, kind: 'directory' | 'file', ignored = false) => ({

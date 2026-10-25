@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { createJournal, updateJournal, deleteJournal, journalsQueryOptions } from '@/features/journal/api/queries';
 import { defaultJournalTitle } from '@/features/journal/hooks/useJournalNote';
 import type { JournalNotify } from '@/features/journal/hooks/useJournalNotice';
 import type { AppNavigate } from '@/hooks/useAppNavigate';
-import VaultAPI from '@/lib/api';
+import type VaultAPI from '@/lib/api';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
@@ -33,6 +34,7 @@ export function useFollowNoteIdParam(options: {
   setSearchParams: SetURLSearchParams;
   setRequestedNoteId: (noteId: string | null) => void;
 }) {
+  const api = useApi();
   const { requestedNoteIdParam, searchParams, setSearchParams, setRequestedNoteId } = options;
 
   // Take `?noteId=` off the URL once it has been handed to the note hook, and
@@ -44,7 +46,7 @@ export function useFollowNoteIdParam(options: {
     let cancelled = false;
 
     const follow = async () => {
-      const notesResult = await VaultAPI.listWorkspaceNotes();
+      const notesResult = await api.listWorkspaceNotes();
       if (cancelled) return;
       const owningJournalId = notesResult.ok
         ? (notesResult.data.notes.find((note) => note.id === requestedNoteIdParam)?.journalId ?? null)
@@ -64,7 +66,7 @@ export function useFollowNoteIdParam(options: {
     return () => {
       cancelled = true;
     };
-  }, [requestedNoteIdParam, searchParams, setSearchParams, setRequestedNoteId]);
+  }, [requestedNoteIdParam, searchParams, setSearchParams, setRequestedNoteId, api]);
 }
 
 /**
@@ -81,6 +83,7 @@ export function useJournalSpaces(options: {
   navigate: AppNavigate;
   notify: JournalNotify;
 }) {
+  const api = useApi();
   const { requestedJournalSpaceId, journalSpace, activeNote, updateNote, searchParams, navigate, notify } = options;
   const queryClient = useQueryClient();
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
@@ -93,7 +96,7 @@ export function useJournalSpaces(options: {
     if (journalCreationRef.current) return journalCreationRef.current;
     const request = (async () => {
       try {
-        const journals = await queryClient.fetchQuery(journalsQueryOptions());
+        const journals = await queryClient.fetchQuery(journalsQueryOptions(api));
         return createJournal(queryClient, {
           name: nextJournalName(journals),
           description: null,
@@ -101,7 +104,7 @@ export function useJournalSpaces(options: {
           accentColor: DEFAULT_JOURNAL_ACCENT,
           spacePrompt: null,
           toolPreferencesJson: null,
-        });
+        }, api);
       } catch (error) {
         return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
       }
@@ -112,7 +115,7 @@ export function useJournalSpaces(options: {
       () => { if (journalCreationRef.current === request) journalCreationRef.current = null; },
     );
     return request;
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   // Auto-redirect: ensure URL always has a journalSpaceId when one exists
   useEffect(() => {
@@ -120,7 +123,7 @@ export function useJournalSpaces(options: {
 
     const ensureJournal = async () => {
       setTopLevelError(null);
-      const fetched = await queryClient.fetchQuery(journalsQueryOptions());
+      const fetched = await queryClient.fetchQuery(journalsQueryOptions(api));
       if (cancelled) return;
       const active = fetched.filter(journal => !journal.isArchived);
       if (fetched.length > 0) initialJournalHandledRef.current = true;
@@ -194,7 +197,7 @@ export function useJournalSpaces(options: {
     return () => {
       cancelled = true;
     };
-  }, [queryClient, createJournalOnce, requestedJournalSpaceId, navigate, searchParams, journalLoadAttempt]);
+  }, [queryClient, createJournalOnce, requestedJournalSpaceId, navigate, searchParams, journalLoadAttempt, api]);
 
   const retryJournalLoad = useCallback(() => {
     initialJournalHandledRef.current = false;
@@ -238,7 +241,7 @@ export function useJournalSpaces(options: {
       const result = await updateJournal(queryClient, {
         journalId: requestedJournalSpaceId,
         name: nextName,
-      });
+      }, api);
       if (!result.ok) {
         notify('error', result.error);
         return;
@@ -255,12 +258,12 @@ export function useJournalSpaces(options: {
         }
       }
     },
-    [queryClient, activeNote, journalSpace, notify, requestedJournalSpaceId, updateNote],
+    [requestedJournalSpaceId, journalSpace, queryClient, api, notify, activeNote, updateNote],
   );
 
   const handleDeleteJournal = useCallback(async () => {
     if (!requestedJournalSpaceId || !journalSpace) return;
-    const result = await deleteJournal(queryClient, { journalId: requestedJournalSpaceId });
+    const result = await deleteJournal(queryClient, { journalId: requestedJournalSpaceId }, api);
     if (!result.ok) {
       notify('error', result.error);
       return;
@@ -276,7 +279,7 @@ export function useJournalSpaces(options: {
     } catch {
       // Ignore
     }
-    const remaining = (await queryClient.fetchQuery(journalsQueryOptions())).filter(journal => !journal.isArchived);
+    const remaining = (await queryClient.fetchQuery(journalsQueryOptions(api))).filter(journal => !journal.isArchived);
     const params = new URLSearchParams(searchParams);
     params.delete('entryId');
     if (remaining.length === 0) {
@@ -287,7 +290,7 @@ export function useJournalSpaces(options: {
     const next = params.toString();
     navigate(next ? `/journals?${next}` : '/journals', { replace: true });
     notify('success', `Deleted journal "${journalSpace.name}".`);
-  }, [queryClient, journalSpace, navigate, notify, requestedJournalSpaceId, searchParams]);
+  }, [requestedJournalSpaceId, journalSpace, queryClient, api, searchParams, navigate, notify]);
 
   return {
     topLevelError,

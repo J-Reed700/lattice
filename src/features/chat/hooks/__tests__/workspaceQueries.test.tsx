@@ -9,7 +9,10 @@ import { VaultAPI } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn() } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn() };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

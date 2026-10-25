@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
+import VaultAPI from '@/lib/api';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 import { FileBrowser } from './FileBrowser';
@@ -343,7 +345,7 @@ describe('FileBrowser', () => {
       h.openDocumentFile.mockResolvedValueOnce({ ok: true, data: { action: 'opened_external' } });
       render(<FileBrowser />);
       await open(doc('map', { filePath: '/library/map.xyz', fileType: 'xyz' }));
-      expect(h.openDocumentFile).toHaveBeenCalledWith('map');
+      expect(h.openDocumentFile).toHaveBeenCalledWith('map', VaultAPI);
       expect(h.toast.error).not.toHaveBeenCalled();
       h.openDocumentFile.mockResolvedValueOnce({ ok: false, error: 'no app' });
       await open(doc('map', { filePath: '/library/map.xyz', fileType: 'xyz' }));

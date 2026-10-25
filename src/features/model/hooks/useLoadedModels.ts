@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { LoadedModelDto, ModelRef } from '@/lib/bindings';
 import { sameModelRef } from '@/utils/chatModelSelection';
 
@@ -18,16 +19,17 @@ export const LOADED_MODELS_QUERY_KEY = ['loaded-models'] as const;
  */
 export const DEGRADED_RECHECK_MS = 15_000;
 
-async function loadLoadedModels(): Promise<LoadedModelDto[]> {
-  const result = await VaultAPI.listLoadedModels();
+async function loadLoadedModels(api: ApiClient = VaultAPI): Promise<LoadedModelDto[]> {
+  const result = await api.listLoadedModels();
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }
 
 export function useLoadedModels() {
+  const api = useApi();
   const query = useQuery<LoadedModelDto[]>({
     queryKey: LOADED_MODELS_QUERY_KEY,
-    queryFn: loadLoadedModels,
+    queryFn: () => loadLoadedModels(api),
     staleTime: 15_000,
     refetchInterval: (query) => (query.state.data?.some((entry) => entry.degraded) ? DEGRADED_RECHECK_MS : false),
   });

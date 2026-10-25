@@ -3,6 +3,8 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
+import VaultAPI from '@/lib/api';
 import { deferred } from '@/tests/deferred';
 
 import { ToolsTab } from './ToolsTab';
@@ -179,7 +181,7 @@ describe('ToolsTab', () => {
       expect(h.probe).toHaveBeenCalledWith({
         endpoint: 'https://tides.example.org/search', queryParam: 'q', maxResultsParam: 'limit',
         defaultMaxResults: 5, query: 'spring tides', maxResults: 5,
-      });
+      }, VaultAPI);
       await act(async () => { pending.resolve({ ok: true, data: { status: 200, finalUrl: 'https://tides.example.org/search?q=spring' } }); await pending.promise; });
       expect(h.toast.success).toHaveBeenCalledWith('Tool responded (HTTP 200)', { message: 'https://tides.example.org/search?q=spring' });
       expect(screen.getByRole('button', { name: 'Test' })).toBeEnabled();
@@ -191,7 +193,7 @@ describe('ToolsTab', () => {
       fireEvent.change(screen.getByLabelText('Test query'), { target: { value: '   ' } });
       fireEvent.click(screen.getByRole('button', { name: 'Test' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("The tool didn't respond", { message: 'HTTP 404' }));
-      expect(h.probe).toHaveBeenCalledWith(expect.objectContaining({ query: 'test' }));
+      expect(h.probe).toHaveBeenCalledWith(expect.objectContaining({ query: 'test' }), VaultAPI);
     });
 
     it('needs an endpoint and a query param first', () => {

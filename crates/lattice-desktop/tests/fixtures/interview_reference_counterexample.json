@@ -1,0 +1,121 @@
+{
+  "fixtureVersion": "interview-reference-counterexample/2026-10-24.1",
+  "origin": {
+    "case": "website_only_parcel_full_loop",
+    "model": "Qwen3.5-9B-Q4_K_M.gguf",
+    "harnessVersion": "learning-studio-eval/2026-10-24.5",
+    "company": "Parcel Lantern is an invented evaluation company."
+  },
+  "question": {
+    "round": "debugging_and_code",
+    "question": "Assume for this practice exercise that you are investigating a race condition in a hypothetical offline-first sync service written in Rust. Consider this minimal self-contained example:\n\nfn apply_event(events: &mut Vec<Event>, id: u64, payload: Option<Payload>) -> Result<(), SyncError> {\n    if let Some(existing) = events.iter().find(|e| e.id == id) {\n        existing.payload = payload;\n        return Ok(());\n    }\n    events.push(Event { id, payload });\n    Ok(())\n}\n\n// Hypothetical failure trace: Two threads call apply_event for the same ID simultaneously.\n// Observed behavior: Duplicate delivery charges occur in production logs.\n// Expected behavior: Only one charge per unique delivery event ID.\n\nInvestigate why the provided code might fail to prevent duplicate charges under concurrent access. Identify what additional evidence is needed to confirm a race condition versus a logic error, and propose a verification step.",
+    "companyRationale": "Based on supplied company context, Parcel Lantern uses Rust for sync services where duplicate delivery events must not charge customers twice.",
+    "followUpProbes": [
+      "How would you modify the provided function to guarantee idempotency without relying solely on iteration order?",
+      "What specific logging or metrics would you add to distinguish between a race condition and a deterministic bug in this scenario?",
+      "In the context of offline depots, how would network latency affect the window for this race condition?"
+    ],
+    "evaluationSignals": [
+      "Candidate identifies lack of atomicity in the `find` and `push` operations.",
+      "Proposal includes using an atomic flag or locking mechanism appropriate for Rust concurrency.",
+      "Correctly distinguishes between observed symptoms (duplicate charges) and root cause (race condition)."
+    ],
+    "id": "00000000-0000-4000-8000-000000000301"
+  },
+  "compilerOracle": {
+    "code": "E0594",
+    "diagnosis": "Assignment through the shared reference returned by iter().find() fails to compile. The exclusive mutable reference does not justify a simultaneous unsynchronized mutation claim in safe Rust."
+  },
+  "retainedIncorrectStandard": {
+    "referenceAnswer": "The provided Rust code fails to prevent duplicate charges under concurrent access because it lacks atomicity for the 'check-then-act' sequence. Specifically, the `find` operation and the subsequent `push` or assignment are separate steps that can be interleaved by multiple threads.\n\n1.  **Race Condition Mechanism**: Thread A checks if an event with `id` exists (not found). Thread B performs the same check for the same `id` (also not found). Both threads proceed to push their respective payloads into the vector, resulting in two entries and potentially two charges if downstream logic processes both.\n2.  **Ownership vs. Synchronization**: Rust's ownership model ensures memory safety but does not provide mutual exclusion for shared mutable state accessed across threads without explicit synchronization primitives (e.g., `Mutex`, `RwLock`, or atomic operations). The code assumes sequential logic applies to concurrent execution, which is incorrect.\n3.  **Evidence Needed**: To confirm a race condition versus a logic error, logs must show timestamps proving two threads entered the critical section simultaneously for the same ID, rather than one thread failing due to invalid input data (logic error).\n4.  **Verification Step**: Implement a test where two threads concurrently invoke `apply_event` with identical IDs and payloads. Assert that the resulting vector contains exactly one entry for that ID. Additionally, introduce jitter or network latency simulation to increase the probability of interleaving.\n\n**Key Points & Citations**:\n- The core issue is that shared mutable state in a multithreaded program requires explicit synchronization; ownership alone is insufficient.\n- Deduplication and protected state changes must be coordinated atomically to avoid concurrent duplicate effects.\n- A stable operation identifier allows the system to recognize repeated attempts, preventing duplicates even if retries occur.",
+    "keyPoints": [
+      {
+        "point": "In a multithreaded program, shared mutable state requires synchronization; ownership alone does not make a multi-step logical transaction atomic.",
+        "evidence": "sourced",
+        "citations": [
+          {
+            "sourceId": "e255a131-2888-5be8-a946-1de4a820553b",
+            "versionId": "954dcdb0-7941-5970-a062-30d288599dfc",
+            "quote": "In a multithreaded program, shared mutable state requires synchronization; ownership alone does not make a multi-step logical transaction atomic."
+          }
+        ]
+      },
+      {
+        "point": "Deduplication and the protected state change must be coordinated atomically to avoid concurrent duplicate effects.",
+        "evidence": "sourced",
+        "citations": [
+          {
+            "sourceId": "e255a131-2888-5be8-a946-1de4a820553b",
+            "versionId": "954dcdb0-7941-5970-a062-30d288599dfc",
+            "quote": "Deduplication and the protected state change must be coordinated atomically to avoid concurrent duplicate effects."
+          }
+        ]
+      },
+      {
+        "point": "A stable operation identifier lets a receiver recognize repeated attempts at the same operation.",
+        "evidence": "sourced",
+        "citations": [
+          {
+            "sourceId": "e255a131-2888-5be8-a946-1de4a820553b",
+            "versionId": "954dcdb0-7941-5970-a062-30d288599dfc",
+            "quote": "A stable operation identifier lets a receiver recognize repeated attempts at the same operation."
+          }
+        ]
+      }
+    ],
+    "acceptableAlternatives": [
+      "Using `std::sync::Mutex` to guard the entire lookup-and-insert sequence.",
+      "Using an atomic compare-and-swap (CAS) loop to update only if no event with that ID exists.",
+      "Utilizing a database transaction if the state were persisted, ensuring ACID properties instead of in-memory checks."
+    ],
+    "commonMistakes": [
+      "Assuming Rust's borrow checker prevents data races between threads.",
+      "Thinking that checking for existence and inserting are atomic operations in a single function call without locks.",
+      "Ignoring the possibility of retries or lost acknowledgements leading to duplicate submissions as described in broader system reliability contexts.",
+      "Attributing the issue to a bug in the `find` algorithm rather than concurrency control."
+    ],
+    "scoringCriteria": [
+      {
+        "criterion": "Root Cause Analysis",
+        "fullCredit": "Correctly identifies the race condition arising from non-atomic check-and-act on shared mutable state without synchronization.",
+        "partialCredit": "Mentions concurrency issues but fails to link them specifically to the lack of atomicity or synchronization primitives."
+      },
+      {
+        "criterion": "Distinction between Error Types",
+        "fullCredit": "Differentiates between a logic error (incorrect data) and a race condition (timing/interleaving), noting that logs showing simultaneous access confirm the latter.",
+        "partialCredit": "States that logs are needed but does not specify what specific log patterns distinguish a race from a logic flaw."
+      },
+      {
+        "criterion": "Verification Strategy",
+        "fullCredit": "Proposes a concrete test: concurrent invocation with identical IDs, asserting a single resulting entry, potentially mentioning jitter or retries.",
+        "partialCredit": "Suggests general testing like 'run multiple times' without specifying the concurrency aspect or the specific assertion required to prove deduplication."
+      }
+    ],
+    "evidenceGaps": [
+      "The exact implementation of the downstream charging logic is not provided, so we assume it processes every unique event entry in the vector.",
+      "The definition of 'duplicate delivery charges' implies business logic that counts entries; this specific mapping is not sourced but is necessary for the diagnosis."
+    ]
+  },
+  "documents": [
+    {
+      "url": "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html",
+      "title": "References and Borrowing",
+      "capturedOn": "2026-10-25",
+      "content": "If you have a mutable reference to a value, you can have no other references to that value."
+    },
+    {
+      "url": "https://doc.rust-lang.org/std/slice/struct.Iter.html",
+      "title": "std::slice::Iter",
+      "capturedOn": "2026-10-25",
+      "content": "impl<'a, T> Iterator for Iter<'a, T>\ntype Item = &'a T;\nfn find<P>(&mut self, predicate: P) -> Option<Self::Item>\nwhere P: FnMut(&Self::Item) -> bool;"
+    },
+    {
+      "url": "https://doc.rust-lang.org/error_codes/E0594.html",
+      "title": "Error code E0594",
+      "capturedOn": "2026-10-25",
+      "content": "A non-mutable value was assigned a value.\n\nTo fix this error, declare `ss` as mutable by using the `mut` keyword:"
+    }
+  ],
+  "webMode": "Recorded concise official-document excerpts, not live search or complete page captures. Search snippets are deliberately excluded from evidence.",
+  "interpretation": "Assisted results do not erase the retained false acceptance. Bounded regression gates still require manual semantic review."
+}

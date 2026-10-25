@@ -11,7 +11,10 @@ import { cancelBatchJob, getBatchJobStatus, startBatchUrlImport } from '@/utils/
 
 import { BatchUrlImport } from './BatchUrlImport';
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { fetchUrlPreview: vi.fn() } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { fetchUrlPreview: vi.fn() };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 vi.mock('@/utils/batchImport', () => ({ startBatchUrlImport: vi.fn(), getBatchJobStatus: vi.fn(), cancelBatchJob: vi.fn() }));
 
 const URL_A = 'https://example.org/one';
@@ -95,7 +98,7 @@ it('can import a selected URL even when its preview fails', async () => {
   await paste(URL_A);
   expect(screen.getByText('Failed — Preview unavailable')).toBeInTheDocument();
   await start();
-  expect(startBatchUrlImport).toHaveBeenCalledWith([URL_A], { extractArticle: true });
+  expect(startBatchUrlImport).toHaveBeenCalledWith([URL_A], { extractArticle: true }, VaultAPI);
 });
 
 it('respects selection and extraction settings, and prevents editing an active batch', async () => {
@@ -107,7 +110,7 @@ it('respects selection and extraction settings, and prevents editing an active b
   fireEvent.click(screen.getByRole('checkbox', { name: `Include ${URL_B}` }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Extract article text' }));
   await start();
-  expect(startBatchUrlImport).toHaveBeenCalledExactlyOnceWith([URL_A], { extractArticle: false });
+  expect(startBatchUrlImport).toHaveBeenCalledExactlyOnceWith([URL_A], { extractArticle: false }, VaultAPI);
   expect(screen.getByRole('textbox')).toBeDisabled();
   expect(screen.getByRole('checkbox', { name: 'Extract article text' })).toBeDisabled();
 });
@@ -133,7 +136,7 @@ it('reports a start failure, preserves the selection and allows a retry', async 
   expect(screen.getByRole('alert')).toHaveTextContent('Cannot write import history');
   await start();
   expect(startBatchUrlImport).toHaveBeenCalledTimes(2);
-  expect(getBatchJobStatus).toHaveBeenCalledWith('job-2');
+  expect(getBatchJobStatus).toHaveBeenCalledWith('job-2', VaultAPI);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
@@ -151,7 +154,7 @@ it('retries a failed status read on the same job without launching a duplicate i
   fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
   await tick(0);
   expect(startBatchUrlImport).toHaveBeenCalledOnce();
-  expect(vi.mocked(getBatchJobStatus).mock.calls).toEqual([['job-1'], ['job-1']]);
+  expect(vi.mocked(getBatchJobStatus).mock.calls).toEqual([['job-1', VaultAPI], ['job-1', VaultAPI]]);
   expect(onImportComplete).toHaveBeenCalledExactlyOnceWith({ successful: 2, failed: 0 });
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
@@ -165,7 +168,7 @@ it('prevents a second start or premature cancellation while the job is being cre
   expect(startBatchUrlImport).toHaveBeenCalledOnce();
   await act(async () => { pending.resolve('created-job'); });
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-  expect(getBatchJobStatus).toHaveBeenCalledWith('created-job');
+  expect(getBatchJobStatus).toHaveBeenCalledWith('created-job', VaultAPI);
 });
 
 it('ignores a previous job response after cancelling and starting another job', async () => {
@@ -178,7 +181,7 @@ it('ignores a previous job response after cancelling and starting another job', 
   await act(async () => { old.resolve(status({ status: 'failed', failedItems: 2 })); });
   expect(screen.getAllByText('Imported')).toHaveLength(2);
   expect(onImportComplete).toHaveBeenCalledExactlyOnceWith({ successful: 2, failed: 0 });
-  expect(getBatchJobStatus).toHaveBeenNthCalledWith(2, 'job-2');
+  expect(getBatchJobStatus).toHaveBeenNthCalledWith(2, 'job-2', VaultAPI);
 });
 
 it.each(['cancelled', 'canceled'])('shows %s items as retryable, without leaving a running row', async terminal => {
@@ -215,7 +218,7 @@ it('cancels the native job and prevents a late poll from reporting success', asy
   const { onImportComplete } = show(); await paste(); await start();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await tick(0);
-  expect(cancelBatchJob).toHaveBeenCalledExactlyOnceWith('job-1');
+  expect(cancelBatchJob).toHaveBeenCalledExactlyOnceWith('job-1', VaultAPI);
   await act(async () => { pending.resolve(completed()); });
   await tick(10000);
   expect(onImportComplete).not.toHaveBeenCalled();

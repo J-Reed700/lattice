@@ -11,6 +11,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
@@ -117,6 +118,7 @@ function ModelDetailContent({
   onSetRouterModel,
   onAddToken,
 }: ModelDetailPanelProps) {
+  const api = useApi();
   const { model: metadata } = model;
   const { systemCapabilities } = useModelCatalog({
     autoLoadCapabilities: true,
@@ -312,7 +314,7 @@ function ModelDetailContent({
         metadata,
         addToast,
         queryClient,
-      });
+      }, api);
       if (alreadyDownloaded) setIsDownloaded(true);
     } finally {
       setIsStartingDownload(false);

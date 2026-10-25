@@ -6,6 +6,7 @@ import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, Rota
 import { TiptapEditor } from '@/components/TiptapEditor';
 import { SaveStatus } from '@/components/ui/SaveStatus';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
+import { useApi } from '@/contexts/ApiContext';
 import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
@@ -33,10 +34,11 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   onRetryMemory: () => void; drafts: Record<string, NoteDraft>; setDraft: (key: string, draft: NoteDraft) => void; enabled: boolean;
   compact?: boolean; onOpenNotebook?: () => void;
 }) {
+  const api = useApi();
   const navigate = useAppNavigate();
   const ensure = useEnsureLearningLessonNote();
   const client = useQueryClient();
-  const saveQueue = useRef(createNoteSaveQueue());
+  const saveQueue = useRef(createNoteSaveQueue(api));
   const startedEnsure = useRef(new Set<string>());
   const latest = useRef({ memory, drafts });
   const flushAllRef = useRef<() => Promise<boolean>>(async () => true);

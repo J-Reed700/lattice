@@ -7,6 +7,8 @@
  */
 import type { VaultClients } from './apiClients';
 
+export type ApiClient = VaultClients;
+
 type ClientMethod = (...args: unknown[]) => Promise<unknown>;
 
 let loading: Promise<Record<string, ClientMethod>> | undefined;

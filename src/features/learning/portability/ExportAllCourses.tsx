@@ -2,11 +2,11 @@ import { useRef, useState } from 'react';
 
 import { Archive, CheckCircle2, FolderOpen, TriangleAlert } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { MOVE_EXPORT_DEFAULTS, PackExportOptions, packOptionsReady, packOptionsRequest } from '@/features/learning/portability/PackExportOptions';
 import { failureMessage, idempotentEntry, type RetryEntry } from '@/features/learning/portability/requestRetry';
 import { RetryAlert } from '@/features/learning/portability/RetryAlert';
 import { useExportAllLearningPacks } from '@/features/learning/portability/useLearningPortability';
-import VaultAPI from '@/lib/api';
 import type { ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto } from '@/lib/bindings';
 
 type Retries = { exportAll?: RetryEntry<ExportAllLearningPacksRequestDto> };
@@ -14,6 +14,7 @@ type Exported = Extract<ExportAllLearningPacksResultDto, { outcome: 'exported' }
 
 /** Every course, drafts included, one file each, into a folder Rust asks for. */
 export function ExportAllCourses() {
+  const api = useApi();
   const exportAll = useExportAllLearningPacks();
   const retry = useRef<Retries>({});
   const [options, setOptions] = useState(MOVE_EXPORT_DEFAULTS);
@@ -31,7 +32,7 @@ export function ExportAllCourses() {
   };
   const run = () => send(idempotentEntry(retry, 'exportAll', { options: packOptionsRequest(options) }, (id) => ({ operationId: id() })));
   const reveal = async (path: string) => {
-    const opened = await VaultAPI.showInFolder(path);
+    const opened = await api.showInFolder(path);
     if (!opened.ok) setError(opened.error);
   };
 

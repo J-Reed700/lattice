@@ -1,17 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 
+import { useApi } from '@/contexts/ApiContext';
 import { getBatchJobDetails, listAllBatchJobs } from '@/utils/batchHistory';
 
 /** Durable import history, including failures that finished while Chat was open. */
 export function ImportFailuresNotice() {
+  const api = useApi();
   const { data, error } = useQuery({
     queryKey: ['batch-imports', 'coverage'],
     queryFn: async () => {
-      const jobs = (await listAllBatchJobs()).filter(job => job.jobType === 'file_import');
+      const jobs = (await listAllBatchJobs(api)).filter(job => job.jobType === 'file_import');
       const failed = jobs.reduce((sum, job) => sum + job.failedItems, 0);
       const active = jobs.some(job => ['pending', 'running'].includes(job.status));
-      const details = await Promise.all(jobs.filter(job => job.failedItems > 0).slice(0, 3).map(job => getBatchJobDetails(job.id)));
+      const details = await Promise.all(jobs.filter(job => job.failedItems > 0).slice(0, 3).map(job => getBatchJobDetails(job.id, api)));
       const names = details.flatMap(job => job.items.filter(item => item.status === 'failed').map(item => item.target.split(/[\\/]/).pop() || item.target));
       return { failed, active, names };
     },

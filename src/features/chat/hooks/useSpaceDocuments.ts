@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { spaceKeys } from '@/features/spaces/api/queries';
 import { useDebounce } from '@/hooks/useDebounce';
-import { VaultAPI } from '@/lib/api';
 import type { SpaceDocument } from '@/types';
 
 /**
@@ -37,13 +37,14 @@ export function useSpaceDocuments(
   conversationId: string | null,
   query: string | null
 ): SpaceDocumentsResult {
+  const api = useApi();
   const debouncedQuery = useDebounce(query, DEBOUNCE_MS);
   const lookup = query === null ? null : debouncedQuery;
 
   const documentsQuery = useQuery({
     queryKey: spaceDocumentsKey(spaceId, conversationId, lookup ?? ''),
     queryFn: async () => {
-      const result = await VaultAPI.listSpaceDocuments(spaceId, conversationId, lookup ?? '', MENTION_LIMIT);
+      const result = await api.listSpaceDocuments(spaceId, conversationId, lookup ?? '', MENTION_LIMIT);
       // A failed lookup offers nothing rather than offering the last space's
       // answer: the chips it builds decide what the turn is allowed to read.
       return result.ok ? result.data : NO_DOCUMENTS;

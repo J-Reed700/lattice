@@ -1,10 +1,13 @@
 import { useCallback } from 'react';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+
+
 
 /** Bringing a web page into the library: a look before, and the import. */
 export function useWebImport() {
-  const preview = useCallback((url: string) => VaultAPI.fetchUrlPreview(url), []);
-  const importPage = useCallback((url: string) => VaultAPI.ingestWebUrl(url), []);
+  const api = useApi();
+  const preview = useCallback((url: string) => api.fetchUrlPreview(url), [api]);
+  const importPage = useCallback((url: string) => api.ingestWebUrl(url), [api]);
   return { preview, importPage };
 }

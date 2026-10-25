@@ -2,8 +2,8 @@ import { useState } from 'react';
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { LEARNING_CHECKER_ACCURACY_KEY } from '@/features/learning/api/learningQueryKeys';
-import VaultAPI from '@/lib/api';
 import type { CheckerAccuracyDto, ExportedLearningCheckerExamplesDto } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
@@ -29,16 +29,17 @@ export function accuracyLine(row: CheckerAccuracyDto): string {
  * and the export that lets the claim-pairs eval score another checker on them.
  */
 export function CheckerAccuracy({ programId }: { programId: string }) {
+  const api = useApi();
   const [open, setOpen] = useState(false);
   const accuracy = useQuery({
     queryKey: LEARNING_CHECKER_ACCURACY_KEY,
-    queryFn: async () => unwrap(await VaultAPI.getLearningCheckerAccuracy()),
+    queryFn: async () => unwrap(await api.getLearningCheckerAccuracy()),
     enabled: open,
     retry: false,
   });
   const exported = useMutation<ExportedLearningCheckerExamplesDto | null, Error, void>({
     retry: false,
-    mutationFn: async () => unwrap(await VaultAPI.exportLearningCheckerExamples({ programId })),
+    mutationFn: async () => unwrap(await api.exportLearningCheckerExamples({ programId })),
   });
   return (
     <details className="mt-4 text-xs" onToggle={(event) => setOpen(event.currentTarget.open)}>

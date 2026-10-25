@@ -11,9 +11,10 @@ import {
 } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
+import { useApi } from '@/contexts/ApiContext';
 import type { FolderIndexStatus } from '@/features/explorer/stores/explorerStore';
 import { isJobFinished, useJobs, useJobStatus, type JobDto } from '@/features/jobs/api';
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { ExplorerFolderListDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
@@ -29,43 +30,45 @@ export const explorerKeys = {
   indexStatus: (root: string) => ['explorer', 'index-status', root] as const,
 };
 
-export const explorerFoldersQueryOptions = () =>
+export const explorerFoldersQueryOptions = (api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: explorerKeys.folders,
-    queryFn: async () => unwrapApiResult(await VaultAPI.explorerFoldersList()),
+    queryFn: async () => unwrapApiResult(await api.explorerFoldersList()),
     staleTime: 15_000,
   });
 
 /** "Your folders": pinned first, then the most recently opened. */
 export function useExplorerFoldersQuery() {
-  return useQuery(explorerFoldersQueryOptions());
+  const api = useApi();
+  return useQuery(explorerFoldersQueryOptions(api));
 }
 
 /** Canonicalises a folder the user picked; it must be an existing directory. */
-export const resolveExplorerRoot = (path: string) => VaultAPI.explorerResolveRoot(path);
+export const resolveExplorerRoot = (path: string, api: ApiClient = VaultAPI) => api.explorerResolveRoot(path);
 
 /**
  * Binds a conversation to a folder and files it in the folder's space. The
  * caller updates the conversation's cached detail and lists.
  */
-export const bindThreadToFolder = (conversationId: string, root: string) =>
-  VaultAPI.setConversationExplorerRoot(conversationId, root);
+export const bindThreadToFolder = (conversationId: string, root: string, api: ApiClient = VaultAPI) =>
+  api.setConversationExplorerRoot(conversationId, root);
 
 /**
  * The folders list's writes. Each refreshes the list; the ones that move or
  * delete threads refresh the conversation lists too.
  */
 export function useExplorerFolderMutations() {
+  const api = useApi();
   const client = useQueryClient();
   const refreshFolders = () => client.invalidateQueries({ queryKey: explorerKeys.folders });
   const rename = useMutation({
     mutationFn: async ({ root, name }: { root: string; name: string }) =>
-      unwrapApiResult(await VaultAPI.explorerFolderRename(root, name)),
+      unwrapApiResult(await api.explorerFolderRename(root, name)),
     onSettled: refreshFolders,
   });
   const setPinned = useMutation({
     mutationFn: async ({ root, pinned }: { root: string; pinned: boolean }) =>
-      unwrapApiResult(await VaultAPI.explorerFolderSetPinned(root, pinned)),
+      unwrapApiResult(await api.explorerFolderSetPinned(root, pinned)),
     // Moves at once; the refresh confirms it.
     onMutate: ({ root, pinned }) => {
       client.setQueryData<ExplorerFolderListDto>(explorerKeys.folders, (list) => list && {
@@ -77,7 +80,7 @@ export function useExplorerFolderMutations() {
   });
   const setSettings = useMutation({
     mutationFn: async ({ root, instructions, spaceId }: { root: string; instructions: string; spaceId: string }) =>
-      unwrapApiResult(await VaultAPI.explorerFolderSetSettings(root, instructions, spaceId)),
+      unwrapApiResult(await api.explorerFolderSetSettings(root, instructions, spaceId)),
     onSuccess: async (moved) => {
       // Moved threads change space in the Chat sidebar and the thread bar.
       if (moved > 0) await client.invalidateQueries({ queryKey: conversationKeys.all });
@@ -85,12 +88,12 @@ export function useExplorerFolderMutations() {
     },
   });
   const deleteIndex = useMutation({
-    mutationFn: async (root: string) => unwrapApiResult(await VaultAPI.explorerFolderDeleteIndex(root)),
+    mutationFn: async (root: string) => unwrapApiResult(await api.explorerFolderDeleteIndex(root)),
     onSettled: refreshFolders,
   });
   const remove = useMutation({
     mutationFn: async ({ root, deleteThreads }: { root: string; deleteThreads: boolean }) =>
-      unwrapApiResult(await VaultAPI.explorerFolderRemove(root, deleteThreads)),
+      unwrapApiResult(await api.explorerFolderRemove(root, deleteThreads)),
     onSuccess: (deleted, { root }) => {
       client.setQueryData<ExplorerFolderListDto>(explorerKeys.folders, (list) => list && {
         ...list,
@@ -102,7 +105,7 @@ export function useExplorerFolderMutations() {
   });
   const setLastThread = useMutation({
     mutationFn: async ({ root, conversationId }: { root: string; conversationId: string }) =>
-      unwrapApiResult(await VaultAPI.explorerFolderSetLastThread(root, conversationId)),
+      unwrapApiResult(await api.explorerFolderSetLastThread(root, conversationId)),
     onSuccess: async (_result, { root, conversationId }) => {
       const list = client.getQueryData<ExplorerFolderListDto>(explorerKeys.folders);
       if (list?.folders.some((folder) => folder.root === root)) {
@@ -257,29 +260,30 @@ async function runIndexCommand(
 
 /** Opening, rebuilding and closing the open folder's index; results land in the status cache. */
 export function useExplorerIndexCommands() {
+  const api = useApi();
   const client = useQueryClient();
   return useMemo(() => ({
     /** Opens the folder's index and starts or resumes indexing; the folder joins the list. */
     open: async (root: string, stillWanted: () => boolean = () => true) => {
-      await runIndexCommand(client, () => VaultAPI.explorerIndexOpen(root), root, stillWanted);
+      await runIndexCommand(client, () => api.explorerIndexOpen(root), root, stillWanted);
       void client.invalidateQueries({ queryKey: explorerKeys.folders });
     },
     /** Wipes the index and builds it again; `retry` resumes a failed one instead. */
     rebuild: (root: string, retry: boolean) =>
       runIndexCommand(
         client,
-        () => (retry ? VaultAPI.explorerIndexOpen(root) : VaultAPI.explorerIndexRebuild(root)),
+        () => (retry ? api.explorerIndexOpen(root) : api.explorerIndexRebuild(root)),
         root,
         () => true
       ),
     /** Closes the open folder's index, waiting for the batch in flight and a save. */
     close: async (root: string | null) => {
-      await VaultAPI.explorerIndexClose();
+      await api.explorerIndexClose();
       // A closed index reports nothing more; the folders list reads it from disk.
       if (root) client.removeQueries({ queryKey: explorerKeys.indexStatus(root), exact: true });
       void client.invalidateQueries({ queryKey: explorerKeys.folders });
     },
-  }), [client]);
+  }), [api, client]);
 }
 
 /**
@@ -294,10 +298,11 @@ export const explorerDirKey = (root: string, path: string) => ['explorer', 'dir'
 
 /** One listing per directory in `dirs`, in the same order. Only open directories are read. */
 export function useExplorerDirListings(root: string, dirs: readonly string[]) {
+  const api = useApi();
   return useQueries({
     queries: dirs.map((path) => ({
       queryKey: explorerDirKey(root, path),
-      queryFn: async () => unwrapApiResult(await VaultAPI.explorerListDir(root, path)),
+      queryFn: async () => unwrapApiResult(await api.explorerListDir(root, path)),
       staleTime: 10_000,
     })),
   });
@@ -305,9 +310,10 @@ export function useExplorerDirListings(root: string, dirs: readonly string[]) {
 
 /** The open file's text, or why it is not shown; idle until a file is open. */
 export function useExplorerFileQuery(root: string, path: string | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['explorer', 'file', root, path],
-    queryFn: async () => unwrapApiResult(await VaultAPI.explorerReadFile(root, path!)),
+    queryFn: async () => unwrapApiResult(await api.explorerReadFile(root, path!)),
     enabled: Boolean(path),
     ...FILE_CACHE,
   });
@@ -318,10 +324,11 @@ export function useExplorerFileQuery(root: string, path: string | null) {
  * path itself came back: the file is there but would not read.
  */
 export function useExplorerLocateQuery(root: string, path: string) {
+  const api = useApi();
   return useQuery({
     queryKey: ['explorer', 'locate', root, path],
     queryFn: async () => {
-      const found = unwrapApiResult(await VaultAPI.explorerLocateFile(root, path));
+      const found = unwrapApiResult(await api.explorerLocateFile(root, path));
       return { exists: found.includes(path), matches: found.filter((match) => match !== path) };
     },
     ...FILE_CACHE,
@@ -330,9 +337,10 @@ export function useExplorerLocateQuery(root: string, path: string) {
 
 /** Text matches in the folder; idle until `enabled`. */
 export function useExplorerSearchQuery(root: string, query: string, enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['explorer', 'search', root, query],
-    queryFn: async () => unwrapApiResult(await VaultAPI.explorerSearch(root, query, { maxResults: 200 })),
+    queryFn: async () => unwrapApiResult(await api.explorerSearch(root, query, { maxResults: 200 })),
     enabled,
     staleTime: 5_000,
   });

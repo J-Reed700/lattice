@@ -30,15 +30,16 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/lib/api', () => ({
-  VaultAPI: {
+vi.mock('@/lib/api', () => {
+  const mockApi = {
     explorerIndexOpen: mocks.indexOpen,
     explorerIndexClose: mocks.indexClose,
     explorerIndexRebuild: mocks.indexRebuild,
     explorerResolveRoot: mocks.resolveRoot,
     explorerFoldersList: mocks.foldersList,
-  },
-}));
+  };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 vi.mock('@/shared/ipc/transport', () => ({ apiCall: mocks.apiCall }));
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {

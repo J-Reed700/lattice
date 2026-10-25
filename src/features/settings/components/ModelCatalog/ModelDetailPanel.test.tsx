@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
+import VaultAPI from '@/lib/api';
 import { deferred } from '@/tests/deferred';
 import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
 
@@ -170,7 +172,7 @@ describe('ModelDetailPanel', () => {
       renderPanel(recommendation());
       fireEvent.click(await screen.findByRole('button', { name: 'Download' }));
       expect(screen.getByText('Starting…')).toBeInTheDocument();
-      expect(h.startModelDownload).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ id: 'saga-7b-q4' }), addToast: h.addToast }));
+      expect(h.startModelDownload).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ id: 'saga-7b-q4' }), addToast: h.addToast }), VaultAPI);
       await act(async () => { pending.resolve({ alreadyDownloaded: false }); await pending.promise; });
       expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
     });

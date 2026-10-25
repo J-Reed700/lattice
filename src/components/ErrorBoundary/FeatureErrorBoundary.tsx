@@ -2,7 +2,7 @@ import React from 'react';
 
 import { RefreshCw } from 'lucide-react';
 
-import { ErrorBoundary, type ErrorFallbackProps } from './ErrorBoundary';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface FeatureErrorFallbackProps {
   error: Error;
@@ -37,17 +37,10 @@ interface FeatureErrorBoundaryProps {
 }
 
 export function FeatureErrorBoundary({ children, featureName, icon }: FeatureErrorBoundaryProps) {
-  const FallbackComponent = ({ error, resetError }: ErrorFallbackProps) => (
-    <FeatureErrorFallback
-      error={error}
-      reset={resetError}
-      featureName={featureName}
-      icon={icon}
-    />
-  );
-
   return (
-    <ErrorBoundary fallback={FallbackComponent}>
+    <ErrorBoundary renderFallback={({ error, resetError }) => (
+      <FeatureErrorFallback error={error} reset={resetError} featureName={featureName} icon={icon} />
+    )}>
       {children}
     </ErrorBoundary>
   );

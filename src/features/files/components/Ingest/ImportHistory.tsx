@@ -4,8 +4,10 @@ import { type FC, useEffect, useState } from 'react';
 import { type QueryClient, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { useApi } from '@/contexts/ApiContext';
 import { BATCH_IMPORT_JOBS } from '@/features/batch/jobKinds';
 import { useJobStatus } from '@/features/jobs/api';
+import type { ApiClient } from '@/lib/api';
 import type { BatchJobSummary, BatchJobStatus, BatchJobItem } from '@/types/api/batch';
 import { listAllBatchJobs, deleteBatchJob, retryFailedItems, getBatchJobDetails } from '@/utils/batchHistory';
 import { validateIndexablePath } from '@/utils/indexingFileValidation';
@@ -44,20 +46,21 @@ const importHistoryKeys = {
 const FAILED_READ_POLL_MS = 2000;
 const readOptions = { retry: true, retryDelay: FAILED_READ_POLL_MS, staleTime: 0, refetchOnWindowFocus: 'always' } as const;
 const NO_JOBS: BatchJobSummary[] = [];
-const deleteJobs = (ids: string[]) => Promise.all(ids.map(id => deleteBatchJob(id)));
+const deleteJobs = (ids: string[], api: ApiClient) => Promise.all(ids.map(id => deleteBatchJob(id, api)));
 /** The newest details read for a job under any summary, shown while a fresher read is under way. */
 const lastDetails = (client: QueryClient, id: string) => client.getQueryCache().findAll({ queryKey: importHistoryKeys.job(id) })
   .filter(query => query.state.data !== undefined)
   .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)[0]?.state.data as BatchJobStatus | undefined;
 
 export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
+  const api = useApi();
   const queryClient = useQueryClient();
   // Rows the user opened or closed. Others are open while importing or holding failures.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
 
-  const list = useQuery({ queryKey: importHistoryKeys.list(), queryFn: listAllBatchJobs, ...readOptions });
+  const list = useQuery({ queryKey: importHistoryKeys.list(), queryFn: () => listAllBatchJobs(api), ...readOptions });
   const jobs = list.data ?? NO_JOBS;
   const listError = list.error ?? list.failureReason;
   const isOpen = (job: BatchJobSummary) => toggled[job.id] ?? (job.failedItems > 0 || isActive(job));
@@ -66,7 +69,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   const detailQueries = useQueries({
     queries: detailed.map(job => ({
       queryKey: importHistoryKeys.details(job.id, job.status, job.completedItems, job.failedItems),
-      queryFn: () => getBatchJobDetails(job.id),
+      queryFn: () => getBatchJobDetails(job.id, api),
       placeholderData: () => lastDetails(queryClient, job.id),
       ...readOptions,
     })),
@@ -93,12 +96,12 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   const setJobs = (update: (all: BatchJobSummary[]) => BatchJobSummary[]) =>
     queryClient.setQueryData<BatchJobSummary[]>(importHistoryKeys.list(), prev => prev && update(prev));
   const retry = useMutation({
-    mutationFn: (args: { jobId: string; itemId?: string; replacement?: string }) => retryFailedItems(args.jobId, args.itemId, args.replacement),
+    mutationFn: (args: { jobId: string; itemId?: string; replacement?: string }) => retryFailedItems(args.jobId, args.itemId, args.replacement, api),
     onSuccess: id => setJobs(all => all.map(entry => entry.id === id ? { ...entry, status: 'pending' } : entry)),
     onSettled: () => { void refresh(); },
   });
   const removeOptions = {
-    mutationFn: deleteJobs,
+    mutationFn: (arg0: Parameters<typeof deleteJobs>[0]) => deleteJobs(arg0, api),
     onSuccess: (_: unknown, ids: string[]) => setJobs(all => all.filter(entry => !ids.includes(entry.id))),
     onSettled: () => { void refresh(); },
   };

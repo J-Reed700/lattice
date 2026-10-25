@@ -8,7 +8,10 @@ import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
 import { ExplorerFileView } from '../ExplorerFileView';
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), locate: vi.fn() }));
-vi.mock('@/lib/api', () => ({ VaultAPI: { explorerReadFile: mocks.read, explorerLocateFile: mocks.locate } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { explorerReadFile: mocks.read, explorerLocateFile: mocks.locate };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 const ROOT = '/Users/me/MusicVST';
 const FILES: Record<string, string> = {

@@ -1,17 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
-import VaultAPI from '@/lib/api';
 import type { IndexedFolder } from '@/types/api/files';
 
 
 export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
 
 export function useIndexedFoldersQuery() {
+  const api = useApi();
   return useQuery<IndexedFolder[]>({
     queryKey: INDEXED_FOLDERS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getIndexedFolders();
+      const result = await api.getIndexedFolders();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -27,13 +28,14 @@ interface SetWatchFolderEnabledArgs {
 }
 
 export function useSetWatchFolderEnabledMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, SetWatchFolderEnabledArgs>({
     mutationFn: async ({ path, enabled }) => {
       const result = enabled
-        ? await VaultAPI.addWatchFolder(path)
-        : await VaultAPI.removeWatchFolder(path);
+        ? await api.addWatchFolder(path)
+        : await api.removeWatchFolder(path);
       if (!result.ok) {
         throw new Error(result.error);
       }
