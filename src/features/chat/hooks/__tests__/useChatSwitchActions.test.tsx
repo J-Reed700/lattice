@@ -8,6 +8,10 @@ import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
 import type { DownloadedModel } from '@/types/downloadedModels';
+import type { CloudModelCatalogs } from '@/utils/chatModelSelection';
+
+const cloud = vi.hoisted(() => ({ catalogs: {} as CloudModelCatalogs }));
+vi.mock('@/features/model/hooks/useCloudModels', () => ({ useCloudModelCatalogs: () => cloud }));
 
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -45,6 +49,7 @@ const toastTitles = () => useToastStore.getState().toasts.map((toast) => toast.t
 
 describe('useChatSwitchActions', () => {
   beforeEach(() => {
+    cloud.catalogs = {};
     useToastStore.setState({ toasts: [] });
     const settings = makeAppSettings();
     settings.llm.provider = 'llamacpp';
@@ -75,6 +80,16 @@ describe('useChatSwitchActions', () => {
     expect(state.setConversationModelChoice).toHaveBeenCalledWith('chat-b', {
       kind: 'explicit', model: { kind: 'llama_cpp', model: 'served.gguf' },
     });
+  });
+
+  it('pins a discovered cloud model independently of the default provider', async () => {
+    cloud.catalogs = { anthropic: { hasApiKey: true, models: [{ id: 'claude-new', name: 'Claude New' }] } };
+    const result = render();
+    await act(() => result.current.handleChooseChatModel('cloud:anthropic/claude-new', 'Anthropic · Claude New'));
+    expect(state.setConversationModelChoice).toHaveBeenCalledWith('chat-b', {
+      kind: 'explicit', model: { kind: 'cloud', provider: 'anthropic', model: 'claude-new' },
+    });
+    expectNoGlobalWrite();
   });
 
   it('makes the chat first when none is open, then sets its model', async () => {

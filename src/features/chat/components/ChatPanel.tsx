@@ -22,6 +22,7 @@ import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions
 import { useComposer } from '@/features/chat/hooks/useComposer';
 import { useThreadMessages } from '@/features/chat/hooks/useThreadMessages';
 import { useThreadScroll } from '@/features/chat/hooks/useThreadScroll';
+import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
@@ -53,6 +54,7 @@ const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 
 export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
+  const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const conversations = useConversationsStore((state) => state.conversations);
@@ -143,16 +145,16 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   const modelChoice = activeConversation?.modelChoice ?? DEFAULT_CHOICE;
   const onDefaultModel = modelChoice.kind === 'default';
   const effectiveModel = useMemo(
-    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels),
-    [modelChoice, llmSettings, downloadedModels]
+    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels, catalogs),
+    [modelChoice, llmSettings, downloadedModels, catalogs]
   );
   const defaultModelOption = useMemo(
-    () => resolveDefaultChatOption(llmSettings, downloadedModels),
-    [llmSettings, downloadedModels]
+    () => resolveDefaultChatOption(llmSettings, downloadedModels, catalogs),
+    [llmSettings, downloadedModels, catalogs]
   );
   const chatModelOptions = useMemo(
-    () => buildChatModelOptions(llmSettings, downloadedModels),
-    [llmSettings, downloadedModels]
+    () => buildChatModelOptions(llmSettings, downloadedModels, catalogs),
+    [llmSettings, downloadedModels, catalogs]
   );
   const effectiveRef = effectiveModel && !isUnavailableChatModel(effectiveModel) ? effectiveModel.ref : null;
   // While a turn runs, the model it is pinned to says whether it fell back to

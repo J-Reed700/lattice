@@ -200,6 +200,7 @@
     "file:allow-add-documents-to-custom-collection",
     "file:allow-remove-documents-from-custom-collection",
     "settings:allow-set-cloud-api-key",
+    "settings:allow-list-cloud-models",
     "settings:allow-get-settings",
     "settings:allow-get-settings-category",
     "settings:allow-update-settings",

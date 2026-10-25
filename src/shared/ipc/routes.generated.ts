@@ -233,6 +233,7 @@ export const COMMAND_PLUGINS = {
   last_learning_window_shortfall: 'model',
   list_all_documents: 'file',
   list_available_functions: 'functions',
+  list_cloud_models: 'settings',
   list_clusters: 'corpus-shape',
   list_conversation_linked_documents: 'conversation',
   list_conversation_space_members: 'conversation',

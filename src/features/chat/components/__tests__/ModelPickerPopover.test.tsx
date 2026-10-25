@@ -6,7 +6,12 @@ import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopove
 import type { ChatModelChoice, LoadedModelDto } from '@/lib/bindings';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import type { ChatModelOption } from '@/utils/chatModelSelection';
+import type { CloudModelCatalogs, ChatModelOption } from '@/utils/chatModelSelection';
+
+const cloud = vi.hoisted(() => ({ catalogs: {} as CloudModelCatalogs, refresh: vi.fn() }));
+vi.mock('@/features/model/hooks/useCloudModels', () => ({
+  useCloudModelCatalogs: () => ({ ...cloud, isLoading: false, isFetching: false, errors: [] }),
+}));
 
 const models = vi.hoisted(() => ({ current: [] as DownloadedModel[] }));
 const appSettings = vi.hoisted(() => ({
@@ -55,6 +60,7 @@ const open = async (choice: ChatModelChoice = { kind: 'default' }, onSelect = vi
 
 describe('ModelPickerPopover', () => {
   beforeEach(() => {
+    cloud.catalogs = {};
     appSettings.current = undefined;
     models.current = [];
     loaded.current = [];
@@ -69,6 +75,20 @@ describe('ModelPickerPopover', () => {
 
     expect(screen.getByText('Llama 3.2 3B')).toBeInTheDocument();
     expect(screen.queryByText('BGE small')).not.toBeInTheDocument();
+  });
+
+  it('offers models from both keyed providers and returns the selected model identity', async () => {
+    appSettings.current = makeAppSettings();
+    appSettings.current.llm.provider = 'local';
+    cloud.catalogs = {
+      openai: { hasApiKey: true, models: [{ id: 'gpt-new', name: 'GPT New' }] },
+      anthropic: { hasApiKey: true, models: [{ id: 'claude-new', name: 'Claude New' }] },
+    };
+    const select = vi.fn();
+    await open({ kind: 'default' }, select);
+    expect(screen.getByRole('menuitemradio', { name: /GPT New/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /Claude New/ }));
+    expect(select).toHaveBeenCalledWith('cloud:anthropic/claude-new', 'Anthropic · Claude New');
   });
 
   it('groups by backend and, with no "Use default" row, checks the model that answers', async () => {
@@ -103,7 +123,7 @@ describe('ModelPickerPopover', () => {
     models.current = [];
     await open();
 
-    expect(screen.getByText('No other models installed.')).toBeInTheDocument();
+    expect(screen.getByText(/No models available/)).toBeInTheDocument();
   });
 
   it('shows configured llama.cpp and local model without unconfigured Ollama server row', async () => {

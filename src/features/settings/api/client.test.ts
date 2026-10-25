@@ -6,11 +6,16 @@ import { diagnostics } from '@/utils/diagnostics';
 
 import { settingsApi } from './client';
 
-const route = (command: CommandName) => `plugin:${COMMAND_PLUGINS[command]}|${command}`;
+const route = (command: CommandName) => {
+  const plugin = COMMAND_PLUGINS[command];
+  if (!plugin) throw new Error(`No plugin route for ${command}`);
+  return `plugin:${plugin}|${command}`;
+};
 
 type Case = [label: string, call: () => Promise<unknown>, command: CommandName, args: Record<string, unknown>];
 
 const cases: Case[] = [
+  ['listCloudModels', () => settingsApi.listCloudModels('anthropic'), 'list_cloud_models', { provider: 'anthropic' }],
   ['addWatchFolder', () => settingsApi.addWatchFolder('/archives'), 'add_watch_folder', { path: '/archives' }],
   ['removeWatchFolder', () => settingsApi.removeWatchFolder('/archives'), 'remove_watch_folder', { path: '/archives' }],
   ['getSettings', () => settingsApi.getSettings(), 'get_settings', {}],

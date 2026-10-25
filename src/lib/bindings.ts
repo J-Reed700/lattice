@@ -4090,6 +4090,17 @@ async deleteMention(mentionId: string) : Promise<Result<null, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Models available to a saved cloud credential. Never returns the key.
+ */
+async listCloudModels(provider: CloudProvider) : Promise<Result<CloudModelCatalogDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|list_cloud_models", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -5643,6 +5654,8 @@ publishedDate?: string | null;
  * Excerpt (first ~200 characters of text)
  */
 excerpt?: string | null }
+export type CloudModelCatalogDto = { hasApiKey: boolean; models: CloudModelDto[] }
+export type CloudModelDto = { id: string; name: string }
 /**
  * A cloud provider, each with its own keyring entry and endpoint.
  */

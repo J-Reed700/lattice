@@ -1,15 +1,15 @@
 import { configuredConnections } from './configuredConnections';
 import { cloudVisionDefault } from './visionGeometry';
 
-import type { ChatModelChoice, CloudProvider, ModelRef } from '../lib/bindings';
+import type { ChatModelChoice, CloudModelCatalogDto, CloudProvider, ModelRef } from '../lib/bindings';
 import type { LLMSettings } from '../types/api/settings';
 import type { DownloadedModel } from '../types/downloadedModels';
 
 export const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
 export const LLAMACPP_SERVER_MODEL_ID = '__llamacpp_server__';
-export const CLOUD_PROVIDER_MODEL_ID = '__cloud_provider__';
 
 export type ChatModelBackend = 'local' | 'llamacpp' | 'ollama' | 'cloud';
+export type CloudModelCatalogs = Partial<Record<CloudProvider, CloudModelCatalogDto | undefined>>;
 
 /** One row of the chat model picker. */
 export interface ChatModelOption {
@@ -168,7 +168,7 @@ export function remoteSeesImages(ref: ModelRef, settings: LLMSettings | null | u
 }
 
 /**
- * The model a picker row names. The three connection rows name whatever
+ * The model a picker row names. The two server connection rows name whatever
  * Settings serves on that connection now; a downloaded row names itself, and
  * an explicit Ollama row names its own tag rather than the Settings tag.
  */
@@ -181,12 +181,12 @@ export function modelRefForOption(
       return { kind: 'llama_cpp', model: settings.llamaCpp.model.trim() };
     case OLLAMA_SERVER_MODEL_ID:
       return { kind: 'ollama', model: settings.model.trim() };
-    case CLOUD_PROVIDER_MODEL_ID:
-      if (!isCloudProvider(settings.provider)) {
-        throw new Error('The cloud row names the cloud provider set in Settings, and none is set.');
-      }
-      return { kind: 'cloud', provider: settings.provider, model: settings.model.trim() };
     default:
+      if (option.backend === 'cloud') {
+        const match = /^cloud:(openai|anthropic|google)\/(.+)$/.exec(option.id);
+        if (!match) throw new Error('The cloud model row has no model identity.');
+        return { kind: 'cloud', provider: match[1] as CloudProvider, model: match[2] };
+      }
       return option.backend === 'ollama'
         ? { kind: 'ollama', model: option.id }
         : { kind: 'local', model_id: option.id };
@@ -255,7 +255,7 @@ export function resolveDefaultChatOptionId(
     case 'openai':
     case 'anthropic':
     case 'google':
-      return settings.model.trim() ? CLOUD_PROVIDER_MODEL_ID : null;
+      return settings.model.trim() ? modelRefKey({ kind: 'cloud', provider: settings.provider, model: settings.model.trim() }) : null;
     case 'local':
       return activeLocal?.model_id ?? null;
     case 'auto':
@@ -271,6 +271,7 @@ export function resolveDefaultChatOptionId(
 export function buildChatModelOptions(
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
+  catalogs: CloudModelCatalogs = {},
 ): ChatModelOption[] {
   const defaultId = resolveDefaultChatOptionId(settings, downloadedModels);
   const connections = configuredConnections(settings);
@@ -370,10 +371,11 @@ export function buildChatModelOptions(
   // 4. Cloud provider
   if (settings && isCloudProvider(settings.provider) && settings.model.trim()) {
     const providerName = CLOUD_PROVIDER_NAMES[settings.provider];
-    const modelLabel = settings.model.trim();
-    const ref = modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, settings);
+    const modelLabel = catalogs[settings.provider]?.models.find((model) => model.id === settings.model.trim())?.name ?? settings.model.trim();
+    const ref: ModelRef = { kind: 'cloud', provider: settings.provider, model: settings.model.trim() };
+    const id = modelRefKey(ref);
     options.push({
-      id: CLOUD_PROVIDER_MODEL_ID,
+      id,
       ref,
       label: modelLabel,
       triggerLabel: `${providerName} · ${modelLabel}`,
@@ -383,8 +385,26 @@ export function buildChatModelOptions(
       contextLabel: null,
       supportsTools: null,
       seesImages: remoteSeesImages(ref, settings),
-      isDefault: defaultId === CLOUD_PROVIDER_MODEL_ID,
+      isDefault: defaultId === id,
     });
+  }
+
+  // Every provider with a saved key contributes its models, independently of
+  // the app default. Stable IDs keep choices pinned across catalog refreshes.
+  const seen = new Set(options.map((option) => modelRefKey(option.ref)));
+  for (const provider of ['openai', 'anthropic', 'google'] as const) {
+    for (const model of catalogs[provider]?.models ?? []) {
+      const ref: ModelRef = { kind: 'cloud', provider, model: model.id };
+      const id = modelRefKey(ref);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const providerName = CLOUD_PROVIDER_NAMES[provider];
+      options.push({
+        id, ref, label: model.name, triggerLabel: `${providerName} · ${model.name}`,
+        subtitle: `${providerName} · ${model.id}`, group: 'Cloud', backend: 'cloud',
+        contextLabel: null, supportsTools: null, seesImages: remoteSeesImages(ref, settings), isDefault: false,
+      });
+    }
   }
 
   return options;
@@ -394,8 +414,9 @@ export function buildChatModelOptions(
 export function resolveDefaultChatOption(
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
+  catalogs: CloudModelCatalogs = {},
 ): ChatModelOption | null {
-  return buildChatModelOptions(settings, downloadedModels).find((o) => o.isDefault) ?? null;
+  return buildChatModelOptions(settings, downloadedModels, catalogs).find((o) => o.isDefault) ?? null;
 }
 
 function unavailable(label: string, reason: string): UnavailableChatModel {
@@ -438,8 +459,9 @@ export function resolveEffectiveChatOption(
   choice: ChatModelChoice,
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
+  catalogs: CloudModelCatalogs = {},
 ): EffectiveChatModel | null {
-  const options = buildChatModelOptions(settings, downloadedModels);
+  const options = buildChatModelOptions(settings, downloadedModels, catalogs);
   if (choice.kind === 'default') return options.find((o) => o.isDefault) ?? null;
 
   const ref = choice.model;

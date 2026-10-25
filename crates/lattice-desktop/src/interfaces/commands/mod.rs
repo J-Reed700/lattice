@@ -1,4 +1,5 @@
 // Single-file command modules grouped under domains/ for filesystem organization.
+pub mod cloud_models;
 pub mod consolidated;
 pub mod document_list;
 pub mod indexing;

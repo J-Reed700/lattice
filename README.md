@@ -54,8 +54,13 @@ embedding model (Qwen3-Embedding where there is a GPU backend, MiniLM
 otherwise) and a local chat model. Downloads continue in the background, the
 full catalog stays in Settings, and after that it works fully offline.
 Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
-Anthropic) are available if you want them; `crates/lattice-sync/` holds an
+Anthropic, Google) are available if you want them; `crates/lattice-sync/` holds an
 experimental sync service the app does not use yet.
+
+For a cloud provider, open **Settings → Chat**, save its API key, and choose
+from the available models. Use **Refresh** to reload the provider's list.
+Models from providers with saved keys also appear in each chat's model picker;
+choosing one there changes that conversation's model, keeping the app default.
 
 ## Getting started
 

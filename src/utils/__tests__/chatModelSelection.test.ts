@@ -5,8 +5,8 @@ import type { DownloadedModel } from '@/types/downloadedModels';
 import { makeAppSettings } from '../../tests/fixtures/appSettings';
 import {
   buildChatModelOptions,
+  type CloudModelCatalogs,
   cleanModelDisplayName,
-  CLOUD_PROVIDER_MODEL_ID,
   contextFitWarning,
   formatContextLabel,
   formatModelSize,
@@ -43,6 +43,33 @@ const settingsWith = (patch: (llm: ReturnType<typeof makeAppSettings>['llm']) =>
   patch(llm);
   return llm;
 };
+
+describe('discovered cloud models', () => {
+  const catalogs: CloudModelCatalogs = {
+    openai: { hasApiKey: true, models: [{ id: 'gpt-new', name: 'GPT New' }, { id: 'gpt-small', name: 'GPT Small' }] },
+    anthropic: { hasApiKey: true, models: [{ id: 'claude-new', name: 'Claude New' }] },
+  };
+
+  it('offers both providers beside local models and deduplicates the configured default', () => {
+    const settings = settingsWith((llm) => { llm.provider = 'openai'; llm.model = 'gpt-new'; });
+    const options = buildChatModelOptions(settings, [makeModel({})], catalogs);
+    expect(options.filter((option) => option.backend === 'cloud').map((option) => option.label)).toEqual(['GPT New', 'GPT Small', 'Claude New']);
+    expect(options.find((option) => option.isDefault)?.ref).toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-new' });
+    for (const option of options) expect(modelRefForOption(option, settings)).toEqual(option.ref);
+    settings.model = 'gpt-small';
+    const after = buildChatModelOptions(settings, [], catalogs);
+    for (const option of options.filter((entry) => entry.backend === 'cloud')) {
+      expect(after.find((entry) => entry.id === option.id)?.ref).toEqual(option.ref);
+    }
+  });
+
+  it('keeps an explicit model when settings change and the catalog refresh no longer lists it', () => {
+    const settings = settingsWith((llm) => { llm.provider = 'local'; });
+    const choice = { kind: 'explicit', model: { kind: 'cloud', provider: 'anthropic', model: 'claude-new' } } as const;
+    expect(resolveEffectiveChatOption(choice, settings, [], catalogs)).toMatchObject({ label: 'Claude New' });
+    expect(resolveEffectiveChatOption(choice, settings, [], {})).toMatchObject({ ref: choice.model });
+  });
+});
 
 describe('the Settings default as a picker row', () => {
   it('prefers a configured llama.cpp over the legacy Ollama shortcut in Auto, and a local model over both', () => {
@@ -110,7 +137,7 @@ describe('modelRefForOption', () => {
       .toEqual({ kind: 'llama_cpp', model: '/models/served.gguf' });
     expect(modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings))
       .toEqual({ kind: 'ollama', model: 'gpt-x' });
-    expect(modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, settings))
+    expect(modelRefForOption({ id: 'cloud:openai/gpt-x', backend: 'cloud' }, settings))
       .toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-x' });
     expect(modelRefForOption({ id: 'ornith-1.5-9b', backend: 'local' }, settings))
       .toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
@@ -119,9 +146,11 @@ describe('modelRefForOption', () => {
       .toEqual({ kind: 'ollama', model: 'qwen3:8b' });
   });
 
-  it('refuses a cloud row when Settings names no cloud provider', () => {
+  it('names a cloud model independently of the provider currently set in Settings', () => {
     const local = settingsWith((llm) => { llm.provider = 'local'; });
-    expect(() => modelRefForOption({ id: CLOUD_PROVIDER_MODEL_ID, backend: 'cloud' }, local)).toThrow();
+    expect(modelRefForOption({ id: 'cloud:anthropic/claude-new', backend: 'cloud' }, local))
+      .toEqual({ kind: 'cloud', provider: 'anthropic', model: 'claude-new' });
+    expect(() => modelRefForOption({ id: 'missing-model', backend: 'cloud' }, local)).toThrow();
   });
 
   it('puts the same reference on each built row', () => {
