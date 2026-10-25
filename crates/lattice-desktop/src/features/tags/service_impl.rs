@@ -163,6 +163,15 @@ impl TagServiceTrait for TagServiceImpl {
             .map_err(|e| AppError::Database(format!("Failed to get document tags: {}", e)))
     }
 
+    async fn get_tags_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<Tag>>> {
+        TagRepository::new(self.db_pool.clone())
+            .get_tags_for_documents(document_ids)
+            .await
+    }
+
     async fn apply_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<Vec<Tag>> {
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
@@ -275,30 +284,11 @@ impl TagServiceTrait for TagServiceImpl {
             ));
         }
 
-        let document_repo = DocumentRepositoryImpl::new(self.db_pool.clone());
         let tag_repo = TagRepository::new(self.db_pool.clone());
-
-        let documents = document_repo.find_all().await?;
-        if documents.is_empty() {
-            return Ok(0);
-        }
-
-        let document_ids: Vec<String> = documents.iter().map(|doc| doc.id().to_string()).collect();
-        let tags_by_document = tag_repo.get_tags_for_documents(&document_ids).await?;
-
-        let mut untagged_ids = Vec::new();
-        for doc_id in document_ids {
-            let has_tags = tags_by_document
-                .get(&doc_id)
-                .map(|tags| !tags.is_empty())
-                .unwrap_or(false);
-            if !has_tags {
-                untagged_ids.push(doc_id);
-            }
-        }
+        let untagged_ids = tag_repo.untagged_document_ids(max_documents).await?;
 
         let mut tagged_count = 0;
-        for document_id in untagged_ids.into_iter().take(max_documents) {
+        for document_id in untagged_ids {
             let tags = match self.generate_tags(&document_id, DEFAULT_MAX_TAGS).await {
                 Ok(tags) => tags,
                 Err(error) => {

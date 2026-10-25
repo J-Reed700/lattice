@@ -20,6 +20,7 @@ import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { router } from '@/routes';
 import { toast } from '@/stores/toastStore';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 import { VISION_CAPABILITY } from '@/utils/visionGeometry';
 
 interface ModelSetupModalProps {
@@ -188,7 +189,7 @@ export function ModelSetupModal({
             Choose models
           </Button>
           <Button
-            onClick={handleInstall}
+            onClick={handleAsyncEvent(handleInstall)}
             disabled={loading || !status.embedding_model || notEnoughDisk}
           >
             Install · {sizeLabel}

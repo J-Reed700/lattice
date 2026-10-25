@@ -169,6 +169,60 @@ pub async fn generate_learning_practical_activity(
     {
         return Ok(replayed.resolve_runtime(&runtimes).await);
     }
+    for (value, label) in [
+        (&request.operation_id, "operation"),
+        (&request.activity_id, "activity"),
+        (&request.lesson_id, "lesson"),
+    ] {
+        if uuid::Uuid::parse_str(value).is_err() {
+            return Err(ApiError::from(
+                lattice_core::shared::error::AppError::InvalidInput(format!("Invalid {label} ID.")),
+            ));
+        }
+    }
+    if request.allowed_aids.len() > 24
+        || request
+            .allowed_aids
+            .iter()
+            .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
+    {
+        return Err(ApiError::from(
+            lattice_core::shared::error::AppError::InvalidInput(
+                "Practical aid descriptions must be bounded.".into(),
+            ),
+        ));
+    }
+    if request.learner_brief.trim().is_empty() || request.learner_brief.chars().count() > 4_000 {
+        return Err(ApiError::from(
+            lattice_core::shared::error::AppError::InvalidInput(
+                "Practical request must contain 1–4000 characters.".into(),
+            ),
+        ));
+    }
+    let interview_target = if request.kind == LearningPracticalActivityKind::Interview {
+        if request.runtime_profile_id.is_some() || request.builtin_runtime.is_some() {
+            return Err(ApiError::from(
+                lattice_core::shared::error::AppError::InvalidInput(
+                    "Interview activities do not use an execution environment.".into(),
+                ),
+            ));
+        }
+        Some(
+            crate::features::learning::interview_research::validate_target(
+                &request.interview_target.clone().unwrap_or_default(),
+            )
+            .map_err(ApiError::from)?,
+        )
+    } else {
+        if request.interview_target.is_some() {
+            return Err(ApiError::from(
+                lattice_core::shared::error::AppError::InvalidInput(
+                    "Company research is only available for interview activities.".into(),
+                ),
+            ));
+        }
+        None
+    };
     let program = LearningRepository::new(container.db_pool().clone())
         .get(&request.program_id)
         .await
@@ -193,6 +247,34 @@ pub async fn generate_learning_practical_activity(
                 "Learning lesson not found".into(),
             ))
         })?;
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Writing this practical activity",
+    )
+    .await?;
+    let llm = &pin.llm;
+    let mut researched_source_ids = Vec::new();
+    if let Some(target) = interview_target.as_ref() {
+        let web = container.web_service();
+        let library = source_library(&container);
+        let research =
+            crate::features::learning::practice::interview_research::research_interview_target(
+                llm.as_ref(),
+                web.as_ref(),
+                &library,
+                &request.program_id,
+                &request.operation_id,
+                &lesson.title,
+                &request.learner_brief,
+                target,
+            )
+            .await;
+        if let Some(courses) = container.course_indexes() {
+            courses.refresh(&request.program_id).await;
+        }
+        researched_source_ids = research.map_err(ApiError::from)?;
+    }
     let source_workspace = source_library(&container)
         .workspace(&request.program_id)
         .await
@@ -225,13 +307,6 @@ pub async fn generate_learning_practical_activity(
     )
     .await
     .map_err(ApiError::from)?;
-    let pin = learning_model(
-        &container,
-        model_requirements::practice(),
-        "Writing this practical activity",
-    )
-    .await?;
-    let llm = &pin.llm;
     let generated = crate::features::learning::practical_generation::generate_activity(
         llm.as_ref(),
         request.kind,
@@ -239,6 +314,8 @@ pub async fn generate_learning_practical_activity(
         &lesson,
         &sources,
         runtime.as_ref(),
+        interview_target.as_ref(),
+        &researched_source_ids,
     )
     .await
     .map_err(ApiError::from)?;
@@ -331,8 +408,18 @@ pub async fn send_learning_simulation_turn(
             ),
         ));
     }
+    if session.status != LearningSimulationStatus::Active
+        || request.content.trim().is_empty()
+        || request.content.chars().count() > 8_000
+    {
+        return Err(ApiError::from(
+            lattice_core::shared::error::AppError::InvalidInput(
+                "Active simulations accept responses of 1–8000 characters.".into(),
+            ),
+        ));
+    }
     let (activity, source_ids) = repo
-        .simulation_generation_context(&request.program_id, &session.activity_id)
+        .simulation_session_generation_context(&request.program_id, &session.id)
         .await
         .map_err(ApiError::from)?;
     session.turns.push(LearningSimulationTurnDto {
@@ -408,8 +495,20 @@ pub async fn finish_learning_simulation(
             ),
         ));
     }
+    if session.status != LearningSimulationStatus::Active
+        || !session
+            .turns
+            .iter()
+            .any(|turn| turn.speaker == LearningSimulationSpeaker::Learner)
+    {
+        return Err(ApiError::from(
+            lattice_core::shared::error::AppError::InvalidInput(
+                "Respond at least once in an active simulation before requesting feedback.".into(),
+            ),
+        ));
+    }
     let (activity, source_ids) = repo
-        .simulation_generation_context(&request.program_id, &session.activity_id)
+        .simulation_session_generation_context(&request.program_id, &session.id)
         .await
         .map_err(ApiError::from)?;
     let sources = practical_source_versions(&container, &request.program_id, &source_ids)

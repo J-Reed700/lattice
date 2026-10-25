@@ -2,10 +2,10 @@ import { type ReactNode, useMemo, useState } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
 import { Columns3, Loader2, NotebookPen } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { ACTION_HEADING_CLASS, ACTION_ROW_CLASS, ACTION_SURFACE_CLASS } from '@/features/chat/components/actions/actionSurface';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { toast } from '@/stores/toastStore';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 import { answerToMarkdown, vaultDocumentIds } from '@/utils/conversationExport';
@@ -45,7 +45,7 @@ export function AnswerActionsMenu({
   children,
   align = 'start',
 }: AnswerActionsMenuProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const quickCapture = useQuickCapture();
   const [open, setOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);

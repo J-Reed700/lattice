@@ -11,6 +11,7 @@ import VaultAPI from '@/lib/api';
 import { registerPendingSave } from '@/lib/pendingSaves';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 import { unwrapApiResult } from '@/types/api/result';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -242,12 +243,12 @@ export function useJournalNote(options: {
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
       }
-      persistTimerRef.current = setTimeout(async () => {
+      persistTimerRef.current = setTimeout(handleAsyncEvent(async () => {
         persistTimerRef.current = null;
         const latest = noteRef.current;
         if (!latest) return;
         await persistNote(latest);
-      }, DEBOUNCE_MS);
+      }), DEBOUNCE_MS);
     },
     [persistNote],
   );

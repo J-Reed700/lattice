@@ -139,6 +139,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         allowed_aids: vec![],
         runtime_profile_id: None,
         builtin_runtime: Some(LearningBuiltinRuntime::Javascript),
+        interview_target: None,
     };
     let mut activity = generated();
     activity.files = vec![
@@ -354,6 +355,7 @@ async fn activity(
         allowed_aids: vec!["Frozen source notes".into()],
         runtime_profile_id: None,
         builtin_runtime: None,
+        interview_target: None,
     };
     repository
         .save_generated_activity(&request, &generated(), "fixture-model", "activity-payload")
@@ -693,6 +695,7 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
         allowed_aids: vec![],
         runtime_profile_id: Some(profile_id.clone()),
         builtin_runtime: None,
+        interview_target: None,
     };
     repository
         .save_generated_activity(
@@ -808,6 +811,493 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
     assert_eq!(
         crate::features::learning::practical_runs::recover_running_runs(&repository).await?,
         0
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() -> Result<()> {
+    let (pool, program_id, lesson_id, _) = fixture().await?;
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let programs = LearningRepository::new(pool.clone());
+    let research_ids = crate::features::learning::interview_research::research_interview_target(
+        &TestResearchLLM(serde_json::json!({"needs":[]})),
+        &crate::features::web::mocks::MockWebService::new(),
+        &crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+            pool.clone(),
+        ),
+        &program_id,
+        &id(),
+        "Streaming systems",
+        "Prepare for Acme",
+        &LearningInterviewTargetDto {
+            company_context: Some(
+                "Acme role focuses on streaming pipelines and backpressure.".into(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let plan = LearningInterviewPlanDto {
+        company_name: "Acme Corp".into(),
+        company_url: Some("https://acme.example.com".into()),
+        target_role: "Staff Backend Engineer".into(),
+        round_kind: LearningInterviewRoundKind::TechnicalDeepDive,
+        company_summary: "Acme Corp builds high-throughput streaming pipelines.".into(),
+        learner_role: "Candidate (Staff Backend Engineer)".into(),
+        counterpart_role: "Interviewer at Acme Corp".into(),
+        researched_source_version_ids: research_ids.clone(),
+        questions: vec![LearningInterviewQuestionDto {
+            id: id(),
+            round: LearningInterviewRoundKind::TechnicalDeepDive,
+            question: "How do you handle backpressure in event streams?".into(),
+            company_rationale: "Relevant to Acme streaming architecture.".into(),
+            follow_up_probes: vec!["What buffering strategies do you apply?".into()],
+            evaluation_signals: vec!["Understands queue limits and drop policies.".into()],
+        }],
+    };
+
+    let plan_json =
+        serde_json::to_string_pretty(&plan).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let activity_id = id();
+    let request = GenerateLearningPracticalActivityRequestDto {
+        operation_id: id(),
+        activity_id: activity_id.clone(),
+        program_id: program_id.clone(),
+        lesson_id: lesson_id.clone(),
+        expected_program_revision: programs.get(&program_id).await?.summary.revision,
+        kind: LearningPracticalActivityKind::Interview,
+        learner_brief: "Practice technical deep dive interview for Acme Corp.".into(),
+        practice_mode: LearningPracticeMode::Practice,
+        allowed_aids: vec![],
+        runtime_profile_id: None,
+        builtin_runtime: None,
+        interview_target: Some(LearningInterviewTargetDto {
+            company_name: Some("Acme Corp".into()),
+            company_url: Some("https://acme.example.com".into()),
+            target_role: Some("Staff Backend Engineer".into()),
+            company_context: None,
+            round_kind: Some(LearningInterviewRoundKind::TechnicalDeepDive),
+        }),
+    };
+
+    let mut generated_act = generated();
+    generated_act.source_version_ids = research_ids.clone();
+    generated_act.files = vec![GeneratedPracticalFile {
+        path: crate::features::learning::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH
+            .into(),
+        role: PracticalFileRole::Reference,
+        content: plan_json,
+        editable: false,
+    }];
+
+    let workspace = repository
+        .save_generated_activity(
+            &request,
+            &generated_act,
+            "fixture-model",
+            "interview-activity",
+        )
+        .await?;
+
+    let saved = workspace
+        .workspace
+        .activities
+        .iter()
+        .find(|a| a.id == activity_id)
+        .ok_or_else(|| AppError::NotFound("Interview activity not found in workspace".into()))?;
+
+    // 1. Verify interview_plan round-tripped on LearningPracticalActivityDto
+    assert_eq!(saved.interview_plan.as_ref(), Some(&plan));
+
+    // 2. Verify interview/plan.json is hidden from public files
+    assert!(!saved.files.iter().any(|f| f.path
+        == crate::features::learning::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH));
+
+    // 3. Verify interview_plan is provided in simulation_generation_context
+    let (sim_context, _sources) = repository
+        .simulation_generation_context(&program_id, &activity_id)
+        .await?;
+    assert_eq!(sim_context.interview_plan.as_ref(), Some(&plan));
+
+    let start = StartLearningSimulationRequestDto {
+        operation_id: id(),
+        session_id: id(),
+        program_id: program_id.clone(),
+        activity_id: activity_id.clone(),
+        expected_activity_revision: 0,
+        practice_session_id: None,
+        learner_role: plan.learner_role.clone(),
+        counterpart_role: plan.counterpart_role.clone(),
+    };
+    let session = repository
+        .start_simulation(&start, "start-interview")
+        .await?;
+    assert_eq!(session.turns.len(), 1);
+    assert_eq!(
+        session.turns[0].speaker,
+        LearningSimulationSpeaker::Counterpart
+    );
+    assert_eq!(session.turns[0].content, plan.questions[0].question);
+    let replay = repository
+        .start_simulation(&start, "start-interview")
+        .await?;
+    assert_eq!(replay.turns.len(), 1);
+    assert_eq!(replay.turns[0].id, session.turns[0].id);
+    // A later revision or retirement must not change a running interview.
+    sqlx::query("UPDATE learning_practical_activities SET brief='Changed brief',revision=1,status='retired' WHERE id=?")
+        .bind(&activity_id).execute(&pool).await.map_err(db)?;
+    let (frozen, _) = repository
+        .simulation_session_generation_context(&program_id, &session.id)
+        .await?;
+    assert_eq!(frozen.brief, generated_act.brief);
+    assert_eq!(frozen.interview_plan.as_ref(), Some(&plan));
+
+    use crate::features::learning::{pack_repository::LearningPackRepository, portability_dto::*};
+    let directory = tempfile::tempdir()?;
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        directory.path().join("packs"),
+        directory.path().join("app"),
+    );
+    let exported = packs
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program_id.clone(),
+            options: LearningPackExportOptionsDto {
+                include_evidence: false,
+                include_practical_artifacts: true,
+                include_source_bodies: true,
+                source_body_redistribution_confirmed: true,
+            },
+        })
+        .await?;
+    let preview_id = id();
+    let preview = packs
+        .preview(&PreviewLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id: preview_id.clone(),
+            source_path: exported.exports[0].destination_path.clone(),
+            conflict_policy: LearningPackConflictPolicy::CreateCopy,
+        })
+        .await?;
+    assert!(preview.import_previews[0].can_apply);
+    let imported = packs
+        .apply(&ApplyLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id,
+            expected_root_sha256: preview.import_previews[0].manifest.root_sha256.clone(),
+        })
+        .await?;
+    let copied_program = &imported.imports[0].imported_program_id;
+    let copied = repository.workspace(copied_program).await?;
+    let copied_plan = copied.workspace.activities[0]
+        .interview_plan
+        .as_ref()
+        .expect("Copied interview plan");
+    assert_ne!(copied_plan.researched_source_version_ids, research_ids);
+    assert_eq!(
+        copied_plan.researched_source_version_ids,
+        copied.workspace.activities[0].source_version_ids
+    );
+    let (copied_context, copied_sources) = repository
+        .simulation_session_generation_context(copied_program, &copied.workspace.simulations[0].id)
+        .await?;
+    assert_eq!(copied_sources, copied_plan.researched_source_version_ids);
+    assert_eq!(
+        copied_context
+            .interview_plan
+            .as_ref()
+            .expect("Frozen copied plan")
+            .researched_source_version_ids,
+        copied_sources
+    );
+
+    Ok(())
+}
+
+struct TestResearchLLM(serde_json::Value);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for TestResearchLLM {
+    async fn complete(
+        &self,
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        Ok(
+            lattice_core::application::ports::llm_port::CompletionResponse::from_text(
+                self.0.to_string(),
+            ),
+        )
+    }
+    fn model_name(&self) -> &str {
+        "test-research-model"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.split_whitespace().count()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn interview_research_ingests_context_and_web_pages_idempotently() -> Result<()> {
+    use crate::features::learning::practice::interview_research;
+    use crate::features::learning::references::source_library::LearningSourceLibraryRepository;
+    use crate::features::web::mocks::MockWebService;
+    use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+
+    let (pool, program_id, _lesson_id, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let existing_count = library.workspace(&program_id).await?.sources.len();
+    let llm = TestResearchLLM(
+        serde_json::json!({"needs":[{"query":"Stripe distributed systems architecture","kind":"web"}]}),
+    );
+
+    let mock_web = MockWebService::new();
+    mock_web.set_url_content(
+        "https://stripe.com",
+        FetchUrlContentOutput {
+            url: "https://stripe.com".into(),
+            title: Some("Stripe Payments Infrastructure".into()),
+            content: "Stripe builds economic infrastructure for the internet with high availability and reliability.".into(),
+            content_truncated: false,
+            word_count: 15,
+            fetch_time_ms: 0.0,
+            content_type: None,
+            from_cache: false,
+            read_via: Default::default(),
+        },
+    );
+    mock_web.set_url_content(
+        "https://stripe.com/blog/distributed-systems",
+        FetchUrlContentOutput {
+            url: "https://stripe.com/blog/distributed-systems".into(),
+            title: Some("Stripe Engineering Blog: Distributed Systems".into()),
+            content:
+                "Deep dive into idempotent request handling and transaction consensus at scale."
+                    .into(),
+            content_truncated: false,
+            word_count: 14,
+            fetch_time_ms: 0.0,
+            content_type: None,
+            from_cache: false,
+            read_via: Default::default(),
+        },
+    );
+    mock_web.set_search_results(vec![WebSearchResult {
+        title: "Stripe Engineering Blog: Distributed Systems".into(),
+        url: "https://stripe.com/blog/distributed-systems".into(),
+        snippet: "Distributed systems deep dive".into(),
+        published_date: None,
+        source: None,
+    }]);
+
+    let target = LearningInterviewTargetDto {
+        company_name: Some("Stripe".into()),
+        company_url: Some("https://stripe.com".into()),
+        target_role: Some("Staff Infrastructure Engineer".into()),
+        company_context: Some(
+            "We run global payment infrastructure requiring 99.999% uptime and zero duplicate transactions.".into(),
+        ),
+        round_kind: Some(LearningInterviewRoundKind::TechnicalDeepDive),
+    };
+
+    let op_id = id();
+    let versions_first = interview_research::research_interview_target(
+        &llm,
+        &mock_web,
+        &library,
+        &program_id,
+        &op_id,
+        "Distributed Systems",
+        "Design idempotent APIs",
+        &target,
+    )
+    .await?;
+
+    // Verify at least pasted context, seed URL, and research web pages were ingested
+    assert_eq!(versions_first.len(), 3);
+
+    // Verify sources in workspace
+    let ws_after_first = library.workspace(&program_id).await?;
+    assert_eq!(ws_after_first.sources.len(), existing_count + 3);
+
+    // Previously captured pages survive a retry even if they disappear from search.
+    mock_web.set_search_results(vec![]);
+
+    // Call again with same op_id for idempotent retry
+    let versions_second = interview_research::research_interview_target(
+        &llm,
+        &mock_web,
+        &library,
+        &program_id,
+        &op_id,
+        "Distributed Systems",
+        "Design idempotent APIs",
+        &target,
+    )
+    .await?;
+
+    // Verify deterministic/idempotent version IDs returned on replay
+    assert_eq!(versions_first, versions_second);
+
+    // Verify no duplicate sources were added to library workspace
+    let ws_after_second = library.workspace(&program_id).await?;
+    assert_eq!(ws_after_first.sources.len(), ws_after_second.sources.len());
+
+    mock_web.set_search_results(vec![WebSearchResult {
+        title: "Stripe engineering".into(),
+        url: "https://stripe.com/blog/distributed-systems".into(),
+        snippet: String::new(),
+        published_date: None,
+        source: None,
+    }]);
+    let reused = interview_research::research_interview_target(
+        &llm,
+        &mock_web,
+        &library,
+        &program_id,
+        &id(),
+        "Distributed Systems",
+        "Design idempotent APIs",
+        &target,
+    )
+    .await?;
+    assert_eq!(reused, versions_first);
+    assert_eq!(
+        library.workspace(&program_id).await?.sources.len(),
+        existing_count + 3
+    );
+    let provenance = library.added_by_version(&program_id).await?;
+    assert_eq!(
+        versions_first
+            .iter()
+            .filter(|version| provenance.get(*version)
+                == Some(&lattice_core::domain::learning::claim_review::SourceAddedBy::User))
+            .count(),
+        2
+    );
+    let mut changed = target;
+    changed.company_context = Some("Changed request under the same operation ID".into());
+    assert!(interview_research::research_interview_target(
+        &llm,
+        &mock_web,
+        &library,
+        &program_id,
+        &op_id,
+        "Distributed Systems",
+        "Design idempotent APIs",
+        &changed,
+    )
+    .await
+    .is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn interview_research_rejects_redirects_outside_structured_site_scope() -> Result<()> {
+    use crate::features::learning::practice::interview_research;
+    use crate::features::learning::source_library::LearningSourceLibraryRepository;
+    use crate::features::web::mocks::MockWebService;
+    use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+    let (pool, program_id, _, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(pool);
+    let existing_count = library.workspace(&program_id).await?.sources.len();
+    let web = MockWebService::new();
+    let address = "https://acme.example/engineering";
+    web.set_search_results(vec![WebSearchResult {
+        title: "Acme engineering".into(),
+        url: address.into(),
+        snippet: String::new(),
+        published_date: None,
+        source: None,
+    }]);
+    let llm = TestResearchLLM(serde_json::json!({"needs":[{
+        "query":"site:acme.example Acme engineering", "kind":"web", "site":"acme.example/engineering"
+    }]}));
+    // Both the broad query scope and the narrower structured scope must hold.
+    for resolved in [
+        "https://unrelated.example/redirect",
+        "https://acme.example/other",
+    ] {
+        web.set_url_content(
+            address,
+            FetchUrlContentOutput {
+                url: resolved.into(),
+                title: Some("Out-of-scope content".into()),
+                content: "This page has left the requested engineering documentation scope.".into(),
+                content_truncated: false,
+                word_count: 10,
+                fetch_time_ms: 0.0,
+                content_type: None,
+                from_cache: false,
+                read_via: Default::default(),
+            },
+        );
+        let versions = interview_research::research_interview_target(
+            &llm,
+            &web,
+            &library,
+            &program_id,
+            &id(),
+            "System design",
+            "Interview at Acme",
+            &LearningInterviewTargetDto {
+                company_name: Some("Acme".into()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        assert!(versions.is_empty());
+        assert_eq!(
+            library.workspace(&program_id).await?.sources.len(),
+            existing_count
+        );
+    }
+    // A user may already have saved a URL that redirected elsewhere. Reusing
+    // its active version must enforce the same scope as a fresh capture.
+    let saved = interview_research::research_interview_target(
+        &TestResearchLLM(serde_json::json!({"needs":[]})),
+        &web,
+        &library,
+        &program_id,
+        &id(),
+        "System design",
+        "Interview at Acme",
+        &LearningInterviewTargetDto {
+            company_name: Some("Acme".into()),
+            company_url: Some(address.into()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert_eq!(saved.len(), 1);
+    let researched = interview_research::research_interview_target(
+        &llm,
+        &web,
+        &library,
+        &program_id,
+        &id(),
+        "System design",
+        "Interview at Acme",
+        &LearningInterviewTargetDto {
+            company_name: Some("Acme".into()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert!(researched.is_empty());
+    assert_eq!(
+        library.workspace(&program_id).await?.sources.len(),
+        existing_count + 1
     );
     Ok(())
 }

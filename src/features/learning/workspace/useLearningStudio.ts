@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { LEARNING_PROGRAMS_KEY, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import VaultAPI from '@/lib/api';
@@ -72,7 +72,7 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
   // IPC outlives the panel that started it. Keep its observable state with the
   // backend cache so reopening the draft rejoins the same request and cancel ID.
   const { data: operation } = useQuery<OutlineOperationState>({
-    queryKey: key, enabled: false, initialData: idleOutlineOperation, gcTime: Infinity,
+    queryKey: key, queryFn: skipToken, initialData: idleOutlineOperation, gcTime: Infinity,
   });
   const updateOperation = (id: string, update: Partial<OutlineOperationState>) => {
     client.setQueryData<OutlineOperationState>(key, (current) => current?.requestId === id ? { ...current, ...update } : current);

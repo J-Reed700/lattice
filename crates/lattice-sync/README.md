@@ -23,6 +23,10 @@ call it yet.
   - `outbox`
 - Idempotent write key: `(user_id, device_id, client_op_id)`.
 - Sequence-cursor pull (`since_seq`) instead of timestamp cursor.
+- Exhausted pull pages advance past the requesting device's own operations,
+  so idle polling does not repeatedly scan its upload history.
+- Push batches accept up to 1,000 changes; larger batches are rejected before
+  acquiring the per-user write lock. Split larger uploads across requests.
 
 ## Local run
 

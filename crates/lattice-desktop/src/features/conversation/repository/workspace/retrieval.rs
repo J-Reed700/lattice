@@ -35,22 +35,28 @@ impl ConversationRepository {
         if allowed_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT d.id, d.file_name, COALESCE((SELECT substr(c.content, 1, 600) FROM text_chunks c WHERE c.document_id = d.id ORDER BY c.chunk_index LIMIT 1), ''), d.source_context FROM documents d WHERE d.id IN (",
-        );
-        let mut ids: Vec<_> = allowed_ids.iter().collect();
-        ids.sort();
-        let mut separated = query.separated(", ");
-        for id in ids {
-            separated.push_bind(id);
-        }
-        query.push(") ORDER BY d.file_name, d.id");
-        let rows: Vec<(String, String, String, Option<String>)> =
-            query.build_query_as().fetch_all(&self.pool).await?;
+        let scope = serde_json::to_string(allowed_ids)?;
+        // Keep each document's bounded headings in one row. Returning a row
+        // per heading adds thousands of SQLx row decodes to a large catalog.
+        let rows: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT d.id,d.file_name,
+                COALESCE((SELECT substr(c.content,1,600) FROM text_chunks c
+                          WHERE c.document_id=d.id ORDER BY c.chunk_index LIMIT 1),''),
+                d.source_context,
+                (SELECT json_group_array(section) FROM (
+                    SELECT section FROM text_chunks
+                    WHERE document_id=d.id AND section IS NOT NULL
+                    GROUP BY section ORDER BY MIN(chunk_index),section LIMIT 24
+                ))
+             FROM documents d WHERE d.id IN (SELECT value FROM json_each(?))
+             ORDER BY d.file_name,d.id",
+        )
+        .bind(&scope)
+        .fetch_all(&self.pool)
+        .await?;
         let mut catalog = Vec::new();
-        for (id, name, opening, source_context) in rows {
-            let sections: Vec<String> = sqlx::query_scalar("SELECT section FROM text_chunks WHERE document_id = ? AND section IS NOT NULL GROUP BY section ORDER BY MIN(chunk_index) LIMIT 24")
-                .bind(&id).fetch_all(&self.pool).await?;
+        for (id, name, opening, source_context, headings) in rows {
+            let sections = serde_json::from_str(&headings)?;
             catalog.push(lattice_core::application::contracts::search::CorpusDocument {
                 chapter_number:
                     lattice_core::application::contracts::search::CorpusDocument::opening_chapter_number(
@@ -128,16 +134,30 @@ impl ConversationRepository {
         allowed_ids: &HashSet<String>,
         chunks_per_document: usize,
     ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
-        let mut passages = Vec::new();
         let mut seen = HashSet::new();
-        for id in selected_ids {
-            if !allowed_ids.contains(id) || !seen.insert(id) {
-                continue;
-            }
-            let rows: Vec<PassageRow> = sqlx::query_as(
-                "SELECT c.id, d.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? ORDER BY c.chunk_index LIMIT ?",
-            ).bind(id).bind(i64::try_from(chunks_per_document).unwrap_or(i64::MAX)).fetch_all(&self.pool).await?;
-            passages.extend(rows.into_iter().map(
+        let selected: Vec<_> = selected_ids
+            .iter()
+            .filter(|id| allowed_ids.contains(*id) && seen.insert(*id))
+            .collect();
+        if selected.is_empty() || chunks_per_document == 0 {
+            return Ok(Vec::new());
+        }
+        // Probe each document's ordered chunk index for only its first K ids,
+        // then fetch those bodies. A window over chunk content would read every
+        // passage of a large document just to return its opening.
+        let rows: Vec<PassageRow> = sqlx::query_as(
+            "SELECT c.id, d.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr
+             FROM json_each(?) selected JOIN documents d ON d.id = selected.value
+             JOIN text_chunks c ON c.id IN (
+                 SELECT id FROM text_chunks WHERE document_id = d.id ORDER BY chunk_index LIMIT ?
+             ) ORDER BY selected.key, c.chunk_index",
+        )
+        .bind(serde_json::to_string(&selected)?)
+        .bind(i64::try_from(chunks_per_document).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(
                 |(id, document_id, name, path, content, chunk_index, section, page, from_ocr)| {
                     lattice_core::application::contracts::search::CorpusPassage {
                         id,
@@ -151,9 +171,8 @@ impl ConversationRepository {
                         from_ocr,
                     }
                 },
-            ));
-        }
-        Ok(passages)
+            )
+            .collect())
     }
 
     pub async fn retrieval_section_passages(
@@ -172,6 +191,7 @@ impl ConversationRepository {
         if identifiers.is_empty() || allowed.is_empty() {
             return Ok(Vec::new());
         }
+        let scope = serde_json::to_string(allowed)?;
         // Reserve evidence for each requested identifier. One long section or
         // edition must not consume the entire budget of a comparison request.
         let per_identifier = 12 / identifiers.len();
@@ -213,16 +233,9 @@ impl ConversationRepository {
             } else {
                 q.push("0");
             }
-            q.push(" AS body_hit FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (");
-            let mut ids: Vec<_> = allowed.iter().collect();
-            ids.sort();
-            for (i, id) in ids.into_iter().enumerate() {
-                if i > 0 {
-                    q.push(",");
-                }
-                q.push_bind(id);
-            }
-            q.push(")) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
+            q.push(" AS body_hit FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id IN (SELECT value FROM json_each(")
+                .push_bind(&scope)
+                .push("))) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
                 .push_bind(per_identifier as i64);
             let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).await?;
             passages.extend(

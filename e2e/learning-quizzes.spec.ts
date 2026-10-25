@@ -35,9 +35,12 @@ async function answerFirstForm(page: Page) {
   await expect(page.getByRole("radio", { name: /False/ })).toHaveAttribute("aria-checked", "true");
   await next(page);
 
-  await page.getByLabel("Measure", { exact: true }).selectOption({ label: "What is counted" });
-  await page.getByLabel("Period", { exact: true }).selectOption({ label: "How long you watched" });
-  await page.getByLabel("Limit", { exact: true }).selectOption({ label: "Tomorrow's forecast" });
+  for (const [term, answer] of [["Measure", "What is counted"], ["Period", "How long you watched"], ["Limit", "Tomorrow's forecast"]]) {
+    await page.getByRole("button", { name: term, exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: answer, exact: true }).focus();
+    await page.keyboard.press("Space");
+  }
   await next(page);
 
   // Ordering without dragging: Alt+↓ twice on the first row.
@@ -62,6 +65,72 @@ async function submit(page: Page) {
   await expect(dialog.getByText(/Your responses will be frozen and graded/)).toBeVisible();
   await dialog.getByRole("button", { name: "Submit now" }).click();
 }
+
+test('quiz cards support visual pairing and pointer sorting in light and dark', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openCourse(page);
+  await page.getByRole('region', { name: 'Check what stuck from “Compare observations”' }).getByRole('button', { name: /Start quiz/ }).click();
+  await next(page);
+  await next(page);
+  await page.getByRole('button', { name: 'What is counted', exact: true }).dragTo(page.getByRole('button', { name: 'Measure', exact: true }));
+  await expect(page.getByRole('button', { name: 'Measure', exact: true })).toHaveAttribute('aria-description', 'Matched to What is counted');
+  await page.getByRole('button', { name: 'Period', exact: true }).click();
+  await page.getByRole('button', { name: 'How long you watched', exact: true }).click();
+  await page.getByRole('button', { name: 'Limit', exact: true }).click();
+  await page.getByRole('button', { name: 'What the sample cannot show', exact: true }).click();
+  await expect(page.getByText('3 / 3 paired')).toBeVisible();
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(page.locator('.ui-pairing-lines path')).toHaveCount(3);
+      await page.locator('.ui-pairing-board').scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: test.info().outputPath(`quiz-pairing-${theme}-${width}px.png`), animations: 'disabled' });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await next(page);
+  const firstHandle = page.getByRole('button', { name: 'Drag Compare the counts', exact: true });
+  await firstHandle.hover();
+  const cancelTarget = await page.getByRole('listitem', { name: '2 of 3: Choose the measure' }).boundingBox();
+  expect(cancelTarget).not.toBeNull();
+  await page.mouse.down();
+  try {
+    await page.mouse.move(cancelTarget!.x + 24, cancelTarget!.y + cancelTarget!.height, { steps: 10 });
+    await expect(page.locator('.ui-sortable-ghost')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.ui-sortable-ghost')).toHaveCount(0);
+  } finally {
+    await page.mouse.up();
+  }
+  await expect(page.getByRole('listitem', { name: '1 of 3: Compare the counts' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Question 4, not answered yet', exact: true })).toBeVisible();
+  // Each gesture crosses one neighbor. Hover waits for the preceding layout
+  // transition before the next grab, keeping the test independent of frame rate.
+  for (const [position, neighbor] of [[2, 'Choose the measure'], [3, 'Fix the observation period']] as const) {
+    const handle = page.getByRole('button', { name: 'Drag Compare the counts', exact: true });
+    await handle.hover();
+    const start = await handle.boundingBox();
+    const target = await page.getByRole('listitem', { name: `${position} of 3: ${neighbor}` }).boundingBox();
+    expect(start).not.toBeNull();
+    expect(target).not.toBeNull();
+    await page.mouse.down();
+    try {
+      await page.mouse.move(start!.x + start!.width / 2, target!.y + target!.height, { steps: 16 });
+      await expect(page.locator('.ui-sortable-row[data-drop-target="true"]')).toBeVisible();
+      // The preview must not save an intermediate answer while the pointer is held.
+      await expect(page.getByRole('listitem', { name: `${position - 1} of 3: Compare the counts` })).toBeVisible();
+      if (position === 2) await page.screenshot({ path: test.info().outputPath('quiz-sorting-preview-dark.png'), animations: 'disabled' });
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(page.getByRole('listitem', { name: `${position} of 3: Compare the counts` })).toBeVisible();
+  }
+  await expect(page.getByRole('status').filter({ hasText: 'Order updated:' })).toBeAttached();
+  await page.screenshot({ path: test.info().outputPath('quiz-sorted-dark.png'), animations: 'disabled' });
+  expect(await unsupported(page)).toEqual([]);
+});
 
 test("take a lesson quiz, learn why points were lost, retake with fresh questions and pass", async ({ page }) => {
   await openCourse(page);

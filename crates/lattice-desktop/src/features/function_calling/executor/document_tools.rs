@@ -364,16 +364,24 @@ impl FunctionExecutor {
 
             let total = documents.len();
             let start = input.offset.min(total);
-            let end = (start + input.limit).min(total);
-            let page = documents.into_iter().skip(start).take(end - start);
+            let end = start.saturating_add(input.limit).min(total);
+            let page: Vec<_> = documents
+                .into_iter()
+                .skip(start)
+                .take(end - start)
+                .collect();
+            let page_ids: Vec<_> = page
+                .iter()
+                .map(|doc| doc.id().as_str().to_owned())
+                .collect();
+            let mut page_tags = self.tag_service.get_tags_for_documents(&page_ids).await?;
 
             let mut items = Vec::new();
             for doc in page {
                 let document_id = doc.id().as_str().to_string();
-                let tags = self
-                    .tag_service
-                    .get_tags_for_document(doc.id().as_str())
-                    .await?
+                let tags = page_tags
+                    .remove(&document_id)
+                    .unwrap_or_default()
                     .into_iter()
                     .map(|tag| tag.name().as_str().to_string())
                     .collect();

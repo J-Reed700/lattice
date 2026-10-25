@@ -252,6 +252,13 @@ struct MockUowEmbeddingRepo;
 
 #[async_trait]
 impl EmbeddingRepositoryPort for MockUowEmbeddingRepo {
+    async fn vectors_by_document_ids(
+        &self,
+        _document_ids: &[String],
+    ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
+        Ok(Default::default())
+    }
+
     async fn create(&self, _chunk_id: &str, _vector: &[f32], _model: &str) -> Result<String> {
         unimplemented!()
     }

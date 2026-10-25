@@ -25,7 +25,7 @@ export function QuizFormView({ formId, program, overview, onBack, onOpenForm, co
   const status = form.scope && overview ? allQuizStatuses(overview).find((entry) => scopeKey(entry.scope) === scopeKey(form.scope!)) : undefined;
   // A paused form opens in the runner too; the next answer saved resumes it.
   if (form.status === 'active' || form.status === 'interrupted') {
-    return <QuizRunner form={form} sources={program.sources} coverage={status?.coverage} onExit={onBack}
+    return <QuizRunner key={form.id} form={form} sources={program.sources} coverage={status?.coverage} onExit={onBack}
       onSubmitted={(submitted) => onOpenForm(submitted.id)} reload={async () => (await query.refetch()).data} />;
   }
   const lessonId = form.scope?.kind === 'lesson' ? form.scope.id : null;

@@ -7074,7 +7074,7 @@ error_code?: string | null;
 error_message?: string | null }
 export type GenerateConversationStudyDeckRequestDto = { conversationId: string; title: string }
 export type GenerateLearningCardDraftsRequestDto = { programId: string; lessonId: string; count: number }
-export type GenerateLearningPracticalActivityRequestDto = { operationId: string; activityId: string; programId: string; lessonId: string; expectedProgramRevision: number; kind: LearningPracticalActivityKind; learnerBrief: string; practiceMode: LearningPracticeMode; allowedAids: string[]; runtimeProfileId: string | null; builtinRuntime?: LearningBuiltinRuntime | null }
+export type GenerateLearningPracticalActivityRequestDto = { operationId: string; activityId: string; programId: string; lessonId: string; expectedProgramRevision: number; kind: LearningPracticalActivityKind; learnerBrief: string; practiceMode: LearningPracticeMode; allowedAids: string[]; runtimeProfileId: string | null; builtinRuntime?: LearningBuiltinRuntime | null; interviewTarget?: LearningInterviewTargetDto | null }
 export type GenerateLearningProgramRequestDto = { goal: string; priorKnowledge: string; minutesPerSession: number; documentIds: string[]; sourceUrls: string[];
 /**
  * Omitted by older clients; their existing 2–6 module contract remains valid.
@@ -8006,6 +8006,10 @@ export type LearningGradeContestStatus = "open" | "revised" | "upheld" | "overri
  * reason is not shown as a grade.
  */
 export type LearningGradeRationaleDto = { summary: string; criteria: LearningCriterionRationaleDto[]; graderModel: string; rubricVersion: string; gradedAt: number }
+export type LearningInterviewPlanDto = { companyName: string; companyUrl?: string | null; targetRole: string; roundKind: LearningInterviewRoundKind; companySummary: string; learnerRole: string; counterpartRole: string; researchedSourceVersionIds?: string[]; questions?: LearningInterviewQuestionDto[] }
+export type LearningInterviewQuestionDto = { id: string; round: LearningInterviewRoundKind; question: string; companyRationale: string; followUpProbes: string[]; evaluationSignals: string[] }
+export type LearningInterviewRoundKind = "technical_deep_dive" | "system_design" | "behavioral" | "debugging_and_code" | "full_loop"
+export type LearningInterviewTargetDto = { companyName?: string | null; companyUrl?: string | null; targetRole?: string | null; companyContext?: string | null; roundKind?: LearningInterviewRoundKind | null }
 export type LearningItemFormat = "single_choice" | "multi_select" | "true_false" | "short_answer" | "cloze" | "matching" | "ordering" | "explanation" |
 /**
  * Kept for the practical path; quiz blueprints never author it.
@@ -8310,7 +8314,7 @@ export type LearningPlanDto = { programId: string;
  */
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
-export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; revision: number; createdAt: number; updatedAt: number }
+export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
 export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
 export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }

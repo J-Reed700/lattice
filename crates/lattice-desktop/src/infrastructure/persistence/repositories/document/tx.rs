@@ -156,6 +156,15 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
 
 #[async_trait]
 impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
+    async fn record_accesses(&self, document_ids: &[String]) -> Result<()> {
+        if document_ids.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.get_transaction()?;
+        let mut connection = transaction.lock().await;
+        ops::record_accesses(&mut connection, document_ids).await
+    }
+
     async fn list_metadata(&self) -> Result<Vec<DocumentEntity>> {
         let tx_arc = self.get_transaction()?;
         let mut conn = tx_arc.lock().await;

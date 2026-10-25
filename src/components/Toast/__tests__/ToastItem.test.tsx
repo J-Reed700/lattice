@@ -29,14 +29,20 @@ describe('ToastItem', () => {
     expect(onDismiss).toHaveBeenCalledWith('t1');
   });
 
-  // Bug: once its time is up the countdown keeps calling dismiss on every tick
-  // until the toast unmounts, so onDismiss fires many times (ToastItem.tsx:102-103,
-  // updateProgress never clears its interval).
-  it.fails('dismisses itself exactly once when its time is up', () => {
+  it('dismisses itself exactly once when its time is up', () => {
     const onDismiss = vi.fn();
     render(<ToastItem toast={toast({ duration: 200 })} onDismiss={onDismiss} pauseOnHover index={0} />);
     advance(800);
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending dismissal when unmounted', () => {
+    const onDismiss = vi.fn();
+    const { unmount } = render(<ToastItem toast={toast({ duration: 200 })} onDismiss={onDismiss} pauseOnHover index={0} />);
+    advance(208);
+    unmount();
+    advance(1000);
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('pauses while hovered when asked to', () => {

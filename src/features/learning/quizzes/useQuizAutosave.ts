@@ -33,12 +33,12 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>(() => draftsOf(form));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
+  const conflictRef = useRef(false);
   const [, setSavedTick] = useState(0);
   const draftsRef = useRef(drafts);
   const revisionRef = useRef(form.revision);
   const confirmedRef = useRef(confirmedOf(form));
-  const requestsRef = useRef(new Map<string, SaveLearningAssessmentResponseRequestDto>());
-  const retryRef = useRef<SaveLearningAssessmentResponseRequestDto | null>(null);
+  const retryRef = useRef<{ request: SaveLearningAssessmentResponseRequestDto; fingerprint: string } | null>(null);
   const flightRef = useRef<Promise<boolean> | null>(null);
   // The status after the last save: answering a paused form resumes it.
   const statusRef = useRef(form.status);
@@ -51,16 +51,19 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
     revisionRef.current = form.revision;
     statusRef.current = form.status;
     confirmedRef.current = confirmedOf(form);
-    requestsRef.current.clear();
     retryRef.current = null;
+    conflictRef.current = false;
+    setConflict(false);
+    setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.id]);
 
   const send = useCallback(async (request: SaveLearningAssessmentResponseRequestDto, fingerprint: string) => {
-    retryRef.current = request;
+    retryRef.current = { request, fingerprint };
     try {
       const saved = await save.mutateAsync(request);
       if (saved.revision !== request.expectedRevision + 1) {
+        conflictRef.current = true;
         setConflict(true);
         setSaveError('This quiz changed elsewhere. Reload it to continue; your answers stay here.');
         return false;
@@ -68,39 +71,42 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
       revisionRef.current = saved.revision;
       statusRef.current = saved.status;
       confirmedRef.current.set(request.response.itemId, fingerprint);
-      for (const key of [...requestsRef.current.keys()]) if (key.startsWith(`${request.response.itemId}:`)) requestsRef.current.delete(key);
       retryRef.current = null;
       setSaveError(null);
       setConflict(false);
+      conflictRef.current = false;
       setSavedTick((tick) => tick + 1);
       return true;
     } catch (error) {
       setSaveError(message(error));
-      setConflict(isConflict(error));
+      conflictRef.current = isConflict(error);
+      setConflict(conflictRef.current);
       return false;
     }
   }, [save]);
 
   const flush = useCallback(async () => {
-    if (form.status === 'submitted') return true;
+    if (statusRef.current === 'submitted') return true;
     if (flightRef.current) return flightRef.current;
     const flight = (async () => {
-      for (const item of form.items) {
-        // Re-read after each save: the learner may keep typing while one is in flight.
-        while (true) {
+      while (true) {
+        if (conflictRef.current) return false;
+        // Resolve an uncertain write with its original payload before sending
+        // newer edits, even if the learner has since reverted an answer.
+        let pending = retryRef.current;
+        if (!pending) {
+          // Revisit every item after each save: an earlier answer can change
+          // while a later one is in flight.
+          const item = form.items.find((entry) => confirmedRef.current.get(entry.id) !== fingerprintOf(entry, draftsRef.current[entry.id] ?? draftOf(entry)));
+          if (!item) return true;
           const draft = draftsRef.current[item.id] ?? draftOf(item);
-          const fingerprint = fingerprintOf(item, draft);
-          if (confirmedRef.current.get(item.id) === fingerprint) break;
-          const key = `${item.id}:${fingerprint}`;
-          let request = requestsRef.current.get(key);
-          if (!request) {
-            request = { operationId: newOperationId(), programId, formId: form.id, expectedRevision: revisionRef.current, response: responseOf(item, draft), assistance: [] };
-            requestsRef.current.set(key, request);
-          }
-          if (!(await send(request, fingerprint))) return false;
+          pending = {
+            fingerprint: fingerprintOf(item, draft),
+            request: { operationId: newOperationId(), programId, formId: form.id, expectedRevision: revisionRef.current, response: responseOf(item, draft), assistance: [] },
+          };
         }
+        if (!(await send(pending.request, pending.fingerprint))) return false;
       }
-      return true;
     })();
     flightRef.current = flight;
     try { return await flight; } finally { if (flightRef.current === flight) flightRef.current = null; }
@@ -117,20 +123,13 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   }, [drafts, form.status, form.id]);
 
   const update = useCallback((itemId: string, patch: Partial<ItemDraft>) => {
-    setDrafts((current) => {
-      const next = { ...current, [itemId]: { ...current[itemId], ...patch } };
-      draftsRef.current = next;
-      return next;
-    });
+    const current = draftsRef.current;
+    const next = { ...current, [itemId]: { ...current[itemId], ...patch } };
+    draftsRef.current = next;
+    setDrafts(next);
   }, []);
 
-  const retry = useCallback(async () => {
-    const request = retryRef.current;
-    if (!request) return flushRef.current();
-    const item = form.items.find((entry) => entry.id === request.response.itemId);
-    const ok = item ? await send(request, fingerprintOf(item, draftsRef.current[item.id] ?? draftOf(item))) : false;
-    return ok ? flushRef.current() : false;
-  }, [form.items, send]);
+  const retry = useCallback(() => flushRef.current(), []);
 
   /** After a conflict: take the saved revision, keep the learner's answers, and save them again. */
   const reloadKeepingAnswers = useCallback(async () => {
@@ -139,11 +138,11 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
     revisionRef.current = fresh.revision;
     statusRef.current = fresh.status;
     confirmedRef.current = confirmedOf(fresh);
-    requestsRef.current.clear();
     retryRef.current = null;
+    conflictRef.current = false;
     setConflict(false);
     setSaveError(null);
-    void flushRef.current();
+    await flushRef.current();
   }, [reload]);
 
   const unsaved = form.items.some((item) => confirmedRef.current.get(item.id) !== fingerprintOf(item, drafts[item.id] ?? draftOf(item)));

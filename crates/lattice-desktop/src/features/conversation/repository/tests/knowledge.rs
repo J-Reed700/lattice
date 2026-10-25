@@ -43,6 +43,41 @@ async fn remember(repo: &ConversationRepository, scope: &str) -> String {
     r.scope = Some(scope.into());
     repo.knowledge(&r).await.unwrap().items[0].id.clone()
 }
+
+#[tokio::test]
+async fn a_page_batches_evidence_and_keeps_each_facts_source_message() {
+    let (_, repo) = setup().await;
+    let (empty, reads) =
+        crate::tests::common::query_counts::count_reads(repo.list_knowledge("three", 0, true))
+            .await;
+    assert!(empty.unwrap().items.is_empty());
+    assert_eq!(reads, 3);
+    let mut expected = std::collections::HashSet::new();
+    for index in 0..12 {
+        let mut r = request("one", "remember");
+        let text = format!("The budget for project {index} is ${index}00.");
+        expected.insert(text.clone());
+        r.text = Some(text);
+        r.scope = Some("personal".into());
+        repo.knowledge(&r).await.unwrap();
+    }
+    let (response, reads) =
+        crate::tests::common::query_counts::count_reads(repo.list_knowledge("three", 0, true))
+            .await;
+    let response = response.unwrap();
+    assert_eq!(reads, 5, "evidence reads must not grow per fact");
+    assert_eq!(response.items.len(), expected.len());
+    let found: std::collections::HashSet<_> = response
+        .items
+        .iter()
+        .map(|item| {
+            assert_eq!(item.conversation_id, "one");
+            assert_eq!(item.evidence.len(), 1);
+            item.evidence[0].text.clone().unwrap()
+        })
+        .collect();
+    assert_eq!(found, expected);
+}
 #[tokio::test]
 async fn explicit_scope_is_enforced_and_shared_reads_do_not_grant_edits() {
     let (_, repo) = setup().await;

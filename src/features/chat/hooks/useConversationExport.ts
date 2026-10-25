@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { ClipboardCopy, NotebookPen } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
@@ -37,7 +37,7 @@ interface RunningExport {
 }
 
 export function useConversationExport() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);

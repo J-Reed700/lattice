@@ -260,3 +260,129 @@ async fn failed_aggregate_save_preserves_existing_children() {
     assert_eq!(saved.chunks().len(), 1);
     assert_eq!(saved.tags(), document.tags());
 }
+
+#[tokio::test]
+async fn aggregate_lists_batch_children_and_preserve_each_documents_parts() {
+    use crate::tests::common::query_counts::count_reads;
+    let repo = repository().await;
+    let mut expected = std::collections::HashMap::new();
+    // Cross the hydration batch boundary.
+    for index in 0..501 {
+        let document = aggregate(&repo.pool, &format!("batch-{index}")).await;
+        repo.save(&document).await.unwrap();
+        expected.insert(document.id().as_str().to_owned(), document);
+    }
+    let (loaded, reads) = count_reads(repo.find_all()).await;
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.len(), 501);
+    assert_eq!(
+        reads, 5,
+        "one metadata query and two child queries per batch"
+    );
+    for document in loaded {
+        let original = &expected[document.id().as_str()];
+        assert_eq!(document.chunks().len(), 1);
+        assert_eq!(document.chunks()[0].id(), original.chunks()[0].id());
+        assert_eq!(document.tags(), original.tags());
+        assert_eq!(document.source_context(), original.source_context());
+    }
+    let filter = lattice_core::application::ports::DocumentFilter {
+        path_pattern: Some("%batch-%".into()),
+        status: None,
+        limit: Some(20),
+    };
+    let (filtered, reads) = count_reads(repo.find_by_filter(&filter)).await;
+    assert_eq!(filtered.unwrap().len(), 20);
+    assert_eq!(reads, 3);
+    // Aggregate reads retain the domain rule requiring chunks; metadata
+    // lookups remain available for a pending document.
+    insert(&repo, "empty", "/empty.txt", &"b".repeat(64)).await;
+    assert!(repo.find_all().await.is_err());
+    assert_eq!(
+        repo.find_metadata_by_ids(&["empty".into()])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn access_batches_preserve_embeddings_and_increment_each_document_once() {
+    use crate::tests::common::query_counts::count_reads;
+    let repo = repository().await;
+    let document = aggregate(&repo.pool, "search-hit").await;
+    repo.save(&document).await.unwrap();
+    insert(&repo, "pending", "/pending.txt", &"b".repeat(64)).await;
+    insert(&repo, "unrelated", "/unrelated.txt", &"c".repeat(64)).await;
+    sqlx::query("INSERT INTO text_embeddings(id,chunk_id,embedding,model_name,dimension) VALUES ('kept',?,x'0000803f','test',1)")
+        .bind(document.chunks()[0].id().as_str()).execute(&repo.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_chunk_rewrite BEFORE DELETE ON text_chunks BEGIN SELECT RAISE(ABORT, 'access tracking rewrote chunks'); END")
+        .execute(&repo.pool).await.unwrap();
+    let mut ids = vec![document.id().as_str().to_owned(); 2];
+    ids.push("pending".into());
+    ids.extend((0..33_000).map(|i| format!("missing-{i}")));
+    let (tracked, reads) = count_reads(repo.record_accesses(&ids)).await;
+    tracked.unwrap();
+    assert_eq!(reads, 0, "access tracking does not read document bodies");
+    let (first, second) = tokio::join!(repo.record_accesses(&ids), repo.record_accesses(&ids));
+    first.unwrap();
+    second.unwrap();
+    let loaded = repo
+        .find_by_id(document.id().as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.access_count(), 3);
+    assert!(loaded.last_accessed_at().is_some());
+    assert_eq!(loaded.chunks(), document.chunks());
+    assert_eq!(loaded.tags(), document.tags());
+    assert_eq!(loaded.source_context(), document.source_context());
+    let counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT id,access_count FROM documents WHERE id IN ('pending','unrelated') ORDER BY id",
+    )
+    .fetch_all(&repo.pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, [("pending".into(), 3), ("unrelated".into(), 0)]);
+    let embedding: Vec<u8> =
+        sqlx::query_scalar("SELECT embedding FROM text_embeddings WHERE id='kept'")
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(embedding, [0, 0, 128, 63]);
+    sqlx::query("UPDATE documents SET access_count=2147483647 WHERE id='pending'")
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    repo.record_accesses(&["pending".into()]).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT access_count FROM documents WHERE id='pending'")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, i32::MAX as i64);
+    repo.pool.close().await;
+    repo.record_accesses(&[]).await.unwrap();
+}
+
+#[tokio::test]
+async fn access_metadata_participates_in_the_callers_transaction() {
+    let repo = repository().await;
+    insert(&repo, "hit", "/hit.txt", &"d".repeat(64)).await;
+    let transaction =
+        std::sync::Arc::new(tokio::sync::Mutex::new(repo.pool.begin().await.unwrap()));
+    let adapter = super::SqliteDocumentRepositoryTx::new(transaction.clone());
+    adapter.record_accesses(&["hit".into()]).await.unwrap();
+    drop(adapter);
+    std::sync::Arc::try_unwrap(transaction)
+        .unwrap()
+        .into_inner()
+        .rollback()
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT access_count FROM documents WHERE id='hit'")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}

@@ -60,6 +60,19 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
             .collect())
     }
 
+    /// Increment access metadata once per distinct existing document without
+    /// rewriting its chunks, embeddings or tags. Unknown ids are ignored.
+    /// Persistent adapters perform the increment atomically so concurrent
+    /// searches cannot overwrite each other's counts.
+    async fn record_accesses(&self, document_ids: &[String]) -> Result<()> {
+        if document_ids.is_empty() {
+            return Ok(());
+        }
+        Err(crate::shared::error::AppError::Other(
+            "record_accesses is not supported by this repository implementation".into(),
+        ))
+    }
+
     /// Find the file path for a document by its ID.
     ///
     /// # Arguments

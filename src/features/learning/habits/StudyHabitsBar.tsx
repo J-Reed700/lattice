@@ -179,10 +179,10 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
       )}
 
       {/* Main Habits Bar Container — sleek compact utility strip */}
-      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-border-default bg-surface/90 px-3.5 py-2 shadow-2xs backdrop-blur-xs">
+      <div className="studio-habits-controls flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-border-default bg-surface/90 px-3.5 py-2 shadow-2xs backdrop-blur-xs">
         {/* Left: Pomodoro Focus Timer Segmented Control */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-sunken p-0.5">
+          <div className="studio-timer inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-sunken p-0.5">
             {/* Presets Segmented Pill */}
             <div className="inline-flex items-center gap-0.5">
               {PRESETS.map((preset) => {

@@ -165,7 +165,7 @@ describe('Your folders', () => {
 
   it('lists every folder with its state, threads, size and path from home', async () => {
     showStart();
-    expect(await screen.findByRole('heading', { name: 'Your folders' })).toBeInTheDocument();
+    expect(await screen.findByText('Your folders')).toBeInTheDocument();
     expect(screen.getByText('4 folders · 62 MB of indexes')).toBeInTheDocument();
     const [canopy, music, plugins, gone] = rows();
 

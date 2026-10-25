@@ -125,9 +125,7 @@ describe('StudyTangentSelection', () => {
     expect(toolbar()).not.toBeInTheDocument();
   });
 
-  // Bug: the resize listener hands `window` to Node.contains, which throws a
-  // TypeError, so a resize leaves the toolbar up (StudyTangentSelection.tsx:131-133,148).
-  it.fails('goes away when the window is resized', () => {
+  it('goes away when the window is resized', () => {
     // Catch the listener's exception here so it fails this test, not the run.
     const thrown: unknown[] = [];
     const onError = (event: ErrorEvent) => { thrown.push(event.error); event.preventDefault(); };

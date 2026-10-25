@@ -7,6 +7,7 @@ use crate::features::learning::{
 use lattice_core::shared::error::{AppError, Result};
 use serde::Serialize;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use std::collections::HashMap;
 
 const MAX_SCENE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ELEMENTS: usize = 5_000;
@@ -138,9 +139,10 @@ impl LearningCanvasRepository {
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningCanvasWorkspaceDto> {
         validate_uuid(program_id, "program")?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await
             .map_err(db)?;
         if exists == 0 {
@@ -150,29 +152,37 @@ impl LearningCanvasRepository {
             "SELECT * FROM learning_canvases WHERE program_id=? ORDER BY updated_at DESC,id",
         )
         .bind(program_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
+        if rows.is_empty() {
+            tx.commit().await.map_err(db)?;
+            return Ok(LearningCanvasWorkspaceDto {
+                program_id: program_id.into(),
+                canvases: Vec::new(),
+            });
+        }
+        let snapshot_rows = sqlx::query("SELECT * FROM learning_canvas_snapshots WHERE program_id=? ORDER BY canvas_id,created_at,id")
+            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        let mut snapshots_by_canvas: HashMap<String, Vec<LearningCanvasSnapshotDto>> =
+            HashMap::new();
+        for row in snapshot_rows {
+            snapshots_by_canvas
+                .entry(row.get("canvas_id"))
+                .or_default()
+                .push(snapshot_from_row(&row)?);
+        }
         let mut canvases = Vec::with_capacity(rows.len());
         for row in rows {
             let canvas_id: String = row.get("id");
-            let snapshots = self.snapshots(program_id, &canvas_id).await?;
+            let snapshots = snapshots_by_canvas.remove(&canvas_id).unwrap_or_default();
             canvases.push(canvas_from_row(&row, snapshots)?);
         }
         Ok(LearningCanvasWorkspaceDto {
             program_id: program_id.into(),
             canvases,
         })
-    }
-
-    async fn snapshots(
-        &self,
-        program_id: &str,
-        canvas_id: &str,
-    ) -> Result<Vec<LearningCanvasSnapshotDto>> {
-        let rows = sqlx::query("SELECT * FROM learning_canvas_snapshots WHERE program_id=? AND canvas_id=? ORDER BY created_at,id")
-            .bind(program_id).bind(canvas_id).fetch_all(&self.pool).await.map_err(db)?;
-        rows.iter().map(snapshot_from_row).collect()
     }
 
     pub async fn create(

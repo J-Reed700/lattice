@@ -1,6 +1,6 @@
 //! Starting a quiz, reading a form, and saving answers while it is open.
 use super::{
-    assessment_operation, candidate_in, decode, format_name, invalid, json, mode_name,
+    assessment_operation, candidates_in, decode, format_name, invalid, json, mode_name,
     parse_form_status, parse_format, parse_grade, parse_mode, parse_purpose, parse_scope,
     parse_timing, scope_kind_name, uuid, LearningAssessmentRepository, MAX_RESPONSE_CHARS,
 };
@@ -10,6 +10,7 @@ use crate::features::learning::persistence::{db, now};
 use crate::features::learning::quiz_blueprints;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection};
+use std::collections::HashMap;
 
 /// What a saved answer looks like for one item.
 fn validate_response(
@@ -247,16 +248,24 @@ impl LearningAssessmentRepository {
             .map_err(db)?;
         let mut items = Vec::with_capacity(rows.len());
         let mut graded_parts = Vec::with_capacity(rows.len());
+        let outcome_rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT item_ordinal,outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? ORDER BY item_ordinal,outcome_id",
+        )
+        .bind(form_id)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
+        let mut outcomes: HashMap<i64, Vec<String>> = HashMap::new();
+        for (ordinal, outcome) in outcome_rows {
+            outcomes.entry(ordinal).or_default().push(outcome);
+        }
+        let candidate_ids: Vec<String> = rows.iter().map(|row| row.get("candidate_id")).collect();
+        let candidates = candidates_in(connection, &program_id, &candidate_ids).await?;
         for r in rows {
             let ordinal: i64 = r.get("ordinal");
             let id: String = r.get("candidate_id");
             let format = parse_format(r.get("format"))?;
-            let outcome_ids = sqlx::query_scalar::<_, String>("SELECT outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? AND item_ordinal=? ORDER BY outcome_id")
-                .bind(form_id)
-                .bind(ordinal)
-                .fetch_all(&mut *connection)
-                .await
-                .map_err(db)?;
+            let outcome_ids = outcomes.get(&ordinal).cloned().unwrap_or_default();
             let response = engine::LearningAssessmentResponse {
                 item_id: id.clone(),
                 selected_indices: decode(
@@ -290,7 +299,9 @@ impl LearningAssessmentRepository {
                 || (mode == LearningQuizMode::Practice
                     && format.is_keyed()
                     && response.is_answered());
-            let candidate = candidate_in(connection, &program_id, &id).await?;
+            let candidate = candidates.get(&id).ok_or_else(|| {
+                AppError::InvalidState("This quiz question is no longer available.".into())
+            })?;
             let key_reveal = reveal.then(|| {
                 let reveal = engine::key_reveal(&candidate.candidate, &option_order);
                 LearningKeyRevealDto {
@@ -344,7 +355,7 @@ impl LearningAssessmentRepository {
                 answer_hint,
             });
         }
-        let mut submission = Self::submission_in(connection, form_id).await?;
+        let mut submission = Self::submission_in(connection, form_id, &outcomes).await?;
         if let Some(submission) = submission.as_mut() {
             for (result, parts) in submission.item_results.iter_mut().zip(graded_parts) {
                 result.part_results = parts
@@ -387,6 +398,7 @@ impl LearningAssessmentRepository {
     async fn submission_in(
         connection: &mut SqliteConnection,
         form_id: &str,
+        outcomes: &HashMap<i64, Vec<String>>,
     ) -> Result<Option<LearningAssessmentSubmissionDto>> {
         let Some(r) = sqlx::query("SELECT * FROM learning_assessment_submissions WHERE form_id=?")
             .bind(form_id)
@@ -402,14 +414,10 @@ impl LearningAssessmentRepository {
             .await
             .map_err(db)?;
         let mut results = Vec::with_capacity(rows.len());
+        let mut contests = Self::contests_in(connection, form_id).await?;
         for row in rows {
             let ordinal: i64 = row.get("item_ordinal");
-            let outcome_ids = sqlx::query_scalar::<_, String>("SELECT outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? AND item_ordinal=? ORDER BY outcome_id")
-                .bind(form_id)
-                .bind(ordinal)
-                .fetch_all(&mut *connection)
-                .await
-                .map_err(db)?;
+            let outcome_ids = outcomes.get(&ordinal).cloned().unwrap_or_default();
             let rationale_json: String = row.get("rationale_json");
             let rationale = if rationale_json.trim() == "{}" {
                 None
@@ -429,7 +437,7 @@ impl LearningAssessmentRepository {
                 learner_override: row.get::<i64, _>("learner_override") != 0,
                 rationale,
                 part_results: vec![],
-                contest: Self::contest_in(connection, form_id, ordinal).await?,
+                contest: contests.remove(&ordinal),
             });
         }
         // The grading job, while one is waiting or running. Without one,

@@ -12,6 +12,7 @@ import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/u
 import { probeCustomTool } from '@/features/settings/hooks/connectionProbes';
 import { toast } from '@/stores/toastStore';
 import type { CustomToolSettings as ApiCustomToolSettings } from '@/types/api/settings';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import {
   CUSTOM_TOOL_PRESETS,
@@ -517,7 +518,7 @@ export function ToolsTab() {
           </button>
           <button
             type="button"
-            onClick={persistCustomTools}
+            onClick={handleAsyncEvent(persistCustomTools)}
             disabled={!customToolsDirty || isSavingCustomTools}
             className={PRIMARY_BUTTON_CLASS}
           >

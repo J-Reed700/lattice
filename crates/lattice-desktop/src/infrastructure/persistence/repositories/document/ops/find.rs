@@ -1,6 +1,7 @@
 //! Loading documents: by id, path, pattern, checksum or filter, as metadata
 //! or as whole aggregates with their chunks and tags.
 
+use super::hydrate::hydrate_many;
 use super::parts::{fetch_chunks_for_document, fetch_tags_for_document};
 use crate::infrastructure::persistence::mappers::{DocumentMapper, DocumentModel};
 use lattice_core::domain::entities::Document as DocumentEntity;
@@ -277,11 +278,7 @@ async fn hydrate(conn: &mut SqliteConnection, document: DocumentEntity) -> Resul
 
 pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>> {
     let metadata = list_metadata(conn).await?;
-    let mut documents = Vec::with_capacity(metadata.len());
-    for document in metadata {
-        documents.push(hydrate(conn, document).await?);
-    }
-    Ok(documents)
+    hydrate_many(conn, metadata).await
 }
 
 pub async fn find_by_filter(
@@ -306,9 +303,9 @@ pub async fn find_by_filter(
         .await?;
     let mut documents = Vec::with_capacity(models.len());
     for model in models {
-        documents.push(hydrate(conn, DocumentMapper::to_entity(&model)?).await?);
+        documents.push(DocumentMapper::to_entity(&model)?);
     }
-    Ok(documents)
+    hydrate_many(conn, documents).await
 }
 
 pub async fn find_metadata_by_ids(

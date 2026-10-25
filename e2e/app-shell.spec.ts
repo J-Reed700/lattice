@@ -1828,6 +1828,7 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
+      get_learning_outline_evidence: () => null,
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
       get_learning_quiz_overview: () => {
@@ -1857,7 +1858,7 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
   await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: /Production reasoning after an AI-heavy year/ }).click();
   await expect(page.getByRole('heading', { name: 'Production reasoning after an AI-heavy year' })).toBeVisible();
-  await expect(page.getByLabel('Module', { exact: true })).toHaveValue('module-1');
+  await expect(page.getByRole('combobox', { name: 'Module', exact: true })).toContainText('Module 1: Reliable service thinking');
   const moduleWorkspace = page.getByRole('navigation', { name: 'Module workspace' });
   await expect(moduleWorkspace).toBeVisible();
   await expect(moduleWorkspace.getByRole('tab', { name: 'Lessons', exact: true })).toHaveAttribute('aria-selected', 'true');

@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { useRenameDocument } from '@/features/files/hooks/useRenameDocument';
 import { toast } from '@/stores/toastStore';
 import { type DocumentMetadata } from '@/types/fileBrowser';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 interface RenameDialogProps {
   document: DocumentMetadata;
@@ -133,7 +134,7 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleAsyncEvent(handleSubmit)}>
           <div className="p-6 space-y-4">
             <div>
               <label

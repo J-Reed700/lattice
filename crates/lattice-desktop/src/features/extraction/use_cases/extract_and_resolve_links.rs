@@ -36,8 +36,7 @@ use crate::features::extraction::dto::{
 };
 use crate::features::extraction::use_cases::{ParseWikilinksUseCase, ResolveWikilinkUseCase};
 use async_trait::async_trait;
-use lattice_core::application::ports::RepositoryPort;
-use lattice_core::domain::entities::Document;
+use lattice_core::application::ports::DocumentRepositoryPort;
 use lattice_core::shared::error::AppError;
 use std::sync::Arc;
 
@@ -80,14 +79,14 @@ impl ResolveWikilinkPort for ResolveWikilinkUseCase {
 pub struct ExtractAndResolveLinksUseCase {
     parse_wikilinks_use_case: Arc<dyn ParseWikilinksPort>,
     resolve_wikilink_use_case: Arc<dyn ResolveWikilinkPort>,
-    document_repository: Arc<dyn RepositoryPort<Document>>,
+    document_repository: Arc<dyn DocumentRepositoryPort>,
 }
 
 impl ExtractAndResolveLinksUseCase {
     pub fn new(
         parse_wikilinks_use_case: Arc<dyn ParseWikilinksPort>,
         resolve_wikilink_use_case: Arc<dyn ResolveWikilinkPort>,
-        document_repository: Arc<dyn RepositoryPort<Document>>,
+        document_repository: Arc<dyn DocumentRepositoryPort>,
     ) -> Self {
         Self {
             parse_wikilinks_use_case,
@@ -119,7 +118,10 @@ impl ExtractAndResolveLinksUseCase {
             "Parsed wikilinks, now resolving..."
         );
 
-        let all_documents = self.document_repository.find_all().await?;
+        if parse_result.links.is_empty() {
+            return Ok(ExtractAndResolveResponseDto { links: Vec::new() });
+        }
+        let all_documents = self.document_repository.list_metadata().await?;
 
         let document_refs: Vec<DocumentRefDto> = all_documents
             .into_iter()
@@ -179,6 +181,9 @@ mod tests {
         ParseWikilinksResponseDto, ResolveWikilinkResponseDto, WikiLinkDto,
     };
     use async_trait::async_trait;
+    use lattice_core::application::ports::RepositoryPort;
+    use lattice_core::domain::entities::Document;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     struct MockParseWikilinksUseCase {
@@ -252,12 +257,14 @@ mod tests {
 
     struct MockDocumentRepository {
         documents: Mutex<Vec<Document>>,
+        metadata_reads: AtomicUsize,
     }
 
     impl MockDocumentRepository {
         fn new() -> Self {
             Self {
                 documents: Mutex::new(vec![]),
+                metadata_reads: AtomicUsize::new(0),
             }
         }
 
@@ -280,7 +287,7 @@ mod tests {
         }
 
         async fn find_all(&self) -> Result<Vec<Document>, AppError> {
-            Ok(self.documents.lock().unwrap().clone())
+            panic!("Link resolution must not load document bodies")
         }
 
         async fn save(&self, _entity: &Document) -> Result<(), AppError> {
@@ -304,6 +311,41 @@ mod tests {
         }
 
         async fn exists(&self, _id: &str) -> Result<bool, AppError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl DocumentRepositoryPort for MockDocumentRepository {
+        async fn list_metadata(&self) -> Result<Vec<Document>, AppError> {
+            self.metadata_reads.fetch_add(1, Ordering::Relaxed);
+            Ok(self.documents.lock().unwrap().clone())
+        }
+        async fn find_file_path_by_id(&self, _id: &str) -> Result<String, AppError> {
+            unimplemented!()
+        }
+        async fn document_exists(&self, _id: &str) -> Result<bool, AppError> {
+            unimplemented!()
+        }
+        async fn find_id_by_path(&self, _path: &str) -> Result<Option<String>, AppError> {
+            unimplemented!()
+        }
+        async fn delete(&self, _id: &str) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn find_by_checksum(
+            &self,
+            _checksum: &lattice_core::domain::value_objects::Checksum,
+        ) -> Result<Option<Document>, AppError> {
+            unimplemented!()
+        }
+        async fn count_documents(&self) -> Result<i64, AppError> {
+            unimplemented!()
+        }
+        async fn count_chunks(&self) -> Result<i64, AppError> {
+            unimplemented!()
+        }
+        async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
     }
@@ -369,7 +411,7 @@ mod tests {
         let use_case = ExtractAndResolveLinksUseCase::new(
             mock_parse,
             mock_resolve,
-            mock_repo as Arc<dyn RepositoryPort<Document>>,
+            mock_repo as Arc<dyn DocumentRepositoryPort>,
         );
 
         let result = use_case
@@ -406,7 +448,7 @@ mod tests {
         let use_case = ExtractAndResolveLinksUseCase::new(
             mock_parse,
             mock_resolve,
-            mock_repo as Arc<dyn RepositoryPort<Document>>,
+            mock_repo.clone() as Arc<dyn DocumentRepositoryPort>,
         );
 
         let result = use_case
@@ -418,6 +460,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.links.len(), 0);
+        assert_eq!(mock_repo.metadata_reads.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
@@ -452,7 +495,7 @@ mod tests {
         let use_case = ExtractAndResolveLinksUseCase::new(
             mock_parse,
             mock_resolve,
-            mock_repo as Arc<dyn RepositoryPort<Document>>,
+            mock_repo as Arc<dyn DocumentRepositoryPort>,
         );
 
         let result = use_case
@@ -502,7 +545,7 @@ mod tests {
         let use_case = ExtractAndResolveLinksUseCase::new(
             mock_parse,
             mock_resolve,
-            mock_repo as Arc<dyn RepositoryPort<Document>>,
+            mock_repo as Arc<dyn DocumentRepositoryPort>,
         );
 
         let result = use_case

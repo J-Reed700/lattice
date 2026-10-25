@@ -118,9 +118,7 @@ describe('ConversationSidebar', () => {
     await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ spaceId: null }));
   });
 
-  // Bug: ConversationSidebar.tsx:341 pluralises by appending "s", so a
-  // journal with two entries reads "2 entrys".
-  it.fails('counts journal entries in the plural', () => {
+  it('counts journal entries in the plural', () => {
     h.journals.journals = [{ id: 'j1', name: 'Garden diary', icon: null, isArchived: false }];
     h.store = makeStore({ selectedSpaceId: 'j1' });
     renderSidebar();

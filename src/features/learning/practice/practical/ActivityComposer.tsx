@@ -6,12 +6,22 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningBuiltinRuntimeCapability,
+  LearningInterviewRoundKind,
+  LearningInterviewTargetDto,
   LearningLessonDto,
   LearningPracticalActivityKind,
   LearningPracticalWorkspaceDto,
   LearningPracticeMode,
   LearningProgramDto,
 } from "@/lib/bindings";
+
+const roundOptions: { value: LearningInterviewRoundKind; label: string }[] = [
+  { value: "full_loop", label: "Full interview loop" },
+  { value: "technical_deep_dive", label: "Technical deep-dive" },
+  { value: "system_design", label: "System design & architecture" },
+  { value: "behavioral", label: "Behavioral & engineering culture" },
+  { value: "debugging_and_code", label: "Debugging & code walkthrough" },
+];
 
 const kinds: {
   id: LearningPracticalActivityKind;
@@ -107,6 +117,11 @@ export function ActivityComposer({
   const [aids, setAids] = useState<string[]>(["Saved sources"]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [companyName, setCompanyName] = useState("");
+  const [companyUrl, setCompanyUrl] = useState("");
+  const [targetRole, setTargetRole] = useState("");
+  const [roundKind, setRoundKind] = useState<LearningInterviewRoundKind>("full_loop");
+  const [companyContext, setCompanyContext] = useState("");
   const openingSetup = useRef(false);
   const submittingRef = useRef(false);
   const retryRef = useRef<{
@@ -119,6 +134,38 @@ export function ActivityComposer({
   );
   const needsExecution = kind === "code_lab" || kind === "debugging";
   const offersExecution = needsExecution || kind === "project";
+  const hasInterviewTarget =
+    kind === "interview" &&
+    Boolean(
+      companyName.trim() ||
+        companyUrl.trim() ||
+        targetRole.trim() ||
+        companyContext.trim(),
+    );
+  const interviewTarget: LearningInterviewTargetDto | null =
+    kind === "interview" &&
+    (companyName.trim() ||
+      companyUrl.trim() ||
+      targetRole.trim() ||
+      companyContext.trim() ||
+      roundKind)
+      ? {
+          companyName: companyName.trim() || null,
+          companyUrl: companyUrl.trim() || null,
+          targetRole: targetRole.trim() || null,
+          companyContext: companyContext.trim() || null,
+          roundKind,
+        }
+      : null;
+  const roundLabel =
+    roundOptions.find((entry) => entry.value === roundKind)?.label ?? "interview";
+  const synthesizedBrief = `Conduct a tailored ${roundLabel} interview${companyName.trim() ? ` for ${companyName.trim()}` : ""}${targetRole.trim() ? ` (${targetRole.trim()})` : ""}.`;
+  const effectiveBrief = brief.trim() || synthesizedBrief;
+  const canSubmit =
+    Boolean(lesson) &&
+    Boolean(brief.trim() || hasInterviewTarget) &&
+    (!needsExecution || Boolean(runtimeSelection));
+
   const toggleAid = (aid: string) =>
     setAids((current) =>
       current.includes(aid)
@@ -126,7 +173,7 @@ export function ActivityComposer({
         : [...current, aid],
     );
   const submit = async () => {
-    if (submittingRef.current || !lesson || !brief.trim() || (needsExecution && !runtimeSelection)) return;
+    if (submittingRef.current || !canSubmit || !lesson) return;
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -143,11 +190,12 @@ export function ActivityComposer({
       lessonId: lesson.id,
       expectedProgramRevision: program.summary.revision,
       kind,
-      learnerBrief: brief.trim(),
+      learnerBrief: effectiveBrief,
       runtimeProfileId,
       builtinRuntime,
       practiceMode: mode,
       allowedAids: mode === "demonstrate" ? [] : aids,
+      ...(interviewTarget ? { interviewTarget } : {}),
     };
     const fingerprint = JSON.stringify(payload);
     let request =
@@ -208,6 +256,90 @@ export function ActivityComposer({
             ))}
           </select>
         </label>
+        {kind === "interview" && (
+          <section className="mt-4 rounded-xl border border-border bg-background/50 p-4 space-y-3">
+            <div className="text-xs font-semibold text-text-primary">
+              Company &amp; Role Research
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-medium text-text-secondary">
+                Company name
+                <input
+                  type="text"
+                  aria-label="Company name"
+                  value={companyName}
+                  onChange={(event) => setCompanyName(event.target.value)}
+                  placeholder="e.g., Stripe, Cloudflare, Linear"
+                  maxLength={160}
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block text-xs font-medium text-text-secondary">
+                Company website or URL
+                <input
+                  type="text"
+                  aria-label="Company website or URL"
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  value={companyUrl}
+                  onChange={(event) => setCompanyUrl(event.target.value)}
+                  placeholder="company.com or https://…"
+                  maxLength={2048}
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-medium text-text-secondary">
+                Target role
+                <input
+                  type="text"
+                  aria-label="Target role"
+                  value={targetRole}
+                  onChange={(event) => setTargetRole(event.target.value)}
+                  placeholder="e.g., Senior Backend Engineer"
+                  maxLength={160}
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block text-xs font-medium text-text-secondary">
+                Interview round
+                <select
+                  aria-label="Interview round"
+                  value={roundKind}
+                  onChange={(event) =>
+                    setRoundKind(
+                      event.target.value as LearningInterviewRoundKind,
+                    )
+                  }
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                >
+                  {roundOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="block text-xs font-medium text-text-secondary">
+              Job description or company notes
+              <textarea
+                aria-label="Job description or company notes"
+                value={companyContext}
+                onChange={(event) => setCompanyContext(event.target.value)}
+                placeholder="Paste the job description, tech stack, product domain, or specific areas you want the interviewer to probe…"
+                maxLength={16000}
+                rows={3}
+                className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-hidden focus:border-accent"
+              />
+            </label>
+            <p className="text-xs leading-5 text-text-muted">
+              Provide a company URL or paste context. Lattice will research the company, save captured pages to your course Source Library, and tailor the questions to the available evidence. If research is unavailable, the dossier will explain the gaps.
+            </p>
+          </section>
+        )}
         {offersExecution && (
           <div className="mt-4">
             <label className="block text-xs font-medium text-text-secondary">
@@ -334,7 +466,7 @@ export function ActivityComposer({
         <div className="mt-5 flex justify-end">
           <button
             type="button"
-            disabled={!lesson || !brief.trim() || submitting || (needsExecution && !runtimeSelection)}
+            disabled={!canSubmit || submitting}
             aria-busy={submitting}
             onClick={() => void submit()}
             className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
@@ -345,7 +477,9 @@ export function ActivityComposer({
               <SparklesIcon />
             )}
             {submitting
-              ? "Generating…"
+              ? kind === "interview" && interviewTarget
+                ? "Researching & generating…"
+                : "Generating…"
               : error
                 ? "Retry generation"
                 : "Generate activity"}

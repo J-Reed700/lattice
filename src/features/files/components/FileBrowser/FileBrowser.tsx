@@ -8,7 +8,6 @@
 
 import { useState, useCallback, useMemo } from 'react';
 
-import { useNavigate } from 'react-router';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -22,6 +21,7 @@ import { isHttpUrl, isWebDocument } from '@/features/files/model/documentMetadat
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromDocumentMetadata } from '@/features/reading/model/sourceAdapter';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { toast } from '@/stores/toastStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { type DocumentMetadata, type SortField, type SortOrder } from '@/types/fileBrowser';
@@ -134,7 +134,7 @@ export function FileBrowser() {
     handleSnapshotSelection,
   } = collections;
 
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
 
   const documentsById = useMemo(
     () => new Map(documents.map((doc) => [doc.id, doc])),
@@ -347,7 +347,7 @@ export function FileBrowser() {
               scope={scope}
               onScopeChange={setScope}
               collections={customCollections}
-              onCreateCollection={handleCreateCollection}
+              onCreateCollection={handleAsyncEvent(handleCreateCollection)}
               onRenameCollection={setRenameCollection}
               onDeleteCollection={setPendingDeleteCollection}
               collectionCounts={collectionCounts}
@@ -393,8 +393,8 @@ export function FileBrowser() {
                 onAssignToSpace={handleAsyncEvent(handleBulkAssignToSpace)}
                 onAddToCollection={() => setCollectionSelection(Array.from(selectedDocumentIds))}
                 onRemoveFromCollection={activeCollection?.kind === 'manual' && activeCollection.documentIds.some(id => selectedDocumentIds.has(id))
-                  ? () => handleRemoveFromCollection(Array.from(selectedDocumentIds)) : undefined}
-                onSnapshot={handleSnapshotSelection}
+                  ? handleAsyncEvent(() => handleRemoveFromCollection(Array.from(selectedDocumentIds))) : undefined}
+                onSnapshot={handleAsyncEvent(handleSnapshotSelection)}
                 onDelete={() =>
                   setPendingBulkDelete({
                     ids: Array.from(selectedDocumentIds),
@@ -452,7 +452,7 @@ export function FileBrowser() {
           onDelete={handleAsyncEvent(handleDelete)}
           onAddToCollection={doc => setCollectionSelection([doc.id])}
           onRemoveFromCollection={activeCollection?.kind === 'manual' && activeCollection.documentIds.includes(contextMenuDocument.id)
-            ? doc => handleRemoveFromCollection([doc.id]) : undefined}
+            ? handleAsyncEvent(doc => handleRemoveFromCollection([doc.id])) : undefined}
         />
       )}
 

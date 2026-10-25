@@ -19,25 +19,20 @@
  * }
  */
 export function getErrorMessage(error: unknown): string {
-  // Standard Error object
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  // String error
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  // Object with message property
-  if (error && typeof error === 'object' && 'message' in error) {
-    return String(error.message);
-  }
-
-  // Fallback: stringify the error
   try {
-    return JSON.stringify(error);
+    if (typeof error === 'string') return error;
+    if (error && typeof error === 'object' && 'message' in error) {
+      return String(error.message);
+    }
+    const serialized = JSON.stringify(error);
+    if (serialized !== undefined) return serialized;
   } catch {
+    // Error properties and toJSON methods can themselves throw.
+  }
+
+  try {
     return String(error);
+  } catch {
+    return 'Unknown error';
   }
 }

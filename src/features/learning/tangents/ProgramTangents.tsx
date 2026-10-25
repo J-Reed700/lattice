@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { ExternalLink, GitBranch, Search, X } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { CourseTangentChat } from '@/features/learning/tangents/CourseTangentChat';
@@ -16,6 +15,7 @@ import {
   useCreateLearningTangent,
   useLearningTangents,
 } from '@/features/learning/tangents/useLearningTangents';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningProgramDto, LearningTangentDto } from '@/lib/bindings';
 import { useOptionalConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
@@ -360,7 +360,7 @@ function CourseTangentCard({
   tangent: LearningTangentDto;
   onOpen: () => void;
 }) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const store = useOptionalConversationsStore();
   const replies = Math.max(0, tangent.messageCount - tangent.contextMessageCount);
   const sectionLabel =

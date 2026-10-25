@@ -198,7 +198,8 @@ describe('EntryList', () => {
     renderList({ entriesState: state });
 
     await user.click(screen.getByRole('button', { name: 'Open date picker' }));
-    await user.click(await screen.findByRole('button', { name: /October 20th, 2026/ }));
+    const calendar = await screen.findByRole('grid', {}, { timeout: 5_000 });
+    await user.click(within(calendar).getByRole('button', { name: /October 20th, 2026/ }));
     expect(state.setSelectedId).toHaveBeenLastCalledWith('first');
     await waitFor(() => expect(screen.queryByRole('grid')).not.toBeInTheDocument());
 

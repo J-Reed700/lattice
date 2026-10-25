@@ -133,6 +133,17 @@ impl TagServiceTrait for MockTagService {
         Ok(tags)
     }
 
+    async fn get_tags_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<lattice_core::domain::entities::Tag>>> {
+        let mut tags = std::collections::HashMap::new();
+        for id in document_ids {
+            tags.insert(id.clone(), self.get_tags_for_document(id).await?);
+        }
+        Ok(tags)
+    }
+
     async fn apply_tags(
         &self,
         document_id: &str,

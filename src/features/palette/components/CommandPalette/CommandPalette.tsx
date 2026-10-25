@@ -24,7 +24,6 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react'
-import { useNavigate } from 'react-router'
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -35,6 +34,7 @@ import { fetchDocument, openFilePath } from '@/features/files/hooks/useLibraryDo
 import { useCommandPalette } from '@/features/palette/hooks/useCommandPalette'
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore'
 import { quickSearchDocuments } from '@/features/search/hooks/useSearchQuery'
+import { useAppNavigate } from '@/hooks/useAppNavigate'
 import { useDebounce } from '@/hooks/useDebounce'
 import { describeFailure } from '@/lib/errorHandling'
 import { getErrorMessage } from '@/lib/errorUtils'
@@ -45,6 +45,7 @@ import { handleAsyncEvent } from '@/utils/promiseHandlers'
 
 import { CommandItem } from '../CommandItem'
 import { KeyboardShortcutsModal } from '../KeyboardShortcutsModal'
+
 import '@/styles/command-palette.css'
 
 /**
@@ -57,7 +58,7 @@ const NO_RESULTS: SearchResult[] = []
 const isSearchable = (query: string) => query.length >= 2 && query.trim().length > 0
 
 export function CommandPalette() {
-  const navigate = useNavigate()
+  const navigate = useAppNavigate()
   const {
     isOpen,
     searchMode,

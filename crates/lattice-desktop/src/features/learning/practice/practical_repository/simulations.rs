@@ -72,6 +72,35 @@ impl LearningPracticalRepository {
                 title: activity.title,
                 brief: activity.brief,
                 rubric: activity.rubric,
+                interview_plan: activity.interview_plan,
+            },
+            activity.source_version_ids,
+        ))
+    }
+
+    /// An attempt always continues against the exact activity snapshot it began with.
+    pub async fn simulation_session_generation_context(
+        &self,
+        program_id: &str,
+        session_id: &str,
+    ) -> Result<(
+        crate::features::learning::practical_generation::SimulationActivityContext,
+        Vec<String>,
+    )> {
+        uuid(program_id, "program")?;
+        uuid(session_id, "simulation")?;
+        let snapshot: String = sqlx::query_scalar(
+            "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE program_id=? AND id=?",
+        )
+        .bind(program_id).bind(session_id).fetch_optional(&self.pool).await.map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
+        let activity: InternalActivitySnapshot = decode(&snapshot)?;
+        Ok((
+            crate::features::learning::practical_generation::SimulationActivityContext {
+                title: activity.title,
+                brief: activity.brief,
+                rubric: activity.rubric,
+                interview_plan: activity.interview_plan,
             },
             activity.source_version_ids,
         ))
@@ -142,6 +171,19 @@ impl LearningPracticalRepository {
             .bind(&request.operation_id).bind(payload_hash).bind(request.learner_role.trim())
             .bind(request.counterpart_role.trim()).bind(timestamp).bind(timestamp)
             .execute(&mut *tx).await.map_err(db)?;
+        // The interviewer opens with the first planned question. Starting and
+        // replaying remain atomic and do not fabricate a learner response.
+        if let Some(question) = activity
+            .interview_plan
+            .as_ref()
+            .and_then(|plan| plan.questions.first())
+        {
+            sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,0,'counterpart',?,'[]',?,?)")
+                .bind(uuid::Uuid::new_v4().to_string()).bind(&request.program_id).bind(&request.session_id)
+                .bind(uuid::Uuid::new_v4().to_string()).bind(payload_hash)
+                .bind(&question.question).bind(&activity.generator_model).bind(timestamp)
+                .execute(&mut *tx).await.map_err(db)?;
+        }
         operation.record(&mut *tx, &request.session_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await

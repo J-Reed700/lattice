@@ -139,6 +139,29 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
         ..standing.key.clone()
     };
     assert_eq!(course.store.standing(&other_model).await?, None);
+    let second = StoredJudgement {
+        key: key("second-signals"),
+        value: standing_assessment("second-signals"),
+        ..standing.clone()
+    };
+    course.store.save_standing(&second).await?;
+    let (batch, reads) =
+        crate::tests::common::query_counts::count_reads(course.store.standings(&[
+            second.key.clone(),
+            other_model,
+            standing.key.clone(),
+            second.key.clone(),
+        ]))
+        .await;
+    assert_eq!(reads, 1);
+    assert_eq!(
+        batch?,
+        vec![second.value.clone(), standing.value.clone(), second.value]
+    );
+    let (empty, reads) =
+        crate::tests::common::query_counts::count_reads(course.store.standings(&[])).await;
+    assert!(empty?.is_empty());
+    assert_eq!(reads, 0);
 
     let origin = Origin::of_url("https://docs.python.org/3/").unwrap().key;
     let subject = SubjectKey::of("Python");
@@ -371,6 +394,84 @@ async fn outcomes_list_oldest_first_and_count_into_the_origin_track_record() -> 
             .await?,
         TrackRecord::default()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn site_lists_batch_history_and_count_an_origin_once_across_snapshots() -> Result<()> {
+    let course = course().await?;
+    let mut origin = None;
+    for suffix in ["one", "two"] {
+        let url = format!("https://docs.example.org/{suffix}");
+        let saved = add_page(
+            &course,
+            &url,
+            &article(suffix, 8),
+            page_signals(&url, json!({})),
+        )
+        .await?;
+        origin = Some(
+            course
+                .store
+                .provenance(&saved.version_id)
+                .await?
+                .unwrap()
+                .origin
+                .key
+                .0,
+        );
+    }
+    let origin = origin.unwrap();
+    for (sufficient, right) in [(true, true), (false, false), (true, false)] {
+        course
+            .store
+            .record_outcome(&outcome(&course.program_id, &origin, sufficient, right, 1))
+            .await?;
+    }
+    course
+        .store
+        .record_outcome(&outcome(
+            &course.program_id,
+            "web:elsewhere.example.net",
+            true,
+            true,
+            1,
+        ))
+        .await?;
+    for entry in [
+        TrustOverride::Site {
+            registrable_domain: "example.org".into(),
+            standing: SiteStanding::Institutional,
+            note: None,
+            set_at: 1,
+        },
+        TrustOverride::SiteSubject {
+            registrable_domain: "example.org".into(),
+            class: SubjectClass::new("Example APIs", vec![]),
+            level: TrustLevel::Primary,
+            note: None,
+            set_at: 2,
+        },
+        TrustOverride::Site {
+            registrable_domain: "unseen.example".into(),
+            standing: SiteStanding::Community,
+            note: None,
+            set_at: 3,
+        },
+    ] {
+        course.store.set_override(&entry).await?;
+    }
+    let (listed, reads) = crate::tests::common::query_counts::count_reads(
+        super::override_changes::list(&course.store),
+    )
+    .await;
+    assert_eq!(reads, 2);
+    let mut counts: Vec<_> = listed?
+        .into_iter()
+        .map(|site| (site.track_record.right, site.track_record.wrong))
+        .collect();
+    counts.sort();
+    assert_eq!(counts, [(0, 0), (2, 1), (2, 1)]);
     Ok(())
 }
 

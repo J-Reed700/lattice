@@ -25,6 +25,34 @@ async fn setup_schema(pool: &SqlitePool) {
 }
 
 #[tokio::test]
+async fn untagged_batches_filter_and_limit_before_loading_documents() {
+    let pool = create_test_pool().await;
+    sqlx::raw_sql(
+        "CREATE TABLE documents (id TEXT PRIMARY KEY,indexed_at TEXT);
+         CREATE TABLE document_tags (document_id TEXT,tag_id TEXT);
+         INSERT INTO documents VALUES ('tagged','2026-10-24'),('old','2026-10-20'),
+            ('new','2026-10-23'),('tie','2026-10-23');
+         INSERT INTO document_tags VALUES ('tagged','a'),('tagged','b');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let repo = TagRepository::new(pool);
+    let (ids, reads) =
+        crate::tests::common::query_counts::count_reads(repo.untagged_document_ids(1)).await;
+    assert_eq!(ids.unwrap(), ["new"]);
+    assert_eq!(reads, 1);
+    assert_eq!(
+        repo.untagged_document_ids(usize::MAX).await.unwrap(),
+        ["new", "tie", "old"]
+    );
+    let (empty, reads) =
+        crate::tests::common::query_counts::count_reads(repo.untagged_document_ids(0)).await;
+    assert!(empty.unwrap().is_empty());
+    assert_eq!(reads, 0);
+}
+
+#[tokio::test]
 async fn test_save_and_find_by_id() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

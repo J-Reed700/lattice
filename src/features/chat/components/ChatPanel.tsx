@@ -40,6 +40,7 @@ import {
   sameModelRef,
 } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 interface ChatPanelProps {
   /** A line above the composer from the surface hosting this chat. */
@@ -425,7 +426,7 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
         }}
         notice={composerNotice}
         chips={composerChips}
-        space={showSpacePicker ? { id: conversationSpaceId, name: conversationSpaceName, onChange: handleChangeSpace } : null}
+        space={showSpacePicker ? { id: conversationSpaceId, name: conversationSpaceName, onChange: handleAsyncEvent(handleChangeSpace) } : null}
         model={{
           choice: modelChoice,
           effective: effectiveModel,

@@ -19,6 +19,7 @@ import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { conversationDraftKey, useDraft } from '@/shared/drafts/drafts';
 import type { CustomToolSettings } from '@/types';
+import { voidAsync } from '@/utils/promiseHandlers';
 
 
 interface ComposerOptions {
@@ -299,10 +300,10 @@ export function useComposer({
     if (suggest.handleKeyDown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !(e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      handleSubmit(e);
+      voidAsync(() => handleSubmit(e))();
     } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      handleSubmit(e);
+      voidAsync(() => handleSubmit(e))();
     }
   };
 

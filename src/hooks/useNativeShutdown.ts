@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 
 import { flushPendingSaves } from '@/lib/pendingSaves';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 /** Install before making the editor available; native quit waits for this reply. */
 export function useNativeShutdown() {
@@ -32,7 +33,7 @@ export function useNativeShutdown() {
     if (!isTauri()) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<number>('lattice:shutdown-requested', async ({ payload: requestId }) => {
+    void listen<number>('lattice:shutdown-requested', handleAsyncEvent(async ({ payload: requestId }) => {
       if (disposed || activeRequest.current !== null) return;
       const attempt = { requestId };
       activeRequest.current = attempt;
@@ -58,7 +59,7 @@ export function useNativeShutdown() {
       } finally {
         if (activeRequest.current === attempt) activeRequest.current = null;
       }
-    }).then(async (stop) => {
+    })).then(async (stop) => {
       if (disposed) { stop(); return; }
       unlisten = stop;
       await emit('lattice:renderer-ready');

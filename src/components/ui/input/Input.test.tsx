@@ -26,8 +26,20 @@ describe('Input', () => {
   });
 
   it('gives an unlabelled field its own id', () => {
-    render(<Input label="Servings" />);
-    expect(screen.getByLabelText('Servings').id).toMatch(/^input-/);
+    const { rerender } = render(<Input label="Servings" />);
+    const id = screen.getByLabelText('Servings').id;
+    expect(id).toMatch(/^input-/);
+    rerender(<Input label="Servings" helperText="Number of guests" />);
+    expect(screen.getByLabelText('Servings').id).toBe(id);
+  });
+
+  it('counts an uncontrolled field and a controlled numeric zero', () => {
+    const { rerender } = render(<Input label="Name" defaultValue="salt" maxLength={10} showCharCount />);
+    expect(screen.getByText('4 / 10')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'pepper' } });
+    expect(screen.getByText('6 / 10')).toBeInTheDocument();
+    rerender(<Input key="count" label="Count" value={0} onChange={() => {}} maxLength={10} showCharCount />);
+    expect(screen.getByText('1 / 10')).toBeInTheDocument();
   });
 
   it('validates on blur when asked, clearing the error once fixed', () => {
@@ -79,15 +91,13 @@ describe('Input', () => {
   it('counts characters against the limit and warns near it', () => {
     const { rerender } = render(<Input label="Name" value="salt" onChange={() => {}} maxLength={10} showCharCount />);
     expect(screen.getByText('4 / 10')).toHaveClass('text-[hsl(var(--text-secondary))]');
-    rerender(<Input label="Name" value="saltpepper" onChange={() => {}} maxLength={10} showCharCount />);
-    expect(screen.getByText('10 / 10')).toHaveClass('text-[hsl(var(--warning-fg))]');
+    rerender(<Input label="Name" value="saltpepper" onChange={() => {}} maxLength={11} showCharCount />);
+    expect(screen.getByText('10 / 11')).toHaveClass('text-[hsl(var(--warning-fg))]');
     rerender(<Input label="Name" value="salt" onChange={() => {}} showCharCount />);
     expect(screen.queryByText(/\/ 10/)).not.toBeInTheDocument();
   });
 
-  // Bug: the "at the limit" colour can never show; the 90% warning check runs
-  // first and also matches a full field (Input.tsx:217-219).
-  it.fails('marks a full field with the danger colour', () => {
+  it('marks a full field with the danger colour', () => {
     render(<Input label="Name" value="saltpepper" onChange={() => {}} maxLength={10} showCharCount />);
     expect(screen.getByText('10 / 10')).toHaveClass('text-[hsl(var(--danger-fg))]');
   });

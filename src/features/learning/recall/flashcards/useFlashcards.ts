@@ -1,6 +1,6 @@
 import { type QueryClient, useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
 
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import VaultAPI from '@/lib/api';
 import type { GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, UpdateStudyCardRequestDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
@@ -45,7 +45,7 @@ export function useGenerateFlashcardDeck() {
 }
 export function useGenerateConversationFlashcardDeck() {
   const client = useQueryClient();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   return useMutation({
     mutationKey: conversationGenerationKey,
     gcTime: Infinity,

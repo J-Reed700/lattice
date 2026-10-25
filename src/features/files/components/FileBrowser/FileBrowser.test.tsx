@@ -394,7 +394,8 @@ describe('FileBrowser', () => {
       bar.onSelectAll();
       expect(h.store.selectAll).toHaveBeenCalledWith(['herbs', 'spices']);
       expect(bar.onClear).toBe(h.store.clearSelection);
-      expect(bar.onSnapshot).toBe(h.collections.handleSnapshotSelection);
+      bar.onSnapshot();
+      expect(h.collections.handleSnapshotSelection).toHaveBeenCalledTimes(1);
     });
 
     it('offers removal when the selection is in the open manual collection', () => {

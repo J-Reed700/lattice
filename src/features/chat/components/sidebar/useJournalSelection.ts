@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { useNavigate } from 'react-router';
 
 import { JOURNAL_SPACE_DEFAULT_ACCENT, JOURNAL_SPACE_DEFAULT_ICON } from '@/features/chat/components/sidebar/sidebarUtils';
 import { useAddConversationsToJournalMutation, useCreateJournalMutation, useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
 
 export function useJournalSelection() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { conversations, spaces, filterMode, selectedSpaceId, activeConversationId } = useConversationsStore();
   const { journals } = useJournalsQuery();
   const journalSpaces = useMemo(() => journals.filter(journal => !journal.isArchived), [journals]);

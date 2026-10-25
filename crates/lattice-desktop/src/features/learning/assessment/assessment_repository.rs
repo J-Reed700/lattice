@@ -321,6 +321,45 @@ async fn candidate_in(
     candidate_from_row(&row, outcomes)
 }
 
+/// The immutable questions a form retained, fetched together with their keys
+/// and outcome links. Scope by both program and requested ids.
+async fn candidates_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    candidate_ids: &[String],
+) -> Result<HashMap<String, StoredCandidate>> {
+    let scope = json(candidate_ids)?;
+    let rows = sqlx::query(&format!(
+        "SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c
+         JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id
+         WHERE c.program_id=? AND c.id IN (SELECT value FROM json_each(?))",
+    ))
+    .bind(program_id)
+    .bind(&scope)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    let links: Vec<(String, String)> = sqlx::query_as(
+        "SELECT candidate_id,outcome_id FROM learning_assessment_candidate_outcomes
+         WHERE candidate_id IN (SELECT value FROM json_each(?)) ORDER BY outcome_id",
+    )
+    .bind(&scope)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    let mut outcomes: HashMap<String, Vec<String>> = HashMap::new();
+    for (id, outcome) in links {
+        outcomes.entry(id).or_default().push(outcome);
+    }
+    let mut candidates = HashMap::new();
+    for row in rows {
+        let id: String = row.get("id");
+        let candidate = candidate_from_row(&row, outcomes.remove(&id).unwrap_or_default())?;
+        candidates.insert(id, candidate);
+    }
+    Ok(candidates)
+}
+
 impl LearningAssessmentRepository {
     /// One bank item with its key, for the grading job.
     pub(crate) async fn stored_candidate_in(

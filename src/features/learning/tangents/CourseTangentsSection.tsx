@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 
 import { BookOpen, ExternalLink, GitBranch } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { useLearningTangents } from '@/features/learning/tangents/useLearningTangents';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningTangentDto } from '@/lib/bindings';
 import type { StudyDestination } from '@/lib/studyActivity';
 import { useOptionalConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -13,7 +13,7 @@ export interface CourseTangentsSectionProps {
 }
 
 export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSectionProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const store = useOptionalConversationsStore();
   const tangentsQuery = useLearningTangents();
   const tangents = useMemo(() => tangentsQuery.data ?? [], [tangentsQuery.data]);

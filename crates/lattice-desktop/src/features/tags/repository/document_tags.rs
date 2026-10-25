@@ -312,6 +312,22 @@ impl TagRepository {
         Ok(())
     }
 
+    /// Select only the untagged document ids a maintenance batch will use.
+    pub async fn untagged_document_ids(&self, limit: usize) -> Result<Vec<String>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        sqlx::query_scalar(
+            "SELECT d.id FROM documents d
+             WHERE NOT EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id=d.id)
+             ORDER BY d.indexed_at DESC,d.id LIMIT ?",
+        )
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| AppError::Database(format!("Failed to find untagged documents: {error}")))
+    }
+
     /// Bulk add tags to multiple documents.
     ///
     /// # Arguments

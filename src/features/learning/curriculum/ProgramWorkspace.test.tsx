@@ -100,7 +100,7 @@ describe('Course page', () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Sources']);
-    tabs[1].click();
+    await userEvent.click(tabs[1]);
     const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
     expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations']);
     expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();

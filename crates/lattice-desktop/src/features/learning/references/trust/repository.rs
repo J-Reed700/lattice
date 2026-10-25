@@ -154,13 +154,28 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn standings(&self, keys: &[JudgementKey]) -> Result<Vec<StandingAssessment>> {
-        let mut found = Vec::new();
-        for key in keys {
-            if let Some(stored) = self.standing(key).await? {
-                found.push(stored.value);
-            }
+        if keys.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(found)
+        let scope: Vec<_> = keys
+            .iter()
+            .map(|key| (&key.input_sha256, &key.policy, &key.model))
+            .collect();
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT s.judgement_json FROM json_each(?) requested
+             JOIN source_standing_assessments s
+               ON s.signals_sha256=json_extract(requested.value,'$[0]')
+              AND s.policy=json_extract(requested.value,'$[1]')
+              AND s.model=json_extract(requested.value,'$[2]')
+             ORDER BY CAST(requested.key AS INTEGER)",
+        )
+        .bind(to_json(&scope)?)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        rows.iter()
+            .map(|row| from_json(row, "judgement_json"))
+            .collect()
     }
 
     async fn authority_for_subject(

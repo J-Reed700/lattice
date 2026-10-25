@@ -13,6 +13,7 @@ import { useModelCatalogStore } from '@/features/model/stores/modelCatalogStore'
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { toast } from '@/stores/toastStore';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS } from './shared';
 import { useLlmSettings } from './useLlmSettings';
@@ -179,7 +180,7 @@ export function ModelsTab() {
         actions={
           <button
             type="button"
-            onClick={handleAddExternalDirectory}
+            onClick={handleAsyncEvent(handleAddExternalDirectory)}
             disabled={isAddingExternalDirectory}
             className={SECONDARY_BUTTON_CLASS}
           >
@@ -201,7 +202,7 @@ export function ModelsTab() {
               <span className="truncate font-mono text-xs text-text-primary">{directory}</span>
               <button
                 type="button"
-                onClick={() => handleRemoveExternalDirectory(directory)}
+                onClick={handleAsyncEvent(() => handleRemoveExternalDirectory(directory))}
                 className={ROW_ACTION_CLASS}
                 aria-label={`Remove external folder ${directory}`}
                 title="Remove folder"

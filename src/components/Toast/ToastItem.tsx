@@ -13,7 +13,7 @@
  * Accessibility: WCAG AA, keyboard navigation, ARIA live regions
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 import { SuccessIcon, ErrorIcon, WarningIcon, InfoIcon, CloseIcon } from './ToastIcons';
 import { type Toast } from '../../stores/toastStore';
@@ -35,7 +35,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
   const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState(100);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingTimeRef = useRef<number>(toast.duration || 0);
 
   const getTypeStyles = () => {
@@ -73,12 +73,21 @@ export const ToastItem: React.FC<ToastItemProps> = ({
 
   const styles = getTypeStyles();
 
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
+    if (dismissTimerRef.current !== null) return;
+    if (progressIntervalRef.current !== null) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
     setIsExiting(true);
-    setTimeout(() => {
+    dismissTimerRef.current = setTimeout(() => {
       onDismiss(toast.id);
     }, 300); // Match animation duration
-  };
+  }, [onDismiss, toast.id]);
+
+  useEffect(() => () => {
+    if (dismissTimerRef.current !== null) clearTimeout(dismissTimerRef.current);
+  }, []);
 
   const handleAction = () => {
     if (toast.action) {
@@ -89,10 +98,11 @@ export const ToastItem: React.FC<ToastItemProps> = ({
 
   // Progress bar animation
   useEffect(() => {
-    if (!toast.duration || toast.duration === 0) return;
+    if (!toast.duration || isPaused || isExiting) return;
+    const startedAt = Date.now();
 
     const updateProgress = () => {
-      const elapsed = Date.now() - startTimeRef.current;
+      const elapsed = Date.now() - startedAt;
       const remaining = Math.max(0, remainingTimeRef.current - elapsed);
       const duration = toast.duration ?? 4000;
       const progressValue = (remaining / duration) * 100;
@@ -104,23 +114,15 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       }
     };
 
-    if (!isPaused) {
-      startTimeRef.current = Date.now();
-      progressIntervalRef.current = setInterval(updateProgress, 16); // ~60fps
-    } else {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-        remainingTimeRef.current = (progress / 100) * toast.duration;
-      }
-    }
+    const interval = setInterval(updateProgress, 16); // ~60fps
+    progressIntervalRef.current = interval;
 
     return () => {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
+      clearInterval(interval);
+      progressIntervalRef.current = null;
+      remainingTimeRef.current = Math.max(0, remainingTimeRef.current - (Date.now() - startedAt));
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPaused, toast.duration]);
+  }, [isPaused, isExiting, toast.duration, handleDismiss]);
 
   // Pause on hover
   const handleMouseEnter = () => {

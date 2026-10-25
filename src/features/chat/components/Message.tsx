@@ -1,7 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { Paperclip } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
@@ -26,6 +25,7 @@ import { openInFolder, revealInFolder } from '@/features/chat/model/folderThread
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
@@ -57,7 +57,7 @@ export const Message = memo(({
   nextMessageId,
   chatModelSeesImages = false,
 }: MessageProps) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const answerRef = useRef<HTMLDivElement>(null);
   const verificationPanelId = useId();
   const [isVerificationPanelExpanded, setIsVerificationPanelExpanded] = useState(false);

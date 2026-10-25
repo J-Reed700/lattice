@@ -137,6 +137,7 @@ pub(super) fn remap_nested_value(value: &mut serde_json::Value, map: &HashMap<St
                         | "possibleDuplicateCardId"
                         | "sourceIds"
                         | "sourceVersionIds"
+                        | "researchedSourceVersionIds"
                         | "outcomeIds"
                         | "prerequisiteModuleIds"
                         | "evidenceEventIds"

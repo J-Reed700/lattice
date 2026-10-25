@@ -231,6 +231,18 @@ impl TagServiceTrait for TagService {
             })
     }
 
+    async fn get_tags_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<
+        std::collections::HashMap<String, Vec<lattice_core::domain::entities::Tag>>,
+        lattice_core::shared::error::AppError,
+    > {
+        crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
+            .get_tags_for_documents(document_ids)
+            .await
+    }
+
     async fn apply_tags(
         &self,
         document_id: &str,

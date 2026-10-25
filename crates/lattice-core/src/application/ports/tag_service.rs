@@ -120,6 +120,13 @@ pub trait TagServiceTrait: Send + Sync {
     /// - `AppError::Database` if database query fails
     async fn get_tags_for_document(&self, document_id: &str) -> Result<Vec<Tag>>;
 
+    /// Tags for a set of documents, fetched in batches. Documents without tags
+    /// may be absent from the returned map.
+    async fn get_tags_for_documents(
+        &self,
+        document_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<Tag>>>;
+
     /// Apply tags to a document
     ///
     /// # Arguments

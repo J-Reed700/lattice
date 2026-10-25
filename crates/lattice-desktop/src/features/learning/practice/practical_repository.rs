@@ -195,6 +195,8 @@ struct InternalActivitySnapshot {
     runtime_command: Option<Vec<String>>,
     runtime_limits: Option<LearningLabLimits>,
     files: Vec<InternalActivityFile>,
+    #[serde(default)]
+    pub interview_plan: Option<LearningInterviewPlanDto>,
     revision: i64,
     generator_model: String,
 }

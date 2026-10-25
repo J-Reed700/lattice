@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 
 import { PenLine } from 'lucide-react';
-import { Outlet, useLocation, useNavigate } from 'react-router';
+import { Outlet, useLocation } from 'react-router';
+
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 
 import { useDeepResearchJobs } from '../features/jobs/research';
 import { QuickCaptureDialog } from '../features/journal/components/QuickCaptureDialog';
@@ -25,7 +27,7 @@ const SynthesisProgress = lazy(async () => ({
  * left rail.
  */
 export function RootLayout() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const location = useLocation();
   // Syntheses are jobs: one that finished while the app was closed shows too.
   const syntheses = useJournalSyntheses();

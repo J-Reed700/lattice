@@ -1,4 +1,4 @@
-import { type InputHTMLAttributes, forwardRef, useState, useEffect } from 'react';
+import { type InputHTMLAttributes, forwardRef, useState, useEffect, useId } from 'react';
 
 /**
  * Input
@@ -50,29 +50,28 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       onClear,
       maxLength,
       value,
+      defaultValue,
       validateOnBlur = false,
       validate,
       onBlur,
+      onChange,
       ...props
     },
     ref
   ) => {
     const [internalError, setInternalError] = useState<string | undefined>();
-    const [charCount, setCharCount] = useState(0);
+    const [charCount, setCharCount] = useState(() => String(value ?? defaultValue ?? '').length);
+    const generatedId = useId();
 
     const error = externalError || internalError;
 
-    const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
+    const inputId = id ?? `input-${generatedId}`;
     const errorId = error ? `${inputId}-error` : undefined;
     const helperId = helperText ? `${inputId}-helper` : undefined;
     const hasError = Boolean(error);
 
     useEffect(() => {
-      if (value) {
-        setCharCount(String(value).length);
-      } else {
-        setCharCount(0);
-      }
+      if (value !== undefined) setCharCount(String(value ?? '').length);
     }, [value]);
 
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
@@ -118,6 +117,11 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             aria-describedby={errorId || helperId}
             maxLength={maxLength}
             value={value}
+            defaultValue={defaultValue}
+            onChange={(event) => {
+              setCharCount(event.currentTarget.value.length);
+              onChange?.(event);
+            }}
             onBlur={handleBlur}
             className={`
               w-full px-4 py-2.5
@@ -214,10 +218,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           {showCharCount && maxLength && (
             <p
               className={`text-xs ${
-                charCount > maxLength * 0.9
-                  ? 'text-[hsl(var(--warning-fg))]'
-                  : charCount === maxLength
+                charCount >= maxLength
                   ? 'text-[hsl(var(--danger-fg))]'
+                  : charCount > maxLength * 0.9
+                  ? 'text-[hsl(var(--warning-fg))]'
                   : 'text-[hsl(var(--text-secondary))]'
               }`}
             >

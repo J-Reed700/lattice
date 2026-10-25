@@ -22,6 +22,7 @@ import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } 
 import { IndexingActivitySection } from '@/features/files/components/IndexingStatus/IndexingActivitySection';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { NUMBER_FIELD_CLASS, ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
 import {
@@ -190,7 +191,7 @@ export function IndexingTab() {
         actions={
           <button
             type="button"
-            onClick={handleAddFolder}
+            onClick={handleAsyncEvent(handleAddFolder)}
             disabled={isAddingFolder || isSyncing}
             className={SECONDARY_BUTTON_CLASS}
           >

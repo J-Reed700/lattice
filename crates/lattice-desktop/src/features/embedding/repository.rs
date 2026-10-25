@@ -385,6 +385,18 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
         Ok(results)
     }
 
+    async fn vectors_by_document_ids(
+        &self,
+        document_ids: &[String],
+    ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
+        let mut conn = self.pool.acquire().await?;
+        crate::infrastructure::persistence::repositories::embedding::ops::vectors_by_document_ids(
+            &mut conn,
+            document_ids,
+        )
+        .await
+    }
+
     async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()> {
         sqlx::query!(
             r#"DELETE FROM text_embeddings WHERE chunk_id = ?"#,

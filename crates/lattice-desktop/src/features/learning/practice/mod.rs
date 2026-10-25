@@ -1,5 +1,6 @@
 //! Practice capabilities owned by Learning Studio.
 
+pub mod interview_research;
 pub mod practical_dto;
 pub mod practical_generation;
 pub mod practical_repository;

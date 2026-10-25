@@ -15,6 +15,7 @@ import { SidebarHeader } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { AIModelsTab } from './AIModelsTab';
 import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
@@ -241,11 +242,11 @@ export function Settings() {
 
         {/* Footer — never scrolls, never clips the list above it */}
         <div className="shrink-0 border-t border-border-subtle p-2">
-          <button type="button" onClick={handleExport} disabled={isExporting} className={footerButtonClass}>
+          <button type="button" onClick={handleAsyncEvent(handleExport)} disabled={isExporting} className={footerButtonClass}>
             <Archive className="h-3.5 w-3.5" aria-hidden="true" />
             {isExporting ? 'Exporting…' : 'Export'}
           </button>
-          <button type="button" onClick={handleImport} disabled={isImporting} className={footerButtonClass}>
+          <button type="button" onClick={handleAsyncEvent(handleImport)} disabled={isImporting} className={footerButtonClass}>
             <Upload className="h-3.5 w-3.5" aria-hidden="true" />
             {isImporting ? 'Importing…' : 'Import'}
           </button>

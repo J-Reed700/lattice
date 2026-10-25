@@ -24,14 +24,6 @@ import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 /** Longest quote we will carry through a URL into the composer. */
 const MAX_QUOTE_CHARS = 2000;
 
-const decodeQuote = (raw: string): string => {
-  try {
-    return decodeURIComponent(raw).slice(0, MAX_QUOTE_CHARS);
-  } catch {
-    return raw.slice(0, MAX_QUOTE_CHARS);
-  }
-};
-
 const SIDEBAR_COLLAPSED_KEY = 'chat.sidebar.collapsed';
 
 function readSidebarCollapsed(): boolean {
@@ -185,7 +177,7 @@ export function ChatView() {
     setSearchParams(next, { replace: true });
 
     if (requestedQuote) {
-      const quote = decodeQuote(requestedQuote);
+      const quote = requestedQuote.slice(0, MAX_QUOTE_CHARS);
       if (quote.trim()) {
         const quoted = quote
           .split('\n')

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { useNavigate } from 'react-router';
 
 import {
   useIndexingActivitiesQuery,
   useIndexingControlMutation,
 } from '@/features/files/hooks/useIndexingStatusQuery';
 import { GHOST_BUTTON_CLASS } from '@/features/settings/components/settingsStyles';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { cn } from '@/lib/utils';
 import type { IndexingSnapshot } from '@/types/api/indexing';
 
@@ -45,7 +45,7 @@ export interface IndexingStatusPopoverProps {
  * One level, hairlines only — no cards, no progress bar repeating the count.
  */
 export function IndexingStatusPopover({ snapshot, open, onClose }: IndexingStatusPopoverProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const control = useIndexingControlMutation();
   const activities = useIndexingActivitiesQuery(5, open);
 

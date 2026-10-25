@@ -98,6 +98,8 @@ pub struct LearningPracticalActivityDto {
     pub runtime_unavailable_reason: Option<String>,
     pub generator_model: String,
     pub files: Vec<LearningPracticalFileDto>,
+    #[serde(default)]
+    pub interview_plan: Option<LearningInterviewPlanDto>,
     pub revision: i64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -275,6 +277,59 @@ pub struct PrepareLearningRuntimePresetRequestDto {
     pub engine: LearningContainerEngine,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningInterviewRoundKind {
+    TechnicalDeepDive,
+    SystemDesign,
+    Behavioral,
+    DebuggingAndCode,
+    FullLoop,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LearningInterviewTargetDto {
+    #[serde(default)]
+    pub company_name: Option<String>,
+    #[serde(default)]
+    pub company_url: Option<String>,
+    #[serde(default)]
+    pub target_role: Option<String>,
+    #[serde(default)]
+    pub company_context: Option<String>,
+    #[serde(default)]
+    pub round_kind: Option<LearningInterviewRoundKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningInterviewQuestionDto {
+    pub id: String,
+    pub round: LearningInterviewRoundKind,
+    pub question: String,
+    pub company_rationale: String,
+    pub follow_up_probes: Vec<String>,
+    pub evaluation_signals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningInterviewPlanDto {
+    pub company_name: String,
+    #[serde(default)]
+    pub company_url: Option<String>,
+    pub target_role: String,
+    pub round_kind: LearningInterviewRoundKind,
+    pub company_summary: String,
+    pub learner_role: String,
+    pub counterpart_role: String,
+    #[serde(default)]
+    pub researched_source_version_ids: Vec<String>,
+    #[serde(default)]
+    pub questions: Vec<LearningInterviewQuestionDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateLearningPracticalActivityRequestDto {
@@ -291,6 +346,8 @@ pub struct GenerateLearningPracticalActivityRequestDto {
     #[serde(default)]
     pub builtin_runtime:
         Option<crate::features::learning::embedded_runtime::LearningBuiltinRuntime>,
+    #[serde(default)]
+    pub interview_target: Option<LearningInterviewTargetDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

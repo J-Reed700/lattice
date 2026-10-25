@@ -279,6 +279,25 @@ impl EmbeddingRepositoryPort for MockEmbeddingRepository {
         }
     }
 
+    async fn vectors_by_document_ids(
+        &self,
+        document_ids: &[String],
+    ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
+        let mut vectors =
+            lattice_core::application::ports::embedding_repository_port::DocumentVectors::new();
+        for id in document_ids {
+            vectors.insert(
+                id.clone(),
+                self.find_by_document_id(id)
+                    .await?
+                    .into_iter()
+                    .map(|(_, vector)| vector)
+                    .collect(),
+            );
+        }
+        Ok(vectors)
+    }
+
     async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()> {
         let mut chunk_index = self.chunk_index.write();
         if let Some(embedding_id) = chunk_index.remove(chunk_id) {

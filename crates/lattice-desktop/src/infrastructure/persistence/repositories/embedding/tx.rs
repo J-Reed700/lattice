@@ -76,6 +76,15 @@ impl EmbeddingRepositoryPort for SqliteEmbeddingRepositoryTx {
         ops::find_by_document_id(&mut tx, document_id).await
     }
 
+    async fn vectors_by_document_ids(
+        &self,
+        document_ids: &[String],
+    ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::vectors_by_document_ids(&mut tx, document_ids).await
+    }
+
     async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;

@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 
 use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
 use lattice_core::shared::error::{AppError, Result};
@@ -200,6 +201,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     }
 
     async fn get_clusters_for_run(&self, run_id: &str) -> Result<Vec<Cluster>> {
+        let mut tx = self.pool.begin().await?;
         let rows = sqlx::query(
             r#"
             SELECT id, run_id, label, description, centroid, fingerprint,
@@ -210,33 +212,34 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
             "#,
         )
         .bind(run_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("get_clusters_for_run: {}", e)))?;
+        if rows.is_empty() {
+            tx.commit().await?;
+            return Ok(Vec::new());
+        }
 
+        let member_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT m.cluster_id, m.document_id FROM cluster_members m
+             JOIN clusters c ON c.id = m.cluster_id WHERE c.run_id = ?
+             ORDER BY m.cluster_id, m.document_id",
+        )
+        .bind(run_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        let mut members: HashMap<String, Vec<String>> = HashMap::new();
+        for (cluster_id, document_id) in member_rows {
+            members.entry(cluster_id).or_default().push(document_id);
+        }
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let cluster_id: String = row
                 .try_get("id")
                 .map_err(|e| AppError::Database(format!("row.id: {}", e)))?;
 
-            // Pull member ids in a second query (keeps this query flat; row
-            // count is small — one per cluster — so the N+1 is fine here).
-            let member_rows = sqlx::query(
-                r#"SELECT document_id FROM cluster_members WHERE cluster_id = ? ORDER BY document_id"#,
-            )
-            .bind(&cluster_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("members query: {}", e)))?;
-
-            let mut member_doc_ids = Vec::with_capacity(member_rows.len());
-            for mrow in member_rows {
-                let doc_id: String = mrow
-                    .try_get("document_id")
-                    .map_err(|e| AppError::Database(format!("row.document_id: {}", e)))?;
-                member_doc_ids.push(doc_id);
-            }
+            let member_doc_ids = members.remove(&cluster_id).unwrap_or_default();
 
             let created_at_str: String = row
                 .try_get("created_at")

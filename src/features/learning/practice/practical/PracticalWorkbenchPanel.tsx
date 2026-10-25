@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
 
+import { invalidateLearningSourceDependents } from "@/features/learning/api/learningInvalidation";
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { ActivityBrief } from "@/features/learning/practice/practical/ActivityBrief";
 import { ActivityComposer } from "@/features/learning/practice/practical/ActivityComposer";
@@ -46,7 +47,18 @@ export function PracticalWorkbenchPanel({
     retry: false,
     mutationFn: async (request: GenerateLearningPracticalActivityRequestDto) =>
       unwrap(await VaultAPI.generateLearningPracticalActivity(request)),
-    onSuccess: (data) => client.setQueryData(workspaceKey(programId), data),
+    onSuccess: (data) => {
+      client.setQueryData(workspaceKey(programId), data);
+    },
+    onSettled: (_data, _error, request) => {
+      // Research can save useful evidence even when a later model call fails.
+      if (request.kind === "interview") {
+        void invalidateLearningSourceDependents(client, programId);
+        void client.invalidateQueries({
+          queryKey: ["learning-sources", programId],
+        });
+      }
+    },
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -61,7 +73,7 @@ export function PracticalWorkbenchPanel({
   const [startingRun, setStartingRun] = useState(false);
   const startingRunRef = useRef(false);
   const [simulation, setSimulation] =
-    useState<LearningSimulationSessionDto | null>(null);
+    useState<LearningSimulationSessionDto | { newAttemptFor: string } | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const runRequestRef = useRef<{
     fingerprint: string;
@@ -79,6 +91,15 @@ export function PracticalWorkbenchPanel({
     ) ?? [];
   const activeActivity =
     activities.find((item) => item.id === selectedId) ?? activities[0];
+  const savedSimulation = workspace?.simulations.find(
+    (entry) => entry.activityId === activeActivity?.id && entry.status === "active",
+  ) ?? workspace?.simulations.find((entry) => entry.activityId === activeActivity?.id) ?? null;
+  const latestSelectedSimulation = simulation && !("newAttemptFor" in simulation)
+    ? workspace?.simulations.find((entry) => entry.id === simulation.id && entry.revision > simulation.revision) ?? simulation
+    : null;
+  const activeSimulation = simulation && "newAttemptFor" in simulation
+    ? simulation.newAttemptFor === activeActivity?.id ? null : savedSimulation
+    : latestSelectedSimulation?.activityId === activeActivity?.id ? latestSelectedSimulation : savedSimulation;
   const capabilities = workspace?.runtimeCapabilities ?? [];
   const activeRun = workspace?.runs.find(
     (run) =>
@@ -353,17 +374,11 @@ export function PracticalWorkbenchPanel({
 
               {isSimulationKind(activeActivity.kind) && (
                 <SimulationPanel
+                  key={activeActivity.id}
                   programId={programId}
                   activity={activeActivity}
-                  session={
-                    simulation ??
-                    workspace.simulations.find(
-                      (entry) =>
-                        entry.activityId === activeActivity.id &&
-                        entry.status === "active",
-                    ) ??
-                    null
-                  }
+                  session={activeSimulation}
+                  onRestart={() => setSimulation({ newAttemptFor: activeActivity.id })}
                   onSession={(session) => {
                     setSimulation(session);
                     void query.refetch();
@@ -400,6 +415,7 @@ export function PracticalWorkbenchPanel({
             await generate.mutateAsync(request);
             setSelectedId(request.activityId);
             setSelectedRunId(null);
+            setSimulation(null);
           }}
         />
       )}

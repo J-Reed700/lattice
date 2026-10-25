@@ -1,6 +1,5 @@
 //! The search implementations behind the commands: fast, semantic, hybrid, full and similar-document.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey};
@@ -9,8 +8,7 @@ use lattice_core::application::contracts::search::{
     CacheStatsDto, EnhancedSearchResponse, SearchOptions, SearchRequestDto, SearchResponseDto,
     SearchResultDto,
 };
-use lattice_core::application::ports::RepositoryPort;
-use lattice_core::domain::entities::Document;
+use lattice_core::application::ports::DocumentRepository;
 use lattice_core::shared::error::AppError;
 
 use super::enrichment::{enrich_hybrid_results, enrich_vector_results, LibraryMode};
@@ -312,20 +310,14 @@ pub async fn hybrid_search_impl(
 // Access tracking helper
 async fn track_document_access(
     results: &[SearchResultDto],
-    document_repo: Arc<dyn RepositoryPort<Document>>,
+    document_repo: Arc<dyn DocumentRepository>,
 ) -> Result<(), AppError> {
-    let document_ids: HashSet<String> = results
+    let document_ids: Vec<String> = results
         .iter()
         .filter_map(|r| r.document_id.clone())
         .collect();
 
-    for doc_id in document_ids {
-        if let Some(mut document) = document_repo.find_by_id(&doc_id).await? {
-            document.increment_access();
-            document_repo.save(&document).await?;
-        }
-    }
-    Ok(())
+    document_repo.record_accesses(&document_ids).await
 }
 
 /// Search documents implementation for gateway pattern

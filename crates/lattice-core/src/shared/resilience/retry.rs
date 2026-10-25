@@ -143,7 +143,7 @@ impl RetryConfig {
 /// ```
 pub async fn retry_with_backoff<F, Fut, T, E, R>(
     config: RetryConfig,
-    mut operation: F,
+    operation: F,
     is_retryable: R,
 ) -> Result<T, E>
 where
@@ -151,8 +151,28 @@ where
     Fut: std::future::Future<Output = Result<T, E>>,
     R: Fn(&E) -> bool,
 {
+    retry_with_delay(config, operation, is_retryable, false).await
+}
+
+fn scale_delay(delay: Duration, multiplier: f64, max_delay: Duration) -> Duration {
+    Duration::try_from_secs_f64(delay.as_secs_f64() * multiplier)
+        .unwrap_or(max_delay)
+        .min(max_delay)
+}
+
+async fn retry_with_delay<F, Fut, T, E, R>(
+    config: RetryConfig,
+    mut operation: F,
+    is_retryable: R,
+    jitter: bool,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    R: Fn(&E) -> bool,
+{
     let mut attempt = 1;
-    let mut delay = config.initial_delay;
+    let mut delay = config.initial_delay.min(config.max_delay);
 
     loop {
         match operation().await {
@@ -180,20 +200,28 @@ where
                     return Err(e);
                 }
 
+                // Keep ThreadRng out of the future's suspended state so this
+                // retry can run on a multithreaded executor.
+                let sleep_delay = if jitter {
+                    scale_delay(
+                        delay,
+                        rand::thread_rng().gen_range(0.8..=1.2),
+                        config.max_delay,
+                    )
+                } else {
+                    delay
+                };
                 tracing::warn!(
                     attempt = attempt,
-                    delay_ms = delay.as_millis(),
+                    delay_ms = sleep_delay.as_millis(),
                     max_attempts = config.max_attempts,
                     "Operation failed, retrying after delay"
                 );
 
-                sleep(delay).await;
+                sleep(sleep_delay).await;
 
                 // Exponential backoff
-                delay = Duration::from_millis(
-                    ((delay.as_millis() as f64) * config.backoff_multiplier) as u64,
-                );
-                delay = delay.min(config.max_delay);
+                delay = scale_delay(delay, config.backoff_multiplier, config.max_delay);
 
                 attempt += 1;
             }
@@ -263,7 +291,7 @@ where
 /// ```
 pub async fn retry_with_jitter<F, Fut, T, E, R>(
     config: RetryConfig,
-    mut operation: F,
+    operation: F,
     is_retryable: R,
 ) -> Result<T, E>
 where
@@ -271,60 +299,7 @@ where
     Fut: std::future::Future<Output = Result<T, E>>,
     R: Fn(&E) -> bool,
 {
-    let mut rng = rand::thread_rng();
-
-    let mut attempt = 1;
-    let mut delay = config.initial_delay;
-
-    loop {
-        match operation().await {
-            Ok(result) => {
-                if attempt > 1 {
-                    tracing::info!(attempt = attempt, "Operation succeeded after retry");
-                }
-                return Ok(result);
-            }
-            Err(e) => {
-                if attempt >= config.max_attempts {
-                    tracing::error!(
-                        attempt = attempt,
-                        max_attempts = config.max_attempts,
-                        "Operation failed after max retries"
-                    );
-                    return Err(e);
-                }
-
-                if !is_retryable(&e) {
-                    tracing::debug!(
-                        attempt = attempt,
-                        "Error not retryable, failing immediately"
-                    );
-                    return Err(e);
-                }
-
-                let jitter = rng.gen_range(-0.2..=0.2);
-                let jittered_delay =
-                    Duration::from_millis(((delay.as_millis() as f64) * (1.0 + jitter)) as u64);
-
-                tracing::warn!(
-                    attempt = attempt,
-                    delay_ms = jittered_delay.as_millis(),
-                    max_attempts = config.max_attempts,
-                    "Operation failed, retrying with jitter"
-                );
-
-                sleep(jittered_delay).await;
-
-                // Exponential backoff
-                delay = Duration::from_millis(
-                    ((delay.as_millis() as f64) * config.backoff_multiplier) as u64,
-                );
-                delay = delay.min(config.max_delay);
-
-                attempt += 1;
-            }
-        }
-    }
+    retry_with_delay(config, operation, is_retryable, true).await
 }
 
 #[cfg(test)]
@@ -332,6 +307,39 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_never_sleeps_past_the_configured_maximum() {
+        for jitter in [false, true] {
+            let start = tokio::time::Instant::now();
+            let result = retry_with_delay(
+                RetryConfig {
+                    max_attempts: 3,
+                    initial_delay: Duration::from_secs(60),
+                    max_delay: Duration::from_millis(10),
+                    backoff_multiplier: f64::INFINITY,
+                },
+                || async { Err::<(), _>("unavailable") },
+                |_| true,
+                jitter,
+            )
+            .await;
+            assert_eq!(result, Err("unavailable"));
+            assert!(start.elapsed() <= Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test]
+    async fn jitter_retry_is_send() {
+        let result = tokio::spawn(retry_with_jitter(
+            RetryConfig::quick(),
+            || async { Ok::<_, String>("success") },
+            |_| true,
+        ))
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap(), "success");
+    }
 
     #[tokio::test]
     async fn test_retry_succeeds_on_first_try() {

@@ -1,11 +1,9 @@
 use crate::shared::error::{AppError, Result, ResultExt};
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
-use uuid::Uuid;
 
-/// SECURITY FIX: Prevent TOCTOU race conditions (CWE-367)
-/// Provides atomic file system operations
+/// Atomic file replacement and advisory locking for filesystem resources.
 pub struct AtomicFs;
 
 impl AtomicFs {
@@ -16,19 +14,23 @@ impl AtomicFs {
             .parent()
             .ok_or_else(|| AppError::InvalidInput("Invalid file path".to_string()))?;
 
-        let temp_name = format!(".tmp_{}", Uuid::new_v4());
-        let temp_path = parent.join(&temp_name);
-
-        let mut temp_file = File::create(&temp_path).context("Failed to create temporary file")?;
+        let mut temp_file = tempfile::Builder::new()
+            .prefix(".tmp_")
+            .tempfile_in(parent)
+            .context("Failed to create temporary file")?;
         temp_file
             .write_all(content)
             .context("Failed to write to temporary file")?;
         temp_file
+            .as_file()
             .sync_all()
             .context("Failed to sync temporary file")?;
 
         // Atomically rename temp file to target
-        fs::rename(&temp_path, path).context("Failed to rename temporary file")?;
+        temp_file
+            .persist(path)
+            .map_err(|error| error.error)
+            .context("Failed to rename temporary file")?;
 
         Ok(())
     }
@@ -75,50 +77,27 @@ impl AtomicFs {
         Ok(())
     }
 
-    /// Lock file for exclusive access (using advisory locks)
-    #[cfg(unix)]
+    /// Run an operation while holding an exclusive advisory lock.
+    /// The persistent sidecar must not be unlinked: waiters lock that same file.
     pub fn with_file_lock<P: AsRef<Path>, F, R>(path: P, f: F) -> Result<R>
     where
         F: FnOnce() -> Result<R>,
     {
-        use std::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let lock_path = format!("{}.lock", path.as_ref().display());
-        let _lock = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(&lock_path)
-            .context("Failed to acquire lock")?;
-
-        let result = f()?;
-
-        // Lock is automatically released when _lock is dropped
-        fs::remove_file(&lock_path).ok();
-        Ok(result)
-    }
-
-    #[cfg(windows)]
-    pub fn with_file_lock<P: AsRef<Path>, F, R>(path: P, f: F) -> Result<R>
-    where
-        F: FnOnce() -> Result<R>,
-    {
-        use std::fs::OpenOptions;
-
-        let lock_path = format!("{}.lock", path.as_ref().display());
-        let _lock = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(&lock_path)
-            .context("Failed to acquire lock")?;
-
-        let result = f()?;
-
-        // Lock is automatically released when _lock is dropped
-        fs::remove_file(&lock_path).ok();
-        Ok(result)
+        let mut lock_path = path.as_ref().as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(lock_path)
+            .context("Failed to open lock file")?;
+        lock.lock().context("Failed to acquire lock")?;
+        // Dropping the handle releases the lock, including on error or unwind.
+        f()
     }
 }
 
@@ -126,6 +105,46 @@ impl AtomicFs {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn failed_replacement_removes_temporary_file() {
+        let temp = TempDir::new().unwrap();
+        let destination = temp.path().join("directory");
+        fs::create_dir(&destination).unwrap();
+
+        assert!(AtomicFs::write_file(&destination, b"cannot replace a directory").is_err());
+        assert!(destination.is_dir());
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn replacement_overwrites_existing_content() {
+        let temp = TempDir::new().unwrap();
+        let destination = temp.path().join("note.md");
+        fs::write(&destination, b"old text").unwrap();
+        AtomicFs::write_file(&destination, b"new text").unwrap();
+        assert_eq!(fs::read(destination).unwrap(), b"new text");
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn file_lock_excludes_other_handles_and_releases_after_error() {
+        let temp = TempDir::new().unwrap();
+        let resource = temp.path().join("note.md");
+        let lock_path = temp.path().join("note.md.lock");
+        let result: Result<()> = AtomicFs::with_file_lock(&resource, || {
+            let contender = OpenOptions::new().write(true).open(&lock_path).unwrap();
+            assert!(matches!(
+                contender.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            Err(AppError::InvalidInput("operation failed".into()))
+        });
+        assert!(result.is_err());
+        assert!(lock_path.is_file());
+        let contender = OpenOptions::new().write(true).open(lock_path).unwrap();
+        contender.try_lock().unwrap();
+    }
 
     #[test]
     fn test_atomic_write() {

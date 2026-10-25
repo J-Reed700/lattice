@@ -22,10 +22,86 @@ fn change(path: &str) -> PushChange {
         base_version: Some(0),
     }
 }
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
+async fn conflict_replay_uses_its_identity_index(pool: PgPool) {
+    sqlx::query(
+        "INSERT INTO conflicts (user_id,path)
+         SELECT 42,'note-' || n || '.md' FROM generate_series(1,10000) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("ANALYZE conflicts")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT id,path,server_version,incoming_base_version,status,created_at,resolved_at
+         FROM conflicts WHERE user_id=$1 AND server_op_seq=$2
+           AND incoming_device_id=$3 AND incoming_client_op_id=$4",
+    )
+    .bind(42_i64)
+    .bind(1_i64)
+    .bind(1_i64)
+    .bind(Uuid::nil())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("idx_conflicts_replay")),
+        "{plan:?}"
+    );
+}
 async fn device(repo: &PgSyncRepository, user: i64) -> Uuid {
     let id = Uuid::new_v4();
     repo.upsert_device(user, id, "test".into()).await.unwrap();
     id
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
+async fn pull_cursors_skip_own_history_without_skipping_another_devices_page(pool: PgPool) {
+    let repo = PgSyncRepository::new(pool);
+    let first = device(&repo, 42).await;
+    let second = device(&repo, 42).await;
+    let outsider = device(&repo, 43).await;
+    repo.push_changes(42, first, vec![change("first.md")])
+        .await
+        .unwrap();
+    repo.push_changes(42, second, vec![change("second.md"), change("third.md")])
+        .await
+        .unwrap();
+    let latest = repo
+        .push_changes(42, first, vec![change("fourth.md")])
+        .await
+        .unwrap();
+    repo.push_changes(43, outsider, vec![change("private.md")])
+        .await
+        .unwrap();
+    let page = repo.pull_changes(42, first, 0, 1).await.unwrap();
+    assert_eq!(page.changes.len(), 1);
+    assert_eq!(page.changes[0].path, "second.md");
+    assert_eq!(page.next_seq, page.changes[0].seq);
+    assert!(page.next_seq < latest.high_watermark_seq);
+    let last = repo
+        .pull_changes(42, first, page.next_seq, 2)
+        .await
+        .unwrap();
+    assert_eq!(last.changes.len(), 1);
+    assert_eq!(last.changes[0].path, "third.md");
+    assert_eq!(last.next_seq, latest.high_watermark_seq);
+    let idle = repo
+        .pull_changes(42, first, last.next_seq, 2)
+        .await
+        .unwrap();
+    assert!(idle.changes.is_empty());
+    assert_eq!(idle.next_seq, last.next_seq);
+    let own_only = repo.pull_changes(43, outsider, 0, 1).await.unwrap();
+    assert!(own_only.changes.is_empty());
+    assert!(own_only.next_seq > last.next_seq);
 }
 
 #[sqlx::test(migrations = "./migrations")]

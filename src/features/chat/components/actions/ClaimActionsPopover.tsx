@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Columns3, Loader2, MessageCircleQuestion, NotebookPen, Quote } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router';
 
 import { ACTION_HEADING_CLASS, ACTION_ROW_CLASS, ACTION_SURFACE_CLASS } from '@/features/chat/components/actions/actionSurface';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
@@ -63,7 +63,7 @@ export function ClaimActionsPopover({
   maxRight,
   onClose,
 }: ClaimActionsPopoverProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const quickCapture = useQuickCapture();
   const panelRef = useRef<HTMLDivElement>(null);
   const [isSaving, setIsSaving] = useState(false);

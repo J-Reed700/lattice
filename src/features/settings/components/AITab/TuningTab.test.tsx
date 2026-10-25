@@ -97,10 +97,7 @@ describe('TuningTab', () => {
       ]);
     });
 
-    // Bug: toFinite (AITab/shared.ts:127) treats an empty field as 0, because
-    // Number('') is 0, so leaving a number field empty saves 0 instead of
-    // keeping the saved value.
-    it.fails('keeps the saved value when a number field is left empty', () => {
+    it('keeps the saved value when a number field is left empty', () => {
       render(<TuningTab />);
       fireEvent.change(field('Top P'), { target: { value: '' } });
       fireEvent.blur(field('Top P'));

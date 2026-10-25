@@ -5,11 +5,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createJournal, updateJournal, deleteJournal, journalsQueryOptions } from '@/features/journal/api/queries';
 import { defaultJournalTitle } from '@/features/journal/hooks/useJournalNote';
 import type { JournalNotify } from '@/features/journal/hooks/useJournalNotice';
+import type { AppNavigate } from '@/hooks/useAppNavigate';
 import VaultAPI from '@/lib/api';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
-import type { NavigateFunction, SetURLSearchParams } from 'react-router';
+import type { SetURLSearchParams } from 'react-router';
 
 const LAST_JOURNAL_SPACE_KEY = 'journal.lastSpaceId';
 const DEFAULT_JOURNAL_ICON = '📓';
@@ -77,7 +78,7 @@ export function useJournalSpaces(options: {
   activeNote: WorkspaceNote | null;
   updateNote: (updater: (note: WorkspaceNote) => WorkspaceNote) => void;
   searchParams: URLSearchParams;
-  navigate: NavigateFunction;
+  navigate: AppNavigate;
   notify: JournalNotify;
 }) {
   const { requestedJournalSpaceId, journalSpace, activeNote, updateNote, searchParams, navigate, notify } = options;

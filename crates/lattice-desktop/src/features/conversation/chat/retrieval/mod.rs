@@ -609,9 +609,9 @@ pub(super) fn citation_ids_by_chunk(
     citation_ids_by_chunk_impl(sources)
 }
 
-/// Build source citations from search results with parallel document lookups.
+/// Build source citations from search results with batched metadata lookups.
 ///
-/// Fetches document metadata in parallel to avoid N+1 queries, then constructs
+/// Fetches document and chunk metadata in batches, then constructs
 /// `SourceDto` entries with full citation metadata for frontend display.
 async fn build_source_citations(
     results: &[lattice_core::application::contracts::search::SearchResultDto],

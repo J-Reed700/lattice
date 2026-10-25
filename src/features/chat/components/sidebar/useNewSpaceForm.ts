@@ -1,6 +1,5 @@
 import { useState } from 'react';
 
-import { useNavigate } from 'react-router';
 
 import {
   JOURNAL_SPACE_DEFAULT_ACCENT,
@@ -10,6 +9,7 @@ import {
 import { useCreateJournalMutation, useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import type { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { uniqueName } from '@/features/spaces/model/spaces';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
@@ -18,7 +18,7 @@ import { toast } from '@/stores/toastStore';
  * A space goes through the space editor; a journal opens in the Journal.
  */
 export function useNewSpaceForm(editor: ReturnType<typeof useSpaceEditor>) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { setSelectedSpace, loadConversations } = useConversationsStore();
   const { journals } = useJournalsQuery();
   const createJournal = useCreateJournalMutation();

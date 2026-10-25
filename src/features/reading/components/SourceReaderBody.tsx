@@ -2,7 +2,6 @@ import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { useNavigate } from 'react-router';
 
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
 import { CitationRail } from '@/features/reading/components/CitationRail';
@@ -26,6 +25,7 @@ import { useSourceUrlImport } from '@/features/reading/hooks/useSourceUrlImport'
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
 import { useWebPageMode } from '@/features/reading/snapshot';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type {
@@ -33,6 +33,7 @@ import type {
   PassageMatchTier,
   SourceWithMetadata,
 } from '@/types/conversation';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
   getSourceExternalUrl,
@@ -120,7 +121,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onToggleFocus,
   onMinimize,
 }) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   /** The marked passage the web article has in view, if it has one. */
   const [activePassage, setActivePassage] = useState<string | null>(null);
   const isCompact = presentation !== 'dialog';
@@ -407,8 +408,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             importableUrl={importableUrl}
             importScopeSelect={renderImportScopeSelect()}
             isImportingUrl={isImportingUrl}
-            onImportUrl={handleImportSourceUrl}
-            onOpenUrl={handleOpenPrimary}
+            onImportUrl={handleAsyncEvent(handleImportSourceUrl)}
+            onOpenUrl={handleAsyncEvent(handleOpenPrimary)}
             snapshotConversationId={snapshotConversationId}
             snapshotUrl={snapshotUrl}
             webPageMode={webPageMode}
@@ -416,7 +417,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
           />
         ) : null
       }
-      onOpenPrimary={handleOpenPrimary}
+      onOpenPrimary={handleAsyncEvent(handleOpenPrimary)}
     />
   );
 
@@ -500,14 +501,14 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       {/* Footer */}
       <SourceReaderFooter
         canShowInFolder={canShowInFolder}
-        onShowInFolder={handleShowInFolder}
+        onShowInFolder={handleAsyncEvent(handleShowInFolder)}
         platformRevealLabel={platformRevealLabel}
         canImportUrl={shouldUseUrlActions && Boolean(importableUrl)}
         importScopeSelect={renderImportScopeSelect('mr-1')}
         isImportingUrl={isImportingUrl}
-        onImportUrl={handleImportSourceUrl}
+        onImportUrl={handleAsyncEvent(handleImportSourceUrl)}
         primaryActionLabel={primaryActionLabel}
-        onOpenPrimary={handleOpenPrimary}
+        onOpenPrimary={handleAsyncEvent(handleOpenPrimary)}
       />
       {captureDraft !== null && (
         <JournalCapturePreview content={captureDraft} onClose={() => setCaptureDraft(null)}

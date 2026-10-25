@@ -1,6 +1,7 @@
 import { Code2 } from "lucide-react";
 
 import type { LearningLessonDto, LearningPracticalActivityDto } from "@/lib/bindings";
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export function ActivityShelf({
   lesson,
@@ -61,7 +62,7 @@ export function ActivityShelf({
                 type="button"
                 key={activity.id}
                 aria-pressed={activeActivity?.id === activity.id}
-                onClick={() => onSelectActivity(activity)}
+                onClick={handleAsyncEvent(() => onSelectActivity(activity))}
                 className={`w-full rounded-xl border p-3 text-left transition ${activeActivity?.id === activity.id ? "border-accent/50 bg-accent/5" : "border-border bg-background/40 hover:border-accent/30"}`}
               >
                 <span className="flex items-center justify-between gap-2">

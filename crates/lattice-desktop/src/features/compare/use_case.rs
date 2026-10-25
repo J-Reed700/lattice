@@ -2,7 +2,7 @@
 //! document → tolerant parse → map quotes back to the chunks it carried →
 //! assemble.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::features::compare::di::CompareDeps;
 use lattice_core::application::ports::llm_port::InferencePriority;
-use lattice_core::application::ports::{LLMPort, RepositoryPort};
+use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
@@ -349,16 +349,23 @@ pub async fn compare_documents_impl(
 
     // Resolve titles once. A missing document is a row, never a hard failure.
     let repository = &deps.documents;
+    let mut metadata: HashMap<_, _> = repository
+        .find_metadata_by_ids(&document_ids)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|document| (document.id().as_str().to_owned(), document))
+        .collect();
     let mut documents: Vec<ResolvedDocument> = Vec::with_capacity(document_ids.len());
     for id in &document_ids {
-        match RepositoryPort::find_by_id(repository.as_ref(), id).await {
-            Ok(Some(document)) => documents.push(ResolvedDocument {
+        match metadata.remove(id) {
+            Some(document) => documents.push(ResolvedDocument {
                 id: id.clone(),
                 title: document.file_name().to_string(),
                 file_path: document.file_path().to_string_lossy().to_string(),
                 error: None,
             }),
-            Ok(None) | Err(_) => documents.push(ResolvedDocument {
+            None => documents.push(ResolvedDocument {
                 id: id.clone(),
                 title: id.clone(),
                 file_path: String::new(),
