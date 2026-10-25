@@ -21,6 +21,7 @@ import { SectionTangentBar, StudyTangentSelection } from '@/features/learning/ta
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 const blockLabels: Record<LearningBlockKind, string> = {
   explanation: 'Understand the idea', worked_example: 'Worked example', guided_practice: 'Try it with guidance',
@@ -41,7 +42,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   pending: boolean;
   onPrepare: () => void;
   onComplete: () => void;
-  onSelect: () => void;
+  onSelect: () => void | Promise<boolean>;
   onPractice: () => void;
   /** Opens the lesson's claim review screen; the course page never shows claims itself. */
   onReview?: (programId: string, lessonId: string) => void;
@@ -110,7 +111,11 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     <article id={`lesson-${lesson.id}`} className={`studio-lesson ${expanded ? 'is-expanded' : ''}`}>
       <div className="studio-lesson-header">
         <span className={`studio-lesson-marker ${lesson.completed ? 'is-complete' : ''}`} aria-hidden="true">{lesson.completed ? <Check size={14} /> : number ?? '—'}</span>
-        <button type="button" aria-label={lesson.title} aria-expanded={expanded} aria-controls={bodyId} onClick={() => { onSelect(); setExpanded((value) => !value); }} className="studio-lesson-toggle">
+        <button type="button" aria-label={lesson.title} aria-expanded={expanded} aria-controls={bodyId} onClick={handleAsyncEvent(async () => {
+          const nextExpanded = !expanded;
+          if (await onSelect() === false) return;
+          setExpanded(nextExpanded);
+        })} className="studio-lesson-toggle">
           <span className="studio-lesson-row-title">{expanded ? 'Lesson' : lesson.title}</span>
           {isCurrent && <span className="studio-resume-tag">Resume here</span>}
           <ChevronDown size={13} className={`shrink-0 text-text-muted transition ${expanded ? 'rotate-180' : ''}`} />

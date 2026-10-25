@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,6 +79,27 @@ describe('Lesson card review state', () => {
     await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
     expect(await screen.findByRole('button', { name: 'Prepare lesson' })).toBeVisible();
     expect(screen.queryByRole('region', { name: /claim review/i })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('keeps the notebook mounted until saving resolves (%s)', async (saved) => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue(noReview);
+    let finishSave!: (saved: boolean) => void;
+    const onSelect = vi.fn(() => new Promise<boolean>((resolve) => { finishSave = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <LessonCard lesson={{ ...lesson, preparation: 'ready' }} moduleId="module-1" program={program} isCurrent selected pending={false}
+        onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={onSelect} onPractice={vi.fn()}
+        notebook={<textarea aria-label="Draft lesson notes" defaultValue="Keep this unsaved thought." />} />
+    </QueryClientProvider>);
+    const toggle = screen.getByRole('button', { name: lesson.title });
+    await userEvent.click(toggle);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('Draft lesson notes')).toHaveValue('Keep this unsaved thought.');
+    await act(async () => finishSave(saved));
+    expect(toggle).toHaveAttribute('aria-expanded', String(!saved));
+    if (saved) expect(screen.queryByLabelText('Draft lesson notes')).not.toBeInTheDocument();
+    else expect(screen.getByLabelText('Draft lesson notes')).toHaveValue('Keep this unsaved thought.');
   });
 
   it.each([

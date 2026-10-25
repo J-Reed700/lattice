@@ -676,6 +676,43 @@ test('Studio supports both themes and saves margin notes before hiding the panel
   await expectNoUnsupportedIpc(page);
 });
 
+test('Studio keeps margin notes and navigation guarded when collapsing fails to save', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.getByRole('button', { name: 'Add a lesson note' }).click();
+  const editor = page.getByLabel('Lesson margin notes', { exact: true });
+  await expect(editor).toBeVisible();
+  await page.evaluate(() => {
+    const ipc = window.__LATTICE_IPC__;
+    const save = ipc.handlers.update_workspace_note!;
+    const gate = { failing: true };
+    (window as unknown as { __NOTE_SAVE_GATE__: typeof gate }).__NOTE_SAVE_GATE__ = gate;
+    ipc.handlers.update_workspace_note = (args, bridge) => {
+      if (gate.failing) throw new Error('Notebook write failed');
+      return save(args, bridge);
+    };
+  });
+  const thought = 'Retain this draft until Journal can save it.';
+  await editor.fill(thought);
+  const lessonTitle = await page.locator('.studio-lesson-heading').innerText();
+  const toggle = page.getByRole('button', { name: lessonTitle, exact: true });
+  await toggle.click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Notebook write failed' })).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(editor).toHaveValue(thought);
+  await page.getByRole('button', { name: 'All programs', exact: true }).click();
+  await expect(editor).toHaveValue(thought);
+  await page.evaluate(() => {
+    (window as unknown as { __NOTE_SAVE_GATE__: { failing: boolean } }).__NOTE_SAVE_GATE__.failing = false;
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('button', { name: 'All programs', exact: true }).click();
+  await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+  await expect(editor).toHaveValue(thought);
+  await expectNoUnsupportedIpc(page);
+});
+
 test('Studio searches course context and persists pointer and keyboard pane resizing in both themes', async ({ page }) => {
   await installLearningStudioBackend(page);
   for (const theme of ['light', 'dark'] as const) {
