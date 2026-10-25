@@ -393,6 +393,13 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
             sources: vec![],
         })
         .await?;
+    LearningRepository::new(pool.clone())
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program_id.clone(),
+            expected_revision: 0,
+            title: "Rust reference control".into(),
+        })
+        .await?;
     let library = LearningSourceLibraryRepository::new(pool.clone());
     let versions = research_interview_answers(
         model.as_ref(),
