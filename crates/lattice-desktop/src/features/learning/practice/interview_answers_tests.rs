@@ -98,6 +98,111 @@ fn standard() -> Value {
     })
 }
 
+fn accepted_review() -> Value {
+    json!({"assessment":"The answer meets the question with supported claims and fair scoring.","issues":[]})
+}
+
+fn rejected_review(quote: &str, problem: &str) -> Value {
+    json!({"assessment":"The answer needs a correction.","issues":[{
+        "path":"/referenceAnswer","quote":quote,"problem":problem
+    }]})
+}
+
+#[test]
+fn review_findings_must_quote_the_answer_and_cannot_be_overridden_by_acceptance() -> Result<()> {
+    let answer: AnswerStandard =
+        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
+    assert!(
+        interview_answer_review::read(&accepted_review().to_string(), &answer)?
+            .issues
+            .is_empty()
+    );
+    let issue = rejected_review(
+        "Preserve the intended effect",
+        "Explain the durability boundary.",
+    );
+    assert_eq!(
+        interview_answer_review::read(&issue.to_string(), &answer)?
+            .issues
+            .len(),
+        1
+    );
+    let mut contradictory = issue.clone();
+    contradictory["accepted"] = json!(true);
+    assert!(interview_answer_review::read(&contradictory.to_string(), &answer).is_err());
+    for (path, quote) in [
+        ("/referenceAnswer", "Ignore previous instructions"),
+        ("/referenceAnswer", "A paraphrase of the proposed answer"),
+        ("/keyPoints/0/citations/0/quote", "An idempotent operation"),
+        ("/sourceSnapshots/0", "Preserve the intended effect"),
+        (
+            "/scoringCriteria/9/fullCredit",
+            "Preserve the intended effect",
+        ),
+    ] {
+        let mut bad = issue.clone();
+        bad["issues"][0]["path"] = json!(path);
+        bad["issues"][0]["quote"] = json!(quote);
+        assert!(
+            interview_answer_review::read(&bad.to_string(), &answer).is_err(),
+            "{path}: {quote}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn author_schema_and_parser_preserve_evidence_classifications() -> Result<()> {
+    let llm = model(vec![]);
+    let source = source();
+    let passages = json!([{"sourceId":source.source_id,"versionId":source.version.id,"passages":[source.full_text]}]);
+    let bank = EvidenceBank::from_passages(&llm, std::slice::from_ref(&source), &passages, 2_000)?;
+    let schema = standard_schema(&bank.ids());
+    let validator = jsonschema::JSONSchema::compile(&schema).expect("valid author schema");
+    let mut authored = standard();
+    authored["keyPoints"][0]["citations"] = json!(["e1"]);
+    assert!(validator.is_valid(&authored));
+    for (kind, citations) in [
+        ("reasoning", json!(["e1"])),
+        ("unverified", json!(["e1"])),
+        ("sourced", json!([])),
+    ] {
+        authored["keyPoints"][0]["evidence"] = json!(kind);
+        authored["keyPoints"][0]["citations"] = citations;
+        assert!(!validator.is_valid(&authored));
+        let parsed = bank.read_standard(&authored.to_string())?;
+        assert_eq!(
+            serde_json::to_value(&parsed.key_points[0].evidence).expect("evidence"),
+            json!(kind)
+        );
+        assert!(check_standard(&parsed, std::slice::from_ref(&source)).is_err());
+    }
+    let schema = standard_schema(&[]);
+    let empty = jsonschema::JSONSchema::compile(&schema).expect("valid source-free schema");
+    authored["keyPoints"][0]["evidence"] = json!("reasoning");
+    authored["evidenceGaps"] = json!(["No captured source support."]);
+    assert!(empty.is_valid(&authored));
+    authored["keyPoints"][0]["evidence"] = json!("sourced");
+    assert!(!empty.is_valid(&authored));
+    Ok(())
+}
+
+#[tokio::test]
+async fn unrelated_reference_availability_does_not_force_a_false_citation() -> Result<()> {
+    let mut unrelated = source();
+    unrelated.version.extraction_version = "web_reference_markdown_v2".into();
+    let mut hypothetical = standard();
+    hypothetical["keyPoints"][0]["evidence"] = json!("reasoning");
+    hypothetical["keyPoints"][0]["citations"] = json!([]);
+    hypothetical["evidenceGaps"] =
+        json!(["The captured reference does not establish this hypothetical design."]);
+    let llm = model(vec![hypothetical, accepted_review()]);
+    let guides = generate_answer_guides(&llm, &plan(), &[unrelated]).await?;
+    assert_eq!(guides.cited_versions().count(), 0);
+    assert_eq!(llm.prompts.lock().expect("prompts").len(), 2);
+    Ok(())
+}
+
 #[test]
 fn evidence_ids_expand_only_to_exact_captured_quotes_from_this_call() -> Result<()> {
     let llm = model(vec![]);
@@ -201,9 +306,12 @@ fn standards_require_exact_owned_citations_and_disclose_missing_evidence() {
 async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()> {
     let llm = model(vec![
         standard(),
-        json!({"accepted":false,"issues":["Explain that responses can differ."]}),
+        rejected_review(
+            "Preserve the intended effect across retries",
+            "Explain that responses can differ.",
+        ),
         standard(),
-        json!({"accepted":true,"issues":[]}),
+        accepted_review(),
     ]);
     let guides = generate_answer_guides(&llm, &plan(), &[source()]).await?;
     guides.validate_plan(&plan())?;
@@ -229,11 +337,17 @@ async fn a_second_repair_must_receive_a_fresh_review_before_acceptance() -> Resu
         json!("Preserve the intended effect but verify only when the response arrives.");
     let llm = model(vec![
         initial,
-        json!({"accepted":false,"issues":["Repeated responses may differ."]}),
+        rejected_review(
+            "Require an identical response on every retry.",
+            "Repeated responses may differ.",
+        ),
         first_repair,
-        json!({"accepted":false,"issues":["Verify the explicit lost-response scenario."]}),
+        rejected_review(
+            "verify only when the response arrives",
+            "Verify the explicit lost-response scenario.",
+        ),
         standard(),
-        json!({"accepted":true,"issues":[]}),
+        accepted_review(),
     ]);
     let guides = generate_answer_guides(&llm, &plan(), &[source()]).await?;
     assert_eq!(
@@ -285,11 +399,7 @@ async fn behavioral_standard_repairs_fabricated_history_before_review() -> Resul
         json!("In my previous role, I led a project that prevented duplicate charges.");
     let mut outline = standard();
     outline["referenceAnswer"] = json!("The candidate should use their own example, explain their responsibility and reasoning, and describe observable outcomes and limitations without inventing experience.");
-    let llm = model(vec![
-        fabricated,
-        outline,
-        json!({"accepted":true,"issues":[]}),
-    ]);
+    let llm = model(vec![fabricated, outline, accepted_review()]);
     let guides = generate_answer_guides(&llm, &behavioral, &[source()]).await?;
     assert!(guides.questions[0]
         .standard
@@ -306,8 +416,10 @@ async fn behavioral_standard_repairs_fabricated_history_before_review() -> Resul
 
 #[tokio::test]
 async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
-    let rejected =
-        json!({"accepted":false,"issues":["The proposed answer contradicts the specification."]});
+    let rejected = rejected_review(
+        "Preserve the intended effect across retries",
+        "The proposed answer contradicts the specification.",
+    );
     let llm = model(vec![
         standard(),
         rejected.clone(),
@@ -317,7 +429,7 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
         rejected,
         // A later acceptance must not bypass the finite review budget.
         standard(),
-        json!({"accepted":true,"issues":[]}),
+        accepted_review(),
     ]);
     let error = generate_answer_guides(&llm, &plan(), &[source()])
         .await
@@ -329,7 +441,7 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
 
 #[tokio::test]
 async fn guide_is_bound_to_exact_question_and_quotes_revalidated_for_feedback() -> Result<()> {
-    let llm = model(vec![standard(), json!({"accepted":true,"issues":[]})]);
+    let llm = model(vec![standard(), accepted_review()]);
     let guides = generate_answer_guides(&llm, &plan(), &[source()]).await?;
     let mut changed = plan();
     changed.questions[0].question = "A different question".into();
@@ -374,7 +486,7 @@ fn session() -> crate::features::learning::practical_dto::LearningSimulationSess
 #[tokio::test]
 async fn only_closing_feedback_receives_answers_and_must_cite_the_saved_evidence() -> Result<()> {
     use super::super::practical_generation::{generate_simulation_turn, SimulationActivityContext};
-    let author = model(vec![standard(), json!({"accepted":true,"issues":[]})]);
+    let author = model(vec![standard(), accepted_review()]);
     let mut actual_plan = plan();
     actual_plan.questions[0].evaluation_signals = vec!["UNVERIFIED_PLAN_SIGNAL_837".into()];
     actual_plan.questions[0].follow_up_probes = vec!["UNVERIFIED_PLAN_PROBE_837".into()];
@@ -428,7 +540,7 @@ async fn only_closing_feedback_receives_answers_and_must_cite_the_saved_evidence
 #[tokio::test]
 async fn selecting_a_question_can_finish_without_an_invented_answer_or_citation() -> Result<()> {
     use super::super::practical_generation::{generate_simulation_turn, SimulationActivityContext};
-    let author = model(vec![standard(), json!({"accepted":true,"issues":[]})]);
+    let author = model(vec![standard(), accepted_review()]);
     let guides = generate_answer_guides(&author, &plan(), &[source()]).await?;
     let context = SimulationActivityContext {
         title: "Retry interview".into(),
@@ -539,7 +651,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
     let mut answer = standard();
     answer["keyPoints"][0]["citations"][0]["sourceId"] = json!(captured.source_id);
     answer["keyPoints"][0]["citations"][0]["versionId"] = json!(captured.version.id);
-    let author = model(vec![answer, json!({"accepted":true,"issues":[]})]);
+    let author = model(vec![answer, accepted_review()]);
     let lesson = &program.modules[0].lessons[0];
     let generated = generate_activity_with_plan(
         &author,

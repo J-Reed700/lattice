@@ -29,6 +29,68 @@ fn schema(runtime: &PracticalRuntimeContext) -> Value {
     })
 }
 
+pub(super) fn check_python_line_quotes(path: &str, content: &str) -> Result<()> {
+    let mut triple: Option<&str> = None;
+    for (idx, line) in content.lines().enumerate() {
+        let mut chars = line.chars().peekable();
+        let mut quote: Option<char> = None;
+        while let Some(ch) = chars.next() {
+            if let Some(delim) = triple {
+                let first = delim.chars().next().unwrap_or('"');
+                if ch == '\\' {
+                    let _ = chars.next();
+                } else if ch == first && chars.peek() == Some(&first) {
+                    let mut clone = chars.clone();
+                    let _ = clone.next();
+                    if clone.next() == Some(first) {
+                        let _ = chars.next();
+                        let _ = chars.next();
+                        triple = None;
+                    }
+                }
+                continue;
+            }
+            if let Some(active) = quote {
+                if ch == '\\' {
+                    let _ = chars.next();
+                } else if ch == active {
+                    quote = None;
+                }
+                continue;
+            }
+            if ch == '#' {
+                break;
+            }
+            if ch == '\'' || ch == '"' {
+                if chars.peek() == Some(&ch) {
+                    let mut clone = chars.clone();
+                    let _ = clone.next();
+                    if clone.next() == Some(ch) {
+                        let _ = chars.next();
+                        let _ = chars.next();
+                        triple = Some(if ch == '\'' { "'''" } else { "\"\"\"" });
+                        continue;
+                    }
+                }
+                quote = Some(ch);
+            }
+        }
+        if quote.is_some() && !line.trim_end().ends_with('\\') {
+            return Err(invalid(format!(
+                "Python file '{path}' has an unterminated string literal on line {} (`{}`): close the string literal with a matching quote, and use double-quoted strings with backslash-escaped quotes instead of single-quoted strings containing double quotes.",
+                idx + 1,
+                line.trim()
+            )));
+        }
+    }
+    if triple.is_some() {
+        return Err(invalid(format!(
+            "Python file '{path}' has an unterminated triple-quoted string."
+        )));
+    }
+    Ok(())
+}
+
 pub(super) async fn generate(
     llm: &dyn LLMPort,
     brief: &str,
@@ -54,7 +116,7 @@ pub(super) async fn generate(
         .collect::<HashSet<_>>();
     crate::features::learning::generation::complete_checked(
         llm,
-        "Author only independent evaluator files for this public practical brief and exact executionEnvironment. evaluatorPaths are app-owned required filenames; use those paths exactly and include every listed file. Every publicFiles path belongs to the learner workspace: never emit, copy or replace it. Import the learner's supplied interface and assert the stated behavior and edge cases. Use only supported language versions and available dependencies. Assertions must fail nonzero; zero checks cannot count as success. Do not include a solution or reference implementation, derive expected output from hidden solution text, use networking, or execute a host shell.",
+        "Author only independent evaluator files for this public practical brief and exact executionEnvironment. evaluatorPaths are app-owned required filenames; use those paths exactly and include every listed file. Every publicFiles path belongs to the learner workspace: never emit, copy or replace it. Import the learner's supplied interface and assert the stated behavior and edge cases with 4 to 6 concise, syntactically valid test cases. In Python files, use double-quoted string literals with backslash-escaped quotes instead of single-quoted strings containing double quotes. Use only supported language versions and available dependencies. Assertions must fail nonzero; zero checks cannot count as success. Do not include a solution or reference implementation, derive expected output from hidden solution text, use networking, or execute a host shell.",
         json!({"brief":brief,"publicFiles":public_files,"executionEnvironment":runtime}).to_string(),
         schema(runtime), 2_500, None, None,
         |raw| {

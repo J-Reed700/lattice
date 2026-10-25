@@ -4929,6 +4929,12 @@
           "markdownDescription": "Enables the course_index_status command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_learning_assessment_blueprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-assessment-blueprint",
+          "markdownDescription": "Enables the create_learning_assessment_blueprint command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_learning_canvas command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-create-learning-canvas",
@@ -5065,6 +5071,12 @@
           "type": "string",
           "const": "learning:allow-get-learning-assessment-form",
           "markdownDescription": "Enables the get_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_assessment_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-assessment-workspace",
+          "markdownDescription": "Enables the get_learning_assessment_workspace command without any pre-configured scope."
         },
         {
           "description": "Enables the get_learning_canvas_workspace command without any pre-configured scope.",
@@ -5481,6 +5493,12 @@
           "markdownDescription": "Enables the skip_learning_diagnostic command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-assessment-form",
+          "markdownDescription": "Enables the start_learning_assessment_form command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_learning_diagnostic command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-start-learning-diagnostic",
@@ -5521,6 +5539,12 @@
           "type": "string",
           "const": "learning:allow-submit-learning-assessment-form",
           "markdownDescription": "Enables the submit_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_learning_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-submit-learning-attempt",
+          "markdownDescription": "Enables the submit_learning_attempt command without any pre-configured scope."
         },
         {
           "description": "Enables the submit_learning_diagnostic command without any pre-configured scope.",
@@ -5703,6 +5727,12 @@
           "markdownDescription": "Denies the course_index_status command without any pre-configured scope."
         },
         {
+          "description": "Denies the create_learning_assessment_blueprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-assessment-blueprint",
+          "markdownDescription": "Denies the create_learning_assessment_blueprint command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_learning_canvas command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-create-learning-canvas",
@@ -5839,6 +5869,12 @@
           "type": "string",
           "const": "learning:deny-get-learning-assessment-form",
           "markdownDescription": "Denies the get_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_assessment_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-assessment-workspace",
+          "markdownDescription": "Denies the get_learning_assessment_workspace command without any pre-configured scope."
         },
         {
           "description": "Denies the get_learning_canvas_workspace command without any pre-configured scope.",
@@ -6255,6 +6291,12 @@
           "markdownDescription": "Denies the skip_learning_diagnostic command without any pre-configured scope."
         },
         {
+          "description": "Denies the start_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-assessment-form",
+          "markdownDescription": "Denies the start_learning_assessment_form command without any pre-configured scope."
+        },
+        {
           "description": "Denies the start_learning_diagnostic command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-start-learning-diagnostic",
@@ -6295,6 +6337,12 @@
           "type": "string",
           "const": "learning:deny-submit-learning-assessment-form",
           "markdownDescription": "Denies the submit_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_learning_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-submit-learning-attempt",
+          "markdownDescription": "Denies the submit_learning_attempt command without any pre-configured scope."
         },
         {
           "description": "Denies the submit_learning_diagnostic command without any pre-configured scope.",

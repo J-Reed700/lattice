@@ -215,8 +215,8 @@ impl LLMPort for InterviewLlm {
                     {"criterion":"Verification","fullCredit":"Checks the claimed outcome.","partialCredit":"Suggests a check without explaining it."}
                 ],"evidenceGaps":["No source snapshots were captured for these hypothetical exercises."]
             })
-        } else if properties.is_some_and(|fields| fields.get("accepted").is_some()) {
-            json!({"accepted":true,"issues":[]})
+        } else if properties.is_some_and(|fields| fields.get("assessment").is_some()) {
+            json!({"assessment":"The standard meets the question with disclosed limitations.","issues":[]})
         } else if properties.is_some_and(|fields| fields.get("content").is_some()) {
             if self.invalid_citation_once.swap(false, Ordering::Relaxed) {
                 json!({"content":"Evidence is insufficient.","citations":[{"sourceId":"learner","versionId":"transcript","quote":"I am not sure."}]})

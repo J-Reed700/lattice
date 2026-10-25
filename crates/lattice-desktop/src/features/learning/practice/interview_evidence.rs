@@ -186,27 +186,43 @@ impl EvidenceBank {
         }
         let standard: AnswerStandard = serde_json::from_value(value)
             .map_err(|_| invalid("The interview answer standard was malformed."))?;
-        let has_inline_ids = {
-            let mut prose = std::iter::once(standard.reference_answer.as_str())
-                .chain(standard.key_points.iter().map(|point| point.point.as_str()))
-                .chain(standard.acceptable_alternatives.iter().map(String::as_str))
-                .chain(standard.common_mistakes.iter().map(String::as_str))
-                .chain(standard.evidence_gaps.iter().map(String::as_str))
-                .chain(standard.scoring_criteria.iter().flat_map(|criterion| {
-                    [
-                        criterion.criterion.as_str(),
-                        criterion.full_credit.as_str(),
-                        criterion.partial_credit.as_str(),
-                    ]
-                }));
-            prose.any(|text| {
-                self.choices
-                    .iter()
-                    .any(|choice| text.contains(&format!("[{}]", choice.id)))
-            })
-        };
-        if has_inline_ids {
-            return Err(invalid("Evidence choice IDs belong only in keyPoints citations arrays. Remove inline [eN] labels from saved answer and scoring prose."));
+        let mut inline_tokens = Vec::new();
+        for text in std::iter::once(standard.reference_answer.as_str())
+            .chain(standard.key_points.iter().map(|point| point.point.as_str()))
+            .chain(standard.acceptable_alternatives.iter().map(String::as_str))
+            .chain(standard.common_mistakes.iter().map(String::as_str))
+            .chain(standard.evidence_gaps.iter().map(String::as_str))
+            .chain(standard.scoring_criteria.iter().flat_map(|criterion| {
+                [
+                    criterion.criterion.as_str(),
+                    criterion.full_credit.as_str(),
+                    criterion.partial_credit.as_str(),
+                ]
+            }))
+        {
+            for choice in &self.choices {
+                let id = &choice.id;
+                for pat in [
+                    format!("[{id}]"),
+                    format!("({id})"),
+                    format!("({id},"),
+                    format!(", {id})"),
+                ] {
+                    if text.contains(&pat) && !inline_tokens.contains(&pat) {
+                        inline_tokens.push(pat);
+                    }
+                }
+            }
+        }
+        if !inline_tokens.is_empty() {
+            let mut msg = format!(
+                "Evidence choice IDs belong only in keyPoints citations arrays. Remove inline {} labels from referenceAnswer, commonMistakes, scoringCriteria and all prose.",
+                inline_tokens.join(", ")
+            );
+            if standard.reference_answer.trim().chars().count() > 4_000 {
+                msg.push_str(" Also shorten referenceAnswer to under 3500 characters (maximum 4000 characters).");
+            }
+            return Err(invalid(msg));
         }
         Ok(standard)
     }

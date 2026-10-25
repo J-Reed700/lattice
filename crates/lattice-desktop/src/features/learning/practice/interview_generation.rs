@@ -137,10 +137,13 @@ fn checked_interview_plan(
     let mut seen = HashSet::new();
     let mut rounds = HashSet::new();
     let mut questions = Vec::new();
-    for question in parsed.questions {
+    for (index, question) in parsed.questions.into_iter().enumerate() {
         // A grammar maxLength closes strings mid-task; let the model finish
         // the question, then enforce the bound without publishing a fragment.
-        bounded(&question.question, "Interview question", 2_000)?;
+        let q_len = question.question.trim().chars().count();
+        if !(1..=2_000).contains(&q_len) {
+            return Err(invalid(format!("Interview question must contain 1–2000 characters (questions[{index}].question has {q_len} characters; shorten its code sample and prose to under 1400 characters).")));
+        }
         let prose = interview_prose(&question.question)?;
         if !prose
             .trim_end()
@@ -477,9 +480,9 @@ pub(in crate::features::learning) async fn generate_interview_plan(
         "Keep each question under 1400 characters INCLUDING any code, and finish every task with complete punctuation outside a closed code fence; the field limit is 2000 characters. Never trail off mid-sentence. Each question needs 2 to 4 concise follow-up probes and evaluation signals tied to this role and company context. ",
         "Make the rounds substantively different: technical_deep_dive probes mechanisms and tradeoffs; system_design asks for an architecture; behavioral asks for the learner's own past experience; debugging_and_code embeds a short actual code sample, exact failure trace or concrete failing input, including expected and observed behavior, and asks the learner to investigate and verify a fix. Never say a code sample is supplied without including it. A design question alone is not a debugging round. ",
         "Use a minimal self-contained debugging example, with the relevant operations and necessary inputs/types. Never assert that a snippet proves a side effect or root cause absent from the shown code; ask what additional evidence is needed when a cause cannot yet be established. ",
-        "Ground company facts only in supplied company sourceSnapshots and distinguish learner-supplied notes from verified company publications. Preserve facts at their captured specificity; do not turn plausible inferences or product extensions into documented capabilities. ",
+        "Ground company facts only in supplied company sourceSnapshots and distinguish learner-supplied notes from verified company publications. Preserve facts at their captured specificity and use the exact domain terms from supplied company sourceSnapshots directly in question and companyRationale rather than replacing them with generic paraphrases; do not turn plausible inferences or product extensions into documented capabilities. ",
         "Give a short company summary and state research gaps explicitly. Without captured company evidence, label context as unverified; say no publications were captured, never that none exist. ",
-        "Every invented architecture, numeric target, scale, policy or other exercise premise must be explicitly hypothetical within the question itself (for example, 'Assume for this practice exercise ...'); probes must preserve that framing. Never describe an invented premise as the company's current system. ",
+        "Every invented architecture, tech stack, numeric target, scale, policy or other exercise premise must be explicitly hypothetical within the question itself (for example, 'Assume for this practice exercise ...'); probes must preserve that framing. Never describe an invented premise as the company's current system. ",
         "Evaluation signals should describe observable correctness, reasoning, tradeoffs and verification, accepting technically valid alternatives rather than requiring a particular tool or implementation recipe. Do not introduce domain assumptions absent from the question and evidence, or treat a possible failure cause as proven. ",
         "Never invent a company's stack, scale, values or actual interview process. Questions are original practice exercises, not claims about actual company interviews."
     );
