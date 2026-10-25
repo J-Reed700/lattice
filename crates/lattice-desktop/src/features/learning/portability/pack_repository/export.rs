@@ -186,13 +186,19 @@ pub(super) async fn practical(
     let practical = LearningPracticalRepository::workspace_on(tx, program_id).await?;
     let sessions=sqlx::query("SELECT id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at,submitted_at FROM learning_simulation_sessions WHERE program_id=? ORDER BY created_at,id")
                 .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
-    let simulations:Vec<serde_json::Value>=sessions.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"activityId":r.get::<String,_>("activity_id"),"activityRevision":r.get::<i64,_>("activity_revision"),"activitySnapshot":r.get::<String,_>("activity_snapshot_json"),"practiceSessionId":r.get::<Option<String>,_>("practice_session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"learnerRole":r.get::<String,_>("learner_role"),"counterpartRole":r.get::<String,_>("counterpart_role"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision"),"createdAt":r.get::<i64,_>("created_at"),"updatedAt":r.get::<i64,_>("updated_at"),"submittedAt":r.get::<Option<i64>,_>("submitted_at")})).collect();
+    let simulations:Vec<serde_json::Value>=sessions.into_iter().map(|r| {
+        let activity = super::interview_privacy::public_snapshot(r.get("activity_snapshot_json"))?;
+        Ok(serde_json::json!({"id":r.get::<String,_>("id"),"activityId":r.get::<String,_>("activity_id"),"activityRevision":r.get::<i64,_>("activity_revision"),"activitySnapshot":activity,"practiceSessionId":r.get::<Option<String>,_>("practice_session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"learnerRole":r.get::<String,_>("learner_role"),"counterpartRole":r.get::<String,_>("counterpart_role"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision"),"createdAt":r.get::<i64,_>("created_at"),"updatedAt":r.get::<i64,_>("updated_at"),"submittedAt":r.get::<Option<i64>,_>("submitted_at")}))
+    }).collect::<Result<_>>()?;
     let turns=sqlx::query("SELECT id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at FROM learning_simulation_turns WHERE program_id=? ORDER BY session_id,ordinal")
                 .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
     let simulation_turns:Vec<serde_json::Value>=turns.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"sessionId":r.get::<String,_>("session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"ordinal":r.get::<i64,_>("ordinal"),"speaker":r.get::<String,_>("speaker"),"content":r.get::<String,_>("content"),"citations":r.get::<String,_>("citations_json"),"modelName":r.get::<Option<String>,_>("model_name"),"createdAt":r.get::<i64,_>("created_at")})).collect();
     let raw_runs=sqlx::query("SELECT id,operation_id,payload_hash,activity_snapshot_json FROM learning_practical_runs WHERE program_id=? ORDER BY created_at,id")
                 .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
-    let run_snapshots:Vec<serde_json::Value>=raw_runs.into_iter().map(|r|serde_json::json!({"runId":r.get::<String,_>("id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"activitySnapshot":r.get::<String,_>("activity_snapshot_json")})).collect();
+    let run_snapshots:Vec<serde_json::Value>=raw_runs.into_iter().map(|r| {
+        let activity = super::interview_privacy::public_snapshot(r.get("activity_snapshot_json"))?;
+        Ok(serde_json::json!({"runId":r.get::<String,_>("id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"activitySnapshot":activity}))
+    }).collect::<Result<_>>()?;
     let snapshot = PracticalPackSnapshot {
         // Export saved data; availability is recomputed on the receiving device.
         activities: practical.workspace.activities,

@@ -20,6 +20,10 @@ const MAX_COMMAND_OUTPUT: usize = 32 * 1024;
 const NODE_BASE_IMAGE_REF: &str =
     "node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c";
 const NODE_PREPARED_IMAGE_REF: &str = "lattice-learning/react-ts:22.23.3-v2";
+const CSHARP_ENVIRONMENT: &str = ".NET SDK 10.0.401.";
+const RUST_ENVIRONMENT: &str = "Rust 1.98.1.";
+const NODE_ENVIRONMENT: &str = "Node.js 22.23.3 with React and React DOM 19.2.8, TypeScript 5.9.3, jsdom 30.0.1, and Testing Library 16.3.2.";
+const PYTHON_ENVIRONMENT: &str = "Python 3.13.16.";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +47,31 @@ pub struct LearningRuntimePresetDto {
     pub limits: LearningLabLimits,
     /// Describes required workspace files and what the base image supports.
     pub entrypoint_contract: String,
+}
+
+impl LearningRuntimePresetDto {
+    /// Public workspace constraints and private filenames are separate from
+    /// the evaluator's instructions, so the public author cannot copy checks.
+    pub(in crate::features::learning) fn generation_contracts(&self) -> (String, Vec<String>) {
+        let (environment, learner, paths): (&str, &str, &[&str]) = match self.id {
+            LearningRuntimePresetId::Csharp => (CSHARP_ENVIRONMENT,
+                "Create editable C# source compatible with an independent package-free test project. Use the standard library and no external PackageReference dependencies. Do not create a test project or test runner. The runner reserves /workspace/.lattice-build.",
+                &["checks/Checks.csproj", "checks/Program.cs"]),
+            LearningRuntimePresetId::Rust => (RUST_ENVIRONMENT,
+                "Create editable Rust source using only the standard library, with public functions callable by an independent test module. Cargo dependencies and networking are unavailable. The runner reserves /workspace/.lattice-build.",
+                &["checks.rs"]),
+            LearningRuntimePresetId::Node => (NODE_ENVIRONMENT,
+                "Create editable React/TypeScript source under src/ and a workspace-root tsconfig.json with react-jsx enabled that includes all workspace TypeScript sources. Use only the installed dependencies. Do not create tests. The runner reserves /workspace/node_modules.",
+                &["checks/checks.test.tsx"]),
+            LearningRuntimePresetId::Python => (PYTHON_ENVIRONMENT,
+                "Create editable functions in solution.py using only the standard library. Networking and package installation are unavailable. Do not create tests or a test runner.",
+                &["checks.py"]),
+        };
+        (
+            format!("{environment} {learner}"),
+            paths.iter().map(|path| (*path).into()).collect(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -82,7 +111,7 @@ pub fn learning_runtime_catalog() -> Vec<LearningRuntimePresetDto> {
                 "--property:UseAppHost=false".into(),
             ],
             limits: runtime_limits(),
-            entrypoint_contract: ".NET SDK 10.0.401. Provide checks/Checks.csproj and its C# sources. Keep the project free of external PackageReference dependencies; the SDK restores framework references offline. The runner reserves /workspace/.lattice-build for build output; the project must not use that path. UseAppHost=false keeps execution through the installed dotnet runtime.".into(),
+            entrypoint_contract: format!("{CSHARP_ENVIRONMENT} Provide checks/Checks.csproj and its C# sources. Keep the project free of external PackageReference dependencies; the SDK restores framework references offline. The runner reserves /workspace/.lattice-build for build output; the project must not use that path. UseAppHost=false keeps execution through the installed dotnet runtime."),
         },
         LearningRuntimePresetDto {
             id: LearningRuntimePresetId::Rust,
@@ -95,7 +124,7 @@ pub fn learning_runtime_catalog() -> Vec<LearningRuntimePresetDto> {
                 "mkdir -p /workspace/.lattice-build && rustc --test checks.rs -o /workspace/.lattice-build/rust-tests && /workspace/.lattice-build/rust-tests".into(),
             ],
             limits: runtime_limits(),
-            entrypoint_contract: "Rust 1.98.1. Provide checks.rs with Rust #[test] functions. This preset uses rustc and the standard library only; Cargo dependencies and network access are unavailable. The runner reserves /workspace/.lattice-build for its executable; the project must not use that path.".into(),
+            entrypoint_contract: format!("{RUST_ENVIRONMENT} Provide checks.rs with Rust #[test] functions. This preset uses rustc and the standard library only; Cargo dependencies and network access are unavailable. The runner reserves /workspace/.lattice-build for its executable; the project must not use that path."),
         },
         LearningRuntimePresetDto {
             id: LearningRuntimePresetId::Node,
@@ -108,7 +137,7 @@ pub fn learning_runtime_catalog() -> Vec<LearningRuntimePresetDto> {
                 "ln -s /opt/lattice/node_modules /workspace/node_modules && /opt/lattice/node_modules/.bin/tsc --project tsconfig.json --noEmit && node --import tsx --test checks/checks.test.tsx".into(),
             ],
             limits: runtime_limits(),
-            entrypoint_contract: "Node.js 22.23.3 with React and React DOM 19.2.8, TypeScript 5.9.3, jsdom 30.0.1, and Testing Library 16.3.2. Provide React/TypeScript source under src/, a workspace-root tsconfig.json with react-jsx enabled that includes the source and evaluator tests, and checks/checks.test.tsx using node:test. The generated runner checks types, then executes React component tests without network access. The runner reserves /workspace/node_modules; project files must not use that path.".into(),
+            entrypoint_contract: format!("{NODE_ENVIRONMENT} Provide React/TypeScript source under src/, a workspace-root tsconfig.json with react-jsx enabled that includes the source and evaluator tests, and checks/checks.test.tsx using node:test. The generated runner checks types, then executes React component tests without network access. The runner reserves /workspace/node_modules; project files must not use that path."),
         },
         LearningRuntimePresetDto {
             id: LearningRuntimePresetId::Python,
@@ -123,7 +152,7 @@ pub fn learning_runtime_catalog() -> Vec<LearningRuntimePresetDto> {
                 "import runpy,sys; sys.path.insert(0, '/workspace'); runpy.run_path('/workspace/checks.py', run_name='__main__')".into(),
             ],
             limits: runtime_limits(),
-            entrypoint_contract: "Python 3.13.16. Provide checks.py. The trusted launcher explicitly adds /workspace for imports while Python isolated mode ignores user Python configuration; use the standard library because network and package installation are unavailable.".into(),
+            entrypoint_contract: format!("{PYTHON_ENVIRONMENT} Provide checks.py. The trusted launcher explicitly adds /workspace for imports while Python isolated mode ignores user Python configuration; use the standard library because network and package installation are unavailable."),
         },
     ]
 }

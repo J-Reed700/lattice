@@ -6,6 +6,7 @@ import { LoaderCircle, Play, Send, Users } from "lucide-react";
 import { TiptapViewer } from "@/components/TiptapEditor";
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { errorText, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
 import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
 import VaultAPI from "@/lib/api";
 import type {
@@ -294,16 +295,16 @@ export function SimulationPanel({
                     </p>
                   ) : (
                     <div className="mt-1 text-sm leading-6 text-text-secondary">
-                      <TiptapViewer content={turnItem.content} />
+                      <TiptapViewer content={turnItem.content} images={isInterview ? [] : undefined} />
                     </div>
                   )}
                   {showCitations && turnItem.citations.map((citation, index) => (
-                    <blockquote
+                    <PracticeCitation
                       key={`${citation.sourceId}:${index}`}
-                      className="mt-2 border-l-2 border-accent/40 pl-2 text-xs italic text-text-muted"
-                    >
-                      “{citation.quote}”
-                    </blockquote>
+                      programId={programId}
+                      citation={citation}
+                      canOpen={activity.practiceMode !== "demonstrate" || session.status === "submitted"}
+                    />
                   ))}
                 </article>
               ))

@@ -128,6 +128,8 @@ impl LearningPracticalRepository {
         let mut interview_plan = None;
         for file in file_rows {
             let path: String = file.get("path");
+            // A pack or older writer may mislabel this reserved private path.
+            if path == crate::features::learning::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH { continue; }
             let content: String = file.get("content");
             if path == crate::features::learning::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH {
                 interview_plan = Some(serde_json::from_str::<LearningInterviewPlanDto>(&content)
