@@ -5,6 +5,8 @@
 //! - `tx.rs` - Transaction-based repository
 
 pub mod ops;
+#[cfg(test)]
+mod ops_tests;
 pub mod tx;
 
 pub use tx::SqliteModelRepositoryTx;

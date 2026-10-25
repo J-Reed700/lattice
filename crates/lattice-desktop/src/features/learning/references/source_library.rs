@@ -15,6 +15,8 @@ use std::collections::HashMap;
 
 mod capture;
 mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;
 mod reads;
 pub use reads::ActiveVersion;
 mod user_evidence;
