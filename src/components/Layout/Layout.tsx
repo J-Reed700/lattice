@@ -17,7 +17,7 @@ import {
   Search,
   Settings,
 } from 'lucide-react';
-import { Outlet, useLocation, useNavigate } from 'react-router';
+import { Outlet, useLocation } from 'react-router';
 
 import { ActivityIndicator } from '@/features/activity/components/ActivityIndicator';
 import { IndexingStatusRail } from '@/features/files/components/IndexingStatus/IndexingStatusRail';
@@ -25,7 +25,9 @@ import { DownloadsDrawer } from '@/features/model/components/Downloads/Downloads
 import { DrawerTrigger } from '@/features/model/components/Downloads/DrawerTrigger';
 import { HeaderDownloadsIndicator } from '@/features/model/components/Downloads/HeaderDownloadsIndicator';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { cn } from '@/lib/utils';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -152,7 +154,7 @@ function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
 }
 
 export function Layout() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const location = useLocation();
   const activeView = resolveActiveView(location.pathname);
 
@@ -192,13 +194,13 @@ export function Layout() {
         <nav aria-label="Main navigation" className="flex min-h-0 flex-1 flex-col">
           <div className="flex w-full flex-col gap-px">
             {PRIMARY_NAV.map((item) => (
-              <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={() => go(item.view)} compact={compact} />
+              <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={handleAsyncEvent(() => go(item.view))} compact={compact} />
             ))}
           </div>
 
           <div className="mx-2.5 my-2.5 h-px bg-border-subtle" aria-hidden="true" />
 
-          <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={() => go(IMPORT_NAV.view)} compact={compact} />
+          <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={handleAsyncEvent(() => go(IMPORT_NAV.view))} compact={compact} />
 
           <div data-tauri-drag-region className="min-h-4 flex-1" />
 
@@ -206,7 +208,7 @@ export function Layout() {
             <IndexingStatusRail />
             <ActivityIndicator />
             <HeaderDownloadsIndicator />
-            <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={() => go(SETTINGS_NAV.view)} compact={compact} />
+            <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={handleAsyncEvent(() => go(SETTINGS_NAV.view))} compact={compact} />
             {/* Only a wide window has a labeled rail to collapse. */}
             <Tooltip delayDuration={500}>
               <TooltipTrigger asChild>

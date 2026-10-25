@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowUp, ExternalLink, GitBranch, Square, Trash2, X } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { fetchBookmarks, fetchConversationDetail, fetchMessages } from '@/features/chat/api/conversationQueryData';
@@ -12,6 +11,7 @@ import { reconcilePersistedFailedMessages } from '@/features/chat/controller/opt
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { learningTangentsKey } from '@/features/learning/api/learningQueryKeys';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningTangentDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -46,7 +46,7 @@ export function CourseTangentChat({
   onJumpToLesson,
 }: CourseTangentChatProps) {
   const id = tangent.conversationId;
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const base = useConversationsStore();
   const queryClient = useQueryClient();
   // Kept with the conversation, so leaving the lesson or the course keeps it.

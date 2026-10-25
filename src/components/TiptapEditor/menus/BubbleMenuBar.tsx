@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 
 import { BubbleMenu } from '@tiptap/react/menus';
 import { Bold, Highlighter, Italic, Link as LinkIcon } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { clipboardUrl } from '@/utils/clipboard';
 
 import type { Editor } from '@tiptap/react';
@@ -57,7 +57,7 @@ function MenuButton({ label, isActive, onClick, children }: MenuButtonProps) {
  * destructive-to-flow action is never the thing under the cursor.
  */
 export function BubbleMenuBar({ editor, selectionActions = [] }: BubbleMenuBarProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [linkMode, setLinkMode] = useState(false);
   const [linkDraft, setLinkDraft] = useState('');
 

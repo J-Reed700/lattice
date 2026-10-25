@@ -641,6 +641,134 @@ test("Learning Studio remains usable through the same journey at a narrow viewpo
   await runLearningStudioJourney(page, 390, 844);
 });
 
+test('Studio supports both themes and saves margin notes before hiding the panel', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto('/studio');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const build = page.locator('.studio-library-actions .studio-button-primary');
+    await expect(build).toBeVisible();
+    expect((await build.evaluateAll(buttonContrast))[0].ratio).toBeGreaterThanOrEqual(4.5);
+    await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+    const margin = page.getByRole('region', { name: 'Lesson margin notebook' });
+    await margin.getByRole('button', { name: 'Add a lesson note' }).click();
+    const thought = `A ${theme} theme note from the lesson margin.`;
+    await page.getByLabel('Lesson margin notes', { exact: true }).fill(thought);
+    // Hiding the editor immediately must flush, including before its debounce fires.
+    await page.getByRole('button', { name: 'Outline & notes', exact: true }).click();
+    await expect(margin).toHaveCount(0);
+    await page.getByRole('button', { name: 'All programs', exact: true }).click();
+    await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+    await expect(page.getByLabel('Lesson margin notes', { exact: true })).toHaveValue(thought);
+    await margin.getByRole('button', { name: 'Open notebook', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Your notes', exact: true })).toHaveText(thought);
+    await page.getByRole('tab', { name: 'Lessons', exact: true }).click();
+    for (const width of [1440, 800, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const overflow = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);
+      expect(overflow).toBeLessThanOrEqual(1);
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath(`studio-${theme}-${width}px.png`) });
+    }
+  }
+  await expectNoUnsupportedIpc(page);
+});
+
+test('Studio keeps margin notes and navigation guarded when collapsing fails to save', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.getByRole('button', { name: 'Add a lesson note' }).click();
+  const editor = page.getByLabel('Lesson margin notes', { exact: true });
+  await expect(editor).toBeVisible();
+  await page.evaluate(() => {
+    const ipc = window.__LATTICE_IPC__;
+    const save = ipc.handlers.update_workspace_note!;
+    const gate = { failing: true };
+    (window as unknown as { __NOTE_SAVE_GATE__: typeof gate }).__NOTE_SAVE_GATE__ = gate;
+    ipc.handlers.update_workspace_note = (args, bridge) => {
+      if (gate.failing) throw new Error('Notebook write failed');
+      return save(args, bridge);
+    };
+  });
+  const thought = 'Retain this draft until Journal can save it.';
+  await editor.fill(thought);
+  const lessonTitle = await page.locator('.studio-lesson-heading').innerText();
+  const toggle = page.getByRole('button', { name: lessonTitle, exact: true });
+  await toggle.click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Notebook write failed' })).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(editor).toHaveValue(thought);
+  await page.getByRole('button', { name: 'All programs', exact: true }).click();
+  await expect(editor).toHaveValue(thought);
+  await page.evaluate(() => {
+    (window as unknown as { __NOTE_SAVE_GATE__: { failing: boolean } }).__NOTE_SAVE_GATE__.failing = false;
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('button', { name: 'All programs', exact: true }).click();
+  await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+  await expect(editor).toHaveValue(thought);
+  await expectNoUnsupportedIpc(page);
+});
+
+test('Studio searches course context and persists pointer and keyboard pane resizing in both themes', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto('/studio');
+    await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+    const module = page.getByRole('combobox', { name: 'Module', exact: true });
+    await module.click();
+    const search = page.getByRole('combobox', { name: 'Search module', exact: true });
+    await search.fill('missing-module');
+    await expect(page.getByText('No modules match your search.')).toBeVisible();
+    await search.fill('Compare observations'); // A lesson title also finds its module.
+    await expect(page.getByRole('option', { name: /Comparing observations/ })).toBeVisible();
+    const popup = page.getByRole('dialog', { name: 'Module picker', exact: true });
+    await expect.poll(async () => {
+      const anchor = await module.boundingBox();
+      const content = await popup.boundingBox();
+      return Math.abs((anchor?.x ?? 0) - (content?.x ?? 0));
+    }).toBeLessThanOrEqual(2);
+    const palette = (element: Element) => ['--surface', '--text-primary', '--accent'].map((token) => getComputedStyle(element).getPropertyValue(token).trim());
+    expect(await popup.evaluate(palette)).toEqual(await module.evaluate(palette));
+    await page.screenshot({ path: test.info().outputPath(`studio-search-${theme}.png`), animations: 'disabled' });
+    await page.keyboard.press('Escape');
+    await expect(module).toBeFocused();
+
+    const separator = page.getByRole('separator', { name: 'Lesson notes width' });
+    const grip = separator.locator('svg');
+    await grip.dblclick();
+    await expect(separator).toHaveAttribute('aria-valuenow', '245');
+    const bounds = await grip.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds!.x + bounds!.width / 2 - 80, bounds!.y + bounds!.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await expect(separator).toHaveAttribute('aria-valuenow', '325');
+    await separator.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(separator).toHaveAttribute('aria-valuenow', '309');
+    await page.reload();
+    await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+    await expect(page.getByRole('separator', { name: 'Lesson notes width' })).toHaveAttribute('aria-valuenow', '309');
+    await page.screenshot({ path: test.info().outputPath(`studio-resized-${theme}.png`), animations: 'disabled' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('separator', { name: 'Lesson notes width' })).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    await page.getByRole('combobox', { name: 'Lesson context', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Search lesson context', exact: true }).fill('Compare');
+    await expect(page.getByRole('option', { name: /Compare observations/ })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath(`studio-search-mobile-${theme}.png`), animations: 'disabled' });
+    await page.keyboard.press('Escape');
+  }
+  await expectNoUnsupportedIpc(page);
+});
+
 test("Learning Studio programs overview and active workspace visual audit", async ({ page }) => {
   await installLearningStudioBackend(page);
   const pageErrors: Error[] = [];
@@ -2356,6 +2484,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await expect(sources.getByRole("status")).toContainText("was restored as the active source version");
 
   await workspace.getByRole("tab", { name: "Recall", exact: true }).click();
+  await page.getByRole("group", { name: "Recall view" }).getByRole("button", { name: "Versioned cards & schedules", exact: true }).click();
   const recall = page.getByTestId("learning-recall-evolution");
   await expect(recall.getByRole("heading", { name: "Cards that can evolve" })).toBeVisible();
   await expect(recall.getByText(/scheduler choice is recorded per card/)).toBeVisible();

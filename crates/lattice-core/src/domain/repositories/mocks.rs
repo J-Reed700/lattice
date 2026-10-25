@@ -255,6 +255,7 @@ mock! {
         async fn save_batch(&self, entries: Vec<(Embedding, Vec<f32>)>) -> Result<()>;
         async fn find_by_chunk_id(&self, chunk_id: &str) -> Result<Option<(Embedding, Vec<f32>)>>;
         async fn find_by_document_id(&self, document_id: &str) -> Result<Vec<(Embedding, Vec<f32>)>>;
+        async fn vectors_by_document_ids(&self, document_ids: &[String]) -> Result<crate::application::ports::embedding_repository_port::DocumentVectors>;
         async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()>;
         async fn delete_by_document_id(&self, document_id: &str) -> Result<()>;
         async fn count(&self) -> Result<i64>;

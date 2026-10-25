@@ -39,10 +39,11 @@ function memory(overrides: Partial<LearningMemoryDto> = {}): LearningMemoryDto {
   return { programId: program.summary.id, journalId: 'journal-1', lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, ...overrides };
 }
 
-function NotebookHarness({ enabled = true, lessonId = lesson.id }: { enabled?: boolean; lessonId?: string }) {
+function NotebookHarness({ enabled = true, lessonId = lesson.id, margin = false }: { enabled?: boolean; lessonId?: string; margin?: boolean }) {
   const query = useLearningMemory(program.summary.id);
   const [drafts, setDrafts] = useState<Record<string, { title: string; content: string }>>({});
-  return <NotebookPanel enabled={enabled} program={program} lessonId={lessonId} memory={query.data} memoryLoading={query.isLoading} memoryError={query.error?.message} onRetryMemory={() => void query.refetch()} drafts={drafts} setDraft={(key, draft) => setDrafts((current) => ({ ...current, [key]: draft }))} />;
+  const [compact, setCompact] = useState(margin);
+  return <NotebookPanel compact={compact} onOpenNotebook={() => setCompact(false)} enabled={enabled} program={program} lessonId={lessonId} memory={query.data} memoryLoading={query.isLoading} memoryError={query.error?.message} onRetryMemory={() => void query.refetch()} drafts={drafts} setDraft={(key, draft) => setDrafts((current) => ({ ...current, [key]: draft }))} />;
 }
 
 function NotebookLessonSwitchHarness() {
@@ -90,6 +91,33 @@ describe('Learning Studio notebook and recall', () => {
     await waitFor(() => expect(api.updateWorkspaceNote).toHaveBeenCalledWith(expect.objectContaining({ id: note.id, content: 'A note worth keeping.' })), { timeout: 3000 });
     expect(api.ensureLearningLessonNote).toHaveBeenCalledWith({ programId: program.summary.id, lessonId: lesson.id });
     expect(screen.getByText('Saved to Journal')).toBeVisible();
+  });
+
+  it('opens margin notes on request and shares the canonical page with the full notebook', async () => {
+    const user = userEvent.setup();
+    mount(<NotebookHarness margin />);
+    const add = await screen.findByRole('button', { name: 'Add a lesson note' });
+    expect(api.ensureLearningLessonNote).not.toHaveBeenCalled();
+    await user.click(add);
+    await user.type(await screen.findByLabelText('Lesson margin notes'), 'A connection from the lesson.');
+    await user.click(screen.getByRole('button', { name: 'Open notebook' }));
+    expect(screen.getByLabelText('Your notes')).toHaveValue('A connection from the lesson.');
+    await waitFor(() => expect(api.updateWorkspaceNote).toHaveBeenCalledWith(expect.objectContaining({ id: note.id, content: 'A connection from the lesson.' })), { timeout: 3000 });
+    expect(api.ensureLearningLessonNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps margin notes editable after a save failure and exposes a retry', async () => {
+    const user = userEvent.setup();
+    api.getLearningMemory.mockResolvedValue(ok(memory({ lessonNotes: [{ lessonId: lesson.id, note }] })));
+    api.updateWorkspaceNote.mockResolvedValueOnce(fail('Journal write failed')).mockImplementationOnce(async (updated: WorkspaceNoteDto) => ok({ ...updated, revision: updated.revision + 1 }));
+    mount(<NotebookHarness margin />);
+    const editor = await screen.findByLabelText('Lesson margin notes');
+    await user.type(editor, 'Keep this thought.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Journal write failed');
+    expect(editor).toHaveValue('Keep this thought.');
+    await user.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved to Journal'));
+    expect(api.ensureLearningLessonNote).not.toHaveBeenCalled();
   });
 
   it('does not create a page until Notebook is opened and exposes an accessible writing surface', async () => {

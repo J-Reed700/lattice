@@ -722,7 +722,25 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
         "test-model",
     )
     .await?;
-    let form = repo.get_form(&form_id).await?;
+    let (form, reads) =
+        crate::tests::common::query_counts::count_reads(repo.get_form(&form_id)).await;
+    let form = form?;
+    assert_eq!(
+        reads, 9,
+        "quiz candidates, outcomes and contests must be loaded per form"
+    );
+    assert!(form.items.len() > 1);
+    for item in &form.items {
+        let result = form
+            .submission
+            .as_ref()
+            .unwrap()
+            .item_results
+            .iter()
+            .find(|result| result.item_id == item.id)
+            .unwrap();
+        assert_eq!(result.outcome_ids, item.outcome_ids);
+    }
     let submission = form.submission.unwrap();
     assert_eq!(submission.pending_items, 0);
     assert_eq!(submission.passed, Some(false));

@@ -8,6 +8,9 @@ use crate::domain::entities::Embedding;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
+/// Raw vectors grouped by their document, in chunk order.
+pub type DocumentVectors = std::collections::HashMap<String, Vec<Vec<f32>>>;
+
 /// Port for embedding persistence operations.
 ///
 /// # Architecture
@@ -87,6 +90,10 @@ pub trait EmbeddingRepositoryPort: Send + Sync {
     /// # Returns
     /// Vec of (entity, vector) pairs
     async fn find_by_document_id(&self, document_id: &str) -> Result<Vec<(Embedding, Vec<f32>)>>;
+
+    /// Load vectors for a bounded set of documents in one query, without
+    /// constructing embedding metadata that aggregate consumers do not use.
+    async fn vectors_by_document_ids(&self, document_ids: &[String]) -> Result<DocumentVectors>;
 
     /// Delete embedding for a specific chunk
     async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()>;

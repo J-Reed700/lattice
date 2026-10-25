@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { Columns3 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -10,6 +9,7 @@ import {
 } from '@/features/files/stores/fileBrowserStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { type ConversationSpaceDto } from '@/types';
 
 interface SelectionBarProps {
@@ -43,7 +43,7 @@ export function SelectionBar({
   onSelectAll,
   onClear,
 }: SelectionBarProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   // The selection already lives in the store, so this reads it directly rather
   // than adding a prop to FileBrowser.
   const selectedDocumentIds = useFileBrowserStore(selectSelectedDocumentIds);

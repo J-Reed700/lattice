@@ -24,7 +24,7 @@ export function useModelWarmupListener(): void {
     const isMounted = { current: true };
     let unlisten: UnlistenFn | undefined;
 
-    (async () => {
+    void (async () => {
       try {
         const setRolePhase = useModelWarmupStore.getState().setRolePhase;
         const handle = await listenValidated(

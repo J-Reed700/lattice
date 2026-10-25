@@ -87,13 +87,15 @@ describe('quiz item editors, by keyboard alone', () => {
     expect(isAnswered(item, latest())).toBe(true);
   });
 
-  it('matching uses one native select per entry, named by the entry', async () => {
+  it('matching pairs named cards and keeps each assignment in the draft', async () => {
     const item = formItem('matching', { leftItems: ['Competitive', 'Uncompetitive'], rightItems: ['Same Vmax', 'Lower Vmax and Km', 'No effect'] });
     const { user, latest } = mount(item);
-    await user.selectOptions(screen.getByLabelText('Uncompetitive'), 'Lower Vmax and Km');
+    await user.click(screen.getByRole('button', { name: 'Uncompetitive' }));
+    await user.click(screen.getByRole('button', { name: 'Lower Vmax and Km' }));
     expect(latest().matches).toEqual([null, 1]);
     expect(isAnswered(item, latest())).toBe(false);
-    await user.selectOptions(screen.getByLabelText('Competitive'), 'Same Vmax');
+    await user.click(screen.getByRole('button', { name: 'Competitive' }));
+    await user.click(screen.getByRole('button', { name: 'Same Vmax' }));
     expect(isAnswered(item, latest())).toBe(true);
     expect(screen.getByText('One answer on the right matches nothing.')).toBeVisible();
   });

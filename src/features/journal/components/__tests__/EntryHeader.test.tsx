@@ -89,9 +89,7 @@ describe('EntryHeader', () => {
     expect(title()).toHaveValue('Low tide high tide');
   });
 
-  // Bug: Escape resets the draft and blurs in the same handler, so the blur's
-  // commit still sees the edited draft and renames (EntryHeader.tsx:132-135).
-  it.fails('abandons an edit on Escape', async () => {
+  it('abandons an edit on Escape', async () => {
     const user = userEvent.setup();
     const p = props();
     render(<EntryHeader {...p} />);

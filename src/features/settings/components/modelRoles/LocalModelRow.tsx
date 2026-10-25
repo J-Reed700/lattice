@@ -24,6 +24,7 @@ import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelW
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { LocalModelConfigModal } from './LocalModelConfigModal';
@@ -237,7 +238,7 @@ export function LocalModelRow({ model }: Props) {
             {canWarmUp ? (
               <IconButton
                 label={isWarming ? 'Warming up…' : 'Warm up'}
-                onClick={handleWarmUp}
+                onClick={handleAsyncEvent(handleWarmUp)}
                 disabled={isWarming}
               >
                 <Flame />

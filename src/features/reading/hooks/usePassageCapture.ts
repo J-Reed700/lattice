@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
 
 import { PASSAGE_REFERENCES_QUERY_KEY } from '@/features/reading/hooks/usePassageReferencesQuery';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import VaultAPI from '@/lib/api';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import { toast } from '@/stores/toastStore';
@@ -28,7 +28,7 @@ export function usePassageCapture({
   resolvedLabel,
   onClose,
 }: PassageCaptureOptions) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const queryClient = useQueryClient();
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
 

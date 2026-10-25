@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, Combine, Loader2, RotateCcw, X } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { SynthesisStage } from '@/lib/bindings';
 
 import { dismissSynthesis, isSynthesisLive, rememberSynthesis, retrySynthesis, synthesisKeys, useJournalSyntheses, type JournalSynthesisDto } from './api';
@@ -81,7 +81,7 @@ export function SynthesisProgress() {
   const client = useQueryClient();
   const { data: syntheses = [] } = useJournalSyntheses();
   const { minimized, setMinimized, saving, saved, autoSave } = useSynthesisPanel();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [now, setNow] = useState(Date.now);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const restoreToggleFocus = useRef(false);

@@ -194,10 +194,7 @@ describe('ChatView', () => {
     expect(h.store.setComposerDraft).toHaveBeenCalledWith('> Yields rose 100%\n\n');
   });
 
-  // Bug: ChatView.tsx:29 decodes the quote a second time after
-  // URLSearchParams.get already decoded it, so a passage that contains a
-  // literal percent escape (a URL, say) reaches the composer altered.
-  it.fails('quotes a passage containing a percent escape exactly as captured', () => {
+  it('quotes a passage containing a percent escape exactly as captured', () => {
     const passage = 'See https://example.org/field%20notes for the survey';
     renderView(`/chat?quote=${encodeURIComponent(passage)}`);
     expect(h.store.setComposerDraft).toHaveBeenCalledWith(`> ${passage}\n\n`);

@@ -14,10 +14,16 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe(message);
   });
 
-  // Bug: JSON.stringify(undefined) returns undefined, so the "always a string"
-  // contract breaks for a bare `throw undefined` (errorUtils.ts:39).
-  it.fails('reads an undefined error as text', () => {
-    expect(typeof getErrorMessage(undefined)).toBe('string');
+  it('reads an undefined error as text', () => {
+    expect(getErrorMessage(undefined)).toBe('undefined');
+  });
+
+  it('contains failures while reading or formatting an error', () => {
+    const error = {
+      get message() { throw new Error('unreadable'); },
+      toString() { throw new Error('unprintable'); },
+    };
+    expect(getErrorMessage(error)).toBe('Unknown error');
   });
 
   it('falls back to String() for values JSON cannot write', () => {

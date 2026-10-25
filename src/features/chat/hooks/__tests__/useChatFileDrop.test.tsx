@@ -93,9 +93,7 @@ describe('useChatFileDrop', () => {
     expect(result.current.staged).toEqual([]);
   });
 
-  // Bug: useChatFileDrop.ts:76 only skips paths already staged, not repeats
-  // within one batch, so the same file passed twice in one call is staged twice.
-  it.fails('stages a file passed twice in one batch once', () => {
+  it('stages a file passed twice in one batch once', () => {
     const { result } = setup();
     act(() => result.current.add(['/a/notes.md', '/a/notes.md']));
     expect(result.current.staged).toHaveLength(1);

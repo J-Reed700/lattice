@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { formatFileSize } from '@/utils/files';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { FolderSettingsDialog } from './FolderSettingsDialog';
 import { count, formatEta, indexPercent, tildePath } from '../model/indexProgress';
@@ -350,14 +351,14 @@ function RemoveFolderDialog({ folder, home, onCancel, onRemove }: RemoveFolderDi
             type="button"
             variant="destructive"
             disabled={removing}
-            onClick={async () => {
+            onClick={handleAsyncEvent(async () => {
               setRemoving(true);
               try {
                 await onRemove(deleteThreads);
               } finally {
                 setRemoving(false);
               }
-            }}
+            })}
           >
             {removing ? 'Removing…' : 'Remove'}
           </Button>

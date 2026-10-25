@@ -194,10 +194,10 @@ function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; b
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return render(
+  return { client, ...render(
     <PracticalWorkbenchPanel program={program} lesson={chosenLesson} projectRequest={projectRequest} />,
     { wrapper },
-  );
+  ) };
 }
 
 describe("Learning Studio Labs & simulations", () => {
@@ -586,5 +586,171 @@ describe("Learning Studio Labs & simulations", () => {
     expect(within(dialog).getByLabelText("Your focus for this activity")).toHaveValue("A new exercise");
     await user.keyboard("{Escape}");
     expect(editor).toHaveValue("important existing work");
+  });
+
+  it("reveals company research fields when choosing interview and submits interviewTarget", async () => {
+    const user = userEvent.setup();
+    renderPractical();
+
+    const newActivityButton = await screen.findByRole("button", { name: "New activity" });
+    await user.click(newActivityButton);
+    const dialog = screen.getByRole("dialog");
+
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+
+    expect(within(dialog).getByLabelText("Company name")).toBeVisible();
+    expect(within(dialog).getByLabelText("Company website or URL")).toBeVisible();
+    expect(within(dialog).getByLabelText("Target role")).toBeVisible();
+    expect(within(dialog).getByLabelText("Interview round")).toBeVisible();
+    expect(within(dialog).getByLabelText("Job description or company notes")).toBeVisible();
+    expect(
+      within(dialog).getByText(/Lattice will research the company/i),
+    ).toBeVisible();
+
+    await user.type(within(dialog).getByLabelText("Company name"), "Stripe");
+    await user.type(within(dialog).getByLabelText("Company website or URL"), "https://stripe.com");
+    await user.type(within(dialog).getByLabelText("Target role"), "Staff Infrastructure Engineer");
+    await user.selectOptions(within(dialog).getByLabelText("Interview round"), "system_design");
+    await user.click(within(dialog).getByLabelText("Job description or company notes"));
+    await user.paste("Ledger consistency, high throughput payment rails.");
+
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(1));
+    expect(mocks.generate.mock.calls[0][0]).toMatchObject({
+      kind: "interview",
+      interviewTarget: {
+        companyName: "Stripe",
+        companyUrl: "https://stripe.com",
+        targetRole: "Staff Infrastructure Engineer",
+        roundKind: "system_design",
+        companyContext: "Ledger consistency, high throughput payment rails.",
+      },
+      learnerBrief: "Conduct a tailored System design & architecture interview for Stripe (Staff Infrastructure Engineer).",
+    });
+  });
+
+  it("displays company dossier and tailored questions in ActivityBrief and pre-fills simulation roles", async () => {
+    const interviewPlan = {
+      companyName: "Linear",
+      companyUrl: "https://linear.app",
+      targetRole: "Senior Frontend Engineer",
+      roundKind: "technical_deep_dive" as const,
+      companySummary: "Linear builds high performance issue tracking software using local-first sync architecture.",
+      learnerRole: "Frontend Candidate",
+      counterpartRole: "Staff UI Architect",
+      researchedSourceVersionIds: ["source-v1", "source-v2"],
+      questions: [
+        {
+          id: "q-1",
+          round: "technical_deep_dive" as const,
+          question: "How would you implement conflict resolution in a local-first client cache?",
+          companyRationale: "Linear sync engine relies on client-side optimistic mutations and CRDT-like merges.",
+          followUpProbes: ["How do you handle indexedDB storage quotas?", "What happens on offline reconnections?"],
+          evaluationSignals: ["Mentions vector clocks or lamport timestamps", "Addresses offline latency"],
+        },
+      ],
+    };
+
+    const interviewAct = activity({
+      id: "activity-interview-1",
+      kind: "interview",
+      title: "Linear Senior Frontend System Deep-Dive",
+      brief: "Practice a technical conversation focused on local-first sync.",
+      files: [],
+      interviewPlan,
+    });
+
+    mocks.workspace.mockResolvedValue(
+      ok(
+        workspace({
+          activities: [interviewAct],
+        }),
+      ),
+    );
+
+    renderPractical();
+
+    // Verify Company Dossier in ActivityBrief
+    expect(await screen.findByRole("heading", { name: "Linear" })).toBeVisible();
+    expect(screen.getByText("Senior Frontend Engineer")).toBeVisible();
+    expect(screen.getAllByText("Technical deep-dive").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Technical deep-dive")[0]).toBeVisible();
+    expect(screen.getByText("https://linear.app")).toBeVisible();
+    expect(screen.getByText(/2 preparation source\(s\) in library/)).toBeVisible();
+    expect(
+      screen.getByText(/Linear builds high performance issue tracking software/),
+    ).toBeVisible();
+
+    // Verify Tailored Questions
+    expect(
+      screen.getByText("How would you implement conflict resolution in a local-first client cache?"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Linear sync engine relies on client-side optimistic mutations/),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Study preparation: follow-up probes & evaluation signals"),
+    ).toBeVisible();
+
+    // Verify SimulationPanel pre-fills learnerRole and counterpartRole
+    expect(screen.getByLabelText("Your role")).toHaveValue("Frontend Candidate");
+    expect(screen.getByLabelText("Counterpart role")).toHaveValue("Staff UI Architect");
+  });
+
+  it("restores completed interview feedback and offers another attempt", async () => {
+    mocks.workspace.mockResolvedValue(ok(workspace({
+      activities: [activity({ kind: "interview", files: [], runtimeKind: "none" })],
+      simulations: [session({ status: "submitted", turns: [{
+        id: "coach-1", speaker: "coach", content: "Explain the retry tradeoff more clearly.", citations: [],
+      }] })],
+    })));
+    const user = userEvent.setup();
+    renderPractical();
+    expect(await screen.findByText("Explain the retry tradeoff more clearly.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Start another attempt" }));
+    expect(screen.getByRole("button", { name: "Start simulation" })).toBeVisible();
+    expect(screen.getByLabelText("Your role")).toHaveValue("Candidate");
+  });
+
+  it("refreshes captured sources even if interview generation later fails", async () => {
+    mocks.generate.mockResolvedValue(fail("The interview plan could not be generated."));
+    const user = userEvent.setup();
+    const { client } = renderPractical();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog).getByLabelText("Job description or company notes"), "Practice a backend role at Acme.");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The interview plan could not be generated.");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["learning-sources", "program-1"] });
+  });
+
+  it("recovers saved interview feedback when the finish acknowledgement is lost", async () => {
+    const learnerTurn = { id: "learner-1", speaker: "learner", content: "I would verify retries.", citations: [] };
+    let saved = session();
+    mocks.workspace.mockImplementation(async () => ok(workspace({
+      activities: [activity({ kind: "interview", files: [], runtimeKind: "none" })], simulations: [structuredClone(saved)],
+    })));
+    mocks.turn.mockImplementation(async () => {
+      saved = session({ revision: 2, turns: [learnerTurn] });
+      return ok(structuredClone(saved));
+    });
+    mocks.finish.mockImplementation(async () => {
+      saved = session({ status: "submitted", revision: 3, turns: [learnerTurn, {
+        id: "coach-1", speaker: "coach", content: "Feedback from the saved attempt.", citations: [],
+      }] });
+      return fail("Response lost after saving feedback.");
+    });
+    const user = userEvent.setup();
+    renderPractical();
+    await user.type(await screen.findByLabelText("Your response"), "I would verify retries.");
+    await user.click(screen.getByRole("button", { name: "Send simulation turn" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish simulation" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Finish simulation" }));
+    expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish simulation" })).not.toBeInTheDocument();
   });
 });

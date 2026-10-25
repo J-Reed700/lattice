@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 import { findCodeRefs } from '@/components/TiptapEditor/extensions/codeRefMarks';
 import { revealInFolder } from '@/features/chat/model/folderThreadHost';
@@ -18,7 +18,7 @@ export function useRevealStreamingRef(content: string, active: boolean): void {
   const contentRef = useRef(content);
   const shownRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     contentRef.current = content;
   }, [content]);
 

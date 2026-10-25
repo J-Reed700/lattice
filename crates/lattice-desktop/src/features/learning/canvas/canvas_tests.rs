@@ -69,6 +69,69 @@ fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+#[tokio::test]
+async fn workspaces_batch_snapshots_without_mixing_canvases_or_programs() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let other = active_program(&pool).await?;
+    let repo = LearningCanvasRepository::new(pool);
+    let (empty, reads) =
+        crate::tests::common::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
+    assert!(empty?.canvases.is_empty());
+    assert_eq!(reads, 2);
+    let mut expected = std::collections::HashMap::new();
+    for index in 0..4 {
+        let program_id = if index < 3 {
+            &program.summary.id
+        } else {
+            &other.summary.id
+        };
+        let canvas_id = uuid();
+        let create = CreateLearningCanvasRequestDto {
+            operation_id: uuid(),
+            canvas_id: canvas_id.clone(),
+            program_id: program_id.clone(),
+            lesson_id: None,
+            title: format!("Canvas {index}"),
+            description: String::new(),
+            scene_json: scene(&format!("scene-{index}"), index + 1),
+        };
+        repo.create(&create, &validate_scene(&create.scene_json)?)
+            .await?;
+        let snapshot_id = (index != 1).then(uuid);
+        if let Some(snapshot_id) = &snapshot_id {
+            repo.create_snapshot(&CreateLearningCanvasSnapshotRequestDto {
+                operation_id: uuid(),
+                snapshot_id: snapshot_id.clone(),
+                program_id: program_id.clone(),
+                canvas_id: canvas_id.clone(),
+                expected_revision: 0,
+                name: format!("Snapshot {index}"),
+            })
+            .await?;
+        }
+        if index < 3 {
+            expected.insert(canvas_id, (snapshot_id, create.scene_json));
+        }
+    }
+    let (workspace, reads) =
+        crate::tests::common::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
+    let workspace = workspace?;
+    assert_eq!(reads, 3);
+    assert_eq!(workspace.canvases.len(), 3);
+    for canvas in workspace.canvases {
+        let (snapshot, scene) = expected.remove(&canvas.id).unwrap();
+        assert_eq!(canvas.scene_json, scene);
+        assert_eq!(canvas.snapshots.len(), usize::from(snapshot.is_some()));
+        if let Some(id) = snapshot {
+            assert_eq!(canvas.snapshots[0].id, id);
+            assert_eq!(canvas.snapshots[0].canvas_id, canvas.id);
+            assert_eq!(canvas.snapshots[0].scene_json, scene);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn excalidraw_validation_checks_shape_size_and_disallows_unmanaged_files() {
     let valid = scene("a", 3);

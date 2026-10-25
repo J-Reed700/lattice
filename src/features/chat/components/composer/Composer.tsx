@@ -14,6 +14,7 @@ import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport
 import type { ComposerState } from '@/features/chat/hooks/useComposer';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
 import { isUnavailableChatModel } from '@/utils/chatModelSelection';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 /** The textarea points at the suggestion list through this, for screen readers. */
 const SUGGEST_LIST_ID = 'composer-suggest-list';
@@ -82,7 +83,7 @@ export function Composer({
       <ChatModelNotice {...modelNotice} />
       {notice}
 
-      <form onSubmit={composer.handleSubmit} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
+      <form onSubmit={handleAsyncEvent(composer.handleSubmit)} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
         {/* One object: the page you write on, with its tools along the bottom edge. */}
         <div className="rounded-2xl bg-surface shadow-sheet transition-shadow duration-base focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.16)]">
           {chips}

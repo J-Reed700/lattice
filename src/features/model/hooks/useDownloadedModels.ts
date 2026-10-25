@@ -9,6 +9,7 @@ import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { TauriEventNames, EventSchemas, listenValidated } from '@/types/events';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
 
@@ -170,7 +171,7 @@ export const useDownloadedModelsListener = () => {
         const listener = await listenValidated(
           TauriEventNames.Downloads.Completed,
           EventSchemas.Downloads.Completed,
-          async (event) => {
+          handleAsyncEvent(async (event) => {
             const { modelName } = event.payload;
             try {
               const updated = await fetchDownloadedModels();
@@ -191,7 +192,7 @@ export const useDownloadedModelsListener = () => {
             } catch (error) {
               console.error('[useDownloadedModels] Failed to refresh after completion:', error);
             }
-          },
+          }),
           (error) => console.error('[useDownloadedModels] Invalid completion event:', error.format())
         );
         if (!isMounted) listener();

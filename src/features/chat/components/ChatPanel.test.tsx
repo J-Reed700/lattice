@@ -328,7 +328,9 @@ describe('ChatPanel', () => {
     h.store = makeStore({ conversations: [{ id: 'c1', spaceId: GENERAL_SPACE_ID, messages: [] }] });
     h.openSpaces = [{ id: 'a' }, { id: 'b' }];
     render(<ChatPanel />);
-    expect(composerProps().space).toEqual({ id: GENERAL_SPACE_ID, name: 'General', onChange: h.switchActions.handleChangeSpace });
+    expect(composerProps().space).toEqual({ id: GENERAL_SPACE_ID, name: 'General', onChange: expect.any(Function) });
+    composerProps().space.onChange('space-other');
+    expect(h.switchActions.handleChangeSpace).toHaveBeenCalledWith('space-other');
   });
 
   describe('model state handed to the composer', () => {

@@ -10,8 +10,7 @@ use crate::features::extraction::use_cases::{
     ResolveWikilinkUseCase,
 };
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::RepositoryPort;
-use lattice_core::domain::entities::Document;
+use lattice_core::application::ports::DocumentRepositoryPort;
 
 #[derive(Clone)]
 pub struct ExtractionDi {
@@ -21,7 +20,7 @@ pub struct ExtractionDi {
     pub extract_and_resolve_links_use_case: Arc<ExtractAndResolveLinksUseCase>,
 }
 
-pub fn build(document_repo: Arc<dyn RepositoryPort<Document>>) -> ExtractionDi {
+pub fn build(document_repo: Arc<dyn DocumentRepositoryPort>) -> ExtractionDi {
     let parse_wikilinks_use_case = Arc::new(ParseWikilinksUseCase::new());
     let resolve_wikilink_use_case = Arc::new(ResolveWikilinkUseCase::new());
     let extract_and_resolve_links_use_case = Arc::new(ExtractAndResolveLinksUseCase::new(

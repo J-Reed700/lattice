@@ -4,11 +4,11 @@ import {
   ArrowUpRight,
   Loader2
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { formatRoleLabel, formatShortRelativeTime, isReferenceInboxEnabled } from '@/features/chat/components/sidebar/sidebarUtils';
 import { useCapturedReferencesQuery, useSidebarBookmarksQuery } from '@/features/chat/hooks/workspaceQueries';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
@@ -20,7 +20,7 @@ import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 
 export function SidebarReferences({ query, active }: { query: string; active: boolean }) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { selectedSpaceId, selectConversation } = useConversationsStore();
   const [referenceInboxEnabled] = useState(isReferenceInboxEnabled);
   const bookmarks = useSidebarBookmarksQuery(query, selectedSpaceId, active);

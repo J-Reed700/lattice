@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
+import { skipToken, useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronUp, Clock3, LoaderCircle, X } from 'lucide-react';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
@@ -77,7 +77,7 @@ function ActivityCard({ activity, now, onOpen }: { activity: StudyActivity; now:
 export function StudyActivityPanel({ onOpen }: { onOpen: (destination: StudyDestination) => void }) {
   // Use the same client as the IPC bridge, including when Studio is remounted.
   const { data: activities = EMPTY_STUDY_ACTIVITY } = useQuery<StudyActivity[]>({
-    queryKey: STUDY_ACTIVITY_KEY, enabled: false, initialData: EMPTY_STUDY_ACTIVITY,
+    queryKey: STUDY_ACTIVITY_KEY, queryFn: skipToken, initialData: EMPTY_STUDY_ACTIVITY,
     staleTime: Infinity, gcTime: Infinity,
   }, queryClient);
   const [expanded, setExpanded] = useState(true);

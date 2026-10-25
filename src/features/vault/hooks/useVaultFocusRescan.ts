@@ -52,7 +52,7 @@ export function useVaultFocusRescan(): void {
       }
     };
 
-    (async () => {
+    void (async () => {
       try {
         const window = getCurrentWindow();
         const handle = await window.onFocusChanged(({ payload: focused }) => {

@@ -199,16 +199,20 @@ async fn list_attachments(
         .documents_owned_by_conversation(conversation_id)
         .await?;
 
+    let owned: Vec<_> = owned
+        .into_iter()
+        .filter(|id| allowed.contains(id))
+        .collect();
+    let mut documents: std::collections::HashMap<_, _> = container
+        .document_repository()
+        .find_metadata_by_ids(&owned)
+        .await?
+        .into_iter()
+        .map(|document| (document.id().as_str().to_owned(), document))
+        .collect();
     let mut attachments = Vec::new();
     for document_id in owned {
-        if !allowed.contains(&document_id) {
-            continue;
-        }
-        let Some(document) = container
-            .document_repository()
-            .find_by_id(&document_id)
-            .await?
-        else {
+        let Some(document) = documents.remove(&document_id) else {
             continue;
         };
         attachments.push(AttachmentItem {

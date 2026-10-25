@@ -218,7 +218,7 @@ export function useLearningLabDraft({
   useEffect(() => {
     const unregister = registerPendingSave(() => flush());
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      const dirty = [...contexts.current.values()].some((context) => context.saveState !== 'saved' || context.operation || context.inFlight);
+      const dirty = [...contexts.current.values()].some((context) => context.saveState !== 'saved' || context.operation !== null || context.inFlight !== null);
       if (dirty) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', beforeUnload);

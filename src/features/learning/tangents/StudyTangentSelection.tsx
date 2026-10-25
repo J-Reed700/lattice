@@ -129,7 +129,7 @@ export function StudyTangentSelection({
       menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     }
     const dismiss = (event: Event) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
+      if (!(event.target instanceof Node) || !menuRef.current?.contains(event.target)) {
         setSelection(null);
       }
     };

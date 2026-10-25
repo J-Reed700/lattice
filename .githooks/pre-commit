@@ -5,12 +5,22 @@
 set -o pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
-rust=()
+rust_manifests=()
 web=()
 e2e=0
 while IFS= read -r file; do
   case "$file" in
-    *.rs) rust+=("$file") ;;
+    *.rs)
+      directory=$(dirname "$file")
+      while [ "$directory" != "." ] && [ ! -f "$directory/Cargo.toml" ]; do
+        directory=$(dirname "$directory")
+      done
+      manifest="$directory/Cargo.toml"
+      case " ${rust_manifests[*]} " in
+        *" $manifest "*) ;;
+        *) rust_manifests+=("$manifest") ;;
+      esac
+      ;;
     src/*.ts | src/*.tsx) web+=("$file") ;;
     e2e/*.ts | e2e/*.tsx) web+=("$file"); e2e=1 ;;
   esac
@@ -23,11 +33,11 @@ step() {
   "$@" || failed=1
 }
 
-if [ ${#rust[@]} -gt 0 ]; then
-  step "rustfmt (fix: rustfmt --edition 2021 <file>)" rustfmt --edition 2021 --check "${rust[@]}"
-fi
+for manifest in "${rust_manifests[@]}"; do
+  step "cargo fmt ($manifest)" cargo fmt --manifest-path "$manifest" --all -- --check
+done
 if [ ${#web[@]} -gt 0 ]; then
-  step "eslint" npx --no-install eslint --max-warnings 0 "${web[@]}"
+  step "eslint" npx --no-install eslint --no-warn-ignored --max-warnings 0 "${web[@]}"
   step "type-check" npx --no-install tsc --noEmit
   if [ $e2e -eq 1 ]; then
     step "type-check e2e" npx --no-install tsc --noEmit -p tsconfig.e2e.json

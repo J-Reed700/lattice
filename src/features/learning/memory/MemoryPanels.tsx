@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Shuffle, Sparkles, Trash2, Undo2 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { TiptapEditor } from '@/components/TiptapEditor';
+import { SaveStatus } from '@/components/ui/SaveStatus';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
 import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useGenerateLearningCardDrafts, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningCardDraftDto, LearningCardOriginDto, LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 import { flushPendingSaves, registerPendingSave } from '@/lib/pendingSaves';
 
@@ -27,11 +28,12 @@ function SourceProvenance({ sourceIds, program }: { sourceIds: string[]; program
 
 type NoteDraft = { title: string; content: string };
 
-export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoading, memoryError, onRetryMemory, drafts, setDraft }: {
+export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoading, memoryError, onRetryMemory, drafts, setDraft, compact = false, onOpenNotebook }: {
   program: LearningProgramDto; lessonId?: string; memory: LearningMemoryDto | undefined; memoryLoading: boolean; memoryError?: string;
   onRetryMemory: () => void; drafts: Record<string, NoteDraft>; setDraft: (key: string, draft: NoteDraft) => void; enabled: boolean;
+  compact?: boolean; onOpenNotebook?: () => void;
 }) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const ensure = useEnsureLearningLessonNote();
   const client = useQueryClient();
   const saveQueue = useRef(createNoteSaveQueue());
@@ -39,6 +41,7 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   const latest = useRef({ memory, drafts });
   const flushAllRef = useRef<() => Promise<boolean>>(async () => true);
   const [noteMode, setNoteMode] = useState<'typed' | 'split' | 'handwritten'>('typed');
+  const [marginOpen, setMarginOpen] = useState(false);
   latest.current = { memory, drafts };
   const currentLesson = program.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === lessonId);
   const lessonSourceIds = new Set(currentLesson?.blocks.flatMap((block) => block.sourceIds) ?? []);
@@ -62,11 +65,11 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
   });
 
   useEffect(() => {
-    if (!enabled || !lessonId || program.summary.status !== 'active' || !memory || note || memoryLoading) return;
+    if (!enabled || (compact && !marginOpen) || !lessonId || program.summary.status !== 'active' || !memory || note || memoryLoading) return;
     if (startedEnsure.current.has(key)) return;
     startedEnsure.current.add(key);
     ensure.mutate({ programId: program.summary.id, lessonId });
-  }, [enabled, ensure, key, lessonId, memory, memoryLoading, note, program.summary.id, program.summary.status]);
+  }, [enabled, compact, marginOpen, ensure, key, lessonId, memory, memoryLoading, note, program.summary.id, program.summary.status]);
 
   const dirty = Boolean(note && (title !== note.title || content !== note.content));
   const titleMissing = Boolean(note && !title.trim());
@@ -105,6 +108,17 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
     startedEnsure.current.add(key);
     ensure.mutate({ programId: program.summary.id, lessonId });
   };
+
+  if (compact) return <section className="studio-margin-notebook" aria-label="Lesson margin notebook">
+    <div className="studio-margin-heading"><h3>Notebook</h3><button type="button" onClick={onOpenNotebook} className="studio-notebook-open">Open notebook <ExternalLink size={12} /></button></div>
+    {memoryError && !memory ? <div className="studio-note-empty"><p role="alert">Notes could not load: {memoryError}</p><button type="button" onClick={onRetryMemory}>Retry</button></div>
+      : ensure.isError && !note ? <div className="studio-note-empty"><p role="alert">Notes could not open: {ensure.error.message}</p><button type="button" onClick={retryEnsure}>Retry</button></div>
+        : note ? <>
+          <textarea aria-label="Lesson margin notes" value={content} onChange={(event) => setDraft(key, { title, content: event.target.value })} placeholder="What stands out? Put the idea in your own words…" />
+          <div className="studio-note-status">{titleMissing ? <span role="alert">Add a page title in Notebook to save these notes.</span> : save.isError ? <><span role="alert">Could not save: {save.error.message}</span><button type="button" onClick={saveCurrent} className="text-accent underline">Retry save</button></> : <SaveStatus state={save.isPending ? 'saving' : dirty ? 'unsaved' : 'saved'} savedLabel="Saved to Journal" unsavedLabel="Unsaved changes · saves after you pause" />}</div>
+        </> : memoryLoading || marginOpen ? <p role="status" className="studio-note-empty">Opening your lesson notes…</p>
+          : <div className="studio-note-empty"><p>Keep a question, a connection, or an explanation in your own words.</p><button type="button" onClick={() => setMarginOpen(true)}><PencilLine size={13} /> Add a lesson note</button></div>}
+  </section>;
 
   if (program.summary.status === 'draft') return <div className="rounded-2xl border border-dashed border-border bg-surface p-8"><h3 className="font-serif text-xl text-text-primary">Notebook opens with an accepted program</h3><p className="mt-2 max-w-xl text-sm leading-6 text-text-secondary">Accept this outline first. Studio will then create one canonical, lesson-linked Journal page when you open a lesson’s notebook.</p></div>;
   if (!lessonId) return <div className="rounded-2xl border border-dashed border-border bg-surface p-8"><h3 className="font-serif text-xl text-text-primary">Choose a lesson for your notebook</h3><p className="mt-2 text-sm text-text-secondary">Select a lesson in the Lessons view to open its linked writing page.</p></div>;
@@ -176,7 +190,7 @@ export function NotebookPanel({ enabled, program, lessonId, memory, memoryLoadin
         onSketchpadOpenChange={(open) => setNoteMode((current) => (open ? (current === 'handwritten' ? 'handwritten' : 'split') : 'typed'))}
         onInsertSynthesis={(snippet) => setDraft(key, { title, content: content ? `${content}\n\n${snippet}` : snippet })}
       />
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="text-xs">{titleMissing ? <span role="alert" className="text-amber-700">Add a page title before saving or opening Journal.</span> : save.isPending ? <span role="status" className="text-text-muted"><LoaderCircle size={13} className="mr-1 inline animate-spin" />Saving…</span> : save.isError ? <span role="alert" className="text-rose-700">Could not save: {save.error.message}</span> : dirty ? <span className="text-text-muted">Unsaved changes · saves after you pause</span> : <span role="status" className="text-text-muted"><Check size={13} className="mr-1 inline text-emerald-700" />Saved to Journal</span>}</div>{save.isError && !titleMissing && <button type="button" onClick={saveCurrent} className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs"><RotateCcw size={13} /> Retry save</button>}<p className="ml-auto text-[10px] text-text-muted">Lesson-linked canonical Journal page</p></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="text-xs">{titleMissing ? <span role="alert" className="text-amber-700">Add a page title before saving or opening Journal.</span> : <SaveStatus state={save.isPending ? 'saving' : save.isError ? 'error' : dirty ? 'unsaved' : 'saved'} error={save.error?.message} savedLabel="Saved to Journal" unsavedLabel="Unsaved changes · saves after you pause" /> }</div>{save.isError && !titleMissing && <button type="button" onClick={saveCurrent} className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs"><RotateCcw size={13} /> Retry save</button>}<p className="ml-auto text-[10px] text-text-muted">Lesson-linked canonical Journal page</p></div>
     </div>
   </section>;
 }

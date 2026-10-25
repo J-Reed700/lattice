@@ -12,6 +12,7 @@ import { useCloudApiKeyMutation } from "@/features/settings/hooks/useSettingsQue
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toastStore";
 import type { LLMSettings as ApiLLMSettings } from "@/types/api/settings";
+import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import { LlamaCppConnection } from "./LlamaCppConnection";
 import {
@@ -106,10 +107,10 @@ export function ChatTab() {
   const handleHeaderBlur = () => {
     if (isHeaderPartialPair) return;
     if (!headerDraftDiffersFromSaved) return;
-    saveLlmUpdates({
+    voidAsync(() => saveLlmUpdates({
       ollamaAuthHeaderName: trimmedHeaderName,
       ollamaAuthHeaderValue: trimmedHeaderValue,
-    });
+    }))();
   };
 
   const handleApplyBasicAuth = () => {
@@ -118,10 +119,10 @@ export function ChatTab() {
       return;
     }
     const token = btoa(`${ollamaBasicUserDraft}:${ollamaBasicPassDraft}`);
-    saveLlmUpdates({
+    voidAsync(() => saveLlmUpdates({
       ollamaAuthHeaderName: "Authorization",
       ollamaAuthHeaderValue: `Basic ${token}`,
-    });
+    }))();
   };
 
   const handleSaveOllamaConnection = async () => {
@@ -226,7 +227,7 @@ export function ChatTab() {
             <select
               id="chatProvider"
               value={provider}
-              onChange={(event) =>
+              onChange={handleAsyncEvent((event) =>
                 saveLlmUpdates({
                   provider: event.target.value as ApiLLMSettings["provider"],
                   ...(event.target.value === "openai"
@@ -245,7 +246,7 @@ export function ChatTab() {
                             maxTokens: 8192,
                           }
                         : {}),
-                })
+                }))
               }
               className={INPUT_CLASS}
             >
@@ -276,7 +277,7 @@ export function ChatTab() {
               onChange={(event) => setOllamaModelDraft(event.target.value)}
               onBlur={() => {
                 if (ollamaModelDraft.trim())
-                  saveLlmUpdates({ model: ollamaModelDraft.trim() });
+                  voidAsync(() => saveLlmUpdates({ model: ollamaModelDraft.trim() }))();
               }}
             />
           </SettingsRow>
@@ -295,7 +296,7 @@ export function ChatTab() {
                 type="button"
                 className={SECONDARY_BUTTON_CLASS}
                 disabled={savingCloudKey || !cloudKey.trim()}
-                onClick={async () => {
+                onClick={handleAsyncEvent(async () => {
                   setSavingCloudKey(true);
                   try {
                     const result = await setCloudApiKey({
@@ -313,7 +314,7 @@ export function ChatTab() {
                   } finally {
                     setSavingCloudKey(false);
                   }
-                }}
+                })}
               >
                 {savingCloudKey ? "Saving…" : "Save key"}
               </button>
@@ -334,7 +335,7 @@ export function ChatTab() {
               onChange={(e) => setOllamaUrlDraft(e.target.value)}
               onBlur={() => {
                 if (ollamaUrlDraft !== llmSettings.ollamaUrl) {
-                  saveLlmUpdates({ ollamaUrl: ollamaUrlDraft.trim() });
+                  voidAsync(() => saveLlmUpdates({ ollamaUrl: ollamaUrlDraft.trim() }))();
                 }
               }}
               placeholder="http://localhost:11434"
@@ -350,7 +351,7 @@ export function ChatTab() {
                 const selectedModel = e.target.value;
                 setOllamaModelDraft(selectedModel);
                 if (selectedModel) {
-                  saveLlmUpdates({ model: selectedModel, ollamaConfigured: true });
+                  voidAsync(() => saveLlmUpdates({ model: selectedModel, ollamaConfigured: true }))();
                 }
               }}
               disabled={ollamaAvailableModels.length === 0}
@@ -381,7 +382,7 @@ export function ChatTab() {
                 const selected = e.target.value;
                 setOllamaUtilityModelDraft(selected);
                 if (selected !== (llmSettings.ollamaUtilityModel || "")) {
-                  saveLlmUpdates({ ollamaUtilityModel: selected });
+                  voidAsync(() => saveLlmUpdates({ ollamaUtilityModel: selected }))();
                 }
               }}
               disabled={ollamaAvailableModels.length === 0}
@@ -411,7 +412,7 @@ export function ChatTab() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleTestOllamaConnection}
+                onClick={handleAsyncEvent(handleTestOllamaConnection)}
                 disabled={isTestingOllamaConnection || isSavingOllamaConnection}
                 className={SECONDARY_BUTTON_CLASS}
               >

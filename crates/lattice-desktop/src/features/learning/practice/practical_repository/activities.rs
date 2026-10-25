@@ -318,16 +318,29 @@ impl LearningPracticalRepository {
         .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
-        let files = file_rows
-            .into_iter()
-            .map(|file| InternalActivityFile {
-                path: file.get("path"),
+        let mut interview_plan = None;
+        let mut files = Vec::new();
+        for file in file_rows {
+            let path: String = file.get("path");
+            let content: String = file.get("content");
+            if path == crate::features::learning::practical_generation::INTERVIEW_PLAN_FILE_PATH {
+                interview_plan = Some(
+                    serde_json::from_str::<LearningInterviewPlanDto>(&content).map_err(
+                        |error| {
+                            AppError::Database(format!("Saved interview plan is invalid: {error}"))
+                        },
+                    )?,
+                );
+                continue;
+            }
+            files.push(InternalActivityFile {
+                path,
                 role: file.get("role"),
-                content: file.get("content"),
+                content,
                 content_sha256: file.get("content_sha256"),
                 editable: file.get::<i64, _>("editable") != 0,
-            })
-            .collect();
+            });
+        }
         Ok(InternalActivitySnapshot {
             id: row.get("id"),
             program_id: row.get("program_id"),
@@ -366,6 +379,7 @@ impl LearningPracticalRepository {
                 .map(decode)
                 .transpose()?,
             files,
+            interview_plan,
             revision: row.get("revision"),
             generator_model: row.get("generator_model"),
         })

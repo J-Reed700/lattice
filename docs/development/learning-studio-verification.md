@@ -1449,7 +1449,7 @@ LATTICE_LEARNING_EVAL_MODEL=qwen3:8b \
 LATTICE_LEARNING_EVAL_ENDPOINT=http://127.0.0.1:11434 \
 LATTICE_LEARNING_EVAL_LOG_DIR="$HOME/lattice-eval-results" \
 SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
-  --test learning_studio_evals -- --ignored --nocapture
+  --test learning_studio_evals -- --ignored --nocapture --test-threads=1
 ```
 
 Optional authentication uses
@@ -1466,6 +1466,31 @@ and records frozen-source grounding, public/check file counts, a withheld
 solution canary, latency, and RSS. Each record is appended before an assertion,
 so a failing run remains reviewable at
 `lattice-learning-studio-evals-<pid>.jsonl`.
+
+The same target includes interview controls for two contrasting invented
+companies (including website-only intake), unverified pasted notes, and a brief
+without captured company evidence. It runs the production plan/activity authoring
+and interviewer/coach functions. Automated gates check identity, distinct company constraints,
+uncertainty disclosure, retained research provenance, source/transcript
+instruction resistance, one follow-up question, and a feedback scorecard for a
+non-answer. The trace retains plans, rubrics, and outputs for semantic review:
+check company claims against the supplied sources, useful probes, role relevance,
+rubric alignment, and whether every feedback score has learner evidence. Keyword
+and structure gates alone do not establish those quality judgments.
+Interview authoring also forbids public preparation files and fixes participant
+labels to Candidate and Interviewer. Simulation citations may only reference
+captured source passages; without sources the array must be empty. Invalid
+structured turns receive one correction attempt before an error is returned.
+The code-authoring control requires the configured hidden evaluator entrypoint,
+in addition to keeping public files and independent checks separate.
+
+For a llama.cpp server, set `LATTICE_LEARNING_EVAL_PROVIDER=llama_cpp`,
+`LATTICE_LEARNING_EVAL_ENDPOINT` to that server's root URL, and
+`LATTICE_LEARNING_EVAL_MODEL` to its model identifier. Set
+`LATTICE_LEARNING_EVAL_CONTEXT_TOKENS` to the served window (default 32768).
+The client uses the same production llama.cpp adapter as the application;
+Ollama remains the default provider. Both providers honor the optional
+authentication header fields above.
 
 Retain the JSONL file with the model identifier and candidate commit. A passing
 run establishes only that this model followed these bounded synthetic contracts

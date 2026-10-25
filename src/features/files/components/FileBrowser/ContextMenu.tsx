@@ -29,7 +29,6 @@ import {
   FolderPlus,
   FolderMinus,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import {
   openDocumentFile,
@@ -38,6 +37,7 @@ import {
   useLibraryDocumentActions,
 } from '@/features/files/hooks/useLibraryDocumentActions';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { toast } from '@/stores/toastStore';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 import { isSupportedFileType } from '@/utils/fileTypeDetector';
@@ -67,7 +67,7 @@ export function ContextMenu({
   onRemoveFromCollection,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const spacesQuery = useSpacesQuery();
   const membershipsQuery = useDocumentSpaceMembershipsQuery(doc.id);
   const { reindex, removeFromIndex, setSpaceMembership } = useLibraryDocumentActions();

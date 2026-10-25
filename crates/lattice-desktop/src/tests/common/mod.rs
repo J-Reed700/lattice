@@ -27,6 +27,8 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub mod query_counts;
+
 /// Setup a test Container with in-memory database
 ///
 /// This function creates a production-aligned Container using the same

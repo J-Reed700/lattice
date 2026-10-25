@@ -20,11 +20,11 @@ const session = (overrides: Partial<LearningSimulationSessionDto> = {}): Learnin
   createdAt: 1, updatedAt: 1, submittedAt: null, ...overrides,
 } as LearningSimulationSessionDto);
 
-function renderPanel(current: LearningSimulationSessionDto | null) {
+function renderPanel(current: LearningSimulationSessionDto | null, currentActivity: LearningPracticalActivityDto = activity) {
   const onSession = vi.fn();
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const view = render(<SimulationPanel programId="course-1" activity={activity} session={current} onSession={onSession} />, { wrapper });
+  const view = render(<SimulationPanel programId="course-1" activity={currentActivity} session={current} onSession={onSession} />, { wrapper });
   return { ...view, onSession };
 }
 
@@ -42,6 +42,7 @@ describe('SimulationPanel', () => {
     fireEvent.change(screen.getByLabelText('Counterpart role'), { target: { value: 'Visitor' } });
     fireEvent.click(screen.getByRole('button', { name: /Start simulation/ }));
     await waitFor(() => expect(onSession).toHaveBeenCalledWith(session()));
+    expect(onSession).toHaveBeenCalledTimes(1);
     expect(api.startLearningSimulation).toHaveBeenCalledWith(expect.objectContaining({
       programId: 'course-1', activityId: 'activity-1', expectedActivityRevision: 2, learnerRole: 'Museum guide', counterpartRole: 'Visitor',
     }));
@@ -114,7 +115,7 @@ describe('SimulationPanel', () => {
 
   it('finishes a simulation, retrying the same request after a failure', async () => {
     api.finishLearningSimulation.mockResolvedValueOnce({ ok: false, error: 'grader offline' }).mockResolvedValue({ ok: true, data: session({ status: 'completed' as never }) });
-    const { onSession } = renderPanel(session());
+    const { onSession } = renderPanel(session({ turns: [{ id: 'answer', speaker: 'learner', content: 'My answer', citations: [] }] as never }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish simulation' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('grader offline');
     fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
@@ -128,5 +129,108 @@ describe('SimulationPanel', () => {
     expect(screen.getByText(/· completed/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Finish simulation' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Your response')).not.toBeInTheDocument();
+  });
+
+  it('pre-fills learner and counterpart roles from activity interviewPlan', () => {
+    const interviewActivity: LearningPracticalActivityDto = {
+      ...activity,
+      interviewPlan: {
+        companyName: 'Stripe',
+        targetRole: 'Staff Infrastructure Engineer',
+        roundKind: 'system_design',
+        companySummary: 'Summary of Stripe',
+        learnerRole: 'Staff Candidate',
+        counterpartRole: 'Principal Architect',
+        researchedSourceVersionIds: ['v1'],
+        questions: [],
+      },
+    };
+    renderPanel(null, interviewActivity);
+    expect(screen.getByLabelText('Your role')).toHaveValue('Staff Candidate');
+    expect(screen.getByLabelText('Counterpart role')).toHaveValue('Principal Architect');
+  });
+
+  it('renders quick question prompt chips and populates the message draft', () => {
+    const interviewActivity: LearningPracticalActivityDto = {
+      ...activity,
+      interviewPlan: {
+        companyName: 'Stripe',
+        targetRole: 'Staff Engineer',
+        roundKind: 'system_design',
+        companySummary: 'Summary of Stripe',
+        learnerRole: 'Candidate',
+        counterpartRole: 'Interviewer',
+        questions: [
+          {
+            id: 'q1',
+            round: 'system_design',
+            question: 'How would you design an idempotency key store?',
+            companyRationale: 'Core to Stripe APIs',
+            followUpProbes: ['Cache invalidation?'],
+            evaluationSignals: ['Understands distributed locks'],
+          },
+        ],
+      },
+    };
+    renderPanel(session(), interviewActivity);
+    const chip = screen.getByRole('button', { name: /How would you design/i });
+    expect(chip).toBeInTheDocument();
+    fireEvent.click(chip);
+    expect(screen.getByLabelText('Your response')).toHaveValue("Please ask me this practice question: How would you design an idempotency key store?");
+  });
+
+  it('prevents duplicate keyboard sends and finishing while a reply is pending', async () => {
+    let release!: (value: unknown) => void;
+    api.sendLearningSimulationTurn.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const { onSession } = renderPanel(session({ turns: [{ id: 'answer', speaker: 'learner', content: 'Prior answer', citations: [] }] as never }));
+    const field = screen.getByLabelText('Your response');
+    fireEvent.change(field, { target: { value: 'Here is my reasoning.' } });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(api.sendLearningSimulationTurn).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
+    expect(field).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('responding');
+    await act(async () => release({ ok: true, data: session({ revision: 4 }) }));
+    await waitFor(() => expect(onSession).toHaveBeenCalledTimes(1));
+  });
+
+  it('requires a learner answer before finishing and uses interview defaults', () => {
+    const view = renderPanel(null, { ...activity, kind: 'interview' });
+    expect(screen.getByLabelText('Your role')).toHaveValue('Candidate');
+    expect(screen.getByLabelText('Counterpart role')).toHaveValue('Interviewer');
+    view.rerender(<SimulationPanel programId="course-1" activity={activity} session={session()} onSession={view.onSession} />);
+    expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
+  });
+
+  it('retries the failed turn exactly and preserves a newer draft', async () => {
+    api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'response lost' })
+      .mockResolvedValueOnce({ ok: true, data: session({ revision: 4 }) });
+    renderPanel(session());
+    const field = screen.getByLabelText('Your response');
+    fireEvent.change(field, { target: { value: 'The original answer.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send simulation turn' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('response lost');
+    fireEvent.change(field, { target: { value: 'A newer draft I want to keep.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
+    await waitFor(() => expect(api.sendLearningSimulationTurn).toHaveBeenCalledTimes(2));
+    expect(api.sendLearningSimulationTurn.mock.calls[1][0]).toEqual(api.sendLearningSimulationTurn.mock.calls[0][0]);
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(field).toHaveValue('A newer draft I want to keep.');
+  });
+
+  it('withholds question selection during unassisted demonstration', () => {
+    const interviewActivity = {
+      ...activity, practiceMode: 'demonstrate', interviewPlan: {
+        companyName: 'Acme', targetRole: 'Engineer', roundKind: 'full_loop', companySummary: 'Private preparation',
+        learnerRole: 'Candidate', counterpartRole: 'Interviewer', questions: [{
+          id: 'q1', round: 'behavioral', question: 'Unseen question?', companyRationale: 'Rationale',
+          followUpProbes: ['Probe'], evaluationSignals: ['Signal'],
+        }],
+      },
+    } as LearningPracticalActivityDto;
+    renderPanel(session(), interviewActivity);
+    expect(screen.queryByLabelText('Tailored interview quick prompts')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unseen question?')).not.toBeInTheDocument();
   });
 });

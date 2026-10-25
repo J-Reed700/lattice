@@ -20,7 +20,7 @@ use crate::features::extraction::use_cases::{
 
 // Application Ports
 use lattice_core::application::ports::{
-    DocumentRepository, FileStoragePort, FileSystemPort, RepositoryPort,
+    DocumentRepository, DocumentRepositoryPort, FileStoragePort, FileSystemPort,
 };
 
 // Service Traits
@@ -93,7 +93,7 @@ impl FileOpsModule {
             preview_extractor,
         );
         let extraction = crate::features::extraction::di::build(
-            document_repo as Arc<dyn RepositoryPort<lattice_core::domain::entities::Document>>,
+            document_repo as Arc<dyn DocumentRepositoryPort>,
         );
 
         Ok(Self {

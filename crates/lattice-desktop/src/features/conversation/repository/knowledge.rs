@@ -6,6 +6,7 @@ use crate::features::conversation::knowledge_dto::{
 use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use std::collections::HashMap;
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -50,42 +51,75 @@ impl ConversationRepository {
             .bind(conversation).bind(&space).bind(for_prompt).bind(limit).bind(offset.max(0)).fetch_all(&mut *tx).await?;
         let page_size = if for_prompt { 1000 } else { 50 };
         let has_more = rows.len() > page_size;
+        let item_ids: Vec<_> = rows.iter().take(page_size).map(|row| &row.id).collect();
+        #[derive(sqlx::FromRow)]
+        struct Evidence {
+            item_id: String,
+            message_id: String,
+            sequence: i64,
+            role: String,
+            purpose: String,
+            start_byte: i64,
+            end_byte: i64,
+            content_digest: String,
+        }
+        let evidence = if item_ids.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_as::<_, Evidence>(
+            "SELECT e.item_id,e.message_id,e.sequence,e.role,e.purpose,e.start_byte,e.end_byte,e.content_digest
+             FROM conversation_memory_evidence e
+             JOIN conversation_memory_items i ON i.id=e.item_id
+             JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id
+             WHERE e.item_id IN (SELECT value FROM json_each(?)) ORDER BY e.item_id,e.ordinal",
+        )
+        .bind(serde_json::to_string(&item_ids)?)
+        .fetch_all(&mut *tx)
+        .await?
+        };
+        // Read each source message once. Joining its full body onto every
+        // evidence span would multiply both I/O and memory for shared sources.
+        let message_ids: std::collections::HashSet<_> =
+            evidence.iter().map(|e| &e.message_id).collect();
+        let messages: Vec<(String, String)> = if message_ids.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_as(
+            "SELECT id,content FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(serde_json::to_string(&message_ids)?)
+        .fetch_all(&mut *tx).await?
+        };
+        let messages: HashMap<_, _> = messages
+            .into_iter()
+            .map(|(id, content)| {
+                let digest = compute_digest(&content);
+                (id, (content, digest))
+            })
+            .collect();
+        let mut evidence_by_item: HashMap<String, Vec<MemoryEvidenceDto>> = HashMap::new();
+        for e in evidence {
+            let text = messages
+                .get(&e.message_id)
+                .filter(|(_, digest)| *digest == e.content_digest)
+                .and_then(|(content, _)| content.get(e.start_byte as usize..e.end_byte as usize))
+                .map(str::to_owned);
+            evidence_by_item
+                .entry(e.item_id)
+                .or_default()
+                .push(MemoryEvidenceDto {
+                    message_id: e.message_id,
+                    sequence: e.sequence,
+                    role: e.role,
+                    purpose: e.purpose,
+                    start_byte: e.start_byte as u32,
+                    end_byte: e.end_byte as u32,
+                    text,
+                });
+        }
         let mut items = Vec::new();
         for row in rows.into_iter().take(page_size) {
-            #[derive(sqlx::FromRow)]
-            struct Evidence {
-                message_id: String,
-                sequence: i64,
-                role: String,
-                purpose: String,
-                start_byte: i64,
-                end_byte: i64,
-                content_digest: String,
-                content: String,
-            }
-            let evidence=sqlx::query_as::<_,Evidence>("SELECT e.message_id,e.sequence,e.role,e.purpose,e.start_byte,e.end_byte,e.content_digest,m.content FROM conversation_memory_evidence e JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=? WHERE e.item_id=? ORDER BY e.ordinal")
-                .bind(&row.conversation_id).bind(&row.id).fetch_all(&mut *tx).await?;
-            let evidence: Vec<_> = evidence
-                .into_iter()
-                .map(|e| {
-                    let text = if compute_digest(&e.content) == e.content_digest {
-                        e.content
-                            .get(e.start_byte as usize..e.end_byte as usize)
-                            .map(str::to_owned)
-                    } else {
-                        None
-                    };
-                    MemoryEvidenceDto {
-                        message_id: e.message_id,
-                        sequence: e.sequence,
-                        role: e.role,
-                        purpose: e.purpose,
-                        start_byte: e.start_byte as u32,
-                        end_byte: e.end_byte as u32,
-                        text,
-                    }
-                })
-                .collect();
+            let evidence = evidence_by_item.remove(&row.id).unwrap_or_default();
             if for_prompt && (evidence.is_empty() || evidence.iter().any(|e| e.text.is_none())) {
                 continue;
             }

@@ -67,6 +67,7 @@ export function EntryHeader({
 
   const [draft, setDraft] = useState(named);
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  const cancellingRename = useRef(false);
 
   // Another page, or a rename made elsewhere (the list): take its title.
   const [seen, setSeen] = useState({ pageId, named });
@@ -90,6 +91,7 @@ export function EntryHeader({
   }, [autoFocusTitle, pageId]);
 
   const commit = () => {
+    if (cancellingRename.current) return;
     const next = draft.trim();
     if (next === named) return;
     if (!next) {
@@ -131,8 +133,10 @@ export function EntryHeader({
               event.currentTarget.blur();
             } else if (event.key === 'Escape') {
               event.preventDefault();
+              cancellingRename.current = true;
               setDraft(named);
               event.currentTarget.blur();
+              cancellingRename.current = false;
             }
           }}
           maxLength={160}

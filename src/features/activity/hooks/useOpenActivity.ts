@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
 
-import { useNavigate } from 'react-router';
 
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { ActivityEntryDto } from '@/lib/bindings';
 
 /** Whether an item has somewhere to open: its course, lesson, folder or chat, or the downloads drawer. */
@@ -13,7 +13,7 @@ export function canOpenActivity(item: Pick<ActivityEntryDto, 'kind' | 'target'>)
 
 /** Opens where an item lives, then calls `onOpened` (the drawer closes). */
 export function useOpenActivity(onOpened: () => void) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { openDrawer } = useDownloadState();
   return useCallback(
     (item: ActivityEntryDto) => {

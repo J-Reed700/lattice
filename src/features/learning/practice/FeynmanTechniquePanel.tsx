@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export type FeynmanRating = 'Simple & Clear' | 'Has Unexplained Jargon' | 'Needs More Explanation';
 
@@ -375,7 +376,7 @@ export function FeynmanTechniquePanel({ program, lesson, module }: FeynmanTechni
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={handleCopyExplanation}
+              onClick={handleAsyncEvent(handleCopyExplanation)}
               disabled={!explanation.trim()}
               className="inline-flex items-center gap-1.5 rounded-full border border-border-default bg-surface-sunken px-3.5 py-1.5 text-xs font-medium text-text-primary hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
             >

@@ -1,13 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { Columns3 } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/ui';
 import { useCompareQuery } from '@/features/compare/hooks/useCompareQuery';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { toast } from '@/stores/toastStore';
 import type { CompareCellDto, CompareRowDto } from '@/types/api/compare';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
@@ -30,7 +31,7 @@ function parseIds(value: string | null): string[] {
  * answer that has one and "not stated" wherever a document does not answer.
  */
 export function ComparePage() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const quickCapture = useQuickCapture();
   const [searchParams, setSearchParams] = useSearchParams();
 

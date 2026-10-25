@@ -21,7 +21,7 @@ import { getErrorMessage } from '@/lib/errorUtils';
 import { cn } from '@/lib/utils';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
-import { handleAsyncEvent } from '@/utils/promiseHandlers';
+import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import {
   CATEGORY_LABELS,
@@ -229,7 +229,7 @@ function ModelDetailContent({
           message: `${metadata.name} is active, but warm-up failed: ${getErrorMessage(warmError)}`,
         });
       }
-      queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
+      voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
     } catch (error) {
       addToast({
         type: 'error',
@@ -258,7 +258,7 @@ function ModelDetailContent({
         title: 'Embedding model updated',
         message: `${metadata.name} is prepared. Restart Lattice to use its search index.`,
       });
-      queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
+      voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
     } catch (error) {
       addToast({
         type: 'error',

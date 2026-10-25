@@ -85,7 +85,7 @@ export function TangentSelection({ conversationId, messageId, enabled, children 
     const previousFocus = document.activeElement;
     if (selection.mode === 'menu') menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     const dismiss = (event: Event) => {
-      if (!menuRef.current?.contains(event.target as Node)) setSelection(null);
+      if (!(event.target instanceof Node) || !menuRef.current?.contains(event.target)) setSelection(null);
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;

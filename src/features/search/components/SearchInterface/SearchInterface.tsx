@@ -7,6 +7,7 @@ import { fromSearchResult, type ResolvedReaderTarget } from '@/features/reading/
 import { useSearchQuery } from '@/features/search/hooks/useSearchQuery';
 import { useDebounce } from '@/hooks/useDebounce';
 import type { SearchResult } from '@/types';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { SearchEmptyState } from './SearchEmptyState';
 import { SearchInput } from './SearchInput';
@@ -255,7 +256,7 @@ export function SearchInterface() {
             <VirtualizedSearchResults
               results={groupedResults}
               query={debouncedQuery}
-              onResultOpen={handleResultOpen}
+              onResultOpen={handleAsyncEvent(handleResultOpen)}
             />
           )}
         </div>

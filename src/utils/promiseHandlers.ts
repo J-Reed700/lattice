@@ -1,90 +1,35 @@
-/**
- * Promise Handler Utilities
- *
- * Provides safe wrappers for async operations in React components.
- * Addresses ESLint errors: @typescript-eslint/no-misused-promises and @typescript-eslint/no-floating-promises
- */
+import { getErrorMessage } from '@/lib/errorUtils';
 
-/**
- * Wraps an async function for use in event handlers.
- * Provides automatic error handling and logging.
- *
- * @example
- * ```tsx
- * // Before (ESLint error)
- * <button onClick={async () => await saveData()}>Save</button>
- *
- * // After
- * <button onClick={handleAsyncEvent(async () => {
- *   await saveData();
- * })}>Save</button>
- * ```
- *
- * @param fn - The async function to wrap
- * @param onError - Optional custom error handler
- * @returns A synchronous event handler that safely executes the async function
- */
+/** Runs an event handler immediately and contains synchronous and asynchronous failures. */
 export const handleAsyncEvent = <T extends unknown[]>(
-  fn: (...args: T) => Promise<void>,
+  fn: (...args: T) => Promise<unknown> | void,
   onError?: (error: Error) => void
-): ((...args: T) => void) => (...args: T): void => {
-    const result = fn(...args);
-    if (result && typeof result.catch === 'function') {
-      result.catch((error) => {
-        console.error('Async event handler error:', error);
-        onError?.(error);
-      });
+): ((...args: T) => void) => {
+  const report = (error: unknown) => {
+    const failure = error instanceof Error ? error : new Error(getErrorMessage(error));
+    console.error('Async event handler error:', failure);
+    try {
+      onError?.(failure);
+    } catch (callbackError) {
+      console.error('Async event error callback failed:', callbackError);
     }
   };
+  return (...args: T): void => {
+    try {
+      // Event handlers may need to preventDefault before returning.
+      void Promise.resolve(fn(...args)).catch(report);
+    } catch (error) {
+      report(error);
+    }
+  };
+};
 
-/**
- * Void wrapper for fire-and-forget async operations.
- * Use when you intentionally want to ignore the promise result.
- *
- * @example
- * ```tsx
- * // Before (ESLint error)
- * useEffect(() => {
- *   loadData();
- * }, []);
- *
- * // After
- * useEffect(() => {
- *   void loadData();
- * }, []);
- *
- * // Or with wrapper
- * useEffect(() => {
- *   voidAsync(loadData)();
- * }, []);
- * ```
- *
- * @param fn - The async function to wrap
- * @returns A synchronous function that executes the async function without waiting
- */
+/** Starts a background operation and reports a rejected result. */
 export const voidAsync = <T extends unknown[]>(
   fn: (...args: T) => Promise<unknown>
-): ((...args: T) => void) => (...args: T): void => {
-    void fn(...args);
-  };
+): ((...args: T) => void) => handleAsyncEvent(fn);
 
-/**
- * Safe wrapper for async operations with error boundary.
- * Returns a result object with success/error status.
- *
- * @example
- * ```tsx
- * const result = await safeAsync(() => fetchData());
- * if (result.success) {
- *   console.log(result.data);
- * } else {
- *   console.error(result.error);
- * }
- * ```
- *
- * @param fn - The async function to execute
- * @returns Promise resolving to result object with success/error status
- */
+/** Returns an explicit success or failure without rejecting. */
 export const safeAsync = async <T>(
   fn: () => Promise<T>
 ): Promise<{ success: true; data: T } | { success: false; error: Error }> => {
@@ -94,7 +39,7 @@ export const safeAsync = async <T>(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error : new Error(String(error)),
+      error: error instanceof Error ? error : new Error(getErrorMessage(error)),
     };
   }
 };

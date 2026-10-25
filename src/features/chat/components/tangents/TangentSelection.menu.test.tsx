@@ -138,8 +138,7 @@ describe('the highlight action', () => {
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
   });
 
-  // Bug: TangentSelection.tsx:88 hands the resize event's target (window, not a Node) to Node.contains, which throws, so a resize never closes the action.
-  it.fails('closes on a window resize', () => {
+  it('closes on a window resize', () => {
     const onError = (event: ErrorEvent) => event.preventDefault();
     window.addEventListener('error', onError);
     try {

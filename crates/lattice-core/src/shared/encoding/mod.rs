@@ -1,5 +1,3 @@
-#![allow(unsafe_code)]
-
 //! Byte-slice → f32 conversion with alignment validation.
 //!
 //! Critical for ARM (Apple Silicon, Raspberry Pi, ARM Linux) where
@@ -11,50 +9,15 @@
 
 use crate::shared::error::{AppError, Result};
 
-/// Validates that a pointer is properly aligned for type T.
-pub(crate) fn validate_alignment<T>(ptr: *const u8) -> Result<()> {
-    let alignment = ptr as usize % std::mem::align_of::<T>();
-    if alignment != 0 {
-        return Err(AppError::Other(format!(
-            "Pointer {:p} is not aligned for type {}. \
-             Alignment: {}, Required: {}. \
-             This would crash on ARM processors (M1/M2 Macs, ARM Linux).",
-            ptr,
-            std::any::type_name::<T>(),
-            alignment,
-            std::mem::align_of::<T>()
-        )));
-    }
-    Ok(())
-}
-
-/// Converts bytes to a typed slice with alignment + length validation.
-fn bytes_to_slice<T: bytemuck::Pod>(bytes: &[u8]) -> Result<&[T]> {
-    if !bytes.len().is_multiple_of(std::mem::size_of::<T>()) {
-        return Err(AppError::InvalidInput(format!(
-            "Byte array length {} is not a multiple of type size {}",
-            bytes.len(),
-            std::mem::size_of::<T>()
-        )));
-    }
-    validate_alignment::<T>(bytes.as_ptr())?;
-
-    // SAFETY: length validated above; alignment validated above;
-    // T: Pod means all bit patterns are valid; lifetime tied to input.
-    let slice = unsafe {
-        std::slice::from_raw_parts(
-            bytes.as_ptr() as *const T,
-            bytes.len() / std::mem::size_of::<T>(),
-        )
-    };
-    Ok(slice)
-}
-
 /// Zero-copy view of bytes as `&[f32]`. Errors if the input is
 /// misaligned for f32; callers wanting a fallback should use
 /// `bytes_to_f32_vec` (always safe, copies).
 pub fn bytes_to_f32_slice(bytes: &[u8]) -> Result<&[f32]> {
-    bytes_to_slice::<f32>(bytes)
+    if bytes.is_empty() {
+        return Ok(&[]);
+    }
+    bytemuck::try_cast_slice(bytes)
+        .map_err(|error| AppError::InvalidInput(format!("Invalid f32 byte slice: {error}")))
 }
 
 /// Copy bytes into a freshly-allocated `Vec<f32>`. Always safe — `Vec`
@@ -70,11 +33,40 @@ pub fn bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
     let float_count = bytes.len() / std::mem::size_of::<f32>();
     let mut floats = vec![0.0f32; float_count];
 
-    // SAFETY: Vec is always properly aligned for its element type;
-    // we're copying raw bytes into a properly aligned Vec<f32>.
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), floats.as_mut_ptr() as *mut u8, bytes.len());
-    }
+    bytemuck::cast_slice_mut(&mut floats).copy_from_slice(bytes);
 
     Ok(floats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aligned_bytes_are_borrowed_without_copying() {
+        let values = [1.25_f32, -3.5, 0.0];
+        let decoded = bytes_to_f32_slice(bytemuck::cast_slice(&values)).unwrap();
+        assert_eq!(decoded, values);
+        assert_eq!(decoded.as_ptr(), values.as_ptr());
+    }
+
+    #[test]
+    fn unaligned_bytes_can_be_copied_but_not_borrowed() {
+        let mut buffer = [0_u8; 8];
+        let offset = (0..4)
+            .find(|offset| !(buffer.as_ptr() as usize + offset).is_multiple_of(4))
+            .unwrap();
+        let bytes = &mut buffer[offset..offset + 4];
+        bytes.copy_from_slice(&1.25_f32.to_ne_bytes());
+        assert!(bytes_to_f32_slice(bytes).is_err());
+        assert_eq!(bytes_to_f32_vec(bytes).unwrap(), [1.25]);
+    }
+
+    #[test]
+    fn empty_and_incomplete_inputs_are_handled() {
+        assert!(bytes_to_f32_slice(&[]).unwrap().is_empty());
+        assert!(bytes_to_f32_vec(&[]).unwrap().is_empty());
+        assert!(bytes_to_f32_slice(&[0; 3]).is_err());
+        assert!(bytes_to_f32_vec(&[0; 3]).is_err());
+    }
 }

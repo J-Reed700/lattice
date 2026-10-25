@@ -303,6 +303,39 @@ Imported by path, not from the barrel: `popover.tsx` (`Popover`,
 
 ---
 
+## Workspace and study interactions
+
+These components live in `src/components/ui/` and are exported from the barrel.
+Their colors come from semantic theme tokens; they work inside Studio's scoped
+palette as well as the application theme.
+
+| Component | Behavior | Keyboard support |
+|-----------|----------|------------------|
+| `SearchableSelect` | Search labels, descriptions and keywords; show optional status indicators; confirm a controlled value | Type to filter, arrows to browse, Enter to select, Escape to dismiss and restore focus |
+| `NavigationTabs` | Radix tabs with underline or segmented appearance, badges and a separate actions slot | Arrows/Home/End move focus; Enter/Space activates, allowing the owner to save drafts first |
+| `ResizableColumns` | Adjustable trailing pane; optional saved width; stacks when its container is narrow | Left/Right adjust width, Shift takes larger steps, Home/End set limits; double-click resets |
+| `SortableList` | Drag a handle to reorder; explicit up/down controls remain available | Move buttons or Alt+Up/Down on a row; changes are announced |
+| `PairingBoard` | Connect named cards by selecting or dragging; clear and replace assignments | Select the left item, then activate the right item; changes are announced |
+| `SaveStatus` | Consistent saving, saved, unsaved and error feedback with icons | Status/alert announcements; retry actions belong to the owning workflow |
+
+Keep domain labels, course progress, grading and save operations in feature
+components. For example, `CourseNavigator` builds course-specific options and
+passes them to `SearchableSelect`; `OrderingEditor` passes the same response
+values to `SortableList` regardless of input method. Do not duplicate their
+focus, search or pointer behavior in individual screens.
+
+`NavigationTabs` uses manual activation. Its controlled `value` should change
+only after any required save succeeds. Pass `idPrefix` and `panelId` when the
+owner renders a separate panel. `ResizableColumns` accepts a namespaced
+`storageKey`; it stores only the width, never document content.
+
+`SortableList` shows a preview while dragging and commits one change on drop.
+Escape or a cancelled pointer leaves the answer unchanged.
+
+`PopoverContent` accepts `inheritThemeFrom` to copy semantic palette tokens into
+its portal without inheriting layout containment. `SearchableSelect` handles
+this automatically, so its popup follows the opening surface and theme changes.
+
 ## Integration Examples
 
 ### 1. Navigation rail

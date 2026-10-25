@@ -139,22 +139,26 @@ impl RunClusteringUseCase {
 
         self.emit("loading", 0, documents.len());
         let mut inputs: Vec<ClusteringInput> = Vec::new();
-        for (index, doc) in documents.iter().enumerate() {
-            if index > 0 && index % 200 == 0 {
-                self.emit("loading", index, documents.len());
+        // Bound the number of documents whose chunk vectors are resident at
+        // once, and release them as each document is pooled.
+        for (index, batch) in documents.chunks(32).enumerate() {
+            let ids: Vec<_> = batch
+                .iter()
+                .map(|doc| doc.id().as_str().to_owned())
+                .collect();
+            let mut vectors = self.embedding_repo.vectors_by_document_ids(&ids).await?;
+            for doc_id in ids {
+                if let Some(chunks) = vectors.remove(&doc_id) {
+                    if let Some(vector) = mean_pool(&chunks) {
+                        inputs.push(ClusteringInput { doc_id, vector });
+                    }
+                }
             }
-            let doc_id = doc.id().as_str().to_string();
-            let chunk_pairs = self.embedding_repo.find_by_document_id(&doc_id).await?;
-            if chunk_pairs.is_empty() {
-                continue;
-            }
-            let vectors: Vec<Vec<f32>> = chunk_pairs.into_iter().map(|(_, v)| v).collect();
-            if let Some(pooled) = mean_pool(&vectors) {
-                inputs.push(ClusteringInput {
-                    doc_id,
-                    vector: pooled,
-                });
-            }
+            self.emit(
+                "loading",
+                ((index + 1) * 32).min(documents.len()),
+                documents.len(),
+            );
         }
 
         let doc_count = inputs.len();

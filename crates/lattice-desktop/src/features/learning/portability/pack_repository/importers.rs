@@ -343,6 +343,19 @@ pub(super) async fn insert_practical_snapshot(
             let role = enum_label(&file.role)?;
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)").bind(&activity.id).bind(ordinal as i64).bind(&file.path).bind(role).bind(&file.content).bind(&file.content_sha256).bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
+        if let Some(plan) = &activity.interview_plan {
+            let content = json_string(plan)?;
+            let checksum = format!("{:x}", Sha256::digest(content.as_bytes()));
+            sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,'reference',?,?,0)")
+                .bind(&activity.id)
+                .bind(activity.files.len() as i64)
+                .bind(crate::features::learning::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH)
+                .bind(&content)
+                .bind(&checksum)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
     }
     for activity in &snapshot.activities {
         if let Some(predecessor) = &activity.predecessor_id {
@@ -531,6 +544,9 @@ pub(super) fn remap_practical(
         activity.predecessor_id = activity.predecessor_id.as_deref().map(|id| remap(map, id));
         remap_refs(map, &mut activity.outcome_ids);
         remap_refs(map, &mut activity.source_version_ids);
+        if let Some(plan) = &mut activity.interview_plan {
+            remap_refs(map, &mut plan.researched_source_version_ids);
+        }
     }
     for run in &mut snapshot.runs {
         run.id = remap(map, &run.id);

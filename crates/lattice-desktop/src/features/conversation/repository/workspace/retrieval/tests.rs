@@ -1,5 +1,7 @@
 use super::*;
 
+mod batch_reads;
+
 async fn scope_fixture() -> ConversationRepository {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)

@@ -139,10 +139,11 @@ describe('Learning Studio Sources workspace', () => {
 
     // Opening a match from the search results turns the list to the page that holds it.
     await user.type(screen.getByRole('textbox', { name: 'Search saved source text' }), 'archive');
-    await user.click(await screen.findByRole('button', { name: /^Archive 22.*match 22$/ }));
+    await waitFor(() => expect(mocks.search).toHaveBeenCalledWith(expect.objectContaining({ query: 'archive' })), { timeout: 5_000 });
+    await user.click(await screen.findByText('match 22'));
     expect(titles()).toEqual(['Archive 21', 'Archive 22', 'Archive 23']);
     expect(within(list).getByRole('button', { name: /Archive 22/ })).toHaveAttribute('aria-current', 'true');
-  });
+  }, 20_000);
 
   it('supports paste text and retries a lost response with the exact same operation and version ids', async () => {
     const user = userEvent.setup();

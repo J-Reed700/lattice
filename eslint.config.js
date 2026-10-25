@@ -176,7 +176,7 @@ export default [
       // ===================================
       // Core ESLint Rules
       // ===================================
-      'no-console': 'off', // Allow console in development, will be stripped in production
+      'no-console': 'off', // The application records console errors and warnings in diagnostics.
       'no-debugger': 'warn',
       'no-unused-vars': 'off', // Disabled in favor of TypeScript rule
       'no-undef': 'off', // TypeScript handles this
@@ -204,9 +204,9 @@ export default [
       ],
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/explicit-function-return-type': 'off', // Too many warnings, TypeScript infers types well
-      '@typescript-eslint/no-floating-promises': 'off', // Temporarily disabled - too many to fix now (58 warnings)
+      '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/await-thenable': 'warn',
-      '@typescript-eslint/no-misused-promises': 'off', // Temporarily disabled - too many to fix now (65 warnings),
+      '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/prefer-nullish-coalescing': 'off', // Too many false positives
       '@typescript-eslint/prefer-optional-chain': 'warn',
       '@typescript-eslint/consistent-type-imports': 'off', // Conflicts with some TypeScript patterns
@@ -251,7 +251,8 @@ export default [
       // Case-sensitive, so an import that only resolves through macOS case
       // folding fails here instead of on a case-sensitive filesystem.
       'import/no-unresolved': 'error',
-      'import/no-cycle': 'error',
+      // Keep cycle detection on the application's graph, outside node_modules.
+      'import/no-cycle': ['error', { ignoreExternal: true }],
       // import/no-cycle sees file-level cycles only. These zones fix the
       // direction between folders that used to import each other, so a
       // folder-level cycle cannot come back one file at a time.
@@ -576,6 +577,9 @@ export default [
       'no-restricted-syntax': 'off',
       // Test doubles frequently need to stand in for broad framework types.
       '@typescript-eslint/no-explicit-any': 'off',
+      // Tests deliberately create rejected promises and async mock callbacks.
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-misused-promises': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
       'no-console': 'off',
     },

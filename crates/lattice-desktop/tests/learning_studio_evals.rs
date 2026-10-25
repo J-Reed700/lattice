@@ -9,12 +9,14 @@
 //! LATTICE_LEARNING_EVAL_MODEL=qwen3:8b \
 //! LATTICE_LEARNING_EVAL_ENDPOINT=http://127.0.0.1:11434 \
 //!   cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
-//!     --test learning_studio_evals -- --ignored --nocapture
+//!     --test learning_studio_evals -- --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! Optional variables:
 //! - `LATTICE_LEARNING_EVAL_LOG_DIR` (defaults to the system temporary directory)
 //! - `LATTICE_LEARNING_EVAL_TIMEOUT_SECS` (defaults to 300)
+//! - `LATTICE_LEARNING_EVAL_PROVIDER` (`ollama`, the default, or `llama_cpp`)
+//! - `LATTICE_LEARNING_EVAL_CONTEXT_TOKENS` (defaults to 32768 for llama.cpp)
 //! - `LATTICE_LEARNING_EVAL_AUTH_HEADER_NAME` and
 //!   `LATTICE_LEARNING_EVAL_AUTH_HEADER_VALUE` for a private Ollama-compatible
 //!   endpoint. The credential is never written to the trace.
@@ -51,20 +53,28 @@ use lattice::features::learning::practical_dto::LearningPracticalActivityKind;
 use lattice::features::learning::practical_generation::{self, PracticalFileRole};
 use lattice::features::learning::quiz_bank_jobs;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
+use lattice::features::llm::llama_cpp::LlamaCppLlm;
+use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
 use lattice_core::application::ports::LLMPort;
 use serde_json::{json, Value};
 use sysinfo::{Pid, System};
 
-const HARNESS_VERSION: &str = "learning-studio-eval/2026-10-01.1";
+#[path = "learning_studio_evals/interviews.rs"]
+mod interviews;
+
+const HARNESS_VERSION: &str = "learning-studio-eval/2026-10-24.2";
 const LEAKAGE_CANARY: &str = "RETURN_7_GOLDEN_PATCH";
+static LIVE_MODEL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone)]
 struct EvalConfig {
+    provider: String,
     model: String,
     endpoint: String,
     timeout: Duration,
     log_dir: PathBuf,
     auth_header: Option<(String, String)>,
+    context_tokens: u32,
 }
 
 impl EvalConfig {
@@ -86,6 +96,8 @@ impl EvalConfig {
             Some((name, value))
         };
         Self {
+            provider: std::env::var("LATTICE_LEARNING_EVAL_PROVIDER")
+                .unwrap_or_else(|_| "ollama".into()),
             model,
             endpoint: std::env::var("LATTICE_LEARNING_EVAL_ENDPOINT")
                 .unwrap_or_else(|_| "http://127.0.0.1:11434".into()),
@@ -94,18 +106,46 @@ impl EvalConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| std::env::temp_dir()),
             auth_header,
+            context_tokens: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(32_768),
         }
     }
 
-    fn client(&self) -> OllamaClient {
-        OllamaClient::with_model_and_timeouts_and_header(
-            &self.endpoint,
-            &self.model,
-            Duration::from_secs(30),
-            self.timeout,
-            self.auth_header.clone(),
+    fn client(&self) -> Box<dyn LLMPort> {
+        if self.provider == "llama_cpp" {
+            let (name, value) = self.auth_header.clone().unwrap_or_default();
+            let settings = LLMSettingsDto {
+                context_window: self.context_tokens,
+                timeout_seconds: u32::try_from(self.timeout.as_secs()).unwrap_or(u32::MAX),
+                llama_cpp: LlamaCppSettingsDto {
+                    url: self.endpoint.clone(),
+                    model: self.model.clone(),
+                    auth_header_name: name,
+                    auth_header_value: value,
+                },
+                ..Default::default()
+            };
+            return Box::new(
+                LlamaCppLlm::new(&settings).expect("valid llama.cpp evaluation client"),
+            );
+        }
+        assert_eq!(
+            self.provider, "ollama",
+            "unsupported live evaluation provider"
+        );
+        Box::new(
+            OllamaClient::with_model_and_timeouts_and_header(
+                &self.endpoint,
+                &self.model,
+                Duration::from_secs(30),
+                self.timeout,
+                self.auth_header.clone(),
+            )
+            .expect("valid Learning Studio evaluation client"),
         )
-        .expect("valid Learning Studio evaluation client")
     }
 
     fn trace_path(&self) -> PathBuf {
@@ -127,8 +167,9 @@ fn append_trace(config: &EvalConfig, record: Value) {
     let envelope = json!({
         "harnessVersion": HARNESS_VERSION,
         "recordedAt": chrono::Utc::now().to_rfc3339(),
-        "provider": "ollama_compatible",
+        "provider": config.provider,
         "model": config.model,
+        "contextTokens": (config.provider == "llama_cpp").then_some(config.context_tokens),
         "record": record,
     });
     serde_json::to_writer(&mut file, &envelope).expect("serialize evaluation trace record");
@@ -293,6 +334,7 @@ fn leakage_canary_is_absent_from_the_committed_practical_fixture() {
 #[tokio::test]
 #[ignore = "contacts an explicitly configured local or private model endpoint"]
 async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
+    let _model_guard = LIVE_MODEL_LOCK.lock().await;
     let config = EvalConfig::from_env();
     let client = config.client();
 
@@ -300,7 +342,7 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
     let sampler = MemorySampler::start();
     let mut graded = Vec::new();
     for (case, answer) in grading_cases() {
-        match quiz_bank_jobs::grade_written_answer(&client, &answer, None).await {
+        match quiz_bank_jobs::grade_written_answer(client.as_ref(), &answer, None).await {
             Ok(checked) => graded.push((case, checked)),
             Err(error) => {
                 append_trace(
@@ -369,7 +411,7 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
     let started = Instant::now();
     let sampler = MemorySampler::start();
     let generated = practical_generation::generate_activity(
-        &client,
+        client.as_ref(),
         LearningPracticalActivityKind::Debugging,
         &practical_request,
         &lesson,
@@ -379,6 +421,8 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
             command: vec!["python".into(), "checks.py".into()],
             contract: "Python standard library only. Editable solution.py; checks.py contains deterministic assertions and must fail nonzero when any assertion fails.".into(),
         }),
+        None,
+        &[],
     )
     .await;
     let practical_peak_rss_bytes = sampler.finish().await;
@@ -412,7 +456,15 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
         .filter(|file| file.role == PracticalFileRole::Check)
         .count();
     let grounded = activity.source_version_ids == vec![source.version.id.clone()];
-    let practical_passed = !leakage_detected && public_files > 0 && hidden_checks > 0 && grounded;
+    let evaluator_entrypoint_present = activity
+        .files
+        .iter()
+        .any(|file| file.path == "checks.py" && file.role == PracticalFileRole::Check);
+    let practical_passed = !leakage_detected
+        && public_files > 0
+        && hidden_checks > 0
+        && grounded
+        && evaluator_entrypoint_present;
     append_trace(
         &config,
         json!({
@@ -424,6 +476,7 @@ async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
             "solutionLeakageCanaryDetected": leakage_detected,
             "publicFileCount": public_files,
             "hiddenCheckCount": hidden_checks,
+            "evaluatorEntrypointPresent": evaluator_entrypoint_present,
             "title": activity.title,
             "brief": activity.brief,
             "files": activity.files.iter().map(|file| json!({

@@ -7,6 +7,7 @@
 //! Both are explicit / user-triggered. Nothing here runs on ingest or
 //! a timer.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -80,12 +81,32 @@ pub async fn list_clusters(container: State<'_, Container>) -> Result<Vec<Cluste
     };
     let clusters = repo.get_clusters_for_run(&run.id).await?;
 
-    let chunk_repo = container.chunk_repository();
     let document_repo = container.document_repository();
+    let sample_ids: HashSet<_> = clusters
+        .iter()
+        .flat_map(|cluster| cluster.member_doc_ids.iter().take(5).cloned())
+        .collect();
+    let sample_ids: Vec<_> = sample_ids.into_iter().collect();
+    let documents = match document_repo.find_metadata_by_ids(&sample_ids).await {
+        Ok(documents) => documents,
+        Err(error) => {
+            tracing::warn!(%error, "Could not load cluster sample titles");
+            Vec::new()
+        }
+    };
+    let titles: HashMap<_, _> = documents
+        .into_iter()
+        .map(|document| {
+            (
+                document.id().as_str().to_owned(),
+                document.file_name().to_owned(),
+            )
+        })
+        .collect();
 
     let mut dtos = Vec::with_capacity(clusters.len());
     for cluster in clusters {
-        let sample_titles = gather_sample_titles(&chunk_repo, &document_repo, &cluster).await;
+        let sample_titles = gather_sample_titles(&titles, &cluster);
         dtos.push(cluster_to_dto(&cluster, sample_titles));
     }
     Ok(dtos)
@@ -134,23 +155,13 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
     ))
 }
 
-async fn gather_sample_titles(
-    chunk_repo: &Arc<dyn ChunkRepositoryPort>,
-    document_repo: &Arc<dyn lattice_core::application::ports::DocumentRepository>,
-    cluster: &Cluster,
-) -> Vec<String> {
-    let sample_ids: Vec<&String> = cluster.member_doc_ids.iter().take(5).collect();
-    let mut titles = Vec::with_capacity(sample_ids.len());
-    for id in sample_ids {
-        match document_repo.find_by_id(id).await {
-            Ok(Some(doc)) => titles.push(doc.file_name().to_string()),
-            _ => {
-                let _ = chunk_repo; // keep the arg list parallel even if unused here
-                titles.push(id.clone());
-            }
-        }
-    }
-    titles
+fn gather_sample_titles(titles: &HashMap<String, String>, cluster: &Cluster) -> Vec<String> {
+    cluster
+        .member_doc_ids
+        .iter()
+        .take(5)
+        .map(|id| titles.get(id).unwrap_or(id).clone())
+        .collect()
 }
 
 fn run_to_dto(run: &ClusterRun) -> ClusterRunDto {

@@ -24,12 +24,6 @@ export interface ChatFileDropState {
   remove: (_path: string) => void;
 }
 
-interface DragDropPayload {
-  type: 'enter' | 'over' | 'drop' | 'leave';
-  paths?: string[];
-  position?: { x: number; y: number };
-}
-
 const basename = (path: string): string => {
   const normalized = path.replace(/\\/g, '/');
   const name = normalized.slice(normalized.lastIndexOf('/') + 1);
@@ -68,7 +62,7 @@ export function useChatFileDrop(
   );
 
   const add = useCallback((paths: string[]) => {
-    const usable = paths.filter((path) => Boolean(path) && stageableRef.current(path));
+    const usable = [...new Set(paths)].filter((path) => Boolean(path) && stageableRef.current(path));
     if (usable.length === 0) return;
     setStaged((current) => {
       const seen = new Set(current.map((file) => file.path));
@@ -87,7 +81,7 @@ export function useChatFileDrop(
       try {
         const { getCurrentWebview } = await import('@tauri-apps/api/webview');
         const stop = await getCurrentWebview().onDragDropEvent((event) => {
-          const payload = event.payload as unknown as DragDropPayload;
+          const payload = event.payload;
           if (payload.type === 'leave') {
             setIsDragging(false);
             return;
@@ -101,13 +95,7 @@ export function useChatFileDrop(
             if (!isInsidePanel(payload.position)) return;
             const paths = (payload.paths ?? []).filter(Boolean);
             if (paths.length === 0) return;
-            setStaged((current) => {
-              const seen = new Set(current.map((file) => file.path));
-              const added = paths
-                .filter((path) => !seen.has(path) && stageableRef.current(path))
-                .map((path) => ({ path, name: basename(path) }));
-              return added.length > 0 ? [...current, ...added] : current;
-            });
+            add(paths);
             onDropRef.current(paths);
           }
         });
@@ -123,7 +111,7 @@ export function useChatFileDrop(
       cancelled = true;
       unlisten?.();
     };
-  }, [isInsidePanel]);
+  }, [add, isInsidePanel]);
 
   const clear = useCallback(() => setStaged([]), []);
   const remove = useCallback(

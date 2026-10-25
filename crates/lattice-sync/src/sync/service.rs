@@ -11,6 +11,8 @@ use crate::sync::types::{
     SyncStatusResponse,
 };
 
+const MAX_PUSH_CHANGES: usize = 1000;
+
 #[async_trait]
 pub trait SyncService: Send + Sync {
     async fn register_device(
@@ -87,6 +89,11 @@ impl<R: SyncRepository> SyncService for SyncServiceImpl<R> {
             return Err(AppError::Validation(
                 "push request must contain at least one change".to_string(),
             ));
+        }
+        if request.changes.len() > MAX_PUSH_CHANGES {
+            return Err(AppError::Validation(format!(
+                "push requests are limited to {MAX_PUSH_CHANGES} changes",
+            )));
         }
 
         for change in &request.changes {
@@ -307,6 +314,36 @@ mod tests {
             content_hash: None,
             base_version: None,
         }
+    }
+
+    #[tokio::test]
+    async fn push_batches_are_bounded_before_opening_a_transaction() {
+        let repo = Arc::new(Repository::default());
+        let service = SyncServiceImpl::new(repo.clone());
+        let device_id = Uuid::new_v4();
+        let oversized = PushChangesRequest {
+            device_id,
+            changes: vec![change("note.md"); MAX_PUSH_CHANGES + 1],
+        };
+        assert!(matches!(
+            service.push_changes(42, oversized).await,
+            Err(AppError::Validation(_))
+        ));
+        assert!(repo.calls.lock().unwrap().is_empty());
+        let boundary = PushChangesRequest {
+            device_id,
+            changes: vec![change("note.md"); MAX_PUSH_CHANGES],
+        };
+        assert_eq!(
+            service
+                .push_changes(42, boundary)
+                .await
+                .unwrap()
+                .accepted_paths
+                .len(),
+            MAX_PUSH_CHANGES
+        );
+        assert_eq!(repo.calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

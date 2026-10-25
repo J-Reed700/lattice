@@ -171,6 +171,17 @@ impl SyncRepository for PgSyncRepository {
     ) -> AppResult<PullBatch> {
         let device = self.get_device(user_id, device_id).await?;
 
+        // Bound this page to a committed watermark. Pushes commit in sequence
+        // order per user, so an exhausted page can safely advance past this
+        // device's own operations instead of scanning them again on every poll.
+        let high_watermark = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(seq) FROM document_ops WHERE user_id=$1",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?
+        .unwrap_or(0);
+
         let rows = sqlx::query_as::<_, ChangeRow>(
             r#"
             SELECT
@@ -188,6 +199,7 @@ impl SyncRepository for PgSyncRepository {
             WHERE user_id = $1
               AND seq > $2
               AND device_id <> $3
+              AND seq <= $5
             ORDER BY seq ASC
             LIMIT $4
             "#,
@@ -196,6 +208,7 @@ impl SyncRepository for PgSyncRepository {
         .bind(since_seq)
         .bind(device.id)
         .bind(limit)
+        .bind(high_watermark)
         .fetch_all(&self.pool)
         .await?;
 
@@ -257,7 +270,11 @@ impl SyncRepository for PgSyncRepository {
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-        let next_seq = changes.last().map(|item| item.seq).unwrap_or(since_seq);
+        let next_seq = if changes.len() < usize::try_from(limit).unwrap_or(0) {
+            since_seq.max(high_watermark)
+        } else {
+            changes.last().map(|item| item.seq).unwrap_or(since_seq)
+        };
 
         let _ = sqlx::query(
             r#"

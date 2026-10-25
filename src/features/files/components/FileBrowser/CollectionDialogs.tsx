@@ -12,6 +12,7 @@ import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/feature
 import { metaLine } from '@/features/files/model/documentMetadata';
 import { toast } from '@/stores/toastStore';
 import { type CustomCollection, type DocumentMetadata } from '@/types/fileBrowser';
+import { voidAsync } from '@/utils/promiseHandlers';
 
 import { FileIcon } from './FileIcon';
 
@@ -45,7 +46,7 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
       setError('Enter a unique collection name.');
       return;
     }
-    add(id, name.trim());
+    voidAsync(() => add(id, name.trim()))();
   };
 
   return (

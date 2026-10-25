@@ -12,6 +12,7 @@ import { embeddingBlockReason } from '@/features/settings/components/ModelCatalo
 import { VaultAPI } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelMetadata } from '@/types/modelCatalog';
+import { voidAsync } from '@/utils/promiseHandlers';
 
 type AddToast = ReturnType<typeof useToastStore.getState>['addToast'];
 
@@ -65,7 +66,7 @@ export async function startModelDownload({
       title: 'Already downloaded',
       message: `${metadata.name} is on disk.`,
     });
-    queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
+    voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
     return { alreadyDownloaded: true };
   } else if (response.status === 'network_error') {
     addToast({

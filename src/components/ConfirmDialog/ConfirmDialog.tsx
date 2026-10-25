@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 import { sanitizeFileName } from '@/utils/sanitize';
 
 import { ButtonLoading } from '../LoadingState';
@@ -108,7 +109,7 @@ export function ConfirmDialog({
         // Cmd/Ctrl+Enter to confirm
         e.preventDefault();
         if (canConfirm) {
-          handleConfirm();
+          voidAsync(() => handleConfirm())();
         }
       }
     };
@@ -200,7 +201,7 @@ export function ConfirmDialog({
           <button
             ref={confirmButtonRef}
             type="button"
-            onClick={handleConfirm}
+            onClick={handleAsyncEvent(handleConfirm)}
             disabled={!canConfirm}
             className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50 ${confirmButtonClass}`}
           >

@@ -124,26 +124,32 @@ impl LearningPracticalRepository {
         let id: String = row.get("id");
         let file_rows = sqlx::query("SELECT * FROM learning_practical_files WHERE activity_id=? AND role IN ('starter','reference') ORDER BY ordinal")
             .bind(&id).fetch_all(&mut *connection).await.map_err(db)?;
-        let files = file_rows
-            .into_iter()
-            .map(|file| {
-                Ok(LearningPracticalFileDto {
-                    path: file.get("path"),
-                    role: match file.get::<String, _>("role").as_str() {
-                        "starter" => LearningPracticalPublicFileRole::Starter,
-                        "reference" => LearningPracticalPublicFileRole::Reference,
-                        _ => {
-                            return Err(AppError::Database(
-                                "Hidden practical file leaked into public query".into(),
-                            ))
-                        }
-                    },
-                    content: file.get("content"),
-                    content_sha256: file.get("content_sha256"),
-                    editable: file.get::<i64, _>("editable") != 0,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut files = Vec::new();
+        let mut interview_plan = None;
+        for file in file_rows {
+            let path: String = file.get("path");
+            let content: String = file.get("content");
+            if path == crate::features::learning::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH {
+                interview_plan = Some(serde_json::from_str::<LearningInterviewPlanDto>(&content)
+                    .map_err(|error| AppError::Database(format!("Saved interview plan is invalid: {error}")))?);
+                continue;
+            }
+            files.push(LearningPracticalFileDto {
+                path,
+                role: match file.get::<String, _>("role").as_str() {
+                    "starter" => LearningPracticalPublicFileRole::Starter,
+                    "reference" => LearningPracticalPublicFileRole::Reference,
+                    _ => {
+                        return Err(AppError::Database(
+                            "Hidden practical file leaked into public query".into(),
+                        ))
+                    }
+                },
+                content,
+                content_sha256: file.get("content_sha256"),
+                editable: file.get::<i64, _>("editable") != 0,
+            });
+        }
         let builtin_runtime = row
             .get::<Option<String>, _>("builtin_runtime")
             .as_deref()
@@ -205,6 +211,7 @@ impl LearningPracticalRepository {
             runtime_unavailable_reason: None,
             generator_model: row.get("generator_model"),
             files,
+            interview_plan,
             revision: row.get("revision"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),

@@ -1,17 +1,17 @@
 import { useState } from 'react';
 
-import { useNavigate } from 'react-router';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
 import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from './settingsStyles';
 
 export function SpacesTab() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
   const { isCreatingSpace, createSpace } = useSpaceEditor();
   const activeSpaces = useOpenSpaces();

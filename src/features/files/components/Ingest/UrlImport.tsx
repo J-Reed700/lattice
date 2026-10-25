@@ -5,6 +5,7 @@ import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
 import { cn } from '@/lib/utils';
 import type { UrlPreview } from '@/types/api/web';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 interface UrlImportProps {
   onImport: (_url: string) => void;
@@ -152,7 +153,7 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
           className={cn(settingsFieldClass, 'h-9 flex-1')}
         />
         <Button
-          onClick={handleImport}
+          onClick={handleAsyncEvent(handleImport)}
           disabled={!resolvedUrl || loading}
           className="h-9 shrink-0"
         >

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
 import { Bookmark, Combine, FileText, MessageSquare, NotebookPen, Plus, Search } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { useCorpusShapeQuery } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { useDashboardQuery } from '@/features/dashboard/hooks/useDashboardQuery';
@@ -12,6 +11,7 @@ import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromRecentDocument } from '@/features/reading/model/sourceAdapter';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { cn } from '@/lib/utils';
 import type { RecentDocument } from '@/types';
 import type { ConversationMessageBookmarkDto } from '@/types/api/conversation';
@@ -110,7 +110,7 @@ export const Dashboard = () => {
   const { data, isLoading, error } = useDashboardQuery();
   const { data: weekCandidates } = useWeeklySynthesisCandidatesQuery();
   const { data: corpusShape } = useCorpusShapeQuery();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);
 
   if (isLoading) return <DashboardSkeleton />;

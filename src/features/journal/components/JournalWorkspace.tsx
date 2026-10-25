@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 
-import { useNavigate, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 
 import { useJournalsQuery } from '@/features/journal/api/queries';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
@@ -24,6 +24,7 @@ import { RECENT_DECK_SIZE, useJournalSynthesis } from '@/features/journal/hooks/
 import { usePinnedNoteHighlights, useSidebarCollapsed } from '@/features/journal/hooks/useJournalViewPrefs';
 import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { useActiveSynthesis } from '@/features/journal/synthesis/synthesisPanel';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -39,7 +40,7 @@ function makeId(prefix: string): string {
  * presentational components.
  */
 export function JournalWorkspace() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedJournalSpaceId = searchParams.get('journalSpaceId');
   const requestedEntryId = searchParams.get('entryId');

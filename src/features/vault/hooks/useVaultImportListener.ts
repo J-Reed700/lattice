@@ -17,7 +17,7 @@ export function useVaultImportListener(): void {
     const isMounted = { current: true };
     let unlisten: UnlistenFn | undefined;
 
-    (async () => {
+    void (async () => {
       try {
         const bump = useVaultImportStore.getState().bump;
         const handle = await listenValidated(

@@ -8,6 +8,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
+import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { BackupSection } from './BackupSection';
 import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
@@ -108,7 +109,7 @@ export function VaultTab() {
             </span>
             <button
               type="button"
-              onClick={handlePickFolder}
+              onClick={handleAsyncEvent(handlePickFolder)}
               disabled={isPicking || isSaving || isSyncing}
               className={SECONDARY_BUTTON_CLASS}
             >

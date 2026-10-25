@@ -10,7 +10,6 @@ import {
   Plus,
   X
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
@@ -24,6 +23,7 @@ import { useNewSpaceForm } from '@/features/chat/components/sidebar/useNewSpaceF
 import { useConversationExport } from '@/features/chat/hooks/useConversationExport';
 import { useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
@@ -35,7 +35,7 @@ interface ConversationSidebarProps {
 }
 
 export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {}) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const {
     spaces,
     selectedSpaceId,
@@ -338,7 +338,9 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
 
       <div className="flex h-8 shrink-0 items-center justify-end border-t border-border-subtle px-4">
         <span className="text-xs text-text-muted">
-          {conversations.length} {isJournalScope ? 'entry' : 'conversation'}{conversations.length !== 1 ? 's' : ''}
+          {conversations.length} {isJournalScope
+            ? (conversations.length === 1 ? 'entry' : 'entries')
+            : (conversations.length === 1 ? 'conversation' : 'conversations')}
         </span>
       </div>
 

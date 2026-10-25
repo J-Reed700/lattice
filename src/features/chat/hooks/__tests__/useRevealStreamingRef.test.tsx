@@ -40,11 +40,7 @@ describe('useRevealStreamingRef', () => {
     expect(h.reveal).toHaveBeenCalledWith('notes/rome.md', { startLine: 12, endLine: 12 });
   });
 
-  // Bug: useRevealStreamingRef.ts:43 runs the final check in the effect
-  // cleanup, before the content effect stores the render's text, so when the
-  // last tokens and the end of streaming arrive in one render the final check
-  // reads the previous text and reveals line 1 instead of line 12.
-  it.fails('takes the last tokens when they arrive with the end of streaming', () => {
+  it('takes the last tokens when they arrive with the end of streaming', () => {
     const { rerender } = renderHook(({ content, active }) => useRevealStreamingRef(content, active), {
       initialProps: { content: 'Answer: notes/rome.md:1', active: true },
     });

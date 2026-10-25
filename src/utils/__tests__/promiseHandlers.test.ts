@@ -3,6 +3,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleAsyncEvent, safeAsync, voidAsync } from '../promiseHandlers';
 
 describe('handleAsyncEvent', () => {
+  it('contains synchronous failures before a promise is returned', () => {
+    const failure = new Error('failed to start');
+    const onError = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const operation = () => { throw failure; };
+
+    expect(() => handleAsyncEvent(operation, onError)()).not.toThrow();
+    expect(onError).toHaveBeenCalledWith(failure);
+  });
+
+  it('normalizes rejection values and contains a failing error callback', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const callbackFailure = new Error('reporting failed');
+    const onError = vi.fn(() => { throw callbackFailure; });
+
+    handleAsyncEvent(async () => { throw { message: 'offline' }; }, onError)();
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(new Error('offline')));
+    expect(consoleError).toHaveBeenCalledWith('Async event error callback failed:', callbackFailure);
+  });
   it('passes every event argument to the async callback', async () => {
     const operation = vi.fn(async (_id: string, _force: boolean) => undefined);
     const handler = handleAsyncEvent(operation);
@@ -38,6 +58,12 @@ describe('handleAsyncEvent', () => {
 });
 
 describe('voidAsync', () => {
+  it('contains rejected background operations', async () => {
+    const failure = new Error('background task failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    voidAsync(async () => { throw failure; })();
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Async event handler error:', failure));
+  });
   it('starts the operation with its arguments and returns synchronously', () => {
     const operation = vi.fn(async (_path: string) => 'ignored result');
     const wrapped = voidAsync(operation);

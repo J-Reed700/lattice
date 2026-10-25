@@ -10,7 +10,7 @@ use super::{
     canvas_entries::CANVASES,
     conflicts::IdClaim,
     evidence_entries::EVIDENCE_TABLE_ROWS,
-    export, importers, parse,
+    export, importers, invalid, parse,
     program_entry::PROGRAM,
     provenance,
     review_entries::REVIEW_TABLE_ROWS,
@@ -390,6 +390,27 @@ impl SectionRows for Practical {
         let Some(snapshot) = decode::<PracticalPackSnapshot>(pack, PRACTICAL_ENTRY)? else {
             return Ok(Vec::new());
         };
+        for activity in &snapshot.activities {
+            if activity.files.iter().any(|file| {
+                file.path
+                    == crate::features::learning::practical_generation::INTERVIEW_PLAN_FILE_PATH
+            }) {
+                return Err(invalid(
+                    "A pack cannot replace internal interview metadata with a public file.",
+                ));
+            }
+            if let Some(plan) = &activity.interview_plan {
+                if plan
+                    .researched_source_version_ids
+                    .iter()
+                    .any(|id| !activity.source_version_ids.contains(id))
+                {
+                    return Err(invalid(
+                        "Interview research must reference the activity's frozen sources.",
+                    ));
+                }
+            }
+        }
         let executable = snapshot
             .activities
             .iter()

@@ -12,6 +12,7 @@ use crate::features::learning::quiz_bank_jobs;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
+use std::collections::HashMap;
 
 /// A grade as kept in a contest row.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -80,39 +81,39 @@ async fn ordinal_of(
 }
 
 impl LearningAssessmentRepository {
-    pub(crate) async fn contest_in(
+    pub(super) async fn contests_in(
         connection: &mut SqliteConnection,
         form_id: &str,
-        ordinal: i64,
-    ) -> Result<Option<LearningGradeContestDto>> {
-        let Some(row) = sqlx::query(
-            "SELECT * FROM learning_assessment_grade_contests WHERE form_id=? AND item_ordinal=?",
-        )
-        .bind(form_id)
-        .bind(ordinal)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?
-        else {
-            return Ok(None);
-        };
-        let first: KeptGrade = decode(row.get("first_results_json")).unwrap_or_default();
-        let regrade: Option<KeptGrade> = row
-            .get::<Option<String>, _>("regrade_results_json")
-            .and_then(|r| decode(&r).ok());
-        Ok(Some(LearningGradeContestDto {
-            id: row.get("id"),
-            status: parse_contest_status(row.get("status"))?,
-            note: row.get("note"),
-            first_score: row.get("first_score"),
-            regrade_score: row.get("regrade_score"),
-            regrade_reason: row.get("regrade_reason"),
-            first_rationale: first.rationale.unwrap_or_else(empty_rationale),
-            regrade_rationale: regrade.and_then(|r| r.rationale),
-            response_to_note: row.get("response_to_note"),
-            created_at: row.get("created_at"),
-            decided_at: row.get("decided_at"),
-        }))
+    ) -> Result<HashMap<i64, LearningGradeContestDto>> {
+        let rows = sqlx::query("SELECT * FROM learning_assessment_grade_contests WHERE form_id=?")
+            .bind(form_id)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(db)?;
+        let mut contests = HashMap::new();
+        for row in rows {
+            let first: KeptGrade = decode(row.get("first_results_json")).unwrap_or_default();
+            let regrade: Option<KeptGrade> = row
+                .get::<Option<String>, _>("regrade_results_json")
+                .and_then(|r| decode(&r).ok());
+            contests.insert(
+                row.get("item_ordinal"),
+                LearningGradeContestDto {
+                    id: row.get("id"),
+                    status: parse_contest_status(row.get("status"))?,
+                    note: row.get("note"),
+                    first_score: row.get("first_score"),
+                    regrade_score: row.get("regrade_score"),
+                    regrade_reason: row.get("regrade_reason"),
+                    first_rationale: first.rationale.unwrap_or_else(empty_rationale),
+                    regrade_rationale: regrade.and_then(|r| r.rationale),
+                    response_to_note: row.get("response_to_note"),
+                    created_at: row.get("created_at"),
+                    decided_at: row.get("decided_at"),
+                },
+            );
+        }
+        Ok(contests)
     }
 
     /// Record the learner's note and queue a blind regrade.

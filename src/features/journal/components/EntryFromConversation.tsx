@@ -9,7 +9,6 @@ import {
   MessageSquare,
   MoreHorizontal,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { fetchConversationSpaceId } from '@/features/journal/api/queries';
@@ -28,6 +27,7 @@ import {
   fromJournalSource,
   type ResolvedReaderTarget,
 } from '@/features/reading/model/sourceAdapter';
+import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 
@@ -62,7 +62,7 @@ export function EntryFromConversation({
   embedded = false,
 }: EntryFromConversationProps) {
   const prefersReducedMotion = useReducedMotion();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isInsightsExpanded, setIsInsightsExpanded] = useState(embedded);
   const [isCrossEntryExpanded, setIsCrossEntryExpanded] = useState(false);

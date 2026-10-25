@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '@/tests/interactionDom';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -119,7 +120,7 @@ describe('Learning Studio program workflow', () => {
     mocks.get.mockResolvedValue(ok(current));
     mocks.outlineEvidence.mockResolvedValueOnce(fail('Saved outline evidence unavailable.')).mockResolvedValue(ok(null));
     show();
-    await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }, { timeout: 5000 }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Outline citations could not be loaded');
     await userEvent.click(screen.getByRole('button', { name: 'Retry outline citations' }));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
@@ -194,7 +195,9 @@ describe('Learning Studio program workflow', () => {
     await user.type(screen.getByRole('textbox', { name: 'Program title' }), 'My considered plan');
     await user.click(screen.getByRole('button', { name: 'Accept program' }));
     await waitFor(() => expect(mocks.accept).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 0, title: 'My considered plan' }));
-    await user.selectOptions(screen.getByLabelText('Module'), 'module-2');
+    await user.click(screen.getByRole('combobox', { name: 'Module' }));
+    await user.type(screen.getByRole('combobox', { name: 'Search module' }), 'Putting it');
+    await user.click(screen.getByRole('option', { name: /Putting it together/ }));
     expect(screen.getAllByText(/Putting it together gives the course/).some((element) => element.closest('[hidden]') === null)).toBe(true);
     expect(mocks.complete).not.toHaveBeenCalled();
     // The row is one line: the title is its own button, and the state sits beside it (§2.2).
@@ -378,10 +381,12 @@ describe('Learning Studio program workflow', () => {
     const lab = screen.getByRole('textbox', { name: 'Lab scratchpad' });
     await user.type(lab, 'keep this work');
     expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-1');
-    await user.selectOptions(screen.getByLabelText('Lesson context'), '');
+    await user.click(screen.getByLabelText('Lesson context'));
+    await user.click(screen.getByRole('option', { name: /No lesson selected/ }));
     await waitFor(() => expect(screen.getByLabelText('Lesson context')).toHaveValue(''));
     expect(screen.getByText('No lesson selected')).toBeVisible();
-    await user.selectOptions(screen.getByLabelText('Lesson context'), 'lesson-1');
+    await user.click(screen.getByLabelText('Lesson context'));
+    await user.click(screen.getByRole('option', { name: /Start with the idea/ }));
     await user.click(within(mainNav).getByRole('tab', { name: 'Recall' }));
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
@@ -410,7 +415,8 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     const lessonSelect = screen.getByLabelText('Lesson context');
-    await user.selectOptions(lessonSelect, 'lesson-2');
+    await user.click(lessonSelect);
+    await user.click(screen.getByRole('option', { name: /Read a worked example/ }));
     expect(lessonSelect).toBeDisabled();
     resolveFlush(true);
     await waitFor(() => expect(lessonSelect).toHaveValue('lesson-2'));

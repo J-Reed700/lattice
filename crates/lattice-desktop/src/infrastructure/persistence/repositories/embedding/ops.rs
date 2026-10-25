@@ -9,6 +9,9 @@ use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
+#[cfg(test)]
+mod vector_tests;
+
 // Database row struct for embedding queries
 #[derive(Debug, sqlx::FromRow)]
 struct EmbeddingRow {
@@ -240,6 +243,34 @@ pub async fn find_by_document_id(
     }
 
     Ok(results)
+}
+
+pub async fn vectors_by_document_ids(
+    conn: &mut SqliteConnection,
+    document_ids: &[String],
+) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
+    use futures::TryStreamExt;
+    let mut vectors =
+        lattice_core::application::ports::embedding_repository_port::DocumentVectors::new();
+    if document_ids.is_empty() {
+        return Ok(vectors);
+    }
+    // Stream blobs so only one encoded row is kept beside the decoded vectors.
+    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+        "SELECT c.document_id,e.embedding FROM text_chunks c
+         JOIN text_embeddings e ON e.chunk_id=c.id
+         WHERE c.document_id IN (SELECT value FROM json_each(?))
+         ORDER BY c.document_id,c.chunk_index",
+    )
+    .bind(serde_json::to_string(document_ids)?)
+    .fetch(conn);
+    while let Some((id, blob)) = rows.try_next().await? {
+        vectors
+            .entry(id)
+            .or_default()
+            .push(lattice_core::shared::persistence::embedding_encoding::decode_embedding(&blob)?);
+    }
+    Ok(vectors)
 }
 
 pub async fn delete_by_chunk_id(conn: &mut SqliteConnection, chunk_id: &str) -> Result<()> {

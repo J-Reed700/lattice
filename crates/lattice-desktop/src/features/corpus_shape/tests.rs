@@ -285,7 +285,11 @@ async fn sqlite_round_trip_preserves_clusters() {
     assert_eq!(latest.id, outcome.run.id);
     assert_eq!(latest.cluster_count, outcome.clusters.len() as i64);
 
-    let persisted = repo.get_clusters_for_run(&latest.id).await.unwrap();
+    let (persisted, reads) =
+        crate::tests::common::query_counts::count_reads(repo.get_clusters_for_run(&latest.id))
+            .await;
+    let persisted = persisted.unwrap();
+    assert_eq!(reads, 2, "cluster count must not increase read queries");
     assert_eq!(persisted.len(), outcome.clusters.len());
 
     // Rebuild a mapping by fingerprint so we can cross-compare without relying on insertion order.
@@ -298,6 +302,9 @@ async fn sqlite_round_trip_preserves_clusters() {
         assert_eq!(reloaded.label, original.label);
         assert_eq!(reloaded.description, original.description);
         assert_eq!(reloaded.member_doc_ids.len(), original.member_doc_ids.len());
+        let mut expected_members = original.member_doc_ids.clone();
+        expected_members.sort();
+        assert_eq!(reloaded.member_doc_ids, expected_members);
         assert_eq!(reloaded.centroid.len(), original.centroid.len());
         assert_eq!(reloaded.label_source, original.label_source);
     }

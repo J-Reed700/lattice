@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::features::conversation::chat::ports::ChatStorage;
 use lattice_core::application::contracts::search::SearchResultDto;
@@ -224,25 +224,19 @@ pub(super) async fn build_source_citations(
             doc_ids.insert(doc_id);
         }
     }
-    let doc_ids: Vec<&str> = doc_ids.into_iter().collect();
+    let doc_ids: Vec<String> = doc_ids.into_iter().map(str::to_owned).collect();
 
     let chunk_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
 
-    let doc_futures: Vec<_> = doc_ids.iter().map(|id| doc_repo.find_by_id(id)).collect();
-    let doc_results = futures::future::join_all(doc_futures).await;
-
     let mut doc_map = HashMap::new();
-    for (id, result) in doc_ids.iter().zip(doc_results) {
-        match result {
-            Ok(Some(doc)) => {
-                doc_map.insert(*id, doc);
+    match doc_repo.find_metadata_by_ids(&doc_ids).await {
+        Ok(documents) => {
+            for document in documents {
+                doc_map.insert(document.id().as_str().to_owned(), document);
             }
-            Ok(None) => {
-                debug!(doc_id = %id, "Document not found for source citation");
-            }
-            Err(e) => {
-                warn!(error = %e, doc_id = %id, "Failed to fetch document metadata for citation");
-            }
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to fetch document metadata for citation batch");
         }
     }
 

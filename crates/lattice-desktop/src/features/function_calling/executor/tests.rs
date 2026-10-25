@@ -338,7 +338,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         documents.save(&document).await.unwrap();
     }
     let favorites = Arc::new(FavoritesRepository::new(pool.clone()));
-    let recent = Arc::new(RecentDocumentsRepository::new(pool));
+    let recent = Arc::new(RecentDocumentsRepository::new(pool.clone()));
     let mut services = test_executor_services(
         Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
         Arc::new(MockWebService::new()),
@@ -346,6 +346,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     services.document_repository = documents;
     services.favorites_repository = favorites.clone();
     services.recent_documents_repository = recent.clone();
+    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(pool));
     let executor = FunctionExecutor::new(services);
     let list = |args| {
         let executor = &executor;
@@ -377,6 +378,12 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     assert_eq!(second.total, 2);
     assert!(!second.has_more);
     assert_eq!(second.documents[0].filename, "mpep-0200.pdf");
+    let (all, reads) = crate::tests::common::query_counts::count_reads(executor.execute(
+        FunctionCall::new("inventory", "list_documents", json!({"limit": 100})),
+    ))
+    .await;
+    assert!(all.unwrap().success);
+    assert_eq!(reads, 3, "inventory, favorites and one batch of tags");
 }
 
 #[tokio::test]

@@ -15,6 +15,7 @@ import { settingsTextareaClass } from '@/components/ui/SettingsSection';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
 import type { UrlPreview } from '@/types/api/web';
 import { startBatchUrlImport, getBatchJobStatus, cancelBatchJob } from '@/utils/batchImport';
+import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 type ItemStatus = 'idle' | 'fetching' | 'ready' | 'importing' | 'success' | 'error';
 
@@ -206,7 +207,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     setItems(newItems);
 
     newItems.forEach((item) => {
-      fetchPreview(item.id, item.url);
+      voidAsync(() => fetchPreview(item.id, item.url))();
     });
   }, [fetchPreview]);
 
@@ -369,7 +370,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
             return;
           }
 
-          pollTimerRef.current = setTimeout(pollJobStatus, BATCH_POLL_INTERVAL_MS);
+          pollTimerRef.current = setTimeout(handleAsyncEvent(pollJobStatus), BATCH_POLL_INTERVAL_MS);
         } catch (error) {
           if (!isCurrent()) return;
           console.error('[BatchImport] Polling error:', error);
@@ -459,7 +460,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
         </label>
 
         <Button
-          onClick={handleBatchImport}
+          onClick={handleAsyncEvent(handleBatchImport)}
           disabled={readyCount === 0 || hasActiveJob}
           className="h-9 shrink-0"
         >
@@ -486,7 +487,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
           </span>
           <button
             type="button"
-            onClick={cancelImport}
+            onClick={handleAsyncEvent(cancelImport)}
             disabled={!activeJobId || isCancelling}
             className="text-text-tertiary transition-colors duration-fast hover:text-text-primary"
           >

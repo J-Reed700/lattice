@@ -2,16 +2,15 @@ import { useCallback } from 'react';
 
 import type { JournalNotify } from '@/features/journal/hooks/useJournalNotice';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import type { AppNavigate } from '@/hooks/useAppNavigate';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
-import type { NavigateFunction } from 'react-router';
-
 /** Starts, renames and deletes the conversations filed under a journal. */
 export function useJournalEntryActions(options: {
   requestedJournalSpaceId: string | null;
-  navigate: NavigateFunction;
+  navigate: AppNavigate;
   notify: JournalNotify;
   saveNow: () => Promise<boolean>;
   reloadEntries: () => Promise<void>;

@@ -17,7 +17,7 @@ export function useVaultWriteErrorListener(): void {
     const isMounted = { current: true };
     let unlisten: UnlistenFn | undefined;
 
-    (async () => {
+    void (async () => {
       try {
         const handle = await listenValidated(
           TauriEventNames.Vault.WriteError,
