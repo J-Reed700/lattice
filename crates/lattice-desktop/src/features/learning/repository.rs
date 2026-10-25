@@ -13,6 +13,8 @@ use std::collections::HashMap;
 mod memory;
 mod progress;
 mod tangents;
+#[cfg(test)]
+mod memory_tests;
 
 pub(crate) use memory::ensure_memory_resources;
 

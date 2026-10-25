@@ -1,0 +1,94 @@
+{
+  "schema_version": 2,
+  "dataset_sha256": "36f7dece97647ee7319f0a30bad89582ca3010479cec36ce07312a238075e1a1",
+  "expectations_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "retrieval_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "settings": {
+    "harness": "shipped_desktop_path",
+    "model": "Qwen3.5-9B-Q4_K_M.gguf",
+    "model_revision": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+    "recipe_sha256": "8ed2c8b5e1965fd837a933832f17ade32e826b6184e9510a3487577b647a21c9",
+    "corpus_sha256": "7b95adfe6baa0ab6924f8cdef88e2052c18ad2e5550090279a5ce4795af85486",
+    "thinking": "off",
+    "commit": "f6ff104a2cd6449a3e0cec99dd33b8f0aba717cc",
+    "judge": {
+      "model": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+      "messages": null,
+      "stream": false,
+      "temperature": 0,
+      "top_p": 1,
+      "top_k": 1,
+      "seed": 2026,
+      "max_tokens": 300,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "verdict",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "reason"
+            ]
+          }
+        }
+      },
+      "rubric": "lattice-shipped-path-judge/1",
+      "identity": {
+        "requested_model": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+        "served_models": [
+          {
+            "id": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+            "meta": {
+              "vocab_type": 2,
+              "n_vocab": 248320,
+              "n_ctx": 196608,
+              "n_ctx_train": 262144,
+              "vbr": {
+                "enabled": false,
+                "dynamic": false,
+                "type_k": false,
+                "type_v": false,
+                "codec": "turbo",
+                "entry_type_k": "turbo4",
+                "entry_type_v": "turbo2",
+                "floor_bpv": 0.0,
+                "capacity_floor_bpv": 0.0,
+                "realized_bpv": 0.0,
+                "selected_family": "",
+                "selected_policy": "",
+                "selected_bpv": 0.0,
+                "selected_kld": 0.0,
+                "selected_schedule": "",
+                "vram_budget_bytes": 0
+              },
+              "n_embd": 5120,
+              "n_params": 27320697856,
+              "size": 19669950464,
+              "ftype": "Q5_K - Small"
+            }
+          }
+        ],
+        "answer_model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "judges_own_answers": false
+      }
+    }
+  },
+  "harness_sha256": "ee5b2dcbc59d17d5c05023323cacfc3f6dfd2a72719dfd7f96ef7dc42dd0d9af",
+  "run_id": "8d152ee6c9dc146d7093240c460a37412dc75e303ee9c48242b16e58739e04ec"
+}

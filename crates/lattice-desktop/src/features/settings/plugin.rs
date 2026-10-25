@@ -630,3 +630,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         ])
         .build()
 }
+
+#[cfg(test)]
+#[path = "plugin_tests.rs"]
+mod tests;
