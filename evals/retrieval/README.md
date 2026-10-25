@@ -2,6 +2,8 @@
 
 [Fresh inference diagnosis and grounding fixes (2026-09-16)](2026-09-16-DIAGNOSIS.md).
 
+[From many misses to two: how the retrieval and answer evals changed (2026-10-24)](2026-10-24-EVAL-JOURNEY.md).
+
 For reproducible answer runs, evidence-bound human review, paired comparisons,
 and release gates, see [Evaluation evidence protocol](EVALUATION_PROTOCOL.md).
 Regex checks are diagnostics; unreviewed answers do not have verified accuracy.
