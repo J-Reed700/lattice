@@ -11,10 +11,10 @@ use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod memory;
-mod progress;
-mod tangents;
 #[cfg(test)]
 mod memory_tests;
+mod progress;
+mod tangents;
 
 pub(crate) use memory::ensure_memory_resources;
 
