@@ -10,6 +10,10 @@ import type {
 } from '@/types';
 
 export const settingsApi = {
+  /** Models available to a provider's saved API key; the key stays native. */
+  listCloudModels: async (provider: Wire.CloudProvider): Promise<ApiResult<Wire.CloudModelCatalogDto>> =>
+    apiCall<Wire.CloudModelCatalogDto>('list_cloud_models', { provider }),
+
   /**
    * Adds a folder to the file watcher.
    * Enables automatic reindexing when files in this folder change.

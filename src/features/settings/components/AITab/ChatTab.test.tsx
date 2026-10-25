@@ -64,9 +64,9 @@ describe('ChatTab', () => {
 
   describe('provider', () => {
     it.each([
-      ['openai', { provider: 'openai', model: 'gpt-6-astra', maxTokens: 8192 }],
-      ['anthropic', { provider: 'anthropic', model: 'claude-opus-5', maxTokens: 8192 }],
-      ['google', { provider: 'google', model: 'gemini-2.5-flash', maxTokens: 8192 }],
+      ['openai', { provider: 'openai', model: '', maxTokens: 8192 }],
+      ['anthropic', { provider: 'anthropic', model: '', maxTokens: 8192 }],
+      ['google', { provider: 'google', model: '', maxTokens: 8192 }],
       ['local', { provider: 'local' }],
     ])('switching to %s saves its defaults', (value, update) => {
       render(<ChatTab />);
@@ -98,6 +98,7 @@ describe('ChatTab', () => {
 
     it('saves a changed model name on blur, never a blank one', () => {
       render(<ChatTab />);
+      fireEvent.click(screen.getByRole('button', { name: 'Enter a model ID manually' }));
       const model = screen.getByLabelText('Model');
       fireEvent.change(model, { target: { value: '  claude-sonnet-5 ' } });
       fireEvent.blur(model);
@@ -134,6 +135,15 @@ describe('ChatTab', () => {
       render(<ChatTab />);
       expect(screen.getAllByText('claude-opus-5').length).toBeGreaterThan(0);
       expect(screen.getByText('anthropic')).toBeInTheDocument();
+    });
+
+    it('clears an unsaved key when changing cloud providers', () => {
+      const { rerender } = render(<ChatTab />);
+      fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'anthropic-draft' } });
+      h.llm.llmSettings = settings({ provider: 'openai', model: '' });
+      rerender(<ChatTab />);
+      expect(screen.getByLabelText('API key')).toHaveValue('');
+      expect(screen.getByRole('button', { name: 'Save key' })).toBeDisabled();
     });
   });
 

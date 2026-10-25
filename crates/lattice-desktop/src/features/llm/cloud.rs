@@ -14,6 +14,7 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+pub mod catalog;
 mod messages;
 mod streaming;
 mod timing;

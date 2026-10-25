@@ -612,6 +612,7 @@ pub async fn set_cloud_api_key(
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("settings")
         .invoke_handler(tauri::generate_handler![
+            crate::interfaces::commands::cloud_models::list_cloud_models,
             set_cloud_api_key,
             get_settings,
             get_settings_category,

@@ -8,6 +8,7 @@ import {
   useQuery,
 } from '@tanstack/react-query';
 
+import { CLOUD_MODELS_QUERY_KEY } from '@/features/model/hooks/useCloudModels';
 import VaultAPI from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
 import type { AppSettings } from '@/types/api/settings';
@@ -118,6 +119,14 @@ export function useCloudApiKeyMutation() {
     {
       mutationFn: ({ provider, key }: { provider: string; key: string }) =>
         VaultAPI.setCloudApiKey(provider, key),
+      onSuccess: async (result, { provider }) => {
+        if (!result.ok) return;
+        const queryKey = [...CLOUD_MODELS_QUERY_KEY, provider];
+        // Discard an old key's in-flight response and cached list before the
+        // new credential is used, including when the replacement is invalid.
+        await queryClient.cancelQueries({ queryKey });
+        void queryClient.resetQueries({ queryKey });
+      },
     },
     queryClient
   );

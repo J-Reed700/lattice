@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import type { ChatModelChoice } from '@/lib/bindings';
@@ -65,6 +66,7 @@ export function useMessageActions({
   );
 
   const { downloadedModels } = useDownloadedModels();
+  const { catalogs } = useCloudModelCatalogs(false);
   const { data: settings } = useSettingsQuery();
 
   const handleCopy = async () => {
@@ -104,7 +106,7 @@ export function useMessageActions({
   const handleTryWithModel = useCallback(
     async (modelId: string, modelLabel: string) => {
       if (!conversationId) return;
-      const option = buildChatModelOptions(settings?.llm, downloadedModels).find((o) => o.id === modelId);
+      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs).find((o) => o.id === modelId);
       if (!option) {
         toast.error("Couldn't regenerate", {
           message: `${modelLabel} is no longer available. Pick another model.`,
@@ -126,7 +128,7 @@ export function useMessageActions({
       }
 
       // Offer to keep it only when it is not what this chat already uses.
-      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels);
+      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels, catalogs);
       const isChatsModel = current !== null && !isUnavailableChatModel(current) && sameModelRef(current.ref, option.ref);
       toast.success(
         `Answered with ${modelLabel}`,
@@ -148,7 +150,7 @@ export function useMessageActions({
             }
       );
     },
-    [conversationId, downloadedModels, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
+    [conversationId, downloadedModels, catalogs, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
   );
 
   const handleBranch = useCallback(async () => {

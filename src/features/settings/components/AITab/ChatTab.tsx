@@ -8,12 +8,13 @@ import { useEffect, useState } from "react";
 import { PageHeader, SettingsRow, SettingsSection, Switch } from "@/components/ui";
 import { useDownloadedModels } from "@/features/model/hooks/useDownloadedModels";
 import { probeOllamaServer } from "@/features/settings/hooks/connectionProbes";
-import { useCloudApiKeyMutation } from "@/features/settings/hooks/useSettingsQuery";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toastStore";
 import type { LLMSettings as ApiLLMSettings } from "@/types/api/settings";
+import { isCloudProvider } from '@/utils/chatModelSelection';
 import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
+import { CloudConnection } from './CloudConnection';
 import { LlamaCppConnection } from "./LlamaCppConnection";
 import {
   GHOST_BUTTON_CLASS,
@@ -35,10 +36,6 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
 
 export function ChatTab() {
   const { llmSettings, isLoading, saveLlmUpdates, reload } = useLlmSettings();
-  const { setCloudApiKey } = useCloudApiKeyMutation();
-
-  const [cloudKey, setCloudKey] = useState("");
-  const [savingCloudKey, setSavingCloudKey] = useState(false);
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState("");
   const [ollamaModelDraft, setOllamaModelDraft] = useState("");
   const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState("");
@@ -230,22 +227,9 @@ export function ChatTab() {
               onChange={handleAsyncEvent((event) =>
                 saveLlmUpdates({
                   provider: event.target.value as ApiLLMSettings["provider"],
-                  ...(event.target.value === "openai"
-                    ? {
-                        model: "gpt-6-astra",
-                        maxTokens: 8192,
-                      }
-                    : event.target.value === "anthropic"
-                      ? {
-                          model: "claude-opus-5",
-                          maxTokens: 8192,
-                        }
-                      : event.target.value === "google"
-                        ? {
-                            model: "gemini-2.5-flash",
-                            maxTokens: 8192,
-                          }
-                        : {}),
+                  ...(isCloudProvider(event.target.value as ApiLLMSettings['provider'])
+                    ? { model: '', maxTokens: 8192 }
+                    : {}),
                 }))
               }
               className={INPUT_CLASS}
@@ -260,68 +244,8 @@ export function ChatTab() {
         )}
       </SettingsSection>
 
-      {llmSettings &&
-        (provider === "openai" ||
-          provider === "anthropic" ||
-          provider === "google") && (
-        <SettingsSection title="Cloud connection">
-          <p className="py-2 text-sm text-text-muted">
-            Chat prompts and retrieved passages are sent to the selected
-            provider. API billing is separate from subscriptions.
-          </p>
-          <SettingsRow label="Model" htmlFor="cloudModel">
-            <input
-              id="cloudModel"
-              className={INPUT_CLASS}
-              value={ollamaModelDraft}
-              onChange={(event) => setOllamaModelDraft(event.target.value)}
-              onBlur={() => {
-                if (ollamaModelDraft.trim())
-                  voidAsync(() => saveLlmUpdates({ model: ollamaModelDraft.trim() }))();
-              }}
-            />
-          </SettingsRow>
-          <SettingsRow label="API key" htmlFor="cloudKey">
-            <div className="flex gap-2">
-              <input
-                id="cloudKey"
-                type="password"
-                autoComplete="off"
-                className={INPUT_CLASS}
-                value={cloudKey}
-                placeholder="Stored in your system keychain"
-                onChange={(event) => setCloudKey(event.target.value)}
-              />
-              <button
-                type="button"
-                className={SECONDARY_BUTTON_CLASS}
-                disabled={savingCloudKey || !cloudKey.trim()}
-                onClick={handleAsyncEvent(async () => {
-                  setSavingCloudKey(true);
-                  try {
-                    const result = await setCloudApiKey({
-                      provider,
-                      key: cloudKey.trim(),
-                    });
-                    if (result.ok) {
-                      setCloudKey("");
-                      toast.success("API key saved");
-                    } else {
-                      toast.error("Could not save API key", {
-                        message: result.error,
-                      });
-                    }
-                  } finally {
-                    setSavingCloudKey(false);
-                  }
-                })}
-              >
-                {savingCloudKey ? "Saving…" : "Save key"}
-              </button>
-            </div>
-          </SettingsRow>
-        </SettingsSection>
-      )}
+      {llmSettings && isCloudProvider(provider) && <CloudConnection key={provider} provider={provider}
+        model={llmSettings.model} onSaveModel={(model) => saveLlmUpdates({ model })} />}
 
       {llmSettings && (provider === "llamacpp" || provider === "auto" || llmSettings.llamaCpp?.url.trim()) && <LlamaCppConnection />}
 

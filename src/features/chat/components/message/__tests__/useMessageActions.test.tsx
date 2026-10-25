@@ -10,6 +10,10 @@ import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
 import type { DisplayMessage } from '@/types/conversation';
 import type { DownloadedModel } from '@/types/downloadedModels';
+import type { CloudModelCatalogs } from '@/utils/chatModelSelection';
+
+const cloud = vi.hoisted(() => ({ catalogs: {} as CloudModelCatalogs }));
+vi.mock('@/features/model/hooks/useCloudModels', () => ({ useCloudModelCatalogs: () => cloud }));
 
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -59,6 +63,7 @@ let expectNoGlobalWrite: () => void;
 
 describe('Try with another model', () => {
   beforeEach(() => {
+    cloud.catalogs = {};
     useToastStore.setState({ toasts: [] });
     const settings = makeAppSettings();
     settings.llm.provider = 'local';
@@ -75,6 +80,15 @@ describe('Try with another model', () => {
     await act(() => result.current.handleTryWithModel('ornith-1.5-9b', 'Ornith-1.5-9B'));
 
     expect(state.regenerateResponse).toHaveBeenCalledWith('chat-a', { model: ORNITH });
+    expect(state.setConversationModelChoice).not.toHaveBeenCalled();
+    expectNoGlobalWrite();
+  });
+
+  it('regenerates with a discovered cloud model without changing the chat default', async () => {
+    cloud.catalogs = { openai: { hasApiKey: true, models: [{ id: 'gpt-new', name: 'GPT New' }] } };
+    const result = render();
+    await act(() => result.current.handleTryWithModel('cloud:openai/gpt-new', 'OpenAI · GPT New'));
+    expect(state.regenerateResponse).toHaveBeenCalledWith('chat-a', { model: { kind: 'cloud', provider: 'openai', model: 'gpt-new' } });
     expect(state.setConversationModelChoice).not.toHaveBeenCalled();
     expectNoGlobalWrite();
   });

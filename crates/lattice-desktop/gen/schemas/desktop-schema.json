@@ -6999,6 +6999,12 @@
           "markdownDescription": "Enables the import_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_cloud_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:allow-list-cloud-models",
+          "markdownDescription": "Enables the list_cloud_models command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_watch_folder command without any pre-configured scope.",
           "type": "string",
           "const": "settings:allow-remove-watch-folder",
@@ -7081,6 +7087,12 @@
           "type": "string",
           "const": "settings:deny-import-settings",
           "markdownDescription": "Denies the import_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_cloud_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:deny-list-cloud-models",
+          "markdownDescription": "Denies the list_cloud_models command without any pre-configured scope."
         },
         {
           "description": "Denies the remove_watch_folder command without any pre-configured scope.",

@@ -3,12 +3,14 @@ import { type KeyboardEvent, type ReactNode, useId, useMemo, useRef, useState } 
 import * as Popover from '@radix-ui/react-popover';
 import { Check, Cloud, HardDrive, Network, Settings2 } from 'lucide-react';
 
+import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import type { ChatModelChoice } from '@/lib/bindings';
 import {
   buildChatModelOptions,
+  CLOUD_PROVIDER_NAMES,
   type ChatModelOption,
   runningOnCpuSentence,
   sameModelRef,
@@ -75,13 +77,14 @@ export function ModelPickerPopover({
   };
   const { downloadedModels } = useDownloadedModels();
   const { data: settings } = useSettingsQuery();
+  const cloud = useCloudModelCatalogs(open);
   const loadedModels = useLoadedModels();
   const menuRef = useRef<HTMLDivElement>(null);
   const groupIdPrefix = useId();
 
   const options = useMemo(
-    () => buildChatModelOptions(settings?.llm, downloadedModels),
-    [settings?.llm, downloadedModels]
+    () => buildChatModelOptions(settings?.llm, downloadedModels, cloud.catalogs),
+    [settings?.llm, downloadedModels, cloud.catalogs]
   );
 
   const groups = useMemo(() => {
@@ -151,8 +154,16 @@ export function ModelPickerPopover({
             event.preventDefault();
             start.focus();
           }}
-          className="surface-pop z-50 w-[320px] rounded-xl bg-surface-overlay p-2 shadow-lg outline-hidden"
+          className="surface-pop z-50 max-h-[min(70vh,600px)] w-[320px] overflow-y-auto rounded-xl bg-surface-overlay p-2 shadow-lg outline-hidden"
         >
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-text-muted">
+            <span aria-live="polite">{cloud.isLoading ? 'Loading cloud models…' : 'Available models'}</span>
+            <button type="button" className="shrink-0 text-text-secondary hover:text-text-primary disabled:opacity-50"
+              disabled={cloud.isFetching} onClick={() => { void cloud.refresh(); }}>Refresh models</button>
+          </div>
+          {cloud.errors.map((error) => <p key={error.provider} role="alert" className="px-2 py-1.5 text-xs text-text-muted">
+            {CLOUD_PROVIDER_NAMES[error.provider]}: {error.message}
+          </p>)}
           <div ref={menuRef} role="menu" aria-label={label} onKeyDown={handleKeyDown}>
             {offersDefault && (
               <button
@@ -180,7 +191,7 @@ export function ModelPickerPopover({
             )}
             {options.length === 0 ? (
               <p className="px-2 py-1.5 text-sm text-[hsl(var(--text-muted))]">
-                No other models installed.
+                No models available. Add a provider API key in Settings → Chat, or install a local model.
               </p>
             ) : (
               groups.map((group) => {

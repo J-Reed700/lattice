@@ -244,6 +244,7 @@ fn main() {
                 "settings",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "set_cloud_api_key",
+                    "list_cloud_models",
                     "get_settings",
                     "get_settings_category",
                     "update_settings",

@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type { useComposer } from '@/features/chat/hooks/useComposer';
+import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -30,6 +31,7 @@ export function useChatSwitchActions({
   const conversations = useConversationsStore((state) => state.conversations);
   const { data: settings } = useSettingsQuery();
   const { downloadedModels } = useDownloadedModels();
+  const { catalogs } = useCloudModelCatalogs(false);
 
   /**
    * Move this chat to another space, which changes the documents every later
@@ -85,7 +87,7 @@ export function useChatSwitchActions({
   /** Answer this chat with the model of the picked row, from its next turn on. */
   const handleChooseChatModel = useCallback(
     async (modelId: string, modelLabel: string) => {
-      const option = buildChatModelOptions(settings?.llm, downloadedModels).find((o) => o.id === modelId);
+      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs).find((o) => o.id === modelId);
       if (!option) {
         toast.error("Couldn't change this chat's model", {
           message: `${modelLabel} is no longer available. Pick another model.`,
@@ -97,7 +99,7 @@ export function useChatSwitchActions({
         toast.success(`This chat now uses ${modelLabel}`);
       }
     },
-    [currentChoice, downloadedModels, saveChoice, settings?.llm]
+    [currentChoice, downloadedModels, catalogs, saveChoice, settings?.llm]
   );
 
   /** Put this chat back on the Settings default, which it then follows. */
@@ -105,14 +107,14 @@ export function useChatSwitchActions({
     // A chat starts on the default, so with none open there is nothing to change.
     if (!activeConversationId || currentChoice.kind === 'default') return;
     if (!(await saveChoice(DEFAULT_CHOICE))) return;
-    const defaultOption = resolveDefaultChatOption(settings?.llm, downloadedModels);
+    const defaultOption = resolveDefaultChatOption(settings?.llm, downloadedModels, catalogs);
     toast.success(
       defaultOption
         ? `This chat now uses the app default (${defaultOption.triggerLabel})`
         : 'This chat now uses the app default',
       defaultOption ? undefined : { message: 'No chat model is selected in Settings → Models.' }
     );
-  }, [activeConversationId, currentChoice.kind, downloadedModels, saveChoice, settings?.llm]);
+  }, [activeConversationId, currentChoice.kind, downloadedModels, catalogs, saveChoice, settings?.llm]);
 
   return { handleChangeSpace, handleSearchGeneral, handleChooseChatModel, handleUseDefault };
 }
