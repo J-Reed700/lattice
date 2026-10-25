@@ -94,7 +94,9 @@ screen. The screenshots are there to explain a failure.
   happens on real hardware, but it means the dnf and pacman paths have not
   passed this test end to end.
 - The container has no GPU, so the app runs the CPU build of `llama-server`.
-- Under emulation the app's 30-second stream stall limit fired during prompt
-  processing (llama-server sends nothing until the prompt is read), and each
-  retry started the prompt again: four retries before generation began. A
-  slow real CPU could hit the same limit.
+- Under emulation the app's 30-second stream stall limit fired several times,
+  because generated tokens arrived more than 30 seconds apart. The limit only
+  applies between generated chunks: before the first one, the app asks for
+  `return_progress` and counts prompt-progress events as signs of life
+  (`crates/lattice-desktop/src/features/llm/llama_cpp/retry.rs`), and
+  streamed reasoning counts too. Real hardware emits many tokens a second.
