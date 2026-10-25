@@ -10,13 +10,13 @@ use futures::future::BoxFuture;
 use lattice_core::application::contracts::settings::SourcingSettingsDto;
 use lattice_core::application::ports::{Budget, SourceFinding};
 use lattice_core::domain::sourcing::{
-    FailureCause, FinderResult, Freshness, HealthState, Identifier, NeedKind, Origin, SkipReason,
-    SourceNeed, SubjectHint, SubjectKind,
+    FailureCause, FinderResult, Freshness, HealthState, Hop, Identifier, NeedKind, Origin,
+    SkipReason, SourceNeed, SubjectHint, SubjectKind,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::runner::Clock;
-use super::SourcingService;
+use super::{HopReader, SiteHomes, SourcingService};
 use crate::features::web::mocks::web::ScriptedFinder;
 use crate::features::web::services::finders::{
     bing_html, duckduckgo, github, site_discovery, FinderEntry,
@@ -433,4 +433,160 @@ async fn only_a_named_repository_scopes_the_owner_wave() {
     }]))
     .await;
     assert_eq!(site_calls, 1);
+}
+
+/// An engine whose results are fixed pages, noting the scope each call was
+/// sent, as an engine that maps a moved site's old name to its new one does.
+struct SiteEngine {
+    descriptor: lattice_core::domain::sourcing::FinderDescriptor,
+    pages: Vec<&'static str>,
+    scopes: parking_lot::Mutex<Vec<Option<Origin>>>,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::SourceFinder for SiteEngine {
+    fn descriptor(&self) -> &lattice_core::domain::sourcing::FinderDescriptor {
+        &self.descriptor
+    }
+
+    async fn find(
+        &self,
+        need: &SourceNeed,
+        _page: usize,
+        _budget: &Budget,
+    ) -> lattice_core::domain::sourcing::FinderOutcome {
+        self.scopes.lock().push(need.scope.clone());
+        let leads = self
+            .pages
+            .iter()
+            .enumerate()
+            .map(|(index, page)| {
+                lattice_core::domain::sourcing::Lead::page(
+                    url::Url::parse(page).unwrap(),
+                    self.descriptor.id.clone(),
+                    index + 1,
+                )
+            })
+            .collect();
+        lattice_core::domain::sourcing::FinderOutcome {
+            finder: self.descriptor.id.clone(),
+            leads,
+            result: FinderResult::Answered,
+            elapsed: Duration::ZERO,
+        }
+    }
+}
+
+/// A site that answers its address with these redirects.
+struct Redirects(Vec<Hop>);
+
+#[async_trait::async_trait]
+impl HopReader for Redirects {
+    async fn hops(&self, _from: &url::Url) -> Result<Vec<Hop>, String> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Searches `asked` through one engine returning `pages`, the site
+/// answering its address with `redirects`: the scopes the engine was sent,
+/// and the addresses kept, sorted.
+async fn scoped_search(
+    asked: &str,
+    redirects: Vec<Hop>,
+    pages: Vec<&'static str>,
+) -> (Vec<Option<Origin>>, Vec<String>) {
+    let clock = FakeClock::new();
+    let engine = Arc::new(SiteEngine {
+        descriptor: duckduckgo::DESCRIPTOR,
+        pages,
+        scopes: parking_lot::Mutex::new(Vec::new()),
+    });
+    let homes = SiteHomes::new(
+        Arc::new(Redirects(redirects)),
+        lattice_core::domain::sourcing::SourcingPolicy::default(),
+        Arc::clone(&clock) as Arc<dyn Clock>,
+    );
+    let sourcing = service(
+        vec![FinderEntry {
+            finder: Arc::clone(&engine) as Arc<dyn lattice_core::application::ports::SourceFinder>,
+            page_size: 10,
+        }],
+        &clock,
+    )
+    .with_site_homes(Arc::new(homes));
+    let need = SourceNeed {
+        scope: Origin::parse(asked),
+        ..web_need(10, &[])
+    };
+
+    let findings = sourcing.find(need, budget(PLENTY)).await.unwrap();
+
+    let mut kept: Vec<String> = findings
+        .leads
+        .iter()
+        .map(|lead| lead.url.to_string())
+        .collect();
+    kept.sort();
+    let scopes = engine.scopes.lock().clone();
+    (scopes, kept)
+}
+
+/// A scope whose site moved is searched where the site lives now: every
+/// finder is sent the home, and the leads kept are the site's under either
+/// name (engines still index the old one, which redirects home). A lead off
+/// the site is dropped, whichever finder returned it.
+#[tokio::test]
+async fn a_scope_whose_site_moved_is_searched_where_it_lives_now() {
+    let (scopes, kept) = scoped_search(
+        "docs.anthropic.com",
+        vec![Hop {
+            status: 301,
+            to: url::Url::parse("https://platform.claude.com/docs/").unwrap(),
+        }],
+        vec![
+            "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview",
+            "https://ai-tldr.dev/learn/llm-apis/function-calling/",
+            "https://docs.anthropic.com/en/docs/build-with-claude/tool-use",
+        ],
+    )
+    .await;
+
+    assert!(!scopes.is_empty());
+    assert!(
+        scopes
+            .iter()
+            .all(|scope| scope == &Origin::parse("platform.claude.com")),
+        "{scopes:?}"
+    );
+    assert_eq!(
+        kept,
+        [
+            "https://docs.anthropic.com/en/docs/build-with-claude/tool-use",
+            "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview",
+        ]
+    );
+}
+
+/// Without a move the scope is searched as asked and still decides alone
+/// which leads are the site's.
+#[tokio::test]
+async fn a_scope_that_has_not_moved_is_searched_as_asked() {
+    let (scopes, kept) = scoped_search(
+        "json-schema.org",
+        Vec::new(),
+        vec![
+            "https://json-schema.org/understanding-json-schema/reference/object",
+            "https://openllm.wavise.com/blog/json-schema-tool-calling-reference",
+        ],
+    )
+    .await;
+
+    assert!(!scopes.is_empty());
+    assert!(scopes
+        .iter()
+        .all(|scope| scope == &Origin::parse("json-schema.org")));
+    assert_eq!(
+        kept,
+        ["https://json-schema.org/understanding-json-schema/reference/object"]
+    );
 }

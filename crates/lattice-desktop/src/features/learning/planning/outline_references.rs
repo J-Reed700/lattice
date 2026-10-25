@@ -157,18 +157,19 @@ pub(in crate::features::learning) async fn plan(
             }
             let mut needs: Vec<PlannedNeed> = Vec::new();
             for need in subtopic.needs {
-                let need = need.checked().ok_or_else(malformed)?;
-                planned += 1;
-                if copies_private_text(&need.query, &private) {
-                    dropped += 1;
-                    tracing::warn!(
-                        subtopic = title,
-                        "Dropped a reference search that copied the learner's goal or prior knowledge"
-                    );
-                    continue;
-                }
-                if !needs.iter().any(|known| known.query == need.query) {
-                    needs.push(need);
+                for need in need.searches().ok_or_else(malformed)? {
+                    planned += 1;
+                    if copies_private_text(&need.query, &private) {
+                        dropped += 1;
+                        tracing::warn!(
+                            subtopic = title,
+                            "Dropped a reference search that copied the learner's goal or prior knowledge"
+                        );
+                        continue;
+                    }
+                    if !needs.iter().any(|known| known.line() == need.line()) {
+                        needs.push(need);
+                    }
                 }
             }
             subtopics.push(PlannedSubtopic {
@@ -291,7 +292,7 @@ pub(in crate::features::learning) async fn gather_for(
             cost: &cost,
         }
         .share(subtopic.needs.len());
-        let mut merged: Vec<(web_research::Candidate, String)> = Vec::new();
+        let mut merged: Vec<web_research::Candidate> = Vec::new();
         let mut seen = HashSet::new();
         for need in &subtopic.needs {
             progress.check_cancelled()?;
@@ -307,7 +308,7 @@ pub(in crate::features::learning) async fn gather_for(
                         if !urls.contains(&candidate.result.url)
                             && seen.insert(candidate.result.url.clone())
                         {
-                            merged.push((candidate, need.query.clone()));
+                            merged.push(candidate);
                         }
                     }
                 }
@@ -326,17 +327,7 @@ pub(in crate::features::learning) async fn gather_for(
             label(number, total),
             merged.len()
         ));
-        let selected = select_references(
-            llm,
-            topic,
-            &hint,
-            &gaps,
-            merged
-                .iter()
-                .map(|(candidate, _)| candidate.clone())
-                .collect(),
-        )
-        .await?;
+        let selected = select_references(llm, topic, &hint, &gaps, merged).await?;
         if selected.is_empty() {
             continue;
         }
@@ -345,17 +336,13 @@ pub(in crate::features::learning) async fn gather_for(
             label(number, total),
             selected.len()
         ));
-        let jobs = selected.into_iter().enumerate().map(|(order, result)| {
-            let query = merged
-                .iter()
-                .find(|(candidate, _)| candidate.result.url == result.url)
-                .map(|(_, query)| query.clone())
-                .unwrap_or_default();
-            async move {
-                let captured = web_research::capture(web, &result, &query).await;
+        let jobs = selected
+            .into_iter()
+            .enumerate()
+            .map(|(order, result)| async move {
+                let captured = web_research::capture(web, &result).await;
                 (order, result, captured)
-            }
-        });
+            });
         let mut captures: Vec<_> = futures::stream::iter(jobs)
             .buffer_unordered(FETCH_CONCURRENCY)
             .collect()
@@ -366,7 +353,7 @@ pub(in crate::features::learning) async fn gather_for(
             let captured = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
-                    tracing::info!(url = %result.url, "Skipped a reference page that was truncated, empty or out of scope");
+                    tracing::info!(url = %result.url, "Skipped a reference page that was truncated or empty");
                     gathered.unavailable += 1;
                     continue;
                 }

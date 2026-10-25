@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 use url::{Host, Url};
 
 /// Redirect hops followed before giving up, as reqwest's default does.
-const MAX_REDIRECTS: usize = 10;
+pub(super) const MAX_REDIRECTS: usize = 10;
 
 /// Whether `ip` is loopback, private, link-local, shared, reserved or
 /// otherwise not on the public internet.

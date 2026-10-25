@@ -82,10 +82,10 @@ A call that turns its answer into data goes through `complete_checked`, with its
 
 For each subtopic, in order:
 
-1. Run each query through `references/web_research::search`: 12 results per page (`PAGE_RESULTS`), providers `duckduckgo` and `bing`, Wikipedia off, `site:` scope enforced by `within_search_scope`. It asks for further pages while a page brings in-scope results not seen before. A failure on the first page is logged and the query skipped; on a later page it ends that search.
+1. Run each planned search through `references/web_research::search_need`: 12 results per page (`PAGE_RESULTS`). A planned need's `site:` operators are its scope, lifted into `site` by `PlannedNeed::searches` (one search per site named); the source finder searches the site where it lives now and keeps results to it (toolbelt design §6.7). It asks for further pages while a page brings results not seen before. A failure on the first page is logged and the query skipped; on a later page it ends that search.
 2. Merge results by URL, dropping URLs already saved.
 3. One `content_verification/research::select_references` call per subtopic chooses, in preference order, every result that is relevant and credible for the gap (`decisions[].useForGap`; no count limit since `569a76f7`). Model calls stay sequential: the server is single-slot.
-4. Capture the chosen pages with `web_research::capture`, at most four fetches at once (`FETCH_CONCURRENCY`). A capture that is truncated, empty, or redirected out of the query's scope is skipped (`Ok(None)`).
+4. Capture the chosen pages with `web_research::capture`, at most four fetches at once (`FETCH_CONCURRENCY`). A page is read wherever its own redirects lead; a capture that is truncated or empty is skipped (`Ok(None)`).
 5. Deduplicate by resolved URL and by `hash_text` of the text. Mirrors and redirects are not two sources.
 
 Nothing is persisted here. The captures are saved with the program in `LearningRepository::create_outline_draft`, in the same transaction. A cancel during gathering leaves nothing behind. There is no cap on the number of sources; the bound is the plan.

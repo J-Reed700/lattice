@@ -251,47 +251,13 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
     Ok(())
 }
 
-#[test]
-fn research_site_constraints_require_the_requested_host_and_path() {
-    let query = "site:docs.example.org/manual random assignment";
-    assert!(within_search_scope(
-        query,
-        "https://docs.example.org/manual"
-    ));
-    assert!(within_search_scope(
-        query,
-        "https://docs.example.org/manual/chapter.html"
-    ));
-    assert!(within_search_scope(
-        query,
-        "https://archive.docs.example.org/manual/chapter"
-    ));
-    for address in [
-        "https://en.wikipedia.org/wiki/Manual",
-        "https://docs.example.org.attacker.test/manual",
-        "https://fakedocs.example.org/manual",
-        "https://docs.example.org/manuals",
-        "https://docs.example.org/other",
-        "not a URL",
-    ] {
-        assert!(!within_search_scope(query, address), "{address}");
-    }
-    assert!(within_search_scope(
-        "site:example.org OR site:example.edu topic",
-        "https://example.edu/page"
-    ));
-    assert!(within_search_scope(
-        "site:https://example.org/reference.html topic",
-        "https://example.org/reference.html"
-    ));
-    assert!(within_search_scope(
-        "unrestricted topic search",
-        "https://example.net/page"
-    ));
-}
-
+/// The planner wrote its scope into the query; research searches the site
+/// it named through the source finder's own scope, which keeps the search
+/// there (and follows the site where it moved), and reads the page it chose
+/// wherever the page's own redirects lead.
 #[tokio::test]
-async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
+async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_moved() -> Result<()>
+{
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let mut program = crate::features::learning::tests::fixture();
@@ -299,45 +265,27 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
-    let web = web_capture(false, "https://docs.example.org/manual/good", CAPTURE);
-    let addresses = [
-        "https://unrelated.example/dictionary/assignment",
-        "https://docs.example.org/manual/redirect",
-        "https://docs.example.org/manual/good",
-    ];
-    web.0.set_search_results(
-        addresses
-            .iter()
-            .map(|url| WebSearchResult {
-                title: "Search result".into(),
-                url: (*url).into(),
-                snippet: "Snippet".into(),
-                published_date: None,
-                source: None,
-            })
-            .collect(),
+    let found = "https://docs.example.org/manual/random-assignment";
+    let web = web_capture(false, found, CAPTURE);
+    web.0.set_url_content(
+        found,
+        FetchUrlContentOutput {
+            url: "https://manual.example.net/random-assignment".into(),
+            title: Some("Random assignment".into()),
+            content: CAPTURE.into(),
+            content_truncated: false,
+            word_count: 12,
+            fetch_time_ms: 1.,
+            content_type: None,
+            from_cache: false,
+            read_via: Default::default(),
+        },
     );
-    for address in &addresses[..2] {
-        web.0.set_url_content(
-            *address,
-            FetchUrlContentOutput {
-                url: "https://unrelated.example/redirected".into(),
-                title: None,
-                content: "Irrelevant material must not be saved as a course reference.".into(),
-                content_truncated: false,
-                word_count: 12,
-                fetch_time_ms: 1.,
-                content_type: None,
-                from_cache: false,
-                read_via: Default::default(),
-            },
-        );
-    }
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
                 json!({"needs":[{"gap":0,"query":"site:docs.example.org/manual random assignment","kind":"web"}]}).to_string(),
-                selection(&[0, 1]),
+                selection(&[0]),
             ]
             .into(),
         ),
@@ -347,18 +295,27 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
         pool,
         program.summary.id.clone(),
         program.summary.goal.clone(),
-        Some(web),
+        Some(web.clone()),
         async {
             let expanded = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default())
                 .await?
                 .saved()
-                .expect("relevant capture");
+                .expect("the moved page is read and saved");
             assert_eq!(expanded.sources.len(), sources.len() + 1);
+            let searched: Vec<_> = web
+                .recorded_inputs()
+                .into_iter()
+                .map(|input| (input.query, input.site))
+                .collect();
+            assert_eq!(
+                searched,
+                [(
+                    "random assignment".to_owned(),
+                    Some("docs.example.org/manual".to_owned())
+                )]
+            );
             let saved = repo.verification_sources(&program.summary.id).await?;
             assert!(saved.iter().any(|source| source.excerpt == CAPTURE));
-            assert!(saved
-                .iter()
-                .all(|source| !source.excerpt.contains("Irrelevant material")));
             Ok(())
         },
     )

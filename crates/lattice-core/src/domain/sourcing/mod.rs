@@ -15,6 +15,7 @@ pub mod need;
 pub mod outcome;
 pub mod policy;
 pub mod records;
+pub mod scope;
 
 pub use canonical::{lead_key, unwrap_archive, ArchiveCopy, CanonicalKey};
 pub use catalogue::{is_known_finder, FINDER_IDS};
@@ -35,3 +36,4 @@ pub use need::{
 pub use outcome::{FailureCause, FinderOutcome, FinderResult, Findings, SkipReason};
 pub use policy::{BreakerTrip, SourcingPolicy};
 pub use records::{asserted_owner, records_on_owner, registry_owner};
+pub use scope::{lift_sites, Hop, SiteHome};
