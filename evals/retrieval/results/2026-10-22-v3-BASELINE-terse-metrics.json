@@ -1,0 +1,274 @@
+{
+  "queries": 163,
+  "v3": {
+    "recall_at_k": 0.7648261758691207,
+    "ndcg_at_k": 0.6722209561818866,
+    "mrr_at_k": 0.6800613496932515,
+    "passage_recall_at_k": 0.7484662576687117
+  },
+  "terse": {
+    "recall_at_k": 0.754601226993865,
+    "ndcg_at_k": 0.6512131556481283,
+    "mrr_at_k": 0.6675869120654396,
+    "passage_recall_at_k": 0.6871165644171779
+  },
+  "by_dimension": {
+    "buried needle in long document": {
+      "v3": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.9312144170634953,
+        "mrr_at_k": 0.9074074074074073,
+        "passage_recall_at_k": 0.5555555555555556
+      },
+      "terse": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.8658514069961489,
+        "mrr_at_k": 0.8194444444444444,
+        "passage_recall_at_k": 0.3888888888888889
+      }
+    },
+    "current versus superseded policy": {
+      "v3": {
+        "recall_at_k": 0.9411764705882353,
+        "ndcg_at_k": 0.7131692664452773,
+        "mrr_at_k": 0.7352941176470589,
+        "passage_recall_at_k": 1.0
+      },
+      "terse": {
+        "recall_at_k": 0.8823529411764706,
+        "ndcg_at_k": 0.664084861131218,
+        "mrr_at_k": 0.7450980392156863,
+        "passage_recall_at_k": 0.8823529411764706
+      }
+    },
+    "entity collisions": {
+      "v3": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 1.0,
+        "mrr_at_k": 1.0,
+        "passage_recall_at_k": 1.0
+      },
+      "terse": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.9692441461309548,
+        "mrr_at_k": 0.9583333333333334,
+        "passage_recall_at_k": 1.0
+      }
+    },
+    "exact identifiers and numeric distinctions": {
+      "v3": {
+        "recall_at_k": 0.75,
+        "ndcg_at_k": 0.6143942585512313,
+        "mrr_at_k": 0.600462962962963,
+        "passage_recall_at_k": 0.75
+      },
+      "terse": {
+        "recall_at_k": 0.6805555555555556,
+        "ndcg_at_k": 0.5338493682013656,
+        "mrr_at_k": 0.5148148148148147,
+        "passage_recall_at_k": 0.6527777777777778
+      }
+    },
+    "graded and multi-document relevance": {
+      "v3": {
+        "recall_at_k": 0.6266666666666666,
+        "ndcg_at_k": 0.614686496533333,
+        "mrr_at_k": 0.8013333333333335,
+        "passage_recall_at_k": 0.72
+      },
+      "terse": {
+        "recall_at_k": 0.5866666666666667,
+        "ndcg_at_k": 0.5406695333400816,
+        "mrr_at_k": 0.7566666666666667,
+        "passage_recall_at_k": 0.56
+      }
+    },
+    "long-context tail facts": {
+      "v3": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.8968216255952429,
+        "mrr_at_k": 0.8611111111111112,
+        "passage_recall_at_k": 0.4166666666666667
+      },
+      "terse": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.8602888182323137,
+        "mrr_at_k": 0.8125,
+        "passage_recall_at_k": 0.25
+      }
+    },
+    "multi-hop composition": {
+      "v3": {
+        "recall_at_k": 0.5,
+        "ndcg_at_k": 0.5176459282088663,
+        "mrr_at_k": 0.7916666666666666,
+        "passage_recall_at_k": 0.5
+      },
+      "terse": {
+        "recall_at_k": 0.4166666666666667,
+        "ndcg_at_k": 0.48186607145514304,
+        "mrr_at_k": 0.7708333333333334,
+        "passage_recall_at_k": 0.4166666666666667
+      }
+    },
+    "multilingual and cross-lingual retrieval": {
+      "v3": {
+        "recall_at_k": 0.8333333333333334,
+        "ndcg_at_k": 0.7718216255952429,
+        "mrr_at_k": 0.75,
+        "passage_recall_at_k": 0.8333333333333334
+      },
+      "terse": {
+        "recall_at_k": 0.8333333333333334,
+        "ndcg_at_k": 0.7103099178571526,
+        "mrr_at_k": 0.6666666666666666,
+        "passage_recall_at_k": 0.8333333333333334
+      }
+    },
+    "near-duplicate distractors": {
+      "v3": {
+        "recall_at_k": 0.712121212121212,
+        "ndcg_at_k": 0.6636436256502122,
+        "mrr_at_k": 0.7893939393939394,
+        "passage_recall_at_k": 0.9545454545454546
+      },
+      "terse": {
+        "recall_at_k": 0.6818181818181818,
+        "ndcg_at_k": 0.4848569486359814,
+        "mrr_at_k": 0.6515151515151515,
+        "passage_recall_at_k": 0.7272727272727273
+      }
+    },
+    "negation and exception handling": {
+      "v3": {
+        "recall_at_k": 0.8461538461538461,
+        "ndcg_at_k": 0.9395123246632614,
+        "mrr_at_k": 0.9615384615384616,
+        "passage_recall_at_k": 1.0
+      },
+      "terse": {
+        "recall_at_k": 0.8717948717948718,
+        "ndcg_at_k": 0.8388403278356519,
+        "mrr_at_k": 0.8205128205128205,
+        "passage_recall_at_k": 1.0
+      }
+    },
+    "noisy and OCR text": {
+      "v3": {
+        "recall_at_k": 0.5625,
+        "ndcg_at_k": 0.3131290894077652,
+        "mrr_at_k": 0.23125,
+        "passage_recall_at_k": 0.5625
+      },
+      "terse": {
+        "recall_at_k": 0.5625,
+        "ndcg_at_k": 0.4002897105025338,
+        "mrr_at_k": 0.34791666666666665,
+        "passage_recall_at_k": 0.5
+      }
+    },
+    "scope and applicability boundaries": {
+      "v3": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.9716099810439582,
+        "mrr_at_k": 0.9615384615384616,
+        "passage_recall_at_k": 1.0
+      },
+      "terse": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.9331484425824198,
+        "mrr_at_k": 0.9102564102564104,
+        "passage_recall_at_k": 1.0
+      }
+    },
+    "semantic paraphrase": {
+      "v3": {
+        "recall_at_k": 0.6041666666666666,
+        "ndcg_at_k": 0.4833875311612615,
+        "mrr_at_k": 0.4434027777777778,
+        "passage_recall_at_k": 0.4375
+      },
+      "terse": {
+        "recall_at_k": 0.6458333333333334,
+        "ndcg_at_k": 0.5555148791329486,
+        "mrr_at_k": 0.525,
+        "passage_recall_at_k": 0.4166666666666667
+      }
+    },
+    "short fragment notes": {
+      "v3": {
+        "recall_at_k": 0.8333333333333334,
+        "ndcg_at_k": 0.7551338593037374,
+        "mrr_at_k": 0.7291666666666666,
+        "passage_recall_at_k": 0.8333333333333334
+      },
+      "terse": {
+        "recall_at_k": 0.8333333333333334,
+        "ndcg_at_k": 0.7916666666666666,
+        "mrr_at_k": 0.7777777777777778,
+        "passage_recall_at_k": 0.8333333333333334
+      }
+    },
+    "tables and structured content": {
+      "v3": {
+        "recall_at_k": 1.0,
+        "ndcg_at_k": 0.7386605985424117,
+        "mrr_at_k": 0.6511904761904762,
+        "passage_recall_at_k": 1.0
+      },
+      "terse": {
+        "recall_at_k": 0.7142857142857143,
+        "ndcg_at_k": 0.5758290222603464,
+        "mrr_at_k": 0.5297619047619048,
+        "passage_recall_at_k": 0.7142857142857143
+      }
+    },
+    "topical hard negatives": {
+      "v3": {
+        "recall_at_k": 0.7611940298507462,
+        "ndcg_at_k": 0.6997771959766063,
+        "mrr_at_k": 0.6791044776119403,
+        "passage_recall_at_k": 0.746268656716418
+      },
+      "terse": {
+        "recall_at_k": 0.8208955223880597,
+        "ndcg_at_k": 0.758913206463785,
+        "mrr_at_k": 0.7375621890547264,
+        "passage_recall_at_k": 0.7910447761194029
+      }
+    }
+  },
+  "branch_recall_at_k": {
+    "bm25": {
+      "v3": 0.7024539877300614,
+      "terse": 0.6206543967280164
+    },
+    "vector": {
+      "v3": 0.7239263803680982,
+      "terse": 0.7096114519427403
+    }
+  },
+  "recall_changes": {
+    "better": 12,
+    "worse": 14,
+    "same": 137
+  },
+  "p_value": 0.8450189828872681,
+  "verdict": "can't tell from noise",
+  "lost": [
+    "v3-chat-fact-00",
+    "v3-chat-fact-02",
+    "v3-fragment-02",
+    "v3-multihop-notice-05",
+    "v3-multihop-part-03",
+    "v3-series-latest-nyelle-review",
+    "v3-series-latest-tarrow-council",
+    "v3-series-owner-merridew-sync-02",
+    "v3-series-owner-sepwick-standup-02",
+    "v3-series-reversal-nyelle-review",
+    "v3-table-cell-01",
+    "v3-table-cell-03",
+    "v3-table-csv-01",
+    "v3-table-csv-02"
+  ]
+}
