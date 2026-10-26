@@ -5,6 +5,7 @@ pub mod assessment;
 pub mod canvas;
 pub mod dto;
 pub mod lessons;
+mod method;
 mod model_call;
 pub(crate) mod model_requirements;
 pub(crate) mod operations;
