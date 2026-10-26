@@ -20,7 +20,7 @@ confusion exists, and the number of ideas follows the objective.
 | Question | Decision |
 |---|---|
 | What a lesson is built from | Two or three core ideas, each explained, worked and checked; at least one is set beside a near-miss. Then guided practice, the assignment, explaining from memory, and the recap. |
-| Where the learner thinks | Before each idea, a prediction the explanation then answers; in every check, a committed answer to a fresh case before its reasoning is shown. |
+| Where the learner thinks | Before an idea a newcomer would likely guess wrong, a prediction the explanation then answers; in every check, a committed answer to a fresh case before its reasoning is shown. |
 | How misunderstandings are corrected | Each check's reveal names the misconception behind each plausible wrong answer; quiz distractors are real misconceptions. |
 | How it comes back later | Rating a check schedules it as an FSRS review card. Due cards open the next lesson as a warm-up. |
 | How the recap is used | The learner explains the lesson from memory first; the recap is what they compare with. |
@@ -41,9 +41,9 @@ imagery for text and rereading low [D13].
 | Retrieving information strengthens memory more than restudying it; the benefit grows with delay and with feedback [R06, A17]. | Strong | Checks, explaining from memory, warm-ups, quizzes. | Benefits are measured on retention and near transfer; far transfer is less certain. |
 | Spacing study across sessions beats massing it. The best gap grows with the retention interval [C06, C08]; equal and expanding gaps both work long term [K07]. | Strong | FSRS schedules every card from the learner's answers; warm-ups surface due cards. | FSRS defaults are not personal parameters; an interval is not a retention promise. |
 | Worked examples help novices more than unguided problem solving [A00]; the benefit shrinks as expertise grows [K03]. | Strong for novices | Each idea has a worked example before its check. Its detail follows the learner's stated prior knowledge (every step for a newcomer, only the new steps for someone who knows the basics), and guidance fades from example to guided practice to the assignment. | Prior knowledge is what the learner said, not measured. |
-| Comparing cases side by side improves learning and transfer [A13, G03, RJ07]. Interleaving helps most when the categories are similar and easy to confuse [BR19, RT07]. | Moderate | Contrast sections set an idea beside a near-miss and name the one feature that differs. In a lesson with two or more ideas, the last check mixes them: the learner first decides which idea, this lesson's or an earlier one's, applies. One quiz or test question brings back an earlier lesson's idea. | Interleaving dissimilar material can help less or not at all [BR19]. |
+| Comparing cases side by side improves learning and transfer [A13, G03, RJ07]. Interleaving helps most when the categories are similar and easy to confuse [BR19, RT07]. | Moderate | Contrast sections set an idea beside a near-miss and name the one feature that differs. In a lesson with two or more ideas, the last check mixes them: the learner first decides which idea, this lesson's or an earlier one's, applies. The lesson quiz draws items from earlier lessons by their own outcomes ([practice and quizzes](2026-10-26-learning-science-practice-and-quizzes.md)). | Interleaving dissimilar material can help less or not at all [BR19]. |
 | Explaining material to oneself improves understanding [B18]; explaining to others helps most when it requires recall [F13]. Generative activities beat rereading [F16]. | Moderate | Explaining from memory before the recap; checks ask "why". | Effects vary with prompt quality. |
-| Attempting an answer before learning it, even wrongly, improves later learning when feedback follows [RK09, P23]. Confident errors, once corrected, are corrected especially well [BM01]. | Moderate | Each explanation opens with a prediction question about the idea it is about to teach and then answers it, naming the likely wrong guess and why it fails. A check asks for a committed answer; "I don't know yet" is allowed, but answering first is encouraged. Checks are pitched so a learner who followed the lesson usually succeeds, about four times in five [R12]. | The benefit depends on feedback following the attempt, which is why the explanation answers the prediction at once. |
+| Attempting an answer before learning it, even wrongly, improves later learning when feedback follows [RK09, P23]. Confident errors, once corrected, are corrected especially well [BM01]. | Moderate | Where a newcomer would plausibly guess wrong, an explanation opens with a prediction question about the idea it is about to teach and then answers it, naming the tempting wrong guess and why it fails; asked only there, so lessons do not open every idea the same way. A check asks for a committed answer; "I don't know yet" is allowed, but answering first is encouraged. Checks are pitched so a learner who followed the lesson usually succeeds, about four times in five [R12]. | The benefit depends on feedback following the attempt, which is why the explanation answers the prediction at once. |
 | Feedback that addresses the task and how to improve is among the strongest influences on learning [HT07]. | Strong | Reveals and quiz explanations name the misconception, not just the right answer. | Feedback that only grades has weak effects. |
 | Interpolated tests during instruction reduce mind wandering and improve learning [S13]. | Moderate | Checks sit inside the lesson, after each idea. | Studied with video lectures. |
 | Words with relevant pictures beat words alone [CP91, W18]. | Moderate | A diagram when an idea has structure; none decorative. | Decorative or redundant visuals hurt. |
@@ -149,15 +149,16 @@ Compact rows show a one-line plain preview (`cardPreview`).
 
 `lesson_prompt` states the structure as requirements, not a template: two or
 three core ideas, each explained, worked and checked; a prediction question
-opening each explanation, answered by it; each idea met in at least two
+opening an explanation where a newcomer would likely guess wrong, answered by
+it; each idea met in at least two
 concrete cases; guidance matched to prior knowledge and fading toward the
 assignment; a contrast where learners plausibly confuse the idea; diagrams
 only for structure; a check's format, with at least one "why or how" check
 per idea, a pitch most learners meet, and a last check that mixes the ideas;
 explaining from memory before the recap; quiz distractors that are real
-misconceptions, and one question bringing back an earlier lesson's idea. A
-lesson's recall cards (`recall_draft_prompt`) are retrievals, not recognition:
-they mix stating an idea, explaining why it works, applying it to a new case
+misconceptions. A lesson's recall cards (`recall_draft_prompt`) are
+retrievals, not recognition: they mix stating an idea, explaining why it
+works, applying it to a case whose answer follows from the quoted passage,
 and telling contrasted ideas apart, never give their answer away in the cue,
 and explain the common mistake with the answer. The schema allows 10 to 16 sections of eight kinds.
 `lesson_rules` reports the mix (at least two explanations, two worked
