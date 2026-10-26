@@ -441,6 +441,8 @@
     "learning:allow-review-study-card",
     "learning:allow-update-study-card",
     "learning:allow-delete-study-deck",
+    "learning:allow-set-study-deck-target",
+    "learning:allow-create-interview-study-deck",
     "learning:allow-create-learning-tangent",
     "learning:allow-list-learning-tangents",
     "compare:allow-compare-documents",

@@ -273,6 +273,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             review_study_card,
             update_study_card,
             delete_study_deck,
+            set_study_deck_target,
+            create_interview_study_deck,
             create_learning_tangent,
             list_learning_tangents
         ])
