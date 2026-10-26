@@ -195,6 +195,30 @@ async fn an_open_breaker_skips_its_finder_on_the_next_call_without_a_request() {
     assert_eq!(second.leads.len(), 10);
 }
 
+/// A challenged engine's backoff is skipped even by a caller with time to
+/// wait it out. Waiting it out doubled every search's delay while DuckDuckGo
+/// kept challenging, until one outline's searches took hours.
+#[tokio::test]
+async fn a_challenged_engine_is_skipped_not_waited_for_by_a_caller_with_time() {
+    let clock = FakeClock::new();
+    let ddg = Arc::new(ScriptedFinder::failing(
+        duckduckgo::DESCRIPTOR,
+        FailureCause::Challenge,
+    ));
+    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+
+    for _ in 0..3 {
+        sourcing
+            .find(web_need(20, &[]), budget(PLENTY))
+            .await
+            .expect("Bing answered");
+    }
+
+    assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
+    assert_eq!(ddg.calls().len(), 1);
+}
+
 /// A host that says `Retry-After: 60` is waited out, in full, when the call
 /// still needs its leads and the deadline is further off than that.
 #[tokio::test]
