@@ -298,3 +298,36 @@ async fn silence_before_the_first_delta_is_not_a_stall() {
     .unwrap();
     assert_eq!(response.text, "Thought it through.");
 }
+
+/// A call that takes no arguments can stream only empty deltas; one cut off
+/// at the output limit streams half an object. Neither fails the reply: the
+/// first is `{}`, the second is answered with why it was not run.
+#[test]
+fn anthropic_calls_with_no_or_broken_arguments_do_not_fail_the_reply() {
+    let events = frames(&[
+        json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":1},"stop_reason":null}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-1","name":"list_attachments","input":{}}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-2","name":"search","input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"bri"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8}}),
+        json!({"type":"message_stop"}),
+    ]);
+    let mut decoder = Decoder::new(LLMProvider::Anthropic);
+    decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
+    let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
+    let arguments: Vec<_> = response
+        .tool_calls
+        .iter()
+        .filter_map(|call| match call {
+            CompletionInput::ToolCall { arguments, .. } => Some(arguments.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arguments[0], json!({}));
+    let problem =
+        lattice_core::application::ports::llm_port::invalid_tool_call_problem(&arguments[1]);
+    assert!(problem.is_some_and(|problem| problem.contains("not JSON")));
+}

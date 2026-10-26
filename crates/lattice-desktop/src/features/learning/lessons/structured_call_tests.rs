@@ -20,6 +20,8 @@ const ANSWER: &str = r#"{"answer":"Air scatters blue light more than red light."
 struct Recorder {
     window: usize,
     exact: bool,
+    /// Whether it thinks before every answer, as Claude does.
+    thinks: bool,
     draft: CompletionResponse,
     answer: Option<&'static str>,
     first_answers: Mutex<Vec<&'static str>>,
@@ -31,6 +33,7 @@ impl Recorder {
         Self {
             window,
             exact: false,
+            thinks: false,
             draft: CompletionResponse::from_text(DRAFT),
             answer: Some(ANSWER),
             first_answers: Mutex::new(Vec::new()),
@@ -92,6 +95,9 @@ impl LLMPort for Recorder {
     }
     fn counts_tokens_exactly(&self) -> bool {
         self.exact
+    }
+    fn thinks_before_answering(&self) -> bool {
+        self.thinks
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -239,6 +245,55 @@ async fn each_kind_follows_its_knob() -> Result<()> {
         assert_eq!(llm.sent().len(), if reasons_first { 2 } else { 1 });
     }
     Ok(())
+}
+
+/// A model that thinks before every answer reasons first already, and
+/// Claude refuses the prose draft as a request for its chain of thought, so
+/// the call is made in one step.
+#[tokio::test]
+async fn a_model_that_thinks_before_answering_is_asked_in_one_step() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.thinks = true;
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert_eq!(
+        messages(&sent[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+/// Claude's classifier can decline a draft partway, with some text written;
+/// the call answers in one step rather than from a draft that was refused.
+#[tokio::test]
+async fn a_declined_draft_falls_back_to_the_one_step_request() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.draft = CompletionResponse {
+        text: "Sunlight scatters".into(),
+        finish_reason: "refusal".into(),
+        ..Default::default()
+    };
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        messages(&sent[1]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+/// A declined answer is unusable, not malformed: the lesson's passes work
+/// around it as they do a cut-off one.
+#[test]
+fn a_declined_answer_is_unusable() {
+    assert!(matches!(
+        reject_incomplete_finish_reason("refusal"),
+        Err(AppError::ModelAnswerUnusable(_))
+    ));
+    assert!(reject_incomplete_finish_reason("end_turn").is_ok());
 }
 
 #[tokio::test]

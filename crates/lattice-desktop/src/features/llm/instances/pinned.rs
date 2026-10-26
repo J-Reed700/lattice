@@ -112,6 +112,10 @@ impl LLMPort for PinnedLlm {
         self.inner().supports_tool_calling()
     }
 
+    fn thinks_before_answering(&self) -> bool {
+        self.inner().thinks_before_answering()
+    }
+
     fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
         self.inner().vision()
     }

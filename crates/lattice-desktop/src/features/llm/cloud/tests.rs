@@ -735,3 +735,106 @@ fn each_provider_is_asked_for_no_more_than_the_window_has_left() {
         assert_eq!(ceiling(&short), json!(512), "{provider:?}");
     }
 }
+
+/// Claude thinks unasked from the 5 family on, and its thinking counts toward
+/// `max_tokens` though its text is not returned: such a request is given the
+/// configured ceiling, not its reply-sized one. A model that thinks only when
+/// asked keeps the request's ceiling until it is asked.
+#[test]
+fn claude_that_thinks_is_given_room_to_think_and_answer() {
+    let body = |model: &str, thinking: ThinkingMode| {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Anthropic,
+            model: model.into(),
+            max_tokens: 64_000,
+            context_window: 200_000,
+            ..Default::default()
+        };
+        CloudLlm::new(&settings, "test".into())
+            .unwrap()
+            .body(
+                &CompletionRequest {
+                    input: vec![CompletionInput::Message {
+                        role: "user".into(),
+                        content: "When did the bridge open?".into(),
+                    }],
+                    max_output_tokens: Some(512),
+                    thinking,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    };
+    let always = body("claude-opus-5-5", ThinkingMode::Off);
+    assert_eq!(always["max_tokens"], 64_000);
+    assert_eq!(always["thinking"]["type"], "adaptive");
+    let asked_only = body("claude-opus-4-8", ThinkingMode::Off);
+    assert_eq!(asked_only["max_tokens"], 512);
+    assert!(asked_only.get("thinking").is_none(), "{asked_only}");
+    assert_eq!(
+        body("claude-opus-4-8", ThinkingMode::On)["max_tokens"],
+        64_000
+    );
+}
+
+#[test]
+fn claude_thinks_unasked_from_the_5_family_on() {
+    for model in [
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-1",
+    ] {
+        assert!(claude_thinks_unasked(model), "{model}");
+    }
+    for model in [
+        "claude-opus-4-8",
+        "claude-haiku-4-5-20251001",
+        "claude-3-5-sonnet-20241022",
+        "claude-sonnet",
+        "gpt-5",
+    ] {
+        assert!(!claude_thinks_unasked(model), "{model}");
+    }
+    let settings = |model: &str| LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        model: model.into(),
+        ..Default::default()
+    };
+    let thinks = |model: &str| {
+        CloudLlm::new(&settings(model), "test".into())
+            .unwrap()
+            .thinks_before_answering()
+    };
+    assert!(thinks("claude-opus-5-5"));
+    assert!(!thinks("claude-opus-4-8"));
+}
+
+/// OpenAI's arguments arrive as text: none is `{}`, and text that is not
+/// JSON is answered with why rather than failing the reply as an outage.
+#[test]
+fn openai_calls_with_no_or_broken_arguments_do_not_fail_the_reply() {
+    let result = parse_completion(
+        LLMProvider::Openai,
+        json!({"status":"incomplete","output":[
+            {"type":"function_call","call_id":"c1","name":"list_attachments","arguments":""},
+            {"type":"function_call","call_id":"c2","name":"search","arguments":"{\"query\":\"bri"}
+        ],"usage":{"input_tokens":12,"output_tokens":3}}),
+    )
+    .unwrap();
+    let arguments: Vec<_> = result
+        .tool_calls
+        .iter()
+        .filter_map(|call| match call {
+            CompletionInput::ToolCall { arguments, .. } => Some(arguments.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arguments[0], json!({}));
+    assert!(
+        lattice_core::application::ports::llm_port::invalid_tool_call_problem(&arguments[1])
+            .is_some()
+    );
+}
