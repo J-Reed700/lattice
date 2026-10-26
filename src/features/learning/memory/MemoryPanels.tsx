@@ -13,7 +13,7 @@ import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
 import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useGenerateLearningCardDrafts, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
-import { fromNow } from '@/features/learning/recall/flashcards/retrieval';
+import { fromNow, MAX_ATTEMPTS, RELEARN_GAP } from '@/features/learning/recall/flashcards/retrieval';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningCardDraftDto, LearningCardOriginDto, LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 import { flushPendingSaves, registerPendingSave } from '@/lib/pendingSaves';
@@ -270,7 +270,12 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   const [draftSaveTarget, setDraftSaveTarget] = useState<string | null>(null);
   const [cardUpdateTarget, setCardUpdateTarget] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [attempt, setAttempt] = useState('');
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
+  // Successive relearning: a miss comes back after a few other cards until it
+  // is recalled once, as in the full study session (retrieval.ts).
+  const [relearn, setRelearn] = useState<{ card: StudyCardDto; readyAfter: number; attempts: number }[]>([]);
+  const [reviewsDone, setReviewsDone] = useState(0);
   const [reviewedCard, setReviewedCard] = useState<StudyCardDto | null>(null);
   const [reviewError, setReviewError] = useState('');
   const [reviewScope, setReviewScope] = useState<'interleaved' | 'lesson'>('interleaved');
@@ -322,7 +327,8 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
     return ids.size;
   }, [allDueCards, cardLessonMap]);
 
-  const currentCard = dueCards[0];
+  const relearnItem = relearn.find((item) => item.readyAfter <= reviewsDone) ?? (dueCards.length ? undefined : relearn[0]);
+  const currentCard = relearnItem?.card ?? dueCards[0];
   const currentCardOrigin = memory?.acceptedCards?.find((o) => o.cardId === currentCard?.id);
   const currentCardLesson = currentCardOrigin?.lessonId
     ? program.modules.flatMap((module) => module.lessons).find((item) => item.id === currentCardOrigin.lessonId)
@@ -336,6 +342,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   const currentCardId = currentCard?.id;
   useEffect(() => {
     setRevealed(false);
+    setAttempt('');
     if (!currentCardId) return;
     setReviewError('');
     reviewRequest.current = null;
@@ -372,7 +379,16 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
       reviewRequest.current = { cardId: currentCard.id, rating, id: crypto.randomUUID() };
     }
     const request = { reviewId: reviewRequest.current.id, cardId: currentCard.id, expectedReviews: currentCard.reviewCount, selectedOption: null, rating } as const;
-    review.mutate(request, { onSuccess: (updated) => { setReviewedIds((ids) => [...ids, currentCard.id]); setReviewedCard(updated); setRevealed(false); reviewRequest.current = null; }, onError: (error) => setReviewError(error.message) });
+    const attempts = (relearnItem?.attempts ?? 0) + 1;
+    review.mutate(request, { onSuccess: (updated) => {
+      setReviewedIds((ids) => [...ids, currentCard.id]);
+      setRelearn((items) => {
+        const rest = items.filter((item) => item.card.id !== currentCard.id);
+        return rating === 'again' && attempts < MAX_ATTEMPTS ? [...rest, { card: updated, readyAfter: reviewsDone + 1 + RELEARN_GAP, attempts }] : rest;
+      });
+      setReviewsDone((done) => done + 1);
+      setReviewedCard(updated); setRevealed(false); setAttempt(''); reviewRequest.current = null;
+    }, onError: (error) => setReviewError(error.message) });
   };
 
   if (memoryLoading && !memory) return <div role="status" className="rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted"><LoaderCircle size={15} className="mr-2 inline animate-spin" />Loading recall data…</div>;
@@ -398,7 +414,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">In-Studio review</div>
           <h3 className="mt-1 font-serif text-2xl text-text-primary">Due cards</h3>
-          <p className="mt-1 text-xs text-text-secondary">Prompt first, reveal when you are ready, then record a recall rating.</p>
+          <p className="mt-1 text-xs text-text-secondary">Answer from memory first, then check and rate it. A card you miss comes back later in this review until you recall it.</p>
           {memory?.studyDeck && <FullSessionLink deckId={memory.studyDeck.id} />}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -451,7 +467,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
             </span>
           )}
         </div>
-        <CardText className="mt-3 font-serif text-xl leading-7 text-text-primary" text={currentCard.question} />{!revealed ? <button type="button" disabled={review.isPending} onClick={() => setRevealed(true)} className="mt-5 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg">Reveal answer</button> : <div className="mt-5 border-t border-border pt-5"><div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">Answer</div><CardText className="mt-2 text-base font-medium leading-6 text-text-primary" text={currentCard.answer} />{currentCard.explanation && <CardText className="mt-2 text-sm leading-6 text-text-secondary" text={currentCard.explanation} />}<SourceProvenance sourceIds={memory?.acceptedCards?.find((origin) => origin.cardId === currentCard.id)?.sourceIds ?? []} program={program} /><div className="mt-5"><div className="mb-2 text-xs text-text-muted">How did recall feel?</div><div className="flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as const).map((rating) => <button key={rating} type="button" disabled={review.isPending} onClick={() => rateCard(rating)} className="rounded-full border border-border px-4 py-2 text-xs font-medium capitalize text-text-secondary hover:border-accent/50 hover:text-accent disabled:opacity-50">{review.isPending ? 'Saving…' : rating}</button>)}</div></div></div>}</article> : <div className="mt-5 rounded-xl border border-dashed border-border p-7 text-center"><h4 className="font-serif text-xl text-text-primary">{memory?.studyDeck?.cards.length ? 'You are caught up' : 'No accepted cards yet'}</h4><p className="mt-2 text-sm leading-6 text-text-secondary">{memory?.studyDeck?.cards.length ? 'There are no due cards in this program right now.' : 'Accepted cards will appear here when their scheduled review is due.'}</p></div>}
+        {relearnItem && !revealed && <p className="mt-3 text-xs text-text-muted">Back again: you missed this earlier in this review. Answer it from memory once more.</p>}<CardText className="mt-3 font-serif text-xl leading-7 text-text-primary" text={currentCard.question} />{!revealed ? <div className="mt-5"><label className="block text-xs text-text-muted">Your answer <span>· commit to one before you look</span><textarea value={attempt} onChange={(event) => setAttempt(event.target.value)} rows={3} maxLength={4000} placeholder="Type what you remember…" className="mt-2 w-full resize-y rounded-lg border border-border bg-surface px-3 py-2.5 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" /></label><button type="button" disabled={review.isPending} onClick={() => setRevealed(true)} className="mt-3 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg">{attempt.trim() ? 'Check my answer' : "I don't know yet: show me"}</button></div> : <div className="mt-5 border-t border-border pt-5">{attempt.trim() && <div className="mb-4 rounded-lg bg-surface p-3"><div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Your answer</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{attempt.trim()}</p></div>}<div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">Answer</div><CardText className="mt-2 text-base font-medium leading-6 text-text-primary" text={currentCard.answer} />{currentCard.explanation && <CardText className="mt-2 text-sm leading-6 text-text-secondary" text={currentCard.explanation} />}<SourceProvenance sourceIds={memory?.acceptedCards?.find((origin) => origin.cardId === currentCard.id)?.sourceIds ?? []} program={program} /><div className="mt-5"><div className="mb-2 text-xs text-text-muted">How did recall feel?</div><div className="flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as const).map((rating) => <button key={rating} type="button" disabled={review.isPending} onClick={() => rateCard(rating)} className="rounded-full border border-border px-4 py-2 text-xs font-medium capitalize text-text-secondary hover:border-accent/50 hover:text-accent disabled:opacity-50">{review.isPending ? 'Saving…' : rating}</button>)}</div></div></div>}</article> : <div className="mt-5 rounded-xl border border-dashed border-border p-7 text-center"><h4 className="font-serif text-xl text-text-primary">{memory?.studyDeck?.cards.length ? 'You are caught up' : 'No accepted cards yet'}</h4><p className="mt-2 text-sm leading-6 text-text-secondary">{memory?.studyDeck?.cards.length ? 'There are no due cards in this program right now.' : 'Accepted cards will appear here when their scheduled review is due.'}</p></div>}
       {memory?.acceptedCards?.length ? <div className="mt-7 border-t border-border pt-6"><h4 className="font-serif text-lg text-text-primary">Accepted cards for this lesson</h4><div className="mt-3 space-y-3">{origins.map((origin) => { const card = memory.studyDeck?.cards.find((item) => item.id === origin.cardId); return card ? <AcceptedCardEditor key={card.id} card={card} origin={origin} program={program} pending={updateCard.isPending} error={cardUpdateTarget === card.id ? updateCard.error?.message : undefined} onSave={editAccepted} /> : null; })}</div>{origins.length === 0 && <p className="mt-2 text-xs text-text-muted">No accepted cards yet for this lesson.</p>}</div> : null}
     </section>
   </div>;
