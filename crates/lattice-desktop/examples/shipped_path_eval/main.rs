@@ -1,5 +1,6 @@
 //! Shipped-path evaluation: questions asked of the desktop's own chat
-//! orchestrator, end to end, against a live llama-server.
+//! orchestrator, end to end, against a live llama-server or a cloud model
+//! (a recipe's `cloud` block; see `recipe.rs`).
 //!
 //! Run (from `crates/lattice-desktop/`, with the server from the recipe already up):
 //! ```text
@@ -152,18 +153,18 @@ fn git(args: &[&str]) -> Option<String> {
 
 /// The server must be the one the recipe describes: a different window or
 /// slot count changes the turn budget and the cache behaviour under test.
-async fn probe_server(recipe: &recipe::Recipe) -> Res<Value> {
-    let url = recipe.server.url.trim_end_matches('/');
+async fn probe_server(server: &recipe::Server) -> Res<Value> {
+    let url = server.url.trim_end_matches('/');
     let props: Value = reqwest::get(format!("{url}/props")).await?.json().await?;
     let n_ctx = props
         .pointer("/default_generation_settings/n_ctx")
         .or_else(|| props.get("n_ctx"))
         .and_then(Value::as_u64);
     let slots = props.get("total_slots").and_then(Value::as_u64);
-    if n_ctx != Some(recipe.server.expected_ctx) || slots != Some(recipe.server.expected_slots) {
+    if n_ctx != Some(server.expected_ctx) || slots != Some(server.expected_slots) {
         return Err(format!(
             "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
-            recipe.server.expected_ctx, recipe.server.expected_slots
+            server.expected_ctx, server.expected_slots
         )
         .into());
     }
@@ -182,7 +183,6 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let corpus_path = recipe::resolve(&recipe.corpus, &root, real_home);
     let questions_path = recipe::resolve(&recipe.questions, &root, real_home);
     let embedding_gguf = recipe::resolve(&recipe.embedding_gguf, &root, real_home);
-    let gguf = recipe::resolve(&recipe.server.gguf, &root, real_home);
     let mut items = recipe::load_items(&questions_path)?;
     if let Some(only) = &args.only {
         items.retain(|item| only.contains(&item.id));
@@ -191,20 +191,39 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         }
     }
 
-    eprintln!("hashing {}", gguf.display());
-    let gguf_sha256 = sha256_file(&gguf)?;
-    if gguf_sha256 != recipe.server.gguf_sha256 {
-        return Err(format!("weights hash {gguf_sha256} is not the recipe's").into());
-    }
-    let server = probe_server(&recipe).await?;
+    // What answers, recorded with the run so a result is never read against
+    // another model's: local weights by their hash and the server's own
+    // report, a cloud model by provider and the id requested (the id each
+    // reply was served under is kept per call, in the calls file).
+    let (gguf_sha256, server, upstream, base_url_variable) = match recipe.answerer()? {
+        recipe::Answerer::Server(server) => {
+            let gguf = recipe::resolve(&server.gguf, &root, real_home);
+            eprintln!("hashing {}", gguf.display());
+            let gguf_sha256 = sha256_file(&gguf)?;
+            if gguf_sha256 != server.gguf_sha256 {
+                return Err(format!("weights hash {gguf_sha256} is not the recipe's").into());
+            }
+            (
+                Some(gguf_sha256),
+                probe_server(server).await?,
+                server.url.clone(),
+                None,
+            )
+        }
+        recipe::Answerer::Cloud(cloud) => {
+            let (upstream, variable) = cloud.upstream()?;
+            let server = json!({"provider": cloud.provider, "model": cloud.model});
+            (None, server, upstream.to_owned(), Some(variable))
+        }
+    };
 
     let recorder = proxy::Recorder::new();
-    let proxy_url = proxy::start(
-        recipe.server.url.clone(),
-        recipe.thinking_off()?,
-        Arc::clone(&recorder),
-    )
-    .await?;
+    let proxy_url = proxy::start(upstream, recipe.thinking_off()?, Arc::clone(&recorder)).await?;
+    if let Some(variable) = base_url_variable {
+        // Read when the desktop builds its cloud client, so every request of
+        // the run crosses the proxy and is recorded.
+        std::env::set_var(variable, &proxy_url);
+    }
     let settings = recipe.settings(&proxy_url)?;
     let tool_preferences = recipe.tool_preferences()?;
 
@@ -288,7 +307,12 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let run = json!({
         "schema": record::SCHEMA,
         "name": recipe.name,
-        "server_launch": recipe.server.launch,
+        "server_launch": recipe.server.as_ref().map(|server| server.launch.clone()),
+        "answering_model": {
+            "kind": if recipe.cloud.is_some() { "cloud" } else { "llama-server" },
+            "model": recipe.model_name()?,
+            "served_as": record::served_models(&recorder.since(0)),
+        },
         "recipe_path": args.recipe,
         "recipe_sha256": sha256_file(&args.recipe)?,
         "recipe": serde_json::from_str::<Value>(&std::fs::read_to_string(&args.recipe)?)?,
@@ -297,7 +321,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         "questions_path": recipe.questions,
         "gguf_sha256": gguf_sha256,
         "server": server,
-        "thinking": recipe.server.thinking,
+        "thinking": recipe.server.as_ref().map_or("as-sent", |server| server.thinking.as_str()),
         "only": args.only,
         "commit": git(&["rev-parse", "HEAD"]),
         "dirty_files": git(&["status", "--porcelain"]).map(|s| s.lines().count()),
@@ -343,7 +367,7 @@ async fn run_item(
     to_dataset: &HashMap<String, String>,
     item: &recipe::Item,
 ) -> (Value, Option<String>) {
-    let model = recipe.server.model.as_str();
+    let model = recipe.model_name().unwrap_or_default();
     let verify = recipe
         .settings
         .pointer("/llm/verification/enabled")

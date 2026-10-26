@@ -326,6 +326,62 @@ def judge_headers():
     return headers
 
 
+ANTHROPIC_API = "https://api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def anthropic_headers():
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        raise SystemExit("an Anthropic judge needs ANTHROPIC_API_KEY")
+    return {"Content-Type": "application/json", "x-api-key": key,
+            "anthropic-version": ANTHROPIC_VERSION}
+
+
+def anthropic_judge_request(model, messages):
+    """The judge request in the Messages API's shape. Claude rejects the
+    sampling knobs greedy grading uses, so none is sent: a Claude judge is
+    not deterministic, and its manifest says so. The verdict is bound to the
+    same schema through structured output."""
+    system = "\n\n".join(m["content"] for m in messages if m.get("role") == "system")
+    turns = [{"role": m["role"], "content": m["content"]}
+             for m in messages if m.get("role") in ("user", "assistant")]
+    request = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": turns,
+        "output_config": {"effort": "low",
+                          "format": {"type": "json_schema",
+                                     "schema": JUDGE_SCHEMA | {"additionalProperties": False}}},
+    }
+    if system:
+        request["system"] = system
+    return request
+
+
+def parse_anthropic_verdict(payload):
+    content = "".join(block.get("text", "") for block in payload.get("content") or []
+                      if block.get("type") == "text")
+    verdict = json.loads(content.strip())
+    if verdict.get("verdict") not in ("pass", "fail"):
+        raise ValueError(f"judge returned no verdict: {content!r}")
+    return verdict["verdict"] == "pass", str(verdict.get("reason", ""))
+
+
+def anthropic_judge(model):
+    """Grades one turn with a Claude model through the Messages API. No time
+    limit cuts a grade off, as for any judge."""
+    url = ANTHROPIC_API + "/v1/messages"
+    headers = anthropic_headers()
+
+    def call(messages):
+        body = json.dumps(anthropic_judge_request(model, messages)).encode()
+        request = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        with urllib.request.urlopen(request) as response:
+            return parse_anthropic_verdict(json.load(response))
+    return call
+
+
 def http_judge(endpoint, model):
     """Grades one turn. A grade takes as long as the judge's server takes: a
     shared remote may queue it behind other work, so no time limit cuts it off."""
@@ -340,7 +396,19 @@ def http_judge(endpoint, model):
     return call
 
 
-def judge_identity(endpoint, model, answer_model, timeout=30):
+def answering_model(run_meta):
+    """The model that wrote a run's answers, and the revision it was measured
+    at: a local model's weights hash, or the names a cloud model's replies
+    were served under. Older runs carry only the recipe's server."""
+    answering = run_meta.get("answering_model")
+    if answering:
+        served = answering.get("served_as") or []
+        return answering.get("model"), ",".join(served) or None
+    return (run_meta.get("recipe", {}).get("server", {}).get("model"),
+            run_meta.get("gguf_sha256"))
+
+
+def judge_identity(endpoint, model, answer_model, timeout=30, headers=None):
     """Which model judged: the request's model name and what the server lists.
 
     `/v1/models` is the OpenAI-compatible listing every supported server
@@ -351,7 +419,7 @@ def judge_identity(endpoint, model, answer_model, timeout=30):
     served = None
     try:
         listing_request = urllib.request.Request(endpoint.rstrip("/") + "/v1/models",
-                                                 headers=judge_headers())
+                                                 headers=headers or judge_headers())
         with urllib.request.urlopen(listing_request, timeout=timeout) as response:
             listing = json.load(response)
         served = [{"id": entry.get("id"), "meta": entry.get("meta")}
@@ -579,8 +647,8 @@ def manifest(questions, run_meta, judge_settings):
         "retrieval_sha256": digest(None),
         "settings": {
             "harness": "shipped_desktop_path",
-            "model": run_meta.get("recipe", {}).get("server", {}).get("model"),
-            "model_revision": run_meta.get("gguf_sha256"),
+            "model": answering_model(run_meta)[0],
+            "model_revision": answering_model(run_meta)[1],
             "recipe_sha256": run_meta.get("recipe_sha256"),
             "corpus_sha256": run_meta.get("corpus_sha256"),
             "thinking": run_meta.get("thinking"),
@@ -608,6 +676,10 @@ def main():
     run.add_argument("--endpoint", help="the judge's OpenAI-compatible base URL, independent of the "
                      "server that wrote the answers; omit to skip the judge")
     run.add_argument("--model", default="judge", help="the model name the judge request carries")
+    run.add_argument("--judge-provider", choices=("openai-compatible", "anthropic"),
+                     default="openai-compatible",
+                     help="anthropic: grade with --model through the Messages API, keyed by "
+                          "ANTHROPIC_API_KEY (no --endpoint)")
     labelled = sub.add_parser("score-dataset")
     labelled.add_argument("questions", type=Path, help="the labelled dataset")
     labelled.add_argument("expectations", type=Path)
@@ -644,11 +716,19 @@ def main():
         return
     run_meta_path = Path(str(args.answers) + ".run.json")
     run_meta = json.loads(run_meta_path.read_text()) if run_meta_path.exists() else {}
-    judge = http_judge(args.endpoint, args.model) if args.endpoint else None
-    answer_model = run_meta.get("recipe", {}).get("server", {}).get("model")
-    judge_settings = (judge_request(args.model, [])
-                      | {"messages": None, "rubric": JUDGE_RUBRIC,
-                         "identity": judge_identity(args.endpoint, args.model, answer_model)}) if judge else None
+    answer_model = answering_model(run_meta)[0]
+    if args.judge_provider == "anthropic":
+        judge = anthropic_judge(args.model)
+        judge_settings = (anthropic_judge_request(args.model, [])
+                          | {"messages": None, "rubric": JUDGE_RUBRIC, "provider": "anthropic",
+                             "deterministic": False,
+                             "identity": judge_identity(ANTHROPIC_API, args.model, answer_model,
+                                                        headers=anthropic_headers())})
+    else:
+        judge = http_judge(args.endpoint, args.model) if args.endpoint else None
+        judge_settings = (judge_request(args.model, [])
+                          | {"messages": None, "rubric": JUDGE_RUBRIC,
+                             "identity": judge_identity(args.endpoint, args.model, answer_model)}) if judge else None
     scored = score(questions, rows, judge)
     identity = manifest(questions, run_meta, judge_settings)
     with args.output.open("x") as out:

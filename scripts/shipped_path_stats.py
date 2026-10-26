@@ -169,8 +169,49 @@ def compare(baseline_runs, candidate_runs, kind="judge", alpha=ALPHA):
     }
 
 
+IDENTITY_FIELDS = ("model", "model_revision", "thinking")
+
+
+def run_identity(scored_path):
+    """Which model answered a scored run and which judged it, from the
+    manifest the scorer writes beside it; `None` when there is none."""
+    manifest = Path(str(scored_path) + ".manifest.json")
+    if not manifest.exists():
+        return None
+    settings = json.loads(manifest.read_text()).get("settings") or {}
+    judge = settings.get("judge") or {}
+    return {"answering": {field: settings.get(field) for field in IDENTITY_FIELDS},
+            "judge": judge.get("model")}
+
+
+def check_models(baseline_paths, candidate_paths, across_models=False):
+    """The models both arms were answered and judged by. A difference between
+    two models is not a difference a change made: unless the comparison is
+    asked for as one across models, runs of different models are refused."""
+    identities = {str(path): run_identity(path) for path in [*baseline_paths, *candidate_paths]}
+    unknown = sorted(path for path, identity in identities.items() if identity is None)
+    if unknown:
+        raise ValueError(f"no manifest says which model answered {unknown}")
+    answering = sorted({json.dumps(i["answering"], sort_keys=True) for i in identities.values()})
+    judges = sorted({str(i["judge"]) for i in identities.values()})
+    differs = len(answering) > 1 or len(judges) > 1
+    if differs and not across_models:
+        raise ValueError("the runs were answered or judged by different models "
+                         f"(answering: {answering}; judges: {judges}); compare runs of one model, "
+                         "or pass --across-models to compare the models themselves")
+    return {"answering_models": [json.loads(a) for a in answering], "judges": judges,
+            "across_models": differs}
+
+
 def compare_markdown(report):
     lines = [f"Outcome: {report['outcome']}. Paired questions: {report['paired']}."]
+    models = report.get("models")
+    if models:
+        names = ", ".join(str(m.get("model")) for m in models["answering_models"])
+        lines.append(f"Answered by: {names}. Judged by: {', '.join(models['judges'])}.")
+        if models["across_models"]:
+            lines.append("**Across models: the arms differ in model, so the verdict is about the "
+                         "models, not about a change to the app.**")
     if report["unpaired"]:
         lines.append(f"Not in every run (left out): {', '.join(report['unpaired'])}.")
     if report["changed_items"]:
@@ -428,6 +469,8 @@ def main():
     pair.add_argument("--candidate", type=Path, nargs="+", required=True, help="scored run(s)")
     pair.add_argument("--outcome", choices=OUTCOMES, default="judge")
     pair.add_argument("--json", type=Path, help="also write the report as JSON")
+    pair.add_argument("--across-models", action="store_true",
+                      help="compare runs answered or judged by different models")
     draw = sub.add_parser("calibration-sample")
     draw.add_argument("questions", type=Path)
     draw.add_argument("answers", type=Path, help="the run's answer rows")
@@ -446,8 +489,13 @@ def main():
     args = parser.parse_args()
 
     if args.command == "compare":
+        try:
+            models = check_models(args.baseline, args.candidate, args.across_models)
+        except ValueError as error:
+            raise SystemExit(str(error))
         report = compare([load_jsonl(p) for p in args.baseline], [load_jsonl(p) for p in args.candidate],
                          args.outcome)
+        report["models"] = models
         print(compare_markdown(report))
     elif args.command == "calibration-sample":
         if args.output.exists():

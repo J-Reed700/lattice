@@ -24,6 +24,7 @@ fn http() -> FinderHttp {
         pacer: Arc::new(SitePacer::with_interval(Duration::ZERO)),
         parsers: Arc::new(Semaphore::new(2)),
         contact: None,
+        public_only: false,
     }
 }
 
@@ -312,4 +313,34 @@ fn the_keyless_registry_holds_the_three_providers_with_honest_identities() {
     assert_eq!(duckduckgo.identity, Identity::BrowserLike);
     assert!(duckduckgo.rate.trip_on_first_refusal);
     assert!(!wikipedia.rate.trip_on_first_refusal);
+}
+
+/// A URL from a tool call or a robots.txt can name a local address outright,
+/// and an IP literal never reaches the public client's resolver, so the public
+/// helper must refuse it without sending anything. The user's own SearXNG
+/// instance may be local, so the helper it uses still reaches it.
+#[tokio::test]
+async fn the_public_helper_refuses_a_local_address_without_sending() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("private"))
+        .mount(&server)
+        .await;
+    let public = FinderHttp {
+        public_only: true,
+        ..http()
+    };
+    for url in [format!("{}/admin", server.uri()), "http://[::1]:9/".into()] {
+        match public.get(&url, HeaderMap::new(), 1024).await {
+            Fetched::Transport(error) => assert!(error.contains("blocked"), "{error}"),
+            other => panic!("{url} was not refused: {other:?}"),
+        }
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    let instance = http();
+    assert!(matches!(
+        instance.get(&server.uri(), HeaderMap::new(), 1024).await,
+        Fetched::Body(body) if body == "private"
+    ));
 }

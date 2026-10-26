@@ -15,3 +15,4 @@
 allow features::batch features::indexing  # batch import drives indexing's IndexFileUseCase once per queued file
 allow features::batch features::web  # batch import drives web's IngestWebUrlUseCase once per queued URL
 allow features::compare features::search  # compare's ScopedLibrarySearch port has one adapter over search's hybrid use case
+allow features::web features::indexing  # a page read that fetches a PDF reads it with indexing's ContentExtractor rather than a second PDF reader
