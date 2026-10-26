@@ -37,8 +37,17 @@ use super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::retrieval::infer_category;
 
 /// Appended to an attachment the window could not hold, so the model reports a
-/// partial read as partial instead of answering as though it saw the end.
-const TRUNCATION_NOTE: &str = "\n\n[Attachment truncated here: the rest did not fit the context window. Say so if the answer depends on the part that is missing.]";
+/// partial read as partial instead of answering as though it saw the end, and
+/// can read on: `get_document` pages the same text, joined the same way, from
+/// the character the carried part ends at.
+fn truncation_note(document_id: &str, carried: &str) -> String {
+    format!(
+        "\n\n[Attachment truncated here: the rest did not fit the context window. Call \
+         get_document with document_id=\"{document_id}\" and offset={} to read on, and say \
+         so if the answer depends on a part you have not read.]",
+        carried.chars().count()
+    )
+}
 
 /// One attached file, as far as the window allowed it in.
 #[derive(Debug, Clone)]
@@ -175,9 +184,9 @@ say a file is missing when it is listed here):\n",
                 attached.source.document_id,
                 attached.source.content,
                 if attached.truncated {
-                    TRUNCATION_NOTE
+                    truncation_note(&attached.source.document_id, &attached.source.content)
                 } else {
-                    ""
+                    String::new()
                 },
             ));
         }
@@ -470,6 +479,10 @@ mod tests {
             .expect("an attachment renders a section");
 
         assert!(rendered.contains("Attachment truncated here"));
+        assert!(
+            rendered.contains("document_id=\"doc-book.txt\" and offset=11 to read on"),
+            "{rendered}"
+        );
     }
 
     /// The failure this whole module exists for: a file that arrived must

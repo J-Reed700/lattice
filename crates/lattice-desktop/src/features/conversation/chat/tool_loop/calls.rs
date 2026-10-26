@@ -285,6 +285,11 @@ impl<'a> ToolCalls<'a> {
         Ok(())
     }
 
+    /// The window as this turn's latest count of its prompt puts it.
+    pub(super) fn set_window_chars(&mut self, window_chars: usize) {
+        self.scope.window_chars = window_chars;
+    }
+
     /// The results with these ids were condensed into notes, so the pages
     /// they carried are no longer in the context: a repeat request for one is
     /// read again rather than told the text is above.
@@ -371,7 +376,11 @@ impl<'a> ToolCalls<'a> {
                 available_tools = available_tool_names(self.scope.tools).join(", "),
                 "Skipping unavailable tool requested by LLM"
             );
-            return answered("Requested tool is unavailable".into());
+            return answered(format!(
+                "There is no tool named \"{}\" in this turn. The tools you can call are: {}.",
+                call.name,
+                available_tool_names(self.scope.tools).join(", ")
+            ));
         }
         let mut reread_from = None;
         if let Some(url) = page_read_target(tool, &call.arguments) {

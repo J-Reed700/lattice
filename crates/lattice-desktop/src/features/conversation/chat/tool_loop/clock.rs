@@ -23,6 +23,12 @@ impl TurnClock {
         self.deadline
     }
 
+    /// Whether the deadline has passed. A call that failed after it failed at
+    /// it, whatever its error says: a provider's own budget, or the clock's.
+    pub(super) fn expired(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
     pub(super) fn exhausted(&self) -> AppError {
         AppError::ServiceNotAvailable(format!(
             "Generation exceeded this turn's {}-minute time budget.",

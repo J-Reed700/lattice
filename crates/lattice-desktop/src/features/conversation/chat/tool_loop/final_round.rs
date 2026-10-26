@@ -34,6 +34,10 @@ pub(super) enum LastRound {
     OutOfRounds,
     /// The window has no room left for another result.
     WindowFull,
+    /// The turn's deadline passed. This round alone runs past it, bounded by
+    /// Stop and its output limit: the turn's sources and results are kept
+    /// rather than lost with an error.
+    OutOfTime,
 }
 
 impl LastRound {
@@ -42,6 +46,17 @@ impl LastRound {
         match self {
             Self::OutOfRounds => OUT_OF_ROUNDS_INSTRUCTION,
             Self::WindowFull => WINDOW_FULL_INSTRUCTION,
+            Self::OutOfTime => OUT_OF_TIME_INSTRUCTION,
+        }
+    }
+
+    /// What the answer says where it stops, when it stops to write a call it
+    /// cannot make.
+    pub(super) fn note(self) -> &'static str {
+        match self {
+            Self::OutOfRounds => super::OUT_OF_ROUNDS_NOTE,
+            Self::WindowFull => super::WINDOW_FULL_NOTE,
+            Self::OutOfTime => super::OUT_OF_TIME_NOTE,
         }
     }
 }
@@ -51,6 +66,13 @@ pub(super) const OUT_OF_ROUNDS_INSTRUCTION: &str = "You have used every tool rou
 
 /// Said instead when the window has no room for another result.
 pub(super) const WINDOW_FULL_INSTRUCTION: &str = "Your context window has no room left for more tool results. Tools can no longer be used, so do not write any tool calls. Answer my question now from what you have already gathered. If you could not read enough to answer fully, say what you covered and what is left.";
+
+/// Said instead when the turn's deadline passed.
+pub(super) const OUT_OF_TIME_INSTRUCTION: &str = "This turn has run out of time. Tools can no longer be used, so do not write any tool calls. Answer my question now from what you have already gathered. If you could not read enough to answer fully, say what you covered and what is left, so I can ask you to continue.";
+
+/// The result of a call that never ran because the turn's deadline passed.
+pub(super) const OUT_OF_TIME_RESULT: &str =
+    "Not run: this turn ran out of time before this call could finish.";
 
 /// Said instead when the model answered the last round with calls anyway.
 const INSIST_INSTRUCTION: &str = "Do not call any tools: none can run now, and a tool call here ends this turn with no answer. Write your answer to my question in plain prose, now, from the tool results and notes above. If they are not enough to answer fully, say what you found and what is still missing.";
@@ -109,6 +131,39 @@ pub(super) fn say_last(input: &mut Vec<CompletionInput>, instruction: &str) {
             content: instruction.into(),
         }),
     }
+}
+
+/// Take back the last round's instruction, or the firmer one that replaced
+/// it, so a round asked again for another reason is told only what holds.
+pub(super) fn take_back(request: &mut CompletionRequest, last_round: LastRound) {
+    unsay_last(&mut request.input, last_round.instruction());
+    unsay_last(&mut request.input, INSIST_INSTRUCTION);
+}
+
+/// Answer every call in `ids` that `input` holds no result for with
+/// `output`. A provider refuses a transcript with a call left unanswered, so
+/// a round cut off between its calls has to say what became of the rest.
+pub(super) fn answer_open_calls<'i>(
+    input: &mut Vec<CompletionInput>,
+    ids: impl IntoIterator<Item = &'i str>,
+    output: &str,
+) {
+    let answered: std::collections::HashSet<String> = input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::ToolResult { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    let open: Vec<String> = ids
+        .into_iter()
+        .filter(|id| !answered.contains(*id))
+        .map(str::to_owned)
+        .collect();
+    input.extend(open.into_iter().map(|id| CompletionInput::ToolResult {
+        id,
+        output: output.to_owned(),
+    }));
 }
 
 /// Take back an instruction [`say_last`] gave, wherever it put it.
@@ -389,7 +444,11 @@ mod tests {
     /// Each cause takes back the instruction it gave, not the other one's.
     #[test]
     fn the_retry_sends_no_tools_and_replaces_the_instruction() {
-        for last_round in [LastRound::OutOfRounds, LastRound::WindowFull] {
+        for last_round in [
+            LastRound::OutOfRounds,
+            LastRound::WindowFull,
+            LastRound::OutOfTime,
+        ] {
             for mut request in [
                 request_with_a_tool(),
                 CompletionRequest {

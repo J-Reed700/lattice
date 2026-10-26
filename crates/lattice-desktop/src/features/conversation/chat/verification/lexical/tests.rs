@@ -184,12 +184,13 @@ fn the_cut_short_note_is_not_a_claim() {
     assert!(claims[0].supported);
 }
 
-/// Both of the last round's notes, the rounds' and the window's.
+/// Each of the last round's notes: the rounds', the window's and the clock's.
 #[test]
 fn the_out_of_rounds_note_is_not_a_claim() {
     for note in [
         super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
         super::super::super::tool_loop::WINDOW_FULL_NOTE,
+        super::super::super::tool_loop::OUT_OF_TIME_NOTE,
     ] {
         let answer =
             format!("Bush beans mature within sixty days in shallow window boxes [1].{note}");

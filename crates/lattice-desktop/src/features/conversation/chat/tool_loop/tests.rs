@@ -1,3 +1,4 @@
+use super::room::{window_chars, MIN_TOOL_RESULT_CHARS};
 use super::*;
 use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
 use std::sync::Arc;
@@ -251,4 +252,46 @@ fn what_is_in_flight_counts_every_item_the_next_round_sends() {
     ];
     assert_eq!(chars_in_flight(&input), 500);
     assert_eq!(chars_in_flight(&[]), 0);
+}
+
+/// Chinese pages run near one character a token. The turn's own count
+/// replaces the backend's average, so the window shrinks to what the prompt
+/// can really hold; a count of nothing changes nothing.
+#[test]
+fn the_window_follows_the_rate_the_turn_measured() {
+    let mut window = room::Window::new(10_000, 4.0);
+    let averaged = window.chars();
+    window.measured(12_000, 10_000);
+    assert_eq!(window.chars(), window_chars(10_000, 1.2));
+    assert!(window.chars() < averaged / 3);
+    window.measured(0, 0);
+    assert_eq!(window.chars(), window_chars(10_000, 1.2));
+    assert_eq!(window.chars_in(1_000), 1_200);
+}
+
+/// Shedding frees the newest results first, leaves a note in each one's
+/// place, and frees nothing once every result is a note.
+#[test]
+fn shedding_frees_the_newest_results_first_and_then_nothing() {
+    let result = |id: &str| CompletionInput::ToolResult {
+        id: id.into(),
+        output: id.repeat(2_000),
+    };
+    let mut input = vec![
+        CompletionInput::Message {
+            role: "user".into(),
+            content: "question".into(),
+        },
+        result("a"),
+        result("b"),
+    ];
+    let shed = room::shed_newest_results(&mut input, 1, 100);
+    assert_eq!(shed, std::collections::HashSet::from(["b".to_string()]));
+    let shed = room::shed_newest_results(&mut input, 1, 100_000);
+    assert_eq!(shed, std::collections::HashSet::from(["a".to_string()]));
+    assert!(room::shed_newest_results(&mut input, 1, 100).is_empty());
+    assert!(input.iter().skip(1).all(|item| matches!(
+        item,
+        CompletionInput::ToolResult { output, .. } if output == room::SHED_RESULT
+    )));
 }
