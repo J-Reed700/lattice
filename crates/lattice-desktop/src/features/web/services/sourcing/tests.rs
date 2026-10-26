@@ -248,6 +248,36 @@ async fn retry_after_sixty_is_waited_out_when_the_deadline_allows() {
     assert_eq!(findings.leads.len(), 10);
 }
 
+/// A host that asks for hours (OpenAlex's spent daily allowance sends about
+/// fifteen) is not waited out even by a caller whose deadline is further off:
+/// a lesson's research would sit silent for that long. The other finders
+/// answer and the host is skipped until its window ends.
+#[tokio::test]
+async fn retry_after_of_hours_is_not_waited_out_even_within_the_deadline() {
+    let clock = FakeClock::new();
+    let hours = Duration::from_secs(56_158);
+    let limited = Arc::new(
+        ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 10).failing_first(vec![
+            FailureCause::Status {
+                code: 429,
+                retry_after: Some(hours),
+            },
+        ]),
+    );
+    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
+    let sourcing = service(vec![entry(&limited, 10), entry(&bing, 10)], &clock);
+
+    for _ in 0..2 {
+        sourcing
+            .find(web_need(20, &[]), budget(Duration::from_secs(24 * 60 * 60)))
+            .await
+            .expect("Bing answered");
+    }
+
+    assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
+    assert_eq!(limited.calls().len(), 1);
+}
+
 /// The same instruction with only 30 seconds left: no wait, no second
 /// request, the outcome names the instruction, and the finder stays held
 /// until the minute is up, then is asked again.
