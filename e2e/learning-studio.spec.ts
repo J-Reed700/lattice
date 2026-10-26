@@ -405,7 +405,10 @@ async function runLearningStudioJourney(
     "Field note: compare the same measure over a stated observation period.",
   );
   // Leaving the workspace immediately flushes this edit before changing routes.
-  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  // Leave by keyboard: a click first waits on animation frames to see the
+  // button hold still, and CI WebKit can lag long enough that the 750 ms
+  // autosave starts first and the note is written twice.
+  await page.getByRole("button", { name: "All programs", exact: true }).press("Enter");
   await expect(
     page.getByRole("heading", { name: "Programs", exact: true }),
   ).toBeVisible();
@@ -908,7 +911,10 @@ async function runCanvasJourney(
   await panel
     .getByLabel("Describe your drawing or its meaning", { exact: true })
     .fill("A visual summary of the measure and sample limits.");
-  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  // Leave by keyboard: a click first waits on animation frames to see the
+  // button hold still, and with the canvas open CI WebKit falls far enough
+  // behind on frames that the wait outlasts the action timeout.
+  await page.getByRole("button", { name: "All programs", exact: true }).press("Enter");
   await expect(page.getByRole("button", { name: "Saving your work…", exact: true })).toBeDisabled();
   await releaseLostSave();
   await expect(panel.getByRole("alert")).toContainText(
