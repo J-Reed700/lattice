@@ -53,6 +53,9 @@ pub struct Reply {
     pub tool_calls: Vec<Value>,
     pub finish_reason: Option<String>,
     pub usage: Option<Value>,
+    /// The model the reply says served it, which may differ from the one
+    /// requested (an alias, a snapshot): what a result was measured on.
+    pub model: Option<String>,
     /// llama-server's own accounting: `cache_n`, `prompt_n`, `prompt_ms`,
     /// `predicted_n`, `predicted_ms`.
     pub timings: Option<Value>,
@@ -217,13 +220,16 @@ async fn serve(
     let head = read_request(&mut stream).await?;
     let started_ms = recorder.elapsed_ms();
     let started = Instant::now();
-    let is_chat = head.method == "POST" && head.path.ends_with("/chat/completions");
+    let is_completions = head.path.ends_with("/chat/completions");
+    // Anthropic's Messages API, for a run whose answering model is Claude.
+    let is_messages = head.path.ends_with("/v1/messages");
+    let is_chat = head.method == "POST" && (is_completions || is_messages);
     let mut body = head.body;
     let mut request_json = None;
     let mut thinking_switch_added = false;
     if is_chat {
         let mut value: Value = serde_json::from_slice(&body)?;
-        if thinking_off {
+        if thinking_off && is_completions {
             thinking_switch_added = switch_thinking_off(&mut value);
             body = serde_json::to_vec(&value)?;
         }
@@ -294,7 +300,12 @@ async fn serve(
                 }
             }
             if is_chat {
-                record.reply = Some(parse_reply(&copy, content_type.contains("event-stream")));
+                let streamed = content_type.contains("event-stream");
+                record.reply = Some(if is_messages {
+                    parse_messages_reply(&copy, streamed)
+                } else {
+                    parse_reply(&copy, streamed)
+                });
             }
         }
         Err(error) => {
@@ -336,6 +347,10 @@ pub fn parse_reply(bytes: &[u8], streamed: bool) -> Reply {
                 .map(str::to_owned);
             reply.usage = value.get("usage").cloned();
             reply.timings = value.get("timings").cloned();
+            reply.model = value
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
         return reply;
     }
@@ -354,6 +369,9 @@ pub fn parse_reply(bytes: &[u8], streamed: bool) -> Reply {
         }
         if let Some(timings) = event.get("timings").filter(|t| !t.is_null()) {
             reply.timings = Some(timings.clone());
+        }
+        if let Some(model) = event.get("model").and_then(Value::as_str) {
+            reply.model = Some(model.to_owned());
         }
         let Some(choice) = event.pointer("/choices/0") else {
             continue;
@@ -395,6 +413,129 @@ pub fn parse_reply(bytes: &[u8], streamed: bool) -> Reply {
         .map(|(id, name, arguments)| json!({"id": id, "name": name, "arguments": arguments}))
         .collect();
     reply
+}
+
+/// What a Messages API reply answered, reassembled from its events or read
+/// from its body: text, thinking, tool calls, the stop reason, the usage
+/// and the model it was served by.
+pub fn parse_messages_reply(bytes: &[u8], streamed: bool) -> Reply {
+    let text = String::from_utf8_lossy(bytes);
+    let mut reply = Reply::default();
+    if !streamed {
+        if let Ok(value) = serde_json::from_str::<Value>(&text) {
+            for block in value
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                messages_block_text(&mut reply, block);
+                if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                    reply.tool_calls.push(json!({
+                        "id": string_at(Some(block), "id"),
+                        "name": string_at(Some(block), "name"),
+                        "arguments": block.get("input").map(Value::to_string).unwrap_or_default(),
+                    }));
+                }
+            }
+            reply.finish_reason = value
+                .get("stop_reason")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            reply.usage = value.get("usage").cloned();
+            reply.model = value
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+        return reply;
+    }
+    // A tool call streams as a block start (id, name), then its input a
+    // fragment at a time, keyed by the block's index.
+    let mut calls: Vec<(u64, String, String, String)> = Vec::new();
+    for line in text.lines() {
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        let index = event
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                let message = event.get("message");
+                reply.model = message
+                    .and_then(|m| m.get("model"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                reply.usage = message.and_then(|m| m.get("usage")).cloned();
+            }
+            Some("content_block_start") => {
+                if let Some(block) = event.get("content_block") {
+                    messages_block_text(&mut reply, block);
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        calls.push((
+                            index,
+                            string_at(Some(block), "id"),
+                            string_at(Some(block), "name"),
+                            String::new(),
+                        ));
+                    }
+                }
+            }
+            Some("content_block_delta") => {
+                let delta = event.get("delta");
+                match delta.and_then(|d| d.get("type")).and_then(Value::as_str) {
+                    Some("text_delta") => reply.content.push_str(&string_at(delta, "text")),
+                    Some("thinking_delta") => reply
+                        .reasoning_content
+                        .push_str(&string_at(delta, "thinking")),
+                    Some("input_json_delta") => {
+                        if let Some(call) = calls.iter_mut().find(|call| call.0 == index) {
+                            call.3.push_str(&string_at(delta, "partial_json"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some("message_delta") => {
+                if let Some(reason) = event.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                    reply.finish_reason = Some(reason.to_owned());
+                }
+                if let Some(usage) = event.get("usage") {
+                    reply.usage = Some(match reply.usage.take() {
+                        Some(Value::Object(mut start)) => {
+                            if let Value::Object(end) = usage {
+                                start.extend(end.clone());
+                            }
+                            Value::Object(start)
+                        }
+                        _ => usage.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    reply.tool_calls = calls
+        .into_iter()
+        .map(|(_, id, name, arguments)| json!({"id": id, "name": name, "arguments": arguments}))
+        .collect();
+    reply
+}
+
+/// The text or thinking a Messages API content block carries.
+fn messages_block_text(reply: &mut Reply, block: &Value) {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => reply.content.push_str(&string_at(Some(block), "text")),
+        Some("thinking") => reply
+            .reasoning_content
+            .push_str(&string_at(Some(block), "thinking")),
+        _ => {}
+    }
 }
 
 fn string_at(value: Option<&Value>, key: &str) -> String {
