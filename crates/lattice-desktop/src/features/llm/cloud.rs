@@ -12,12 +12,14 @@ use lattice_core::application::{
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use reply::parse_completion;
+use schema::{anthropic_schema, anthropic_schema_compiles};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 pub mod catalog;
 mod messages;
 mod reply;
+mod schema;
 mod streaming;
 mod timing;
 
@@ -379,16 +381,34 @@ impl CloudLlm {
                 }
             }
             if let Some(schema) = &request.json_schema {
-                let mut config = field(&body, "output_config").clone();
-                if config.is_null() {
-                    config = json!({});
+                let schema = anthropic_schema(schema);
+                if anthropic_schema_compiles(&schema) {
+                    let mut config = field(&body, "output_config").clone();
+                    if config.is_null() {
+                        config = json!({});
+                    }
+                    set_field(
+                        &mut config,
+                        "format",
+                        json!({"type":"json_schema","schema":schema}),
+                    )?;
+                    set_field(&mut body, "output_config", config)?;
+                } else {
+                    // Too large for Claude's grammar compiler: the schema is
+                    // asked for in words, and the caller's parser checks the
+                    // reply as it would any other.
+                    let system = field(&body, "system").as_str().unwrap_or_default();
+                    let ask = format!(
+                        "Reply with only a JSON value that matches this JSON Schema, and no \
+                         other text:\n{schema}"
+                    );
+                    let system = if system.is_empty() {
+                        ask
+                    } else {
+                        format!("{system}\n\n{ask}")
+                    };
+                    set_field(&mut body, "system", json!(system))?;
                 }
-                set_field(
-                    &mut config,
-                    "format",
-                    json!({"type":"json_schema","schema":schema}),
-                )?;
-                set_field(&mut body, "output_config", config)?;
             }
             Ok(body)
         }

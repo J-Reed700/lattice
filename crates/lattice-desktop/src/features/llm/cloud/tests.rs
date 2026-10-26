@@ -230,6 +230,77 @@ fn anthropic_never_sends_sampling_knobs() {
     }
 }
 
+/// Claude's structured outputs 400 on `maxItems`, `uniqueItems`, numeric
+/// bounds and a `minItems` above 1, so they reach the model as description.
+#[test]
+fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                json_schema: Some(json!({"type":"object","required":["items","maximum"],"properties":{
+                    "items":{"type":"array","minItems":2,"maxItems":6,"uniqueItems":true,
+                        "items":{"type":"integer","minimum":1,"maximum":5}},
+                    "maximum":{"type":"string","description":"A property, not a bound","minLength":1}
+                }})),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    let schema = &body["output_config"]["format"]["schema"];
+    let items = &schema["properties"]["items"];
+    assert_eq!(items["minItems"], 1);
+    for moved in ["maxItems", "uniqueItems"] {
+        assert!(items.get(moved).is_none(), "{moved} sent: {schema}");
+    }
+    assert_eq!(
+        items["description"],
+        "minItems: 2, maxItems: 6, uniqueItems: true"
+    );
+    assert!(items["items"].get("minimum").is_none(), "{schema}");
+    assert_eq!(items["items"]["description"], "minimum: 1, maximum: 5");
+    assert_eq!(
+        schema["properties"]["maximum"],
+        json!({"type":"string","description":"A property, not a bound","minLength":1})
+    );
+    assert_eq!(
+        schema["additionalProperties"], false,
+        "every object must close its properties"
+    );
+}
+
+/// Claude refuses to compile a schema with more than 24 optional parameters,
+/// so a larger one is asked for in the system prompt instead.
+#[test]
+fn anthropic_asks_for_an_oversized_schema_in_words() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let properties: serde_json::Map<String, Value> = (0..30)
+        .map(|i| (format!("field{i}"), json!({"type":"string"})))
+        .collect();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                json_schema: Some(json!({"type":"object","properties":properties})),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    assert!(body["output_config"].get("format").is_none(), "{body}");
+    let system = body["system"].as_str().unwrap();
+    assert!(system.contains("JSON Schema"), "{system}");
+    assert!(system.contains("field29"), "{system}");
+}
+
 /// Claude shows no thinking unless asked, so a caller that displays reasoning
 /// asks for summaries.
 #[test]
