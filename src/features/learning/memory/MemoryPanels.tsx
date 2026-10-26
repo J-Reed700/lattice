@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Shuffle, Sparkles, Trash2, Undo2 } from 'lucide-react';
+import { useInRouterContext } from 'react-router';
 
 import { TiptapEditor } from '@/components/TiptapEditor';
 import { SaveStatus } from '@/components/ui/SaveStatus';
@@ -12,6 +13,7 @@ import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
 import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useGenerateLearningCardDrafts, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
+import { fromNow } from '@/features/learning/recall/flashcards/retrieval';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningCardDraftDto, LearningCardOriginDto, LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 import { flushPendingSaves, registerPendingSave } from '@/lib/pendingSaves';
@@ -244,6 +246,16 @@ function AcceptedCardEditor({ card, origin, program, pending, error, onSave }: {
   </form>;
 }
 
+/** Opens the program's deck in Studio's full study session, which needs the app's router. */
+function FullSessionLink({ deckId }: { deckId: string }) {
+  return useInRouterContext() ? <FullSessionButton deckId={deckId} /> : null;
+}
+
+function FullSessionButton({ deckId }: { deckId: string }) {
+  const navigate = useAppNavigate();
+  return <button type="button" onClick={() => void navigate(`/studio?deck=${encodeURIComponent(deckId)}`)} className="mt-2 text-left text-xs font-medium text-accent underline-offset-2 hover:underline">Open the full study session: type your answer, rate your confidence, relearn misses, set a test date</button>;
+}
+
 export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryError, onRetryMemory }: {
   program: LearningProgramDto; lessonId?: string; memory: LearningMemoryDto | undefined; memoryLoading: boolean; memoryError?: string; onRetryMemory: () => void;
 }) {
@@ -387,6 +399,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
           <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">In-Studio review</div>
           <h3 className="mt-1 font-serif text-2xl text-text-primary">Due cards</h3>
           <p className="mt-1 text-xs text-text-secondary">Prompt first, reveal when you are ready, then record a recall rating.</p>
+          {memory?.studyDeck && <FullSessionLink deckId={memory.studyDeck.id} />}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div role="group" aria-label="Review scope" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
@@ -418,7 +431,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
           <span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">{dueCards.length} due · {memory?.studyDeck?.cards.length ?? 0} total</span>
         </div>
       </div>
-      {reviewedCard && <p role="status" className="mt-4 rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800">Review saved. Next interval: {reviewedCard.intervalDays} days.</p>}
+      {reviewedCard && <p role="status" className="mt-4 rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800">{reviewedCard.intervalDays >= 1 ? `Review saved. Next interval: ${reviewedCard.intervalDays} days.` : `Review saved. Next review ${fromNow(reviewedCard.dueAt, Date.now())}.`}</p>}
       {reviewError && <p role="alert" className="mt-4 rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{reviewError}</p>}
       {currentCard ? <article aria-label="Current review card" className="mt-5 min-w-0 rounded-xl border border-border bg-background p-3 wrap-anywhere sm:p-7">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">

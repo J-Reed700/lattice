@@ -28,6 +28,8 @@ learning programs with flashcards.
 4. **[Troubleshooting](troubleshooting.md)**: fixes for common problems.
 5. **[FAQ](faq.md)**: short answers to common questions.
 6. **[Error Codes](error-codes.md)**: what error messages mean.
+7. **[Prepare for an interview in a day](interview-prep.md)**: Studio's
+   mock interview, drill deck and study plan, step by step.
 
 ## Getting Help
 

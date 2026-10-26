@@ -36,7 +36,7 @@ use lattice_core::shared::error::{AppError, Result};
 use super::segment::{clip_chars, segment_message};
 use super::selection::select_boundary;
 use super::{
-    CompactionConfig, CompactionJob, CompactionRequest, CompactionStatus, COMPACTION_DEADLINE,
+    CompactionConfig, CompactionJob, CompactionRequest, CompactionStatus,
     MAX_COMMIT_CONFLICT_RETRIES, MAX_REPAIR_ATTEMPTS, MAX_SOURCE_BYTES_PER_ATTEMPT,
     MAX_SOURCE_MESSAGES_PER_ATTEMPT, MIN_RETAINED_TURNS,
 };
@@ -925,7 +925,6 @@ const PREFIX_SEGMENTS: [&str; 4] = ["m1:s0", "m2:s0", "m3:s0", "m4:s0"];
 
 #[test]
 fn the_enforced_limits_are_the_ones_the_design_documents() {
-    assert_eq!(COMPACTION_DEADLINE, Duration::from_secs(300));
     assert_eq!(MAX_REPAIR_ATTEMPTS, 2);
     assert_eq!(MAX_COMMIT_CONFLICT_RETRIES, 1);
     assert_eq!(MAX_SOURCE_MESSAGES_PER_ATTEMPT, 256);
@@ -940,7 +939,10 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
     assert_eq!(MAX_QUOTE_BYTES, 2048);
 
     let config = CompactionConfig::default();
-    assert_eq!(config.deadline, COMPACTION_DEADLINE);
+    assert_eq!(
+        config.deadline, None,
+        "memory runs end by cancellation, not a clock"
+    );
     assert_eq!(
         config.max_source_messages_per_attempt,
         MAX_SOURCE_MESSAGES_PER_ATTEMPT
@@ -1243,7 +1245,7 @@ async fn a_timeout_or_cancellation_leaves_the_committed_state_usable_and_the_wat
         port.clone(),
         llm.clone(),
         CompactionConfig {
-            deadline: Duration::ZERO,
+            deadline: Some(Duration::ZERO),
             ..small_config()
         },
     );
@@ -1540,8 +1542,12 @@ async fn an_unreviewed_optional_addition_is_not_committed_as_ambiguous_memory() 
     assert_eq!(port.watermark(), 0);
 }
 
+/// What extraction accepted does not depend on the summary. A fold that will
+/// not fit its pool after one regeneration leaves the summary as it was, and
+/// the extraction commits: thrown away with it, the same batches were offered
+/// again after every answer.
 #[tokio::test]
-async fn an_oversized_summary_is_regenerated_once_then_rejected_with_no_partial_commit() {
+async fn an_oversized_summary_is_regenerated_once_then_left_as_it_was_while_extraction_commits() {
     let messages = four_turns();
     let port = FakePort::new(messages, Vec::new(), 0);
     let bloated = (0..80)
@@ -1561,17 +1567,20 @@ async fn an_oversized_summary_is_regenerated_once_then_rejected_with_no_partial_
         },
     );
 
-    let error = job
+    let outcome = job
         .run(CONVERSATION, CompactionRequest::default())
         .await
-        .expect_err("an oversized summary cannot be committed");
-    assert!(error.to_string().contains("budget"), "{error}");
+        .expect("the extraction commits without the summary");
 
     assert_eq!(llm.count(Task::Summarize), 1);
     assert_eq!(llm.count(Task::Shrink), 1, "exactly one regeneration");
-    assert_eq!(port.commits(), 0, "no partial commit");
-    assert_eq!(port.watermark(), 0);
-    assert_eq!(port.errors(), vec!["summary_too_large".to_string()]);
+    assert_eq!(
+        outcome.commit.summary, None,
+        "the oversized summary is not committed"
+    );
+    assert_eq!(port.commits(), 1, "the extraction is");
+    assert_eq!(port.watermark(), outcome.processed_through_sequence);
+    assert!(outcome.processed_through_sequence > 0);
 }
 
 #[tokio::test]

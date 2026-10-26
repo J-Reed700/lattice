@@ -45,6 +45,70 @@ fn read_reference_html(
     Ok((title, content, metadata))
 }
 
+/// The elements a chat page read takes its text from. Paragraphs and headings
+/// alone dropped a page's lists, tables, code and quotes without a word, and
+/// the read was still reported whole: a changelog lost its versions, an
+/// answer its code.
+const READ_BLOCKS: &str = "p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, figcaption, dt, dd, tr";
+
+fn is_read_block(name: &str) -> bool {
+    matches!(
+        name,
+        "p" | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "li"
+            | "pre"
+            | "blockquote"
+            | "figcaption"
+            | "dt"
+            | "dd"
+            | "tr"
+    )
+}
+
+/// Whether a block sits inside another, whose text already holds its own, or
+/// is a list or table row of the page's chrome: a menu is a `nav` of list
+/// items, and a footer's links are one too. Paragraphs and headings there
+/// were always read, and still are.
+fn has_block_ancestor(element: scraper::ElementRef<'_>) -> bool {
+    let structural = !matches!(
+        element.value().name(),
+        "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+    );
+    element
+        .ancestors()
+        .filter_map(scraper::ElementRef::wrap)
+        .any(|ancestor| {
+            let name = ancestor.value().name();
+            is_read_block(name) || (structural && matches!(name, "nav" | "footer" | "aside"))
+        })
+}
+
+/// A block's text: code as written, a table row's cells side by side, and
+/// anything else as one line of words.
+fn block_text(element: scraper::ElementRef<'_>) -> String {
+    match element.value().name() {
+        "pre" => element.text().collect::<String>().trim().to_string(),
+        "tr" => element
+            .children()
+            .filter_map(scraper::ElementRef::wrap)
+            .map(|cell| cell.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ => element
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string(),
+    }
+}
+
 /// Derive both the title and readable body from one parsed document.
 fn page_parts(document: &Html) -> (Option<String>, String) {
     let title = Selector::parse("title")
@@ -52,15 +116,15 @@ fn page_parts(document: &Html) -> (Option<String>, String) {
         .and_then(|selector| document.select(&selector).next())
         .map(|element| element.text().collect::<String>().trim().to_string());
 
-    let (Ok(article_selector), Ok(p_selector)) = (
-        Selector::parse("article"),
-        Selector::parse("p, h1, h2, h3, h4, h5, h6"),
-    ) else {
+    let (Ok(article_selector), Ok(block_selector)) =
+        (Selector::parse("article"), Selector::parse(READ_BLOCKS))
+    else {
         return (title, String::new());
     };
     let blocks = |root: scraper::ElementRef<'_>| -> Vec<String> {
-        root.select(&p_selector)
-            .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
+        root.select(&block_selector)
+            .filter(|block| !has_block_ancestor(*block))
+            .map(block_text)
             .filter(|text| !text.is_empty())
             .collect()
     };
@@ -426,17 +490,23 @@ impl WebService {
             via_browser_reader: false,
         };
 
-        let html = read_bounded_body(response, MAX_PAGE_BODY_BYTES)
+        let body = read_bounded_body(response, MAX_PAGE_BODY_BYTES)
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
-        let html = decode_response_text(html, content_type.as_deref());
-        let (title, content, metadata, text_form) = self.extract(html, page_url, read).await?;
+        let kind = body::body_kind(content_type.as_deref(), &body);
+        let (title, content, metadata, text_form) = if kind == body::BodyKind::Html {
+            let html = decode_response_text(body, content_type.as_deref());
+            self.extract(html, page_url, read).await?
+        } else {
+            let text = body::body_text(kind, body, content_type.as_deref()).await?;
+            (None, text, PageMetadata::default(), TextForm::Plain)
+        };
         let thin = content.trim().len() < THIN_PAGE_CHARS;
 
         // A page whose text is written by its scripts arrives as a shell: a
         // title and a menu. The browser runs the scripts; its text is kept
-        // only when it is actually more.
-        if thin {
+        // only when it is actually more. A PDF or a text file has no scripts.
+        if thin && kind == body::BodyKind::Html {
             if let Some(page) = self
                 .read_through_browser(url, start, read, http.status)
                 .await
@@ -643,7 +713,8 @@ impl WebService {
     ///
     /// Attempts to extract readable article text by:
     /// 1. Finding <article> elements
-    /// 2. Extracting text from <p>, <h1>-<h6> tags
+    /// 2. Extracting text from paragraphs, headings, lists, tables, code,
+    ///    quotes and definitions ([`READ_BLOCKS`])
     /// 3. Cleaning whitespace
     #[cfg(test)]
     pub(super) fn extract_article_text(&self, html: &str) -> String {
@@ -667,6 +738,9 @@ struct BrowserRead {
 
 #[path = "page_archive.rs"]
 mod archive;
+
+#[path = "page_body.rs"]
+mod body;
 
 #[cfg(test)]
 #[path = "page_tests.rs"]

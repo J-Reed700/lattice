@@ -115,6 +115,16 @@ async fn resolve_public(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     Ok(resolved)
 }
 
+/// The check for a URL about to go out over the public client, short of
+/// resolving it: http(s), and not a host the URL alone shows to be local. The
+/// client's resolver refuses a name that resolves to a private address, but an
+/// IP-literal host never reaches a resolver, so this is what refuses one.
+pub(crate) fn check_public_url(url: &str) -> Result<Url> {
+    let parsed = parse_fetchable_url(url)?;
+    check_url_host(&parsed)?;
+    Ok(parsed)
+}
+
 /// The full check for a URL this service is about to request: scheme, host
 /// and every address the host resolves to.
 pub(crate) async fn validate_url_resolved(url: &str) -> Result<()> {

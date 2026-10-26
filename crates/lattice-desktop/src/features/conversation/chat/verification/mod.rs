@@ -460,15 +460,11 @@ impl GroundingVerifier {
                 }
                 ClaimJudgment::Unusable | ClaimJudgment::Failed(_) => UnverifiedReason::JudgeFailed,
             };
-            // Not settled by the judge: the lexical verdict stands where overlap can speak
-            // for the claim. Where it cannot — a number, a date, a negation —
-            // a match certifies nothing, and a miss is not a finding either.
-            if claims
-                .get(index)
-                .is_some_and(|claim| claim.contradiction_prone)
-            {
-                assessment.mark_unverified(unreached);
-            }
+            // Not settled by the judge. The claim was sent because overlap
+            // could not settle it, so the overlap verdict does not stand in:
+            // a reworded or extended claim would show green on words alone,
+            // and a paraphrase red. Unchecked is what it is.
+            assessment.mark_unverified(unreached);
         }
 
         let judge_used = assessments

@@ -173,5 +173,56 @@ class Calibration(unittest.TestCase):
             sps.calibration_score(rows, labels, rows[:-1])
 
 
+class Models(unittest.TestCase):
+    """Two models answering is not a change to the app: the comparison is
+    refused unless asked for as one across models."""
+
+    def write(self, directory, name, model, judge="judge-a", revision="r1"):
+        import json
+        from pathlib import Path
+        path = Path(directory) / f"{name}.scored.jsonl"
+        path.write_text("")
+        manifest = {"settings": {"model": model, "model_revision": revision, "thinking": "off",
+                                 "judge": {"model": judge}}}
+        Path(str(path) + ".manifest.json").write_text(json.dumps(manifest))
+        return path
+
+    def test_runs_of_one_model_compare(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            a = self.write(directory, "a", "qwen")
+            b = self.write(directory, "b", "qwen")
+            models = sps.check_models([a], [b])
+            self.assertFalse(models["across_models"])
+            self.assertEqual(models["judges"], ["judge-a"])
+
+    def test_runs_of_two_models_are_refused_unless_asked(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            qwen = self.write(directory, "qwen", "qwen")
+            opus = self.write(directory, "opus", "claude-opus-5-5", revision="claude-opus-5-5")
+            with self.assertRaises(ValueError):
+                sps.check_models([qwen], [opus])
+            self.assertTrue(sps.check_models([qwen], [opus], across_models=True)["across_models"])
+
+    def test_a_different_judge_is_a_different_measurement(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            a = self.write(directory, "a", "qwen", judge="judge-a")
+            b = self.write(directory, "b", "qwen", judge="judge-b")
+            with self.assertRaises(ValueError):
+                sps.check_models([a], [b])
+
+    def test_a_run_with_no_manifest_cannot_be_placed(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            a = self.write(directory, "a", "qwen")
+            bare = Path(directory) / "bare.scored.jsonl"
+            bare.write_text("")
+            with self.assertRaises(ValueError):
+                sps.check_models([a], [bare])
+
+
 if __name__ == "__main__":
     unittest.main()

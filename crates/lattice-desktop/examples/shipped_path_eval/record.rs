@@ -111,6 +111,17 @@ pub fn citations(evidence: &[Value]) -> (BTreeMap<String, String>, Vec<String>) 
     (map, ranked)
 }
 
+/// Every model name the run's replies said they were served by, sorted. One
+/// name is one model measured; more than one is a run that is not one
+/// model's result, and its manifest says so.
+pub fn served_models(calls: &[CallRecord]) -> Vec<String> {
+    let names: std::collections::BTreeSet<String> = calls
+        .iter()
+        .filter_map(|call| call.reply.as_ref()?.model.clone())
+        .collect();
+    names.into_iter().collect()
+}
+
 /// One model call, summarized; the full request lives in the calls file.
 pub fn call_summary(call: &CallRecord, answer: Option<&str>) -> Value {
     let request = call.request.as_ref();

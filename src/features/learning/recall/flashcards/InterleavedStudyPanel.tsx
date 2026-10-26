@@ -33,8 +33,8 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
   const [sessionMode, setSessionMode] = useState<FlashcardMode>('flashcard');
   const [onlyDueOrWeak, setOnlyDueOrWeak] = useState(false);
   // The cards are fixed when the session starts. Each review refetches the
-  // decks, and a live list would drop the card just reviewed (it is no longer
-  // due) and skip the next one, or swap the card under a revealed answer.
+  // decks, and with "due & weak only" a live list empties as the last cards
+  // are reviewed, which would close the session before its summary.
   const [sessionCards, setSessionCards] = useState<StudyCardDto[] | null>(null);
   const inSession = sessionCards !== null;
   const [isExpanded, setIsExpanded] = useState(false);

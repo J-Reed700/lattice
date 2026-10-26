@@ -40,6 +40,20 @@ pub(super) enum AskError {
     Model(AppError),
 }
 
+impl From<AppError> for AskError {
+    /// The backend refusing a prompt its window cannot hold says what the
+    /// planner says, by an exact count where the planner's is an estimate:
+    /// the batch is halved, not the job failed. Dense batches (JSON, ids,
+    /// quotations) measured under the window by the estimate and were
+    /// refused at twice that.
+    fn from(error: AppError) -> Self {
+        match error {
+            AppError::PromptExceedsWindow { .. } => Self::TooLarge,
+            error => Self::Model(error),
+        }
+    }
+}
+
 /// `text`, cut at a character boundary to at most `tokens` as `llm` counts.
 pub(super) fn fit_text(llm: &dyn LLMPort, text: &str, tokens: usize) -> String {
     let mut kept = text;
@@ -165,6 +179,6 @@ pub(super) async fn ask(
             ..Answer::default()
         }),
         Err(GroundedGenerationError::Budget(_)) => Err(AskError::TooLarge),
-        Err(GroundedGenerationError::Model(error)) => Err(AskError::Model(error)),
+        Err(GroundedGenerationError::Model(error)) => Err(error.into()),
     }
 }

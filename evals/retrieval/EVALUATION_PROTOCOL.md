@@ -188,6 +188,35 @@ write before repairing it. Simultaneous writers to one output are unsupported.
 `--query` and `--limit` are debugging controls. Coverage always uses the entire
 corpus denominator, and partial runs cannot pass a release gate.
 
+### Against a cloud model
+
+A recipe can name a cloud model in place of a server, as
+`shipped-path-recipe-claude-opus-5-5.json` does. That recipe holds the window to 32,768
+tokens: the app sizes evidence from the window, so a cloud model's full window makes every
+turn several times as costly, and a held window keeps runs comparable to each other:
+
+```json
+"cloud": {"provider": "anthropic", "model": "claude-opus-5-5"}
+```
+
+The desktop reads the provider's key as it always does (`ANTHROPIC_API_KEY`, else
+the key saved in Settings). The run starts the same recording proxy and points the
+desktop's client at it through `LATTICE_ANTHROPIC_BASE_URL`, so every request is
+still kept verbatim. The run manifest's `answering_model` names the model requested
+and every name its replies were served under. No weights hash applies to a cloud model.
+
+To grade with Claude, use `score --judge-provider anthropic --model claude-opus-5-5`,
+keyed by `ANTHROPIC_API_KEY`. Claude rejects the sampling settings greedy grading
+uses, so a Claude judge is not deterministic, and its manifest says so
+(`judge.deterministic: false`).
+
+Results are filed by model (`results/chat/<model>/`), and `shipped_path_stats.py
+compare` refuses arms answered or judged by different models: a difference between
+two models is not a difference a change made. To compare the models themselves,
+pass `--across-models`, and the report says that is what it measured. To learn
+whether a change helped on Claude, compare a Claude run before the change with one
+after it.
+
 ### Against the bundled sidecar instead of a remote server
 
 The harness only needs an OpenAI-compatible base URL, so the bundled

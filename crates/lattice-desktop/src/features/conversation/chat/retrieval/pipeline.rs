@@ -4,6 +4,7 @@ use crate::features::conversation::chat::turn_record::{
     TurnRecorder, TurnStepKind, TurnStepLinkDto,
 };
 use crate::features::conversation::chat::web_steps::{self, result_count_line};
+use lattice_core::application::services::context_assembler::EvidenceShare;
 use std::time::Duration;
 
 use lattice_core::domain::qa::hyde::HyDEInterpretation;
@@ -134,11 +135,20 @@ pub(super) async fn run_retrieval_pipeline(
             conversation_id,
             conversation_document_context,
             highlight_terms,
-            evidence.remaining(),
+            // The document under discussion, like an attachment, outranks
+            // what a search turns up but must leave room to search and cite.
+            evidence.allowance(EvidenceShare::ATTACHMENTS),
             llm,
             tool_output_settings.excerpt_chars as usize,
         )
         .await;
+    }
+    // What the follow-up document takes is not there for the passages and
+    // pages sized below. Left uncharged, the document filled the budget they
+    // were sized from, and the cut that followed took every one of them.
+    let mut evidence = evidence;
+    if let Some((document, _)) = &outcome.followup_context {
+        evidence.charge(llm.count_tokens(&document.render_for_count()));
     }
 
     let external = ExternalLookup {

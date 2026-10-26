@@ -10,6 +10,7 @@ import { ActivityBrief } from "@/features/learning/practice/practical/ActivityBr
 import { ActivityComposer } from "@/features/learning/practice/practical/ActivityComposer";
 import { ActivityShelf } from "@/features/learning/practice/practical/ActivityShelf";
 import { ArtifactEditor } from "@/features/learning/practice/practical/ArtifactEditor";
+import { InterviewDrill } from "@/features/learning/practice/practical/InterviewDrill";
 import {
   errorText,
   isSimulationKind,
@@ -400,6 +401,9 @@ export function PracticalWorkbenchPanel({
                     void query.refetch();
                   }}
                 />
+              )}
+              {activeActivity.kind === "interview" && activeActivity.status === "ready" && (
+                <InterviewDrill programId={programId} activity={activeActivity} />
               )}
               <RunHistory
                 runs={runs}
