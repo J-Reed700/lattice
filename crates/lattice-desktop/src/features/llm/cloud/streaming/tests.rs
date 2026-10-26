@@ -121,6 +121,25 @@ fn anthropic_stream_preserves_signatures_tool_arguments_and_cumulative_usage() {
     );
 }
 
+/// A cached prompt is still the whole prompt: Claude reports what it read
+/// from its cache and what it wrote to it apart from `input_tokens`, and the
+/// token estimate learns the prompt's size from the sum.
+#[test]
+fn anthropic_counts_the_cached_prompt_as_prompt() {
+    let events = frames(&[
+        json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":40,"cache_creation_input_tokens":300,"cache_read_input_tokens":9000,"output_tokens":1},"stop_reason":null}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Answer"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":12}}),
+        json!({"type":"message_stop"}),
+    ]);
+    let mut decoder = Decoder::new(LLMProvider::Anthropic);
+    decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
+    let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
+    assert_eq!((response.input_tokens, response.output_tokens), (9340, 12));
+}
+
 #[tokio::test]
 async fn reasoning_is_delivered_before_the_completion_arrives() {
     let (sender, receiver) =
