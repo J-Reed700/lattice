@@ -90,6 +90,18 @@ pub(crate) async fn judge<T>(
                     cause: error.to_string(),
                 })
             }
+            // The backend's own refusal, by its exact count, of a prompt the
+            // planner's estimate let through: nothing was sent either, and the
+            // caller shrinks what it shows as it does for the planner's.
+            // Unread binary text (a PDF saved as a page) measured at half its
+            // tokens by the estimate, and this ended the lesson job.
+            Err(GroundedGenerationError::Model(
+                error @ crate::shared::error::AppError::PromptExceedsWindow { .. },
+            )) => {
+                return Ok(CallOutcome::TooLarge {
+                    cause: error.to_string(),
+                })
+            }
             Err(GroundedGenerationError::Model(error)) => return Err(error),
         };
         input_tokens += output.input_tokens;
