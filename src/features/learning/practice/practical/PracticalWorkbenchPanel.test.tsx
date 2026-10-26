@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -361,8 +361,8 @@ describe("Learning Studio Labs & simulations", () => {
       .mockResolvedValueOnce(fail("Connection interrupted"))
       .mockResolvedValueOnce(ok(session()));
     renderPractical();
-    await user.click(await screen.findByRole("button", { name: /interview/ }));
-    await user.click(screen.getByRole("button", { name: "Start simulation" }));
+    await user.click(await screen.findByRole("button", { name: /interview.*Inspect a data trail/ }));
+    await user.click(screen.getByRole("button", { name: "Start interview" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Connection interrupted",
     );
@@ -709,8 +709,25 @@ describe("Learning Studio Labs & simulations", () => {
     renderPractical();
     expect(await screen.findByText("Explain the retry tradeoff more clearly.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Start another attempt" }));
-    expect(screen.getByRole("button", { name: "Start simulation" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start interview" })).toBeVisible();
     expect(screen.getByLabelText("Your role")).toHaveValue("Candidate");
+  });
+
+  it("keeps showing a slow interview's progress and failure after its dialog closes", async () => {
+    let finish!: (result: unknown) => void;
+    mocks.generate.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    renderPractical();
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog).getByLabelText("Company name"), "Acme");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByText(/Preparing your interview/)).toBeVisible();
+    act(() => finish(fail("Company research is unavailable.")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The activity could not be prepared: Company research is unavailable.");
   });
 
   it("refreshes captured sources even if interview generation later fails", async () => {
@@ -747,10 +764,10 @@ describe("Learning Studio Labs & simulations", () => {
     renderPractical();
     await user.type(await screen.findByLabelText("Your response"), "I would verify retries.");
     await user.click(screen.getByRole("button", { name: "Send simulation turn" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finish simulation" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Finish simulation" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish interview" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Finish interview" }));
     expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Finish simulation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish interview" })).not.toBeInTheDocument();
   });
 });

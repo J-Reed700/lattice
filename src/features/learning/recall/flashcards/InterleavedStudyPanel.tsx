@@ -32,7 +32,11 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
   );
   const [sessionMode, setSessionMode] = useState<FlashcardMode>('flashcard');
   const [onlyDueOrWeak, setOnlyDueOrWeak] = useState(false);
-  const [inSession, setInSession] = useState(false);
+  // The cards are fixed when the session starts. Each review refetches the
+  // decks, and with "due & weak only" a live list empties as the last cards
+  // are reviewed, which would close the session before its summary.
+  const [sessionCards, setSessionCards] = useState<StudyCardDto[] | null>(null);
+  const inSession = sessionCards !== null;
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isSessionActive = inSession;
@@ -99,15 +103,16 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
     return result;
   }, [candidateCards]);
 
+  const shownCards = sessionCards ?? interleavedCards;
   const distinctTopicsCount = useMemo(() => {
-    const topics = new Set(interleavedCards.map((c) => c.topic?.trim() || c.deckId));
+    const topics = new Set(shownCards.map((c) => c.topic?.trim() || c.deckId));
     return topics.size;
-  }, [interleavedCards]);
+  }, [shownCards]);
 
   const distinctDecksCount = useMemo(() => {
-    const deckIds = new Set(interleavedCards.map((c) => c.deckId));
+    const deckIds = new Set(shownCards.map((c) => c.deckId));
     return deckIds.size;
-  }, [interleavedCards]);
+  }, [shownCards]);
 
   const toggleDeck = (id: string) => {
     setSelectedDeckIds((prev) =>
@@ -123,7 +128,7 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
     setSelectedDeckIds([]);
   };
 
-  if (inSession && interleavedCards.length > 0) {
+  if (sessionCards && sessionCards.length > 0) {
     return (
       <div className="rounded-2xl border border-accent/40 bg-surface p-6 shadow-sm">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-4">
@@ -136,7 +141,7 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
 
           <button
             type="button"
-            onClick={() => setInSession(false)}
+            onClick={() => setSessionCards(null)}
             className="rounded-full border border-border-default px-3 py-1 text-xs text-text-muted hover:text-text-primary"
           >
             Exit session
@@ -144,10 +149,10 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
         </div>
 
         <FlashcardSession
-          cards={interleavedCards}
+          cards={sessionCards}
           mode={sessionMode}
           title={`Interleaved Mix (${distinctTopicsCount} topics)`}
-          onClose={() => setInSession(false)}
+          onClose={() => setSessionCards(null)}
         />
       </div>
     );
@@ -325,7 +330,7 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
 
             <Button
               disabled={selectedDeckIds.length < 2 || interleavedCards.length === 0 || isLoadingDecks}
-              onClick={() => setInSession(true)}
+              onClick={() => setSessionCards(interleavedCards)}
               className="inline-flex items-center gap-1.5 rounded-full"
             >
               <Play size={13} />

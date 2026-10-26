@@ -55,7 +55,8 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
   const operations = useOperationIds();
   const [index, setIndex] = useState(() => Math.max(0, form.items.findIndex((item) => !isAnswered(item, autosave.drafts[item.id]))));
   const [confirm, setConfirm] = useState<'submit' | 'pause' | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // The failed action, so "Try again" repeats it: a failed pause must not submit.
+  const [actionError, setActionError] = useState<{ action: 'submit' | 'pause'; message: string } | null>(null);
   const kind = formScopeKind(form);
   const practice = form.mode === 'practice';
   const total = form.items.length;
@@ -76,7 +77,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
       operations.done(key);
       setConfirm(null);
       onExit();
-    } catch (error) { setActionError(errorText(error)); setConfirm(null); }
+    } catch (error) { setActionError({ action: 'pause', message: errorText(error) }); setConfirm(null); }
   };
   const doSubmit = async () => {
     setActionError(null);
@@ -87,7 +88,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
       operations.done(key);
       setConfirm(null);
       onSubmitted(submitted);
-    } catch (error) { setActionError(errorText(error)); setConfirm(null); }
+    } catch (error) { setActionError({ action: 'submit', message: errorText(error) }); setConfirm(null); }
   };
   const go = (next: number) => setIndex(Math.max(0, Math.min(total - 1, next)));
 
@@ -131,10 +132,10 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
           <button type="button" onClick={() => setConfirm('pause')} className="min-h-11 font-medium text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">Pause</button>
         </p>
         {(autosave.saveError || actionError) && <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-800 dark:text-rose-200">
-          <span>{actionError ?? autosave.saveError}</span>
+          <span>{actionError?.message ?? autosave.saveError}</span>
           {autosave.conflict
             ? <button type="button" onClick={() => void autosave.reloadKeepingAnswers()} className={quietPill}>Reload · keep my answers</button>
-            : <button type="button" onClick={() => void (actionError ? doSubmit() : autosave.retry())} className={quietPill}><RotateCcw size={14} aria-hidden="true" /> Try again</button>}
+            : <button type="button" onClick={() => void (actionError?.action === 'pause' ? pause() : actionError ? doSubmit() : autosave.retry())} className={quietPill}><RotateCcw size={14} aria-hidden="true" /> Try again</button>}
         </div>}
       </footer>
     </section>

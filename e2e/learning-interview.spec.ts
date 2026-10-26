@@ -123,20 +123,29 @@ for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "
     await page.getByLabel("Company interview dossier").scrollIntoViewIfNeeded();
     expect(await page.getByLabel("Company interview dossier").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("company-interview.png"), fullPage: true });
-    await page.getByRole("button", { name: "Start simulation", exact: true }).click();
+    await page.getByRole("button", { name: "Start interview", exact: true }).click();
     const turns = page.getByRole("log", { name: "Simulation turns" });
     await expect(turns.getByText("How would you design reliable request processing, part 1?", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Finish simulation" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Finish interview" })).toBeDisabled();
     await page.getByLabel("Your response").fill("I would store an idempotency key and test concurrent retries.");
     await page.getByRole("button", { name: "Send simulation turn" }).click();
     await expect(turns.getByText("How would you verify behavior under retries?", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Finish simulation", exact: true }).click();
+    // A longer interview overflows the log; each new question must stay in view.
+    for (const answer of ["I would key each upload.", "I would replay the lost response.", "I would compare committed effects.", "I would alert on duplicate keys."]) {
+      await page.getByLabel("Your response").fill(answer);
+      await page.getByRole("button", { name: "Send simulation turn" }).click();
+      await expect(turns.getByText(answer, { exact: true })).toBeAttached();
+    }
+    expect(await turns.evaluate((log) => log.scrollHeight > log.clientHeight)).toBe(true);
+    await turns.scrollIntoViewIfNeeded();
+    await expect(turns.locator("article").last()).toBeInViewport();
+    await page.getByRole("button", { name: "Finish interview", exact: true }).click();
     await expect(turns.getByText(/Reasoning: 4\/5/)).toBeVisible();
     await openStudioSection(page, "Lessons");
     await openStudioSection(page, "Code & simulations");
     await expect(page.getByText(/Reasoning: 4\/5/)).toBeVisible();
     await page.getByRole("button", { name: "Start another attempt" }).click();
-    await expect(page.getByRole("button", { name: "Start simulation", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start interview", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(errors).toEqual([]);
     expect(remoteImages).toEqual([]);
