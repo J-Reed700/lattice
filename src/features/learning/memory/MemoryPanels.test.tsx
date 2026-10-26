@@ -337,7 +337,7 @@ describe('Learning Studio notebook and recall', () => {
     expect((await screen.findAllByText(card.question))[0]).toBeVisible();
     expect(screen.queryByText(card.answer)).not.toBeInTheDocument();
     expect(screen.queryByText(source.excerpt)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    await user.click(screen.getByRole('button', { name: "I don't know yet: show me" }));
     expect(screen.getByText(card.answer)).toBeVisible();
     await user.click(screen.getByRole('button', { name: /again/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted');
@@ -355,7 +355,7 @@ describe('Learning Studio notebook and recall', () => {
     const user = userEvent.setup();
     api.reviewStudyCard.mockResolvedValueOnce(fail('Try a different rating')).mockResolvedValueOnce(ok({ ...card, reviewCount: 1, intervalDays: 2, dueAt: Date.now() + 86_400_000 }));
     mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [card] }, dueCount: 1 })} memoryLoading={false} onRetryMemory={() => undefined} />);
-    await user.click(await screen.findByRole('button', { name: 'Reveal answer' }));
+    await user.click(await screen.findByRole('button', { name: "I don't know yet: show me" }));
     await user.click(screen.getByRole('button', { name: /again/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Try a different rating');
     const firstId = api.reviewStudyCard.mock.calls[0][0].reviewId;
@@ -363,5 +363,30 @@ describe('Learning Studio notebook and recall', () => {
     await waitFor(() => expect(api.reviewStudyCard).toHaveBeenCalledTimes(2));
     expect(api.reviewStudyCard.mock.calls[1][0].rating).toBe('hard');
     expect(api.reviewStudyCard.mock.calls[1][0].reviewId).not.toBe(firstId);
+  });
+
+  it('asks for an answer from memory first and brings a missed card back later in the review', async () => {
+    const user = userEvent.setup();
+    const second: StudyCardDto = { ...card, id: 'card-2', question: 'Why does the idea hold?', answer: 'Because the source shows it.' };
+    api.reviewStudyCard
+      .mockResolvedValueOnce(ok({ ...card, reviewCount: 1, lapses: 1, intervalDays: 1, dueAt: Date.now() + 86_400_000 }))
+      .mockResolvedValueOnce(ok({ ...second, reviewCount: 1, intervalDays: 3, dueAt: Date.now() + 3 * 86_400_000 }))
+      .mockResolvedValueOnce(ok({ ...card, reviewCount: 2, lapses: 1, intervalDays: 1, dueAt: Date.now() + 86_400_000 }));
+    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [card, second] }, dueCount: 2 })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    expect(await screen.findByRole('button', { name: "I don't know yet: show me" })).toBeVisible();
+    await user.type(screen.getByLabelText(/Your answer/), 'A guess');
+    await user.click(screen.getByRole('button', { name: 'Check my answer' }));
+    expect(screen.getByText('A guess')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /again/i }));
+    expect(await screen.findByText(second.question)).toBeVisible();
+    expect(screen.getByLabelText(/Your answer/)).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: "I don't know yet: show me" }));
+    await user.click(screen.getByRole('button', { name: /good/i }));
+    expect(await screen.findByText(/Back again: you missed this earlier/)).toBeVisible();
+    expect(screen.getAllByText(card.question)[0]).toBeVisible();
+    await user.click(screen.getByRole('button', { name: "I don't know yet: show me" }));
+    await user.click(screen.getByRole('button', { name: /good/i }));
+    expect(await screen.findByText('You are caught up')).toBeVisible();
+    expect(api.reviewStudyCard.mock.calls.map((call) => [call[0].cardId, call[0].rating, call[0].expectedReviews])).toEqual([['card-1', 'again', 0], ['card-2', 'good', 0], ['card-1', 'good', 1]]);
   });
 });
