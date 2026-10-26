@@ -262,7 +262,10 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
     };
     let plain = body(ThinkingMode::Off, ToolChoice::Required);
     assert!(plain.get("thinking").is_none());
-    assert_eq!(plain["tool_choice"]["type"], "any");
+    assert_eq!(
+        plain["tool_choice"]["type"], "auto",
+        "the newest models refuse a forced call even without thinking"
+    );
     assert_eq!(
         body(ThinkingMode::Off, ToolChoice::None)["tool_choice"]["type"],
         "none"

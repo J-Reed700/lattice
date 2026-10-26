@@ -332,10 +332,11 @@ impl CloudLlm {
             }
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
-                // Forcing a call is refused while extended thinking is on, so a
-                // thinking request that requires one leaves the choice to the model.
+                // A forced call is never sent. Every model refuses one while
+                // extended thinking is on, and the newest refuse it outright
+                // (Opus 5.5 answers `"any"` with a 400), so a request that
+                // requires a call leaves the choice to the model.
                 let choice = match request.tool_choice {
-                    Some(ToolChoice::Required) if !thinks => Some("any"),
                     Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
                     Some(ToolChoice::None) => Some("none"),
                     None => None,
