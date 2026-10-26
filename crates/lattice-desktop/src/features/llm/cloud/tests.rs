@@ -203,6 +203,46 @@ fn anthropic_never_sends_sampling_knobs() {
     }
 }
 
+/// Claude's structured outputs 400 on `maxItems`, `uniqueItems`, numeric
+/// bounds and a `minItems` above 1, so they reach the model as description.
+#[test]
+fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                json_schema: Some(json!({"type":"object","required":["items","maximum"],"properties":{
+                    "items":{"type":"array","minItems":2,"maxItems":6,"uniqueItems":true,
+                        "items":{"type":"integer","minimum":1,"maximum":5}},
+                    "maximum":{"type":"string","description":"A property, not a bound","minLength":1}
+                }})),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    let schema = &body["output_config"]["format"]["schema"];
+    let items = &schema["properties"]["items"];
+    assert_eq!(items["minItems"], 1);
+    for moved in ["maxItems", "uniqueItems"] {
+        assert!(items.get(moved).is_none(), "{moved} sent: {schema}");
+    }
+    assert_eq!(
+        items["description"],
+        "minItems: 2, maxItems: 6, uniqueItems: true"
+    );
+    assert!(items["items"].get("minimum").is_none(), "{schema}");
+    assert_eq!(items["items"]["description"], "minimum: 1, maximum: 5");
+    assert_eq!(
+        schema["properties"]["maximum"],
+        json!({"type":"string","description":"A property, not a bound","minLength":1})
+    );
+}
+
 #[test]
 fn anthropic_still_enables_thinking_for_a_real_effort() {
     let body = anthropic_body("medium");
