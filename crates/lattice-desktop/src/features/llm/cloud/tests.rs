@@ -173,6 +173,61 @@ fn anthropic_omits_the_thinking_block_when_no_reasoning_is_asked_for() {
     assert_eq!(body["output_config"]["effort"], "low");
 }
 
+/// Current Claude models 400 on any sampling knob, so a caller's determinism
+/// override must not reach the request.
+#[test]
+fn anthropic_never_sends_sampling_knobs() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                sampling: Some(
+                    lattice_core::application::ports::llm_port::SamplingOverride {
+                        temperature: Some(0.0),
+                        top_p: Some(1.0),
+                        top_k: Some(1),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    for knob in ["temperature", "top_p", "top_k"] {
+        assert!(body.get(knob).is_none(), "{knob} sent: {body}");
+    }
+}
+
+/// Claude shows no thinking unless asked, so a caller that displays reasoning
+/// asks for summaries.
+#[test]
+fn anthropic_asks_for_thinking_summaries_only_when_reasoning_is_shown() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = |include_reasoning| {
+        anthropic
+            .body(
+                &CompletionRequest {
+                    thinking: ThinkingMode::On,
+                    include_reasoning,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    };
+    assert_eq!(body(true)["thinking"]["display"], "summarized");
+    assert!(body(false)["thinking"].get("display").is_none());
+}
+
 #[test]
 fn anthropic_still_enables_thinking_for_a_real_effort() {
     let body = anthropic_body("medium");

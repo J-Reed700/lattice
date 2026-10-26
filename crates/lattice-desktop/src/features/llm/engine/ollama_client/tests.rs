@@ -27,7 +27,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
             {"role":"user","content":"Check this batch."}
         ],
         "stream":true,
-        "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"presence_penalty":0.0,"num_predict":2048},
+        "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"presence_penalty":0.0,"num_ctx":131072,"num_predict":2048},
         "format":schema,
         "think":false
     });
@@ -676,4 +676,66 @@ fn the_final_chunk_times_the_prompt_and_the_answer() {
     assert!((timing.prompt_seconds - 2.0).abs() < 1e-9);
     assert!((timing.output_seconds - 20.0).abs() < 1e-9);
     assert_eq!(chunk(serde_json::json!({})), None);
+}
+
+/// Ollama runs at its server default (often 4,096 tokens) unless a request
+/// names a window, and trims a longer prompt without saying so. The window
+/// asked for, and reported to the prompt builders, is the configured one held
+/// to the model's trained length and to a Modelfile's pinned `num_ctx`.
+#[tokio::test]
+async fn the_window_is_asked_for_and_held_to_what_the_server_reports() {
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/show"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "parameters": "stop \"<|im_end|>\"
+        num_ctx 16384",
+            "model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960}
+        })))
+        .mount(&server)
+        .await;
+    let client = OllamaClient::with_model(server.uri(), "qwen3").unwrap();
+
+    assert_eq!(client.resolve_context_window(Some(131_072)).await, 16_384);
+    assert_eq!(client.resolve_context_window(Some(8_192)).await, 8_192);
+    let client = client.with_context_window(16_384);
+    assert_eq!(LLMPort::max_context_tokens(&client), 16_384);
+    let body = client
+        .chat_request(&lattice_core::application::ports::llm_port::CompletionRequest::default())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(body).unwrap()["options"]["num_ctx"],
+        16_384
+    );
+}
+
+#[test]
+fn show_limits_read_the_trained_length_and_a_pinned_window() {
+    let limits = ShowLimits::from_show(&serde_json::json!({
+        "parameters": "num_ctx 8192",
+        "model_info": {"llama.context_length": 131072}
+    }));
+    assert_eq!(limits.trained, Some(131_072));
+    assert_eq!(limits.pinned, Some(8_192));
+    assert_eq!(
+        ShowLimits::from_show(&serde_json::json!({})),
+        ShowLimits::default()
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_say_leaves_the_configured_window() {
+    let client = OllamaClient::with_model_and_timeouts(
+        "http://127.0.0.1:9",
+        "qwen3",
+        Duration::from_millis(200),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    assert_eq!(client.resolve_context_window(Some(32_768)).await, 32_768);
 }

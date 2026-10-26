@@ -56,18 +56,36 @@ impl CloudLlm {
                 "Cloud model and API key are required".into(),
             ));
         }
-        let endpoint = match settings.provider {
-            LLMProvider::Openai => "https://api.openai.com/v1/responses",
-            LLMProvider::Anthropic => "https://api.anthropic.com/v1/messages",
-            LLMProvider::Google => {
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-            }
+        let (variable, base, path) = match settings.provider {
+            LLMProvider::Openai => (
+                "LATTICE_OPENAI_BASE_URL",
+                "https://api.openai.com",
+                "/v1/responses",
+            ),
+            LLMProvider::Anthropic => (
+                "LATTICE_ANTHROPIC_BASE_URL",
+                "https://api.anthropic.com",
+                "/v1/messages",
+            ),
+            LLMProvider::Google => (
+                "LATTICE_GOOGLE_BASE_URL",
+                "https://generativelanguage.googleapis.com",
+                "/v1beta/openai/chat/completions",
+            ),
             _ => {
                 return Err(AppError::InvalidConfig(
                     "Expected an explicit cloud provider".into(),
                 ))
             }
         };
+        // An evaluation run sends every request through a local recording
+        // proxy, named here in place of the provider's public host.
+        let base = std::env::var(variable)
+            .ok()
+            .map(|base| base.trim().trim_end_matches('/').to_owned())
+            .filter(|base| !base.is_empty())
+            .unwrap_or_else(|| base.to_owned());
+        let endpoint = format!("{base}{path}");
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
         let client = lattice_core::shared::http::reqwest_client_builder()
@@ -79,7 +97,7 @@ impl CloudLlm {
             provider: settings.provider,
             model: settings.model.clone(),
             key,
-            endpoint: endpoint.into(),
+            endpoint,
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
@@ -276,18 +294,12 @@ impl CloudLlm {
             Ok(body)
         } else {
             let (system, messages) = messages::anthropic_messages(&request.input)?;
+            // No sampling knobs are sent. Current Claude models reject
+            // `temperature`, `top_p` and `top_k` with a 400 (some outright, some
+            // for any non-default value, all of them while thinking), and the
+            // overrides callers pass were tuned for local models anyway. A
+            // determinism override is not worth a failed call.
             let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.output_room(request),"stream":stream});
-            if let Some(sampling) = request.sampling {
-                if let Some(temperature) = sampling.temperature {
-                    set_field(&mut body, "temperature", json!(temperature))?;
-                }
-                if let Some(top_p) = sampling.top_p {
-                    set_field(&mut body, "top_p", json!(top_p))?;
-                }
-                if let Some(top_k) = sampling.top_k {
-                    set_field(&mut body, "top_k", json!(top_k))?;
-                }
-            }
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
@@ -303,7 +315,14 @@ impl CloudLlm {
             let thinks = request.thinking == ThinkingMode::On
                 || effort.is_some_and(|effort| effort != "none");
             if thinks {
-                set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
+                // Thinking is not shown unless asked for: summaries are what a
+                // caller that displays reasoning gets back.
+                let thinking = if request.include_reasoning {
+                    json!({"type":"adaptive","display":"summarized"})
+                } else {
+                    json!({"type":"adaptive"})
+                };
+                set_field(&mut body, "thinking", thinking)?;
             }
             if let Some(effort) = effort {
                 // Anthropic has no "none" effort of its own, so the answer
@@ -698,6 +717,12 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
     Ok(())
 }
 
+/// Whether this OpenAI model is a reasoning model, which takes an effort
+/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
+fn is_openai_reasoning_model(model: &str) -> bool {
+    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
+}
+
 /// What, if anything, belongs in the Responses API's `reasoning` block.
 ///
 /// The field is not universally accepted: a model without reasoning controls
@@ -710,12 +735,6 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// `low` on the o-series, so a request for no reasoning is clamped to whichever
 /// the target model understands. A non-reasoning model needs no clamp — it never
 /// thinks in the first place.
-/// Whether this OpenAI model is a reasoning model, which takes an effort
-/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
-fn is_openai_reasoning_model(model: &str) -> bool {
-    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
-}
-
 fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
     let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
