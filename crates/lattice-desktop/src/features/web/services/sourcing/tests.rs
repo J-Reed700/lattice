@@ -195,6 +195,30 @@ async fn an_open_breaker_skips_its_finder_on_the_next_call_without_a_request() {
     assert_eq!(second.leads.len(), 10);
 }
 
+/// A challenged engine's backoff is skipped even by a caller with time to
+/// wait it out. Waiting it out doubled every search's delay while DuckDuckGo
+/// kept challenging, until one outline's searches took hours.
+#[tokio::test]
+async fn a_challenged_engine_is_skipped_not_waited_for_by_a_caller_with_time() {
+    let clock = FakeClock::new();
+    let ddg = Arc::new(ScriptedFinder::failing(
+        duckduckgo::DESCRIPTOR,
+        FailureCause::Challenge,
+    ));
+    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+
+    for _ in 0..3 {
+        sourcing
+            .find(web_need(20, &[]), budget(PLENTY))
+            .await
+            .expect("Bing answered");
+    }
+
+    assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
+    assert_eq!(ddg.calls().len(), 1);
+}
+
 /// A host that says `Retry-After: 60` is waited out, in full, when the call
 /// still needs its leads and the deadline is further off than that.
 #[tokio::test]
@@ -222,6 +246,36 @@ async fn retry_after_sixty_is_waited_out_when_the_deadline_allows() {
         &FinderResult::Answered
     );
     assert_eq!(findings.leads.len(), 10);
+}
+
+/// A host that asks for hours (OpenAlex's spent daily allowance sends about
+/// fifteen) is not waited out even by a caller whose deadline is further off:
+/// a lesson's research would sit silent for that long. The other finders
+/// answer and the host is skipped until its window ends.
+#[tokio::test]
+async fn retry_after_of_hours_is_not_waited_out_even_within_the_deadline() {
+    let clock = FakeClock::new();
+    let hours = Duration::from_secs(56_158);
+    let limited = Arc::new(
+        ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 10).failing_first(vec![
+            FailureCause::Status {
+                code: 429,
+                retry_after: Some(hours),
+            },
+        ]),
+    );
+    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
+    let sourcing = service(vec![entry(&limited, 10), entry(&bing, 10)], &clock);
+
+    for _ in 0..2 {
+        sourcing
+            .find(web_need(20, &[]), budget(Duration::from_secs(24 * 60 * 60)))
+            .await
+            .expect("Bing answered");
+    }
+
+    assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
+    assert_eq!(limited.calls().len(), 1);
 }
 
 /// The same instruction with only 30 seconds left: no wait, no second

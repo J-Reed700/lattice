@@ -13,6 +13,12 @@ use lattice_core::domain::sourcing::{
     FinderOutcome, FinderResult, HealthState, KeyService, SkipReason, SourcingPolicy,
 };
 
+/// The longest one call waits out a host's window. A `Retry-After` of a
+/// minute is worth the wait; one that runs to the end of a daily allowance
+/// (OpenAlex sends about fifteen hours) would hold a lesson's research that
+/// long, so a longer window skips the finder until it ends.
+const LONGEST_WAIT: Duration = Duration::from_secs(120);
+
 pub(crate) struct HealthBook {
     policy: SourcingPolicy,
     entries: parking_lot::Mutex<HashMap<FinderId, Entry>>,
@@ -95,7 +101,8 @@ impl HealthBook {
     }
 
     /// How long a caller with `remaining` time must wait before this finder
-    /// may be called; `None` when its open window outlasts the caller.
+    /// may be called; `None` when its open window outlasts the caller, or
+    /// [`LONGEST_WAIT`].
     pub(super) fn wait_before(
         &self,
         id: &FinderId,
@@ -106,7 +113,7 @@ impl HealthBook {
             .lock()
             .get(id)
             .map_or(Some(Duration::ZERO), |entry| {
-                entry.breaker.wait_before(now, remaining)
+                entry.breaker.wait_before(now, remaining.min(LONGEST_WAIT))
             })
     }
 
@@ -131,7 +138,10 @@ impl HealthBook {
             .iter()
             .filter_map(|(id, entry)| match entry.breaker.state() {
                 BreakerState::Open { until, cause }
-                    if entry.breaker.wait_before(now, remaining).is_none() =>
+                    if entry
+                        .breaker
+                        .wait_before(now, remaining.min(LONGEST_WAIT))
+                        .is_none() =>
                 {
                     Some((
                         id.clone(),
