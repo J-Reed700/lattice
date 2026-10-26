@@ -69,8 +69,9 @@ pub(super) fn in_words(mut body: Value) -> Value {
     else {
         return body;
     };
-    if body["output_config"]
-        .as_object()
+    if body
+        .get("output_config")
+        .and_then(Value::as_object)
         .is_some_and(serde_json::Map::is_empty)
     {
         if let Some(fields) = body.as_object_mut() {
@@ -79,7 +80,7 @@ pub(super) fn in_words(mut body: Value) -> Value {
     }
     let ask = format!(
         "Reply with only a JSON value that matches this JSON Schema, and no other text:\n{}",
-        format["schema"]
+        format.get("schema").unwrap_or(&Value::Null)
     );
     let system = match body.get("system").and_then(Value::as_str) {
         Some(system) if !system.is_empty() => format!("{system}\n\n{ask}"),
