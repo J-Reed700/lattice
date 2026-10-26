@@ -139,11 +139,12 @@ pub(super) fn point_support(standard: &AnswerStandard) -> Vec<Value> {
                 AnswerEvidence::Reasoning => "exercise_reasoning",
                 AnswerEvidence::Unverified => "unverified",
             };
-            let mut support = json!({"path":format!("/keyPoints/{i}/point"),"basis":basis});
+            let path = format!("/keyPoints/{i}/point");
             if point.evidence == AnswerEvidence::Sourced {
-                support["quotes"] = json!(point.citations);
+                json!({"path":path,"basis":basis,"quotes":point.citations})
+            } else {
+                json!({"path":path,"basis":basis})
             }
-            support
         })
         .collect()
 }
