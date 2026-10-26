@@ -119,6 +119,23 @@ fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
 }
 
 #[test]
+fn a_sentence_with_no_citation_is_never_backed_on_shared_words() {
+    // Half its words are the source's, and the source says nothing of yields:
+    // overlap with whichever window ranks best is not a source for it.
+    let claims = lexical_pass(
+        "Salicylic acid treatment tripled blueberry yields in commercial orchards.",
+        &[source(
+            "Salicylic acid treatment improved cold tolerance in blueberry plants.",
+        )],
+    );
+
+    let claim = claims.first().expect("the uncited sentence is a claim");
+    assert!(claim.citation_ids.is_empty());
+    assert!(claim.overlap_ratio > 0.0, "overlap is still measured");
+    assert!(!claim.supported);
+}
+
+#[test]
 fn grounded_claim_scores_above_threshold() {
     let claims = lexical_pass(
         "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
