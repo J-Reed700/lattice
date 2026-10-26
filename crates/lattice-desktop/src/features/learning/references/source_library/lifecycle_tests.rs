@@ -573,6 +573,8 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
     let library = LearningSourceLibraryRepository::new(pool.clone());
+    // The fixture program brings its own selected source.
+    let fixture_rows = library_rows(&pool, &program_id).await?;
 
     let mut noted = Vec::new();
     for note in [
@@ -729,12 +731,21 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
             .await,
     );
 
-    let rows: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
-            .bind(&program_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(db)?;
-    assert_eq!(rows, 4, "rejected captures must not leave rows behind");
+    // The three noted captures and the existing source; no rejected
+    // capture leaves a row behind.
+    assert_eq!(
+        library_rows(&pool, &program_id).await?,
+        fixture_rows + 4,
+        "rejected captures must not leave rows behind"
+    );
     Ok(())
+}
+
+/// How many sources `program_id`'s library holds, deleted ones included.
+async fn library_rows(pool: &SqlitePool, program_id: &str) -> Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
+        .bind(program_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db)
 }
