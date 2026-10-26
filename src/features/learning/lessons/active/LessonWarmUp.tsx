@@ -4,6 +4,7 @@ import { Brain, Check } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useLearningRecallV2, useReviewLearningRecallCard } from '@/features/learning/portability/useLearningPortability';
+import { isMiss, MAX_ATTEMPTS, RELEARN_GAP } from '@/features/learning/recall/flashcards/retrieval';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import type { LearningRecallCardDto, StudyRating } from '@/lib/bindings';
 
@@ -28,6 +29,32 @@ export function warmUpQueue(cards: LearningRecallCardDto[], now = Date.now()): s
     .map((card) => card.id);
 }
 
+/** The warm-up's place: the cards still to answer, next first, and each card's attempts so far. */
+export interface WarmUp {
+  pending: string[];
+  total: number;
+  tries: Record<string, number>;
+}
+
+export function startWarmUp(ids: string[]): WarmUp {
+  return { pending: ids, total: ids.length, tries: {} };
+}
+
+/**
+ * The warm-up after the current card was answered. A missed card comes back
+ * after the others, as in a study session (successive relearning: Rawson &
+ * Dunlosky), until it is recalled once or has had its attempts.
+ */
+export function answerWarmUp(warmUp: WarmUp, rating: StudyRating): WarmUp {
+  const [current, ...rest] = warmUp.pending;
+  if (!current) return warmUp;
+  const tried = (warmUp.tries[current] ?? 0) + 1;
+  const tries = { ...warmUp.tries, [current]: tried };
+  if (!isMiss(rating) || tried >= MAX_ATTEMPTS) return { ...warmUp, pending: rest, tries };
+  const at = Math.min(RELEARN_GAP, rest.length);
+  return { ...warmUp, pending: [...rest.slice(0, at), current, ...rest.slice(at)], tries };
+}
+
 function masked(card: LearningRecallCardDto) {
   return card.content.clozeDeletions.filter(Boolean).reduce((text, deletion) => text.split(deletion).join('＿＿＿'), card.content.prompt);
 }
@@ -43,8 +70,7 @@ export function LessonWarmUp({ programId }: { programId: string }) {
   const recall = useLearningRecallV2(programId);
   const review = useReviewLearningRecallCard(programId);
   // Fixed when the lesson opens, so a reviewed card does not shuffle the rest.
-  const [queue, setQueue] = useState<string[] | null>(null);
-  const [position, setPosition] = useState(0);
+  const [queue, setQueue] = useState<WarmUp | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [choice, setChoice] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -52,22 +78,27 @@ export function LessonWarmUp({ programId }: { programId: string }) {
   const reviewIds = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    if (queue === null && recall.data) setQueue(warmUpQueue(recall.data.cards));
+    if (queue === null && recall.data) setQueue(startWarmUp(warmUpQueue(recall.data.cards)));
   }, [queue, recall.data]);
 
-  if (dismissed || !queue?.length) return null;
+  if (dismissed || !queue?.total) return null;
   const due = recall.data?.cards.filter((card) => card.scheduler.dueAt <= Date.now()).length ?? 0;
-  const card = recall.data?.cards.find((candidate) => candidate.id === queue[position]);
-  const finished = position >= queue.length || !card;
+  // The card as last saved, so a card that comes back sends its new review count.
+  const card = recall.data?.cards.find((candidate) => candidate.id === queue.pending[0]);
+  const finished = queue.pending.length === 0 || !card;
+  const done = queue.total - new Set(queue.pending).size;
+  const again = card ? (queue.tries[card.id] ?? 0) > 0 : false;
+  const relearned = Object.values(queue.tries).some((tries) => tries > 1);
 
   const rate = async (rating: StudyRating) => {
     if (!card) return;
-    const key = `${card.id}:${rating}:${choice ?? ''}`;
+    // A card that comes back is a new review, so its attempt is in the key.
+    const key = `${card.id}:${queue.tries[card.id] ?? 0}:${rating}:${choice ?? ''}`;
     reviewIds.current[key] ??= newId();
     setError(undefined);
     try {
       await review.mutateAsync({ reviewId: reviewIds.current[key], programId, cardId: card.id, expectedReviewCount: card.scheduler.reviewCount, rating, selectedOption: card.format === 'multiple_choice' ? choice : null });
-      setPosition((current) => current + 1);
+      setQueue((current) => (current ? answerWarmUp(current, rating) : current));
       setRevealed(false);
       setChoice(null);
     } catch (cause) {
@@ -81,7 +112,7 @@ export function LessonWarmUp({ programId }: { programId: string }) {
         <div className="flex items-center gap-2">
           <Brain size={16} className="text-accent" aria-hidden="true" />
           <h4 id="warm-up-heading" className="text-sm font-medium text-text-primary">Warm up from memory</h4>
-          {!finished && <span className="text-xs text-text-muted">{position + 1} of {queue.length}</span>}
+          {!finished && <span className="text-xs text-text-muted">{again ? 'Back again' : `${done + 1} of ${queue.total}`}</span>}
         </div>
         <button type="button" onClick={() => setDismissed(true)} className="text-xs text-text-secondary underline underline-offset-2 hover:text-text-primary">
           {finished ? 'Close' : 'Skip for now'}
@@ -89,11 +120,11 @@ export function LessonWarmUp({ programId }: { programId: string }) {
       </div>
       {finished ? (
         <p role="status" className="mt-3 flex items-center gap-2 text-sm text-text-secondary">
-          <Check size={14} className="text-success-fg" /> Warmed up. {due > 0 ? `${due} more ${due === 1 ? 'idea waits' : 'ideas wait'} in Recall.` : 'Nothing else is due.'}
+          <Check size={14} className="text-success-fg" /> Warmed up.{relearned ? ' Each one you missed came back until you recalled it.' : ''} {due > 0 ? `${due} more ${due === 1 ? 'idea waits' : 'ideas wait'} in Recall.` : 'Nothing else is due.'}
         </p>
       ) : (
         <>
-          <p className="mt-1 text-xs leading-5 text-text-secondary">A few earlier ideas that are due. Answer in your head before revealing; recalling them now keeps them.</p>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">{again ? 'You missed this one a moment ago. Try it from memory once more before revealing.' : 'A few earlier ideas that are due. Answer in your head before revealing; recalling them now keeps them.'}</p>
           <div className="studio-lesson-prose mt-4"><MarkdownViewer content={card.format === 'cloze' ? masked(card) : card.content.prompt} /></div>
           {card.format === 'multiple_choice' && !revealed && (
             <fieldset className="mt-3 space-y-2">
