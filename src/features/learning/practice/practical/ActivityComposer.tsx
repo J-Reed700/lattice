@@ -458,7 +458,7 @@ export function ActivityComposer({
         {error && (
           <p
             role="alert"
-            className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700"
+            className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
           >
             {error}
           </p>
