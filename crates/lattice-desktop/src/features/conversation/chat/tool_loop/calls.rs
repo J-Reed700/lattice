@@ -285,6 +285,11 @@ impl<'a> ToolCalls<'a> {
         Ok(())
     }
 
+    /// The window as this turn's latest count of its prompt puts it.
+    pub(super) fn set_window_chars(&mut self, window_chars: usize) {
+        self.scope.window_chars = window_chars;
+    }
+
     /// The results with these ids were condensed into notes, so the pages
     /// they carried are no longer in the context: a repeat request for one is
     /// read again rather than told the text is above.

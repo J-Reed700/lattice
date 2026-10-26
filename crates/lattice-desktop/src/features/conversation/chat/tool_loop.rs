@@ -3,14 +3,17 @@ mod calls;
 mod clock;
 mod document_evidence;
 mod document_progress;
+mod emitter;
 mod final_round;
 mod generation;
 mod image_pick;
 mod images;
+mod limits;
 #[cfg(test)]
 mod loop_tests;
 mod reading;
 mod research_notes;
+mod room;
 mod scoped_document_tools;
 mod tool_sources;
 mod written_calls;
@@ -30,8 +33,10 @@ use super::fetch_memory::FetchMemory;
 use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
+use emitter::StreamEmitter;
 use final_round::LastRound;
 pub(super) use reading::READING_INSTRUCTION;
+use room::{chars_in_flight, tool_result_allowance, window_has_room_for_a_result};
 use written_calls::WrittenCalls;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
@@ -84,72 +89,6 @@ struct RequestedCall {
     id: String,
     name: String,
     arguments: serde_json::Value,
-}
-
-/// Emits `llm-stream` events tagged with the turn they belong to.
-///
-/// `llm-stream` is a single global Tauri channel with more than one producer
-/// (this tool loop and the QA service), and the payloads previously carried no
-/// identity at all. Any consumer therefore had to accept every event on the
-/// channel, so a second concurrent generation — a query rewrite running during
-/// a chat turn, or a resend whose predecessor's listener was still attached —
-/// interleaved its tokens into the wrong bubble.
-///
-/// Tagging every emit with `conversation_id` and a per-turn `request_id` lets
-/// each consumer keep only what is addressed to it.
-pub(super) struct StreamEmitter<'a> {
-    sink: &'a ChatEventSink,
-    conversation_id: String,
-    request_id: String,
-    /// Whether a terminal `done` has been emitted for this turn.
-    done_sent: bool,
-}
-
-impl<'a> StreamEmitter<'a> {
-    pub(super) fn new(sink: &'a ChatEventSink, conversation_id: &str, request_id: &str) -> Self {
-        Self {
-            sink,
-            conversation_id: conversation_id.to_string(),
-            request_id: request_id.to_string(),
-            done_sent: false,
-        }
-    }
-
-    /// Emit a content chunk.
-    pub(super) fn content(&self, chunk: &str) -> Result<()> {
-        self.emit(ChatStreamEventDto {
-            content: Some(chunk.to_owned()),
-            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
-        })
-    }
-
-    /// Emit the terminal event. Idempotent, so belt-and-braces calls on
-    /// several exit paths cannot produce duplicates.
-    pub(super) fn done(&mut self) {
-        if self.done_sent {
-            return;
-        }
-        self.done_sent = true;
-        if let Err(e) = self.emit(ChatStreamEventDto {
-            done: true,
-            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
-        }) {
-            warn!(error = %e, "Failed to emit stream completion");
-        }
-    }
-
-    fn emit(&self, payload: ChatStreamEventDto) -> Result<()> {
-        (self.sink)(payload)
-    }
-}
-
-impl Drop for StreamEmitter<'_> {
-    /// Guarantee a terminal event on **every** exit path, including the error
-    /// returns scattered through the tool loop. Without this the UI stays
-    /// stuck "generating" unless the outer invoke happens to reject.
-    fn drop(&mut self) {
-        self.done();
-    }
 }
 
 pub(super) async fn run_agentic_tool_loop(
@@ -263,7 +202,7 @@ pub(super) async fn run_agentic_tool_loop(
         .await
         .map(|settings| settings.llm.answer_thinking)
         .unwrap_or(false);
-    let window = window_chars(input_budget, llm.chars_per_token());
+    let mut window = room::Window::new(input_budget, llm.chars_per_token());
     // The schemas ride along with every round and take room like any message.
     let tool_schema_chars = tools_ref.map_or(0, |tools| tool_schema_text(tools).chars().count());
     let mut calls = calls::ToolCalls::new(
@@ -284,7 +223,7 @@ pub(super) async fn run_agentic_tool_loop(
                 .with_recall_embedding(container.get_or_load_embedding().await.ok()),
             cancel: &turn_cancel,
             clock: &clock,
-            window_chars: window,
+            window_chars: window.chars(),
             tool_schema_chars,
             llm,
             question,
@@ -297,13 +236,16 @@ pub(super) async fn run_agentic_tool_loop(
         fetched,
         sources,
     );
+    // Why the next round has to answer, when a limit cut the round before it
+    // short: the deadline passed, or the prompt no longer fit.
+    let mut forced: Option<LastRound> = None;
     // A message that shows numbered passages asks for a reading of them
     // first; a resumed turn has its notes in the saved transcript already.
     let mut notes = None;
     if native_request.input.len() == planned_len {
         if let Some(passages) = reading::asked(&native_request.input, sources.as_slice()) {
             let reading_start = Instant::now();
-            notes = reading::read_passages(
+            notes = match reading::read_passages(
                 llm.as_ref(),
                 &native_request,
                 &passages,
@@ -311,7 +253,16 @@ pub(super) async fn run_agentic_tool_loop(
                 &turn_cancel,
                 &clock,
             )
-            .await?;
+            .await
+            {
+                Ok(notes) => notes,
+                Err(error) if limits::ran_out(&clock, &turn_cancel) => {
+                    warn!(%error, "The turn ran out of time reading its passages; answering without notes");
+                    forced = Some(LastRound::OutOfTime);
+                    None
+                }
+                Err(error) => return Err(error),
+            };
             let given = match notes.as_ref() {
                 Some(read) => reading::append_notes(llm.as_ref(), &mut native_request, read).await,
                 None => false,
@@ -328,16 +279,41 @@ pub(super) async fn run_agentic_tool_loop(
         }
     }
     let mut condensed = 0;
-    for iteration in first_round..max_tool_rounds {
+    let mut iteration = first_round;
+    // A forced round runs even after the last: the round it stands in for was
+    // cut short, not finished.
+    while iteration < max_tool_rounds || forced.is_some() {
         timings.iterations = (iteration + 1) as u32;
-        let out_of_rounds = iteration + 1 == max_tool_rounds;
+        let out_of_rounds = iteration + 1 >= max_tool_rounds;
+        // The prompt as the backend counts it, where it counts exactly: the
+        // window follows what this turn has read, and a prompt already past
+        // it sheds its newest results and answers.
+        if iteration > 0 && forced.is_none() && llm.counts_tokens_exactly() {
+            let tokens = reading::prompt_tokens(llm.as_ref(), &native_request).await;
+            window.measured(
+                chars_in_flight(&native_request.input) + tool_schema_chars,
+                tokens,
+            );
+            calls.set_window_chars(window.chars());
+            if tokens > window.tokens()
+                && limits::shed(
+                    &mut native_request.input,
+                    planned_len,
+                    window.chars_in(tokens - window.tokens()),
+                    &mut calls,
+                )
+            {
+                forced = Some(LastRound::WindowFull);
+            }
+        }
         // Before the window can be judged full: results that have outgrown
         // their share are condensed into notes and the research goes on. The
         // full-window ending below is the last resort.
         if iteration > 0
             && !out_of_rounds
+            && forced.is_none()
             && research_notes::should_condense(
-                window,
+                window.chars(),
                 &native_request.input,
                 planned_len,
                 condensed,
@@ -345,7 +321,7 @@ pub(super) async fn run_agentic_tool_loop(
         {
             condensed += 1;
             let condense_start = Instant::now();
-            if let Some(notes) = research_notes::condense(
+            match research_notes::condense(
                 llm.as_ref(),
                 &mut native_request,
                 planned_len,
@@ -353,15 +329,23 @@ pub(super) async fn run_agentic_tool_loop(
                 &turn_cancel,
                 &clock,
             )
-            .await?
+            .await
             {
-                info!(
-                    iteration,
-                    chars_before = notes.chars_before,
-                    chars_after = notes.chars_after,
-                    "Condensed earlier tool results to keep researching"
-                );
-                calls.results_condensed(&notes.result_ids);
+                Ok(Some(notes)) => {
+                    info!(
+                        iteration,
+                        chars_before = notes.chars_before,
+                        chars_after = notes.chars_after,
+                        "Condensed earlier tool results to keep researching"
+                    );
+                    calls.results_condensed(&notes.result_ids);
+                }
+                Ok(None) => {}
+                Err(error) if limits::ran_out(&clock, &turn_cancel) => {
+                    warn!(%error, "The turn ran out of time condensing its results; answering from them");
+                    forced = Some(LastRound::OutOfTime);
+                }
+                Err(error) => return Err(error),
             }
             timings.llm_stream_ms = timings
                 .llm_stream_ms
@@ -371,18 +355,15 @@ pub(super) async fn run_agentic_tool_loop(
         // calls made now would come back cut to nothing.
         let window_full = iteration > 0
             && !window_has_room_for_a_result(
-                window,
+                window.chars(),
                 chars_in_flight(&native_request.input) + tool_schema_chars,
             );
-        // Out of rounds is named first: the last round skips condensing, so
-        // its window can look fuller than it would have been.
-        let last_round = if out_of_rounds {
-            Some(LastRound::OutOfRounds)
-        } else if window_full {
-            Some(LastRound::WindowFull)
-        } else {
-            None
-        };
+        // A forced round says what forced it. Out of rounds is named before a
+        // full window: the last round skips condensing, so its window can
+        // look fuller than it would have been.
+        let last_round = forced
+            .or(out_of_rounds.then_some(LastRound::OutOfRounds))
+            .or(window_full.then_some(LastRound::WindowFull));
         // The last round is for answering. A model still calling tools here
         // would otherwise end the turn with an error and lose every page and
         // passage it had gathered, so it may call none and is told to answer
@@ -394,7 +375,9 @@ pub(super) async fn run_agentic_tool_loop(
                 ?last_round,
                 "Last tool round: asking for the answer with calls forbidden"
             );
-            if answer_thinking {
+            // A round asked again after the firmer retry has no tools left
+            // to forbid, and a provider refuses a choice that names none.
+            if answer_thinking || native_request.tools.is_empty() {
                 // Thinking with the tools still in the prompt wrote the call
                 // as text and answered nothing, so this answer has none.
                 final_round::ask_for_answer_without_tools(&mut native_request, last_round);
@@ -420,20 +403,52 @@ pub(super) async fn run_agentic_tool_loop(
             Some(tools) => WrittenCalls::Run(tools),
         };
         let llm_iteration_start = Instant::now();
-        let mut round = generation::generate(
+        // Past the deadline the answering round alone runs on, bounded by
+        // Stop and its output limit.
+        let deadline = (last_round != Some(LastRound::OutOfTime)).then_some(&clock);
+        let sent = chars_in_flight(&native_request.input)
+            + if native_request.tools.is_empty() {
+                0
+            } else {
+                tool_schema_chars
+            };
+        let mut round = match generation::generate(
             llm.as_ref(),
             &mut native_request,
             &emitter,
             recorder,
             &turn_cancel,
-            &clock,
+            deadline,
             match notes {
                 Some(_) if iteration == 0 => "Writing the answer",
                 _ => generation::thinking_label(iteration),
             },
             written_calls,
         )
-        .await?;
+        .await
+        {
+            Ok(round) => round,
+            Err(error) => {
+                forced = Some(limits::recover(
+                    error,
+                    last_round,
+                    &mut native_request,
+                    planned_len,
+                    sent,
+                    &mut window,
+                    &mut calls,
+                    &clock,
+                    &turn_cancel,
+                )?);
+                continue;
+            }
+        };
+        // The provider's count of what was sent: the next round's window is
+        // judged at this turn's own rate.
+        if let Ok(tokens @ 1..) = usize::try_from(round.response.input_tokens) {
+            window.measured(sent, tokens);
+            calls.set_window_chars(window.chars());
+        }
         if let Some(last_round) =
             answer_only.filter(|_| final_round::wrote_only_calls(&round.response))
         {
@@ -455,17 +470,35 @@ pub(super) async fn run_agentic_tool_loop(
                 Some("the model called tools in the last round".into()),
             );
             final_round::insist_on_answer(&mut native_request, last_round);
-            round = generation::generate(
+            let sent = chars_in_flight(&native_request.input);
+            round = match generation::generate(
                 llm.as_ref(),
                 &mut native_request,
                 &emitter,
                 recorder,
                 &turn_cancel,
-                &clock,
+                deadline,
                 "Writing the answer",
                 WrittenCalls::Cut,
             )
-            .await?;
+            .await
+            {
+                Ok(round) => round,
+                Err(error) => {
+                    forced = Some(limits::recover(
+                        error,
+                        Some(last_round),
+                        &mut native_request,
+                        planned_len,
+                        sent,
+                        &mut window,
+                        &mut calls,
+                        &clock,
+                        &turn_cancel,
+                    )?);
+                    continue;
+                }
+            };
         }
         let generation::Generation {
             mut response,
@@ -501,7 +534,8 @@ pub(super) async fn run_agentic_tool_loop(
             })
             .collect::<Vec<_>>();
         let response_text = response.text;
-        let tool_calls = if last_round.is_some() && !tool_calls.is_empty() {
+        let dropped_calls = last_round.is_some() && !tool_calls.is_empty();
+        let tool_calls = if dropped_calls {
             // Forbidden to call, a model can still call. It is not run: this
             // round's text is the answer.
             warn!(
@@ -524,10 +558,7 @@ pub(super) async fn run_agentic_tool_loop(
                     "Model wrote tool calls as text in the last round; cutting them from the answer"
                 );
                 let kept = response_text[..start].trim_end();
-                let note = match last_round {
-                    LastRound::OutOfRounds => OUT_OF_ROUNDS_NOTE,
-                    LastRound::WindowFull => WINDOW_FULL_NOTE,
-                };
+                let note = last_round.note();
                 emitter.content(note)?;
                 if kept.is_empty() {
                     note.trim_start().to_string()
@@ -537,6 +568,16 @@ pub(super) async fn run_agentic_tool_loop(
             }
             None => response_text,
         };
+        // A last round that only called, even asked again, ends with the note
+        // in place of an answer rather than an error: the turn keeps the
+        // sources and results it gathered, and can be continued.
+        if let Some(last_round) =
+            last_round.filter(|_| dropped_calls && response_text.trim().is_empty())
+        {
+            let note = last_round.note().trim_start();
+            emitter.content(note)?;
+            response_text = note.to_string();
+        }
         timings.llm_stream_ms = timings
             .llm_stream_ms
             .saturating_add(elapsed_ms(llm_iteration_start));
@@ -586,7 +627,7 @@ pub(super) async fn run_agentic_tool_loop(
             });
         }
 
-        calls
+        if let Err(error) = calls
             .run_round(
                 &tool_calls,
                 &mut native_request.input,
@@ -594,7 +635,19 @@ pub(super) async fn run_agentic_tool_loop(
                 sources,
                 retrieval_trace,
             )
-            .await?;
+            .await
+        {
+            if !limits::ran_out(&clock, &turn_cancel) {
+                return Err(error);
+            }
+            warn!(%error, "The turn ran out of time running its tools; answering from what they found");
+            final_round::answer_open_calls(
+                &mut native_request.input,
+                tool_calls.iter().map(|call| call.id.as_str()),
+                final_round::OUT_OF_TIME_RESULT,
+            );
+            forced = Some(LastRound::OutOfTime);
+        }
         if let Some(journal) = journal {
             journal
                 .round(&ResearchRound {
@@ -615,6 +668,7 @@ pub(super) async fn run_agentic_tool_loop(
                 })
                 .await?;
         }
+        iteration += 1;
     }
 
     warn!(
@@ -661,22 +715,10 @@ pub(in crate::features::conversation::chat) const OUT_OF_ROUNDS_NOTE: &str =
 pub(in crate::features::conversation::chat) const WINDOW_FULL_NOTE: &str =
     "\n\n_(Stopped here: the context window filled before the model finished — a larger context window in Settings gives it room to read more.)_";
 
-/// Whether another tool result could still fit in the window, at the size
-/// below which a result says too little to be worth a round. A provider that
-/// reports no window is never treated as full.
-fn window_has_room_for_a_result(window_chars: usize, chars_in_flight: usize) -> bool {
-    if window_chars == 0 {
-        return true;
-    }
-    window_chars.saturating_sub(chars_in_flight) >= MIN_TOOL_RESULT_CHARS
-}
-
-/// The characters the prompt may fill: the plan's input budget, converted at
-/// the backend's calibrated characters per token and erring short, so dense
-/// text under-fills rather than overruns.
-fn window_chars(input_budget: usize, chars_per_token: f64) -> usize {
-    lattice_core::application::ports::llm_port::chars_within_tokens(input_budget, chars_per_token)
-}
+/// The same, when the turn's deadline passed. "Continue" starts a new turn
+/// with a deadline of its own.
+pub(in crate::features::conversation::chat) const OUT_OF_TIME_NOTE: &str =
+    "\n\n_(Stopped here: the turn ran out of time before the model finished — say \"continue\" to let it keep going.)_";
 
 /// The tool definitions as the provider receives them, for budgeting: the
 /// JSON `parameters` of each tool are sent and read like any other prompt text.
@@ -726,55 +768,6 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
         (words, 1) => format!("{words} words and 1 tool call"),
         (words, calls) => format!("{words} words and {calls} tool calls"),
     }
-}
-
-/// A result cut shorter than this says too little to have been worth the round
-/// that asked for it, so a nearly full window still gets this much.
-const MIN_TOOL_RESULT_CHARS: usize = 1_500;
-
-/// Roughly how many characters the next generation already has to read. A
-/// picture counts as the characters its declared tokens stand for, never as
-/// its bytes.
-fn chars_in_flight(input: &[lattice_core::application::ports::llm_port::CompletionInput]) -> usize {
-    use lattice_core::application::ports::llm_port::{CompletionInput, DEFAULT_CHARS_PER_TOKEN};
-    input
-        .iter()
-        .map(|item| match item {
-            CompletionInput::Message { content, .. } => content.chars().count(),
-            CompletionInput::Multimodal { .. } => {
-                item.text().chars().count()
-                    + (item.image_tokens() as f64 * DEFAULT_CHARS_PER_TOKEN) as usize
-            }
-            CompletionInput::ToolResult { output, .. } => output.chars().count(),
-            CompletionInput::ToolCall {
-                name, arguments, ..
-            } => name.len() + arguments.to_string().len(),
-            CompletionInput::Native { value } => value.to_string().len(),
-        })
-        .sum()
-}
-
-/// How many characters one tool result may take, given the model's window,
-/// what is already in it, and how many results this round has still to fit.
-///
-/// The window alone decides: there is no configured ceiling on top of it, so a
-/// large window carries a long result whole. A result longer than its share is
-/// shown in part and says how to read on (see `format_tool_result`).
-///
-/// One share of what is left is always kept back for the round after this
-/// one. A lone page read that took the whole window left the next round
-/// nothing to read with: it had to condense or stop, so one long page ended
-/// the research. The rest of a long page is a further call by offset.
-fn tool_result_allowance(window_chars: usize, chars_in_flight: usize, calls_left: usize) -> usize {
-    let room = window_chars.saturating_sub(chars_in_flight);
-    let share = room / calls_left.saturating_add(1).max(2);
-    // The floor is only kept while the window can still take it. Past that, a
-    // result is given its share of what is left and no more: overrunning the
-    // window fails the next round outright, which is worse than a short result.
-    if room < MIN_TOOL_RESULT_CHARS {
-        return share;
-    }
-    share.max(MIN_TOOL_RESULT_CHARS)
 }
 
 fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id: &str) {

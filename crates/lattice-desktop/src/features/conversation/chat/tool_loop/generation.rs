@@ -30,13 +30,16 @@ pub(super) struct Generation<'r> {
 /// Run one generation. `written_calls` says what becomes of a tool call the
 /// model writes into its text instead of making it: never shown either way,
 /// it is cut on a round that may not call and run on one that may.
+///
+/// `clock` bounds it by the turn's deadline. Without one it is the answering
+/// round after the deadline, bounded by Stop and its output limit alone.
 pub(super) async fn generate<'r>(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
     emitter: &StreamEmitter<'_>,
     recorder: &'r TurnRecorder,
     cancel: &CancellationToken,
-    clock: &TurnClock,
+    clock: Option<&TurnClock>,
     label: &str,
     written_calls: WrittenCalls<'_>,
 ) -> Result<Generation<'r>> {
@@ -47,8 +50,9 @@ pub(super) async fn generate<'r>(
     let step = recorder.begin_guarded(TurnStepKind::Generate, label, None);
     let reasoning_progress = Mutex::new(ReasoningProgress::new());
     let filter = Mutex::new(LeakedCallFilter::new(written_calls));
-    let remaining = clock.remaining()?;
-    request.time_budget = Some(remaining);
+    let remaining = clock.map(TurnClock::remaining).transpose()?;
+    request.time_budget = remaining;
+    request.no_time_limit = remaining.is_none();
     let mut response = {
         let first_text_received = AtomicBool::new(false);
         let on_text = |text: String| {
@@ -94,14 +98,20 @@ pub(super) async fn generate<'r>(
             );
             Ok(())
         };
-        let completion = timeout(
-            remaining,
-            llm.complete_with_reasoning_progress(&*request, &on_text, &on_reasoning, &on_retry),
-        );
+        let completion =
+            llm.complete_with_reasoning_progress(&*request, &on_text, &on_reasoning, &on_retry);
+        let bounded = async {
+            match remaining.zip(clock) {
+                Some((remaining, clock)) => timeout(remaining, completion)
+                    .await
+                    .map_err(|_| clock.exhausted())?,
+                None => completion.await,
+            }
+        };
         tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(cancelled_error()),
-            result = completion => result.map_err(|_| clock.exhausted())?,
+            result = bounded => result,
         }
     }?;
     let (held, call) = filter
