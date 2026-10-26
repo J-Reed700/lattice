@@ -1208,3 +1208,25 @@ async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_one
     ));
     Ok(())
 }
+
+/// A lesson job failed for good on "database is locked": another connection
+/// held SQLite's lock past the busy timeout. That is waited out like an
+/// outage, while any other database error still fails the attempt.
+#[test]
+fn a_locked_database_is_retried_and_other_database_errors_are_not() {
+    let locked =
+        AppError::Database("error returned from database: (code: 5) database is locked".into());
+    let table_locked = AppError::Database("database table is locked: jobs".into());
+    let corrupt = AppError::Database("database disk image is malformed".into());
+    assert!(JobFailure::is_transient(&locked));
+    assert!(JobFailure::is_transient(&table_locked));
+    assert!(matches!(
+        JobFailure::classify(&locked),
+        JobFailure::Defer(_)
+    ));
+    assert!(!JobFailure::is_transient(&corrupt));
+    assert!(matches!(
+        JobFailure::classify(&corrupt),
+        JobFailure::Fail { .. }
+    ));
+}
