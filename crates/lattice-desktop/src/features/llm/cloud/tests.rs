@@ -247,6 +247,33 @@ fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
     );
 }
 
+/// Claude refuses to compile a schema with more than 24 optional parameters,
+/// so a larger one is asked for in the system prompt instead.
+#[test]
+fn anthropic_asks_for_an_oversized_schema_in_words() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let properties: serde_json::Map<String, Value> = (0..30)
+        .map(|i| (format!("field{i}"), json!({"type":"string"})))
+        .collect();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                json_schema: Some(json!({"type":"object","properties":properties})),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    assert!(body["output_config"].get("format").is_none(), "{body}");
+    let system = body["system"].as_str().unwrap();
+    assert!(system.contains("JSON Schema"), "{system}");
+    assert!(system.contains("field29"), "{system}");
+}
+
 #[test]
 fn anthropic_still_enables_thinking_for_a_real_effort() {
     let body = anthropic_body("medium");

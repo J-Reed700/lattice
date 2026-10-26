@@ -321,16 +321,34 @@ impl CloudLlm {
                 }
             }
             if let Some(schema) = &request.json_schema {
-                let mut config = field(&body, "output_config").clone();
-                if config.is_null() {
-                    config = json!({});
+                let schema = anthropic_schema(schema);
+                if anthropic_schema_compiles(&schema) {
+                    let mut config = field(&body, "output_config").clone();
+                    if config.is_null() {
+                        config = json!({});
+                    }
+                    set_field(
+                        &mut config,
+                        "format",
+                        json!({"type":"json_schema","schema":schema}),
+                    )?;
+                    set_field(&mut body, "output_config", config)?;
+                } else {
+                    // Too large for Claude's grammar compiler: the schema is
+                    // asked for in words, and the caller's parser checks the
+                    // reply as it would any other.
+                    let system = field(&body, "system").as_str().unwrap_or_default();
+                    let ask = format!(
+                        "Reply with only a JSON value that matches this JSON Schema, and no \
+                         other text:\n{schema}"
+                    );
+                    let system = if system.is_empty() {
+                        ask
+                    } else {
+                        format!("{system}\n\n{ask}")
+                    };
+                    set_field(&mut body, "system", json!(system))?;
                 }
-                set_field(
-                    &mut config,
-                    "format",
-                    json!({"type":"json_schema","schema":anthropic_schema(schema)}),
-                )?;
-                set_field(&mut body, "output_config", config)?;
             }
             Ok(body)
         }
@@ -742,6 +760,45 @@ fn anthropic_schema(schema: &Value) -> Value {
         Value::Array(items) => Value::Array(items.iter().map(anthropic_schema).collect()),
         other => other.clone(),
     }
+}
+
+/// Whether Claude will compile `schema` into a grammar. It refuses one with
+/// more than 24 optional parameters or 16 union-typed ones, counted across
+/// every object in it.
+fn anthropic_schema_compiles(schema: &Value) -> bool {
+    fn count(schema: &Value, optional: &mut usize, unions: &mut usize) {
+        match schema {
+            Value::Object(map) => {
+                if let Some(Value::Object(properties)) = map.get("properties") {
+                    let required = map.get("required").and_then(Value::as_array);
+                    for (name, property) in properties {
+                        let listed = required
+                            .is_some_and(|required| required.iter().any(|item| item == name));
+                        if !listed {
+                            *optional += 1;
+                        }
+                        if property.get("anyOf").is_some()
+                            || property.get("type").is_some_and(Value::is_array)
+                        {
+                            *unions += 1;
+                        }
+                    }
+                }
+                for value in map.values() {
+                    count(value, optional, unions);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    count(item, optional, unions);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut optional, mut unions) = (0, 0);
+    count(schema, &mut optional, &mut unions);
+    optional <= 24 && unions <= 16
 }
 
 /// What, if anything, belongs in the Responses API's `reasoning` block.
