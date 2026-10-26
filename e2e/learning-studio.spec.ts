@@ -2505,7 +2505,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await recall.getByRole("textbox", { name: "Why was this card changed?" }).fill("Clarify the comparison details");
   await recall.getByRole("button", { name: "Save card version", exact: true }).click();
   await expect(recall.getByRole("status")).toContainText("Card version saved.");
-  await recall.getByRole("button", { name: "Reveal answer", exact: true }).first().click();
+  await recall.getByRole("button", { name: "I don't know yet: show me", exact: true }).first().click();
   await recall.getByRole("button", { name: "good", exact: true }).first().click();
   await expect(recall.getByRole("status")).toContainText("Review saved to this card’s schedule.");
   await recall.getByRole("button", { name: "Mark as duplicate", exact: true }).click();

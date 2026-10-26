@@ -63,7 +63,9 @@ describe('Learning Studio versioned recall', () => {
     renderPanel();
     expect((await screen.findAllByText('Which boundary makes retries safe?')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/A stable operation identifier and a payload fingerprint/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    await user.type(screen.getByLabelText(/Your answer/), 'An idempotency key');
+    await user.click(screen.getByRole('button', { name: 'Check my answer' }));
+    expect(screen.getByText('An idempotency key')).toBeVisible();
     expect(screen.getByText(/A stable operation identifier and a payload fingerprint/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'good' }));
     expect(await screen.findByText(/Temporary review error/)).toBeVisible();
@@ -86,8 +88,9 @@ describe('Learning Studio versioned recall', () => {
     mocks.recall.mockResolvedValue(ok(workspace({ cards: [card({ format: 'multiple_choice', content: multipleChoiceContent, versions: [{ revision: 1, format: 'multiple_choice', content: multipleChoiceContent, sourceVersionIds: ['version-1'], changeReason: 'Migrated from Study', createdAt: 1_790_000_000_000 }] })] })));
     renderPanel();
 
-    await user.click(await screen.findByRole('radio', { name: 'A stable operation identifier.' }));
-    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    expect(await screen.findByRole('button', { name: "I don't know yet: show me" })).toBeVisible();
+    await user.click(screen.getByRole('radio', { name: 'A stable operation identifier.' }));
+    await user.click(screen.getByRole('button', { name: 'Check my answer' }));
     expect(screen.getByText('Your choice matches the saved answer.')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'good' }));
 
