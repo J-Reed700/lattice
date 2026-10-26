@@ -7,9 +7,11 @@ use super::retrieve::Retrieved;
 use super::*;
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 use crate::features::conversation::chat::prompting::{kb_passage, kb_passages};
+use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::{LLMPort, ToolDefinition};
 use lattice_core::application::services::context_assembler::{render, InlineEvidence};
+use std::collections::HashSet;
 
 /// The rendered prompt and the numbered sources it cites.
 pub(super) struct RenderedPrompt {
@@ -66,9 +68,24 @@ impl RenderedPrompt {
             return;
         };
         let before = self.sources.len();
+        let web_pages = |sources: &[SourceDto]| -> HashSet<String> {
+            sources
+                .iter()
+                .filter(|source| source.document_id.starts_with(WEB_SOURCE_PREFIX))
+                .map(|source| source.file_path.trim().to_string())
+                .collect()
+        };
+        let pages_before = web_pages(&self.sources);
         message.keep_sources(kept, &mut self.sources);
         if self.sources.len() == before {
             return;
+        }
+        // A page cut from the prompt was recorded as read when it was
+        // fetched. Left so, the model's request for it was answered "its text
+        // is in your context above", which it never was.
+        let pages_after = web_pages(&self.sources);
+        for url in pages_before.difference(&pages_after) {
+            self.pages_read.withdraw(url);
         }
         if let Some(trace) = self.retrieval_trace.as_mut() {
             let TraceCounts {
@@ -132,6 +149,21 @@ pub(super) fn render_prompt(
             .map(|item| llm.count_tokens(&item.render(0)))
             .sum(),
     );
+    // The pages earlier turns linked and the document a follow-up reopens are
+    // in the prompt too. Uncharged, they pushed the request past its budget,
+    // and the cut that followed took this turn's own pages first.
+    if let Some(linked) = turn.linked_web_sources_context.as_deref() {
+        evidence.charge(llm.count_tokens(linked));
+    }
+    if let Some((document, followup_sources)) = retrieval.followup_context.as_ref() {
+        let attached = !followup_sources.is_empty()
+            && followup_sources
+                .iter()
+                .all(|source| carried_attachment_ids.contains(&source.document_id));
+        if !attached {
+            evidence.charge(llm.count_tokens(&document.render_for_count()));
+        }
+    }
     let passage_room = evidence.remaining();
     // Priced as the prompt shows a passage, under its document's name and id,
     // rather than as its bare text: on a small window those lines add up.
