@@ -276,18 +276,12 @@ impl CloudLlm {
             Ok(body)
         } else {
             let (system, messages) = messages::anthropic_messages(&request.input)?;
+            // No sampling knobs are sent. Current Claude models reject
+            // `temperature`, `top_p` and `top_k` with a 400 (some outright, some
+            // for any non-default value, all of them while thinking), and the
+            // overrides callers pass were tuned for local models anyway. A
+            // determinism override is not worth a failed call.
             let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.output_room(request),"stream":stream});
-            if let Some(sampling) = request.sampling {
-                if let Some(temperature) = sampling.temperature {
-                    set_field(&mut body, "temperature", json!(temperature))?;
-                }
-                if let Some(top_p) = sampling.top_p {
-                    set_field(&mut body, "top_p", json!(top_p))?;
-                }
-                if let Some(top_k) = sampling.top_k {
-                    set_field(&mut body, "top_k", json!(top_k))?;
-                }
-            }
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
@@ -313,10 +307,11 @@ impl CloudLlm {
             }
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
-                // Forcing a call is refused while extended thinking is on, so a
-                // thinking request that requires one leaves the choice to the model.
+                // A forced call is never sent. Every model refuses one while
+                // extended thinking is on, and the newest refuse it outright
+                // (Opus 5.5 answers `"any"` with a 400), so a request that
+                // requires a call leaves the choice to the model.
                 let choice = match request.tool_choice {
-                    Some(ToolChoice::Required) if !thinks => Some("any"),
                     Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
                     Some(ToolChoice::None) => Some("none"),
                     None => None,

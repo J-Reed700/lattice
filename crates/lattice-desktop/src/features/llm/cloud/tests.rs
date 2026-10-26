@@ -173,6 +173,36 @@ fn anthropic_omits_the_thinking_block_when_no_reasoning_is_asked_for() {
     assert_eq!(body["output_config"]["effort"], "low");
 }
 
+/// Current Claude models 400 on any sampling knob, so a caller's determinism
+/// override must not reach the request.
+#[test]
+fn anthropic_never_sends_sampling_knobs() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                sampling: Some(
+                    lattice_core::application::ports::llm_port::SamplingOverride {
+                        temperature: Some(0.0),
+                        top_p: Some(1.0),
+                        top_k: Some(1),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    for knob in ["temperature", "top_p", "top_k"] {
+        assert!(body.get(knob).is_none(), "{knob} sent: {body}");
+    }
+}
+
 #[test]
 fn anthropic_still_enables_thinking_for_a_real_effort() {
     let body = anthropic_body("medium");
@@ -207,7 +237,10 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
     };
     let plain = body(ThinkingMode::Off, ToolChoice::Required);
     assert!(plain.get("thinking").is_none());
-    assert_eq!(plain["tool_choice"]["type"], "any");
+    assert_eq!(
+        plain["tool_choice"]["type"], "auto",
+        "the newest models refuse a forced call even without thinking"
+    );
     assert_eq!(
         body(ThinkingMode::Off, ToolChoice::None)["tool_choice"]["type"],
         "none"
