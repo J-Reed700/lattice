@@ -109,6 +109,25 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.queryByRole('button', { name: 'Reveal solution' })).not.toBeInTheDocument();
   });
 
+  it('keeps the guided answer editable while an autosave is in flight', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    const saved = mocks.save.getMockImplementation()!;
+    let release!: () => void;
+    mocks.save.mockImplementationOnce((request) => new Promise((resolve) => { release = () => resolve(saved(request)); }));
+    renderWorkbench(lesson, true);
+    const answer = await screen.findByRole('textbox', { name: 'Your working' });
+    await user.type(answer, 'First thought.');
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(answer).toBeEnabled();
+    await user.type(answer, ' Second thought.');
+    expect(answer).toHaveValue('First thought. Second thought.');
+    release();
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
+    expect(mocks.save.mock.calls[1][0]).toMatchObject({ text: 'First thought. Second thought.' });
+  });
+
   it('opens exact citations in embedded guided replies and hides them without changing the response', async () => {
     const user = userEvent.setup();
     currentSession!.summary.taskKind = 'guided';

@@ -31,6 +31,7 @@ fn test_http() -> FinderHttp {
         pacer: Arc::new(SitePacer::with_interval(Duration::ZERO)),
         parsers: Arc::new(Semaphore::new(2)),
         contact: None,
+        public_only: false,
     }
 }
 

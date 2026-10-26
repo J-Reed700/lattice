@@ -207,7 +207,15 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     ledger.observe(&candidate, &report).await?;
                 }
                 research::Expansion::Unchanged(searched) => {
-                    ledger.record_research(&claims, &searched, &report).await?;
+                    // A round that reached no search engine and no page is
+                    // not the claims' research: they keep their round.
+                    if !searched.unreached {
+                        ledger.record_research(&claims, &searched, &report).await?;
+                    } else {
+                        tracing::info!(
+                            "claim.state: research reached nothing; the claims keep their round"
+                        );
+                    }
                     break;
                 }
                 research::Expansion::Exhausted(exhausted, searched) => {

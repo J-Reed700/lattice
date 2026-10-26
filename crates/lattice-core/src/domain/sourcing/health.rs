@@ -40,6 +40,9 @@ pub struct Breaker {
     /// Consecutive openings without a success between them; the derived
     /// backoff doubles with each.
     trips: u32,
+    /// Whether the open window is the host's own instruction rather than a
+    /// derived backoff. Only the host's is worth a caller's wait.
+    explicit: bool,
     quota: Option<QuotaWindow>,
 }
 
@@ -103,6 +106,7 @@ impl Breaker {
                 transport: 0,
             },
             trips: 0,
+            explicit: false,
             quota: None,
         }
     }
@@ -280,6 +284,7 @@ impl Breaker {
                     until: later,
                     cause: cause.clone(),
                 };
+                self.explicit = true;
             }
             (BreakerState::Open { .. }, _) => {}
             (BreakerState::HalfOpen { .. }, _)
@@ -312,14 +317,19 @@ impl Breaker {
     }
 
     /// How long a caller with `remaining` time must wait before this finder
-    /// may be called: zero when it is not open, the rest of the open window
-    /// when that fits before the caller's deadline, `None` when it does not
+    /// may be called: zero when it is not open, the rest of a window the host
+    /// asked for when that fits before the caller's deadline, `None` otherwise
     /// (the caller skips it as `CircuitOpen`).
+    ///
+    /// A derived backoff is never waited out. It doubles with every trip, so a
+    /// host that refuses every call (a search engine's bot challenge) would
+    /// have each caller wait twice as long as the one before, minutes and then
+    /// hours, for an answer that is another refusal.
     pub fn wait_before(&self, now: DateTime<Utc>, remaining: Duration) -> Option<Duration> {
         match &self.state {
             BreakerState::Open { until, .. } if *until > now => {
                 let wait = (*until - now).to_std().unwrap_or(Duration::ZERO);
-                (wait <= remaining).then_some(wait)
+                (self.explicit && wait <= remaining).then_some(wait)
             }
             _ => Some(Duration::ZERO),
         }
@@ -354,6 +364,7 @@ impl Breaker {
         policy: &SourcingPolicy,
     ) {
         self.trips = self.trips.saturating_add(1);
+        self.explicit = matches!(class, FailureClass::Explicit { .. });
         let window = open_for(class, now, rate, self.trips, policy.breaker_ceiling);
         self.state = BreakerState::Open {
             until: after(now, window),

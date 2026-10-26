@@ -130,8 +130,14 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
                     .filter_map(|idx| source_token_sets.get(*idx)),
             )
         };
-        let supported =
-            matching_tokens >= MIN_MATCHING_TOKENS && overlap_ratio >= MIN_OVERLAP_RATIO;
+        // A sentence that cites nothing is never backed, however many words it
+        // shares with some source: the overlap is with whichever window ranks
+        // best, not with anything the sentence claims to rest on, and "tripled
+        // yields" shares half its words with "improved cold tolerance". Its
+        // overlap is still measured, for diagnostics.
+        let supported = !citation_ids.is_empty()
+            && matching_tokens >= MIN_MATCHING_TOKENS
+            && overlap_ratio >= MIN_OVERLAP_RATIO;
         let copying = if citations_valid && !citation_ids.is_empty() {
             compare_wording(&claim_text, &cited_source_indices, sources, &mut wording)
         } else {
@@ -508,7 +514,7 @@ fn is_claim_candidate(sentence: &str) -> bool {
         return false;
     }
     // The app's own lines, appended when the model hit its output limit, ran
-    // out of tool rounds or filled its window. The splitter stops at a full stop, so compare the
+    // out of tool rounds or time, or filled its window. The splitter stops at a full stop, so compare the
     // words, not the wrapper — and the emphasis around them is gone by now, so
     // match either form.
     let app_note = |note: &'static str| {
@@ -524,6 +530,7 @@ fn is_claim_candidate(sentence: &str) -> bool {
         super::super::tool_loop::CUT_SHORT_NOTE,
         super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
         super::super::tool_loop::WINDOW_FULL_NOTE,
+        super::super::tool_loop::OUT_OF_TIME_NOTE,
     ]
     .into_iter()
     .any(|note| unwrapped.starts_with(app_note(note)))

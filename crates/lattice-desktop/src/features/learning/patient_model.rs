@@ -163,6 +163,9 @@ impl LLMPort for PatientModel<'_> {
     fn chars_per_token(&self) -> f64 {
         self.inner.chars_per_token()
     }
+    fn thinks_before_answering(&self) -> bool {
+        self.inner.thinks_before_answering()
+    }
     fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
         self.inner.pace()
     }

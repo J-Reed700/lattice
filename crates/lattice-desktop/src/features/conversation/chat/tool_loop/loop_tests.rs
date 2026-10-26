@@ -26,6 +26,11 @@ const CONVERSATION: &str = "tool-loop-conversation";
 enum Scripted {
     Reply(CompletionResponse),
     Fail(String),
+    /// A reply that takes this long to write.
+    After(Duration, CompletionResponse),
+    /// The prompt refused before it was sent: this many tokens, counted
+    /// exactly, against the reported window.
+    Refuse(usize),
 }
 
 impl From<CompletionResponse> for Scripted {
@@ -90,6 +95,16 @@ impl LLMPort for Model {
         match reply {
             Some(Scripted::Reply(reply)) => Ok(reply),
             Some(Scripted::Fail(error)) => Err(AppError::ServiceNotAvailable(error)),
+            Some(Scripted::After(wait, reply)) => {
+                tokio::time::sleep(wait).await;
+                Ok(reply)
+            }
+            Some(Scripted::Refuse(prompt_tokens)) => Err(AppError::PromptExceedsWindow {
+                prompt_tokens,
+                window: self.max_context_tokens(),
+                counted_exactly: true,
+                message: "The prompt does not fit.".into(),
+            }),
             // Out of script: wait to be stopped.
             None => std::future::pending().await,
         }
@@ -289,6 +304,7 @@ async fn run_on(
     let turn = Turn {
         message,
         sources: Vec::new(),
+        time_budget: TURN_TIME,
     };
     run_turn(
         runtime,
@@ -302,11 +318,15 @@ async fn run_on(
     .await
 }
 
-/// The turn's message and the numbered sources it shows.
+/// The turn's message, the numbered sources it shows, and its deadline.
 struct Turn<'a> {
     message: &'a str,
     sources: Vec<SourceDto>,
+    time_budget: Duration,
 }
+
+/// Time enough that no test here meets the deadline unless it means to.
+const TURN_TIME: Duration = Duration::from_secs(60);
 
 async fn run_turn(
     runtime: FakeRuntime,
@@ -361,7 +381,7 @@ async fn run_turn(
             tools: Some(tools),
             max_output_tokens: 512,
             input_budget,
-            time_budget: Duration::from_secs(60),
+            time_budget: turn.time_budget,
             max_tool_rounds: rounds,
             research: None,
         },
@@ -610,9 +630,11 @@ async fn a_call_written_as_text_in_a_round_that_may_call_is_run() {
     assert!(streamed.contains("Let me check."), "{streamed}");
 }
 
-/// One retry, then the loop ends as it always has for a reply with no answer.
+/// One retry. A retry that only calls again ends the turn with the note in
+/// place of an answer, not an error: the turn keeps what it gathered and
+/// can be continued.
 #[tokio::test]
-async fn a_retry_that_calls_again_ends_as_an_empty_answer_always_has() {
+async fn a_retry_that_calls_again_ends_with_the_note_and_keeps_its_sources() {
     let model = Model::new([
         search("s1", "bridge opening"),
         search("s2", "again"),
@@ -630,9 +652,12 @@ async fn a_retry_that_calls_again_ends_as_an_empty_answer_always_has() {
     )
     .await;
 
-    let error = run.outcome.expect_err("no answer was written");
-    assert!(error.to_string().contains("no answer"), "{error}");
+    assert_eq!(
+        run.outcome.unwrap().response,
+        OUT_OF_ROUNDS_NOTE.trim_start()
+    );
     assert_eq!(model.requests().len(), 3, "one retry, no more");
+    assert_eq!(web.log().len(), 2, "the first round's search ran");
 }
 
 #[tokio::test]
@@ -1057,5 +1082,34 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     assert!(!result[0].contains("Citable passage"), "{}", result[0]);
 }
 
+/// A call to a tool the turn does not offer is answered with the tools it
+/// does, so the next round can correct the call rather than guess again.
+#[tokio::test]
+async fn an_unknown_tool_is_answered_with_the_tools_there_are() {
+    let model = Model::new([
+        calls(&[("t1", "teleport", json!({"to": "the bridge"}))]),
+        CompletionResponse::from_text("It opened in 1932."),
+    ]);
+    let web = Web::with_delays(&[]);
+    let run = run(
+        &model,
+        &web,
+        &[tool("web_search")],
+        ROOMY,
+        3,
+        "unknown-tool",
+    )
+    .await;
+
+    assert_eq!(run.outcome.unwrap().response, "It opened in 1932.");
+    let requests = model.requests();
+    let answered = results_mentioning(&requests[1], "There is no tool named \"teleport\"");
+    assert_eq!(answered.len(), 1);
+    assert!(answered[0].contains("web_search"), "{}", answered[0]);
+    assert!(web.log().is_empty(), "nothing ran");
+}
+
+#[path = "limit_loop_tests.rs"]
+mod limit_loop_tests;
 #[path = "reading_loop_tests.rs"]
 mod reading_loop_tests;

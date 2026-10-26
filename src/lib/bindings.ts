@@ -1292,6 +1292,22 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async setStudyDeckTarget(request: SetStudyDeckTargetRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_study_deck_target", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createInterviewStudyDeck(request: CreateInterviewStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_interview_study_deck", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async createLearningTangent(request: CreateLearningTangentRequestDto) : Promise<Result<LearningTangentDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_tangent", { request }) };
@@ -6124,6 +6140,11 @@ conversation: ConversationDto;
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
 export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
+/**
+ * Make a recall deck from a ready interview activity's questions and its
+ * private answer guides.
+ */
+export type CreateInterviewStudyDeckRequestDto = { programId: string; activityId: string; targetAt: number | null }
 export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
@@ -10020,6 +10041,10 @@ export type SetConversationStateRequestDto = { conversationId: string; value: bo
  */
 export type SetJournalEntryPinnedRequestDto = { journalSpaceId: string; conversationId: string; pinned: boolean }
 /**
+ * Set or clear the moment a deck must be remembered by.
+ */
+export type SetStudyDeckTargetRequestDto = { deckId: string; targetAt: number | null }
+/**
  * Complete application settings structure.
  */
 export type SettingsDto = {
@@ -10390,8 +10415,13 @@ export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: strin
  */
 citations?: StudySourceDto[]; topic: string; dueAt: number; intervalDays: number; reviewCount: number; lapses: number }
 export type StudyCardFormat = "multiple_choice" | "question_answer"
-export type StudyDeckDto = { id: string; title: string; focus: string; studyGoal?: string; modelName: string; createdAt: number; cards: StudyCardDto[] }
-export type StudyDeckSummaryDto = { id: string; title: string; focus: string; studyGoal?: string; createdAt: number; cardCount: number; dueCount: number; quizAttempts: number; quizCorrect: number }
+export type StudyDeckDto = { id: string; title: string; focus: string; studyGoal?: string; modelName: string; createdAt: number;
+/**
+ * When these cards must be remembered by, such as an interview. Reviews
+ * before then are spaced to land before it.
+ */
+targetAt?: number | null; cards: StudyCardDto[] }
+export type StudyDeckSummaryDto = { id: string; title: string; focus: string; studyGoal?: string; createdAt: number; cardCount: number; dueCount: number; quizAttempts: number; quizCorrect: number; targetAt?: number | null }
 export type StudyRating = "again" | "hard" | "good" | "easy"
 export type StudySourceDto = { chunkId: string; documentId: string; fileName: string; filePath: string; excerpt: string;
 /**

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningPracticalActivityDto, LearningSimulationSessionDto } from '@/lib/bindings';
 
+import { questionLabel } from './practicalWorkbenchHelpers';
 import { SimulationPanel } from './SimulationPanel';
 
 const api = vi.hoisted(() => ({ startLearningSimulation: vi.fn(), sendLearningSimulationTurn: vi.fn(), finishLearningSimulation: vi.fn(), getLearningSourceVersion: vi.fn() }));
@@ -138,9 +139,30 @@ describe('SimulationPanel', () => {
     expect(second.operationId).toBe(first.operationId);
   });
 
+  it('brings the newest turn into view inside the conversation log', () => {
+    const turn = (id: string, speaker: string) => ({ id, speaker, content: `Turn ${id}`, citations: [] });
+    const rects = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const top = this.getAttribute('role') === 'log' ? 100 : this.textContent?.includes('Turn 3') ? 700 : 0;
+      return { top } as DOMRect;
+    });
+    const view = renderPanel(session({ turns: [turn('1', 'counterpart'), turn('2', 'learner')] as never }));
+    const log = screen.getByRole('log', { name: 'Simulation turns' });
+    log.scrollTop = 0;
+    view.rerender(<SimulationPanel programId="course-1" activity={activity} session={session({ revision: 4, turns: [turn('1', 'counterpart'), turn('2', 'learner'), turn('3', 'counterpart')] as never })} onSession={view.onSession} />);
+    expect(log.scrollTop).toBe(588);
+    rects.mockRestore();
+  });
+
+  it('labels quick prompts with the question’s words, not its markdown', () => {
+    expect(questionLabel('Assume this trace:\n```text\nretry=42\n```\nHow would you prevent duplicates?', 80))
+      .toBe('Assume this trace: How would you prevent duplicates?');
+    expect(questionLabel('Explain observability.\n![Untrusted image](https://example.test/p.png)')).toBe('Explain observability.');
+    expect(questionLabel('How would you design reliable request processing, part 1?')).toBe('How would you design reliable…');
+  });
+
   it('offers no reply or finish once the simulation is over', () => {
-    renderPanel(session({ status: 'completed' as never }));
-    expect(screen.getByText(/· completed/)).toBeInTheDocument();
+    renderPanel(session({ status: 'submitted' }));
+    expect(screen.getByText(/· finished/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Finish simulation' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Your response')).not.toBeInTheDocument();
   });

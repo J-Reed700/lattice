@@ -24,7 +24,13 @@ pub struct Recipe {
     /// The embedding model's GGUF, with its `tokenizer.json` beside it.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
-    pub server: Server,
+    /// A llama-server the run checks and records. Exactly one of `server`
+    /// and `cloud` names the answering model.
+    #[serde(default)]
+    pub server: Option<Server>,
+    /// A cloud provider's model, reached through the same recording proxy.
+    #[serde(default)]
+    pub cloud: Option<Cloud>,
     /// A model on the recipe's server to hold the utility role, as Settings ->
     /// Model roles assigns it to a server-hosted model. The corpus planner and
     /// the corrective retry run only when a utility model is set
@@ -60,6 +66,41 @@ pub struct Server {
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
     pub thinking: String,
+}
+
+/// A model on a cloud provider's public API. The key is the one the desktop
+/// reads (the provider's `*_API_KEY` variable, else the saved key); it goes
+/// to the provider and is never written to a result.
+#[derive(Debug, Deserialize)]
+pub struct Cloud {
+    /// `anthropic`, `openai` or `google`, as Settings names them.
+    pub provider: String,
+    /// The model id requested, e.g. `claude-opus-5-5`.
+    pub model: String,
+}
+
+impl Cloud {
+    /// The provider's public host, which the proxy forwards to, and the
+    /// variable that points the desktop's client at the proxy instead.
+    pub fn upstream(&self) -> Res<(&'static str, &'static str)> {
+        match self.provider.as_str() {
+            "anthropic" => Ok(("https://api.anthropic.com", "LATTICE_ANTHROPIC_BASE_URL")),
+            "openai" => Ok(("https://api.openai.com", "LATTICE_OPENAI_BASE_URL")),
+            "google" => Ok((
+                "https://generativelanguage.googleapis.com",
+                "LATTICE_GOOGLE_BASE_URL",
+            )),
+            other => {
+                Err(format!("cloud.provider {other:?} is not anthropic, openai or google").into())
+            }
+        }
+    }
+}
+
+/// Which model a run answers with.
+pub enum Answerer<'a> {
+    Server(&'a Server),
+    Cloud(&'a Cloud),
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,8 +147,29 @@ impl Recipe {
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 
+    /// The answering model: exactly one of `server` and `cloud`.
+    pub fn answerer(&self) -> Res<Answerer<'_>> {
+        match (&self.server, &self.cloud) {
+            (Some(server), None) => Ok(Answerer::Server(server)),
+            (None, Some(cloud)) => Ok(Answerer::Cloud(cloud)),
+            _ => Err("a recipe names exactly one of `server` and `cloud`".into()),
+        }
+    }
+
+    /// The model name a run's rows and results are filed under.
+    pub fn model_name(&self) -> Res<&str> {
+        Ok(match self.answerer()? {
+            Answerer::Server(server) => server.model.as_str(),
+            Answerer::Cloud(cloud) => cloud.model.as_str(),
+        })
+    }
+
     pub fn thinking_off(&self) -> Res<bool> {
-        match self.server.thinking.as_str() {
+        let Answerer::Server(server) = self.answerer()? else {
+            // A cloud request carries its own thinking setting, as sent.
+            return Ok(false);
+        };
+        match server.thinking.as_str() {
             "off" => Ok(true),
             "as-sent" => Ok(false),
             other => {
@@ -133,6 +195,8 @@ impl Recipe {
     }
 
     /// The shipped defaults, the recipe's overrides, and the harness wiring.
+    /// `llama_url` is the proxy in front of the recipe's server; a cloud run
+    /// reaches its proxy through the provider's base-URL variable instead.
     pub fn settings(&self, llama_url: &str) -> Res<SettingsDto> {
         let mut merged = serde_json::to_value(SettingsDto::default())?;
         merge(&mut merged, &self.settings);
@@ -142,13 +206,22 @@ impl Recipe {
             .utility_role
             .as_ref()
             .map_or(String::new(), |role| role.served_as.clone());
-        let wiring = serde_json::json!({
-            "llm": {
-                "provider": "llamacpp",
-                "llamaCpp": {"url": llama_url, "model": self.server.model},
-                "ollamaUtilityModel": utility
-            }
-        });
+        let wiring = match self.answerer()? {
+            Answerer::Server(server) => serde_json::json!({
+                "llm": {
+                    "provider": "llamacpp",
+                    "llamaCpp": {"url": llama_url, "model": server.model},
+                    "ollamaUtilityModel": utility
+                }
+            }),
+            Answerer::Cloud(cloud) => serde_json::json!({
+                "llm": {
+                    "provider": cloud.provider,
+                    "model": cloud.model,
+                    "ollamaUtilityModel": utility
+                }
+            }),
+        };
         merge(&mut merged, &wiring);
         let settings: SettingsDto = serde_json::from_value(merged)?;
         let round_trip = serde_json::to_value(&settings)?;

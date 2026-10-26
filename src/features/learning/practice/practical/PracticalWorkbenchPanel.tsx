@@ -10,6 +10,7 @@ import { ActivityBrief } from "@/features/learning/practice/practical/ActivityBr
 import { ActivityComposer } from "@/features/learning/practice/practical/ActivityComposer";
 import { ActivityShelf } from "@/features/learning/practice/practical/ActivityShelf";
 import { ArtifactEditor } from "@/features/learning/practice/practical/ArtifactEditor";
+import { InterviewDrill } from "@/features/learning/practice/practical/InterviewDrill";
 import {
   errorText,
   isSimulationKind,
@@ -264,6 +265,21 @@ export function PracticalWorkbenchPanel({
         </div>
       </header>
 
+      {/* The dialog can close while an activity is prepared; say what is happening, and what failed. */}
+      {!composerOpen && generate.isPending && (
+        <p role="status" className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
+          <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" />
+          {generate.variables?.kind === "interview"
+            ? "Preparing your interview… Company research and question planning can take several minutes."
+            : "Preparing your activity…"}
+        </p>
+      )}
+      {!composerOpen && generate.isError && (
+        <p role="alert" className="rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+          The activity could not be prepared: {errorText(generate.error)}
+        </p>
+      )}
+
       <RuntimeSetupPanel
         programId={programId}
         workspace={workspace}
@@ -386,6 +402,9 @@ export function PracticalWorkbenchPanel({
                   }}
                 />
               )}
+              {activeActivity.kind === "interview" && activeActivity.status === "ready" && (
+                <InterviewDrill programId={programId} activity={activeActivity} />
+              )}
               <RunHistory
                 runs={runs}
                 selectedRun={selectedRun}
@@ -404,7 +423,12 @@ export function PracticalWorkbenchPanel({
           profiles={profiles}
           builtinRuntimes={builtinRuntimes}
           returnFocusRef={newActivityRef}
-          onClose={() => { setComposerOpen(false); setProjectBrief(null); }}
+          onClose={() => {
+            setComposerOpen(false);
+            setProjectBrief(null);
+            // An error the dialog already showed need not linger below it.
+            if (!generate.isPending) generate.reset();
+          }}
           onRequestRuntimeSetup={() => {
             setComposerOpen(false);
             setRuntimeSetupRequest((request) => request + 1);

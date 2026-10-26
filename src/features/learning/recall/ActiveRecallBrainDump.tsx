@@ -47,7 +47,16 @@ function extractKeywords(text: string): string[] {
   return Array.from(new Set(matches.filter((word) => !STOP_WORDS.has(word))));
 }
 
-export function ActiveRecallBrainDump({
+/**
+ * Each lesson keeps its own dump. Choosing another lesson while this view is
+ * open starts that lesson's dump; it never carries this text over or writes it
+ * into the other lesson's saved draft.
+ */
+export function ActiveRecallBrainDump(props: ActiveRecallBrainDumpProps) {
+  return <BrainDump key={`${props.program.summary.id}:${props.lesson?.id ?? 'course'}`} {...props} />;
+}
+
+function BrainDump({
   program,
   lesson,
   onDraftMissedConcept,

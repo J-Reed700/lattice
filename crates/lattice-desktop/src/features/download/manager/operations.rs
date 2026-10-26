@@ -112,13 +112,18 @@ impl DownloadManager for DownloadManagerService {
             .ok()
             .map(std::path::PathBuf::from)
             .map(|p| p.join(".cache").join("lattice"));
-        let within_allowed_root = request.destination.starts_with(&self.allowed_root);
-        let within_cache_root = cache_root
-            .as_ref()
-            .is_some_and(|root| request.destination.starts_with(root));
-        let within_dot_cache_root = dot_cache_root
-            .as_ref()
-            .is_some_and(|root| request.destination.starts_with(root));
+        // Model files arrive confined, so canonicalized (on Windows with the
+        // `\\?\` prefix), while the roots are plain paths: each root is matched
+        // in both forms, or no model could ever download on Windows.
+        let under = |root: &std::path::Path| {
+            request.destination.starts_with(root)
+                || root
+                    .canonicalize()
+                    .is_ok_and(|canonical| request.destination.starts_with(canonical))
+        };
+        let within_allowed_root = under(self.allowed_root.as_path());
+        let within_cache_root = cache_root.as_deref().is_some_and(under);
+        let within_dot_cache_root = dot_cache_root.as_deref().is_some_and(under);
 
         if !within_allowed_root && !within_cache_root && !within_dot_cache_root {
             let mut roots = vec![self.allowed_root.display().to_string()];

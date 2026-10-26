@@ -6,7 +6,8 @@ import { LoaderCircle, Play, Send, Users } from "lucide-react";
 import { TiptapViewer } from "@/components/TiptapEditor";
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
-import { errorText, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import { AnswerTimer } from "@/features/learning/practice/practical/AnswerTimer";
+import { errorText, questionLabel, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
 import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
 import type {
@@ -52,6 +53,7 @@ export function SimulationPanel({
   const [error, setError] = useState<string | null>(null);
   const [retryOperation, setRetryOperation] = useState<"start" | "turn" | "finish" | null>(null);
   const busyRef = useRef(false);
+  const logRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<{
     start?: StartLearningSimulationRequestDto;
     turn?: SendLearningSimulationTurnRequestDto;
@@ -60,6 +62,15 @@ export function SimulationPanel({
   const refreshAfterError = () => {
     void client.invalidateQueries({ queryKey: learningPracticalWorkspaceKey(programId) });
   };
+  // Bring the newest turn into view inside the log: the interviewer's next
+  // question, or the start of the closing feedback, not the end of it.
+  const turnCount = session?.turns.length ?? 0;
+  useEffect(() => {
+    const log = logRef.current;
+    const newest = log?.lastElementChild;
+    if (!log || !newest || turnCount === 0) return;
+    log.scrollTop += newest.getBoundingClientRect().top - log.getBoundingClientRect().top - 12;
+  }, [session?.id, turnCount]);
   useEffect(() => {
     if (session?.status === "submitted") {
       setError(null);
@@ -85,6 +96,7 @@ export function SimulationPanel({
     onError: refreshAfterError,
   });
   const busy = start.isPending || turn.isPending || finish.isPending;
+  const lastQuestionId = session?.turns.filter((item) => item.speaker === "counterpart").at(-1)?.id;
   const begin = async () => {
     if (busyRef.current || !learnerRole.trim() || !counterpartRole.trim()) return;
     busyRef.current = true;
@@ -234,7 +246,7 @@ export function SimulationPanel({
             onClick={() => void begin()}
             className="inline-flex w-fit items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
           >
-            <Play size={13} /> Start simulation
+            <Play size={13} /> {isInterview ? "Start interview" : "Start simulation"}
           </button>
         </div>
       ) : (
@@ -248,7 +260,7 @@ export function SimulationPanel({
               <strong className="text-text-primary">
                 {session.counterpartRole}
               </strong>{" "}
-              · {session.status}
+              · {session.status === "active" ? "in progress" : "finished"}
             </div>
             {session.status === "active" && (
               <button
@@ -257,7 +269,7 @@ export function SimulationPanel({
                 onClick={() => void end()}
                 className="rounded-full border border-border px-3 py-2 text-xs"
               >
-                Finish simulation
+                {isInterview ? "Finish interview" : "Finish simulation"}
               </button>
             )}
             {session.status !== "active" && onRestart && (
@@ -267,11 +279,12 @@ export function SimulationPanel({
             )}
           </div>
           <div
+            ref={logRef}
             aria-label="Simulation turns"
             role="log"
             aria-live="polite"
             aria-busy={busy}
-            className="mt-3 max-h-[420px] space-y-3 overflow-y-auto rounded-xl border border-border bg-background/40 p-3"
+            className="mt-3 max-h-[min(70vh,640px)] space-y-3 overflow-y-auto rounded-xl border border-border bg-background/40 p-3"
           >
             {session.turns.length === 0 ? (
               <p className="p-4 text-xs text-text-muted">
@@ -313,6 +326,7 @@ export function SimulationPanel({
           </div>
           {session.status === "active" && (
             <div className="mt-3 space-y-2">
+              {isInterview && lastQuestionId && <AnswerTimer since={lastQuestionId} />}
               {activity.practiceMode !== "demonstrate" && activity.interviewPlan?.questions &&
                 activity.interviewPlan.questions.length > 0 && (
                   <div
@@ -325,10 +339,7 @@ export function SimulationPanel({
                     </span>
                     {activity.interviewPlan.questions.map((q) => {
                       const promptText = `Please ask me this practice question: ${q.question}`;
-                      const truncated =
-                        q.question.length > 36
-                          ? `${q.question.slice(0, 36)}…`
-                          : q.question;
+                      const truncated = questionLabel(q.question);
                       return (
                         <button
                           key={q.id}
@@ -342,7 +353,7 @@ export function SimulationPanel({
                             );
                           }}
                           className="max-w-full truncate rounded-full border border-border bg-background px-2.5 py-1 text-xs text-text-secondary hover:border-accent hover:text-accent transition-colors"
-                          title={q.question}
+                          title={questionLabel(q.question, 300)}
                         >
                           Ask me: {truncated}
                         </button>
@@ -385,7 +396,11 @@ export function SimulationPanel({
       {busy && (
         <p role="status" className="mt-3 flex items-center gap-2 text-xs text-text-muted">
           <LoaderCircle size={14} className="animate-spin" />
-          {start.isPending ? "Starting simulation…" : finish.isPending ? "Preparing your feedback…" : "Your counterpart is responding…"}
+          {start.isPending
+            ? isInterview ? "Starting the interview…" : "Starting simulation…"
+            : finish.isPending
+              ? "Preparing your feedback…"
+              : isInterview ? "The interviewer is responding…" : "Your counterpart is responding…"}
         </p>
       )}
       {error && (

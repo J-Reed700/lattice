@@ -206,7 +206,7 @@ fn the_check_script_sends_a_long_page_in_parts_that_rejoin_exactly() {
             r#"
             var window = {};
             var location = { protocol: 'https:', href: '' };
-            var block = { textContent: pageText };
+            var block = { tagName: 'P', textContent: pageText, parentElement: null, closest: () => null };
             var document = {
               readyState: 'complete', title: 'Long page', body: { textContent: pageText },
               querySelector: () => null,

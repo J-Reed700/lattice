@@ -703,12 +703,15 @@ async fn review_material(
                     set_aside: passes.set_aside(),
                 });
             }
-            // A repair request carries the requirements, the whole lesson and
-            // its findings, and can outgrow the window the lesson itself was
-            // written in. It was never sent; like an unusable answer it fixed
-            // nothing, so the findings wait instead of failing an hour's job.
-            (Err(error @ AppError::PromptExceedsWindow { .. }), Some(passes)) => {
-                tracing::warn!(%error, "The teaching repair does not fit the model's window; its findings wait for the user");
+            // A repair prompt carries the whole authoring context, the
+            // candidate and a full answer's room; on a small window it does
+            // not fit. That is a repair that could not run, not a lesson that
+            // cannot be published: its findings wait for the user too.
+            (
+                Err(error @ (AppError::PromptExceedsWindow { .. } | AppError::InvalidConfig(_))),
+                Some(passes),
+            ) => {
+                tracing::warn!(%error, "The teaching repair did not fit the window; its findings wait for the user");
                 return Ok(Reviewed {
                     candidate,
                     set_aside: passes.set_aside(),

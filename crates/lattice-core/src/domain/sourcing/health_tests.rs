@@ -474,6 +474,26 @@ fn the_caller_waits_only_when_the_window_ends_before_its_deadline() {
     assert_eq!(breaker.next_allowed_at(), Some(at(30 * SECOND)));
 }
 
+/// A backoff the breaker derived itself is skipped, however much time the
+/// caller has: it doubles with every trip, so waiting it out against a host
+/// that always refuses costs each caller twice what the last one waited.
+#[test]
+fn a_derived_backoff_is_never_waited_out() {
+    let mut policy = SourcingPolicy::default();
+    policy.breaker_trip.refusals = 1;
+    let rate = rate(SECOND);
+    let mut breaker = Breaker::new();
+
+    breaker.record(
+        &FinderResult::Failed(FailureCause::Challenge),
+        t0(),
+        &rate,
+        &policy,
+    );
+    assert!(breaker.next_allowed_at().is_some_and(|until| until > t0()));
+    assert_eq!(breaker.wait_before(t0(), HOUR), None);
+}
+
 #[test]
 fn a_spent_allowance_refuses_until_its_window_ends() {
     let mut rate = rate(SECOND);

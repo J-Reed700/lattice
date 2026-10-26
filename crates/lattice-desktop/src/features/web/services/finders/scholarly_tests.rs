@@ -29,6 +29,7 @@ fn http(contact: Option<&str>) -> FinderHttp {
         pacer: Arc::new(SitePacer::with_interval(Duration::ZERO)),
         parsers: Arc::new(Semaphore::new(2)),
         contact: contact.map(str::to_string),
+        public_only: false,
     }
 }
 

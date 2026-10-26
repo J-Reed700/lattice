@@ -89,6 +89,7 @@ impl RouterService {
                     priority: InferencePriority::Interactive,
                     cancel: self.cancel.clone(),
                     cache_key: None,
+                    ..Default::default()
                 },
             ),
         )

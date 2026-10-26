@@ -86,6 +86,22 @@ pub(super) fn runs_alongside_others(tool: &str) -> bool {
     ) || is_explorer_tool(tool)
 }
 
+/// The page a call reads, when the call is a page read.
+///
+/// Only `fetch_url_content` asks for a page's text, so only it is answered
+/// from the turn's page memory, kept apart from a second read of the same page
+/// and recorded as a failure when it fails. `follow_links` also names a page,
+/// one the model has usually read already, but it asks for the page's links:
+/// memory of the text cannot answer it, and its failure says nothing about
+/// whether the text can be read.
+fn page_read_target<'v>(tool: &str, arguments: &'v serde_json::Value) -> Option<&'v str> {
+    if tool == "fetch_url_content" {
+        fetch_memory::fetch_target(arguments)
+    } else {
+        None
+    }
+}
+
 /// What every call of the turn reads and none changes.
 pub(super) struct CallScope<'a> {
     pub(super) container: &'a dyn ChatRuntime,
@@ -204,10 +220,11 @@ fn batch_end(calls: &[RequestedCall], start: usize) -> usize {
     let mut pages = HashSet::new();
     let mut end = start;
     while let Some(call) = calls.get(end) {
-        if !runs_alongside_others(canonical_tool_name(&call.name)) {
+        let tool = canonical_tool_name(&call.name);
+        if !runs_alongside_others(tool) {
             break;
         }
-        if let Some(url) = fetch_memory::fetch_target(&call.arguments) {
+        if let Some(url) = page_read_target(tool, &call.arguments) {
             if !pages.insert(identity(url)) {
                 break;
             }
@@ -266,6 +283,11 @@ impl<'a> ToolCalls<'a> {
             .tool_execution_ms
             .saturating_add(elapsed_ms(started));
         Ok(())
+    }
+
+    /// The window as this turn's latest count of its prompt puts it.
+    pub(super) fn set_window_chars(&mut self, window_chars: usize) {
+        self.scope.window_chars = window_chars;
     }
 
     /// The results with these ids were condensed into notes, so the pages
@@ -354,10 +376,14 @@ impl<'a> ToolCalls<'a> {
                 available_tools = available_tool_names(self.scope.tools).join(", "),
                 "Skipping unavailable tool requested by LLM"
             );
-            return answered("Requested tool is unavailable".into());
+            return answered(format!(
+                "There is no tool named \"{}\" in this turn. The tools you can call are: {}.",
+                call.name,
+                available_tool_names(self.scope.tools).join(", ")
+            ));
         }
         let mut reread_from = None;
-        if let Some(url) = fetch_memory::fetch_target(&call.arguments) {
+        if let Some(url) = page_read_target(tool, &call.arguments) {
             // A URL this turn already failed on costs a request to learn
             // nothing. Answer it from memory so the round can still spend its
             // time somewhere useful.
@@ -602,7 +628,7 @@ impl<'a> ToolCalls<'a> {
                     id,
                     output: format!("Tool failed: {error}"),
                 });
-                if let Some(url) = fetch_memory::fetch_target(&arguments) {
+                if let Some(url) = page_read_target(tool, &arguments) {
                     self.fetch_memory.record_failure(url, &error.to_string());
                 }
                 return Ok(());
@@ -695,13 +721,13 @@ impl<'a> ToolCalls<'a> {
                 "Failed to persist tool document references"
             );
         }
-        let url = fetch_memory::fetch_target(&arguments);
-        if result.success && tool == "fetch_url_content" {
+        let url = page_read_target(tool, &arguments);
+        if let Some(url) = url.filter(|_| result.success) {
             let page = result
                 .data
                 .clone()
                 .and_then(|data| serde_json::from_value::<FetchUrlContentOutput>(data).ok());
-            if let (Some(url), Some(page)) = (url, page) {
+            if let Some(page) = page {
                 let text = page.content.trim();
                 // The part this result showed; a later request without an
                 // offset carries on from the first part not yet shown.

@@ -285,7 +285,12 @@ impl Batch<'_> {
             return Ok(None);
         };
         let schema = self.schema(chosen.len());
-        let raw = crate::features::learning::teaching::review_and_repair(
+        // A teaching issue that survived its repair, a reviewer answer out of
+        // shape, or a reviewed batch that is not JSON is this batch's problem.
+        // Its items are refused with the reason and the round asks for others,
+        // so the bank comes out smaller rather than the job failing (§5.2).
+        let refused = |reason: String| Ok(Some(vec![Err(reason); self.count]));
+        let raw = match crate::features::learning::teaching::review_and_repair(
             llm,
             SYSTEM,
             &prompt,
@@ -293,8 +298,18 @@ impl Batch<'_> {
             response.text,
             self.output_tokens(),
         )
-        .await?;
-        let items = crate::features::learning::generation::parse_json::<Value>(&raw)?
+        .await
+        {
+            Ok(raw) => raw,
+            Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
+                return refused(format!("The batch did not pass teaching review: {error}"));
+            }
+            Err(error) => return Err(error),
+        };
+        let Ok(parsed) = crate::features::learning::generation::parse_json::<Value>(&raw) else {
+            return refused("The reviewed batch was not valid JSON.".into());
+        };
+        let items = parsed
             .get("items")
             .and_then(Value::as_array)
             .cloned()
@@ -397,8 +412,20 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
     if !need.requirement.format.is_keyed() || out.items.is_empty() {
         return Ok(out);
     }
-    // Blinded key review, then one targeted repair per disputed item.
-    let verdicts = review(llm, &out.items).await?;
+    // Blinded key review, then one targeted repair per disputed item. A key
+    // review with no usable answer leaves the keys unchecked, and an unchecked
+    // key may be wrong: those items are dropped, not kept and not fatal.
+    let verdicts = match review(llm, &out.items).await {
+        Ok(verdicts) => verdicts,
+        Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
+            let reason = format!("The answer key could not be checked: {error}");
+            out.dropped
+                .extend(std::iter::repeat_n(reason, out.items.len()));
+            out.items.clear();
+            return Ok(out);
+        }
+        Err(error) => return Err(error),
+    };
     let mut kept = Vec::new();
     for (item, verdict) in out.items.into_iter().zip(verdicts) {
         match verdict {
@@ -425,9 +452,19 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
                     out.dropped.push(reason);
                     continue;
                 };
-                match review(llm, std::slice::from_ref(&repaired)).await?.first() {
-                    Some(KeyVerdict::Agreed) => kept.push(repaired),
-                    _ => out.dropped.push(reason),
+                match review(llm, std::slice::from_ref(&repaired))
+                    .await
+                    .as_deref()
+                    .map(<[KeyVerdict]>::first)
+                {
+                    Ok(Some(KeyVerdict::Agreed)) => kept.push(repaired),
+                    Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
+                        out.dropped.push(format!(
+                            "{reason}; the repair's key could not be checked: {error}"
+                        ));
+                    }
+                    Err(error) => return Err(error.clone()),
+                    Ok(_) => out.dropped.push(reason),
                 }
             }
         }

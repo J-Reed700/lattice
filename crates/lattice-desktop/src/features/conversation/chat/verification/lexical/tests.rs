@@ -119,6 +119,23 @@ fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
 }
 
 #[test]
+fn a_sentence_with_no_citation_is_never_backed_on_shared_words() {
+    // Half its words are the source's, and the source says nothing of yields:
+    // overlap with whichever window ranks best is not a source for it.
+    let claims = lexical_pass(
+        "Salicylic acid treatment tripled blueberry yields in commercial orchards.",
+        &[source(
+            "Salicylic acid treatment improved cold tolerance in blueberry plants.",
+        )],
+    );
+
+    let claim = claims.first().expect("the uncited sentence is a claim");
+    assert!(claim.citation_ids.is_empty());
+    assert!(claim.overlap_ratio > 0.0, "overlap is still measured");
+    assert!(!claim.supported);
+}
+
+#[test]
 fn grounded_claim_scores_above_threshold() {
     let claims = lexical_pass(
         "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
@@ -167,12 +184,13 @@ fn the_cut_short_note_is_not_a_claim() {
     assert!(claims[0].supported);
 }
 
-/// Both of the last round's notes, the rounds' and the window's.
+/// Each of the last round's notes: the rounds', the window's and the clock's.
 #[test]
 fn the_out_of_rounds_note_is_not_a_claim() {
     for note in [
         super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
         super::super::super::tool_loop::WINDOW_FULL_NOTE,
+        super::super::super::tool_loop::OUT_OF_TIME_NOTE,
     ] {
         let answer =
             format!("Bush beans mature within sixty days in shallow window boxes [1].{note}");

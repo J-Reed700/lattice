@@ -1,12 +1,14 @@
 //! Typed cloud streams publish only displayable text through callbacks while
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
+use super::reply::call_arguments;
 use super::timing::{evaluated_prompt_tokens, StreamClock};
 use super::{field, parse_completion, set_field, CompletionResponse, LLMProvider};
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 type Callback<'a> = &'a (dyn Fn(String) -> Result<()> + Send + Sync);
@@ -28,25 +30,39 @@ where
     E: std::fmt::Display,
 {
     let clock = StreamClock::started(sent);
+    let generating = AtomicBool::new(false);
     let timed_text = |text: String| {
         clock.delta();
+        generating.store(true, Ordering::Relaxed);
         on_text(text)
     };
     let timed_reasoning = |text: String| {
         clock.delta();
+        generating.store(true, Ordering::Relaxed);
         on_reasoning(text)
     };
     let (on_text, on_reasoning): (Callback<'_>, Callback<'_>) = (&timed_text, &timed_reasoning);
     let mut decoder = Decoder::new(provider);
     loop {
-        let next = tokio::time::timeout(stall_timeout, bytes.next())
-            .await
-            .map_err(|_| {
-                AppError::Network(format!(
-                    "Cloud stream stalled for {}s",
-                    stall_timeout.as_secs()
-                ))
-            })?;
+        // Silence before the first delta is the model reading the prompt or
+        // thinking, which a reasoning model can do for minutes with nothing to
+        // send: Claude streams no thinking unless asked to, and an OpenAI
+        // reasoning model without a summary sends only keepalives. That wait
+        // is bounded by the turn's deadline, Stop and shutdown. Once the
+        // answer is streaming, a silence this long is a stall.
+        let armed = generating.load(Ordering::Relaxed) || decoder.has_tool_output();
+        let next = if armed {
+            tokio::time::timeout(stall_timeout, bytes.next())
+                .await
+                .map_err(|_| {
+                    AppError::Network(format!(
+                        "Cloud stream stalled for {}s",
+                        stall_timeout.as_secs()
+                    ))
+                })?
+        } else {
+            bytes.next().await
+        };
         let Some(chunk) = next else { break };
         let chunk = chunk
             .map_err(|error| AppError::Network(format!("Cloud stream interrupted: {error}")))?;
@@ -90,6 +106,9 @@ struct GoogleToolCallDraft {
     id: String,
     name: String,
     arguments: String,
+    /// Gemini 3's `extra_content` (its `google.thought_signature`), which the
+    /// next round must send back with the call or be refused.
+    extra_content: serde_json::Map<String, Value>,
 }
 
 fn invalid(detail: &str) -> AppError {
@@ -119,6 +138,12 @@ impl Decoder {
             google_usage: None,
             google_timings: None,
         }
+    }
+
+    /// Whether a tool call has started streaming its arguments, which counts
+    /// as the answer having started, as text does.
+    fn has_tool_output(&self) -> bool {
+        !self.input_json.is_empty() || !self.google_tool_calls.is_empty()
     }
 
     fn push(
@@ -273,6 +298,9 @@ impl Decoder {
                     if let Some(args) = field(function, "arguments").as_str() {
                         draft.arguments.push_str(args);
                     }
+                    if let Some(extra) = field(call, "extra_content").as_object() {
+                        draft.extra_content.extend(extra.clone());
+                    }
                 }
             }
         }
@@ -384,9 +412,12 @@ impl Decoder {
                 if !self.open_blocks.remove(&index) {
                     return Err(invalid("stop for an unopened content block"));
                 }
+                // A call with no arguments can stream nothing but empty
+                // deltas, and is `{}`. A call cut off or malformed is answered
+                // with why instead of failing the whole reply as a broken
+                // stream.
                 if let Some(input) = self.input_json.remove(&index) {
-                    let input: Value = serde_json::from_str(&input)
-                        .map_err(|_| invalid("invalid tool arguments"))?;
+                    let input = call_arguments(&input);
                     let block = self
                         .blocks
                         .get_mut(&index)
@@ -469,14 +500,22 @@ impl Decoder {
         {
             let mut tool_calls_json = Vec::new();
             for (_idx, draft) in std::mem::take(&mut self.google_tool_calls) {
-                tool_calls_json.push(json!({
+                let mut call = json!({
                     "id": draft.id,
                     "type": "function",
                     "function": {
                         "name": draft.name,
                         "arguments": draft.arguments,
                     }
-                }));
+                });
+                if !draft.extra_content.is_empty() {
+                    set_field(
+                        &mut call,
+                        "extra_content",
+                        Value::Object(draft.extra_content),
+                    )?;
+                }
+                tool_calls_json.push(call);
             }
             let mut message = json!({
                 "role": "assistant",
@@ -539,236 +578,4 @@ fn append(block: &mut Value, delta: &Value, key: &str) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use lattice_core::application::ports::llm_port::CompletionInput;
-    use std::sync::Mutex;
-
-    /// What the response replays, as the provider's own JSON.
-    fn replayed(response: &CompletionResponse) -> Value {
-        Value::Array(
-            response
-                .replay
-                .iter()
-                .map(|item| match item {
-                    CompletionInput::Native { value } => value.clone(),
-                    other => panic!("cloud replay is native, not {other:?}"),
-                })
-                .collect(),
-        )
-    }
-
-    fn frames(events: &[Value]) -> Vec<u8> {
-        events
-            .iter()
-            .map(|event| format!("data: {event}\r\n\r\n"))
-            .collect::<String>()
-            .into_bytes()
-    }
-
-    #[test]
-    fn openai_stream_keeps_native_tools_and_opaque_state_out_of_displayable_reasoning() {
-        let terminal = json!({"status":"completed","usage":{"input_tokens":14,"output_tokens":9},"output":[
-            {"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"Compare 世界"},{"type":"summary_text","text":"Choose evidence"}],"encrypted_content":"opaque-state"},
-            {"type":"message","content":[{"type":"output_text","text":"Hello"}]},
-            {"type":"function_call","id":"f1","call_id":"call-1","name":"search","arguments":"{\"q\":\"世界\"}"}
-        ]});
-        let events = frames(&[
-            json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":0,"delta":"Compare 世界"}),
-            json!({"type":"response.reasoning_text.delta","delta":"private raw reasoning"}),
-            json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":1,"delta":"Choose evidence"}),
-            json!({"type":"response.output_text.delta","delta":"Hello"}),
-            json!({"type":"response.completed","response":terminal}),
-        ]);
-        let text = Mutex::new(String::new());
-        let reasoning = Mutex::new(String::new());
-        let on_text = |delta: String| {
-            text.lock().unwrap().push_str(&delta);
-            Ok(())
-        };
-        let on_reasoning = |delta: String| {
-            reasoning.lock().unwrap().push_str(&delta);
-            Ok(())
-        };
-        let mut decoder = Decoder::new(LLMProvider::Openai);
-        // Split every UTF-8 character and SSE boundary across network packets.
-        for byte in events.chunks(1) {
-            decoder.push(byte, &on_text, &on_reasoning).unwrap();
-        }
-        let response = decoder.finish(&on_text, &on_reasoning).unwrap();
-        assert_eq!(*text.lock().unwrap(), "Hello");
-        assert_eq!(
-            *reasoning.lock().unwrap(),
-            "Compare 世界\n\nChoose evidence"
-        );
-        assert_eq!(
-            response.reasoning.as_deref(),
-            Some("Compare 世界\n\nChoose evidence")
-        );
-        assert_eq!(replayed(&response), terminal["output"]);
-        assert_eq!((response.input_tokens, response.output_tokens), (14, 9));
-        assert!(
-            matches!(&response.tool_calls[0], CompletionInput::ToolCall { id, arguments, .. } if id == "call-1" && arguments["q"] == "世界")
-        );
-    }
-
-    #[test]
-    fn anthropic_stream_preserves_signatures_tool_arguments_and_cumulative_usage() {
-        let events = frames(&[
-            json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":23,"output_tokens":1},"stop_reason":null}}),
-            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
-            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Compare the sources."}}),
-            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed-"}}),
-            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"state"}}),
-            json!({"type":"content_block_stop","index":0}),
-            json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"redacted-state"}}),
-            json!({"type":"content_block_stop","index":1}),
-            json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
-            json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Answer"}}),
-            json!({"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"page_location","start_page_number":2}}}),
-            json!({"type":"content_block_stop","index":2}),
-            json!({"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"call-2","name":"search","input":{}}}),
-            json!({"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\""}}),
-            json!({"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"世界\"}"}}),
-            json!({"type":"content_block_stop","index":3}),
-            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":18}}),
-            json!({"type":"message_stop"}),
-        ]);
-        let reasoning = Mutex::new(String::new());
-        let on_reasoning = |delta: String| {
-            reasoning.lock().unwrap().push_str(&delta);
-            Ok(())
-        };
-        let mut decoder = Decoder::new(LLMProvider::Anthropic);
-        for chunk in events.chunks(7) {
-            decoder.push(chunk, &|_| Ok(()), &on_reasoning).unwrap();
-        }
-        let response = decoder.finish(&|_| Ok(()), &on_reasoning).unwrap();
-        assert_eq!(*reasoning.lock().unwrap(), "Compare the sources.");
-        assert_eq!(response.reasoning.as_deref(), Some("Compare the sources."));
-        assert_eq!(response.text, "Answer");
-        // One assistant message, its signed thinking included.
-        let message = &replayed(&response)[0];
-        assert_eq!(message["role"], "assistant");
-        assert_eq!(message["content"][0]["signature"], "signed-state");
-        assert_eq!(message["content"][1]["data"], "redacted-state");
-        assert_eq!(
-            message["content"][2]["citations"][0]["start_page_number"],
-            2
-        );
-        assert_eq!((response.input_tokens, response.output_tokens), (23, 18));
-        assert_eq!(response.finish_reason, "tool_use");
-        assert!(
-            matches!(&response.tool_calls[0], CompletionInput::ToolCall { id, arguments, .. } if id == "call-2" && arguments["query"] == "世界")
-        );
-    }
-
-    #[tokio::test]
-    async fn reasoning_is_delivered_before_the_completion_arrives() {
-        let (sender, receiver) =
-            tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, String>>();
-        let (shown, observed) = tokio::sync::oneshot::channel();
-        let shown = Mutex::new(Some(shown));
-        let on_reasoning = |delta: String| {
-            if let Some(shown) = shown.lock().unwrap().take() {
-                shown.send(delta).unwrap();
-            }
-            Ok(())
-        };
-        let on_text = |_| Ok(());
-        sender.send(Ok(frames(&[json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":0,"delta":"Checking evidence."})]))).unwrap();
-        let completion = drain(
-            LLMProvider::Openai,
-            tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
-            Duration::from_secs(1),
-            Instant::now(),
-            &on_text,
-            &on_reasoning,
-        );
-        tokio::pin!(completion);
-        tokio::select! {
-            result = observed => assert_eq!(result.unwrap(), "Checking evidence."),
-            _ = &mut completion => panic!("the response completed before its terminal event"),
-        }
-        sender
-            .send(Ok(frames(&[
-                json!({"type":"response.completed","response":{"status":"completed","output":[]}}),
-            ])))
-            .unwrap();
-        completion.await.unwrap();
-    }
-
-    #[test]
-    fn incomplete_answers_keep_their_status_but_truncated_streams_fail() {
-        let mut decoder = Decoder::new(LLMProvider::Openai);
-        decoder.push(&frames(&[json!({"type":"response.incomplete","response":{"status":"incomplete","output":[{"type":"message","content":[{"type":"output_text","text":"Partial answer"}]}]}})]), &|_| Ok(()), &|_| Ok(())).unwrap();
-        let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
-        assert_eq!(response.finish_reason, "incomplete");
-        assert_eq!(response.text, "Partial answer");
-        let mut decoder = Decoder::new(LLMProvider::Openai);
-        decoder
-            .push(b"data: [DONE]\n\n", &|_| Ok(()), &|_| Ok(()))
-            .unwrap();
-        assert!(decoder.finish(&|_| Ok(()), &|_| Ok(())).is_err());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn stalled_streams_and_oversized_events_fail() {
-        let pending = futures::stream::pending::<std::result::Result<Vec<u8>, String>>();
-        let error = drain(
-            LLMProvider::Openai,
-            pending,
-            Duration::from_secs(2),
-            Instant::now(),
-            &|_| Ok(()),
-            &|_| Ok(()),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("stalled"));
-        let mut decoder = Decoder::new(LLMProvider::Openai);
-        assert!(decoder
-            .push(
-                &vec![b'x'; Decoder::MAX_EVENT_BYTES + 1],
-                &|_| Ok(()),
-                &|_| Ok(())
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn google_stream_preserves_tool_arguments_reasoning_and_usage() {
-        let events = frames(&[
-            json!({"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Step 1"}}],"usage":null}),
-            json!({"choices":[{"index":0,"delta":{"content":"Answer"}}],"usage":null}),
-            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-g1","type":"function","function":{"name":"search","arguments":""}}]}}],"usage":null}),
-            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\""}}]}}],"usage":null}),
-            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"rust\"}"}}]}}],"usage":null}),
-            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":8}}),
-        ]);
-        let text = Mutex::new(String::new());
-        let reasoning = Mutex::new(String::new());
-        let on_text = |delta: String| {
-            text.lock().unwrap().push_str(&delta);
-            Ok(())
-        };
-        let on_reasoning = |delta: String| {
-            reasoning.lock().unwrap().push_str(&delta);
-            Ok(())
-        };
-        let mut decoder = Decoder::new(LLMProvider::Google);
-        for byte in events.chunks(3) {
-            decoder.push(byte, &on_text, &on_reasoning).unwrap();
-        }
-        let response = decoder.finish(&on_text, &on_reasoning).unwrap();
-        assert_eq!(*text.lock().unwrap(), "Answer");
-        assert_eq!(*reasoning.lock().unwrap(), "Step 1");
-        assert_eq!(response.text, "Answer");
-        assert_eq!(response.reasoning.as_deref(), Some("Step 1"));
-        assert_eq!(response.finish_reason, "tool_calls");
-        assert_eq!((response.input_tokens, response.output_tokens), (12, 8));
-        assert!(
-            matches!(&response.tool_calls[0], CompletionInput::ToolCall { id, name, arguments } if id == "call-g1" && name == "search" && arguments["query"] == "rust")
-        );
-    }
-}
+mod tests;

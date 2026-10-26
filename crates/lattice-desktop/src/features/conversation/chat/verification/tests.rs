@@ -509,10 +509,12 @@ fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
     assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
 }
 
-/// A plain claim the judge never reached keeps what overlap said about it:
-/// "not checked by the model" is not a reason to call it missing.
+/// A claim the judge never settled is unchecked, not whatever overlap said
+/// about it. It went to the judge because overlap could not settle it: these
+/// "hardier bushes" and "sturdier stems" are nowhere in a source that only
+/// says "cold tolerance", and green on shared words would certify them.
 #[tokio::test]
-async fn an_unreached_plain_claim_keeps_its_lexical_verdict() {
+async fn an_unreached_plain_claim_is_not_checked() {
     // Supported on overlap, but not strongly enough to skip the judge.
     let response = "Blueberry growers noticed hardier bushes, better cold tolerance and sturdier stems after salicylic acid treatment [1].";
     let sources = vec![source(
@@ -524,9 +526,12 @@ async fn an_unreached_plain_claim_keeps_its_lexical_verdict() {
         .await;
 
     assert_eq!(llm.call_count(), 1, "the claim was escalated");
-    assert_eq!(report.claims[0].verdict, ClaimVerdict::Supported);
+    assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
     assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
-    assert!(report.claims[0].unverified_reason.is_none());
+    assert_eq!(
+        report.claims[0].unverified_reason,
+        Some(UnverifiedReason::JudgeFailed)
+    );
 }
 
 #[tokio::test]

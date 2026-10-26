@@ -107,7 +107,7 @@ pub(super) async fn ask(
             no_time_limit: true,
             ..Default::default()
         };
-        let response = llm.complete(&request).await.map_err(AskError::Model)?;
+        let response = llm.complete(&request).await.map_err(AskError::from)?;
         answer.input_tokens += response.input_tokens;
         answer.output_tokens += response.output_tokens;
         if response.tool_calls.is_empty() || !offer {

@@ -65,6 +65,7 @@ fn deck(created_at: i64, cards: impl FnOnce(&str) -> Vec<StudyCardDto>) -> Study
         study_goal: "Cook regional sauces".into(),
         model_name: "fixture-model".into(),
         created_at,
+        target_at: None,
     }
 }
 
@@ -210,5 +211,66 @@ async fn editing_keeps_choices_distinct_and_edits_free_answers_in_place() -> Res
     let free = &stored.cards[1];
     assert_eq!(free.answer, "Fresh basil");
     assert!(free.options.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_target_pulls_late_cards_due_and_spaces_reviews_to_land_before_it() -> Result<()> {
+    use super::schedule::{DAY_MS, FINAL_WINDOW_MS, RELEARN_STEP_MS};
+    let pool = fk_pool().await?;
+    let repo = StudyRepository::new(pool.clone());
+    let qa = StudyCardFormat::QuestionAnswer;
+    let now = 1_000 * DAY_MS;
+    let target = now + DAY_MS;
+    let saved = deck(1_000, |d| {
+        vec![
+            card(d, qa, &[], 0, now + 3 * DAY_MS),
+            card(d, qa, &[], 0, now + DAY_MS / 4),
+        ]
+    });
+    repo.save(&saved).await?;
+
+    repo.set_target(&saved.id, Some(target), now).await?;
+    let loaded = repo.get(&saved.id).await?;
+    assert_eq!(loaded.target_at, Some(target));
+    assert_eq!(repo.list(now).await?[0].target_at, Some(target));
+    let late = &loaded.cards[0];
+    assert_eq!(late.due_at, now, "a card due after the target is due now");
+    assert_eq!(
+        loaded.cards[1].due_at,
+        now + DAY_MS / 4,
+        "an earlier one keeps its time"
+    );
+    assert!(target - FINAL_WINDOW_MS > now + DAY_MS / 4);
+
+    let review = |rating, review_id: String, expected_reviews| ReviewStudyCardRequestDto {
+        review_id,
+        card_id: late.id.clone(),
+        expected_reviews,
+        selected_option: None,
+        rating,
+    };
+    let missed = repo
+        .review(&review(StudyRating::Again, id(), 0), now)
+        .await?;
+    assert_eq!(missed.due_at, now + RELEARN_STEP_MS);
+    let recalled = repo
+        .review(&review(StudyRating::Good, id(), 1), missed.due_at)
+        .await?;
+    assert!(recalled.due_at > missed.due_at && recalled.due_at < target);
+
+    repo.set_target(&saved.id, None, now).await?;
+    assert_eq!(repo.get(&saved.id).await?.target_at, None);
+    repo.set_target(&saved.id, Some(target), now).await?;
+    repo.delete_deck(&saved.id).await?;
+    let orphans: i64 = sqlx::query_scalar("SELECT count(*) FROM study_deck_targets")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(orphans, 0, "deleting a deck deletes its target");
+    assert!(matches!(
+        repo.set_target(&saved.id, Some(target), now).await,
+        Err(AppError::NotFound(_))
+    ));
     Ok(())
 }
