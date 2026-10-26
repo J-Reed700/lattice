@@ -74,7 +74,35 @@ ignored while typing in the answer box.
   drills what the interviewer listens for instead.
 - `StudyDeckDto` and `StudyDeckSummaryDto` carry `targetAt`.
 
-## 5. Later
+## 5. The same practice in decks, reviews, labs and interviews
+
+Each section keeps its own job; these changes make each one do that job the
+way the research above supports, without a shared instruction block.
+
+- **Deck prompts** (`recall/study_generation.rs`) write cards for retrieval.
+  The session hides the options until the learner answers, so the question
+  alone calls up one answer. Each card tests one idea, its wrong choices are
+  plausible mistakes, and its explanation names the misunderstanding behind
+  the most tempting one. Document decks prefer questions that use an idea
+  (why, how, a new case, which of two confusable ideas applies) over a
+  sentence's wording, and word a concept's topic the same on every card, so
+  sessions interleave by concept.
+- **The program Recall tab** asks for an answer before the reveal ("Check my
+  answer", or "I don't know yet: show me") and brings a card rated Again back
+  after three other cards, up to four attempts, with the session's constants.
+  **Card history** asks for an answer before revealing a due card.
+- **Labs and simulations** set the lesson's ideas in a new, realistic case,
+  ask for a prediction before running where that applies and a short reason
+  for the approach and how it was checked, and grade that reasoning. A
+  simulated counterpart lets the learner's last decision play out. A code
+  lab's hidden checks say what they expected and what they saw, without
+  showing an implementation.
+- **Interviews** stay interviews. Each round runs from foundational to harder;
+  the interviewer asks why when an answer states a choice without its reason;
+  and the closing debrief's next step is a retry of the one or two weakest
+  answers from memory, now and on a later day.
+
+## 6. Later
 
 - Keep confidence with each review, so a confident error is put first in the
   next session.
@@ -83,7 +111,7 @@ ignored while typing in the answer box.
 - Spoken answers, transcribed, so "answer aloud" is checked rather than
   trusted.
 
-## 6. Sources
+## 7. Sources
 
 New sources; the rest are listed in the lessons design.
 
