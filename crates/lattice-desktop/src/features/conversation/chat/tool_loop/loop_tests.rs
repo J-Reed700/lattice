@@ -1082,6 +1082,33 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     assert!(!result[0].contains("Citable passage"), "{}", result[0]);
 }
 
+/// A call to a tool the turn does not offer is answered with the tools it
+/// does, so the next round can correct the call rather than guess again.
+#[tokio::test]
+async fn an_unknown_tool_is_answered_with_the_tools_there_are() {
+    let model = Model::new([
+        calls(&[("t1", "teleport", json!({"to": "the bridge"}))]),
+        CompletionResponse::from_text("It opened in 1932."),
+    ]);
+    let web = Web::with_delays(&[]);
+    let run = run(
+        &model,
+        &web,
+        &[tool("web_search")],
+        ROOMY,
+        3,
+        "unknown-tool",
+    )
+    .await;
+
+    assert_eq!(run.outcome.unwrap().response, "It opened in 1932.");
+    let requests = model.requests();
+    let answered = results_mentioning(&requests[1], "There is no tool named \"teleport\"");
+    assert_eq!(answered.len(), 1);
+    assert!(answered[0].contains("web_search"), "{}", answered[0]);
+    assert!(web.log().is_empty(), "nothing ran");
+}
+
 #[path = "limit_loop_tests.rs"]
 mod limit_loop_tests;
 #[path = "reading_loop_tests.rs"]
