@@ -1,6 +1,7 @@
 //! Recall capabilities owned by Learning Studio: program recall cards, study
 //! decks, and the FSRS scheduler both share.
 
+mod interview_deck;
 pub(crate) mod recall_content;
 pub mod recall_repository;
 #[cfg(test)]

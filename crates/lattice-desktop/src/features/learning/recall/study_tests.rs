@@ -33,6 +33,7 @@ fn deck() -> StudyDeckDto {
         study_goal: "Understand the process".into(),
         model_name: "test".into(),
         created_at: 1000,
+        target_at: None,
     }
 }
 #[test]
