@@ -44,7 +44,7 @@ function DrillForm({ programId, activity }: { programId: string; activity: Learn
             Drill these {questions} {questions === 1 ? "question" : "questions"} until they stick
           </h3>
           <p className="mt-1 text-xs leading-5 text-text-secondary">
-            Each question becomes a card. You answer it aloud from memory, then tick off the points a strong answer covers. Misses come back in the same session, and reviews are spaced to land before your interview. Works best after one cold attempt at the mock interview above, and before a final one.
+            Each question becomes a card. You answer it aloud from memory, then tick off the points a strong answer covers. Misses come back in the same session, and reviews are spaced to land before your interview. Works best after one cold attempt at the mock interview above, and before a final one. Making it again opens the same deck, reviews kept, with the new date.
           </p>
         </div>
       </div>
