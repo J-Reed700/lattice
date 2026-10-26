@@ -20,7 +20,7 @@ confusion exists, and the number of ideas follows the objective.
 | Question | Decision |
 |---|---|
 | What a lesson is built from | Two or three core ideas, each explained, worked and checked; at least one is set beside a near-miss. Then guided practice, the assignment, explaining from memory, and the recap. |
-| Where the learner thinks | In every check: they commit to an answer to a fresh case before its reasoning is shown. |
+| Where the learner thinks | Before an idea a newcomer would likely guess wrong, a prediction the explanation then answers; in every check, a committed answer to a fresh case before its reasoning is shown. |
 | How misunderstandings are corrected | Each check's reveal names the misconception behind each plausible wrong answer; quiz distractors are real misconceptions. |
 | How it comes back later | Rating a check schedules it as an FSRS review card. Due cards open the next lesson as a warm-up. |
 | How the recap is used | The learner explains the lesson from memory first; the recap is what they compare with. |
@@ -40,10 +40,10 @@ imagery for text and rereading low [D13].
 |---|---|---|---|
 | Retrieving information strengthens memory more than restudying it; the benefit grows with delay and with feedback [R06, A17]. | Strong | Checks, explaining from memory, warm-ups, quizzes. | Benefits are measured on retention and near transfer; far transfer is less certain. |
 | Spacing study across sessions beats massing it. The best gap grows with the retention interval [C06, C08]; equal and expanding gaps both work long term [K07]. | Strong | FSRS schedules every card from the learner's answers; warm-ups surface due cards. | FSRS defaults are not personal parameters; an interval is not a retention promise. |
-| Worked examples help novices more than unguided problem solving [A00]; the benefit shrinks as expertise grows [K03]. | Strong for novices | Each idea has a worked example before its check. | Experienced learners may find examples redundant; the guided and independent tasks carry the challenge. |
-| Comparing cases side by side improves learning and transfer [A13, G03, RJ07]. Interleaving helps most when the categories are similar and easy to confuse [BR19, RT07]. | Moderate | Contrast sections set an idea beside a near-miss and name the one feature that differs; later checks ask which idea applies. | Interleaving dissimilar material can help less or not at all [BR19]. |
+| Worked examples help novices more than unguided problem solving [A00]; the benefit shrinks as expertise grows [K03]. | Strong for novices | Each idea has a worked example before its check. Its detail follows the learner's stated prior knowledge (every step for a newcomer, only the new steps for someone who knows the basics), and guidance fades from example to guided practice to the assignment. | Prior knowledge is what the learner said, not measured. |
+| Comparing cases side by side improves learning and transfer [A13, G03, RJ07]. Interleaving helps most when the categories are similar and easy to confuse [BR19, RT07]. | Moderate | Contrast sections set an idea beside a near-miss and name the one feature that differs. In a lesson with two or more ideas, the last check mixes them: the learner first decides which idea, this lesson's or an earlier one's, applies. The lesson quiz draws items from earlier lessons by their own outcomes ([practice and quizzes](2026-10-26-learning-science-practice-and-quizzes.md)). | Interleaving dissimilar material can help less or not at all [BR19]. |
 | Explaining material to oneself improves understanding [B18]; explaining to others helps most when it requires recall [F13]. Generative activities beat rereading [F16]. | Moderate | Explaining from memory before the recap; checks ask "why". | Effects vary with prompt quality. |
-| Attempting an answer before learning it, even wrongly, improves later learning when feedback follows [RK09, P23]. Confident errors, once corrected, are corrected especially well [BM01]. | Moderate | A check asks for a committed answer; "I don't know yet" is allowed, but answering first is encouraged. | The benefit depends on feedback following the attempt. |
+| Attempting an answer before learning it, even wrongly, improves later learning when feedback follows [RK09, P23]. Confident errors, once corrected, are corrected especially well [BM01]. | Moderate | Where a newcomer would plausibly guess wrong, an explanation opens with a prediction question about the idea it is about to teach and then answers it, naming the tempting wrong guess and why it fails; asked only there, so lessons do not open every idea the same way. A check asks for a committed answer; "I don't know yet" is allowed, but answering first is encouraged. Checks are pitched so a learner who followed the lesson usually succeeds, about four times in five [R12]. | The benefit depends on feedback following the attempt, which is why the explanation answers the prediction at once. |
 | Feedback that addresses the task and how to improve is among the strongest influences on learning [HT07]. | Strong | Reveals and quiz explanations name the misconception, not just the right answer. | Feedback that only grades has weak effects. |
 | Interpolated tests during instruction reduce mind wandering and improve learning [S13]. | Moderate | Checks sit inside the lesson, after each idea. | Studied with video lectures. |
 | Words with relevant pictures beat words alone [CP91, W18]. | Moderate | A diagram when an idea has structure; none decorative. | Decorative or redundant visuals hurt. |
@@ -73,7 +73,10 @@ longest overdue first, before an unfinished lesson in an active course. Each
 is answered from memory, revealed and rated; the rating is an ordinary FSRS
 review (`review_learning_recall_card`). It can be skipped, and it disappears
 when nothing is due. The queue is fixed when the lesson opens, so reviewing
-one card does not reshuffle the rest.
+one card does not reshuffle the rest. A missed card (Forgot, or a wrong
+choice) comes back after the others until it is recalled once or has had four
+attempts, as in a study session (successive relearning [RD22]); each attempt
+is its own review.
 
 ### 3.2 Contrast
 
@@ -145,10 +148,19 @@ Compact rows show a one-line plain preview (`cardPreview`).
 ## 4. Authoring
 
 `lesson_prompt` states the structure as requirements, not a template: two or
-three core ideas, each explained, worked and checked; a contrast where
-learners plausibly confuse the idea; diagrams only for structure; a check's
-format; explaining from memory before the recap; quiz distractors that are
-real misconceptions. The schema allows 10 to 16 sections of eight kinds.
+three core ideas, each explained, worked and checked; a prediction question
+opening an explanation where a newcomer would likely guess wrong, answered by
+it; each idea met in at least two
+concrete cases; guidance matched to prior knowledge and fading toward the
+assignment; a contrast where learners plausibly confuse the idea; diagrams
+only for structure; a check's format, with at least one "why or how" check
+per idea, a pitch most learners meet, and a last check that mixes the ideas;
+explaining from memory before the recap; quiz distractors that are real
+misconceptions. A lesson's recall cards (`recall_draft_prompt`) are
+retrievals, not recognition: they mix stating an idea, explaining why it
+works, applying it to a case whose answer follows from the quoted passage,
+and telling contrasted ideas apart, never give their answer away in the cue,
+and explain the common mistake with the answer. The schema allows 10 to 16 sections of eight kinds.
 `lesson_rules` reports the mix (at least two explanations, two worked
 examples, one contrast and two checks; exactly one guided practice,
 independent practice, reflection and recap), the check format, and the order.
@@ -209,6 +221,8 @@ of what the evidence does not support.
 - **[R06]** Roediger & Karpicke (2006). Test-enhanced learning. *Psychological Science* 17(3). doi:10.1111/j.1467-9280.2006.01693.x
 - **[R13]** Roig, Nordbrandt, Geertsen & Nielsen (2013). The effects of cardiovascular exercise on human memory: a review with meta-analysis. *Neuroscience & Biobehavioral Reviews* 37(8). doi:10.1016/j.neubiorev.2013.06.012
 - **[RB13]** Rasch & Born (2013). About sleep's role in memory. *Physiological Reviews* 93(2). doi:10.1152/physrev.00032.2012
+- **[R12]** Rosenshine (2012). Principles of instruction: research-based strategies that all teachers should know. *American Educator* 36(1), 12–19, 39. (No DOI.)
+- **[RD22]** Rawson & Dunlosky (2022). Successive relearning: an underexplored but potent technique for obtaining and maintaining knowledge. *Current Directions in Psychological Science* 31(4). doi:10.1177/09637214221100484
 - **[RJ07]** Rittle-Johnson & Star (2007). Does comparing solution methods facilitate conceptual and procedural knowledge? *Journal of Educational Psychology* 99(3). doi:10.1037/0022-0663.99.3.561
 - **[RK09]** Richland, Kornell & Kao (2009). The pretesting effect: do unsuccessful retrieval attempts enhance learning? *JEP: Applied* 15(3). doi:10.1037/a0016496
 - **[RT07]** Rohrer & Taylor (2007). The shuffling of mathematics problems improves learning. *Instructional Science* 35. doi:10.1007/s11251-007-9015-8
