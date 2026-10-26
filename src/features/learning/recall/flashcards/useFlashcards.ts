@@ -2,7 +2,7 @@ import { type QueryClient, useMutation, useMutationState, useQuery, useQueryClie
 
 import { useApi } from '@/contexts/ApiContext';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
-import type { GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, UpdateStudyCardRequestDto } from '@/lib/bindings';
+import type { CreateInterviewStudyDeckRequestDto, GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, SetStudyDeckTargetRequestDto, UpdateStudyCardRequestDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
 
@@ -94,4 +94,26 @@ export function useDeleteFlashcardDeck() {
   const api = useApi();
   const client = useQueryClient();
   return useMutation({ mutationFn: (id: string) => data(api.deleteStudyDeck(id)), onSuccess: () => invalidateDecks(client) });
+}
+export function useSetFlashcardDeckTarget() {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (request: SetStudyDeckTargetRequestDto) => data(api.setStudyDeckTarget(request)),
+    onSuccess: (deck) => { client.setQueryData([...key, 'deck', deck.id], deck); return invalidateDecks(client); },
+  });
+}
+/** Makes a recall deck from an interview activity and opens it in Studio. */
+export function useCreateInterviewDeck() {
+  const api = useApi();
+  const client = useQueryClient();
+  const navigate = useAppNavigate();
+  return useMutation({
+    mutationFn: (request: CreateInterviewStudyDeckRequestDto) => data(api.createInterviewStudyDeck(request)),
+    onSuccess: (deck) => {
+      client.setQueryData([...key, 'deck', deck.id], deck);
+      void invalidateDecks(client);
+      void navigate(`/studio?deck=${encodeURIComponent(deck.id)}`);
+    },
+  });
 }
