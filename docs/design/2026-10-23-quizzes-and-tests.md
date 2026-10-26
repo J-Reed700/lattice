@@ -147,14 +147,28 @@ keeps working because forms are unchanged.
 | Setting | Lesson quiz | Module test | Course exam | Where |
 |---|---|---|---|---|
 | Pass mark | 70 % | 75 % | 75 % | Course quiz settings (three numbers, one card) |
-| Form size | 8 items | 3 per prepared lesson + 1 per module outcome | 1 per lesson + 1 per module | derived, shown, not edited |
-| Formats | 4 single choice, 1 true/false, 1 structure item (multi-select, matching or ordering), 1 short answer or cloze, 1 explanation | 2 keyed + 1 short answer per lesson; explanation per module outcome | keyed per lesson; explanation per module | derived |
+| Form size | 7 items, plus 1 from the lesson before and 1 from a lesson further back | 3 per prepared lesson + 1 per module outcome | 1 per lesson + 1 per module | derived, shown, not edited |
+| Formats | 3 single choice, 1 structure item (multi-select, matching or ordering), 1 short answer, 1 cloze, 1 explanation; the two earlier-lesson items are single choice from those lessons' banks. A lesson whose blueprint already asks the earlier mix (4 single choice, 1 true/false, 1 structure item, 1 short answer or cloze, 1 explanation) keeps it | 2 keyed + 1 short answer per lesson; explanation per module outcome | keyed per lesson; explanation per module | derived |
 | Written answers | included | included | included | Course quiz settings: "Include written answers (graded by your model)" on/off; off removes explanation items and short-answer model fallback |
 | Feedback | after submission | after submission | after submission | Practice mode gives per-item feedback |
 | Expected minutes | derived: 1 min keyed, 2 min short answer/cloze, 6 min explanation | | | shown on the start screen |
 | Bank size | 3 × form requirement per (outcome, format) | | | derived; "Prepare more questions" adds one more form's worth |
 
 No per-item timers and no attempt limits.
+
+Why this mix (2026-10-26): a mix of formats, with more items where the
+learner produces the answer. Short-answer practice with feedback outlasted
+multiple choice in Kang, McDermott & Roediger (2007) and McDaniel, Roediger &
+McDermott (2007); choice items with competitive distractors also drive
+retrieval (Little et al. 2012; Adesope et al. 2017), so the mix keeps three.
+Two typed items replace a true/false item, a coin-flip guess, and one
+single-choice item. The earlier-lesson items bring
+back material the learner answered correctly, which the warm-up's due cards
+(misses and rated checks) never return; retrieval spaced across sessions and
+mixed with new material is what keeps it (Rawson & Dunlosky 2011; Rohrer,
+Dedrick, Hartwig & Cheung 2020). They are drawn from the earlier lessons' own
+banks, so nothing new is authored, and the quiz's instructions say why they
+are there.
 
 ### 2.4 Screens
 
@@ -163,10 +177,11 @@ No per-item timers and no attempt limits.
 
 ```
 ──────────────────────────────────────────────────────────────────────
- ✓ LESSON QUIZ                                           8 questions · ~12 min
+ ✓ LESSON QUIZ                                           9 questions · ~15 min
  Check what stuck from "Enzyme kinetics"
- Four choice questions, a true/false, a matching task, a short answer
- and one written explanation. Keys are shown after you submit.
+ Three choice questions, a matching task, a short answer, a fill-in,
+ one written explanation, and two questions from earlier lessons.
+ Keys are shown after you submit.
                                                       [ Start quiz → ]
  Best: not taken yet                      Practice first (ungraded) ›
 ──────────────────────────────────────────────────────────────────────

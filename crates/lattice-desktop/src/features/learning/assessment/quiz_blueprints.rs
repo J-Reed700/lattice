@@ -135,6 +135,8 @@ pub fn blueprint_for(
 ) -> Option<DesiredBlueprint> {
     let prepared = |lesson: &&LessonFacts| lesson.prepared && lesson.outcome_id.is_some();
     let mut slots = Vec::new();
+    // Earlier lessons a lesson quiz asks again.
+    let mut review: Vec<&LessonFacts> = Vec::new();
     let (purpose, title, passing, scoped): (_, _, _, Vec<&LessonFacts>) = match scope.kind {
         LearningQuizScopeKind::Lesson => {
             let lesson = facts
@@ -143,14 +145,6 @@ pub fn blueprint_for(
                 .find(|l| Some(&l.id) == scope.id.as_ref())
                 .filter(prepared)?;
             let outcome = lesson.outcome_id.as_deref()?;
-            slots.push(requirement(
-                outcome,
-                LearningItemFormat::SingleChoice,
-                4,
-                2,
-                3,
-            ));
-            slots.push(requirement(outcome, LearningItemFormat::TrueFalse, 1, 2, 2));
             let structured = [
                 LearningItemFormat::MultiSelect,
                 LearningItemFormat::Matching,
@@ -169,14 +163,83 @@ pub fn blueprint_for(
                     })
                     .unwrap_or(LearningItemFormat::SingleChoice)
             };
-            slots.push(requirement(
-                outcome,
-                pick(&structured, "structured"),
-                1,
-                3,
-                3,
-            ));
-            slots.push(requirement(outcome, pick(&typed, "typed"), 1, 3, 3));
+            if lesson.quiz_formats.contains(&LearningItemFormat::TrueFalse) {
+                // A lesson whose blueprint already asks the earlier mix keeps
+                // it, so its bank (or a copied course's) is not written again.
+                slots.push(requirement(
+                    outcome,
+                    LearningItemFormat::SingleChoice,
+                    4,
+                    2,
+                    3,
+                ));
+                slots.push(requirement(outcome, LearningItemFormat::TrueFalse, 1, 2, 2));
+                slots.push(requirement(
+                    outcome,
+                    pick(&structured, "structured"),
+                    1,
+                    3,
+                    3,
+                ));
+                slots.push(requirement(outcome, pick(&typed, "typed"), 1, 3, 3));
+            } else {
+                // A mix with more answers the learner produces: short-answer
+                // practice with feedback outlasted multiple choice (Kang,
+                // McDermott & Roediger 2007; McDaniel et al. 2007), while choice
+                // items with competitive distractors also drive retrieval
+                // (Little et al. 2012). Both typed formats replace a true/false
+                // item, a coin-flip guess, and one of four single-choice items.
+                slots.push(requirement(
+                    outcome,
+                    LearningItemFormat::SingleChoice,
+                    3,
+                    2,
+                    3,
+                ));
+                slots.push(requirement(
+                    outcome,
+                    pick(&structured, "structured"),
+                    1,
+                    3,
+                    3,
+                ));
+                for format in typed {
+                    slots.push(requirement(outcome, format, 1, 3, 3));
+                }
+            }
+            // Earlier lessons come back: one item from the lesson just before
+            // and one from a lesson further back, drawn from their own banks
+            // at the difficulty those were written for, so nothing new is
+            // authored. Retrieval spaced across sessions and mixed with new
+            // material is what keeps it (Rawson & Dunlosky 2011; Rohrer et al.
+            // 2020; Rosenshine 2012's weekly and monthly review).
+            let earlier: Vec<&LessonFacts> = facts
+                .lessons
+                .iter()
+                .take_while(|l| l.id != lesson.id)
+                .filter(prepared)
+                .collect();
+            if let Some((last, further)) = earlier.split_last() {
+                review.push(*last);
+                if !further.is_empty() {
+                    if let Some(back) =
+                        further.get(stable_pick(&format!("{}:review", lesson.id), further.len()))
+                    {
+                        review.push(*back);
+                    }
+                }
+            }
+            for revisited in &review {
+                if let Some(earlier_outcome) = revisited.outcome_id.as_deref() {
+                    slots.push(requirement(
+                        earlier_outcome,
+                        LearningItemFormat::SingleChoice,
+                        1,
+                        2,
+                        3,
+                    ));
+                }
+            }
             if settings.written_answers {
                 slots.push(requirement(
                     outcome,
@@ -300,10 +363,16 @@ pub fn blueprint_for(
     Some(DesiredBlueprint {
         purpose,
         title,
-        instructions: if settings.written_answers {
-            "Answer every question. Questions you leave blank score zero. Written answers are graded after you submit, and each lost point comes with the reason.".into()
-        } else {
-            "Answer every question. Questions you leave blank score zero.".into()
+        instructions: {
+            let mut text = if settings.written_answers {
+                "Answer every question. Questions you leave blank score zero. Written answers are graded after you submit, and each lost point comes with the reason.".to_string()
+            } else {
+                "Answer every question. Questions you leave blank score zero.".to_string()
+            };
+            if !review.is_empty() {
+                text.push_str(" A few questions come from earlier lessons: recalling them again, spread out over time, is what makes them last.");
+            }
+            text
         },
         expected_minutes,
         passing_score: (passing * 10_000.0).round() / 10_000.0,

@@ -4,6 +4,7 @@ import { AlertCircle, ArrowDownRight, BookOpen, Check, ChevronRight, CircleHelp,
 
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
 import {
   useAcceptLearningPracticeProposal,
   useChangeLearningPracticeMode,
@@ -75,6 +76,24 @@ function PreviousFeedback({ session }: { session: LearningPracticeSessionDto }) 
   const feedback = inherited?.previousFeedback;
   if (!Array.isArray(feedback)) return null;
   return <details open className="rounded-xl border border-accent/20 bg-accent/5 p-4"><summary className="cursor-pointer text-sm font-semibold">Feedback to use in this revision</summary><ul className="mt-3 space-y-3">{feedback.map((item: { criterionId?: string; observation?: string; evidenceQuote?: string }, index) => <li key={item.criterionId ?? index} className="text-sm leading-6"><p>{item.observation}</p>{item.evidenceQuote && <blockquote className="mt-1 border-l-2 border-accent/30 pl-3 text-xs text-text-muted">{item.evidenceQuote}</blockquote>}</li>)}</ul><p className="mt-3 text-xs text-text-muted">Your original submission and feedback stay in the attempt history.</p></details>;
+}
+
+/**
+ * An accepted misconception, corrected in the learner's own words and kept as
+ * a recall card. Writing the correction is itself retrieval, and the card
+ * brings it back spaced, so the error is fixed rather than only noted.
+ */
+function MisconceptionCard({ programId, lessonId, misconception }: { programId: string; lessonId: string; misconception: string }) {
+  const draft = useSaveLearningCardDraft();
+  const [correction, setCorrection] = useState('');
+  if (draft.isSuccess) return <p role="status" className="mt-3 text-xs text-text-secondary"><Check size={12} className="mr-1 inline text-accent" />Saved as a recall card draft. It comes back in Recall.</p>;
+  return <div className="mt-3 rounded-lg border border-border bg-surface p-3">
+    <label className="block text-xs font-medium text-text-primary">What is actually right, in your own words?
+      <textarea rows={2} maxLength={2000} value={correction} onChange={(event) => setCorrection(event.target.value)} className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" />
+    </label>
+    <button type="button" disabled={!correction.trim() || draft.isPending} onClick={() => draft.mutate({ draftId: null, programId, lessonId, question: `What is wrong with this idea, and what is right instead? “${misconception}”`, answer: correction.trim(), explanation: 'Drafted from a misconception found in practice', sourceIds: [] })} className="mt-2 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg disabled:opacity-50">{draft.isPending ? 'Saving…' : 'Make a recall card'}</button>
+    {draft.isError && <p role="alert" className="mt-2 text-xs text-rose-700">{draft.error.message}</p>}
+  </div>;
 }
 
 export function PracticeWorkbenchPanel({ program, lesson, taskKind = 'independent', embedded = false, onContinue }: { program: LearningProgramDto; lesson: LearningLessonDto | undefined; taskKind?: LearningPracticeTaskKind; embedded?: boolean; onContinue?: () => void }) {
@@ -345,7 +364,7 @@ export function PracticeWorkbenchPanel({ program, lesson, taskKind = 'independen
 
         {session.revealedSolution && <section className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-5"><div className="flex items-center gap-2 text-violet-800 dark:text-violet-200"><Unlock size={15} /><h4 className="font-serif text-xl">Worked solution revealed</h4></div><div className="mt-3 text-sm leading-7 text-text-secondary"><TiptapViewer content={session.revealedSolution} /></div>{showCitations && session.revealedSolutionCitations.length > 0 && <CitationCards disabled={!sourceOpeningAllowed || Boolean(busyLabel)} citations={session.revealedSolutionCitations} onOpen={(citation) => { const source = sourceForVersion(sourceWorkspace.data?.sources ?? [], citation.sourceId, citation.versionId); if (source) void doOpenSource(source, citation.versionId); }} />}</section>}
 
-        {session.proposals.length > 0 && <section className="rounded-2xl border border-border bg-surface p-5"><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Follow-up ideas</div><h4 className="mt-1 font-serif text-xl text-text-primary">Tutor proposals</h4><div className="mt-4 space-y-3">{session.proposals.map((proposal) => <article key={proposal.id} className="rounded-xl border border-border bg-background p-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="rounded-full bg-accent/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent">{proposal.kind === 'follow_up' ? 'Follow-up' : 'Possible misconception'}</span><span className="text-[10px] text-text-muted">{proposal.status}</span></div><p className="mt-2 text-sm leading-6 text-text-secondary">{proposal.text}</p>{proposal.evidenceQuote && <blockquote className="mt-3 border-l-2 border-accent/40 pl-3 text-xs italic leading-5 text-text-muted">“{proposal.evidenceQuote}”</blockquote>}{active && proposal.status === 'pending' && <div className="mt-3 flex gap-2"><button type="button" disabled={Boolean(busyLabel)} onClick={() => void decide(proposal.id, true)} className="rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">Accept idea</button><button type="button" disabled={Boolean(busyLabel)} onClick={() => void decide(proposal.id, false)} className="rounded-full border border-border px-3 py-2 text-xs font-semibold text-text-secondary disabled:opacity-50">Not useful</button></div>}</article>)}</div></section>}
+        {session.proposals.length > 0 && <section className="rounded-2xl border border-border bg-surface p-5"><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Follow-up ideas</div><h4 className="mt-1 font-serif text-xl text-text-primary">Tutor proposals</h4><div className="mt-4 space-y-3">{session.proposals.map((proposal) => <article key={proposal.id} className="rounded-xl border border-border bg-background p-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="rounded-full bg-accent/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent">{proposal.kind === 'follow_up' ? 'Follow-up' : 'Possible misconception'}</span><span className="text-[10px] text-text-muted">{proposal.status}</span></div><p className="mt-2 text-sm leading-6 text-text-secondary">{proposal.text}</p>{proposal.evidenceQuote && <blockquote className="mt-3 border-l-2 border-accent/40 pl-3 text-xs italic leading-5 text-text-muted">“{proposal.evidenceQuote}”</blockquote>}{active && proposal.status === 'pending' && <div className="mt-3 flex gap-2"><button type="button" disabled={Boolean(busyLabel)} onClick={() => void decide(proposal.id, true)} className="rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">Accept idea</button><button type="button" disabled={Boolean(busyLabel)} onClick={() => void decide(proposal.id, false)} className="rounded-full border border-border px-3 py-2 text-xs font-semibold text-text-secondary disabled:opacity-50">Not useful</button></div>}{proposal.kind === 'misconception' && proposal.status === 'accepted' && lessonId && <MisconceptionCard programId={programId} lessonId={lessonId} misconception={proposal.text} />}</article>)}</div></section>}
       </div>
 
       <aside className="min-w-0 space-y-5">
