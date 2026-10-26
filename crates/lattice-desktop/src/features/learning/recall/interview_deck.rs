@@ -26,6 +26,7 @@ fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T
 /// What a deck is made from: the activity's title, its plan, and its answer
 /// guides when it has them. Activities made before guides existed have none.
 pub(crate) struct InterviewMaterial {
+    pub activity_id: String,
     pub title: String,
     pub plan: LearningInterviewPlanDto,
     pub guides: Option<InterviewAnswerGuides>,
@@ -102,6 +103,7 @@ pub(crate) async fn load(
         }
     }
     Ok(InterviewMaterial {
+        activity_id: activity_id.to_owned(),
         title: activity.get("title"),
         plan,
         guides,
@@ -253,9 +255,23 @@ fn card(
     }
 }
 
+/// The drill deck's ID: one per interview and question set, so making the
+/// drill again finds the deck already made, with its reviews, instead of a
+/// second copy. An interview planned again with other questions gets its own.
+fn deck_id(material: &InterviewMaterial) -> String {
+    let questions: Vec<(&str, &str)> = material
+        .plan
+        .questions
+        .iter()
+        .map(|question| (question.id.as_str(), question.question.as_str()))
+        .collect();
+    let name = serde_json::json!(["interview-drill", material.activity_id, questions]).to_string();
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()).to_string()
+}
+
 /// The deck for `material`, every card due now.
 pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = deck_id(material);
     let plan = &material.plan;
     let cards = plan
         .questions
@@ -373,6 +389,7 @@ mod tests {
 
     fn material(guides: Option<InterviewAnswerGuides>) -> InterviewMaterial {
         InterviewMaterial {
+            activity_id: "activity-1".into(),
             title: "Acme loop".into(),
             plan: plan(),
             guides,
@@ -432,6 +449,20 @@ mod tests {
         );
         assert!(behavioral.citations.is_empty());
         assert_eq!(behavioral.source.file_name, "Answer guide · Acme loop");
+    }
+
+    #[test]
+    fn one_interview_and_question_set_is_one_deck() {
+        let first = deck(&material(Some(guides())), 5_000);
+        let again = deck(&material(Some(guides())), 9_000);
+        assert_eq!(again.id, first.id);
+        assert!(uuid::Uuid::parse_str(&first.id).is_ok());
+        let mut other_interview = material(Some(guides()));
+        other_interview.activity_id = "activity-2".into();
+        assert_ne!(deck(&other_interview, 5_000).id, first.id);
+        let mut replanned = material(None);
+        replanned.plan.questions[0].question = "How would you shed load?".into();
+        assert_ne!(deck(&replanned, 5_000).id, first.id);
     }
 
     #[test]
@@ -544,6 +575,74 @@ mod tests {
             load(&pool, "other-program", "ready").await,
             Err(AppError::NotFound(_))
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn making_the_drill_again_keeps_the_deck_and_its_reviews_and_moves_the_date() -> Result<()>
+    {
+        use super::super::{
+            study_dto::CreateInterviewStudyDeckRequestDto, study_repository::StudyRepository,
+            study_service::create_interview_deck,
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        sqlx::query("PRAGMA foreign_keys=OFF")
+            .execute(&pool)
+            .await
+            .map_err(db)?;
+        let plan = serde_json::to_string(&plan())
+            .map_err(|error| AppError::Serialization(error.to_string()))?;
+        save(
+            &pool,
+            "ready",
+            "interview",
+            "ready",
+            &[(INTERVIEW_PLAN_FILE_PATH, "reference", plan)],
+        )
+        .await?;
+        let repo = StudyRepository::new(pool.clone());
+        let request = |target_at| CreateInterviewStudyDeckRequestDto {
+            program_id: "program".into(),
+            activity_id: "ready".into(),
+            target_at,
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let day = super::super::schedule::DAY_MS;
+        let interview = now + day;
+        let first = create_interview_deck(&repo, &pool, request(Some(interview))).await?;
+        // The first card was recalled well enough to rest until the interview.
+        sqlx::query("UPDATE study_cards SET due_at=?, review_count=1 WHERE id=?")
+            .bind(interview)
+            .bind(&first.cards[0].id)
+            .execute(&pool)
+            .await
+            .map_err(db)?;
+        let ids = |deck: &StudyDeckDto| {
+            deck.cards
+                .iter()
+                .map(|card| card.id.clone())
+                .collect::<Vec<_>>()
+        };
+        for target in [Some(interview), None] {
+            let again = create_interview_deck(&repo, &pool, request(target)).await?;
+            assert_eq!(again.id, first.id);
+            assert_eq!(ids(&again), ids(&first));
+            assert_eq!(
+                again.target_at,
+                Some(interview),
+                "{target:?} keeps the date"
+            );
+            assert_eq!(
+                (again.cards[0].due_at, again.cards[0].review_count),
+                (interview, 1),
+                "{target:?} keeps the review and its rest"
+            );
+        }
+        let moved = create_interview_deck(&repo, &pool, request(Some(now + 2 * day))).await?;
+        assert_eq!(moved.id, first.id);
+        assert_eq!(moved.target_at, Some(now + 2 * day));
+        assert_eq!(moved.cards[0].review_count, 1);
+        assert_eq!(repo.list(now).await?.len(), 1, "no second copy");
         Ok(())
     }
 }

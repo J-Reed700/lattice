@@ -214,7 +214,9 @@ pub async fn set_target(
 }
 
 /// A deck of the interview's questions, checked against its answer guides,
-/// with the interview date as its target when one is given.
+/// with the interview date as its target when one is given. Made again for
+/// the same questions, it is the deck already made, reviews kept, with the
+/// new date.
 pub async fn create_interview_deck(
     repo: &StudyRepository,
     pool: &sqlx::SqlitePool,
@@ -225,8 +227,18 @@ pub async fn create_interview_deck(
     let material =
         super::interview_deck::load(pool, &request.program_id, &request.activity_id).await?;
     let deck = super::interview_deck::deck(&material, now);
-    repo.save(&deck).await?;
-    if request.target_at.is_some() {
+    let saved_target = match repo.get(&deck.id).await {
+        Ok(saved) => saved.target_at,
+        Err(AppError::NotFound(_)) => {
+            repo.save(&deck).await?;
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    // Setting a date makes every card scheduled into its final window due now.
+    // The same date again must not undo the rest a review scheduled before
+    // the interview, and no date keeps the one the deck has.
+    if request.target_at.is_some() && request.target_at != saved_target {
         repo.set_target(&deck.id, request.target_at, now).await?;
     }
     repo.get(&deck.id).await
