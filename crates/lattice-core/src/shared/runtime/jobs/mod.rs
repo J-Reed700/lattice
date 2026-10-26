@@ -149,15 +149,22 @@ impl JobFailure {
     /// Whether an error is a temporary outage of the network or a service,
     /// rather than a failure of the work itself. A model's rejection
     /// ([`AppError::ModelRejected`](crate::shared::error::AppError::ModelRejected))
-    /// is not: the same request would be refused again.
+    /// is not: the same request would be refused again. Nor is a database
+    /// error in general, but SQLite's busy and locked errors are: another
+    /// connection held the lock past the busy timeout, the work is untouched,
+    /// and a later attempt gets the lock.
     pub fn is_transient(error: &crate::shared::error::AppError) -> bool {
         use crate::shared::error::AppError;
-        matches!(
-            error,
+        match error {
             AppError::Network(_)
-                | AppError::ServiceNotAvailable(_)
-                | AppError::RateLimitExceeded(_)
-        )
+            | AppError::ServiceNotAvailable(_)
+            | AppError::RateLimitExceeded(_) => true,
+            AppError::Database(message) => {
+                message.contains("database is locked")
+                    || message.contains("database table is locked")
+            }
+            _ => false,
+        }
     }
 
     /// Whether an error says the service was not reached, or asked to be left
