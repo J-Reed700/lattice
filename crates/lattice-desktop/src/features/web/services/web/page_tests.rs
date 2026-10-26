@@ -36,6 +36,7 @@ fn service(dir: &TempDir, server: &MockServer, settings: SourcingSettingsDto) ->
         pacer: Arc::new(SitePacer::with_interval(Duration::ZERO)),
         parsers: Arc::new(Semaphore::new(2)),
         contact: None,
+        public_only: false,
     };
     let endpoints = Endpoints {
         availability: format!("{}/wayback/available", server.uri()),

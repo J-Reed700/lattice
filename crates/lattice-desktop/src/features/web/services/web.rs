@@ -44,7 +44,7 @@ mod page;
 mod search;
 
 pub(crate) use address_guard::is_blocked_ip;
-pub(crate) use address_guard::validate_url_resolved;
+pub(crate) use address_guard::{check_public_url, validate_url_resolved};
 use address_guard::{
     check_url_host, redirect_policy, refuse_blocked_addresses, PublicOnlyResolver,
 };
@@ -153,6 +153,7 @@ impl WebService {
             pacer: Arc::clone(&pacer),
             parsers: Arc::clone(&html_parsers),
             contact: settings.contact().map(str::to_owned),
+            public_only: true,
         };
         let wayback = Wayback::new(http.clone(), settings.clone());
         let owner_resolver = Arc::new(
@@ -227,6 +228,7 @@ impl WebService {
             pacer: Arc::clone(&self.pacer),
             parsers: Arc::clone(&self.html_parsers),
             contact: settings.contact().map(str::to_owned),
+            public_only: true,
         };
         let registry = finders::registry(&http, &self.instance_client, &settings, &keys);
         self.wayback.apply(http, settings.clone());
