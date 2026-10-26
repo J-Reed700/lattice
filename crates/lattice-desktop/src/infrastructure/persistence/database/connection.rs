@@ -7,14 +7,16 @@ use std::time::Duration;
 
 pub struct DatabaseConnection {
     pool: SqlitePool,
-    /// Where a corrupt database was moved before a fresh one was created, when
-    /// that happened on this open. The user otherwise sees only an empty
-    /// library; this is what lets the app say why.
+    /// Where a corrupt database, or one from before the schema baseline, was
+    /// moved before a fresh one was created, when that happened on this open.
+    /// The user otherwise sees only an empty library; this is what lets the
+    /// app say why.
     recovered_from: Option<PathBuf>,
 }
 
-/// Tracing target of the corruption-recovery event, stable so the log viewer
-/// and support can find it.
+/// Tracing target of the recovery events (a corrupt database, or one from
+/// before the schema baseline, moved aside), stable so the log viewer and
+/// support can find them.
 pub const DB_RECOVERY_TARGET: &str = "lattice::db_recovery";
 
 /// Rename `db_path` to `backup_path`, and its `-wal` and `-shm` with it.
@@ -59,6 +61,40 @@ async fn rename_after_sqlite_close(from: &Path, to: &Path) -> std::io::Result<()
     }
 }
 
+/// The oldest migration `_sqlx_migrations` records from before the first one
+/// this build ships, if any.
+///
+/// The schema was squashed into one baseline migration and the migrations it
+/// replaced are gone, so a database that applied them has no upgrade path:
+/// sqlx refuses it ("previously applied but is missing") and startup fails on
+/// every launch. A missing version *after* the baseline is not this case. It
+/// comes from a build with a migration this one lacks, and moving that
+/// database aside would hide the newer build's data, so the migration run is
+/// left to report it.
+async fn applied_version_before_baseline(pool: &SqlitePool) -> Result<Option<i64>> {
+    let Some(baseline) = sqlx::migrate!("./migrations")
+        .iter()
+        .map(|migration| migration.version)
+        .min()
+    else {
+        return Ok(None);
+    };
+    let tracked: Option<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to look for the migration history")?;
+    if tracked.is_none() {
+        return Ok(None);
+    }
+    let (oldest,): (Option<i64>,) = sqlx::query_as("SELECT MIN(version) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await
+        .context("Failed to read the migration history")?;
+    Ok(oldest.filter(|version| *version < baseline))
+}
+
 /// `lattice.db` + `-wal` → `lattice.db-wal`, SQLite's own naming.
 fn sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
     let mut name = db_path.as_os_str().to_owned();
@@ -69,7 +105,33 @@ fn sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
 impl DatabaseConnection {
     pub async fn new(db_path: PathBuf) -> Result<Self> {
         // Connect with corruption detection and automatic recovery.
-        let (pool, recovered_from) = Self::create_pool_with_corruption_recovery(&db_path).await?;
+        let (mut pool, mut recovered_from) =
+            Self::create_pool_with_corruption_recovery(&db_path).await?;
+
+        if let Some(applied) = applied_version_before_baseline(&pool).await? {
+            pool.close().await;
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let backup_path = db_path.with_extension(format!("pre-baseline-{}.bak", timestamp));
+            move_database_aside(&db_path, &backup_path)
+                .await
+                .map_err(|rename_err| {
+                    AppError::Database(format!(
+                        "Database at {} was created by an older Lattice whose schema can no \
+                         longer be upgraded, and its files could not be moved aside. Close \
+                         other applications using it and retry. Recovery error: {}",
+                        db_path.display(),
+                        rename_err
+                    ))
+                })?;
+            tracing::warn!(
+                target: DB_RECOVERY_TARGET,
+                moved_to = %backup_path.display(),
+                applied_version = applied,
+                "Database predates the schema baseline; moved aside, starting with an empty one"
+            );
+            (pool, _) = Self::create_pool_with_corruption_recovery(&db_path).await?;
+            recovered_from = Some(backup_path);
+        }
 
         let fk_enabled: (i32,) = sqlx::query_as("PRAGMA foreign_keys")
             .fetch_one(&pool)
@@ -88,7 +150,7 @@ impl DatabaseConnection {
         })
     }
 
-    /// The corrupt database moved aside on this open, if any.
+    /// The corrupt or pre-baseline database moved aside on this open, if any.
     pub fn recovered_from(&self) -> Option<&Path> {
         self.recovered_from.as_deref()
     }
@@ -546,6 +608,102 @@ mod tests {
             fresh.0, 0,
             "the database at the original path is a new, empty one"
         );
+        connection.close().await.unwrap();
+    }
+
+    /// A database whose history records `versions`, with a table of its own
+    /// to show whether its contents survived.
+    async fn database_with_history(db: &Path, versions: &[i64]) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(db)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY, \
+             description TEXT NOT NULL, installed_on TIMESTAMP NOT NULL DEFAULT \
+             CURRENT_TIMESTAMP, success BOOLEAN NOT NULL, checksum BLOB NOT NULL, \
+             execution_time BIGINT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for version in versions {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?, 'old', 1, x'00', 0)",
+            )
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("CREATE TABLE old_notes (body TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    async fn has_table(pool: &SqlitePool, name: &str) -> bool {
+        let found: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .bind(name)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        found.0 == 1
+    }
+
+    #[tokio::test]
+    async fn a_database_from_before_the_schema_baseline_is_moved_aside_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("lattice.db");
+        // Versions the squashed baseline replaced: sqlx refuses to migrate this.
+        database_with_history(&db, &[20250101000000, 20260501000000]).await;
+
+        let connection = DatabaseConnection::new(db.clone()).await.unwrap();
+
+        let moved = connection
+            .recovered_from()
+            .expect("move recorded")
+            .to_path_buf();
+        let old = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&moved))
+            .await
+            .unwrap();
+        assert!(has_table(&old, "old_notes").await, "the old data is kept");
+        old.close().await;
+        assert!(!has_table(connection.pool(), "old_notes").await);
+        // What startup failed on: the fresh database takes every migration.
+        crate::infrastructure::persistence::database::migrate::run_migrations(connection.pool())
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_database_on_the_baseline_stays_even_with_a_version_this_build_lacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("lattice.db");
+        let baseline = sqlx::migrate!("./migrations")
+            .iter()
+            .map(|migration| migration.version)
+            .min()
+            .unwrap();
+        // A newer build's migration: its data must not be hidden by a move.
+        database_with_history(&db, &[baseline, 29990101000000]).await;
+
+        let connection = DatabaseConnection::new(db.clone()).await.unwrap();
+
+        assert!(connection.recovered_from().is_none());
+        assert!(has_table(connection.pool(), "old_notes").await);
         connection.close().await.unwrap();
     }
 }
