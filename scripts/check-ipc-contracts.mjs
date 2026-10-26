@@ -4,9 +4,13 @@ import ts from '../node_modules/typescript/lib/typescript.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// TypeScript names files with forward slashes on every OS, while Node's path
+// joins with backslashes on Windows. On Windows, paths are put in TypeScript's
+// form before comparing; elsewhere they already agree and pass unchanged.
+const tsPath = file => path.sep === '\\' ? file.replaceAll('\\', '/') : file;
 const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile);
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-const probePath = path.join(root, 'src', '__contract_probe__.ts');
+const probePath = tsPath(path.join(root, 'src', '__contract_probe__.ts'));
 const host = ts.createCompilerHost(parsed.options);
 const getSourceFile = host.getSourceFile.bind(host);
 const probe = `
@@ -115,7 +119,7 @@ function checkObject(expression, expected, context, prefix = '') {
     }
 }
 for (const source of program.getSourceFiles()) {
-    if (!source.fileName.startsWith(path.join(root, 'src')) || source === bindings || /(?:__tests__|__mocks__|\.test\.|\.spec\.)/.test(source.fileName))
+    if (!source.fileName.startsWith(tsPath(path.join(root, 'src'))) || source === bindings || /(?:__tests__|__mocks__|\.test\.|\.spec\.)/.test(source.fileName))
         continue;
     visit(source, call => {
         if (!ts.isCallExpression(call) || !call.arguments.length || !ts.isStringLiteral(call.arguments[0]))
@@ -124,7 +128,7 @@ for (const source of program.getSourceFiles()) {
         if (!routed && call.expression.getText(source) !== 'invoke')
             return;
         const inputName = call.arguments[0].text, command = inputName.replace(/^plugin:[^|]+\|/, '');
-        const location = `${path.relative(root, source.fileName)}:${source.getLineAndCharacterOfPosition(call.getStart(source)).line + 1}`;
+        const location = `${tsPath(path.relative(root, source.fileName))}:${source.getLineAndCharacterOfPosition(call.getStart(source)).line + 1}`;
         // A routed call names a generated command; anything else cannot be
         // invoked, so it is a dead feature rather than a fallback.
         if (routed && !routes.has(inputName)) {
@@ -199,7 +203,7 @@ if (process.argv.includes('--self-test')) {
 if (process.argv.includes('--self-test')) {
     const e2eConfig = ts.readConfigFile(path.join(root, 'tsconfig.e2e.json'), ts.sys.readFile);
     const e2eParsed = ts.parseJsonConfigFileContent(e2eConfig.config, ts.sys, root);
-    const e2eProbePath = path.join(root, 'e2e', '__contract_probe__.ts');
+    const e2eProbePath = tsPath(path.join(root, 'e2e', '__contract_probe__.ts'));
     const e2eProbe = `
 import type { Page } from '@playwright/test';
 import { mockCommands, serveCommands } from './fixtures/tauri';
