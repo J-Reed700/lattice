@@ -180,11 +180,7 @@ pub(in crate::features::learning) async fn draft_outline<T>(
             ]
         })
     };
-    let system = format!(
-        "You are an expert course designer. Create a substantive, progressive curriculum for the stated goal and prior knowledge. {} {}",
-        crate::features::learning::method::LEARNING_METHOD,
-        reference_instructions(sources)
-    );
+    let system = format!("You are an expert course designer. Create a substantive, progressive curriculum for the stated goal and prior knowledge. {}", reference_instructions(sources));
     // The passages and the catalog are packed and measured: on material
     // denser than the estimate the outline reads fewer, the catalog first.
     let order = packing_order(llm, &supplied, &catalog);
