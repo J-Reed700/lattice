@@ -24,7 +24,7 @@ fn facts() -> CourseFacts {
 }
 
 #[test]
-fn lesson_quizzes_need_a_prepared_lesson_and_ask_eight_items() {
+fn lesson_quizzes_need_a_prepared_lesson_and_ask_seven_items() {
     let settings = default_settings();
     let scope = |id: &str| LearningQuizScopeDto {
         kind: LearningQuizScopeKind::Lesson,
@@ -33,7 +33,7 @@ fn lesson_quizzes_need_a_prepared_lesson_and_ask_eight_items() {
     assert!(blueprint_for(&scope("l2"), &facts(), &settings).is_none());
     let quiz = blueprint_for(&scope("l1"), &facts(), &settings).unwrap();
     let items: usize = quiz.slots.iter().map(|s| s.requirement.count).sum();
-    assert_eq!(items, 8);
+    assert_eq!(items, 7);
     assert_eq!(quiz.passing_score, 0.7);
     let without_written = LearningQuizSettingsDto {
         written_answers: false,
@@ -64,6 +64,30 @@ fn a_lesson_keeps_the_quiz_mix_its_blueprint_already_asks() {
             assert_eq!(formats, asked);
         }
     }
+}
+
+#[test]
+fn a_new_lesson_quiz_asks_for_recall_more_than_recognition() {
+    use LearningItemFormat::*;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some("l1".into()),
+    };
+    let quiz = blueprint_for(&scope, &facts(), &default_settings()).unwrap();
+    let count = |format: LearningItemFormat| -> usize {
+        quiz.slots
+            .iter()
+            .filter(|s| s.requirement.format == format)
+            .map(|s| s.requirement.count)
+            .sum()
+    };
+    assert_eq!(count(TrueFalse), 0, "a coin-flip guess is not retrieval");
+    assert_eq!(count(SingleChoice), 3);
+    assert_eq!(
+        (count(ShortAnswer), count(Cloze), count(Explanation)),
+        (1, 1, 1)
+    );
+    assert_eq!(count(MultiSelect) + count(Matching) + count(Ordering), 1);
 }
 
 #[test]

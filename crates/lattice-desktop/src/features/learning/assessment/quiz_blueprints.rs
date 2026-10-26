@@ -143,14 +143,6 @@ pub fn blueprint_for(
                 .find(|l| Some(&l.id) == scope.id.as_ref())
                 .filter(prepared)?;
             let outcome = lesson.outcome_id.as_deref()?;
-            slots.push(requirement(
-                outcome,
-                LearningItemFormat::SingleChoice,
-                4,
-                2,
-                3,
-            ));
-            slots.push(requirement(outcome, LearningItemFormat::TrueFalse, 1, 2, 2));
             let structured = [
                 LearningItemFormat::MultiSelect,
                 LearningItemFormat::Matching,
@@ -169,14 +161,49 @@ pub fn blueprint_for(
                     })
                     .unwrap_or(LearningItemFormat::SingleChoice)
             };
-            slots.push(requirement(
-                outcome,
-                pick(&structured, "structured"),
-                1,
-                3,
-                3,
-            ));
-            slots.push(requirement(outcome, pick(&typed, "typed"), 1, 3, 3));
+            if lesson.quiz_formats.contains(&LearningItemFormat::TrueFalse) {
+                // A lesson whose blueprint already asks the earlier mix keeps
+                // it, so its bank (or a copied course's) is not written again.
+                slots.push(requirement(
+                    outcome,
+                    LearningItemFormat::SingleChoice,
+                    4,
+                    2,
+                    3,
+                ));
+                slots.push(requirement(outcome, LearningItemFormat::TrueFalse, 1, 2, 2));
+                slots.push(requirement(
+                    outcome,
+                    pick(&structured, "structured"),
+                    1,
+                    3,
+                    3,
+                ));
+                slots.push(requirement(outcome, pick(&typed, "typed"), 1, 3, 3));
+            } else {
+                // Recall over recognition: an answer produced from memory, with
+                // feedback after it, is retained better than one picked from
+                // options (Kang, McDermott & Roediger 2007; McDaniel, Roediger
+                // & McDermott 2007). Both typed formats replace a true/false
+                // item, a coin-flip guess, and one of four single-choice items.
+                slots.push(requirement(
+                    outcome,
+                    LearningItemFormat::SingleChoice,
+                    3,
+                    2,
+                    3,
+                ));
+                slots.push(requirement(
+                    outcome,
+                    pick(&structured, "structured"),
+                    1,
+                    3,
+                    3,
+                ));
+                for format in typed {
+                    slots.push(requirement(outcome, format, 1, 3, 3));
+                }
+            }
             if settings.written_answers {
                 slots.push(requirement(
                     outcome,
