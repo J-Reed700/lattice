@@ -135,6 +135,8 @@ pub fn blueprint_for(
 ) -> Option<DesiredBlueprint> {
     let prepared = |lesson: &&LessonFacts| lesson.prepared && lesson.outcome_id.is_some();
     let mut slots = Vec::new();
+    // Earlier lessons a lesson quiz asks again.
+    let mut review: Vec<&LessonFacts> = Vec::new();
     let (purpose, title, passing, scoped): (_, _, _, Vec<&LessonFacts>) = match scope.kind {
         LearningQuizScopeKind::Lesson => {
             let lesson = facts
@@ -202,6 +204,39 @@ pub fn blueprint_for(
                 ));
                 for format in typed {
                     slots.push(requirement(outcome, format, 1, 3, 3));
+                }
+            }
+            // Earlier lessons come back: one item from the lesson just before
+            // and one from a lesson further back, drawn from their own banks
+            // at the difficulty those were written for, so nothing new is
+            // authored. Retrieval spaced across sessions and mixed with new
+            // material is what keeps it (Rawson & Dunlosky 2011; Rohrer et al.
+            // 2020; Rosenshine 2012's weekly and monthly review).
+            let earlier: Vec<&LessonFacts> = facts
+                .lessons
+                .iter()
+                .take_while(|l| l.id != lesson.id)
+                .filter(prepared)
+                .collect();
+            if let Some((last, further)) = earlier.split_last() {
+                review.push(*last);
+                if !further.is_empty() {
+                    if let Some(back) =
+                        further.get(stable_pick(&format!("{}:review", lesson.id), further.len()))
+                    {
+                        review.push(*back);
+                    }
+                }
+            }
+            for revisited in &review {
+                if let Some(earlier_outcome) = revisited.outcome_id.as_deref() {
+                    slots.push(requirement(
+                        earlier_outcome,
+                        LearningItemFormat::SingleChoice,
+                        1,
+                        2,
+                        3,
+                    ));
                 }
             }
             if settings.written_answers {
@@ -327,10 +362,16 @@ pub fn blueprint_for(
     Some(DesiredBlueprint {
         purpose,
         title,
-        instructions: if settings.written_answers {
-            "Answer every question. Questions you leave blank score zero. Written answers are graded after you submit, and each lost point comes with the reason.".into()
-        } else {
-            "Answer every question. Questions you leave blank score zero.".into()
+        instructions: {
+            let mut text = if settings.written_answers {
+                "Answer every question. Questions you leave blank score zero. Written answers are graded after you submit, and each lost point comes with the reason.".to_string()
+            } else {
+                "Answer every question. Questions you leave blank score zero.".to_string()
+            };
+            if !review.is_empty() {
+                text.push_str(" A few questions come from earlier lessons: recalling them again, spread out over time, is what makes them last.");
+            }
+            text
         },
         expected_minutes,
         passing_score: (passing * 10_000.0).round() / 10_000.0,

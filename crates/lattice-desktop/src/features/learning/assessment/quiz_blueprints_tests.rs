@@ -91,6 +91,45 @@ fn a_new_lesson_quiz_asks_for_recall_more_than_recognition() {
 }
 
 #[test]
+fn a_lesson_quiz_asks_earlier_lessons_again() {
+    use LearningItemFormat::*;
+    let mut course = facts();
+    for id in ["l3", "l4"] {
+        let mut lesson = course.lessons[0].clone();
+        lesson.id = id.into();
+        lesson.outcome_id = Some(format!("o-{id}"));
+        course.lessons.push(lesson);
+    }
+    // Course order: l1 (prepared), l2 (outline), l3, l4.
+    let quiz = |id: &str| {
+        let scope = LearningQuizScopeDto {
+            kind: LearningQuizScopeKind::Lesson,
+            id: Some(id.into()),
+        };
+        blueprint_for(&scope, &course, &default_settings()).unwrap()
+    };
+    // The single-choice items a lesson's quiz asks about other lessons.
+    let reviewed = |id: &str| -> Vec<String> {
+        quiz(id)
+            .slots
+            .iter()
+            .map(|s| &s.requirement)
+            .filter(|r| r.outcome_id != format!("o-{id}"))
+            .map(|r| {
+                assert_eq!((r.format, r.count), (SingleChoice, 1));
+                r.outcome_id.clone()
+            })
+            .collect()
+    };
+    assert!(reviewed("l1").is_empty());
+    assert!(!quiz("l1").instructions.contains("earlier lessons"));
+    // The lesson before (an outline lesson is skipped), then one further back.
+    assert_eq!(reviewed("l3"), ["o-l1"]);
+    assert_eq!(reviewed("l4"), ["o-l3", "o-l1"]);
+    assert!(quiz("l4").instructions.contains("earlier lessons"));
+}
+
+#[test]
 fn module_tests_cover_prepared_lessons_and_say_so() {
     let scope = LearningQuizScopeDto {
         kind: LearningQuizScopeKind::Module,
