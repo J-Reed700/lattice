@@ -697,7 +697,8 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// `maxItems`, `uniqueItems`, numeric bounds and a `minItems` above 1 with a
 /// 400, so those move into the description, where the model still reads them;
 /// callers check what comes back either way. A keyword is only ever a number or
-/// a boolean, so a property that happens to be named `maximum` is kept.
+/// a boolean, so a property that happens to be named `maximum` is kept. Every
+/// object must also say `additionalProperties: false` outright.
 fn anthropic_schema(schema: &Value) -> Value {
     const MOVED: [&str; 7] = [
         "maxItems",
@@ -730,6 +731,11 @@ fn anthropic_schema(schema: &Value) -> Value {
                     None => moved,
                 };
                 kept.insert("description".into(), json!(description));
+            }
+            if kept.get("type").and_then(Value::as_str) == Some("object")
+                || kept.get("properties").is_some_and(Value::is_object)
+            {
+                kept.insert("additionalProperties".into(), json!(false));
             }
             Value::Object(kept)
         }

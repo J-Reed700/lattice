@@ -241,6 +241,10 @@ fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
         schema["properties"]["maximum"],
         json!({"type":"string","description":"A property, not a bound","minLength":1})
     );
+    assert_eq!(
+        schema["additionalProperties"], false,
+        "every object must close its properties"
+    );
 }
 
 #[test]
