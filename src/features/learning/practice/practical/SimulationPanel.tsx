@@ -6,6 +6,7 @@ import { LoaderCircle, Play, Send, Users } from "lucide-react";
 import { TiptapViewer } from "@/components/TiptapEditor";
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
+import { AnswerTimer } from "@/features/learning/practice/practical/AnswerTimer";
 import { errorText, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
 import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
@@ -85,6 +86,7 @@ export function SimulationPanel({
     onError: refreshAfterError,
   });
   const busy = start.isPending || turn.isPending || finish.isPending;
+  const lastQuestionId = session?.turns.filter((item) => item.speaker === "counterpart").at(-1)?.id;
   const begin = async () => {
     if (busyRef.current || !learnerRole.trim() || !counterpartRole.trim()) return;
     busyRef.current = true;
@@ -313,6 +315,7 @@ export function SimulationPanel({
           </div>
           {session.status === "active" && (
             <div className="mt-3 space-y-2">
+              {isInterview && lastQuestionId && <AnswerTimer since={lastQuestionId} />}
               {activity.practiceMode !== "demonstrate" && activity.interviewPlan?.questions &&
                 activity.interviewPlan.questions.length > 0 && (
                   <div

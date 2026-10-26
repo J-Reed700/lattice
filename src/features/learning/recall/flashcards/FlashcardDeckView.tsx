@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { PageHeader, SectionHeading } from '@/components/ui/PageHeader';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
+import { DeckTarget } from '@/features/learning/recall/flashcards/DeckTarget';
 import { EditFlashcard } from '@/features/learning/recall/flashcards/EditFlashcard';
 import { FlashcardSession, type FlashcardMode } from '@/features/learning/recall/flashcards/FlashcardSession';
 import { FlashcardSource } from '@/features/learning/recall/flashcards/FlashcardSource';
 import { NewFlashcardDeck } from '@/features/learning/recall/flashcards/NewFlashcardDeck';
+import { fromNow, interleaveByTopic } from '@/features/learning/recall/flashcards/retrieval';
 import { useDeleteFlashcardDeck, useFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
 import type { StudyCardDto } from '@/lib/bindings';
 
@@ -56,19 +58,20 @@ export function FlashcardDeckView() {
 
   let content;
   if (creating) content = <NewFlashcardDeck onCreated={deckId => setParams({ deck: deckId })} onCancel={back} />;
-  else if (session && current) content = <FlashcardSession key={session.id} title={current.title} cards={session.cards} mode={session.mode} onClose={() => setSession(null)} />;
+  else if (session && current) content = <FlashcardSession key={session.id} title={current.title} cards={session.cards} mode={session.mode} targetAt={current.targetAt} onClose={() => setSession(null)} />;
   else content = <>
     {backButton}
     {deck.isPending && <p role="status" className="text-sm text-text-muted">Loading deck…</p>}
     {deck.isError && <div role="alert"><p className="text-sm text-danger-fg">{deck.error.message}</p><Button variant="secondary" className="mt-4" onClick={() => void deck.refetch()}>Retry</Button></div>}
     {current && <>
-      <PageHeader title={current.title} meta={`${current.cards.length} cards · ${due.length} due${current.focus ? ` · ${current.focus}` : ''}`} />
+      <PageHeader title={current.title} meta={`${current.cards.length} cards · ${due.length} due${current.focus ? ` · ${current.focus}` : ''}${current.targetAt && current.targetAt > now ? ` · target ${fromNow(current.targetAt, now)}` : ''}`} />
       {current.studyGoal && <p className="mb-6 text-sm text-text-secondary">Learning goal · {current.studyGoal}</p>}
       <div className="mb-8 flex flex-wrap gap-2">
-        <Button disabled={due.length === 0} onClick={() => start(due, 'flashcard')}>Review due{due.length > 0 ? ` (${due.length})` : ''}</Button>
+        <Button disabled={due.length === 0} onClick={() => start(interleaveByTopic(due), 'flashcard')}>Review due{due.length > 0 ? ` (${due.length})` : ''}</Button>
         <Button variant="secondary" disabled={!quizCards.length} title={quizCards.length ? undefined : 'This deck has no multiple-choice cards'} onClick={() => start(shuffled(quizCards), 'quiz')}>Practice quiz</Button>
-        <Button variant="ghost" disabled={!current.cards.length} onClick={() => start(current.cards, 'flashcard')}>Study all</Button>
+        <Button variant="ghost" disabled={!current.cards.length} onClick={() => start(interleaveByTopic(current.cards), 'flashcard')}>Study all</Button>
       </div>
+      <DeckTarget deck={current} now={now} />
       {due.length === 0 && current.cards.length > 0 && <p className="mb-8 text-sm text-text-muted">Next review {new Date(Math.min(...current.cards.map(card => card.dueAt))).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.</p>}
       {weakTopics.length > 0 && <section className="mb-8"><SectionHeading>Topics to revisit</SectionHeading><p className="text-sm leading-relaxed text-text-secondary">{weakTopics.join(' · ')}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="ghost" size="sm" className="-ml-3" onClick={() => start(shuffled(weakCards), 'flashcard')}>Review missed cards</Button>{weakQuizCards.length > 0 && <Button variant="ghost" size="sm" onClick={() => start(shuffled(weakQuizCards), 'quiz')}>Practice missed quiz cards</Button>}</div></section>}
       <SectionHeading>Cards</SectionHeading>

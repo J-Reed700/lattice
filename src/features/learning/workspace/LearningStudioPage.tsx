@@ -102,6 +102,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const flashcardsRef = useRef<HTMLElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
   const flashcardRoute = searchParams.has('deck') || searchParams.get('newDeck') === '1';
+  // A deck opened from inside a program, such as an interview's drill deck,
+  // leaves the program for the deck.
+  const requestedDeck = searchParams.get('deck');
+  useEffect(() => {
+    if (!requestedDeck) return;
+    setScreen('programs');
+    setSelectedId(null);
+  }, [requestedDeck]);
   // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
   const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
   const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;

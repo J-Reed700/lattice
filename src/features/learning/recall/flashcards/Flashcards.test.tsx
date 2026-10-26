@@ -42,7 +42,7 @@ describe('Flashcards', () => {
       .mockResolvedValueOnce({ ok: true, data: { ...card, reviewCount: 1 } });
     show(<FlashcardSession cards={[card]} mode="flashcard" title="Biology" onClose={vi.fn()} />);
     expect(screen.queryByText(card.answer, { exact: true })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
     expect(screen.getAllByText(card.answer, { exact: true }).length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: 'Good' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Disk full');
@@ -61,18 +61,76 @@ describe('Flashcards', () => {
     expect(screen.getByRole('heading', { name: 'No quiz cards available' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Check answer' })).not.toBeInTheDocument();
   });
-  it('records a quiz selection before revealing the answer and reports missed topics', async () => {
+  it('ends a session early with a summary of the cards it reached', async () => {
+    const user = userEvent.setup();
+    const close = vi.fn();
+    mocks.review.mockResolvedValue({ ok: true, data: { ...card, reviewCount: 1 } });
+    show(<FlashcardSession cards={[card, { ...card, id: 'second', question: 'Second question?' }]} mode="flashcard" title="Biology" onClose={close} />);
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
+    await screen.findByText('Second question?');
+    await user.click(screen.getByRole('button', { name: 'End session' }));
+    expect(await screen.findByText('1 card · 1 recalled first try')).toBeVisible();
+    expect(close).not.toHaveBeenCalled();
+  });
+  it('records a quiz selection before revealing the answer, relearns a miss and reports missed topics', async () => {
     const user = userEvent.setup();
     mocks.review.mockResolvedValue({ ok: true, data: { ...card, reviewCount: 1, lapses: 1 } });
     show(<FlashcardSession cards={[card]} mode="quiz" title="Biology" onClose={vi.fn()} />);
-    expect(screen.getByRole('button', { name: 'Check answer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check answer: Not sure' })).toBeDisabled();
     await user.click(screen.getByRole('radio', { name: 'B. Water' }));
-    await user.click(screen.getByRole('button', { name: 'Check answer' }));
+    await user.click(screen.getByRole('button', { name: 'Check answer: Not sure' }));
     expect(await screen.findByText('Review this answer')).toBeVisible();
     expect(mocks.review.mock.calls[0][0]).toMatchObject({ selectedOption: 1, expectedReviews: 0 });
+    await user.click(screen.getByRole('button', { name: 'Next question' }));
+    expect(screen.getByText(/relearning/)).toBeVisible();
+    await user.click(screen.getByRole('radio', { name: 'A. Chlorophyll' }));
+    await user.click(screen.getByRole('button', { name: 'Check answer: I know this' }));
+    expect(await screen.findByText('Correct')).toBeVisible();
+    expect(mocks.review.mock.calls[1][0]).toMatchObject({ selectedOption: 0, expectedReviews: 1 });
+    expect(mocks.review.mock.calls[1][0].reviewId).not.toBe(mocks.review.mock.calls[0][0].reviewId);
     await user.click(screen.getByRole('button', { name: 'Finish practice' }));
-    expect(await screen.findByText('1 question · 0 correct')).toBeVisible();
+    expect(await screen.findByText('1 question · 0 correct first try')).toBeVisible();
+    expect(screen.getByText('Relearned').nextSibling).toHaveTextContent('1');
     expect(screen.getByText('Revisit')).toBeVisible();
+  });
+  it('shows the typed attempt beside the answer, holds a confident miss for the correction and brings it back', async () => {
+    const user = userEvent.setup();
+    const recall: StudyCardDto = { ...card, format: 'question_answer', options: [] };
+    const other: StudyCardDto = { ...recall, id: 'other', question: 'What gas do plants release?', answer: 'Oxygen', topic: 'Gases' };
+    mocks.review.mockImplementation((request: { cardId: string }) => Promise.resolve({ ok: true, data: { ...(request.cardId === 'card' ? recall : other), reviewCount: 1 } }));
+    show(<FlashcardSession cards={[recall, other]} mode="flashcard" title="Biology" onClose={vi.fn()} targetAt={Date.now() + 86_400_000} />);
+    await user.type(screen.getByLabelText(/Your answer/), 'Water');
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: I know this' }));
+    expect(screen.getByText('Water')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Again' }));
+    expect(await screen.findByRole('note')).toHaveTextContent('You were sure, and it was wrong.');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(other.question);
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
+    expect(await screen.findByText(/missed this earlier/)).toBeVisible();
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(recall.question);
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
+    expect(await screen.findByText('Review complete')).toBeVisible();
+    expect(screen.getByText('You were sure, and it was wrong')).toBeVisible();
+    expect(screen.getByText(/Target in 24 h/)).toBeVisible();
+    expect(mocks.review.mock.calls.map(call => [call[0].cardId, call[0].rating, call[0].expectedReviews])).toEqual([['card', 'again', 0], ['other', 'good', 0], ['card', 'good', 1]]);
+  });
+  it('checks an interview answer point by point and suggests the rating', async () => {
+    const user = userEvent.setup();
+    const interview: StudyCardDto = { ...card, format: 'question_answer', options: [], topic: 'Behavioral', question: 'Tell me about a conflict.', answer: '- A specific situation\n- What you did\n- The result' };
+    mocks.review.mockResolvedValue({ ok: true, data: { ...interview, reviewCount: 1 } });
+    show(<FlashcardSession cards={[interview]} mode="flashcard" title="Interview" onClose={vi.fn()} />);
+    expect(screen.getByText(/Answer aloud/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
+    await user.click(screen.getByRole('checkbox', { name: 'A specific situation' }));
+    await user.click(screen.getByRole('checkbox', { name: 'What you did' }));
+    expect(screen.getByText('You covered 2 of 3: that suggests Hard.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Hard' }));
+    expect(await screen.findByText('Review complete')).toBeVisible();
+    expect(mocks.review.mock.calls[0][0]).toMatchObject({ rating: 'hard', selectedOption: null });
   });
   it('shows every supporting citation on the answer side', async () => {
     const user = userEvent.setup();
@@ -84,7 +142,7 @@ describe('Flashcards', () => {
       ],
     };
     show(<FlashcardSession cards={[citedCard]} mode="flashcard" title="Biology" onClose={vi.fn()} />);
-    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
     await user.click(screen.getByText('Citations · 2 sources'));
     expect(screen.getByText('A second passage independently supports the verified claim.')).toBeVisible();
   });
