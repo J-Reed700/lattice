@@ -15,4 +15,18 @@ describe('AnswerTimer', () => {
     rerender(<AnswerTimer since="question-2" />);
     expect(screen.getByText(/aim for about two minutes/)).toHaveTextContent('Answering for 0:00');
   });
+
+  it('stops while the answer is with the interviewer and resumes if the send fails', () => {
+    const { rerender } = render(<AnswerTimer since="question-1" />);
+    act(() => { vi.advanceTimersByTime(90_000); });
+    rerender(<AnswerTimer since="question-1" running={false} />);
+    act(() => { vi.advanceTimersByTime(75_000); });
+    expect(screen.getByText(/Answered in/)).toHaveTextContent('Answered in 1:30');
+    expect(screen.queryByText(/past two minutes/)).not.toBeInTheDocument();
+    rerender(<AnswerTimer since="question-1" />);
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(screen.getByText(/Answering for/)).toHaveTextContent('Answering for 1:40');
+    rerender(<AnswerTimer since="question-2" running={false} />);
+    expect(screen.getByText(/Answered in/)).toHaveTextContent('Answered in 0:00');
+  });
 });

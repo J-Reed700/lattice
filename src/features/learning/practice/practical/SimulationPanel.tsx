@@ -326,7 +326,10 @@ export function SimulationPanel({
           </div>
           {session.status === "active" && (
             <div className="mt-3 space-y-2">
-              {isInterview && lastQuestionId && <AnswerTimer since={lastQuestionId} />}
+              {/* Finishing leaves the last question unanswered, so there is no answer to time. */}
+              {isInterview && lastQuestionId && !finish.isPending && (
+                <AnswerTimer since={lastQuestionId} running={!turn.isPending} />
+              )}
               {activity.practiceMode !== "demonstrate" && activity.interviewPlan?.questions &&
                 activity.interviewPlan.questions.length > 0 && (
                   <div
