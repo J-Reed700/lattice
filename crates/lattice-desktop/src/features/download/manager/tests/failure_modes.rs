@@ -52,6 +52,42 @@ async fn test_download_invalid_path_rejected() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// Model files reach the manager canonicalized (on Windows with the `\\?\`
+/// prefix) while its root is a plain path; the destination is still inside.
+#[tokio::test]
+async fn test_download_accepts_a_canonicalized_destination_under_the_root(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root();
+    std::fs::create_dir_all(&root)?;
+    let mock_engine = Arc::new(MockDownloadEngine::new());
+    mock_engine.set_file_size("https://example.com/canonical.bin", Some(1000));
+
+    let manager = DownloadManagerService::new(
+        Arc::new(MockDownloadRepository::new()),
+        mock_engine,
+        root.clone(),
+        Arc::default(),
+    );
+
+    let request = DownloadRequest {
+        url: "https://example.com/canonical.bin".to_string(),
+        destination: root.canonicalize()?.join("canonical.bin"),
+        checksum: None,
+        auth_token: None,
+        model_name: None,
+        model_id: None,
+        model_file_name: None,
+    };
+
+    let result = manager.start_download(request).await;
+    assert!(
+        !matches!(result, Err(DownloadError::InvalidDestination(_))),
+        "canonical destination under the root was refused: {result:?}"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_download_handles_transient_error_gracefully() -> Result<(), Box<dyn std::error::Error>>
 {
