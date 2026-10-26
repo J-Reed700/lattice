@@ -191,6 +191,85 @@ async fn a_repair_whose_answer_cannot_be_used_leaves_the_lesson_unchanged_and_wa
     Ok(())
 }
 
+/// The scripted review, with every teaching repair request longer than the
+/// model's window, as a repair carrying the requirements, the whole lesson
+/// and its findings was on a 131k-token Qwen window.
+struct RepairTooLong(ScriptedModel);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::llm_port::LLMPort for RepairTooLong {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        let repair = request.input.iter().any(|item| {
+            matches!(
+                item,
+                lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
+                    if content.contains("issuesToFix")
+            )
+        });
+        if repair {
+            return Err(AppError::PromptExceedsWindow {
+                prompt_tokens: 251_588,
+                window: 131_072,
+                counted_exactly: true,
+                message: "over the window".into(),
+            });
+        }
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A repair request too long for the window was never sent: the lesson
+/// publishes unchanged with its finding waiting, instead of failing a job
+/// that had already written and checked the lesson.
+#[tokio::test]
+async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<()> {
+    let model = RepairTooLong(model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+    ]));
+    let original = lesson(EXCERPT);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let reviewed = review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        original.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: &[],
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewed.candidate)?,
+        original
+    );
+    assert_eq!(reviewed.set_aside.len(), 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> {
     let model = model(vec![

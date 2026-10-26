@@ -703,6 +703,17 @@ async fn review_material(
                     set_aside: passes.set_aside(),
                 });
             }
+            // A repair request carries the requirements, the whole lesson and
+            // its findings, and can outgrow the window the lesson itself was
+            // written in. It was never sent; like an unusable answer it fixed
+            // nothing, so the findings wait instead of failing an hour's job.
+            (Err(error @ AppError::PromptExceedsWindow { .. }), Some(passes)) => {
+                tracing::warn!(%error, "The teaching repair does not fit the model's window; its findings wait for the user");
+                return Ok(Reviewed {
+                    candidate,
+                    set_aside: passes.set_aside(),
+                });
+            }
             (repaired, _) => repaired?,
         };
         crate::features::learning::lesson_drafts::save(&candidate).await?;
