@@ -9,14 +9,12 @@
 //! stopping one conversation from compacting twice at once.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use tracing::info;
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
-    COMPACTION_DEADLINE,
 };
 use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::LLMPort;
@@ -60,15 +58,12 @@ pub async fn build_job(
         Arc::new(move |text: &str| llm.count_tokens(text))
     };
 
-    let deadline = compaction_deadline_for(utility_llm.provider_name());
-
     Ok(Some(CompactionJob::with_slots(
         runtime.conversation_memory(),
         utility_llm,
         count_tokens,
         CompactionConfig {
             summary_token_budget: summary_pool_for(&continuation_llm),
-            deadline,
             keep_recent_messages: keep_recent_messages
                 .unwrap_or(KEEP_RECENT_DEFAULT)
                 .max(KEEP_RECENT_MIN) as usize,
@@ -77,25 +72,6 @@ pub async fn build_job(
         runtime.compaction_slots(),
     )))
 }
-
-/// How long one compaction job may run, by where the utility model runs.
-///
-/// The default suits a remote llama-server at tens of tokens per second. The
-/// bundled sidecar on a laptop measured two to two and a half minutes for one
-/// extraction over a twelve-turn conversation, so any cycle that needed a
-/// repair round overran five minutes and committed nothing; one evaluated
-/// conversation lost three of its ten cycles that way. Three attempts at that
-/// speed plus review and summary fit in fifteen minutes. The job is a
-/// background task, so the cost of the longer bound is GPU time, not a turn.
-pub fn compaction_deadline_for(utility_provider: &str) -> Duration {
-    if utility_provider == "local-sidecar" {
-        LOCAL_SIDECAR_COMPACTION_DEADLINE
-    } else {
-        COMPACTION_DEADLINE
-    }
-}
-
-const LOCAL_SIDECAR_COMPACTION_DEADLINE: Duration = Duration::from_secs(15 * 60);
 
 /// The summary pool for a model, from the shared budget rules.
 ///
@@ -300,16 +276,6 @@ mod tests {
             CompactionTrigger::Manual.priority(),
             InferencePriority::Interactive
         );
-    }
-
-    /// A laptop sidecar takes minutes per extraction; the remote default
-    /// deadline made every repaired cycle commit nothing.
-    #[test]
-    fn the_bundled_sidecar_gets_a_longer_compaction_deadline_than_a_remote_server() {
-        let local = compaction_deadline_for("local-sidecar");
-        assert!(local >= Duration::from_secs(12 * 60), "{local:?}");
-        assert_eq!(compaction_deadline_for("llamacpp"), COMPACTION_DEADLINE);
-        assert_eq!(compaction_deadline_for("openai"), COMPACTION_DEADLINE);
     }
 
     #[test]

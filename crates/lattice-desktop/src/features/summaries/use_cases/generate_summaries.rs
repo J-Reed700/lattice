@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::features::summaries::entity::DocumentSummary;
@@ -29,9 +28,6 @@ use lattice_core::application::services::grounded_generation::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
-/// One utility-model call. Generous because this is background work, bounded
-/// because a wedged model must not pin a task forever.
-const CALL_TIMEOUT: Duration = Duration::from_secs(45);
 const VECTOR_CLEANUP_BATCH: u32 = 256;
 
 /// Model calls one run may make before it yields to other documents.
@@ -56,6 +52,36 @@ pub enum SummaryRun {
 
 /// The run's share of model calls is used up.
 struct Paused;
+
+/// Runs a summary call may fail on before the summaries are published
+/// without it. A call fails the same way each time often enough (greedy
+/// decoding, the same prompt) that retrying for ever would hold every other
+/// part of the document back with it; the gap is then said, not hidden.
+pub(crate) const MAX_CALL_ATTEMPTS: u32 = 3;
+
+/// What one summary call came to.
+enum Called {
+    Summary(String),
+    /// It failed this run; a later run asks again, and nothing is published
+    /// until then.
+    Missing,
+    /// It failed on [`MAX_CALL_ATTEMPTS`] runs.
+    GaveUp,
+}
+
+impl Called {
+    fn summary(self) -> Option<String> {
+        match self {
+            Self::Summary(text) => Some(text),
+            Self::Missing | Self::GaveUp => None,
+        }
+    }
+}
+
+/// The progress key under which a call's failed runs are counted.
+fn failure_key(call_id: &str) -> String {
+    format!("failed:{call_id}")
+}
 
 pub struct GenerateDocumentSummariesUseCase {
     enabled: bool,
@@ -168,6 +194,7 @@ impl GenerateDocumentSummariesUseCase {
             done: self.repository.load_progress(document_id, revision).await?,
             calls_left: CALLS_PER_RUN,
             finished: 0,
+            missing: 0,
             cancel,
         };
         let summaries = summarize(&mut run, &source, &identity).await;
@@ -187,6 +214,15 @@ impl GenerateDocumentSummariesUseCase {
             );
             return Ok(SummaryRun::Paused);
         };
+        // Published with a hole, a failed section stayed missing until the
+        // document was next re-indexed. The calls that did finish are kept,
+        // so the retry asks only for the missing ones.
+        if run.missing > 0 {
+            return Err(AppError::Other(format!(
+                "{} summary call(s) produced no usable output; retry later",
+                run.missing
+            )));
+        }
         if summaries.is_empty() {
             return Err(AppError::Other(
                 "Summary generation produced no usable output; retry later".into(),
@@ -336,6 +372,8 @@ struct Run<'a> {
     calls_left: usize,
     /// Calls this run made that came back with a summary.
     finished: usize,
+    /// Calls this run made that came back with nothing and may yet succeed.
+    missing: usize,
     cancel: &'a CancellationToken,
 }
 
@@ -346,9 +384,18 @@ impl Run<'_> {
         &mut self,
         call_id: &str,
         request: GroundedRequest,
-    ) -> std::result::Result<Option<String>, Paused> {
+    ) -> std::result::Result<Called, Paused> {
         if let Some(text) = self.done.get(call_id) {
-            return Ok(Some(text.clone()));
+            return Ok(Called::Summary(text.clone()));
+        }
+        let failures_key = failure_key(call_id);
+        let failures = self
+            .done
+            .get(&failures_key)
+            .and_then(|count| count.parse::<u32>().ok())
+            .unwrap_or(0);
+        if failures >= MAX_CALL_ATTEMPTS {
+            return Ok(Called::GaveUp);
         }
         if self.calls_left == 0 {
             return Err(Paused);
@@ -357,18 +404,31 @@ impl Run<'_> {
         let text = ask(self.llm, request, self.cancel)
             .await
             .map(SummaryDraft::into_summary_text);
-        if let Some(text) = &text {
-            if let Err(error) = self
-                .repository
-                .save_progress(self.document_id, self.revision, call_id, text)
-                .await
-            {
-                tracing::warn!(%error, call_id, "Could not keep a finished summary call; a later run repeats it");
-            }
-            self.done.insert(call_id.to_string(), text.clone());
-            self.finished += 1;
+        if text.is_none() && self.cancel.is_cancelled() {
+            return Ok(Called::Missing);
         }
-        Ok(text)
+        let (key, value) = match &text {
+            Some(text) => (call_id.to_string(), text.clone()),
+            None => (failures_key, (failures + 1).to_string()),
+        };
+        if let Err(error) = self
+            .repository
+            .save_progress(self.document_id, self.revision, &key, &value)
+            .await
+        {
+            tracing::warn!(%error, call_id, "Could not keep a summary call's outcome; a later run repeats it");
+        }
+        self.done.insert(key, value);
+        match text {
+            Some(text) => {
+                self.finished += 1;
+                Ok(Called::Summary(text))
+            }
+            None => {
+                self.missing += 1;
+                Ok(Called::Missing)
+            }
+        }
     }
 }
 
@@ -413,7 +473,10 @@ async fn summarize(
         <= 1;
     let mut summaries = Vec::new();
     if body_fits || !sectioned {
-        if let Some(text) = summarize_whole(run, &document, &source.body).await? {
+        if let Some(text) = summarize_whole(run, &document, &source.body)
+            .await?
+            .summary()
+        {
             summaries.push(document_summary(text));
         }
     }
@@ -437,15 +500,22 @@ async fn summarize(
             heading: prompt::SECTION_BODY_HEADING,
             source_id: format!("{document_id}#{}", section.heading),
         };
-        if let Some(text) = summarize_whole(run, &section_call, &section.text).await? {
-            by_section.push(format!("Section {}: {text}", section.heading));
-            summaries.push(DocumentSummary::new(
-                document_id,
-                Some(section.heading.clone()),
-                SummaryLevel::Section,
-                text,
-                identity,
-            ));
+        match summarize_whole(run, &section_call, &section.text).await? {
+            Called::Summary(text) => {
+                by_section.push(format!("Section {}: {text}", section.heading));
+                summaries.push(DocumentSummary::new(
+                    document_id,
+                    Some(section.heading.clone()),
+                    SummaryLevel::Section,
+                    text,
+                    identity,
+                ));
+            }
+            Called::GaveUp => by_section.push(format!(
+                "Section {}: (this section could not be summarized)",
+                section.heading
+            )),
+            Called::Missing => {}
         }
     }
     if !body_fits && !by_section.is_empty() {
@@ -463,7 +533,7 @@ async fn summarize(
             source_id: format!("{document_id}@sections"),
             ..document
         };
-        if let Some(text) = summarize_whole(run, &from_sections, &text).await? {
+        if let Some(text) = summarize_whole(run, &from_sections, &text).await?.summary() {
             summaries.insert(0, document_summary(text));
         }
     }
@@ -485,7 +555,7 @@ async fn summarize_whole(
     run: &mut Run<'_>,
     call: &Summarized,
     text: &str,
-) -> std::result::Result<Option<String>, Paused> {
+) -> std::result::Result<Called, Paused> {
     let cancel = run.cancel.clone();
     let mut task = call.task.clone();
     let mut heading = call.heading;
@@ -507,9 +577,11 @@ async fn summarize_whole(
         }
         let total = parts.len();
         let mut part_summaries = Vec::with_capacity(total);
+        let mut summarized = 0;
+        let mut missing = false;
         for (index, part) in parts.iter().enumerate() {
             if cancel.is_cancelled() {
-                return Ok(None);
+                return Ok(Called::Missing);
             }
             let part_task = format!(
                 "{task}\nThe text is too long to read at once. This is part {} of {total}, in order; summarize this part.",
@@ -518,12 +590,25 @@ async fn summarize_whole(
             let id = format!("{}:part-{}", call.source_id, index + 1);
             let request = summary_request(call, part_task, heading, &id, part, &cancel);
             let call_id = format!("{}@L{level}:part-{}", call.source_id, index + 1);
-            if let Some(summary) = run.ask(&call_id, request).await? {
-                part_summaries.push(format!("Part {}: {summary}", index + 1));
+            match run.ask(&call_id, request).await? {
+                Called::Summary(summary) => {
+                    summarized += 1;
+                    part_summaries.push(format!("Part {}: {summary}", index + 1));
+                }
+                // Said where it is, so the summary of the whole does not read
+                // the parts either side of it as adjacent.
+                Called::GaveUp => part_summaries.push(format!(
+                    "Part {}: (this part could not be summarized)",
+                    index + 1
+                )),
+                Called::Missing => missing = true,
             }
         }
-        if part_summaries.is_empty() {
-            return Ok(None);
+        if missing {
+            return Ok(Called::Missing);
+        }
+        if summarized == 0 {
+            return Ok(Called::GaveUp);
         }
         task = format!(
             "{}\nThe text was too long to read at once; summarize the whole of it from the summaries of its parts below.",
@@ -532,7 +617,7 @@ async fn summarize_whole(
         heading = prompt::PART_SUMMARIES_HEADING;
         text = part_summaries.join("\n");
     }
-    Ok(None)
+    Ok(Called::GaveUp)
 }
 
 /// `text` in consecutive parts that each fit one summary call's evidence
@@ -594,12 +679,16 @@ fn summary_request(
         // Upkeep: queued behind anyone waiting on the model.
         priority: InferencePriority::Maintenance,
         cancel: Some(cancel.clone()),
+        // A 9B model on a CPU reads a long part for minutes, and a wall clock
+        // aborted every part of it and burnt the slot retrying. The run's
+        // cancel token, the scheduler and stall detection end a call instead.
+        no_time_limit: true,
         ..Default::default()
     };
     request
 }
 
-/// One model call, parsed. `None` on timeout, transport failure, a source the
+/// One model call, parsed. `None` on transport failure, a source the
 /// window cannot hold any of, or output that carries no summary — each means
 /// "no summary", and the caller treats them identically.
 async fn ask(
@@ -610,10 +699,10 @@ async fn ask(
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => return None,
-        result = tokio::time::timeout(CALL_TIMEOUT, grounded_generation::generate(llm, request)) => result,
+        result = grounded_generation::generate(llm, request) => result,
     };
     let response = match result {
-        Ok(Ok(output)) => {
+        Ok(output) => {
             tracing::debug!(
                 passages = output.used_evidence_ids.len(),
                 left_out = output.accounting.evicted.len(),
@@ -621,12 +710,8 @@ async fn ask(
             );
             output.text
         }
-        Ok(Err(error)) => {
+        Err(error) => {
             tracing::warn!(%error, "Summary generation call failed");
-            return None;
-        }
-        Err(_) => {
-            tracing::warn!("Summary generation call timed out");
             return None;
         }
     };

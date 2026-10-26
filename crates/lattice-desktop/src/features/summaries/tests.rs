@@ -511,12 +511,20 @@ async fn every_section_is_summarized() {
     assert_eq!(written, 1 + 40);
 }
 
+/// A call that comes back with no summary holds the document back for a later
+/// run, which asks only for what is missing: published with a hole, a failed
+/// section stayed missing until the document was re-indexed. A call that
+/// fails on every run is given up on, and the rest is published without it.
 #[tokio::test]
-async fn unparseable_responses_are_skipped_not_stored() {
+async fn unparseable_responses_are_retried_then_published_without() {
+    use crate::features::summaries::use_cases::generate_summaries::{
+        SummaryRun, MAX_CALL_ATTEMPTS,
+    };
     let pool = pool_with_document().await;
     let index = memory_index();
-    // Document summary is garbage; the first section is fine; the rest are empty.
-    let (use_case, _) = use_case(
+    // Document summary is garbage; the first section is fine; the rest are
+    // empty, as is every later answer.
+    let (use_case, prompts) = use_case(
         true,
         Some(source_with_sections(3)),
         &[
@@ -528,7 +536,20 @@ async fn unparseable_responses_are_skipped_not_stored() {
         &pool,
         Arc::clone(&index),
     );
-    assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
+    let cancel = tokio_util::sync::CancellationToken::new();
+    for _ in 0..MAX_CALL_ATTEMPTS {
+        assert!(use_case.run("doc-1", "rev", &cancel).await.is_err());
+    }
+    assert_eq!(index.count(), 0, "nothing is published with a hole");
+    assert_eq!(
+        prompts.lock().len(),
+        4 + 3 * (MAX_CALL_ATTEMPTS as usize - 1),
+        "the finished section is not asked for again"
+    );
+    assert_eq!(
+        use_case.run("doc-1", "rev", &cancel).await.unwrap(),
+        SummaryRun::Published(1)
+    );
     assert_eq!(index.count(), 1);
     let repository = SqliteSummaryRepository::new(pool.clone());
     let scope: HashSet<String> = ["doc-1".to_string()].into_iter().collect();

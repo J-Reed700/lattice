@@ -36,7 +36,7 @@ use lattice_core::shared::error::{AppError, Result};
 use super::segment::{clip_chars, segment_message};
 use super::selection::select_boundary;
 use super::{
-    CompactionConfig, CompactionJob, CompactionRequest, CompactionStatus, COMPACTION_DEADLINE,
+    CompactionConfig, CompactionJob, CompactionRequest, CompactionStatus,
     MAX_COMMIT_CONFLICT_RETRIES, MAX_REPAIR_ATTEMPTS, MAX_SOURCE_BYTES_PER_ATTEMPT,
     MAX_SOURCE_MESSAGES_PER_ATTEMPT, MIN_RETAINED_TURNS,
 };
@@ -925,7 +925,6 @@ const PREFIX_SEGMENTS: [&str; 4] = ["m1:s0", "m2:s0", "m3:s0", "m4:s0"];
 
 #[test]
 fn the_enforced_limits_are_the_ones_the_design_documents() {
-    assert_eq!(COMPACTION_DEADLINE, Duration::from_secs(300));
     assert_eq!(MAX_REPAIR_ATTEMPTS, 2);
     assert_eq!(MAX_COMMIT_CONFLICT_RETRIES, 1);
     assert_eq!(MAX_SOURCE_MESSAGES_PER_ATTEMPT, 256);
@@ -940,7 +939,10 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
     assert_eq!(MAX_QUOTE_BYTES, 2048);
 
     let config = CompactionConfig::default();
-    assert_eq!(config.deadline, COMPACTION_DEADLINE);
+    assert_eq!(
+        config.deadline, None,
+        "memory runs end by cancellation, not a clock"
+    );
     assert_eq!(
         config.max_source_messages_per_attempt,
         MAX_SOURCE_MESSAGES_PER_ATTEMPT
@@ -1243,7 +1245,7 @@ async fn a_timeout_or_cancellation_leaves_the_committed_state_usable_and_the_wat
         port.clone(),
         llm.clone(),
         CompactionConfig {
-            deadline: Duration::ZERO,
+            deadline: Some(Duration::ZERO),
             ..small_config()
         },
     );

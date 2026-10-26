@@ -244,7 +244,7 @@ impl CompactionJob {
     }
 
     /// [`Self::run_with_retry`], again for each further page of a fold over
-    /// source below the watermark while consolidation's deadline has room for
+    /// source below the watermark, while a run with a deadline has room for
     /// one.
     ///
     /// Only consolidation keeps going: it runs after an answer with no one
@@ -269,7 +269,9 @@ impl CompactionJob {
         let mut page = 1usize;
         while request.trigger == CompactionTrigger::Maintenance
             && outcome.refold_pending
-            && deadline.left() >= last_page.saturating_mul(2)
+            && deadline
+                .left()
+                .is_none_or(|left| left >= last_page.saturating_mul(2))
         {
             page += 1;
             let started = Instant::now();

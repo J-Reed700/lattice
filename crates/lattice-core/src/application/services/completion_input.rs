@@ -12,6 +12,9 @@ pub struct TextCall {
     pub priority: InferencePriority,
     pub cancel: Option<CancellationToken>,
     pub cache_key: Option<String>,
+    /// No elapsed-time limit: background work a slow model must not fail,
+    /// ended by `cancel`, the scheduler, or the answer's own length.
+    pub no_time_limit: bool,
 }
 
 impl TextCall {
@@ -38,6 +41,7 @@ pub async fn complete_text(
             priority: call.priority,
             cancel: call.cancel,
             cache_key: call.cache_key,
+            no_time_limit: call.no_time_limit,
             ..Default::default()
         })
         .await?;

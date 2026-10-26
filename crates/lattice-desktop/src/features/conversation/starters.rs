@@ -501,7 +501,12 @@ pub async fn generate_chat_starters_impl(
                 llm.as_ref(),
                 &prompt,
                 &[],
-                TextCall::at(InferencePriority::Maintenance),
+                // Background upkeep a slow model must not fail on a clock;
+                // its length bound and the scheduler end it.
+                TextCall {
+                    no_time_limit: true,
+                    ..TextCall::at(InferencePriority::Maintenance)
+                },
             )
             .await
             {

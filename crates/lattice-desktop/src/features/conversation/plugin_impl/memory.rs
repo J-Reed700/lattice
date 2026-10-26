@@ -102,6 +102,11 @@ pub async fn compact_conversation_impl(
             crate::features::conversation::memory::CompactionRequest {
                 trigger: crate::features::conversation::memory::CompactionTrigger::Manual,
                 keep_recent_messages: request.keep_recent_messages.map(|value| value as usize),
+                // The run has no clock of its own; app shutdown ends it.
+                cancellation: Some(
+                    crate::features::conversation::chat::ports::ChatJobs::background(container)
+                        .token(),
+                ),
                 ..Default::default()
             },
         )
