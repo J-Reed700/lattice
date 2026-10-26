@@ -45,9 +45,7 @@ impl FollowupDocument {
     /// what it takes of the prompt, counted before the sources are numbered.
     pub(in crate::features::conversation::chat) fn render_for_count(&self) -> String {
         format!(
-            "[0] Document: {}
-Document ID: {}
-Content: {}",
+            "[0] Document: {}\nDocument ID: {}\nContent: {}",
             self.file_name, self.document_id, self.content
         )
     }

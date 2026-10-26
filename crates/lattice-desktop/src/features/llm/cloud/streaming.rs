@@ -1,9 +1,9 @@
 //! Typed cloud streams publish only displayable text through callbacks while
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
+use super::reply::call_arguments;
 use super::timing::{evaluated_prompt_tokens, StreamClock};
 use super::{field, parse_completion, set_field, CompletionResponse, LLMProvider};
-use super::reply::call_arguments;
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};

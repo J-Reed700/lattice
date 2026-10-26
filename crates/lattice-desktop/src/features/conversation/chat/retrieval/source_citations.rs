@@ -719,9 +719,7 @@ mod web_context_label_tests {
         let mut sources = build_web_source_citations(&[web_result("https://a.test")], &[], 200);
         assign_citation_ids(&mut sources);
         let page = WebContextItem {
-            detail: "URL: https://a.test
-Page text: the whole fetched article."
-                .to_string(),
+            detail: "URL: https://a.test\nPage text: the whole fetched article.".to_string(),
             ..item("https://a.test")
         };
 
@@ -730,9 +728,7 @@ Page text: the whole fetched article."
         assert_eq!(
             rendered.as_deref(),
             Some(
-                "[1] Title of https://a.test
-URL: https://a.test
-Page text: the whole fetched article."
+                "[1] Title of https://a.test\nURL: https://a.test\nPage text: the whole fetched article."
             )
         );
     }
