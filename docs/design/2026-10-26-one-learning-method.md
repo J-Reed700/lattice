@@ -75,3 +75,52 @@ Every prompt that carries the method grows by about 300 tokens. Authoring
 requirements are part of the draft cache key, so a changed prompt discards
 drafts cached under the old one; a course being prepared when this lands
 regenerates the affected steps.
+
+## Decks, study sessions, labs, simulations and interviews
+
+**Study decks** (`recall/study_generation.rs`). Both deck prompts, from
+documents and from a conversation, carry `LEARNING_METHOD` and a card rule,
+`RETRIEVAL_CARDS`. A study session hides a card's options until the learner
+has answered from memory, so the question alone must call up one answer. Each
+card tests one idea, every wrong choice is a mistake a learner would plausibly
+make, and the explanation names the misunderstanding behind the most tempting
+one. Document decks prefer questions that use an idea (why or how it works,
+a new concrete case, which of two easily confused ideas applies) over a
+sentence's wording, and word a concept's topic label the same on every card,
+so sessions interleave by concept. Conversation decks ask for a claim's
+substance without quoting it.
+
+**Study sessions.** The Studio session already retrieved first, relearned
+misses within the session and interleaved topics
+([interview-prep design](2026-10-26-interview-prep-and-study-sessions.md)), and
+the interleaved panel uses the same session. The program Recall tab did not:
+one click revealed the answer, and a miss waited until the next day. It now
+asks for an answer first ("Check my answer", or "I don't know yet: show me"),
+shows it beside the real answer, and brings a card rated Again back after
+three other cards, up to four attempts, with the session's constants.
+
+**Labs and simulations** (`practice/practical_generation.rs`). The activity
+prompt carries `LEARNING_METHOD` and `PRACTICE_DESIGN`. The exercise is the
+independent end of the lesson's worked-example fade, so it gives no worked
+solution, though it may step from guided to independent. It sets the lesson's
+ideas in a new, realistic case, makes the learner choose between easily
+confused approaches, asks for a prediction before running where that applies,
+and asks for a short justification of the approach and how it was checked;
+the rubric grades that reasoning and verification, not only the artifact. A
+simulated counterpart lets the learner's last decision have its realistic
+consequences, so the scenario itself shows whether it worked.
+
+**Interviews.** The plan orders each round's questions from foundational to
+harder and, where the role has easily confused approaches, asks the learner
+to choose between them and say when each applies. The interviewer asks why
+when an answer states a choice without its reason. Every closing debrief
+carries `FEEDBACK_METHOD` and `RETRY_STEP`: the next practice step retries
+the one or two weakest answers from memory, now and again on a later day.
+"Make drill deck" turns the questions and answer guides into a deck spaced
+to the interview date.
+
+**Left as they are.** The answer-guide and guide-review prompts already list
+key points, valid alternatives and common mistakes, which is what the
+feedback and the drill deck need. The brain dump already recalls before the
+reveal and turns missed concepts into recall cards. The Feynman panel is
+lattice-f7's.
