@@ -231,6 +231,26 @@ describe('SimulationPanel', () => {
     await waitFor(() => expect(onSession).toHaveBeenCalledTimes(1));
   });
 
+  it('stops the answer timer while the interviewer replies and drops it while finishing', async () => {
+    let release!: (value: unknown) => void;
+    api.sendLearningSimulationTurn.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    api.finishLearningSimulation.mockImplementation(() => new Promise(() => {}));
+    renderPanel(session({ turns: [
+      { id: 'q1', speaker: 'counterpart', content: 'Tell me about a hard bug.', citations: [] },
+      { id: 'a1', speaker: 'learner', content: 'A race in the job queue.', citations: [] },
+      { id: 'q2', speaker: 'counterpart', content: 'How did you find it?', citations: [] },
+    ] as never }), { ...activity, kind: 'interview' });
+    expect(screen.getByText(/Answering for/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'Logs, then a repro.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send simulation turn' }));
+    expect(await screen.findByText(/Answered in/)).toBeInTheDocument();
+    await act(async () => release({ ok: false, error: 'response lost' }));
+    expect(await screen.findByText(/Answering for/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish interview' }));
+    await waitFor(() => expect(api.finishLearningSimulation).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Answering for|Answered in/)).not.toBeInTheDocument();
+  });
+
   it('requires a learner answer before finishing and uses interview defaults', () => {
     const view = renderPanel(null, { ...activity, kind: 'interview' });
     expect(screen.getByLabelText('Your role')).toHaveValue('Candidate');
