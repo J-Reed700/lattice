@@ -8,11 +8,17 @@ import {
   Copy,
   HelpCircle,
   Lightbulb,
+  Lock,
+  PlusCircle,
+  RotateCcw,
   Sparkles,
+  Unlock,
   Volume2,
 } from 'lucide-react';
 
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
+import { CardText } from '@/features/learning/recall/CardText';
+import { keyPoints } from '@/features/learning/recall/flashcards/retrieval';
+import type { LearningBlockKind, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export type FeynmanRating = 'Simple & Clear' | 'Has Unexplained Jargon' | 'Needs More Explanation';
@@ -33,6 +39,34 @@ export interface FeynmanTechniquePanelProps {
   program: LearningProgramDto;
   lesson?: LearningLessonDto;
   module?: LearningModuleDto;
+  /** Saves a point the explanation missed as a recall card draft, as the brain dump does. */
+  onDraftMissedConcept?: (question: string, answer: string) => void;
+}
+
+/** One thing the course says about the concept, to check an explanation against. */
+export interface LessonPoint {
+  title: string;
+  body: string;
+}
+
+/** The sections that teach an idea, as opposed to practising or reviewing it. */
+const TEACHING_KINDS = new Set<LearningBlockKind>(['explanation', 'worked_example', 'contrast']);
+
+/**
+ * What the course says about `concept`: the key points of the section it
+ * names (or that section whole), otherwise the lesson's teaching sections,
+ * otherwise the module's outcomes. The Feynman technique's third step is
+ * going back to the source to find what the explanation missed or got wrong.
+ */
+export function lessonPoints(concept: string, lesson?: LearningLessonDto | null, module?: LearningModuleDto | null): LessonPoint[] {
+  const named = lesson?.blocks.find((block) => block.title.trim() !== '' && block.title.trim() === concept.trim());
+  if (named) {
+    const items = keyPoints(named.body);
+    return items.length ? items.map((item) => ({ title: item, body: '' })) : [{ title: named.title, body: named.body }];
+  }
+  const teaching = lesson?.blocks.filter((block) => TEACHING_KINDS.has(block.kind)) ?? [];
+  if (teaching.length) return teaching.map((block) => ({ title: block.title, body: block.body }));
+  return (module?.outcomes ?? []).map((outcome) => ({ title: outcome, body: '' }));
 }
 
 const COMMON_STOP_WORDS = new Set([
@@ -252,7 +286,7 @@ export function FeynmanTechniquePanel(props: FeynmanTechniquePanelProps) {
   return <FeynmanWorkbench key={`${props.program.summary.id}:${props.lesson?.id ?? 'general'}`} {...props} />;
 }
 
-function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProps) {
+function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: FeynmanTechniquePanelProps) {
   const defaultConcept = lesson?.title ?? module?.title ?? program.summary.title;
   const [selectedConcept, setSelectedConcept] = useState<string>(defaultConcept);
   const [customConcept, setCustomConcept] = useState('');
@@ -267,6 +301,10 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
   const [readAloudConfirmed, setReadAloudConfirmed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [savedMessage, setSavedMessage] = useState(false);
+  // The lesson stays closed until the learner has explained the concept from
+  // memory: teaching what you can retrieve is what helps, explaining with the
+  // material open helps far less (Koh, Lee & Lim 2018; Fiorella & Mayer 2013).
+  const [comparison, setComparison] = useState<{ concept: string; covered: number[]; drafted: number[] } | null>(null);
 
   useEffect(() => {
     try {
@@ -303,6 +341,20 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
     () => analyzeFeynmanExplanation(explanation, analogy, lesson, activeConcept),
     [explanation, analogy, lesson, activeConcept]
   );
+
+  const points = useMemo(() => lessonPoints(activeConcept, lesson, module), [activeConcept, lesson, module]);
+  const compared = comparison !== null && comparison.concept === activeConcept;
+  const coveredCount = compared ? comparison.covered.length : 0;
+  const toggleCovered = (index: number) => setComparison((current) => current && {
+    ...current,
+    covered: current.covered.includes(index) ? current.covered.filter((item) => item !== index) : [...current.covered, index],
+  });
+  const draftCard = (index: number) => {
+    const point = points[index];
+    if (!point || !onDraftMissedConcept) return;
+    onDraftMissedConcept(point.title, point.body.trim() || point.title);
+    setComparison((current) => current && { ...current, drafted: [...current.drafted, index] });
+  };
 
   const conceptOptions = useMemo(() => {
     const options: { id: string; label: string }[] = [];
@@ -374,11 +426,12 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
               <span>The Feynman Technique · Teach a Beginner</span>
             </div>
             <h3 className="mt-1 font-serif text-2xl text-text-primary">
-              Learn by Teaching in Simple Language
+              Teach it from memory, then check it
             </h3>
             <p className="mt-2 text-xs leading-5 text-text-secondary">
-              Explain the concept out loud or in writing in simple, everyday language as if teaching a complete beginner.
-              If you stumble or rely on jargon, it highlights the exact gaps in your understanding.
+              Explain the concept out loud or in writing, in everyday language, as if teaching a complete beginner, without
+              looking at the lesson. Then compare with the lesson: what you left out or got wrong is what to study next, and
+              explaining it again from memory after a day is what makes it last.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -456,10 +509,11 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
       <section className="rounded-2xl border border-border-default bg-surface p-5 shadow-xs sm:p-6">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent">
           <Lightbulb size={14} />
-          <span>Step 2: Explain to a beginner (Simple, everyday language)</span>
+          <span>Step 2: Explain it from memory to a beginner</span>
         </div>
         <p className="mt-1 text-xs text-text-muted">
-          Imagine explaining this to a curious 12-year-old or someone completely outside the field. Avoid jargon and textbook definitions.
+          Close the lesson first. Imagine explaining this to a curious 12-year-old or someone completely outside the field. Avoid
+          jargon and textbook definitions. Write what you can: the gaps you hit are the useful part.
         </p>
 
         <div className="mt-4 space-y-4">
@@ -476,6 +530,7 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
               id="feynman-explanation"
               rows={6}
               value={explanation}
+              readOnly={compared}
               onChange={(e) => setExplanation(e.target.value)}
               placeholder="Start from first principles. How would you explain what this is and how it works without assuming any prior jargon? If you must use a specialized word, immediately explain what it means in plain English..."
               className="w-full rounded-xl border border-border-default bg-surface-sunken px-4 py-3 text-sm leading-6 text-text-primary focus:border-accent focus:outline-hidden"
@@ -519,12 +574,90 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
         </div>
       </section>
 
-      {/* Step 3: Real-Time Jargon, Verbatim & Gap Detector */}
+      {/* Step 3: Check it against the lesson, only after explaining from memory */}
+      <section aria-labelledby="feynman-compare-heading" className="rounded-2xl border border-border-default bg-surface p-5 shadow-xs sm:p-6">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent">
+          {compared ? <Unlock size={14} /> : <Lock size={14} />}
+          <span id="feynman-compare-heading">Step 3: Check it against the lesson</span>
+        </div>
+        {!compared ? (
+          <>
+            <p className="mt-1 text-xs text-text-muted">
+              Once you have explained it, open what the lesson says and tick each point your explanation got right. The rest
+              are your gaps.
+            </p>
+            {points.length > 0 ? (
+              <button
+                type="button"
+                disabled={!explanation.trim()}
+                onClick={() => setComparison({ concept: activeConcept, covered: [], drafted: [] })}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-xs font-semibold text-accent-fg hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Unlock size={13} /> Compare with the lesson
+              </button>
+            ) : (
+              <p className="mt-3 text-xs italic text-text-muted">This concept has no lesson material to compare with yet.</p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-text-muted" role="status">
+              Tick each point your explanation got right, in plain words: {coveredCount} of {points.length} covered.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {points.map((point, index) => {
+                const covered = comparison.covered.includes(index);
+                const drafted = comparison.drafted.includes(index);
+                return (
+                  <li key={`${index}:${point.title}`} className="rounded-xl border border-border-subtle bg-surface-sunken/40 p-3">
+                    <label className="flex cursor-pointer items-start gap-3 text-sm text-text-primary">
+                      <input type="checkbox" checked={covered} onChange={() => toggleCovered(index)} className="mt-1 accent-accent" />
+                      <CardText text={point.title} />
+                    </label>
+                    {point.body && (
+                      <details className="mt-2 pl-7" open={points.length === 1}>
+                        <summary className="cursor-pointer text-xs text-text-secondary">What the lesson says</summary>
+                        <CardText className="mt-2 text-xs leading-5 text-text-secondary" text={point.body} />
+                      </details>
+                    )}
+                    {!covered && onDraftMissedConcept && (
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          disabled={drafted}
+                          onClick={() => draftCard(index)}
+                          className="inline-flex items-center gap-1 rounded-full border border-border-default bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent hover:text-accent-fg disabled:cursor-default disabled:opacity-70"
+                        >
+                          {drafted ? <><CheckCircle2 size={12} /> Added to recall cards</> : <><PlusCircle size={12} /> Make a recall card</>}
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setComparison(null)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border-default bg-surface-sunken px-3.5 py-1.5 text-xs font-medium text-text-primary hover:border-accent/40"
+              >
+                <RotateCcw size={13} /> Explain it again from memory
+              </button>
+              <span className="text-[11px] leading-4 text-text-muted">
+                Close the lesson and fill your gaps from memory. Explaining it once more tomorrow, before you look, is what makes it last.
+              </span>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* Step 4: Jargon, verbatim phrasing and beginner questions */}
       <section className="rounded-2xl border border-border-default bg-surface p-5 shadow-xs sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent">
             <HelpCircle size={14} />
-            <span>Step 3: Real-time Jargon, Verbatim &amp; Gap Detector</span>
+            <span>Step 4: Is it simple enough for a beginner?</span>
           </div>
 
           {/* Rating Badge */}

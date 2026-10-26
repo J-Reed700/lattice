@@ -377,7 +377,23 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             </div>
 
             {workbenchMode === 'feynman' && (
-              <FeynmanTechniquePanel program={program} lesson={currentLesson} module={currentModule} />
+              <FeynmanTechniquePanel
+                program={program}
+                lesson={currentLesson}
+                module={currentModule}
+                onDraftMissedConcept={(question, answer) => {
+                  if (!currentLesson?.id) return;
+                  saveRecallDraft.mutate({
+                    draftId: null,
+                    programId: program.summary.id,
+                    lessonId: currentLesson.id,
+                    question,
+                    answer,
+                    explanation: 'Drafted from a gap in a Feynman explanation',
+                    sourceIds: [],
+                  });
+                }}
+              />
             )}
           </div>
         )}
