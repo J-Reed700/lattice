@@ -3,11 +3,11 @@
  *
  * Single source of truth for role assignment state in the AI Models tab.
  * Every card in the grid (local cards + the Ollama meta-card) reads from
- * this context and calls `assignRole()` to mutate; the llama.cpp connection,
- * which has no model row, calls `assignUtilityReference()`.
+ * this context and calls `assignRole()` to mutate; llama.cpp and cloud
+ * connections, which have no model row, call `assignUtilityReference()`.
  *
  * The utility model is either a row flag (a downloaded model or the Ollama
- * connection) or a reference in Settings (the llama.cpp connection). The
+ * connection) or a reference in Settings (llama.cpp or a cloud model). The
  * reference wins on the Rust side, and each write here clears the other, so
  * only one is ever set.
  *

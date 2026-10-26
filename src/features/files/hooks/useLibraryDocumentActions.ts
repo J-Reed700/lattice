@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { fetchMemberships } from '@/features/chat/api/conversationQueryData';
 import { CORPUS_SHAPE_QUERY_KEY } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { CUSTOM_COLLECTIONS_QUERY_KEY } from '@/features/files/hooks/useCustomCollectionsQuery';
 import { INDEXED_FOLDERS_QUERY_KEY } from '@/features/files/hooks/useIndexedFoldersQuery';
 import { INDEXING_ACTIVITIES_QUERY_KEY, INDEXING_STATUS_QUERY_KEY } from '@/features/files/hooks/useIndexingStatusQuery';
 import { LIBRARY_DOCUMENTS_QUERY_KEY } from '@/features/files/hooks/useLibraryDocumentsQuery';
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { unwrapApiResult } from '@/types/api/result';
 import type { DocumentMetadata } from '@/types/fileBrowser';
@@ -38,39 +39,40 @@ const refreshDocumentViews = (client: QueryClient) =>
 
 /** The spaces a document is filed in. */
 export function useDocumentSpaceMembershipsQuery(documentId: string) {
+  const api = useApi();
   return useQuery({
     queryKey: conversationKeys.memberships(documentId),
-    queryFn: () => fetchMemberships(documentId),
+    queryFn: () => fetchMemberships(documentId, api),
   });
 }
 
 /** An absolute local path for the document, asking the backend when the row only has an id; `null` for none. */
-export async function resolveDocumentPath(doc: LibraryDocument): Promise<string | null> {
+export async function resolveDocumentPath(doc: LibraryDocument, api: ApiClient = VaultAPI): Promise<string | null> {
   if (!isHttpUrl(doc.filePath) && isAbsolutePath(doc.filePath)) return doc.filePath;
-  const result = await VaultAPI.getFilePathById(doc.id);
+  const result = await api.getFilePathById(doc.id);
   return result.ok ? result.data : null;
 }
 
 /** Opens the document in the system viewer, or says to render a web article in the app. */
-export const openDocumentFile = (documentId: string) => VaultAPI.openFileById(documentId);
+export const openDocumentFile = (documentId: string, api: ApiClient = VaultAPI) => api.openFileById(documentId);
 
 /** A document's metadata, by id. */
-export const fetchDocument = (documentId: string) => VaultAPI.getDocument(documentId);
+export const fetchDocument = (documentId: string, api: ApiClient = VaultAPI) => api.getDocument(documentId);
 
 /** Opens the file at `path` in the system's default app. */
-export const openFilePath = (path: string) => VaultAPI.openFile(path);
+export const openFilePath = (path: string, api: ApiClient = VaultAPI) => api.openFile(path);
 
 /** The document's file as text, for searching inside it. */
-export const readDocumentText = (filePath: string) => VaultAPI.readFileContent(filePath);
+export const readDocumentText = (filePath: string, api: ApiClient = VaultAPI) => api.readFileContent(filePath);
 
 /** Reveals the document's file in Finder or Explorer. */
-export async function showDocumentInFolder(documentId: string): Promise<void> {
-  const path = unwrapApiResult(await VaultAPI.getFilePathById(documentId));
-  unwrapApiResult(await VaultAPI.showInFolder(path));
+export async function showDocumentInFolder(documentId: string, api: ApiClient = VaultAPI): Promise<void> {
+  const path = unwrapApiResult(await api.getFilePathById(documentId));
+  unwrapApiResult(await api.showInFolder(path));
 }
 
-const pathFor = async (doc: LibraryDocument) => {
-  const path = await resolveDocumentPath(doc);
+const pathFor = async (doc: LibraryDocument, api: ApiClient = VaultAPI) => {
+  const path = await resolveDocumentPath(doc, api);
   if (!path) throw new Error('No file path for this document.');
   return path;
 };
@@ -95,9 +97,10 @@ export interface DeleteDocumentsOutcome {
  * and reindexing refreshes the indexing status.
  */
 export function useLibraryDocumentActions() {
+  const api = useApi();
   const client = useQueryClient();
   const reindex = useMutation({
-    mutationFn: async (doc: LibraryDocument) => unwrapApiResult(await VaultAPI.reindexFile(await pathFor(doc))),
+    mutationFn: async (doc: LibraryDocument) => unwrapApiResult(await api.reindexFile(await pathFor(doc, api))),
     onSuccess: () => Promise.all([
       client.invalidateQueries({ queryKey: INDEXING_STATUS_QUERY_KEY }),
       client.invalidateQueries({ queryKey: INDEXING_ACTIVITIES_QUERY_KEY }),
@@ -105,7 +108,7 @@ export function useLibraryDocumentActions() {
     ]),
   });
   const removeFromIndex = useMutation({
-    mutationFn: async (doc: LibraryDocument) => unwrapApiResult(await VaultAPI.removeIndexedFile(await pathFor(doc))),
+    mutationFn: async (doc: LibraryDocument) => unwrapApiResult(await api.removeIndexedFile(await pathFor(doc, api))),
     onSuccess: () => Promise.all([
       refreshDocumentViews(client),
       client.invalidateQueries({ queryKey: INDEXING_STATUS_QUERY_KEY }),
@@ -113,7 +116,7 @@ export function useLibraryDocumentActions() {
   });
   const setSpaceMembership = useMutation({
     mutationFn: async ({ documentId, spaceId, assigned }: { documentId: string; spaceId: string; assigned: boolean }) =>
-      unwrapApiResult(await VaultAPI.setDocumentSpaceMembership(documentId, spaceId, assigned)),
+      unwrapApiResult(await api.setDocumentSpaceMembership(documentId, spaceId, assigned)),
     onSuccess: (_result, { documentId }) => Promise.all([
       client.invalidateQueries({ queryKey: conversationKeys.memberships(documentId) }),
       client.invalidateQueries({ queryKey: ['learning-space-documents'] }),
@@ -121,7 +124,7 @@ export function useLibraryDocumentActions() {
   });
   const addToSpace = useMutation({
     mutationFn: async ({ documentIds, spaceId }: { documentIds: string[]; spaceId: string }) =>
-      unwrapApiResult(await VaultAPI.setDocumentsSpaceMembership(documentIds, spaceId, true)),
+      unwrapApiResult(await api.setDocumentsSpaceMembership(documentIds, spaceId, true)),
     onSuccess: (_result, { documentIds }) => Promise.all([
       ...documentIds.map((documentId) => client.invalidateQueries({ queryKey: conversationKeys.memberships(documentId) })),
       client.invalidateQueries({ queryKey: ['learning-space-documents'] }),
@@ -132,7 +135,7 @@ export function useLibraryDocumentActions() {
       const outcome: DeleteDocumentsOutcome = { deleted: 0, errors: [] };
       for (const [index, id] of ids.entries()) {
         if (shouldStop?.()) break;
-        const result = await VaultAPI.deleteDocument(id);
+        const result = await api.deleteDocument(id);
         if (result.ok) outcome.deleted += 1;
         else outcome.errors.push(result.error || 'Unknown error');
         onProgress?.(index + 1);

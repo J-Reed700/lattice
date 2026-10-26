@@ -2,7 +2,9 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import VaultAPI from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { deferred } from '@/tests/deferred';
 
@@ -42,7 +44,7 @@ describe('useConversationMessageActions', () => {
     let outcome!: boolean;
     await act(async () => { outcome = await actions.bookmarkMessage('c1', 'm1', 'Carthage', 'note'); });
     expect(outcome).toBe(true);
-    expect(h.saveBookmark).toHaveBeenCalledWith(queryClient, { conversationId: 'c1', messageId: 'm1', title: 'Carthage', note: 'note' });
+    expect(h.saveBookmark).toHaveBeenCalledWith(queryClient, { conversationId: 'c1', messageId: 'm1', title: 'Carthage', note: 'note' }, VaultAPI);
     await act(async () => { outcome = await actions.bookmarkMessage('c1', 'm1'); });
     expect(outcome).toBe(false);
     expect(uiError()).toBe('bookmark table locked');

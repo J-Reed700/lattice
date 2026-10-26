@@ -3,7 +3,8 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { IndexStatus } from '@/types';
 import type { IndexingActivity } from '@/types/api/files';
 import type { IndexingSnapshot } from '@/types/api/indexing';
@@ -39,6 +40,7 @@ export function isIndexingActive(snapshot: IndexingSnapshot | undefined): boolea
  * a run is active and stops entirely when it isn't — an idle vault costs nothing.
  */
 export function useIndexingStatusQuery() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -75,7 +77,7 @@ export function useIndexingStatusQuery() {
   return useQuery<IndexingSnapshot>({
     queryKey: INDEXING_STATUS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getIndexProgress();
+      const result = await api.getIndexProgress();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -89,10 +91,11 @@ export function useIndexingStatusQuery() {
 
 /** Recent indexing activity. Only mounted where it is shown (popover, Settings). */
 export function useIndexingActivitiesQuery(limit = 25, enabled = true) {
+  const api = useApi();
   return useQuery<IndexingActivity[]>({
     queryKey: [...INDEXING_ACTIVITIES_QUERY_KEY, limit],
     queryFn: async () => {
-      const result = await VaultAPI.getIndexingActivities(limit);
+      const result = await api.getIndexingActivities(limit);
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -107,16 +110,17 @@ export type IndexingControlAction = 'pause' | 'resume' | 'cancel';
 
 /** Pause / Resume / Stop. Each invalidates the status query on settle. */
 export function useIndexingControlMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, IndexingControlAction>({
     mutationFn: async (action) => {
       const result =
         action === 'pause'
-          ? await VaultAPI.pauseIndexing()
+          ? await api.pauseIndexing()
           : action === 'resume'
-            ? await VaultAPI.resumeIndexing()
-            : await VaultAPI.cancelIndexing();
+            ? await api.resumeIndexing()
+            : await api.cancelIndexing();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -136,9 +140,9 @@ export function useIndexingControlMutation() {
  * backend without the command, or a path that has already aged out, must not
  * turn a successful retry or removal into an error.
  */
-async function clearFailureQuietly(path: string): Promise<void> {
+async function clearFailureQuietly(path: string, api: ApiClient = VaultAPI): Promise<void> {
   try {
-    await VaultAPI.clearIndexingFailure(path);
+    await api.clearIndexingFailure(path);
   } catch {
     // The file is retried or removed either way; the row is what's left.
   }
@@ -150,20 +154,21 @@ async function clearFailureQuietly(path: string): Promise<void> {
  * return NotFound. Falls back to `reindexFile` when the path is already indexed.
  */
 export function useRetryIndexedFileMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, string>({
     mutationFn: async (path) => {
-      const indexed = await VaultAPI.indexFile(path);
+      const indexed = await api.indexFile(path);
       if (indexed.ok) {
-        await clearFailureQuietly(path);
+        await clearFailureQuietly(path, api);
         return;
       }
-      const reindexed = await VaultAPI.reindexFile(path);
+      const reindexed = await api.reindexFile(path);
       if (!reindexed.ok) {
         throw new Error(reindexed.error || indexed.error);
       }
-      await clearFailureQuietly(path);
+      await clearFailureQuietly(path, api);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INDEXING_STATUS_QUERY_KEY });
@@ -175,15 +180,16 @@ export function useRetryIndexedFileMutation() {
 
 /** Drop a file from the index and from the failure list. */
 export function useRemoveIndexedFileMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, string>({
     mutationFn: async (path) => {
-      const result = await VaultAPI.removeIndexedFile(path);
+      const result = await api.removeIndexedFile(path);
       if (!result.ok) {
         throw new Error(result.error);
       }
-      await clearFailureQuietly(path);
+      await clearFailureQuietly(path, api);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INDEXING_STATUS_QUERY_KEY });

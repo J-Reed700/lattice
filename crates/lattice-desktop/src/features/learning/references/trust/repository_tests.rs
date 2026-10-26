@@ -246,6 +246,125 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
 }
 
 #[tokio::test]
+async fn ownership_levels_are_the_current_checkers_and_every_checkers_work_is_a_lead() -> Result<()>
+{
+    let course = course().await?;
+    let other_course = course_on(&course.pool).await?;
+    let subject = SubjectKey::of("Python");
+    let assessment = |origin: &str, model: &str, at: i64, relation| StoredJudgement {
+        key: JudgementKey {
+            model: model.into(),
+            ..key(&format!("{origin}-{model}"))
+        },
+        value: AuthorityAssessment {
+            origin_key: OriginKey(origin.into()),
+            subject_key: subject.clone(),
+            relation,
+            basis: vec![],
+            owner_origin_hints: vec![format!("{model}.example.org")],
+            policy: "test-policy-v1".into(),
+            model: model.into(),
+        },
+        input_tokens: 0,
+        output_tokens: 0,
+        assessed_at: at,
+    };
+    let old = assessment("python.org", "old", 1, SubjectRelation::Owner);
+    let recent = assessment("python.org", "recent", 3, SubjectRelation::Independent);
+    let current = assessment("python.org", "current", 2, SubjectRelation::Owner);
+    let fallback = assessment("docs.example.org", "old", 1, SubjectRelation::Independent);
+    for row in [&old, &recent, &current, &fallback] {
+        course.store.save_authority(&course.program_id, row).await?;
+    }
+    course
+        .store
+        .save_authority(
+            &other_course,
+            &assessment("foreign.example.org", "current", 9, SubjectRelation::Owner),
+        )
+        .await?;
+    let mut wrong_subject = assessment(
+        "other-subject.example.org",
+        "current",
+        9,
+        SubjectRelation::Owner,
+    );
+    wrong_subject.value.subject_key = SubjectKey::of("Unrelated subject");
+    course
+        .store
+        .save_authority(&course.program_id, &wrong_subject)
+        .await?;
+    let mut wrong_policy = assessment(
+        "old-policy.example.org",
+        "current",
+        9,
+        SubjectRelation::Owner,
+    );
+    wrong_policy.key.policy = "old-policy".into();
+    wrong_policy.value.policy = "old-policy".into();
+    course
+        .store
+        .save_authority(&course.program_id, &wrong_policy)
+        .await?;
+
+    let current_only = course
+        .store
+        .authority_for_subject(&course.program_id, &subject, "test-policy-v1", "current")
+        .await?;
+    assert_eq!(
+        current_only,
+        vec![current.value.clone()],
+        "levels come from the current checker's judgements alone"
+    );
+    assert!(course
+        .store
+        .authority_for_subject(&course.program_id, &subject, "test-policy-v1", "brand-new")
+        .await?
+        .is_empty());
+    let mut alias = assessment("alias.example.org", "old", 4, SubjectRelation::Owner);
+    alias.value.subject_key = SubjectKey::of("CPython");
+    course
+        .store
+        .save_authority(&course.program_id, &alias)
+        .await?;
+    let leads = course
+        .store
+        .subject_leads(
+            &course.program_id,
+            &[subject.clone(), SubjectKey::of("CPython")],
+            "test-policy-v1",
+        )
+        .await?;
+    assert_eq!(
+        leads,
+        vec![
+            alias.value,
+            recent.value,
+            current.value,
+            fallback.value,
+            old.value.clone()
+        ],
+        "every checker's leads on the subject and its aliases, newest first, \
+         no other courses, subjects or policies"
+    );
+    assert!(
+        course
+            .store
+            .authority(
+                &course.program_id,
+                &old.value.origin_key,
+                &subject,
+                "test-policy-v1",
+                "brand-new"
+            )
+            .await?
+            .is_none(),
+        "discovery reuse does not forge a current-model assessment"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_relation_recorded_again_keeps_one_edge_with_the_new_evidence() -> Result<()> {
     let course = course().await?;
     let url = "https://docs.example.org/cited";

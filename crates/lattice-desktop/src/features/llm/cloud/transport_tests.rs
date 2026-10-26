@@ -169,6 +169,38 @@ async fn authentication_failure_is_not_retried_or_echoed() {
         .unwrap_err();
     assert!(error.to_string().contains("401"));
     assert!(!error.to_string().contains("sensitive-provider-body"));
+    // A rejected key is a setting to fix, never an outage a job waits out.
+    assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+    assert!(!lattice_core::shared::runtime::jobs::JobFailure::is_transient(&error));
+    assert!(error.to_string().contains("API key"), "{error}");
+}
+
+#[tokio::test]
+async fn refusals_are_typed_by_what_waiting_can_change() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for (status, transient) in [
+        (403, false),
+        (404, false),
+        (400, false),
+        (429, true),
+        (529, true),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(status).insert_header("retry-after", "0"))
+            .mount(&server)
+            .await;
+        let error = client(&server)
+            .await
+            .complete(&CompletionRequest::default())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            JobFailure::is_transient(&error),
+            transient,
+            "HTTP {status}: {error:?}"
+        );
+    }
 }
 #[tokio::test]
 async fn dropping_a_completion_cancels_the_request_without_a_retry() {

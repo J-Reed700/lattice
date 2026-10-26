@@ -2,7 +2,9 @@ import { useCallback, useContext } from 'react';
 
 import { QueryClient, QueryClientContext, useQuery } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+
+
 
 export const MODEL_DOWNLOAD_PATH_QUERY_KEY = ['model', 'download-path'] as const;
 
@@ -13,13 +15,14 @@ const fallbackQueryClient = new QueryClient({
 
 /** Where downloaded models are stored; empty when the backend cannot say. */
 export function useModelDownloadPath() {
+  const api = useApi();
   const contextClient = useContext(QueryClientContext);
   const query = useQuery(
     {
       queryKey: MODEL_DOWNLOAD_PATH_QUERY_KEY,
       queryFn: async () => {
         try {
-          const result = await VaultAPI.getModelDownloadPath();
+          const result = await api.getModelDownloadPath();
           return result.ok ? result.data : '';
         } catch {
           // The command can be missing on older builds. Fall through to the

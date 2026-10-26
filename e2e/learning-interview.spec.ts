@@ -12,7 +12,11 @@ import { openStudioSection } from "./helpers/learningStudioNavigation";
 for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "practice" }, { width: 390, mode: "demonstrate" }] as const) {
   test(`company interview intake, first question, feedback and repeat attempt at ${scenario.width}px (${scenario.mode})`, async ({ page }, testInfo) => {
     const errors: string[] = [];
+    const remoteImages: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    page.on("request", (request) => {
+      if (request.url().startsWith("https://untrusted-image.example/")) remoteImages.push(request.url());
+    });
     await page.setViewportSize({ width: scenario.width, height: 900 });
     await installLearningStudioBackend(page);
     await mockCommands(page, () => {
@@ -31,6 +35,7 @@ for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "
           evaluationSignals: ["Makes assumptions explicit", "Handles duplicate requests"],
         })),
       };
+      plan.questions![2].question = "Explain observability.\n![Untrusted image](https://untrusted-image.example/private-pixel.png)";
       const current = (id: string) => {
         const session = state.practicalWorkspace.simulations.find((item) => item.id === id);
         if (!session) throw new Error("Simulation missing");
@@ -107,6 +112,7 @@ for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "
     } else {
       await expect(page.getByText("Company preparation dossier about reliable request processing.")).toBeVisible();
       await expect(page.getByLabel("Company interview dossier").locator("pre").filter({ hasText: "response=lost" })).toBeVisible();
+      await expect(page.getByLabel("Company interview dossier").locator('img[src^="https://untrusted-image.example/"]')).toHaveCount(0);
     }
     const generatedRequest = await page.evaluate(() => window.__LATTICE_IPC__.calls.find((call) => call.command === "generate_learning_practical_activity")?.args.request);
     expect(generatedRequest).toMatchObject({
@@ -133,6 +139,7 @@ for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "
     await expect(page.getByRole("button", { name: "Start simulation", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(errors).toEqual([]);
+    expect(remoteImages).toEqual([]);
     expect(await page.evaluate(() => window.__LATTICE_IPC__.unsupported)).toEqual([]);
   });
 }

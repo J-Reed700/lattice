@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import type { DashboardData } from '@/features/dashboard/hooks/useDashboardQuery';
 import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
+import VaultAPI from '@/lib/api';
 
 import { Dashboard } from './Dashboard';
 
@@ -252,7 +254,7 @@ describe('Dashboard', () => {
       }),
     });
     await user.click(screen.getByRole('button', { name: /\/library\/notes\.docx/ }));
-    expect(openDocumentFile).toHaveBeenCalledWith('d2');
+    expect(openDocumentFile).toHaveBeenCalledWith('d2', VaultAPI);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /\/library\/notes\.docx/ }));

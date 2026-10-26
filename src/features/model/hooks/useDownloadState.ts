@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import type { DownloadStatus, DownloadState } from '@/types/downloads';
 
 import { DOWNLOADS_QUERY_KEY, fetchDownloadMap } from './useDownloads';
@@ -12,10 +13,11 @@ const isActiveState = (state: DownloadState): boolean =>
   state === 'Downloading' || state === 'Pending' || state === 'Paused';
 
 export const useDownloadState = () => {
+  const api = useApi();
   const queryClient = useQueryClient();
   const downloadsQuery = useQuery<Map<string, DownloadStatus>>({
     queryKey: DOWNLOADS_QUERY_KEY,
-    queryFn: fetchDownloadMap,
+    queryFn: () => fetchDownloadMap(api),
     staleTime: 15_000,
     // Events are low-latency hints; reconcile running rows from persisted
     // state if the bounded native event queue drops a terminal notification.

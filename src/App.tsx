@@ -1,5 +1,3 @@
-import { useEffect, useState } from 'react';
-
 import { RouterProvider } from 'react-router/dom';
 
 import { ErrorToastContainer } from './components/ErrorToast';
@@ -13,15 +11,13 @@ import { useModelWarmupListener } from './features/model/hooks/useModelWarmupLis
 import { useVaultFocusRescan } from './features/vault/hooks/useVaultFocusRescan';
 import { useVaultImportListener } from './features/vault/hooks/useVaultImportListener';
 import { useVaultWriteErrorListener } from './features/vault/hooks/useVaultWriteErrorListener';
+import { useAppInitialization } from './hooks/useAppInitialization';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useNativeShutdown } from './hooks/useNativeShutdown';
-import VaultAPI from './lib/api';
 import { router } from './routes';
 
 function App() {
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [initError, setInitError] = useState<string | null>(null);
-
+  const initialization = useAppInitialization();
   const shutdown = useNativeShutdown();
 
   useApplyTheme();
@@ -35,25 +31,11 @@ function App() {
   useVaultFocusRescan();
   useDownloadedModelsListener();
 
-  useEffect(() => {
-    const initialize = async () => {
-      setIsInitializing(true);
-      setInitError(null);
+  const startupError = initialization.status === 'error'
+    ? initialization.error
+    : (!shutdown.ready ? shutdown.error : null);
 
-      // The backend initializes the database during startup; this call only
-      // confirms the bridge is alive.
-      const dbResult = await VaultAPI.initializeDatabase();
-      if (!dbResult.ok) {
-        console.warn('Database initialization check failed:', dbResult.error);
-      }
-
-      setIsInitializing(false);
-    };
-
-    void initialize();
-  }, []);
-
-  if (isInitializing || (!shutdown.ready && !shutdown.error)) {
+  if (startupError === null && (initialization.status === 'pending' || !shutdown.ready)) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
         <span className="font-serif text-lg font-semibold text-text-tertiary">Lattice</span>
@@ -61,12 +43,12 @@ function App() {
     );
   }
 
-  if (initError || !shutdown.ready) {
+  if (startupError !== null) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
         <div className="max-w-sm px-6 text-center">
           <p className="font-serif text-lg font-semibold text-text-primary">Lattice couldn't start.</p>
-          <p className="mt-2 text-sm text-text-secondary">{initError ?? shutdown.error}</p>
+          <p className="mt-2 text-sm text-text-secondary">{startupError}</p>
           <button
             type="button"
             onClick={() => window.location.reload()}

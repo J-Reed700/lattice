@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
-import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ConversationMessage } from '@/types/conversation';
 
@@ -17,6 +17,7 @@ export function useConversationMessageActions({
 }: Pick<ConversationActionsDependencies, 'queryClient' | 'lifecycle'> & {
   invalidateLists: () => Promise<void>;
 }) {
+  const api = useApi();
 
   const bookmarkMessage = useCallback(async (
     conversationId: string,
@@ -25,23 +26,23 @@ export function useConversationMessageActions({
     note?: string | null
   ) => {
     try {
-      await saveBookmark(queryClient, { conversationId, messageId, title, note });
+      await saveBookmark(queryClient, { conversationId, messageId, title, note }, api);
       return true;
     } catch (error) {
       setUiError(error);
       return false;
     }
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   const unbookmarkMessage = useCallback(async (conversationId: string, messageId: string) => {
     try {
-      await removeBookmark(queryClient, { conversationId, messageId });
+      await removeBookmark(queryClient, { conversationId, messageId }, api);
       return true;
     } catch (error) {
       setUiError(error);
       return false;
     }
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   /** Truncate persisted history after a message and refresh the conversation list. */
   const truncateAfter = useCallback(async (
@@ -52,7 +53,7 @@ export function useConversationMessageActions({
     let cancelled = false;
     const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
     try {
-      const result = await VaultAPI.truncateConversationAfter(conversationId, messageId, inclusive);
+      const result = await api.truncateConversationAfter(conversationId, messageId, inclusive);
       // A truncate request can outlive a concurrent conversation deletion.
       // Never recreate its just-removed messages cache with a late response.
       if (cancelled) return false;
@@ -69,7 +70,7 @@ export function useConversationMessageActions({
     } finally {
       unregisterLifecycle();
     }
-  }, [invalidateLists, lifecycle, queryClient]);
+  }, [api, invalidateLists, lifecycle, queryClient]);
 
   const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {
     const key = conversationKeys.messages(conversationId);
@@ -82,7 +83,7 @@ export function useConversationMessageActions({
     const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
     queryClient.setQueryData(key, previous.filter(message => message.id !== messageId));
     try {
-      const result = await VaultAPI.deleteConversationMessage({ conversationId, messageId });
+      const result = await api.deleteConversationMessage({ conversationId, messageId });
       if (cancelled) return;
       if (!result.ok) {
         queryClient.setQueryData<ConversationMessage[]>(key, current =>
@@ -97,7 +98,7 @@ export function useConversationMessageActions({
     } finally {
       unregisterLifecycle();
     }
-  }, [invalidateLists, lifecycle, queryClient]);
+  }, [api, invalidateLists, lifecycle, queryClient]);
 
   const dismissFailedMessage = useCallback((tempId: string) => {
     conversationUiStore.setState(current => {

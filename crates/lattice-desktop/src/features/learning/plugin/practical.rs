@@ -296,9 +296,55 @@ pub async fn generate_learning_practical_activity(
             ),
         ));
     }
-    let sources = practical_source_versions(&container, &request.program_id, &source_ids)
+    let mut sources = practical_source_versions(&container, &request.program_id, &source_ids)
         .await
         .map_err(ApiError::from)?;
+    let prepared_plan = if let Some(target) = interview_target.as_ref() {
+        let plan = crate::features::learning::practical_generation::generate_interview_plan(
+            llm.as_ref(),
+            target,
+            &lesson,
+            &request.learner_brief,
+            &sources,
+            &researched_source_ids,
+        )
+        .await
+        .map_err(ApiError::from)?;
+        let library = source_library(&container);
+        let web = container.web_service();
+        let research = crate::features::learning::interview_research::research_interview_answers(
+            llm.as_ref(),
+            web.as_ref(),
+            &library,
+            &request.program_id,
+            &request.operation_id,
+            &plan,
+            &[
+                &request.learner_brief,
+                target.company_context.as_deref().unwrap_or_default(),
+                &lesson.title,
+            ],
+        )
+        .await;
+        if let Some(courses) = container.course_indexes() {
+            courses.refresh(&request.program_id).await;
+        }
+        let answer_source_ids = research.map_err(ApiError::from)?;
+        for source in practical_source_versions(&container, &request.program_id, &answer_source_ids)
+            .await
+            .map_err(ApiError::from)?
+        {
+            if !sources
+                .iter()
+                .any(|saved| saved.version.id == source.version.id)
+            {
+                sources.push(source);
+            }
+        }
+        Some(plan)
+    } else {
+        None
+    };
     let runtime = crate::features::learning::practical_workspace::runtime_generation_context(
         &repo,
         &runtimes,
@@ -307,7 +353,7 @@ pub async fn generate_learning_practical_activity(
     )
     .await
     .map_err(ApiError::from)?;
-    let generated = crate::features::learning::practical_generation::generate_activity(
+    let generated = crate::features::learning::practical_generation::generate_activity_with_plan(
         llm.as_ref(),
         request.kind,
         &request.learner_brief,
@@ -316,6 +362,7 @@ pub async fn generate_learning_practical_activity(
         runtime.as_ref(),
         interview_target.as_ref(),
         &researched_source_ids,
+        prepared_plan,
     )
     .await
     .map_err(ApiError::from)?;

@@ -1,7 +1,7 @@
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 
 /** Asks for files to add; answers with none when the dialog is dismissed. */
-export const chooseFiles = (): Promise<string[]> => VaultAPI.selectMultipleFiles();
+export const chooseFiles = (api: ApiClient = VaultAPI): Promise<string[]> => api.selectMultipleFiles();
 
 /** Asks for a folder to add; answers with null when the dialog is dismissed. */
-export const chooseFolder = (): Promise<string | null> => VaultAPI.selectFolder();
+export const chooseFolder = (api: ApiClient = VaultAPI): Promise<string | null> => api.selectFolder();

@@ -208,26 +208,34 @@ The static table says what kind of source settles a kind of claim in a field whe
 
 ### 7.3 The claim's standing scope (model-free, one cached hint call at most)
 
-`Judgements::standing_scope(&mut self, profile, shown: &[String]) -> Result<StandingScope>` in `provenance_gate/context.rs`:
+`Judgements::standing_scope(&mut self, profile, supported: &[String]) -> Result<StandingScope>` in `provenance_gate/context/scope.rs`:
 
 ```rust
-pub(in …content_verification) struct StandingScope {
-    /// Course versions worth reading for standing, by proxy, minus `shown`.
+pub(in …learning) struct StandingScope {
+    /// Course versions worth reading for standing, minus the claim's supports.
     pub candidates: HashSet<String>,
-    /// Each candidate's proxy level, for the ceiling.
+    /// Each candidate's proxy level, for the ceiling: current checker only.
     pub proxies: HashMap<String, TrustLevel>,
-    /// Hosts where the subject's owner is believed to publish, from stored
-    /// ownership judgements for this subject.
+    /// Candidates a lead points at (any checker's ownership work).
+    pub led: HashSet<String>,
+    /// Hosts where the subject's owner is believed to publish, from every
+    /// checker's ownership judgements for the subject and its aliases.
     pub owner_hosts: Vec<String>,
 }
 ```
+
+Two rules, added after the owner's held lesson stalled with 33 claims (2026-10-25):
+
+1. **A version nobody has judged is read.** Every stored judgement in that course was `source-standing-v1`; the scope read only v2, so no version had a standing proxy and the vendor documentation the course held (OpenAI's function-calling guide, Anthropic's define-tools page) was never a candidate. §4.5's plan, that the versions on the standing pages get re-judged, could not start: nothing reached a page without a judgement. A captured version with no judgement under the current policy and checker is now a candidate with no proxy; the walk levels it when it reads it (§7.4), so it raises the ceiling only once read.
+2. **Earlier checkers' work is a lead, never a level.** Proxies and `Owner` relations come from the current checker's judgements alone: the ceiling decides `BestAvailable` (§6.1), and a stale `Owner` from an earlier model (one had judged a personal blog the owner of "tool schema") would block every lesser support. Ownership work only leads: the origins a judgement names as owner and the hosts it hints are `led`. The current checker's judgement is the lead once it has made one (`owner_judged` is the current checker's, so a new checker makes its own call before the scope is built); every checker's judgements on the subject's key and aliases (`SqliteSourceTrustStore::subject_leads`) lead only a subject it has not judged. In the owner's course an earlier checker had judged a personal blog the owner of "tool schema", "function calling" and "schema"; as a lead beside the current call it put the blog's 22 versions ahead of the vendor's documentation on the one page a standing walk always reads.
 
 A version is a candidate when any of these holds, each read from the trust store or the library row without a model call:
 
 | proxy | source of the fact | proxy level |
 |---|---|---|
-| stored ownership judgement `Owner` for (its origin, the claim's subject) | `source_subject_authority` | `Primary` |
-| its host is owner-hinted for the subject (`owner_hinted`, `provenance_gate.rs:426-437`, over the union of `owner_origin_hints` of every stored judgement for this subject) | `source_subject_authority` | none (a belief: it is read, it does not raise the ceiling) |
+| the current checker's ownership judgement `Owner` for (its origin, the claim's subject) | `source_subject_authority` | `Primary` |
+| a lead: the current checker judged its origin the subject's owner or hinted its host (earlier checkers' judgements on the subject and its aliases, when the current checker has none) | `source_subject_authority` | none (a belief: it is read first, it does not raise the ceiling) |
+| no judgement under the current standing policy and checker | `source_standing_assessments` (absent) | none (read, levelled once read) |
 | stored v2 standing `Institutional` with `PeerReviewed`/`Editorial` | `source_standing_assessments` | `Authoritative` |
 | stored v2 standing `Institutional` or `Identified` | same | `Established` |
 | stored v2 standing `Unknown` whose `work` summary meets a §5.3 ladder row (`work_level`, no model) | same | the row's level (`Established` for row 1, `Community` for rows 2, 3, 5) |
@@ -235,9 +243,11 @@ A version is a candidate when any of these holds, each read from the trust store
 | `tld_registry` restricted (gov/edu/mil/int, `core/domain/provenance/origin.rs:55-80`) | `source_provenance.origin_json` | `Established` |
 | a site or source override at or above `Established`, or a site-for-subject override | `Overrides` (already loaded) | the override's level |
 
-A version Distrusted by override, or whose host is a Distrusted site, is never a candidate. The claim's current supports and everything it was shown are removed. Candidates whose proxy level is at or below the claim's best counted support level are kept (they may corroborate) but ordered after the higher ones by the list anyway.
+A version Distrusted by override, or whose host is a Distrusted site, is never a candidate; nor is one the current checker judged below the ladder (Community, an unranked Unknown). The claim's current supports are removed. What it was shown is excluded passage by passage by `claim_list`: one silent excerpt of a document must not hide the rest of it.
 
-When no stored ownership judgement exists for the subject (so `owner_hosts` is empty and no `Owner` proxy can exist) and the claim has a subject with a host-bearing origin to ask about: one ownership judgement `authority(llm, origin of the first passage of the claim's course list minus shown, subject)` (`context.rs:435-470`, cached under `(program, origin, subject)`), which yields the subject's `owner_origin_hints`. That is the only model call the scope may make, and it is reused by the gate when that origin later supports anything.
+**Reading order.** `StandingScope::tier` orders the claim's list, stably so relevance orders each tier: tier 0 is a proxy at or above `Established` or a lead, tier 1 a version nobody has judged, tier 2 a proxy below `Established`. The walk reads the course's strongest sources first.
+
+When the current checker has no ownership judgement for the subject and the claim has a subject with a host-bearing origin to ask about: one ownership judgement `authority(llm, origin of the first passage of the claim's course list minus shown, subject)` (`context.rs:435-470`, cached under `(program, origin, subject)`), which yields the subject's `owner_origin_hints`. That is the only model call the scope may make, and it is reused by the gate when that origin later supports anything.
 
 Needs: `SourceTrustStore` gains `authority_for_subject(program_id, subject_key) -> Vec<AuthorityAssessment>` and `standings(keys: &[JudgementKey]) -> Vec<StandingAssessment>` (port `core/application/ports/source_trust.rs`, repository `references/trust/repository.rs`); `Judgements` loads the program's provenance records once per pass (`program_provenance`, already used by `passage_labels`, `context.rs:538-579`) and the library's `added_by` per source (one query through the learning repository). Every new SQL lives in a repository.
 

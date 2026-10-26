@@ -3,7 +3,9 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
+import VaultAPI from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 
 import { ExplorerPage } from '../ExplorerPage';
@@ -101,7 +103,7 @@ describe('ExplorerPage without a folder', () => {
     click('Choose a folder');
     expect(open).toHaveBeenCalledWith({ directory: true, multiple: false, defaultPath: '/home' });
     expect(await screen.findByText('file view of /notes/history')).toBeInTheDocument();
-    expect(mocks.resolveExplorerRoot).toHaveBeenCalledWith('/notes/history');
+    expect(mocks.resolveExplorerRoot).toHaveBeenCalledWith('/notes/history', VaultAPI);
     expect(mocks.index.open).toHaveBeenCalledWith('/notes/history', expect.any(Function));
   });
 

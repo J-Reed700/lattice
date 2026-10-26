@@ -12,9 +12,10 @@ import type {
 
 const getConversationMemory = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/api', () => ({
-  VaultAPI: { getConversationMemory, manageKnowledge: vi.fn().mockResolvedValue({ok:true,data:{items:[],hasMore:false,lastAnswerMemoryIds:[]}}) },
-}));
+vi.mock('@/lib/api', () => {
+  const mockApi = { getConversationMemory, manageKnowledge: vi.fn().mockResolvedValue({ok:true,data:{items:[],hasMore:false,lastAnswerMemoryIds:[]}}) };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 const quote = (overrides: Partial<MemoryEvidenceDto> = {}): MemoryEvidenceDto => ({
   messageId: 'm1',

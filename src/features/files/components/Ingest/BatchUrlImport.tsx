@@ -12,6 +12,7 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { settingsTextareaClass } from '@/components/ui/SettingsSection';
+import { useApi } from '@/contexts/ApiContext';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
 import type { UrlPreview } from '@/types/api/web';
 import { startBatchUrlImport, getBatchJobStatus, cancelBatchJob } from '@/utils/batchImport';
@@ -128,6 +129,7 @@ function itemMeta(preview?: UrlPreview): string {
 }
 
 export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete }) => {
+  const api = useApi();
   const { preview: fetchUrlPreview } = useWebImport();
   const [urlText, setUrlText] = useState('');
   const [items, setItems] = useState<BatchImportItem[]>([]);
@@ -280,7 +282,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     try {
       const jobId = await startBatchUrlImport(
         selected.map(item => item.url),
-        { extractArticle: options.extractArticle },
+        { extractArticle: options.extractArticle },api
       );
       if (!isCurrent()) return;
       setActiveJobId(jobId);
@@ -291,7 +293,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
       const pollJobStatus = async () => {
         if (!isCurrent()) return;
         try {
-          const status = await getBatchJobStatus(jobId);
+          const status = await getBatchJobStatus(jobId, api);
           if (!isCurrent()) return;
           const normalizedStatus = status.status?.toLowerCase?.() ?? '';
           const completedCount = status.completedItems ?? status.completed_items ?? 0;
@@ -402,7 +404,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     cancellingRef.current = true;
     setIsCancelling(true);
     try {
-      await cancelBatchJob(activeJobId);
+      await cancelBatchJob(activeJobId, api);
       if (!mountedRef.current || runRef.current !== run) return;
       runRef.current += 1;
       clearTimeout(pollTimerRef.current);

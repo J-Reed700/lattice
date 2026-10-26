@@ -5,7 +5,10 @@ import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { createNoteSaveQueue } from './noteSaveQueue';
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { updateWorkspaceNote: vi.fn() } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { updateWorkspaceNote: vi.fn() };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 const note: WorkspaceNote = {
   id: 'note',
   revision: 0,

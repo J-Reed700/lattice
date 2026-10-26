@@ -34,12 +34,28 @@ Most behavior is tested by unit tests next to the code (`#[cfg(test)]` modules
 and `features/*/tests.rs`), usually against an in-memory SQLite pool with
 `sqlx::migrate!("./migrations")` applied.
 
+`npm run test:sql` runs the SQL migration regression suite in `scripts/sql_tests/`
+using Python's SQLite driver. It applies the real migrations transactionally
+with foreign keys enabled and checks upgrades, document invariants, FTS
+maintenance, cascades, rollback, and row identities across VACUUM. A progress
+handler compares SQLite execution work across corpus sizes so a return to full
+scans fails without relying on machine-dependent latency thresholds. CI runs
+this suite alongside the SQL contract check. Native Rust tests still exercise
+the application's SQLx connection and migration path.
+
+Rust persistence tests also check that corrupt rows fail explicitly instead of
+disappearing from aggregates, numeric metadata survives conversion without
+wrapping, and embedding batches validate every vector before writing. Bulk
+scope and repository tests count SQL statements and inject failures in later
+batches to verify bounded query work and transaction rollback.
+
 ## Running
 
 ```bash
 cd crates/lattice-desktop
 
 cargo test --lib                                   # unit tests
+cargo test --lib infrastructure::persistence        # database, mappers and repositories
 cargo test --test hybrid_search_integration_test   # one integration target
 cargo test --tests                                 # every integration target
 cargo test --test learning_studio_evals -- --ignored --nocapture   # opt-in eval

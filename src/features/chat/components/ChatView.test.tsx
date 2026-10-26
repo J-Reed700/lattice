@@ -5,8 +5,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import VaultAPI from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 import { deferred } from '@/tests/deferred';
@@ -232,7 +234,7 @@ describe('ChatView', () => {
       h.linkDocumentToSpace.mockResolvedValueOnce({ ok: true, data: null });
       h.fetchDocumentFileName.mockResolvedValueOnce(null);
       renderView('/chat?documentId=d1');
-      await waitFor(() => expect(h.fetchDocumentFileName).toHaveBeenCalledWith('d1'));
+      await waitFor(() => expect(h.fetchDocumentFileName).toHaveBeenCalledWith('d1', VaultAPI));
       expect(h.toast.success).not.toHaveBeenCalled();
     });
 

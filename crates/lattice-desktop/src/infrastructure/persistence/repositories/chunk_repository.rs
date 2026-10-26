@@ -93,7 +93,7 @@ impl ChunkRepository {
         document_id: &str,
         limit: i64,
     ) -> Result<Vec<ChunkEntity>> {
-        let rows = sqlx::query(
+        let db_models = sqlx::query_as::<_, ChunkModel>(
             r#"
             SELECT
                 id,
@@ -121,28 +121,7 @@ impl ChunkRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to find chunks by document: {}", e)))?;
 
-        let db_models: Vec<ChunkModel> = rows
-            .iter()
-            .map(|row| ChunkModel {
-                id: row.get("id"),
-                document_id: row.get("document_id"),
-                content: row.get("content"),
-                chunk_index: row.get("chunk_index"),
-                contextualized_content: row.get("contextualized_content"),
-                context_prefix: row.get("context_prefix"),
-                start_char: row.get("start_char"),
-                end_char: row.get("end_char"),
-                language: row.get("language"),
-                token_count: row.get("token_count"),
-                word_count: row.get("word_count"),
-                has_code: row.get("has_code"),
-                section: row.get("section"),
-                page_number: row.get("page_number"),
-                from_ocr: row.get("from_ocr"),
-            })
-            .collect();
-
-        Ok(ChunkMapper::to_entities(&db_models))
+        ChunkMapper::to_entities(&db_models)
     }
 
     /// Delete all chunks for a document.
@@ -190,7 +169,7 @@ impl ChunkRepository {
 #[async_trait]
 impl RepositoryPort<ChunkEntity> for ChunkRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<ChunkEntity>> {
-        let row = sqlx::query(
+        let row = sqlx::query_as::<_, ChunkModel>(
             r#"
             SELECT
                 id,
@@ -216,26 +195,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         .map_err(|e| AppError::Database(format!("Failed to find chunk by id: {}", e)))?;
 
         match row {
-            Some(r) => {
-                let model = ChunkModel {
-                    id: r.get("id"),
-                    document_id: r.get("document_id"),
-                    content: r.get("content"),
-                    chunk_index: r.get("chunk_index"),
-                    contextualized_content: r.get("contextualized_content"),
-                    context_prefix: r.get("context_prefix"),
-                    start_char: r.get("start_char"),
-                    end_char: r.get("end_char"),
-                    language: r.get("language"),
-                    token_count: r.get("token_count"),
-                    word_count: r.get("word_count"),
-                    has_code: r.get("has_code"),
-                    section: r.get("section"),
-                    page_number: r.get("page_number"),
-                    from_ocr: r.get("from_ocr"),
-                };
-                Ok(Some(ChunkMapper::to_entity(&model)?))
-            }
+            Some(model) => Ok(Some(ChunkMapper::to_entity(&model)?)),
             None => Ok(None),
         }
     }
@@ -247,7 +207,13 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         let filter_any = filter.as_any();
         if let Some(chunk_filter) = filter_any.downcast_ref::<ChunkFilter>() {
             if let Some(document_id) = &chunk_filter.document_id {
-                return self.find_by_document(document_id).await;
+                let limit = chunk_filter
+                    .limit
+                    .map(i64::try_from)
+                    .transpose()
+                    .map_err(|_| AppError::InvalidInput("Chunk limit exceeds SQLite range".into()))?
+                    .unwrap_or(-1);
+                return self.find_first_by_document_inner(document_id, limit).await;
             }
         }
 
@@ -256,7 +222,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
     }
 
     async fn find_all(&self) -> Result<Vec<ChunkEntity>> {
-        let rows = sqlx::query(
+        let db_models = sqlx::query_as::<_, ChunkModel>(
             r#"
             SELECT
                 id,
@@ -280,32 +246,11 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to list all chunks: {}", e)))?;
 
-        let db_models: Vec<ChunkModel> = rows
-            .iter()
-            .map(|row| ChunkModel {
-                id: row.get("id"),
-                document_id: row.get("document_id"),
-                content: row.get("content"),
-                chunk_index: row.get("chunk_index"),
-                contextualized_content: row.get("contextualized_content"),
-                context_prefix: row.get("context_prefix"),
-                start_char: row.get("start_char"),
-                end_char: row.get("end_char"),
-                language: row.get("language"),
-                token_count: row.get("token_count"),
-                word_count: row.get("word_count"),
-                has_code: row.get("has_code"),
-                section: row.get("section"),
-                page_number: row.get("page_number"),
-                from_ocr: row.get("from_ocr"),
-            })
-            .collect();
-
-        Ok(ChunkMapper::to_entities(&db_models))
+        ChunkMapper::to_entities(&db_models)
     }
 
     async fn save(&self, entity: &ChunkEntity) -> Result<()> {
-        let model = ChunkMapper::to_model(entity);
+        let model = ChunkMapper::to_model(entity)?;
 
         sqlx::query(
             r#"
@@ -363,51 +308,10 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        for entity in entities {
-            let model = ChunkMapper::to_model(entity);
-
-            sqlx::query(
-                r#"
-                INSERT INTO text_chunks (
-                    id, document_id, content, chunk_index,
-                    contextualized_content, context_prefix, start_char, end_char,
-                    language, token_count, word_count, has_code, section, page_number, from_ocr
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    content = excluded.content,
-                    chunk_index = excluded.chunk_index,
-                    contextualized_content = excluded.contextualized_content,
-                    context_prefix = excluded.context_prefix,
-                    start_char = excluded.start_char,
-                    end_char = excluded.end_char,
-                    language = excluded.language,
-                    token_count = excluded.token_count,
-                    word_count = excluded.word_count,
-                    has_code = excluded.has_code,
-                    section = excluded.section, page_number = excluded.page_number,
-                from_ocr = excluded.from_ocr
-                "#,
-            )
-            .bind(&model.id)
-            .bind(&model.document_id)
-            .bind(&model.content)
-            .bind(model.chunk_index)
-            .bind(&model.contextualized_content)
-            .bind(&model.context_prefix)
-            .bind(model.start_char)
-            .bind(model.end_char)
-            .bind(&model.language)
-            .bind(model.token_count)
-            .bind(model.word_count)
-            .bind(model.has_code)
-            .bind(&model.section)
-            .bind(model.page_number)
-            .bind(model.from_ocr)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to save chunk in batch: {}", e)))?;
-        }
+        crate::infrastructure::persistence::repositories::chunk::ops::save_batch_optimized(
+            &mut tx, entities,
+        )
+        .await?;
 
         tx.commit()
             .await
@@ -538,38 +442,16 @@ impl ChunkRepositoryPort for ChunkRepository {
                 placeholders
             );
 
-            let mut query_builder = sqlx::query(&query);
+            let mut query_builder = sqlx::query_as::<_, ChunkModel>(&query);
             for id in batch {
                 query_builder = query_builder.bind(id);
             }
 
-            let rows = query_builder
+            let db_models = query_builder
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to find chunks by ids: {}", e)))?;
-
-            let db_models: Vec<ChunkModel> = rows
-                .iter()
-                .map(|row| ChunkModel {
-                    id: row.get("id"),
-                    document_id: row.get("document_id"),
-                    content: row.get("content"),
-                    chunk_index: row.get("chunk_index"),
-                    contextualized_content: row.get("contextualized_content"),
-                    context_prefix: row.get("context_prefix"),
-                    start_char: row.get("start_char"),
-                    end_char: row.get("end_char"),
-                    language: row.get("language"),
-                    token_count: row.get("token_count"),
-                    word_count: row.get("word_count"),
-                    has_code: row.get("has_code"),
-                    section: row.get("section"),
-                    page_number: row.get("page_number"),
-                    from_ocr: row.get("from_ocr"),
-                })
-                .collect();
-
-            all.extend(ChunkMapper::to_entities(&db_models));
+            all.extend(ChunkMapper::to_entities(&db_models)?);
         }
 
         Ok(all)

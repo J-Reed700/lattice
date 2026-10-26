@@ -13,9 +13,9 @@
 
 pub mod implementation;
 pub mod ops;
-pub mod tx;
 #[cfg(test)]
 mod repository_tests;
+pub mod tx;
 
 pub use implementation::{ChunkFilter, SqliteChunkRepository};
 pub use tx::SqliteChunkRepositoryTx;

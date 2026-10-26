@@ -121,6 +121,15 @@ pub async fn restore_page(
     after_chunk_id: &str,
     limit: i64,
 ) -> Result<RestorePage> {
+    if limit <= 0 {
+        return Err(AppError::InvalidInput(
+            "Embedding restore page limit must be positive".into(),
+        ));
+    }
+    // Keep this helper bounded even when a caller supplies a very large SQL
+    // LIMIT. Negative LIMIT values in SQLite mean unlimited rows.
+    const MAX_RESTORE_PAGE_SIZE: i64 = 128;
+    let limit = limit.min(MAX_RESTORE_PAGE_SIZE);
     ensure_schema(pool).await?;
     type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
     let rows: Vec<RestoredRow> = sqlx::query_as(
@@ -278,5 +287,49 @@ mod tests {
         // chunk past the window is split.
         assert_eq!(model.calls.load(Ordering::SeqCst), 3);
         assert_eq!(model.split_batches.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn restore_page_rejects_unbounded_nonpositive_limits() {
+        let pool = database().await;
+        assert!(restore_page(&pool, "new", 2, "", 0).await.is_err());
+        assert!(restore_page(&pool, "new", 2, "", -1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn oversized_restore_page_limit_stays_bounded_and_cursor_continues() {
+        let pool = database().await;
+        ensure_schema(&pool).await.unwrap();
+        for index in 0..130 {
+            let id = format!("c{index:03}");
+            let text = format!("content-{index}");
+            sqlx::query("INSERT INTO text_chunks (id, content, document_id) VALUES (?, ?, 'doc')")
+                .bind(&id)
+                .bind(&text)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) VALUES ('new', ?, ?, ?, 2)")
+                .bind(&id)
+                .bind(content_hash(&text))
+                .bind(embedding_encoding::encode_embedding(&[1.0, 0.0]))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let first = restore_page(&pool, "new", 2, "", i64::MAX).await.unwrap();
+        assert_eq!(first.entries.len(), 128);
+        assert_eq!(first.cursor, "c127");
+        let second = restore_page(&pool, "new", 2, &first.cursor, i64::MAX)
+            .await
+            .unwrap();
+        assert_eq!(second.entries.len(), 2);
+        assert_eq!(second.cursor, "c129");
+        let end = restore_page(&pool, "new", 2, &second.cursor, i64::MAX)
+            .await
+            .unwrap();
+        assert!(end.entries.is_empty());
+        assert!(end.cursor.is_empty());
     }
 }

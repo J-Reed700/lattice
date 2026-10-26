@@ -72,7 +72,9 @@ impl RepositoryPort<ChunkEntity> for SqliteChunkRepository {
         let filter_any = filter.as_any();
         if let Some(chunk_filter) = filter_any.downcast_ref::<ChunkFilter>() {
             if let Some(document_id) = &chunk_filter.document_id {
-                return self.find_by_document(document_id).await;
+                let mut conn = self.pool.acquire().await?;
+                return ops::find_by_document_limit(&mut conn, document_id, chunk_filter.limit)
+                    .await;
             }
         }
 
@@ -100,9 +102,7 @@ impl RepositoryPort<ChunkEntity> for SqliteChunkRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        for entity in entities {
-            ops::save(&mut tx, entity).await?;
-        }
+        ops::save_batch_optimized(&mut tx, entities).await?;
 
         tx.commit()
             .await

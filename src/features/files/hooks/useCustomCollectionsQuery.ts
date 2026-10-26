@@ -2,16 +2,17 @@ import { useMemo } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { CustomCollection } from '@/types/fileBrowser';
 
 export const CUSTOM_COLLECTIONS_QUERY_KEY = ['custom-collections'] as const;
 
 export function useCustomCollectionsQuery() {
+  const api = useApi();
   return useQuery<CustomCollection[]>({
     queryKey: CUSTOM_COLLECTIONS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.listCustomCollections();
+      const result = await api.listCustomCollections();
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
@@ -21,6 +22,7 @@ export function useCustomCollectionsQuery() {
 
 /** Persisted mutations are granular repository operations; writes never depend on query-cache contents. */
 export function useCustomCollectionActions() {
+  const api = useApi();
   const queryClient = useQueryClient();
   return useMemo(() => {
     const invalidate = async () => { await queryClient.invalidateQueries({ queryKey: CUSTOM_COLLECTIONS_QUERY_KEY }); };
@@ -33,17 +35,17 @@ export function useCustomCollectionActions() {
     return {
       create: (name: string, parentId: string | null = null, snapshotDocumentIds?: string[]) => {
         if (!name.trim() || (snapshotDocumentIds?.length === 0)) return Promise.resolve(null);
-        return run(VaultAPI.createCustomCollection({ name, kind: snapshotDocumentIds ? 'snapshot' : 'manual', parentId, documentIds: snapshotDocumentIds ?? [] }));
+        return run(api.createCustomCollection({ name, kind: snapshotDocumentIds ? 'snapshot' : 'manual', parentId, documentIds: snapshotDocumentIds ?? [] }));
       },
-      addDocuments: (collectionId: string, documentIds: string[]) => run(VaultAPI.addDocumentsToCustomCollection(collectionId, documentIds)),
-      removeDocuments: (collectionId: string, documentIds: string[]) => run(VaultAPI.removeDocumentsFromCustomCollection(collectionId, documentIds)),
+      addDocuments: (collectionId: string, documentIds: string[]) => run(api.addDocumentsToCustomCollection(collectionId, documentIds)),
+      removeDocuments: (collectionId: string, documentIds: string[]) => run(api.removeDocumentsFromCustomCollection(collectionId, documentIds)),
       rename: async (collectionId: string, name: string) => {
         if (!name.trim()) return false;
-        await run(VaultAPI.renameCustomCollection(collectionId, name));
+        await run(api.renameCustomCollection(collectionId, name));
         return true;
       },
-      move: (collectionId: string, parentId: string | null) => run(VaultAPI.moveCustomCollection(collectionId, parentId)),
-      deleteCollection: (collectionId: string) => run(VaultAPI.deleteCustomCollection(collectionId)),
+      move: (collectionId: string, parentId: string | null) => run(api.moveCustomCollection(collectionId, parentId)),
+      deleteCollection: (collectionId: string) => run(api.deleteCustomCollection(collectionId)),
     };
-  }, [queryClient]);
+  }, [api, queryClient]);
 }

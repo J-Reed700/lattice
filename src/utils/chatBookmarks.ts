@@ -1,4 +1,5 @@
-import { VaultAPI } from '../lib/api';
+
+import { VaultAPI, type ApiClient } from '../lib/api';
 
 import type { ChatReferenceSource } from './chatReferenceCapture';
 import type { ConversationMessageBookmarkDto } from '../types';
@@ -64,7 +65,8 @@ export const parseBookmarkSourceReferences = (
 
 export async function resolveBookmarkPayload(
   bookmark: ConversationMessageBookmarkDto,
-  loadedMessages?: ConversationMessage[]
+  loadedMessages?: ConversationMessage[],
+  api: ApiClient = VaultAPI,
 ): Promise<BookmarkPayload> {
   const loadedMessage = loadedMessages?.find((message) => message.id === bookmark.messageId);
   if (loadedMessage?.content) {
@@ -78,7 +80,7 @@ export async function resolveBookmarkPayload(
     };
   }
 
-  const result = await VaultAPI.getConversationMessages(bookmark.conversationId);
+  const result = await api.getConversationMessages(bookmark.conversationId);
   if (!result.ok) {
     throw new Error(
       `Unable to load full message content for reference capture: ${result.error}`

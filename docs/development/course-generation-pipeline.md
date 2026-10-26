@@ -82,10 +82,10 @@ A call that turns its answer into data goes through `complete_checked`, with its
 
 For each subtopic, in order:
 
-1. Run each query through `references/web_research::search`: 12 results per page (`PAGE_RESULTS`), providers `duckduckgo` and `bing`, Wikipedia off, `site:` scope enforced by `within_search_scope`. It asks for further pages while a page brings in-scope results not seen before. A failure on the first page is logged and the query skipped; on a later page it ends that search.
+1. Run each planned search through `references/web_research::search_need`: 12 results per page (`PAGE_RESULTS`). A planned need's `site:` operators are its scope, lifted into `site` by `PlannedNeed::searches` (one search per site named); the source finder searches the site where it lives now and keeps results to it (toolbelt design §6.7). It asks for further pages while a page brings results not seen before. A failure on the first page is logged and the query skipped; on a later page it ends that search.
 2. Merge results by URL, dropping URLs already saved.
 3. One `content_verification/research::select_references` call per subtopic chooses, in preference order, every result that is relevant and credible for the gap (`decisions[].useForGap`; no count limit since `569a76f7`). Model calls stay sequential: the server is single-slot.
-4. Capture the chosen pages with `web_research::capture`, at most four fetches at once (`FETCH_CONCURRENCY`). A capture that is truncated, empty, or redirected out of the query's scope is skipped (`Ok(None)`).
+4. Capture the chosen pages with `web_research::capture`, at most four fetches at once (`FETCH_CONCURRENCY`). A page is read wherever its own redirects lead; a capture that is truncated or empty is skipped (`Ok(None)`).
 5. Deduplicate by resolved URL and by `hash_text` of the text. Mirrors and redirects are not two sources.
 
 Nothing is persisted here. The captures are saved with the program in `LearningRepository::create_outline_draft`, in the same transaction. A cancel during gathering leaves nothing behind. There is no cap on the number of sources; the bound is the plan.
@@ -216,7 +216,7 @@ After `service::accept` the program is `Active`. A lesson job (`LearningGenerati
 - **Schema:** `{"topics":[{"topic":>=3 chars,"queries":[>=3 chars, min 1]}]}`, at least one topic. No maximum is set.
 - **Call:** `complete_json`, `PLAN_SYSTEM` (public terminology only, no learner or course details), output 2,000.
 - **Fallback:** an unusable answer becomes one topic built from title and objective. It never fails the lesson.
-- **Checkpoint:** `lesson-evidence-v1:plan:<digest of model, system, lesson + module>`. The catalog is not part of the key, so references saved by research do not reopen the plan.
+- **Checkpoint:** `lesson-topic-evidence:plan:<digest of model, system, lesson + module>`. The catalog is not part of the key, so references saved by research do not reopen the plan.
 - **Progress:** phase `References`, "Finding evidence for {lesson}".
 
 ### L2. Retrieval per topic
@@ -232,7 +232,7 @@ After `service::accept` the program is `Active`. A lesson job (`LearningGenerati
 - **Call:** `CallKind::Classifier`, `COVERAGE_SYSTEM` ("A passage covers a topic when it states what a lesson must teach about that topic... Shared vocabulary, a passing mention, an adjacent topic... does not qualify").
 - Groups are sized to fit and halved while they do not. A single pair that cannot fit is an error: "A lesson evidence check exceeds this model's context window."
 - Unknown IDs are ignored. A topic missing from the answer counts as uncovered. An unreadable answer leaves its topics uncovered.
-- **Checkpoint:** `lesson-evidence-v1:coverage:<digest of model, system, prompt>`.
+- **Checkpoint:** `lesson-topic-evidence:coverage:<digest of model, system, prompt>`.
 - **Progress:** "Checking which of n passages cover the lesson's topics".
 
 ### L4. Research before writing
@@ -251,16 +251,16 @@ After `service::accept` the program is `Active`. A lesson job (`LearningGenerati
 
 `evidence::pack` fills the writer's evidence room round-robin across topics: each topic offers its covering passages first, then its other passages, best first, so every topic is represented before any topic gets another passage. `evidence::assemble` turns the packed passages into the writer's `sources`: one entry per source whose excerpt is its packed passages in document order, plus `evidenceByTopic` (each topic with the `sourceIndex` values whose passages cover it; an empty list means no evidence). `prepare_lesson_with_references` then builds the prompt and drops the last packed passage until the measured prompt fits.
 
-The authoring context (prompt, sources, reference hashes) is saved (`lesson_drafts::authoring`). It is reused while the scope hash matches (policy `lesson-authoring-v2`, prompt scope, revision, model) and every original source is unchanged, so references added by research do not cause a rewrite.
+The authoring context (prompt, sources, reference hashes) is saved (`lesson_drafts::authoring`). It is reused while the scope hash matches (policy `lesson-authoring`, prompt scope including every requirement, revision, model) and every original source is unchanged, so references added by research do not cause a rewrite.
 
 ### L6. Write the lesson
 
 - **System:** `lesson_system(true)`: "Teach one rigorous, accessible lesson..." plus `grounding_instructions(true)`.
 - **Grounding rules** (`lessons/generation.rs::grounding_instructions`): every block, outcome, summary and question cites a `sourceIndex` with a verbatim quote; state a fact only when a supplied excerpt states it or it follows necessarily; add no statistics, typical figures, intensifiers (purely, entirely, always, never, guarantees) or causal explanations the excerpts do not give; present illustrations as explicit hypotheticals ("Suppose...", "In this example...") that say nothing about real products, versions or behaviour beyond the excerpts; for a topic without evidence, say what the learner should find out and why, asserting no facts.
-- **Prompt** (`lesson_prompt`): program goal, prior knowledge, course sequence (whole objectives, and the recap of every earlier Ready lesson; the measured window decides what fits), current module, lesson, `sources`, `evidenceByTopic`, `referenceCatalog`, and requirements: 8 to 12 blocks (at least two explanations and two worked examples, exactly one guided practice, independent practice, reflection and recap), minimum body lengths, rubrics for practice blocks, runnable Python or JavaScript examples, and exactly two questions each of practice, quiz and test.
+- **Prompt** (`lesson_prompt`): program goal, prior knowledge, course sequence (whole objectives, and the recap of every earlier Ready lesson; the measured window decides what fits), current module, lesson, `sources`, `evidenceByTopic`, `referenceCatalog`, and requirements (learning science lessons design §4): two or three core ideas, each explained, worked and checked, with at least one contrast; then guided practice, independent practice, reflection (explaining from memory) and recap, 10 to 16 blocks; the check format (case, one `### Check your thinking` line, answer and misconceptions); minimum body lengths; rubrics for practice blocks; runnable Python or JavaScript examples in worked examples, contrasts and checks; and exactly two questions each of practice, quiz and test, with misconception distractors.
 - **Schema:** `lesson_schema(sources)`; `sourceIndex` is required (non-null) when sources exist.
 - **Call:** reason-first, brief `LESSON_DRAFT_BRIEF` + `CITATION_DRAFT_BRIEF`, output `LESSON_OUTPUT_RESERVE` (10,000).
-- **Checkpoint:** the raw draft is stored in the job's staged drafts (`lesson_drafts::save`, in `jobs.staged_result_json`) under an input hash of policy `lesson_draft_v1`, prompt, schema, revision, model and sources. A resumed job reuses it ("Reusing the saved lesson draft; continuing verification").
+- **Checkpoint:** the raw draft is stored in the job's staged drafts (`lesson_drafts::save`, in `jobs.staged_result_json`) under an input hash of policy `lesson-draft`, prompt, schema, revision, model and sources. A resumed job reuses it ("Reusing the saved lesson draft; continuing verification").
 - **Progress:** phase `Writing`, "Writing {lesson}".
 
 ### L7. Teaching review
@@ -271,7 +271,7 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 2. **Answer keys:** `answer_review::check` solves each question blind (reason-first) and compares with the key.
 3. **Section review:** `teaching_review::review` (policy `section-review-v3`). The reviewer is asked for "at most six concise, actionable defects"; more are kept if returned. Findings are bound to app-owned passages by `review_evidence` (policy `review-finding-protocol-v2`): each finding retrieves passages with `ReferenceCollection::retrieve_within` up to its equal share of the binding call's room (output 6,000, reserved twice); the answer lists at most 8 evidence IDs per finding.
 4. **One repair** of listed issues (one `complete_json_with_progress` call, the lesson schema), then a final review.
-- **Receipts:** `teaching-sources-v1:<digest>` and the teaching receipt (policy `lesson-teaching-v5`). An unchanged candidate with unchanged sources is not reviewed again.
+- **Receipts:** `teaching-sources:<digest>` and the teaching receipt (policy `lesson-teaching-review`). An unchanged candidate with unchanged sources is not reviewed again.
 - **Error:** "The teaching review still found an issue: ... No material was published. Try again."
 - **Progress:** phase `Review`.
 
@@ -325,7 +325,7 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 ### L14. Readiness gate and outcome
 
-- `prepare_lesson_with_references` decodes the final candidate and enforces the shape: 8 to 12 blocks with the required kinds and minimum lengths, unique titles, six questions (two per kind), four distinct options, valid source IDs from this program, and binds the report to the lesson (`report.bind`).
+- `prepare_lesson_with_references` decodes the final candidate and enforces the shape: 10 to 16 blocks with the required kinds and minimum lengths, unique titles, six questions (two per kind), four distinct options, valid source IDs from this program, and binds the report to the lesson (`report.bind`).
 - `service::validate_prepared` rechecks the shape and source references against the program's current sources.
 - The report must validate at publication (`report.rs::validate`): its policy equals the current `POLICY`, it has no issues, and it matches the lesson's content hash. `report.reusable` additionally requires the same checker model and unchanged source hashes.
 - The prepared lesson is checkpointed as `prepared-v1`, then all staged lessons are published in one transaction with their reports (phase `Publishing`, "Publishing verified lesson material").
@@ -400,7 +400,7 @@ Why: a sample of 40 claims the failed final2-1 lesson left unsupported, judged a
 
 **What remains fixed** at `09d5a552`:
 
-- **Output shape** (schema bounds on what the model writes): lesson 8 to 12 blocks, exactly 6 questions, 4 options each; outline review at most 24 new findings per pass; at most 8 evidence IDs per review finding (`review_evidence`); project milestones 2 to 5 deliverables and criteria; practice and practical tasks at most 5 citations; reference-plan subtopics at most `max_modules` (from the requested depth); text lengths such as `MAX_BODY` 5,000 (checked on decode), `MAX_QUOTE_CHARS` 1,200, titles 120 to 180 characters.
+- **Output shape** (schema bounds on what the model writes): lesson 10 to 16 blocks, exactly 6 questions, 4 options each; outline review at most 24 new findings per pass; at most 8 evidence IDs per review finding (`review_evidence`); project milestones 2 to 5 deliverables and criteria; practice and practical tasks at most 5 citations; reference-plan subtopics at most `max_modules` (from the requested depth); text lengths such as `MAX_BODY` 5,000 (checked on decode), `MAX_QUOTE_CHARS` 1,200, titles 120 to 180 characters.
 - **The 80,000-character response check** on an assessment response (`assessment_generation.rs`) and a practical-activity response (`practical_generation.rs`, `MAX_RESPONSE_CHARS`). A longer answer is rejected, not cut.
 - **The teaching reviewer's wording** "at most six concise, actionable defects" (`teaching.rs`). More findings are kept if the model returns them.
 - **Termination:** `ATTEMPT_LIMIT` 2 and `MODULE_REWRITE_BUDGET` 3 for outline repair; the lesson [repair progress stop](#repair-progress-stop); the deepening stop.
@@ -419,10 +419,10 @@ Values at `09d5a552`.
 | `outline-incremental-review-v2` | `planning/outline_review_scope.rs` `REVIEW_VERSION` | The review receipt; the next pass is a full review |
 | `outline-claim-v1` | `planning/outline_repair.rs` `CLAIM_POLICY` | Factual-claim receipts from outline repair |
 | `reason-first-draft-v1` | `lessons/structured_call.rs` `DRAFT_CHECKPOINT_POLICY` | Saved prose drafts of two-step calls in lesson jobs |
-| `lesson-evidence-v1` | `lessons/generation/evidence.rs` `POLICY` | Lesson evidence plans and coverage judgements |
-| `lesson-authoring-v2` | `lessons/generation/lesson.rs` `AUTHORING_POLICY` | The reusable authoring context; evidence is gathered again and the lesson rewritten |
-| `lesson_draft_v1` | `lessons/generation/lesson.rs` (draft input hash) | The saved lesson draft |
-| `lesson-teaching-v5`, `section-review-v3`, `review-finding-protocol-v2` | `lessons/teaching.rs`, `teaching_review.rs`, `review_evidence.rs` | Teaching review receipts |
+| `lesson-topic-evidence` | `lessons/generation/evidence.rs` `POLICY` | Lesson evidence plans and coverage judgements |
+| `lesson-authoring` | `lessons/generation/lesson.rs` `AUTHORING_POLICY` | The reusable authoring context; evidence is gathered again and the lesson rewritten |
+| `lesson-draft` | `lessons/generation/lesson.rs` (draft input hash) | The saved lesson draft |
+| `lesson-teaching-review`, `section-review-v3`, `review-finding-protocol-v2` | `lessons/teaching.rs`, `teaching_review.rs`, `review_evidence.rs` | Teaching review receipts |
 | `lesson-evidence-v7` (`INVENTORY_POLICY`) | `lessons/content_verification/mod.rs` | Claim inventory checkpoints |
 | `passage-coverage-v8` | `lessons/content_verification/coverage.rs` `POLICY` | The coverage audit (the inventory is kept) |
 | `lesson-evidence-v19` (`POLICY`) | `lessons/content_verification/mod.rs` | Claim receipts (`claim-v1:`), the research query log (`research-v1:`), pending repairs, and every report: `prepared-v1` checkpoints stop being reusable and must be verified again |
@@ -447,13 +447,13 @@ Change the string whenever the prompt, schema or meaning of the stored answer ch
 | O6 | `research::select_references` | finding, results | decisions | saved sources |
 | O6 | `content_verification::judge_for_publication` (from `outline_repair::resolve_factual`), per evidence page | claim, page of passages | verdict, reason, quote; then challenge | `OutlineDraft.claim_receipts` (`outline-claim-v1`) |
 | O6 | `outline_repair::rewrite_module` | module, findings with instructions, passages, course sequence | `{module}` | `learning_outline_checkpoints` row |
-| L1 | `evidence::plan` | lesson, module, catalog | `{topics:[{topic, queries}]}` | `lesson-evidence-v1:plan:<digest>` |
-| L3 | `evidence::judge` | topics with candidate IDs, passages | `{topics:[{id, covering}]}` | `lesson-evidence-v1:coverage:<digest>` |
+| L1 | `evidence::plan` | lesson, module, catalog | `{topics:[{topic, queries}]}` | `lesson-topic-evidence:plan:<digest>` |
+| L3 | `evidence::judge` | topics with candidate IDs, passages | `{topics:[{id, covering}]}` | `lesson-topic-evidence:coverage:<digest>` |
 | L4, L12 | `web_research::plan_queries` (from `research::research`) | topics or claims as gaps, catalog, already searched | `{queries}` | `research-v1:<digest>` (completed queries) |
 | L4, L12 | `research::select_references` | gaps, query, results | decisions | sources saved to the library |
-| L6 | `structured_call::complete_checked` (from `prepare_lesson_with_references`) | lesson prompt with sources and `evidenceByTopic` | `lesson_schema` | prose step: `reason-first-draft-v1:<digest>`; answer: staged draft (`lesson_draft_v1` input hash) |
+| L6 | `structured_call::complete_checked` (from `prepare_lesson_with_references`) | lesson prompt with sources and `evidenceByTopic` | `lesson_schema` | prose step: `reason-first-draft-v1:<digest>`; answer: staged draft (`lesson-draft` input hash) |
 | L7 | `answer_review::check` (reason-first) | questions without keys | correct indices and reasons | teaching receipt |
-| L7 | `teaching_review::review` (reason-first), `review_evidence` | sections, questions, authoring context; passages per finding | section checks, findings with evidence IDs | teaching receipt, `teaching-sources-v1:<digest>` |
+| L7 | `teaching_review::review` (reason-first), `review_evidence` | sections, questions, authoring context; passages per finding | section checks, findings with evidence IDs | teaching receipt, `teaching-sources:<digest>` |
 | L7 | `teaching::review_material` repair (one step) | candidate, issues, quote checks | `lesson_schema` | staged draft |
 | L8 | `inventory::extract` | section passages | `{units:{unit-N:{claims, nonFactualReason}}}` | `InventoryCheckpoint` (`lesson-evidence-v7`) |
 | L9 | `coverage` mapping and fidelity | passages, inventory | coverage units, `missingAssertions` | inventory checkpoint (`passage-coverage-v8`), section receipts |

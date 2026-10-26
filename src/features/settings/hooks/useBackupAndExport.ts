@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { toast } from '@/stores/toastStore';
 
 import {
@@ -14,6 +14,7 @@ import {
  * the folder the files were written to.
  */
 export function useBackupAndExport() {
+  const api = useApi();
   const createBackup = useCreateBackupMutation();
   const exportData = useExportMutation();
 
@@ -25,7 +26,7 @@ export function useBackupAndExport() {
             message: 'Saved to your backups folder.',
             action: {
               label: 'Show',
-              onClick: () => void VaultAPI.showInFolder(result.backupPath),
+              onClick: () => void api.showInFolder(result.backupPath),
             },
           });
         },
@@ -34,7 +35,7 @@ export function useBackupAndExport() {
         },
       });
     },
-    [createBackup],
+    [api, createBackup],
   );
 
   const runExport = useMemo(
@@ -54,7 +55,7 @@ export function useBackupAndExport() {
                   : 'The JSON file is in your exports folder.',
               action: {
                 label: 'Show',
-                onClick: () => void VaultAPI.showInFolder(summary.outputDir),
+                onClick: () => void api.showInFolder(summary.outputDir),
               },
             },
           );
@@ -64,10 +65,10 @@ export function useBackupAndExport() {
         },
       });
     },
-    [exportData],
+    [api, exportData],
   );
 
-  const showInFolder = (path: string) => VaultAPI.showInFolder(path);
+  const showInFolder = (path: string) => api.showInFolder(path);
 
   return { createBackup, exportData, runBackup, runExport, showInFolder };
 }

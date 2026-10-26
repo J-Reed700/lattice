@@ -9,7 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type {
   ArchiveRun,
   ArchiveSetup,
@@ -24,10 +24,11 @@ export const ARCHIVE_STATUS_QUERY_KEY = ['backups', 'archive', 'status'] as cons
 
 /** Archive configuration, last run, and the archives in the destination folder. */
 export function useArchiveStatusQuery() {
+  const api = useApi();
   return useQuery<ArchiveStatus>({
     queryKey: ARCHIVE_STATUS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getArchiveStatus();
+      const result = await api.getArchiveStatus();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -58,9 +59,10 @@ function useStatusMutation<TVariables>(
 
 /** Starts a setup run. The words exist only in memory until confirmation. */
 export function useBeginArchiveSetupMutation() {
+  const api = useApi();
   return useMutation<ArchiveSetup, Error, void>({
     mutationFn: async () => {
-      const result = await VaultAPI.beginArchiveSetup();
+      const result = await api.beginArchiveSetup();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -71,9 +73,10 @@ export function useBeginArchiveSetupMutation() {
 
 /** Issues a replacement recovery code for an already-configured archive. */
 export function useRotateRecoveryCodeMutation() {
+  const api = useApi();
   return useMutation<ArchiveSetup, Error, void>({
     mutationFn: async () => {
-      const result = await VaultAPI.rotateRecoveryCode();
+      const result = await api.rotateRecoveryCode();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -90,8 +93,9 @@ export interface ConfirmArchiveSetupVariables {
 
 /** Verifies the three words and writes the envelope. */
 export function useConfirmArchiveSetupMutation() {
+  const api = useApi();
   return useStatusMutation<ConfirmArchiveSetupVariables>(async ({ confirmations, passphrase }) => {
-    const result = await VaultAPI.confirmArchiveSetup(confirmations, passphrase);
+    const result = await api.confirmArchiveSetup(confirmations, passphrase);
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -101,8 +105,9 @@ export function useConfirmArchiveSetupMutation() {
 
 /** Opens the native folder picker on the Rust side. */
 export function useChooseArchiveDestinationMutation() {
+  const api = useApi();
   return useStatusMutation<void>(async () => {
-    const result = await VaultAPI.chooseArchiveDestination();
+    const result = await api.chooseArchiveDestination();
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -112,8 +117,9 @@ export function useChooseArchiveDestinationMutation() {
 
 /** How many archives to keep in the destination folder. */
 export function useSetArchiveKeepCountMutation() {
+  const api = useApi();
   return useStatusMutation<number>(async (keepCount) => {
-    const result = await VaultAPI.setArchiveKeepCount(keepCount);
+    const result = await api.setArchiveKeepCount(keepCount);
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -123,8 +129,9 @@ export function useSetArchiveKeepCountMutation() {
 
 /** Sets, changes, or removes (`null`) the passphrase. */
 export function useSetArchivePassphraseMutation() {
+  const api = useApi();
   return useStatusMutation<string | null>(async (passphrase) => {
-    const result = await VaultAPI.setArchivePassphrase(passphrase);
+    const result = await api.setArchivePassphrase(passphrase);
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -134,8 +141,9 @@ export function useSetArchivePassphraseMutation() {
 
 /** Stops writing archives. The key and the envelope stay. */
 export function useDisableArchiveMutation() {
+  const api = useApi();
   return useStatusMutation<void>(async () => {
-    const result = await VaultAPI.disableArchive();
+    const result = await api.disableArchive();
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -145,11 +153,12 @@ export function useDisableArchiveMutation() {
 
 /** Writes one archive now. Invalidates the status so the new file shows up. */
 export function useCreateArchiveNowMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<ArchiveRun, Error, void>({
     mutationFn: async () => {
-      const result = await VaultAPI.createArchiveNow();
+      const result = await api.createArchiveNow();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -170,11 +179,12 @@ export function useCreateArchiveNowMutation() {
  * caller has to branch on. Only a genuine failure rejects.
  */
 export function useRestoreArchiveMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<RestoreArchiveResult, Error, string | null>({
     mutationFn: async (secret) => {
-      const result = await VaultAPI.restoreArchive(secret);
+      const result = await api.restoreArchive(secret);
       if (!result.ok) {
         throw new Error(result.error);
       }

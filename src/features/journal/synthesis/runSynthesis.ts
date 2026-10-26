@@ -1,7 +1,7 @@
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { weeklySynthesisCandidatesKey } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { appendToNote, buildSynthesisBlock, resolveWeekPage } from '@/features/journal/model/synthesisTargets';
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import { unwrapApiResult } from '@/types/api/result';
@@ -55,16 +55,16 @@ export async function runSynthesis(options: SynthesisRequest, client: QueryClien
   return true;
 }
 
-async function saveTo(destination: SynthesisDestinationDto, block: string, result: SynthesizeJournalEntriesResponseDto) {
+async function saveTo(destination: SynthesisDestinationDto, block: string, result: SynthesizeJournalEntriesResponseDto, api: ApiClient = VaultAPI) {
   if (destination.kind === 'capture') {
-    const saved = unwrapApiResult(await VaultAPI.quickCapture(block, result.sources, result.conversationIds));
+    const saved = unwrapApiResult(await api.quickCapture(block, result.sources, result.conversationIds));
     return { noteId: saved.noteId, noteTitle: saved.noteTitle };
   }
   const note = destination.kind === 'week'
-    ? await resolveWeekPage(destination.title)
-    : unwrapApiResult(await VaultAPI.listWorkspaceNotes()).notes.find(page => page.id === destination.noteId);
+    ? await resolveWeekPage(destination.title, api)
+    : unwrapApiResult(await api.listWorkspaceNotes()).notes.find(page => page.id === destination.noteId);
   if (!note) throw new Error('The destination journal page no longer exists.');
-  const saved = await appendToNote(note, block, result.sources, result.conversationIds);
+  const saved = await appendToNote(note, block, result.sources, result.conversationIds, api);
   return { noteId: saved.id, noteTitle: saved.title };
 }
 
@@ -74,7 +74,7 @@ const applying = new Set<string>();
  * Saves a finished synthesis to the destination it was started with, after
  * open editors have saved, then marks it applied so it is saved once.
  */
-export async function applySynthesis(synthesis: JournalSynthesisDto, client: QueryClient): Promise<boolean> {
+export async function applySynthesis(synthesis: JournalSynthesisDto, client: QueryClient, api: ApiClient = VaultAPI): Promise<boolean> {
   const jobId = synthesis.job.id;
   if (applying.has(jobId)) return false;
   applying.add(jobId);
@@ -90,7 +90,7 @@ export async function applySynthesis(synthesis: JournalSynthesisDto, client: Que
       heading: synthesis.heading, entryCount: result.entryCount,
       synthesis: result.synthesis, citations: result.citations,
     });
-    const { noteId, noteTitle } = await saveTo(synthesis.destination, block, result);
+    const { noteId, noteTitle } = await saveTo(synthesis.destination, block, result, api);
     await markSynthesisApplied(jobId);
     // Saving succeeded. Cache refresh failures must never offer to save again.
     client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, (list) => list?.filter(item => item.job.id !== jobId));

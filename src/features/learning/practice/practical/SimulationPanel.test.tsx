@@ -9,7 +9,7 @@ import type { LearningPracticalActivityDto, LearningSimulationSessionDto } from 
 
 import { SimulationPanel } from './SimulationPanel';
 
-const api = vi.hoisted(() => ({ startLearningSimulation: vi.fn(), sendLearningSimulationTurn: vi.fn(), finishLearningSimulation: vi.fn() }));
+const api = vi.hoisted(() => ({ startLearningSimulation: vi.fn(), sendLearningSimulationTurn: vi.fn(), finishLearningSimulation: vi.fn(), getLearningSourceVersion: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: api }));
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
@@ -90,6 +90,20 @@ describe('SimulationPanel', () => {
     expect(screen.getByText('“Paint has worn away.”')).toBeInTheDocument();
     act(() => citationDisplayStore.getState().setVisible(false));
     expect(screen.queryByText('“Paint has worn away.”')).not.toBeInTheDocument();
+  });
+
+  it('opens the exact cited source after an interview without fetching its live page', async () => {
+    api.getLearningSourceVersion.mockResolvedValue({ ok: true, data: {
+      sourceId: 'spec', fullText: 'The captured specification explains repeated effects.', usage: [],
+      version: { id: 'spec-v2', versionNumber: 2, title: 'Retry semantics', publisher: 'Specification publisher', resolvedUrl: 'https://spec.example/retries', extractionVersion: 'test', wordCount: 8 },
+    } });
+    renderPanel(session({ status: 'submitted', turns: [{ id: 'feedback', speaker: 'coach', content: 'Compare the intended effects.', citations: [{ sourceId: 'spec', versionId: 'spec-v2', quote: 'repeated effects' }] }] as never }), { ...activity, kind: 'interview', practiceMode: 'demonstrate' });
+    expect(api.getLearningSourceVersion).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'View saved source' }));
+    expect(await screen.findByText('Retry semantics')).toBeInTheDocument();
+    expect(api.getLearningSourceVersion).toHaveBeenCalledWith({ programId: 'course-1', sourceId: 'spec', versionId: 'spec-v2' });
+    expect(screen.getByText('https://spec.example/retries')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Page' })).not.toBeInTheDocument();
   });
 
   it('sends a reply with Cmd+Enter, clears it, and keeps it after a failure', async () => {

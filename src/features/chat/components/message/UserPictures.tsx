@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { MediaLightbox } from '@/components/MediaLightbox';
+import { useApi } from '@/contexts/ApiContext';
 import { chatImageUrl } from '@/features/chat/images/chatImageUrl';
 import { restagePicture } from '@/features/chat/images/stagedPictures';
 import type { ChatImage } from '@/types/conversation';
@@ -27,6 +28,7 @@ const RESTAGE_CLASS =
  * from its caption unless it is shown again, so each offers that.
  */
 export function UserPictures({ pictures, picturesSeen, answeredBy, restageIn }: UserPicturesProps) {
+  const api = useApi();
   const [open, setOpen] = useState<ChatImage | null>(null);
   const [restaging, setRestaging] = useState<string | null>(null);
   if (pictures.length === 0) return null;
@@ -35,7 +37,7 @@ export function UserPictures({ pictures, picturesSeen, answeredBy, restageIn }: 
     if (!restageIn || restaging) return;
     setRestaging(picture.id);
     try {
-      await restagePicture(restageIn, picture.id);
+      await restagePicture(restageIn, picture.id, api);
     } finally {
       setRestaging(null);
     }

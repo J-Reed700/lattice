@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type RefObject } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useChatFileDrop } from '@/features/chat/hooks/useChatFileDrop';
 import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
-import VaultAPI from '@/lib/api';
 
 /** Something dropped or pasted on the review screen, ready for the Add a source sheet. */
 export type DroppedSource =
@@ -41,6 +41,7 @@ const basename = (path: string) => path.replace(/\\/g, '/').split('/').pop() || 
  * document id the attach takes. Paste into a text field stays a paste.
  */
 export function useReviewDrop(rootRef: RefObject<HTMLElement | null>, onSource: (source: DroppedSource) => void) {
+  const api = useApi();
   const [over, setOver] = useState(false);
   const [importing, setImporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,9 +54,9 @@ export function useReviewDrop(rootRef: RefObject<HTMLElement | null>, onSource: 
     setError(null);
     setImporting(basename(path));
     try {
-      const started = await VaultAPI.startBatchFileImport([path]);
+      const started = await api.startBatchFileImport([path]);
       if (!started.ok) throw new Error(started.error);
-      const outcome = await pollAttachmentImport(started.data, { getStatus: VaultAPI.getBatchJobStatus, intervalMs: 1000, timeoutMs: 5 * 60 * 1000 });
+      const outcome = await pollAttachmentImport(started.data, { getStatus: api.getBatchJobStatus, intervalMs: 1000, timeoutMs: 5 * 60 * 1000 });
       if (outcome.kind === 'unreachable') throw new Error(outcome.error);
       const documentId = outcome.documentIds[0];
       if (!documentId) throw new Error(`${basename(path)} could not be imported.`);
@@ -65,7 +66,7 @@ export function useReviewDrop(rootRef: RefObject<HTMLElement | null>, onSource: 
     } finally {
       setImporting(null);
     }
-  }, []);
+  }, [api]);
 
   // Files arrive through the webview's own drag-drop event, with their paths.
   const files = useChatFileDrop(rootRef, (paths) => { void importFiles(paths); }, () => false);

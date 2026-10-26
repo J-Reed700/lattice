@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 
 export interface IngestWebSourceArgs {
@@ -16,16 +16,17 @@ export interface IngestWebSourceArgs {
  * failed; a success reloads the conversation's linked documents first.
  */
 export function useConversationSourceFiling(conversationId: string) {
+  const api = useApi();
   const loadLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
   const addToLibrary = useMutation({
-    mutationFn: (documentIds: string[]) => VaultAPI.addDocumentsToLibrary(documentIds),
+    mutationFn: (documentIds: string[]) => api.addDocumentsToLibrary(documentIds),
     onSuccess: async (result) => {
       if (result.ok) await loadLinkedDocuments(conversationId);
     },
   });
   const ingestWebSource = useMutation({
     mutationFn: ({ url, spaceId }: IngestWebSourceArgs) =>
-      VaultAPI.ingestWebUrl(url, { conversationId, spaceId }),
+      api.ingestWebUrl(url, { conversationId, spaceId }),
     onSuccess: async (result, { skipRefresh }) => {
       if (result.ok && !skipRefresh) await loadLinkedDocuments(conversationId);
     },

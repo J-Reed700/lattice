@@ -1,12 +1,13 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import { describeFailure } from '@/lib/errorHandling';
 import { type SearchResult } from '@/types';
 
 /** The command palette's live search: the ten best hybrid matches. */
-export const quickSearchDocuments = (query: string) =>
-  VaultAPI.searchDocuments({ query, limit: 10, searchMode: 'hybrid' });
+export const quickSearchDocuments = (query: string, api: ApiClient = VaultAPI) =>
+  api.searchDocuments({ query, limit: 10, searchMode: 'hybrid' });
 
 export interface UseSearchQueryParams {
   query: string;
@@ -17,14 +18,16 @@ export interface UseSearchQueryParams {
 export const useSearchQuery = (
   params: UseSearchQueryParams,
   options?: Omit<UseQueryOptions<SearchResult[], Error>, 'queryKey' | 'queryFn'>
-) => useQuery<SearchResult[], Error>({
+) => {
+  const api = useApi();
+  return useQuery<SearchResult[], Error>({
     queryKey: ['search', params.query, params.mode, params.limit],
     queryFn: async () => {
       if (!params.query || params.query.trim().length === 0) {
         return [];
       }
 
-      const result = await VaultAPI.searchHybrid(
+      const result = await api.searchHybrid(
         params.query,
         params.limit || 20,
         params.mode
@@ -40,3 +43,4 @@ export const useSearchQuery = (
     staleTime: 5 * 60 * 1000,
     ...options,
   });
+};

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useClustersQuery } from '@/features/files/hooks/useClustersQuery';
 import { useCustomCollectionsQuery } from '@/features/files/hooks/useCustomCollectionsQuery';
 import {
@@ -9,15 +10,15 @@ import {
   sortLibraryDocuments,
   useFileBrowserStore,
 } from '@/features/files/stores/fileBrowserStore';
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { CustomCollection, DocumentMetadata } from '@/types/fileBrowser';
 
 export const LIBRARY_DOCUMENTS_QUERY_KEY = ['library-documents'] as const;
 const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 
 /** Every document in the library, up to 10,000. */
-export async function fetchLibraryDocuments(): Promise<DocumentMetadata[]> {
-  const result = await VaultAPI.listAllDocuments(10_000);
+export async function fetchLibraryDocuments(api: ApiClient = VaultAPI): Promise<DocumentMetadata[]> {
+  const result = await api.listAllDocuments(10_000);
   if (!result.ok) {
     throw new Error(result.error);
   }
@@ -25,9 +26,10 @@ export async function fetchLibraryDocuments(): Promise<DocumentMetadata[]> {
 }
 
 export function useLibraryDocumentsQuery() {
+  const api = useApi();
   const query = useQuery<DocumentMetadata[]>({
     queryKey: LIBRARY_DOCUMENTS_QUERY_KEY,
-    queryFn: fetchLibraryDocuments,
+    queryFn: () => fetchLibraryDocuments(api),
     staleTime: 15_000,
     // Imports continue after leaving the import screen. Refresh on every visit
     // and while the library is visible so their results cannot stay hidden in

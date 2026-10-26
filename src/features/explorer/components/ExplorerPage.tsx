@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { useApi } from '@/contexts/ApiContext';
 import {
   explorerFoldersQueryOptions,
   resolveExplorerRoot,
@@ -78,6 +79,7 @@ function writeFlag(key: string, value: boolean): void {
  * folder; it can read the folder, and its line references light up the file.
  */
 export function ExplorerPage() {
+  const api = useApi();
   const root = useExplorerStore((state) => state.root);
   const setRoot = useExplorerStore((state) => state.setRoot);
   const queryClient = useQueryClient();
@@ -150,7 +152,7 @@ export function ExplorerPage() {
   const openRoot = async (path: string, name?: string) => {
     setOpening(path);
     try {
-      const result = await resolveExplorerRoot(path);
+      const result = await resolveExplorerRoot(path, api);
       if (!result.ok) {
         toast.error("Couldn't open that folder", { message: result.error });
         return;
@@ -183,7 +185,7 @@ export function ExplorerPage() {
     if (!rootPath) return;
     let folder: FolderSettingsTarget | undefined;
     try {
-      const list = await queryClient.fetchQuery({ ...explorerFoldersQueryOptions(), staleTime: 0 });
+      const list = await queryClient.fetchQuery({ ...explorerFoldersQueryOptions(api), staleTime: 0 });
       folder = list.folders.find((item) => item.root === rootPath);
       if (!folder) throw new Error('It isn’t in Your folders yet. Try again in a moment.');
     } catch (error) {

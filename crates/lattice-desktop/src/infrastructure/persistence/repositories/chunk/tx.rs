@@ -66,7 +66,7 @@ impl RepositoryPort<ChunkEntity> for SqliteChunkRepositoryTx {
             if let Some(document_id) = &chunk_filter.document_id {
                 let tx_arc = self.get_transaction()?;
                 let mut tx = tx_arc.lock().await;
-                return ops::find_by_document(&mut tx, document_id).await;
+                return ops::find_by_document_limit(&mut tx, document_id, chunk_filter.limit).await;
             }
         }
 
@@ -92,11 +92,7 @@ impl RepositoryPort<ChunkEntity> for SqliteChunkRepositoryTx {
 
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
-        for entity in entities {
-            ops::save(&mut tx, entity).await?;
-        }
-
-        Ok(())
+        ops::save_batch_optimized(&mut tx, entities).await
     }
 
     async fn delete(&self, id: &str) -> Result<()> {

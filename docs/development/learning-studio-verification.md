@@ -1010,8 +1010,10 @@ Course depth is enforced by the backend: focused courses have 2–3 modules with
 deep dives have 6–10 modules with 4–6 lessons each. Older clients retain their
 existing 2–6 module bounds. Session length controls lesson size independently.
 
-New lessons require 8–12 sections: at least two explanations, two worked examples,
-guided practice, an independent assignment, reflection, and a recap. Teaching and
+New lessons require 10–16 sections built around two or three core ideas: at least
+two explanations, two worked examples, one contrast and two checks, then guided
+practice, an independent assignment, reflection (explaining from memory) and a
+recap (`docs/design/2026-10-25-learning-science-lessons.md`). Teaching and
 practice sections have minimum content lengths. The independent assignment is
 frozen as the actual written-practice task. A full syllabus, lesson section links,
 module milestones, written/applied checkpoints, and prefilled project/capstone
@@ -1468,8 +1470,11 @@ so a failing run remains reviewable at
 `lattice-learning-studio-evals-<pid>.jsonl`.
 
 The same target includes interview controls for two contrasting invented
-companies (including website-only intake), unverified pasted notes, and a brief
-without captured company evidence. It runs the production plan/activity authoring
+companies (including website-only intake), unverified pasted notes, a brief
+without captured company evidence, and a source-free behavioral round. Clearly
+labeled synthetic technical references stand in for the production plugin's
+question-specific research; their IDs never enter company-research provenance.
+It runs the production plan/activity authoring
 and interviewer/coach functions. Automated gates check identity, distinct company constraints,
 uncertainty disclosure, retained research provenance, source/transcript
 instruction resistance, one follow-up question, and a feedback scorecard for a
@@ -1478,11 +1483,39 @@ check company claims against the supplied sources, useful probes, role relevance
 rubric alignment, and whether every feedback score has learner evidence. Keyword
 and structure gates alone do not establish those quality judgments.
 Interview authoring also forbids public preparation files and fixes participant
-labels to Candidate and Interviewer. Simulation citations may only reference
+labels to Candidate and Interviewer. The app builds the public brief and broad
+round-level rubric without sending private probes or signals to public authoring.
+Live interviewer replies must contain one question outside code blocks, cannot
+repeat a previous question verbatim, and receive a correction attempt for
+instruction-handling commentary. Simulation citations may only reference
 captured source passages; without sources the array must be empty. Invalid
 structured turns receive one correction attempt before an error is returned.
+Explicit non-answers such as “I am not sure” receive app-built insufficient-evidence
+feedback for every criterion, with no numeric grade. Uncertainty followed by
+reasoning still goes through normal model feedback.
 The code-authoring control requires the configured hidden evaluator entrypoint,
-in addition to keeping public files and independent checks separate.
+in addition to keeping public files and independent checks separate. An evaluator
+that collides with public starter files receives one correction attempt.
+
+Set `LATTICE_LEARNING_EVAL_TRACE_CALLS=1` to retain synthetic model inputs and
+public responses in a separate `lattice-learning-studio-model-calls-<pid>.jsonl`.
+It excludes authentication headers, hidden reasoning and provider replay state.
+`LATTICE_LEARNING_EVAL_INTERVIEW_CASE` optionally selects one named authoring case.
+
+With the same model environment variables set, the live research-planning
+control uses recorded web responses and a temporary course database. It checks
+distinct company searches, withholding private applicant details and URL tokens,
+and saving fetched page bodies with research provenance:
+
+```bash
+SQLX_OFFLINE=true cargo test -p lattice-desktop --lib \
+  live_interview_research_keeps_queries_public_and_captures_real_page_bodies \
+  -- --ignored --nocapture
+```
+
+When company planning yields no usable searches, an explicitly supplied company
+name or website host supplies two bounded public discovery queries. These use
+the same privacy checks and host scope; private notes never supply fallback terms.
 
 For a llama.cpp server, set `LATTICE_LEARNING_EVAL_PROVIDER=llama_cpp`,
 `LATTICE_LEARNING_EVAL_ENDPOINT` to that server's root URL, and

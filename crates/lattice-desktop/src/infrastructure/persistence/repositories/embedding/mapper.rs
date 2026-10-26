@@ -79,6 +79,11 @@ impl EmbeddingMapper {
                 entity.dimension()
             )));
         }
+        if vector.iter().any(|value| !value.is_finite()) {
+            return Err(AppError::InvalidInput(
+                "Embedding vector contains a non-finite value".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -125,5 +130,12 @@ mod tests {
         let vector = vec![0.0; 512]; // Wrong dimension
 
         assert!(EmbeddingMapper::validate_dimension(&entity, &vector).is_err());
+    }
+
+    #[test]
+    fn validate_dimension_rejects_non_finite_values() {
+        let entity = Embedding::new(ChunkId::new(), "model".to_string(), 2);
+        assert!(EmbeddingMapper::validate_dimension(&entity, &[0.0, f32::NAN]).is_err());
+        assert!(EmbeddingMapper::validate_dimension(&entity, &[0.0, f32::INFINITY]).is_err());
     }
 }

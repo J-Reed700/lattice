@@ -65,10 +65,10 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
         r#"
         INSERT INTO documents (
             id, file_path, file_name, file_type, mime_type,
-            size_bytes, modified_at, indexed_at, checksum, status,
+            size_bytes, modified_at, indexed_at, checksum, status, error_message,
             language, category, quality_score, access_count, last_accessed_at, word_count
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_path = excluded.file_path,
             file_name = excluded.file_name,
@@ -79,6 +79,7 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
             indexed_at = excluded.indexed_at,
             checksum = excluded.checksum,
             status = excluded.status,
+            error_message = excluded.error_message,
             language = excluded.language,
             category = excluded.category,
             quality_score = excluded.quality_score,
@@ -97,6 +98,7 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
         model.indexed_at,
         model.checksum,
         model.status,
+        model.error_message,
         model.language,
         model.category,
         model.quality_score,

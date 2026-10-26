@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -15,6 +16,7 @@ export function useConversationNavigationActions({
   queryClient,
   addRequestedId,
 }: Pick<ConversationActionsDependencies, 'queryClient' | 'addRequestedId'>) {
+  const api = useApi();
 
   const invalidateLists = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
@@ -22,11 +24,11 @@ export function useConversationNavigationActions({
 
   const loadSpaces = useCallback(async () => {
     try {
-      await queryClient.fetchQuery({ ...spacesQueryOptions(), staleTime: 0 });
+      await queryClient.fetchQuery({ ...spacesQueryOptions(api), staleTime: 0 });
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   // Switching to another space leaves the open chat behind: it belongs to the
   // space it was filed in, so keeping it on screen would show a conversation
@@ -70,13 +72,13 @@ export function useConversationNavigationActions({
     try {
       await queryClient.fetchQuery({
         queryKey: conversationKeys.list(params),
-        queryFn: () => fetchConversationList(params),
+        queryFn: () => fetchConversationList(params, api),
         staleTime: 0,
       });
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient, activeChatAfterSpaceChange]);
+  }, [activeChatAfterSpaceChange, queryClient, api]);
 
   const loadMessageBookmarks = useCallback(async (overrides?: LoadMessageBookmarksOverrides) => {
     const id = overrides?.conversationId ?? conversationUiStore.getState().activeConversationId;
@@ -85,13 +87,13 @@ export function useConversationNavigationActions({
     try {
       await queryClient.fetchQuery({
         queryKey: conversationKeys.bookmarks(id, query),
-        queryFn: () => fetchBookmarks(id, query),
+        queryFn: () => fetchBookmarks(id, query, api),
         staleTime: 0,
       });
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [api, queryClient]);
 
   const selectConversation = useCallback(async function selectConversation(id: string): Promise<void> {
     conversationUiStore.setState({ activeConversationId: id, error: null });
@@ -99,11 +101,11 @@ export function useConversationNavigationActions({
     addRequestedId('requestedWebSourceConversationIds', id);
     try {
       const [, detail] = await Promise.all([
-        queryClient.fetchQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.linkedDocuments(id), queryFn: () => fetchLinkedDocuments(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.webSources(id), queryFn: () => fetchWebSources(id), staleTime: 0 }),
+        queryClient.fetchQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id, api), staleTime: 0 }),
+        queryClient.fetchQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id, api), staleTime: 0 }),
+        queryClient.fetchQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id, undefined, api), staleTime: 0 }),
+        queryClient.fetchQuery({ queryKey: conversationKeys.linkedDocuments(id), queryFn: () => fetchLinkedDocuments(id, api), staleTime: 0 }),
+        queryClient.fetchQuery({ queryKey: conversationKeys.webSources(id), queryFn: () => fetchWebSources(id, api), staleTime: 0 }),
       ]);
       // The chat decides the space, not the other way round: a conversation
       // opened from "All spaces", the spotlight or a link searches its own
@@ -126,7 +128,7 @@ export function useConversationNavigationActions({
       // state of the conversation the reader has since opened.
       if (conversationUiStore.getState().activeConversationId === id) setUiError(error);
     }
-  }, [addRequestedId, queryClient, loadConversations]);
+  }, [addRequestedId, queryClient, api, loadConversations]);
 
   return {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,

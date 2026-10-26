@@ -1,4 +1,5 @@
-import VaultAPI from '../lib/api';
+
+import VaultAPI, { type ApiClient } from '../lib/api';
 
 export interface ChatReferenceSource {
   documentId?: string | null;
@@ -28,10 +29,11 @@ export interface CaptureChatReferenceResult {
 
 export async function captureChatReferenceToWorkspaceNote(
   input: CaptureChatReferenceInput,
+  api: ApiClient = VaultAPI,
 ): Promise<CaptureChatReferenceResult> {
   const capturedAt = input.capturedAt ?? new Date();
   const date = [capturedAt.getFullYear(), String(capturedAt.getMonth() + 1).padStart(2, '0'), String(capturedAt.getDate()).padStart(2, '0')].join('-');
-  const result = await VaultAPI.captureReference({
+  const result = await api.captureReference({
     conversationId: input.conversationId,
     conversationTitle: input.conversationTitle?.trim() || 'Untitled conversation',
     messageId: input.messageId,

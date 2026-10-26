@@ -9,11 +9,11 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useApi } from '@/contexts/ApiContext';
 import {
   FlashcardSession,
   type FlashcardMode,
 } from '@/features/learning/recall/flashcards/FlashcardSession';
-import VaultAPI from '@/lib/api';
 import type { StudyCardDto, StudyDeckSummaryDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +26,7 @@ function supportsQuiz(card: StudyCardDto) {
 }
 
 export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
+  const api = useApi();
   const [selectedDeckIds, setSelectedDeckIds] = useState<string[]>(() =>
     decks.slice(0, 3).map((d) => d.id),
   );
@@ -41,7 +42,7 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
     queries: selectedDeckIds.map((id) => ({
       queryKey: ['study', 'deck', id],
       queryFn: async () => {
-        const res = await VaultAPI.getStudyDeck(id);
+        const res = await api.getStudyDeck(id);
         if (!res.ok) throw new Error(res.error);
         return res.data;
       },

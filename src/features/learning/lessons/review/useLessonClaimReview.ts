@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
-import VaultAPI from '@/lib/api';
 import type {
   ClaimActionRequestDto,
   LearningGenerationJob,
@@ -21,9 +21,10 @@ const operationId = () => crypto.randomUUID();
 
 /** The lesson's claim review; null before its first verification pass. */
 export function useLessonClaimReview(programId: string, lessonId: string, enabled = true) {
+  const api = useApi();
   return useQuery<LessonClaimReviewDto | null>({
     queryKey: learningClaimReviewKey(programId, lessonId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningLessonClaimReview(programId, lessonId)),
+    queryFn: async () => unwrap(await api.getLearningLessonClaimReview(programId, lessonId)),
     enabled: enabled && Boolean(programId && lessonId),
     retry: false,
   });
@@ -44,10 +45,11 @@ export type ResolveClaimVariables = { claimId: string; action: ClaimActionReques
  * claim never stays on screen. Adding a source has its own command (`useAddSource`).
  */
 export function useResolveLearningClaim(programId: string, lessonId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<ResolveLearningClaimResultDto, Error, ResolveClaimVariables>({
     retry: false,
-    mutationFn: async ({ claimId, action, expectedRevision }) => unwrap(await VaultAPI.resolveLearningClaim({
+    mutationFn: async ({ claimId, action, expectedRevision }) => unwrap(await api.resolveLearningClaim({
       programId, lessonId, claimId, action, expectedRevision, operationId: operationId(),
     })),
     onSettled: () => refreshAfterAction(client, programId, lessonId),
@@ -59,10 +61,11 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
  * the review reloads either way.
  */
 export function useKeepTeachingFinding(programId: string, lessonId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<void, Error, { findingKey: string }>({
     retry: false,
-    mutationFn: async ({ findingKey }) => unwrap(await VaultAPI.keepLearningTeachingFinding({ programId, lessonId, findingKey })),
+    mutationFn: async ({ findingKey }) => unwrap(await api.keepLearningTeachingFinding({ programId, lessonId, findingKey })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
   });
 }
@@ -72,10 +75,11 @@ export function useKeepTeachingFinding(programId: string, lessonId: string) {
  * course's revision, which the job action checks.
  */
 export function useResumeLearningLessonReview(programId: string, lessonId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<LearningGenerationJob, Error, { courseRevision: number }>({
     retry: false,
-    mutationFn: async ({ courseRevision }) => unwrap(await VaultAPI.resumeLearningLessonReview({
+    mutationFn: async ({ courseRevision }) => unwrap(await api.resumeLearningLessonReview({
       programId, lessonId, expectedRevision: courseRevision, operationId: operationId(),
     })),
     onSettled: async () => {
@@ -92,11 +96,12 @@ export function useResumeLearningLessonReview(programId: string, lessonId: strin
  * report's source and version.
  */
 export function useCaptureSourceSnapshot(programId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<SnapshotNoteDto, Error, { sourceId: string; versionId: string }>({
     retry: false,
     mutationFn: async ({ sourceId, versionId }) =>
-      unwrap(await VaultAPI.captureLearningSourceSnapshot({ programId, sourceId, versionId })),
+      unwrap(await api.captureLearningSourceSnapshot({ programId, sourceId, versionId })),
     onSuccess: () => client.invalidateQueries({ queryKey: learningSourcesKey(programId) }),
   });
 }

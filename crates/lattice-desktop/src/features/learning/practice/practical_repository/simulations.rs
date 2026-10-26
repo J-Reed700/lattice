@@ -73,6 +73,7 @@ impl LearningPracticalRepository {
                 brief: activity.brief,
                 rubric: activity.rubric,
                 interview_plan: activity.interview_plan,
+                interview_answers: activity.interview_answers,
             },
             activity.source_version_ids,
         ))
@@ -101,6 +102,7 @@ impl LearningPracticalRepository {
                 brief: activity.brief,
                 rubric: activity.rubric,
                 interview_plan: activity.interview_plan,
+                interview_answers: activity.interview_answers,
             },
             activity.source_version_ids,
         ))

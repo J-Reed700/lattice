@@ -4,8 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-shell';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { readingKeys, readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
+import type { ApiClient } from '@/lib/api';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { htmlReadingDocument } from './htmlReadingDocument';
@@ -42,10 +44,10 @@ const escapeHtml = (text: string) =>
     .replace(/'/g, '&#39;');
 
 /** The saved page, or its markdown snapshot when the HTML is gone, with its archive metadata. */
-async function loadArchivedPage(htmlPath: string): Promise<ArchivedPage> {
+async function loadArchivedPage(htmlPath: string, api: ApiClient): Promise<ArchivedPage> {
   const page: ArchivedPage = { html: '', fallbackNotice: null, originalUrl: null, siteName: null, links: [] };
 
-  const htmlResult = await readSourceText(htmlPath);
+  const htmlResult = await readSourceText(htmlPath, api);
   if (htmlResult.ok) {
     page.html = htmlResult.data;
   } else {
@@ -55,7 +57,7 @@ async function loadArchivedPage(htmlPath: string): Promise<ArchivedPage> {
 
     let fallbackMarkdown: string | null = null;
     for (const candidate of fallbackCandidates) {
-      const fallbackResult = await readSourceText(candidate);
+      const fallbackResult = await readSourceText(candidate, api);
       if (fallbackResult.ok) {
         fallbackMarkdown = fallbackResult.data;
         break;
@@ -69,7 +71,7 @@ async function loadArchivedPage(htmlPath: string): Promise<ArchivedPage> {
 
   if (htmlPath.endsWith('page.html')) {
     const metadataPath = `${htmlPath.slice(0, -'page.html'.length)}metadata.json`;
-    const metadataResult = await readSourceText(metadataPath);
+    const metadataResult = await readSourceText(metadataPath, api);
     if (metadataResult.ok) {
       try {
         const metadata = JSON.parse(metadataResult.data) as WebArchiveMetadata;
@@ -92,10 +94,11 @@ async function loadArchivedPage(htmlPath: string): Promise<ArchivedPage> {
  * while allowing styles and images to render.
  */
 export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerProps) {
+  const api = useApi();
   const theme = useEffectiveTheme();
   const pageQuery = useQuery({
     queryKey: readingKeys.archivedPage(htmlPath),
-    queryFn: () => loadArchivedPage(htmlPath),
+    queryFn: () => loadArchivedPage(htmlPath, api),
     retry: false,
     staleTime: 0,
   });

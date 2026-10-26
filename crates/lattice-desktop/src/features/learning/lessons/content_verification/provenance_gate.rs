@@ -143,7 +143,9 @@ fn lacks(missing: &Missing) -> String {
             "comes from {have} independent origin{} and no source alone meets the bar",
             if *have == 1 { "" } else { "s" }
         ),
-        Missing::NoIdentifiedSource => "has no identified source".into(),
+        Missing::NoIdentifiedSource => {
+            "comes from sources whose credibility has not been established".into()
+        }
         Missing::OnlyTestimonial => "only reports what another source says".into(),
         Missing::OnlyStale { newer_primary } => {
             format!("is older than the newest primary source ({newer_primary})")

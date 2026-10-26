@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ConversationDto, ConversationMessageBookmarkDto } from '@/types';
 
@@ -11,15 +12,15 @@ import type { ConversationDto, ConversationMessageBookmarkDto } from '@/types';
 const NO_CONVERSATIONS: ConversationDto[] = [];
 const NO_BOOKMARKS: ConversationMessageBookmarkDto[] = [];
 
-async function searchSpotlight(q: string) {
+async function searchSpotlight(q: string, api: ApiClient = VaultAPI) {
   const [conversationsResult, bookmarksResult] = await Promise.all([
-    VaultAPI.listConversationsExplorer({
+    api.listConversationsExplorer({
       query: q || undefined,
       includeArchived: true,
       limit: 20,
       offset: 0,
     }),
-    VaultAPI.listMessageBookmarks({
+    api.listMessageBookmarks({
       query: q || undefined,
       limit: 20,
       offset: 0,
@@ -42,10 +43,11 @@ async function searchSpotlight(q: string) {
 }
 
 export function useSpotlightSearch(debouncedQuery: string, isOpen: boolean) {
+  const api = useApi();
   const q = debouncedQuery.trim();
   const searchQuery = useQuery({
     queryKey: [...conversationKeys.all, 'spotlight', q] as const,
-    queryFn: () => searchSpotlight(q),
+    queryFn: () => searchSpotlight(q, api),
     enabled: isOpen,
     // Opening the spotlight again shows the last answer while it is re-read.
     staleTime: 0,

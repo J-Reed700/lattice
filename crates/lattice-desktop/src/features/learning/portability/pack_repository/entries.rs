@@ -394,6 +394,7 @@ impl SectionRows for Practical {
             if activity.files.iter().any(|file| {
                 file.path
                     == crate::features::learning::practical_generation::INTERVIEW_PLAN_FILE_PATH
+                    || file.path == crate::features::learning::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH
             }) {
                 return Err(invalid(
                     "A pack cannot replace internal interview metadata with a public file.",
@@ -411,15 +412,24 @@ impl SectionRows for Practical {
                 }
             }
         }
+        for attempt in snapshot.simulations.iter().chain(&snapshot.run_snapshots) {
+            super::interview_privacy::check_public_snapshot(value_str(
+                attempt,
+                "activitySnapshot",
+            )?)?;
+        }
         let executable = snapshot
             .activities
             .iter()
             .any(|activity| activity.runtime_kind != LearningPracticalRuntimeKind::None);
-        Ok(if executable {
-            vec!["Imported executable activities are restored in review-only mode without hidden evaluator files; regenerate and review the exercise before running it.".into()]
-        } else {
-            Vec::new()
-        })
+        let mut notices = Vec::new();
+        if executable {
+            notices.push("Imported executable activities are restored in review-only mode without hidden evaluator files; regenerate and review the exercise before running it.".into());
+        }
+        if snapshot.activities.iter().any(|activity| activity.kind == crate::features::learning::practical_dto::LearningPracticalActivityKind::Interview) {
+            notices.push("Private interview reference standards stay on the original device. Regenerate imported interviews to prepare source-backed standards for new attempts.".into());
+        }
+        Ok(notices)
     }
     fn claims(
         &self,

@@ -6,6 +6,7 @@ import { X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
+import { useApi } from '@/contexts/ApiContext';
 import { chooseFiles } from '@/features/files/hooks/filePickers';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/features/files/hooks/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/features/files/hooks/useIndexing';
@@ -52,12 +53,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   onClose,
   onReviewFailures,
 }) => {
+  const api = useApi();
   const { startBatchImport, cancelBatchImport, getOperation, operations, historyError } = useIndexing();
   const { toast } = useToast();
-  // `useToast()` hands back a fresh object every render; depending on it would
-  // recreate `addFilePaths` and re-register the drag-drop listener forever.
-  const toastRef = useRef(toast);
-  toastRef.current = toast;
   const selectedConversationSpaceId = useConversationsStore((state) => state.selectedSpaceId);
   const collectionsQuery = useCustomCollectionsQuery();
   const customCollections = collectionsQuery.data ?? EMPTY_CUSTOM_COLLECTIONS;
@@ -136,40 +134,36 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   }, []);
 
   const addFilePaths = useCallback((paths: string[]) => {
+    const { accepted, rejected } = filterIndexablePaths(paths);
+    if (rejected.length > 0) {
+      const rejectedNames = rejected
+        .map(({ path }) => path.split(/[\\/]/).pop() || path)
+        .slice(0, 3);
+      const summary = rejected.length > 3
+        ? `${rejectedNames.join(', ')} and ${rejected.length - 3} more`
+        : rejectedNames.join(', ');
+      toast.error(`Unsupported file type(s): ${summary}`);
+    }
+
     setFiles((prev) => {
       const existing = new Set(prev.map((file) => file.path));
-      const { accepted, rejected } = filterIndexablePaths(paths);
-
       const dedupedAccepted = accepted.filter((path) => {
         if (existing.has(path)) return false;
         existing.add(path);
         return true;
       });
-      const next = [...prev, ...dedupedAccepted.map(buildFileItem)];
-
-      if (rejected.length > 0) {
-        const rejectedNames = rejected
-          .map(({ path }) => path.split(/[\\/]/).pop() || path)
-          .slice(0, 3);
-        const summary =
-          rejected.length > 3
-            ? `${rejectedNames.join(', ')} and ${rejected.length - 3} more`
-            : rejectedNames.join(', ');
-        toastRef.current.error(`Unsupported file type(s): ${summary}`);
-      }
-
-      return next;
+      return [...prev, ...dedupedAccepted.map(buildFileItem)];
     });
-  }, [buildFileItem]);
+  }, [buildFileItem, toast]);
 
   const handleFileSelect = useCallback(async () => {
     try {
-      const selectedPaths = await chooseFiles();
+      const selectedPaths = await chooseFiles(api);
       addFilePaths(selectedPaths);
     } catch (error) {
-      toastRef.current.error(`Couldn't choose files: ${getErrorMessage(error)}`);
+      toast.error(`Couldn't choose files: ${getErrorMessage(error)}`);
     }
-  }, [addFilePaths]);
+  }, [addFilePaths, api, toast]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -194,9 +188,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         } else {
           const validation = validateIndexablePath(file.name);
           if (!validation.ok) {
-            toastRef.current.error(`Unsupported file type: ${file.name}`);
+            toast.error(`Unsupported file type: ${file.name}`);
           } else {
-            toastRef.current.error(
+            toast.error(
               `Dropped file "${file.name}" is missing a filesystem path. Please use the file picker.`
             );
           }
@@ -207,7 +201,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     if (droppedPaths.length > 0) {
       addFilePaths(droppedPaths);
     }
-  }, [addFilePaths]);
+  }, [addFilePaths, toast]);
 
   useEffect(() => {
     let mounted = true;
@@ -318,15 +312,15 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       try {
         const result = await cancelBatchImport(currentJobId);
         if (!result.ok) {
-          toastRef.current.error(`Couldn't cancel import: ${result.error}`);
+          toast.error(`Couldn't cancel import: ${result.error}`);
           return;
         }
         // A successful cancel says the job stopped, not what became of each
         // file. The file already in flight may still finish indexing, so keep
         // watching the job and let its item statuses decide.
-        toastRef.current.info('Import cancelled');
+        toast.info('Import cancelled');
       } catch (error) {
-        toastRef.current.error(`Couldn't cancel import: ${getErrorMessage(error)}`);
+        toast.error(`Couldn't cancel import: ${getErrorMessage(error)}`);
       } finally {
         setIsCancelling(false);
       }
@@ -339,7 +333,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       startNewImport();
       setFiles([]);
     }
-  }, [cancelBatchImport, currentJobId, isImporting, onClose, startNewImport]);
+  }, [cancelBatchImport, currentJobId, isImporting, onClose, startNewImport, toast]);
 
   // Restore failures as well as active work after navigation or a restart.
   useEffect(() => {
@@ -363,8 +357,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
 
     if (operation.items && operation.items.length > 0) {
-      setFiles((prev) =>
-        prev.map((file) => {
+      setFiles((prev) => {
+        let changed = false;
+        const next = prev.map((file) => {
           const item = operation.items?.find(
             (entry) => (entry.target ?? entry.url) === file.path
           );
@@ -382,13 +377,17 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
                   ? 'queued'
                   : 'importing';
 
+          const errorMessage = item.errorMessage || (nextStatus === 'error' ? 'Import failed' : undefined);
+          if (file.status === nextStatus && file.errorMessage === errorMessage) return file;
+          changed = true;
           return {
             ...file,
             status: nextStatus,
-            errorMessage: item.errorMessage || (nextStatus === 'error' ? 'Import failed' : undefined),
+            errorMessage,
           };
-        })
-      );
+        });
+        return changed ? next : prev;
+      });
     } else {
       // Aggregate counts cannot identify which files succeeded. Only mark all
       // successful when the entire job succeeded; otherwise retain uncertainty.
@@ -412,7 +411,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         .map(item => item.documentId as string) ?? [];
       if (documentIds.length) {
         void collectionActions.addDocuments(selectedCollectionId, documentIds).catch((error) => {
-          toastRef.current.error('Imported documents could not be added to the collection', {
+          toast.error('Imported documents could not be added to the collection', {
             message: error instanceof Error ? error.message : String(error),
           });
         });
@@ -463,7 +462,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         failed: operation.failedFiles,
       });
     }
-  }, [currentJobId, getOperation, onImportComplete, selectedCollectionId, collectionActions]);
+  }, [currentJobId, getOperation, onImportComplete, selectedCollectionId, collectionActions, toast]);
 
   return (
     <div>

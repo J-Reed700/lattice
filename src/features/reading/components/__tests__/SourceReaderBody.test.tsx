@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
 import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
+import VaultAPI from '@/lib/api';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
@@ -119,7 +121,7 @@ describe('SourceReaderBody local citations', () => {
     renderBody(source());
 
     expect(await screen.findByText('Full file at its current path')).toBeTruthy();
-    expect(mocks.resolveSourcePath).toHaveBeenCalledWith(DOCUMENT_ID);
+    expect(mocks.resolveSourcePath).toHaveBeenCalledWith(DOCUMENT_ID, VaultAPI);
     expect(mocks.readFileContent).toHaveBeenCalledWith('/vault/current/notes.txt');
   });
 

@@ -2,10 +2,10 @@ import { useCallback } from 'react';
 
 import { listen } from '@tauri-apps/api/event';
 
+import { useApi } from '@/contexts/ApiContext';
 import { folderFocusFor } from '@/features/chat/model/folderThreadHost';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
-import { VaultAPI } from '@/lib/api';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
@@ -66,6 +66,7 @@ interface TurnLifecycleDependencies {
 }
 
 export function useConversationTurnLifecycle({ queryClient, conversations, invalidateLists, addRequestedId, lifecycle }: TurnLifecycleDependencies) {
+  const api = useApi();
   const runGeneration = useCallback(async (options: {
     conversationId: string;
     content: string;
@@ -326,7 +327,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       streamBatcher.flush();
       if (!result.ok) {
         if (isUserInitiatedCancellation(requestId, result.details?.code)) {
-          const refreshed = await fetchMessages(requestConversationId);
+          const refreshed = await fetchMessages(requestConversationId, api);
           if (!ownsTurn()) return 'cancelled';
           queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
           conversationUiStore.setState(current => {
@@ -351,7 +352,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         // A failed provider call can still have persisted the question. Replace
         // only the optimistic copy carrying that exact request id.
         try {
-          const refreshed = await fetchMessages(requestConversationId);
+          const refreshed = await fetchMessages(requestConversationId, api);
           if (ownsTurn()) {
             queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
             conversationUiStore.setState(current => {
@@ -485,7 +486,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         void queryClient.invalidateQueries({ queryKey: conversationKeys.messages(requestConversationId) });
       }
     }
-  }, [addRequestedId, invalidateLists, lifecycle, queryClient]);
+  }, [addRequestedId, api, invalidateLists, lifecycle, queryClient]);
 
   const sendMessage = useCallback(async (
     content: string,
@@ -515,7 +516,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       conversationId: requestConversationId,
       content,
       showUserBubble: true,
-      invoke: requestId => VaultAPI.chatWithConversation(
+      invoke: requestId => api.chatWithConversation(
         requestConversationId,
         content,
         toolPreferences,
@@ -531,7 +532,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         ...(attachmentImages ? { attachmentImages } : {}),
       },
     });
-  }, [conversations, queryClient, runGeneration]);
+  }, [api, conversations, queryClient, runGeneration]);
 
   const retryFailedMessage = useCallback(async (tempId: string) => {
     const failed = conversationUiStore.getState().optimisticMessages.get(tempId);
@@ -542,7 +543,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       showUserBubble: true,
       retryContext: failed.retryContext,
       replacesFailedTempId: tempId,
-      invoke: requestId => VaultAPI.chatWithConversation(
+      invoke: requestId => api.chatWithConversation(
         failed.conversationId,
         failed.content,
         failed.retryContext?.toolPreferences,
@@ -552,7 +553,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         failed.retryContext?.attachmentImages?.map(image => image.id)
       ),
     });
-  }, [runGeneration]);
+  }, [api, runGeneration]);
 
   /**
    * Re-run the last user message.
@@ -577,7 +578,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       conversationId,
       content: lastUser?.content ?? '',
       showUserBubble: false,
-      invoke: requestId => VaultAPI.regenerateResponse(
+      invoke: requestId => api.regenerateResponse(
         conversationId,
         withExplorerFocus(conversations.find(conversation => conversation.id === conversationId)
           ?? queryClient.getQueryData<Conversation>(conversationKeys.detail(conversationId)), toolPreferences),
@@ -590,7 +591,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         }
       },
     });
-  }, [conversations, queryClient, runGeneration]);
+  }, [api, conversations, queryClient, runGeneration]);
 
   /**
    * Drop every message after `messageId` (and it too when `inclusive`).
@@ -603,12 +604,12 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     const requestId = state.inFlightGenerations.get(id);
     if (!requestId) return;
     pendingCancellationRequests.add(requestId);
-    const result = await VaultAPI.cancelConversationGeneration(id, requestId);
+    const result = await api.cancelConversationGeneration(id, requestId);
     if (!result.ok) {
       pendingCancellationRequests.delete(requestId);
       setUiError(result.error);
     }
-  }, []);
+  }, [api]);
 
 
   return { sendMessage, retryFailedMessage, regenerateResponse, cancelGeneration };

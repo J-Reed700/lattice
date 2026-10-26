@@ -6,7 +6,10 @@ import { KnowledgePanel } from '@/features/chat/components/KnowledgePanel';
 import type { KnowledgeItemDto } from '@/lib/bindings';
 
 const manageKnowledge = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/api', () => ({ VaultAPI: { manageKnowledge } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { manageKnowledge };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 const item = (overrides: Partial<KnowledgeItemDto> = {}): KnowledgeItemDto => ({
   id: 'fact-1', conversationId: 'one', conversationTitle: 'Herb garden', label: 'Basil needs full sun', kind: 'user_fact', state: 'active', scope: 'space',

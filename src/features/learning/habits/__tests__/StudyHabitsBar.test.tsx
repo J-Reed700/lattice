@@ -103,7 +103,7 @@ describe('StudyHabitsBar and Pomodoro Focus Timer', () => {
     expect(screen.getByText('05:00')).toBeInTheDocument();
   });
 
-  it('triggers Anti-Cramming & Single-Tasking Guard alert after 90 continuous study minutes', () => {
+  it('suggests a break after 90 continuous study minutes', () => {
     vi.useFakeTimers();
     render(<StudyHabitsBar />);
 
@@ -116,10 +116,10 @@ describe('StudyHabitsBar and Pomodoro Focus Timer', () => {
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(
-      screen.getByText(/Anti-Cramming & Single-Tasking Guard:/i)
+      screen.getByText(/Time for a break:/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/You have been studying for 91 continuous minutes without a break/i)
+      screen.getByText(/You have been studying for 91 minutes without one/i)
     ).toBeInTheDocument();
 
     // Clicking "Take 5-min Break" resets continuous study and switches to 5-min break
@@ -186,126 +186,53 @@ describe('RetentionFrameworksModal and Core Retention Strategies', () => {
     ]);
   });
 
-  it('opens RetentionFrameworksModal from StudyHabitsBar and renders all 6 core strategies', async () => {
+  it('opens the guide from StudyHabitsBar and states each technique’s evidence without invented figures', async () => {
     const user = userEvent.setup();
-    const handleSelect = vi.fn();
-    render(<StudyHabitsBar onSelectFramework={handleSelect} />);
-
-    const openGuideButton = screen.getByRole('button', {
-      name: /Learning Frameworks & Retention Guide/i,
-    });
-    await user.click(openGuideButton);
-
-    expect(screen.getByText('Evidence-Based Learning & Retention Guide')).toBeInTheDocument();
-
-    // Verify 1: Active Recall
-    expect(screen.getByText('Active Recall (Testing Yourself)')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Close notes and write\/speak everything you remember from scratch/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Free Recall (Brain Dump)' })
-    ).toBeInTheDocument();
-
-    // Verify 2: Spaced Repetition
-    expect(screen.getByText('Spaced Repetition')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Combat the 48-hour forgetting curve with expanding intervals/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Spaced Repetition & Curve' })
-    ).toBeInTheDocument();
-
-    // Verify 3: The Feynman Technique
-    expect(screen.getByText('The Feynman Technique / Teaching Others')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Explain concepts in simple, everyday language as if teaching a beginner/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Feynman Workbench' })
-    ).toBeInTheDocument();
-
-    // Verify 4: Interleaving
-    expect(screen.getByText('Interleaving')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Mix different sub-topics, decks, or problem types in a single session/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Interleaved Practice' })
-    ).toBeInTheDocument();
-
-    // Verify 5: Dual Coding & Visualization
-    expect(screen.getByText('Dual Coding & Visualization')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Pair dense text or abstract numbers with diagrams, Mermaid charts/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Dual-Coding Canvas' })
-    ).toBeInTheDocument();
-
-    // Verify 6: Handwritten Notes & Own-Words Synthesis
-    expect(screen.getByText('Handwritten Notes & Own-Words Synthesis')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Write\/sketch key takeaways by hand and rephrase ideas rather than transcribing verbatim/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Open Handwritten & Synthesis Notebook' })
-    ).toBeInTheDocument();
+    render(<StudyHabitsBar />);
+    await user.click(screen.getByRole('button', { name: 'How to learn so it lasts' }));
+    expect(screen.getByRole('heading', { name: 'How to learn so it lasts' })).toBeInTheDocument();
+    for (const framework of RETENTION_FRAMEWORKS) {
+      expect(screen.getByText(framework.title)).toBeInTheDocument();
+      expect(screen.getByText(framework.description)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: framework.actionLabel })).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Strong evidence')).toHaveLength(2);
+    expect(screen.getAllByText('Moderate evidence')).toHaveLength(3);
+    expect(screen.getAllByText('Mixed evidence')).toHaveLength(1);
+    // No retention percentages, and no institution's name standing in for a study.
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/\d+ ?%|Harvard|Mayo/);
   });
 
-  it('triggers onSelectFramework callback and onNavigate when an action button is clicked', async () => {
-    const user = userEvent.setup();
-    const handleSelect = vi.fn();
-    const handleNavigate = vi.fn();
-    const handleOpenChange = vi.fn();
-
-    render(
-      <RetentionFrameworksModal
-        open
-        onOpenChange={handleOpenChange}
-        onSelectFramework={handleSelect}
-        onNavigate={handleNavigate}
-      />
-    );
-
-    // Click Active Recall action button
-    const recallButton = screen.getByRole('button', { name: 'Open Free Recall (Brain Dump)' });
-    await user.click(recallButton);
-
-    expect(handleSelect).toHaveBeenCalledWith('recall-dump');
-    expect(handleNavigate).toHaveBeenCalledWith('recall-dump');
-    expect(handleOpenChange).toHaveBeenCalledWith(false);
+  it('cites every technique and habit with a DOI link', () => {
+    for (const framework of RETENTION_FRAMEWORKS) expect(framework.citations.length).toBeGreaterThan(0);
+    for (const item of CHECKLIST_ITEMS) expect(item.citations.length).toBeGreaterThan(0);
+    render(<RetentionFrameworksModal open onOpenChange={vi.fn()} />);
+    const recall = screen.getAllByRole('link', { name: 'Roediger & Karpicke, 2006' })[0];
+    expect(recall).toHaveAttribute('href', 'https://doi.org/10.1111/j.1467-9280.2006.01693.x');
+    expect(recall).toHaveAttribute('target', '_blank');
+    expect(recall).toHaveAttribute('rel', 'noreferrer');
   });
 
-  it('triggers onSelectFramework for each of the other framework action buttons', async () => {
+  it('triggers onSelectFramework and onNavigate for every technique’s action', async () => {
     const user = userEvent.setup();
-    const actions: { name: string; expected: FrameworkAction }[] = [
-      { name: 'Open Spaced Repetition & Curve', expected: 'spaced-repetition' },
-      { name: 'Open Feynman Workbench', expected: 'feynman' },
-      { name: 'Open Interleaved Practice', expected: 'interleaving' },
-      { name: 'Open Dual-Coding Canvas', expected: 'dual-coding' },
-      { name: 'Open Handwritten & Synthesis Notebook', expected: 'handwritten-notes' },
-    ];
-
-    for (const item of actions) {
+    for (const framework of RETENTION_FRAMEWORKS) {
       const handleSelect = vi.fn();
+      const handleNavigate = vi.fn();
+      const handleOpenChange = vi.fn();
       const { unmount } = render(
-        <RetentionFrameworksModal
-          open
-          onOpenChange={vi.fn()}
-          onSelectFramework={handleSelect}
-        />
+        <RetentionFrameworksModal open onOpenChange={handleOpenChange} onSelectFramework={handleSelect} onNavigate={handleNavigate} />
       );
-
-      const btn = screen.getByRole('button', { name: item.name });
-      await user.click(btn);
-      expect(handleSelect).toHaveBeenCalledWith(item.expected);
+      await user.click(screen.getByRole('button', { name: framework.actionLabel }));
+      expect(handleSelect).toHaveBeenCalledWith(framework.id satisfies FrameworkAction);
+      expect(handleNavigate).toHaveBeenCalledWith(framework.id);
+      expect(handleOpenChange).toHaveBeenCalledWith(false);
       unmount();
     }
   });
 });
 
-describe('Harvard Retention Principles, Mayo Clinic Health & Metacognitive Checklist', () => {
+describe('Study habits checklist', () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();
@@ -315,110 +242,46 @@ describe('Harvard Retention Principles, Mayo Clinic Health & Metacognitive Check
     window.localStorage.clear();
   });
 
-  it('renders Harvard Summer School and Mayo Clinic resources with proper external links', () => {
+  it('lists what the evidence does not support', () => {
     render(<RetentionFrameworksModal open onOpenChange={vi.fn()} initialTab="habits" />);
-
-    expect(
-      screen.getByText('Harvard Summer School Retention Principles')
-    ).toBeInTheDocument();
-
-    const harvardLink = screen.getByRole('link', { name: /Read Harvard Guide/i });
-    expect(harvardLink).toHaveAttribute(
-      'href',
-      'https://summer.harvard.edu/blog/5-tips-to-retain-what-you-learn/'
-    );
-    expect(harvardLink).toHaveAttribute('target', '_blank');
-    expect(harvardLink).toHaveAttribute('rel', 'noreferrer');
-
-    expect(
-      screen.getByText('Mayo Clinic Physical & Mental Health Memory Foundations')
-    ).toBeInTheDocument();
-
-    const mayoLink = screen.getByRole('link', { name: /Read Mayo Clinic Guide/i });
-    expect(mayoLink).toHaveAttribute(
-      'href',
-      'https://www.mayoclinic.org/healthy-lifestyle/healthy-aging/in-depth/memory-loss/art-20046518'
-    );
-    expect(mayoLink).toHaveAttribute('target', '_blank');
-    expect(mayoLink).toHaveAttribute('rel', 'noreferrer');
-
-    // Supportive Habits (Pomodoro & single-tasking)
-    expect(
-      screen.getByText(/Pomodoro 30–45 Minute Focused Intervals & Single-Tasking Guard/i)
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'What the evidence does not support' })).toBeInTheDocument();
+    expect(screen.getByText(/learning style/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Pashler et al., 2008' })).toHaveAttribute('href', 'https://doi.org/10.1111/j.1539-6053.2009.01038.x');
   });
 
-  it('renders all 6 required checklist items with exact required descriptions', () => {
+  it('renders every checklist item', () => {
     render(<RetentionFrameworksModal open onOpenChange={vi.fn()} initialTab="habits" />);
-
-    expect(
-      screen.getByText('Focused block: Studying in a 30–45 minute undistracted block (no multitasking or cramming)')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Pre-study recall: Tested what I already know before rereading')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Own-words synthesis: Rephrased key takeaways without copying word-for-word')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Sleep & consolidation: Slept 7–8+ hours for synaptic memory consolidation')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Aerobic movement: Completed physical exercise to boost neuroplasticity and brain blood flow')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Social / teaching engagement: Discussed or taught a concept to someone else')
-    ).toBeInTheDocument();
+    for (const item of CHECKLIST_ITEMS) expect(screen.getByText(item.label)).toBeInTheDocument();
   });
 
   it('toggles checklist items, persists to localStorage under the correct key, and updates progress', async () => {
     const user = userEvent.setup();
     render(<RetentionFrameworksModal open onOpenChange={vi.fn()} initialTab="habits" />);
 
-    expect(screen.getByText(/0 of 6 completed \(0%\)/i)).toBeInTheDocument();
-
-    const sleepLabel = screen.getByText(
-      'Sleep & consolidation: Slept 7–8+ hours for synaptic memory consolidation'
-    );
-    await user.click(sleepLabel);
-
-    expect(screen.getByText(/1 of 6 completed \(17%\)/i)).toBeInTheDocument();
+    expect(screen.getByText('0 of 6')).toBeInTheDocument();
+    await user.click(screen.getByText('Slept well after studying'));
+    expect(screen.getByText('1 of 6')).toBeInTheDocument();
 
     const raw = window.localStorage.getItem(HABIT_CHECKLIST_STORAGE_KEY);
     expect(raw).toBeTruthy();
-    const parsed = JSON.parse(raw!);
-    expect(parsed['sleep-consolidation']).toBe(true);
+    expect(JSON.parse(raw!)['sleep-consolidation']).toBe(true);
 
-    // Toggle another item
-    const movementLabel = screen.getByText(
-      'Aerobic movement: Completed physical exercise to boost neuroplasticity and brain blood flow'
-    );
-    await user.click(movementLabel);
-    expect(screen.getByText(/2 of 6 completed \(33%\)/i)).toBeInTheDocument();
+    await user.click(screen.getByText('Did some aerobic exercise'));
+    expect(screen.getByText('2 of 6')).toBeInTheDocument();
 
-    // Reset all checklist items
-    const resetBtn = screen.getByRole('button', { name: /Reset/i });
-    await user.click(resetBtn);
-    expect(screen.getByText(/0 of 6 completed \(0%\)/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Reset/i }));
+    expect(screen.getByText('0 of 6')).toBeInTheDocument();
     expect(window.localStorage.getItem(HABIT_CHECKLIST_STORAGE_KEY)).toBeNull();
   });
 
-  it('opens habits tab directly when Health & Consolidation pill is clicked in StudyHabitsBar', async () => {
+  it('opens the habits tab directly from the Study habits pill in StudyHabitsBar', async () => {
     const user = userEvent.setup();
     render(<StudyHabitsBar />);
-
-    const healthPill = screen.getByTitle('Open Health & Harvard Principles Self-Assessment');
-    await user.click(healthPill);
-
-    expect(
-      screen.getByText('Metacognitive Self-Assessment & Daily Habits Checklist')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Harvard Summer School Retention Principles')
-    ).toBeInTheDocument();
+    await user.click(screen.getByTitle('Open the study habits checklist'));
+    expect(screen.getByText('Today’s study habits')).toBeInTheDocument();
   });
 
-  it('renders completed habit indicators on Health & Consolidation pill when items are checked', () => {
+  it('renders completed habit indicators on the Study habits pill when items are checked', () => {
     window.localStorage.setItem(
       HABIT_CHECKLIST_STORAGE_KEY,
       JSON.stringify({
@@ -439,28 +302,20 @@ describe('Harvard Retention Principles, Mayo Clinic Health & Metacognitive Check
     const user = userEvent.setup();
     render(<RetentionFrameworksModal open onOpenChange={vi.fn()} initialTab="frameworks" />);
 
-    expect(screen.getByText('Active Recall (Testing Yourself)')).toBeInTheDocument();
-
-    const habitsTabTrigger = screen.getByRole('tab', { name: /Harvard Principles & Health/i });
-    await user.click(habitsTabTrigger);
-
-    expect(
-      screen.getByText('Metacognitive Self-Assessment & Daily Habits Checklist')
-    ).toBeInTheDocument();
-
-    const frameworksTabTrigger = screen.getByRole('tab', { name: /Core Retention Frameworks/i });
-    await user.click(frameworksTabTrigger);
-
-    expect(screen.getByText('Active Recall (Testing Yourself)')).toBeInTheDocument();
+    expect(screen.getByText('Retrieval practice')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Habits/i }));
+    expect(screen.getByText('Today’s study habits')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Techniques/i }));
+    expect(screen.getByText('Retrieval practice')).toBeInTheDocument();
   });
 
-  it('forwards onNavigate when framework action is chosen via StudyHabitsBar modal', async () => {
+  it('forwards onNavigate when a technique is chosen via the StudyHabitsBar guide', async () => {
     const user = userEvent.setup();
     const handleNavigate = vi.fn();
     render(<StudyHabitsBar onNavigate={handleNavigate} />);
 
-    await user.click(screen.getByRole('button', { name: /Learning Frameworks & Retention Guide/i }));
-    await user.click(screen.getByRole('button', { name: 'Open Free Recall (Brain Dump)' }));
+    await user.click(screen.getByRole('button', { name: 'How to learn so it lasts' }));
+    await user.click(screen.getByRole('button', { name: 'Open free recall' }));
 
     expect(handleNavigate).toHaveBeenCalledWith('recall-dump');
   });

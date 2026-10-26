@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { Bookmark, Combine, FileText, MessageSquare, NotebookPen, Plus, Search } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useCorpusShapeQuery } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { useDashboardQuery } from '@/features/dashboard/hooks/useDashboardQuery';
 import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
@@ -107,6 +108,7 @@ function EmptyRow({ children }: { children: string }) {
 }
 
 export const Dashboard = () => {
+  const api = useApi();
   const { data, isLoading, error } = useDashboardQuery();
   const { data: weekCandidates } = useWeeklySynthesisCandidatesQuery();
   const { data: corpusShape } = useCorpusShapeQuery();
@@ -148,7 +150,7 @@ export const Dashboard = () => {
     }
     const id = doc.documentId || doc.id;
     if (!id) return;
-    const opened = await openDocumentFile(id);
+    const opened = await openDocumentFile(id, api);
     if (opened.ok && opened.data.action === 'render_internal') {
       setPreviewSource({ ...source, filePath: opened.data.contentPath });
     }

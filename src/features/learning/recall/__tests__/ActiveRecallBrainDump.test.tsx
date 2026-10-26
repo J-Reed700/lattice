@@ -110,7 +110,7 @@ describe('ActiveRecallBrainDump', () => {
     );
 
     expect(
-      screen.getByText(/Close your notes and write down or speak everything you remember from scratch/i),
+      screen.getByText(/Close your notes and write down or say everything you remember/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/Notes-closed lock active/i)).toBeInTheDocument();
     expect(
@@ -335,12 +335,13 @@ describe('SpacedRepetitionCurve', () => {
     { id: 'c5', dueAt: Date.now() + 86400000 * 20, intervalDays: 25, reviewCount: 5, stability: 25 },
   ];
 
-  it('renders Ebbinghaus forgetting curve explanation and live card distribution tiers', () => {
+  it('explains spacing as FSRS schedules it and shows the learner’s cards by gap', () => {
     render(<SpacedRepetitionCurve cards={sampleCards} />);
 
     expect(
-      screen.getByText(/Combat the forgetting curve \(where most new information is lost within 48 hours\)/i),
+      screen.getByText(/FSRS sets each card’s next review from how you answered it/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/The curve is an illustration, not your data/i)).toBeInTheDocument();
 
     expect(screen.getByText('Initial (< 1 day)')).toBeInTheDocument();
     expect(screen.getByText('1–2 days')).toBeInTheDocument();
@@ -348,10 +349,11 @@ describe('SpacedRepetitionCurve', () => {
     expect(screen.getByText('1 week (7–13 days)')).toBeInTheDocument();
     expect(screen.getByText('2+ weeks (14+ days)')).toBeInTheDocument();
 
-    expect(screen.getByText('1 mastered (14d+)')).toBeInTheDocument();
+    expect(screen.getByText('1 on gaps of two weeks or more')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/mastered|48 ?h|Ebbinghaus/i);
   });
 
-  it('renders SVG chart with forgetting curve markers', () => {
+  it('renders the illustration without invented figures', () => {
     render(<SpacedRepetitionCurve cards={sampleCards} />);
 
     expect(screen.getByText('Day 1')).toBeInTheDocument();
@@ -359,14 +361,15 @@ describe('SpacedRepetitionCurve', () => {
     expect(screen.getByText('Day 7 (1 wk)')).toBeInTheDocument();
     expect(screen.getByText('Day 14 (2 wks)')).toBeInTheDocument();
     expect(screen.getByText('Day 30 (1 mo)')).toBeInTheDocument();
-    expect(screen.getByText(/48h drop/i)).toBeInTheDocument();
+    expect(screen.getByText('fades')).toBeInTheDocument();
+    expect(screen.getByText('each review lets the next gap grow')).toBeInTheDocument();
   });
 
   it('renders correctly when cards array is empty or contains a single card', () => {
     const { rerender } = render(<SpacedRepetitionCurve cards={[]} />);
 
     expect(screen.getByText('0 total cards')).toBeInTheDocument();
-    expect(screen.getByText(/No recall cards currently scheduled/i)).toBeInTheDocument();
+    expect(screen.getByText(/No review cards yet/i)).toBeInTheDocument();
 
     rerender(<SpacedRepetitionCurve cards={[sampleCards[0]]} />);
     expect(screen.getByText('1 total card')).toBeInTheDocument();

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import { useQueries, type UseQueryResult } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import {
   journalEntryMessagesQueryOptions,
   type JournalEntrySummary,
@@ -142,6 +143,7 @@ export function useJournalSources(options: {
   pinnedIds: Set<string>;
   enabled: boolean;
 }): UseJournalSourcesResult {
+  const api = useApi();
   const { entries, pinnedIds, enabled } = options;
 
   const scanConversations = useMemo(() => {
@@ -160,7 +162,7 @@ export function useJournalSources(options: {
   }, [enabled, entries, pinnedIds]);
 
   const scanned = useQueries({
-    queries: scanConversations.map((entry) => journalEntryMessagesQueryOptions(entry.id)),
+    queries: scanConversations.map((entry) => journalEntryMessagesQueryOptions(entry.id, api)),
     combine: combineScannedMessages,
   });
   const scannedMessages = scanned.messages;

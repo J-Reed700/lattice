@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 
 import { useQueries } from '@tanstack/react-query';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { Conversation } from '@/types/conversation';
 
 /**
@@ -28,6 +28,7 @@ export interface ForkParent {
 const forkParentKey = (id: string) => ['conversation-fork-parent', id] as const;
 
 export function useForkLineage(conversations: readonly Conversation[]): Map<string, ForkParent> {
+  const api = useApi();
   const loadedTitles = useMemo(() => {
     const map = new Map<string, string>();
     for (const conversation of conversations) map.set(conversation.id, conversation.title);
@@ -52,7 +53,7 @@ export function useForkLineage(conversations: readonly Conversation[]): Map<stri
       staleTime: 5 * 60_000,
       retry: false,
       queryFn: async (): Promise<string | null> => {
-        const result = await VaultAPI.getConversation(id);
+        const result = await api.getConversation(id);
         // A deleted parent is not a failure; it is simply no longer there.
         return result.ok ? result.data.conversation?.title ?? null : null;
       },

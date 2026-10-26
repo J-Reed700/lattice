@@ -248,23 +248,43 @@ async fn run(
     match name {
         SEARCH => match serde_json::from_value::<PlannedNeed>(arguments.clone())
             .ok()
-            .and_then(PlannedNeed::checked)
+            .and_then(PlannedNeed::searches)
         {
-            None => "Search not run: give a query and rewordings of 3 to 240 characters, one \
-                     of the listed kinds, dates as YYYY-MM-DD, and for asOf the page's address \
-                     as identifier."
+            None => "Search not run: give a query and rewordings of 3 to 240 characters besides \
+                     any site: operators, a site that is an address, one of the listed kinds, \
+                     dates as YYYY-MM-DD, and for asOf the page's address as identifier."
                 .into(),
-            Some(need) => match web.search(&need, room).await {
-                Ok(hits) => json!(hits
+            // A query naming several sites is one search per site, sharing
+            // the room the one call has. The call fails only when every
+            // search did: a site that fails leaves the others' answers.
+            Some(searches) => {
+                let room = room.share(searches.len());
+                let mut hits: Vec<SearchHit> = Vec::new();
+                let mut answered = false;
+                let mut failure = None;
+                for need in &searches {
+                    match web.search(need, room).await {
+                        Ok(found) => {
+                            answered = true;
+                            for hit in found {
+                                if !hits.iter().any(|known| known.url == hit.url) {
+                                    hits.push(hit);
+                                }
+                            }
+                        }
+                        Err(error) => failure = Some(error),
+                    }
+                }
+                if let (false, Some(error)) = (answered, failure) {
+                    answer.web_note = Some(format!("Web search was unavailable: {error}"));
+                    return format!("Search failed: {error}");
+                }
+                json!(hits
                     .iter()
                     .map(|hit| hit_json(&hit.title, &hit.url, &hit.snippet))
                     .collect::<Vec<_>>())
-                .to_string(),
-                Err(error) => {
-                    answer.web_note = Some(format!("Web search was unavailable: {error}"));
-                    format!("Search failed: {error}")
-                }
-            },
+                .to_string()
+            }
         },
         FETCH => match web.save_page(&argument("url")).await {
             Ok(page) => {

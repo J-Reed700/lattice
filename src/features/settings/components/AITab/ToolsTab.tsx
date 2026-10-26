@@ -9,6 +9,7 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import { useApi } from '@/contexts/ApiContext';
 import { probeCustomTool } from '@/features/settings/hooks/connectionProbes';
 import { toast } from '@/stores/toastStore';
 import type { CustomToolSettings as ApiCustomToolSettings } from '@/types/api/settings';
@@ -29,6 +30,7 @@ import { useLlmSettings } from './useLlmSettings';
 const BUILT_IN_TOOLS = ['web_search', 'fetch_url_content', 'wiki_search', 'wiki_summary'];
 
 export function ToolsTab() {
+  const api = useApi();
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
 
   const [customToolsDraft, setCustomToolsDraft] = useState<ApiCustomToolSettings[]>([]);
@@ -225,7 +227,7 @@ export function ToolsTab() {
       defaultMaxResults: normalized.defaultMaxResults,
       query,
       maxResults: normalized.defaultMaxResults,
-    });
+    }, api);
     setActiveToolTestKey(null);
 
     if (!result.ok) {

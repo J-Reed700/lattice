@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+import { useApi } from '@/contexts/ApiContext';
 import { sourceTextQueryOptions } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 
@@ -43,8 +44,9 @@ const getLanguage = (filePath: string): string => {
 };
 
 export function TextViewer({ filePath, content: directContent, title: _title, language: directLanguage }: TextViewerProps) {
+  const api = useApi();
   const theme = useEffectiveTheme();
-  const fileQuery = useQuery({ ...sourceTextQueryOptions(filePath ?? ''), enabled: Boolean(filePath) });
+  const fileQuery = useQuery({ ...sourceTextQueryOptions(filePath ?? '', api), enabled: Boolean(filePath) });
   const content = filePath ? fileQuery.data ?? '' : directContent ?? '';
   const language = filePath ? getLanguage(filePath) : directLanguage ?? 'text';
   const isLoading = Boolean(filePath) && fileQuery.isPending;

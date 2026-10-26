@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { readDocumentText } from '@/features/files/hooks/useLibraryDocumentActions';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { type DocumentMetadata } from '@/types/fileBrowser';
@@ -16,6 +17,7 @@ export function useLibraryContentSearch(
   searchQuery: string,
   filterByType: string | null
 ) {
+  const api = useApi();
   const setContentSearchMatches = useFileBrowserStore(state => state.setContentSearchMatches);
   const setContentSearchLoading = useFileBrowserStore(state => state.setContentSearchLoading);
   const clearContentSearch = useFileBrowserStore(state => state.clearContentSearch);
@@ -79,7 +81,7 @@ export function useLibraryContentSearch(
               return cachedContent.includes(normalizedSearchQuery) ? doc.id : null;
             }
 
-            const result = await readDocumentText(doc.filePath);
+            const result = await readDocumentText(doc.filePath, api);
             if (!result.ok) {
               return null;
             }
@@ -113,13 +115,7 @@ export function useLibraryContentSearch(
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [
-    clearContentSearch,
-    contentSearchScope,
-    normalizedSearchQuery,
-    setContentSearchLoading,
-    setContentSearchMatches,
-  ]);
+  }, [api, clearContentSearch, contentSearchScope, normalizedSearchQuery, setContentSearchLoading, setContentSearchMatches]);
 
   return { activeFilter };
 }

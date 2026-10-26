@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+
+
 
 export const weeklySynthesisCandidatesKey = ['synthesis', 'weekly-candidates'] as const;
 
@@ -42,14 +44,15 @@ function isWithinWeek(value: string | null | undefined, cutoff: number): boolean
  * what the backend run will actually read, so the promise matches the delivery.
  */
 export function useWeeklySynthesisCandidatesQuery() {
+  const api = useApi();
   return useQuery<WeeklySynthesisCandidates, Error>({
     queryKey: weeklySynthesisCandidatesKey,
     queryFn: async () => {
       const cutoff = Date.now() - WEEK_MS;
       const [conversationsResult, referencesResult, notesResult] = await Promise.all([
-        VaultAPI.listConversations(),
-        VaultAPI.listPassageReferences(200),
-        VaultAPI.listWorkspaceNotes(),
+        api.listConversations(),
+        api.listPassageReferences(200),
+        api.listWorkspaceNotes(),
       ]);
 
       const conversations = Math.min(

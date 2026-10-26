@@ -13,6 +13,7 @@ mod export_all;
 mod files;
 mod guards;
 mod importers;
+mod interview_privacy;
 mod program_entry;
 mod provenance;
 mod records;

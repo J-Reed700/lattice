@@ -88,23 +88,12 @@ pub(super) async fn corroborate(
             .filter(|passage| passage.retrieval_kind != "execution")
             .cloned()
             .collect();
-        let shown_versions: Vec<String> = shown
-            .iter()
+        // Reading one passage does not exhaust a document. Exclude only
+        // sources already counted as support; claim_list excludes the exact
+        // passages shown, so unread sections of official docs remain eligible.
+        let supported_versions: Vec<String> = provenance_gate::supporting_passages(finding)
+            .into_iter()
             .map(|passage| passage.source_id.clone())
-            .chain(
-                finding
-                    .two_pass
-                    .also_supported
-                    .iter()
-                    .map(|other| other.passage.source_id.clone()),
-            )
-            .chain(
-                finding
-                    .trust
-                    .iter()
-                    .flat_map(|trust| &trust.supports)
-                    .map(|support| support.source_version_id.clone()),
-            )
             .collect();
         if profile.authority_subject().is_some() && !judgements.owner_judged(&profile).await? {
             // The scope's one model call: who owns the subject, asked of the
@@ -119,14 +108,16 @@ pub(super) async fn corroborate(
                     .await?;
             }
         }
-        let scope = judgements.standing_scope(&profile, &shown_versions).await?;
+        let scope = judgements
+            .standing_scope(&profile, &supported_versions)
+            .await?;
         let mut proxies = HashMap::new();
         if !scope.candidates.is_empty() {
             let claim = Claim {
                 quote: finding.quote.clone(),
                 statement: finding.statement.clone(),
             };
-            let list = context
+            let mut list = context
                 .references
                 .claim_list(
                     &claim.statement,
@@ -134,6 +125,10 @@ pub(super) async fn corroborate(
                     &shown,
                 )
                 .await?;
+            // The reach reads the course's strongest sources first (§7.4):
+            // a stable sort, so relevance still orders each tier.
+            list.passages
+                .sort_by_key(|passage| scope.tier(&passage.source_id));
             for passage in &list.passages {
                 if let Some(level) = scope.proxies.get(&passage.source_id) {
                     proxies.insert(passage.source_id.clone(), *level);

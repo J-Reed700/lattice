@@ -29,7 +29,7 @@ const INTERVAL_TIERS: TierDefinition[] = [
   {
     id: 'initial',
     label: 'Initial (< 1 day)',
-    rangeDescription: 'New or struggling cards',
+    rangeDescription: 'New or recently missed',
     filter: (c) => c.intervalDays < 1,
     colorClass: 'text-text-muted',
     bgClass: 'bg-surface-raised',
@@ -37,7 +37,7 @@ const INTERVAL_TIERS: TierDefinition[] = [
   {
     id: 'tier-1-2',
     label: '1–2 days',
-    rangeDescription: 'First critical recall test',
+    rangeDescription: 'Short gaps',
     filter: (c) => c.intervalDays >= 1 && c.intervalDays < 3,
     colorClass: 'text-warning-fg',
     bgClass: 'bg-warning-muted/40',
@@ -45,7 +45,7 @@ const INTERVAL_TIERS: TierDefinition[] = [
   {
     id: 'tier-3-6',
     label: '3–6 days',
-    rangeDescription: 'Consolidating retention',
+    rangeDescription: 'Gaps of a few days',
     filter: (c) => c.intervalDays >= 3 && c.intervalDays < 7,
     colorClass: 'text-accent',
     bgClass: 'bg-accent/20',
@@ -53,7 +53,7 @@ const INTERVAL_TIERS: TierDefinition[] = [
   {
     id: 'tier-7-13',
     label: '1 week (7–13 days)',
-    rangeDescription: 'Medium-term durability',
+    rangeDescription: 'About a week',
     filter: (c) => c.intervalDays >= 7 && c.intervalDays < 14,
     colorClass: 'text-success-fg',
     bgClass: 'bg-success-muted/40',
@@ -61,7 +61,7 @@ const INTERVAL_TIERS: TierDefinition[] = [
   {
     id: 'tier-14-plus',
     label: '2+ weeks (14+ days)',
-    rangeDescription: 'Long-term mastery',
+    rangeDescription: 'Two weeks or more',
     filter: (c) => c.intervalDays >= 14,
     colorClass: 'text-accent',
     bgClass: 'bg-accent/40',
@@ -90,7 +90,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
 
   return (
     <section
-      aria-label="Spaced Repetition & The Forgetting Curve"
+      aria-label="How your reviews are spaced"
       className="rounded-2xl border border-border-default bg-surface p-4 shadow-xs"
     >
       {/* Header */}
@@ -98,10 +98,10 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
         <div>
           <div className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[.14em] text-accent">
             <TrendingUp size={13} />
-            <span>Spaced Repetition · Expanding Intervals</span>
+            <span>Spaced practice · FSRS</span>
           </div>
           <h3 className="mt-0.5 font-serif text-lg font-medium text-text-primary">
-            The Ebbinghaus Forgetting Curve &amp; Memory Reset
+            How your reviews are spaced
           </h3>
         </div>
 
@@ -113,17 +113,17 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
           {cards.length > 0 && (
             <span className="inline-flex items-center gap-1 rounded-full border border-success-muted bg-success-muted/30 px-2.5 py-0.5 text-xs font-medium text-success-fg">
               <Sparkles size={12} />
-              <span>{matureCardsCount} mastered (14d+)</span>
+              <span>{matureCardsCount} on gaps of two weeks or more</span>
             </span>
           )}
         </div>
       </div>
 
       <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-        Combat the forgetting curve (where most new information is lost within 48 hours) by reviewing material at gradually expanding intervals: 1 day → 3 days → 1 week → 2 weeks+.
+        Memories fade without use, and each successful recall lets the next gap grow. FSRS sets each card’s next review from how you answered it, aiming to bring it back before you would forget it. The curve is an illustration, not your data; the bars are your cards.
       </p>
 
-      {/* Main Grid: Ebbinghaus Curve (left) + Tier Bars (right) */}
+      {/* Illustration (left) + the learner's cards by gap (right) */}
       <div className="mt-3.5 grid gap-3.5 items-start lg:grid-cols-[1.2fr_1fr]">
         {/* SVG Forgetting Curve & Spaced Repetition Chart */}
         <div className="rounded-xl border border-border-default bg-surface-sunken/40 p-3">
@@ -134,11 +134,11 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
             <div className="flex flex-wrap items-center gap-3 text-[10px]">
               <span className="inline-flex items-center gap-1.5 text-danger-fg">
                 <span className="inline-block h-0.5 w-3 border-b-2 border-dashed border-danger-fg" />
-                <span>Unreviewed (drops in 48h)</span>
+                <span>Without review</span>
               </span>
               <span className="inline-flex items-center gap-1.5 font-medium text-accent">
                 <span className="inline-block h-0.5 w-3 bg-accent" />
-                <span>Expanding Spaced Reviews</span>
+                <span>With spaced reviews</span>
               </span>
             </div>
           </div>
@@ -147,7 +147,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
             <svg
               viewBox="0 0 600 220"
               className="h-36 w-full min-w-[380px] select-none"
-              aria-label="Ebbinghaus Forgetting Curve and Spaced Repetition Intervals graph"
+              aria-label="Illustration: recall fading without review, and gaps growing with each review"
               role="img"
             >
               {/* Background grid lines */}
@@ -188,7 +188,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
                 strokeDasharray="4 4"
               />
               <circle cx="165" cy="168" r="3" fill="var(--color-danger-fg, #ef4444)" />
-              <text x="170" y="162" className="fill-danger-fg text-[9px] font-semibold">48h drop (&lt;30%)</text>
+              <text x="170" y="162" className="fill-danger-fg text-[9px] font-semibold">fades</text>
 
               {/* Curve 2: Expanding Spaced Repetition reset curves (Solid Accent) */}
               <path
@@ -236,11 +236,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
               <circle cx="560" cy="50" r="3.5" fill="var(--color-accent, #6366f1)" />
 
               {/* Interval annotations */}
-              <text x="125" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">+1d</text>
-              <text x="210" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">+3d</text>
-              <text x="320" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">+1wk</text>
-              <text x="440" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">+2wks</text>
-              <text x="560" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">+1mo</text>
+              <text x="340" y="24" textAnchor="middle" className="fill-accent text-[9px] font-semibold">each review lets the next gap grow</text>
             </svg>
           </div>
         </div>
@@ -293,7 +289,7 @@ export function SpacedRepetitionCurve({ cards }: SpacedRepetitionCurveProps) {
 
           {cards.length === 0 && (
             <p className="mt-2 text-center text-xs text-text-muted">
-              No recall cards currently scheduled. Author cards or generate decks to begin expanding your intervals.
+              No review cards yet. Answer a lesson’s checks or add cards, and they appear here by the gap until their next review.
             </p>
           )}
         </div>

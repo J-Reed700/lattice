@@ -39,6 +39,17 @@ pub const OWNER_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// Wayback captures accrue slowly: a miss today is a miss this week.
 pub const ARCHIVE_LOOKUP_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Sites move on rebrand and re-platform timescales, and a move is one
+/// redirect read to learn again: a site's home is re-read after a day, so a
+/// site that moves this week is searched where it lives by tomorrow.
+pub const SITE_HOME_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// A site that could not be read (down, hanging, refusing) is searched as
+/// asked, and the results found that way are reused for [`SEARCH_PAGE_TTL`]
+/// anyway: reading the site again sooner would rarely change what a search
+/// returns, and a hanging site costs one wait per window, not one per search.
+pub const SITE_HOME_RETRY: Duration = SEARCH_PAGE_TTL;
+
 /// When a breaker opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BreakerTrip {
@@ -58,6 +69,8 @@ pub struct SourcingPolicy {
     pub search_page_ttl: Duration,
     pub owner_ttl: Duration,
     pub archive_lookup_ttl: Duration,
+    pub site_home_ttl: Duration,
+    pub site_home_retry: Duration,
 }
 
 impl Default for SourcingPolicy {
@@ -73,6 +86,8 @@ impl Default for SourcingPolicy {
             search_page_ttl: SEARCH_PAGE_TTL,
             owner_ttl: OWNER_TTL,
             archive_lookup_ttl: ARCHIVE_LOOKUP_TTL,
+            site_home_ttl: SITE_HOME_TTL,
+            site_home_retry: SITE_HOME_RETRY,
         }
     }
 }

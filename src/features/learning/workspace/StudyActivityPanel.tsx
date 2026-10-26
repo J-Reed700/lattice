@@ -3,10 +3,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { skipToken, useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronUp, Clock3, LoaderCircle, X } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
 import { claimsNeedYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { isWaitingForYou } from '@/features/learning/lessons/review/claimReviewPresentation';
-import VaultAPI from '@/lib/api';
 import type { LessonClaimReviewDto } from '@/lib/bindings';
 import { queryClient } from '@/lib/queryClient';
 import { dismissStudyActivity, EMPTY_STUDY_ACTIVITY, STUDY_ACTIVITY_KEY, type StudyActivity, type StudyDestination } from '@/lib/studyActivity';
@@ -21,11 +21,12 @@ function duration(milliseconds: number) {
  * when it points at no lesson, or the lesson is not held for review.
  */
 function useClaimsWaitingIn(destination: StudyDestination, finished: boolean): number {
+  const api = useApi();
   const { programId = '', lessonId = '' } = destination;
   const { data } = useQuery<LessonClaimReviewDto | null>({
     queryKey: learningClaimReviewKey(programId, lessonId),
     queryFn: async () => {
-      const result = await VaultAPI.getLearningLessonClaimReview(programId, lessonId);
+      const result = await api.getLearningLessonClaimReview(programId, lessonId);
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },

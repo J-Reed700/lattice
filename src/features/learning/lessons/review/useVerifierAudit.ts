@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { learningClaimReviewKey, learningLessonAuditKey, learningPlanKey, learningProgramKey, learningVerifierAuditKey } from '@/features/learning/api/learningQueryKeys';
-import VaultAPI from '@/lib/api';
 import type { LearningLessonAuditDto, LearningLessonAuditResultDto, LearningVerifierAuditDto } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
@@ -12,29 +12,32 @@ function unwrap<T>(result: ApiResult<T>): T {
 
 /** The course's opt-in to the Verifier audit, with what consent it needs (§14.2). */
 export function useProgramVerifierAudit(programId: string, enabled = true) {
+  const api = useApi();
   return useQuery<LearningVerifierAuditDto>({
     queryKey: learningVerifierAuditKey(programId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningProgramVerifierAudit(programId)),
+    queryFn: async () => unwrap(await api.getLearningProgramVerifierAudit(programId)),
     enabled: enabled && Boolean(programId),
     retry: false,
   });
 }
 
 export function useSetProgramVerifierAudit(programId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<LearningVerifierAuditDto, Error, { on: boolean; webSearch: boolean; consentConfirmed: boolean }>({
     retry: false,
     mutationFn: async ({ on, webSearch, consentConfirmed }) =>
-      unwrap(await VaultAPI.setLearningProgramVerifierAudit(programId, on, webSearch, consentConfirmed)),
+      unwrap(await api.setLearningProgramVerifierAudit(programId, on, webSearch, consentConfirmed)),
     onSuccess: (audit) => client.setQueryData(learningVerifierAuditKey(programId), audit),
   });
 }
 
 /** The lesson's latest audit: batches, tokens, the last error. Null before any. */
 export function useLessonAudit(programId: string, lessonId: string, enabled = true) {
+  const api = useApi();
   return useQuery<LearningLessonAuditDto | null>({
     queryKey: learningLessonAuditKey(programId, lessonId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningLessonAudit(programId, lessonId)),
+    queryFn: async () => unwrap(await api.getLearningLessonAudit(programId, lessonId)),
     enabled: enabled && Boolean(programId && lessonId),
     retry: false,
   });
@@ -42,10 +45,11 @@ export function useLessonAudit(programId: string, lessonId: string, enabled = tr
 
 /** "Audit this lesson now" on a ready lesson; a dispute sends it back to Needs review. */
 export function useAuditLessonNow(programId: string, lessonId: string) {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<LearningLessonAuditResultDto, Error, void>({
     retry: false,
-    mutationFn: async () => unwrap(await VaultAPI.auditLearningLessonNow(programId, lessonId, crypto.randomUUID())),
+    mutationFn: async () => unwrap(await api.auditLearningLessonNow(programId, lessonId, crypto.randomUUID())),
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: learningLessonAuditKey(programId, lessonId) }),

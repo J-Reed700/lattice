@@ -1,7 +1,8 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { LEARNING_PROGRAMS_KEY, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
-import VaultAPI from '@/lib/api';
+import type VaultAPI from '@/lib/api';
 import type {
   LearningProgramDto,
   LearningOutlineProgressDto,
@@ -22,17 +23,19 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 }
 
 export function useLearningPrograms() {
+  const api = useApi();
   return useQuery<LearningProgramSummaryDto[]>({
     queryKey: LEARNING_PROGRAMS_KEY,
-    queryFn: async () => unwrap(await VaultAPI.listLearningPrograms()),
+    queryFn: async () => unwrap(await api.listLearningPrograms()),
   });
 }
 
 export function useLearningProgram(id: string | null) {
+  const api = useApi();
   return useQuery<LearningProgramDto>({
     queryKey: id ? learningProgramKey(id) : ['learning-program', 'none'],
     enabled: Boolean(id),
-    queryFn: async () => unwrap(await VaultAPI.getLearningProgram(id!)),
+    queryFn: async () => unwrap(await api.getLearningProgram(id!)),
   });
 }
 
@@ -52,10 +55,12 @@ function useProgramMutation<TRequest>(mutate: (request: TRequest) => ReturnType<
 }
 
 export function useGenerateLearningProgram() {
-  return useOutlineOperation(['learning-outline-operation', 'generate'], (request: GenerateLearningProgramRequestDto, options) => VaultAPI.generateLearningProgram(request, options));
+  const api = useApi();
+  return useOutlineOperation(['learning-outline-operation', 'generate'], (request: GenerateLearningProgramRequestDto, options) => api.generateLearningProgram(request, options));
 }
 export function useRepairLearningOutline(programId: string) {
-  return useOutlineOperation(['learning-outline-operation', 'repair', programId], (request: RepairLearningOutlineRequestDto, options) => VaultAPI.repairLearningOutline(request, options));
+  const api = useApi();
+  return useOutlineOperation(['learning-outline-operation', 'repair', programId], (request: RepairLearningOutlineRequestDto, options) => api.repairLearningOutline(request, options));
 }
 type OutlineOperationState = {
   requestId: string | null;
@@ -68,6 +73,7 @@ type OutlineOperationState = {
 const idleOutlineOperation: OutlineOperationState = { requestId: null, isPending: false, progress: null, cancelling: false, error: null };
 
 function useOutlineOperation<T>(key: readonly string[], run: (request: T, options: { requestId: string; onProgress: (update: LearningOutlineProgressDto) => void }) => ReturnType<typeof VaultAPI.getLearningProgram>) {
+  const api = useApi();
   const client = useQueryClient();
   // IPC outlives the panel that started it. Keep its observable state with the
   // backend cache so reopening the draft rejoins the same request and cancel ID.
@@ -116,7 +122,7 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
     if (!requestId || current.cancelling) return;
     updateOperation(requestId, { cancelling: true, cancelError: undefined });
     try {
-      const accepted = unwrap(await VaultAPI.cancelLearningOutline(requestId));
+      const accepted = unwrap(await api.cancelLearningOutline(requestId));
       if (!accepted) updateOperation(requestId, { cancelling: false });
     } catch (error) {
       updateOperation(requestId, { cancelling: false, cancelError: error instanceof Error ? error.message : 'Could not cancel. Try again.' });
@@ -130,11 +136,14 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
 }
 
 export function useAcceptLearningProgram() {
-  return useProgramMutation<AcceptLearningProgramRequestDto>(VaultAPI.acceptLearningProgram);
+  const api = useApi();
+  return useProgramMutation<AcceptLearningProgramRequestDto>(api.acceptLearningProgram);
 }
 export function usePrepareLearningLesson() {
-  return useProgramMutation<PrepareLearningLessonRequestDto>(VaultAPI.prepareLearningLesson);
+  const api = useApi();
+  return useProgramMutation<PrepareLearningLessonRequestDto>(api.prepareLearningLesson);
 }
 export function useCompleteLearningLesson() {
-  return useProgramMutation<CompleteLearningLessonRequestDto>(VaultAPI.completeLearningLesson);
+  const api = useApi();
+  return useProgramMutation<CompleteLearningLessonRequestDto>(api.completeLearningLesson);
 }

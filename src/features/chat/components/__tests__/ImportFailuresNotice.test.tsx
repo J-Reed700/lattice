@@ -6,7 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 
 const { listBatchJobs, getBatchJobStatus } = vi.hoisted(() => ({ listBatchJobs: vi.fn(), getBatchJobStatus: vi.fn() }));
-vi.mock('@/lib/api', () => ({ VaultAPI: { listBatchJobs, getBatchJobStatus } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { listBatchJobs, getBatchJobStatus };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 function renderNotice() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

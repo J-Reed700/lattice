@@ -13,7 +13,10 @@ use crate::features::learning::lab_runtime::{
 use crate::features::learning::persistence::{db, hash_text, now};
 use crate::features::learning::practical_dto::*;
 use crate::features::learning::practical_generation::{
-    GeneratedPracticalActivity, PracticalFileRole,
+    GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
+};
+use crate::features::learning::practice::interview_answers::{
+    InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, Transaction};
@@ -133,6 +136,37 @@ impl LearningPracticalRepository {
         generator_model: &str,
         payload_hash: &str,
     ) -> Result<PracticalWorkspaceSnapshot> {
+        if let Some(file) = generated
+            .files
+            .iter()
+            .find(|file| file.path == INTERVIEW_ANSWERS_FILE_PATH)
+        {
+            if request.kind != LearningPracticalActivityKind::Interview
+                || file.role != PracticalFileRole::Check
+                || file.editable
+            {
+                return Err(invalid(
+                    "Interview answer guides must remain private and read-only.",
+                ));
+            }
+            let answers: InterviewAnswerGuides = decode(&file.content)?;
+            let plan_file = generated
+                .files
+                .iter()
+                .find(|file| file.path == INTERVIEW_PLAN_FILE_PATH)
+                .ok_or_else(|| invalid("Interview answer guides require a saved plan."))?;
+            answers.validate_plan(&decode::<LearningInterviewPlanDto>(&plan_file.content)?)?;
+            if answers.cited_versions().any(|version| {
+                !generated
+                    .source_version_ids
+                    .iter()
+                    .any(|saved| saved == version)
+            }) {
+                return Err(invalid(
+                    "Interview answer evidence must be frozen with the activity.",
+                ));
+            }
+        }
         if request.builtin_runtime.is_some() && request.runtime_profile_id.is_some() {
             return Err(invalid("Choose one execution environment for an activity."));
         }
@@ -319,10 +353,20 @@ impl LearningPracticalRepository {
         .await
         .map_err(db)?;
         let mut interview_plan = None;
+        let mut interview_answers = None;
         let mut files = Vec::new();
         for file in file_rows {
             let path: String = file.get("path");
             let content: String = file.get("content");
+            if path == INTERVIEW_ANSWERS_FILE_PATH {
+                if file.get::<String, _>("role") != "check" || file.get::<i64, _>("editable") != 0 {
+                    return Err(invalid(
+                        "Interview answer guides must use hidden, read-only storage.",
+                    ));
+                }
+                interview_answers = Some(decode::<InterviewAnswerGuides>(&content)?);
+                continue;
+            }
             if path == crate::features::learning::practical_generation::INTERVIEW_PLAN_FILE_PATH {
                 interview_plan = Some(
                     serde_json::from_str::<LearningInterviewPlanDto>(&content).map_err(
@@ -340,6 +384,13 @@ impl LearningPracticalRepository {
                 content_sha256: file.get("content_sha256"),
                 editable: file.get::<i64, _>("editable") != 0,
             });
+        }
+        if let Some(answers) = &interview_answers {
+            answers.validate_plan(
+                interview_plan
+                    .as_ref()
+                    .ok_or_else(|| invalid("Interview answer guides have no saved plan."))?,
+            )?;
         }
         Ok(InternalActivitySnapshot {
             id: row.get("id"),
@@ -380,6 +431,7 @@ impl LearningPracticalRepository {
                 .transpose()?,
             files,
             interview_plan,
+            interview_answers,
             revision: row.get("revision"),
             generator_model: row.get("generator_model"),
         })

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
@@ -9,6 +9,7 @@ import { toast } from '@/stores/toastStore';
  * lands in, defaulting to the open conversation's, and the import itself.
  */
 export function useSourceUrlImport(importableUrl: string | null, activeConversationId: string | null) {
+  const api = useApi();
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
@@ -56,7 +57,7 @@ export function useSourceUrlImport(importableUrl: string | null, activeConversat
 
     setIsImportingUrl(true);
     try {
-      const result = await VaultAPI.ingestWebUrl(importableUrl, {
+      const result = await api.ingestWebUrl(importableUrl, {
         spaceId: scopeId,
         conversationId,
       });
@@ -72,7 +73,7 @@ export function useSourceUrlImport(importableUrl: string | null, activeConversat
           label: 'Open',
           onClick: () => {
             void (async () => {
-              const openResult = await VaultAPI.openFileById(imported.documentId);
+              const openResult = await api.openFileById(imported.documentId);
               if (!openResult.ok) {
                 toast.error("Saved, but couldn't open", {
                   message: openResult.error,

@@ -8,6 +8,9 @@ use crate::features::learning::{
     repository::LearningRepository,
 };
 
+#[path = "interview_research_live_tests.rs"]
+mod interview_research_live_tests;
+
 #[test]
 fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
     let run_id = id();

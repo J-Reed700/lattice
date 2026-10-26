@@ -199,6 +199,8 @@ struct InternalActivitySnapshot {
     files: Vec<InternalActivityFile>,
     #[serde(default)]
     pub interview_plan: Option<LearningInterviewPlanDto>,
+    #[serde(default)]
+    interview_answers: Option<super::interview_answers::InterviewAnswerGuides>,
     revision: i64,
     generator_model: String,
 }

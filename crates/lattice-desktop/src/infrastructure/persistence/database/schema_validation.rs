@@ -160,12 +160,24 @@ mod tests {
             "idx_chunks_document", // Updated to match actual schema
             "idx_documents_file_path",
             "idx_embeddings_chunk", // Updated to match actual schema
-            "idx_watch_folders_path",
+            "idx_documents_status_updated",
         ];
 
         for idx in &required_indexes {
             assert!(indexes.contains(&idx.to_string()), "Missing index: {}", idx);
         }
+
+        // The UNIQUE path constraint provides the lookup index; a second
+        // explicitly named index only adds write and storage overhead.
+        let plan: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as("EXPLAIN QUERY PLAN SELECT id FROM watch_folders WHERE path = ?")
+                .bind("/example")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(plan.iter().any(|row| row
+            .3
+            .contains("SEARCH watch_folders USING INDEX sqlite_autoindex_watch_folders")));
     }
 
     #[tokio::test]

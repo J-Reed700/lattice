@@ -8,7 +8,7 @@ import { useEffect } from 'react';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
-import { VaultAPI } from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { toast } from '@/stores/toastStore';
 
 import { useVaultImportStore } from '../stores/vaultImportStore';
@@ -16,6 +16,7 @@ import { useVaultImportStore } from '../stores/vaultImportStore';
 const RESCAN_THROTTLE_MS = 2000;
 
 export function useVaultFocusRescan(): void {
+  const api = useApi();
   useEffect(() => {
     let mounted = true;
     let unlisten: (() => void) | null = null;
@@ -28,7 +29,7 @@ export function useVaultFocusRescan(): void {
       }
       lastRescanAt = now;
 
-      const result = await VaultAPI.rescanVault();
+      const result = await api.rescanVault();
       if (!result.ok) {
         console.warn('[useVaultFocusRescan] rescan failed:', result.error);
         return;
@@ -77,5 +78,5 @@ export function useVaultFocusRescan(): void {
       mounted = false;
       unlisten?.();
     };
-  }, []);
+  }, [api]);
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore, useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { conversationKeys, type ConversationListParams } from '@/shared/conversations/conversationKeys';
@@ -24,6 +25,7 @@ export { conversationKeys } from '@/shared/conversations/conversationKeys';
 export { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS } from './useConversationActions';
 
 export function useConversationsController(): ConversationsState {
+  const api = useApi();
   const queryClient = useQueryClient();
   const lifecycle = useMemo(createConversationLifecycleRegistry, []);
   const addRequestedId = useCallback((
@@ -57,22 +59,22 @@ export function useConversationsController(): ConversationsState {
     searchQuery: ui.searchQuery,
   }), [ui.filterMode, ui.searchQuery, ui.selectedSpaceId]);
 
-  const spacesQuery = useQuery(spacesQueryOptions());
+  const spacesQuery = useQuery(spacesQueryOptions(api));
   const conversationsQuery = useQuery({
     queryKey: conversationKeys.list(listParams),
-    queryFn: () => fetchConversationList(listParams),
+    queryFn: () => fetchConversationList(listParams, api),
     staleTime: 15_000,
   });
   const activeId = ui.activeConversationId;
   const detailQuery = useQuery({
     queryKey: conversationKeys.detail(activeId ?? ''),
-    queryFn: () => fetchConversationDetail(activeId!),
+    queryFn: () => fetchConversationDetail(activeId!, api),
     enabled: Boolean(activeId),
     staleTime: 30_000,
   });
   const messagesQuery = useQuery({
     queryKey: conversationKeys.messages(activeId ?? ''),
-    queryFn: () => fetchMessages(activeId!),
+    queryFn: () => fetchMessages(activeId!, api),
     enabled: Boolean(activeId),
     staleTime: 10_000,
   });
@@ -86,7 +88,7 @@ export function useConversationsController(): ConversationsState {
   }, [activeId, messagesQuery.data]);
   const bookmarksQuery = useQuery({
     queryKey: conversationKeys.bookmarks(activeId ?? ''),
-    queryFn: () => fetchBookmarks(activeId!),
+    queryFn: () => fetchBookmarks(activeId!, undefined, api),
     enabled: Boolean(activeId),
     staleTime: 10_000,
   });
@@ -106,21 +108,21 @@ export function useConversationsController(): ConversationsState {
   const linkedQueries = useQueries({
     queries: linkedIds.map(id => ({
       queryKey: conversationKeys.linkedDocuments(id),
-      queryFn: () => fetchLinkedDocuments(id),
+      queryFn: () => fetchLinkedDocuments(id, api),
       staleTime: 10_000,
     })),
   });
   const webSourceQueries = useQueries({
     queries: webSourceIds.map(id => ({
       queryKey: conversationKeys.webSources(id),
-      queryFn: () => fetchWebSources(id),
+      queryFn: () => fetchWebSources(id, api),
       staleTime: 10_000,
     })),
   });
   const membershipQueries = useQueries({
     queries: membershipIds.map(id => ({
       queryKey: conversationKeys.memberships(id),
-      queryFn: () => fetchMemberships(id),
+      queryFn: () => fetchMemberships(id, api),
       staleTime: 10_000,
     })),
   });

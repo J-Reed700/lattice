@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import { describeFailure } from '@/lib/errorHandling';
 import type { HfTokenStatus } from '@/types/api/credentials';
 
@@ -14,10 +14,11 @@ export const HF_TOKEN_QUERY_KEY = ['huggingface', 'token-status'] as const;
  * `get_huggingface_token` command exists but must not be called from the UI.
  */
 export function useHuggingFaceTokenStatusQuery() {
+  const api = useApi();
   return useQuery<HfTokenStatus>({
     queryKey: HF_TOKEN_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.getHuggingFaceTokenStatus();
+      const result = await api.getHuggingFaceTokenStatus();
       if (!result.ok) {
         throw new Error(describeFailure(result));
       }
@@ -36,11 +37,12 @@ export function useHuggingFaceTokenStatusQuery() {
  * React Query drops the mutation variables too.
  */
 export function useSetHuggingFaceTokenMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, string>({
     mutationFn: async (token) => {
-      const result = await VaultAPI.setHuggingFaceToken(token);
+      const result = await api.setHuggingFaceToken(token);
       if (!result.ok) {
         throw new Error(describeFailure(result));
       }
@@ -55,11 +57,12 @@ export function useSetHuggingFaceTokenMutation() {
 }
 
 export function useDeleteHuggingFaceTokenMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, void>({
     mutationFn: async () => {
-      const result = await VaultAPI.deleteHuggingFaceToken();
+      const result = await api.deleteHuggingFaceToken();
       if (!result.ok) {
         throw new Error(describeFailure(result));
       }

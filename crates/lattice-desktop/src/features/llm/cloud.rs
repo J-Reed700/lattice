@@ -393,11 +393,7 @@ impl CloudLlm {
                 return Ok(response);
             }
             // Avoid echoing provider bodies which can contain submitted user text.
-            let error = AppError::Network(format!(
-                "{} API returned HTTP {}",
-                self.provider_name(),
-                status
-            ));
+            let error = status_error(&self.provider, self.provider_name(), status);
             if attempt == 2 || !(status.as_u16() == 429 || status.is_server_error()) {
                 return Err(error);
             }
@@ -734,6 +730,38 @@ fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&
 
 #[cfg(test)]
 mod tests;
+
+/// A provider's refusal, typed by what waiting can change. A rejected key or
+/// an unknown model is a setting to fix: as a network error the job runtime
+/// would wait it out forever behind "Connection interrupted". A rate limit or
+/// a server error is an outage and stays one; any other refusal would be
+/// refused again.
+fn status_error(provider: &LLMProvider, name: &str, status: reqwest::StatusCode) -> AppError {
+    let shown = match provider {
+        LLMProvider::Openai => "OpenAI",
+        LLMProvider::Anthropic => "Anthropic",
+        LLMProvider::Google => "Google",
+        _ => name,
+    };
+    match status.as_u16() {
+        401 => AppError::InvalidConfig(format!(
+            "{shown} rejected the saved API key (HTTP {status}): replace it in Settings → AI"
+        )),
+        403 => AppError::InvalidConfig(format!(
+            "{shown} refused the saved API key access to this model (HTTP {status}): check the \
+             key's permissions, or choose another model in Settings → AI"
+        )),
+        404 => AppError::InvalidConfig(format!(
+            "{shown} does not offer the configured model (HTTP {status}): choose another in \
+             Settings → AI"
+        )),
+        408 | 429 => AppError::Network(format!("{name} API returned HTTP {status}")),
+        _ if status.is_server_error() => {
+            AppError::Network(format!("{name} API returned HTTP {status}"))
+        }
+        _ => AppError::ModelRejected(format!("{shown} rejected this request (HTTP {status}).")),
+    }
+}
 
 #[cfg(test)]
 mod transport_tests;

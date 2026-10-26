@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useApi } from '@/contexts/ApiContext';
 import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
 import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
@@ -48,8 +49,9 @@ export function ModelSetupModal({
   onComplete,
   onDismiss,
 }: ModelSetupModalProps) {
+  const api = useApi();
   // Read again on every opening; what was read last stays up meanwhile.
-  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: open });
+  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(api), enabled: open });
   const status = statusQuery.data ?? null;
   const loading = statusQuery.isFetching;
   const error = statusQuery.isError ? getErrorMessage(statusQuery.error) : null;

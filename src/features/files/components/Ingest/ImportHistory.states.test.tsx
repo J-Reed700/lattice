@@ -4,7 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import VaultAPI from '@/lib/api';
+
 import { ImportHistory } from './ImportHistory';
+
 
 const api = vi.hoisted(() => ({ listAllBatchJobs: vi.fn(), getBatchJobDetails: vi.fn(), retryFailedItems: vi.fn(), deleteBatchJob: vi.fn(), open: vi.fn() }));
 vi.mock('@/utils/batchHistory', () => api);
@@ -81,7 +84,7 @@ describe('ImportHistory states', () => {
     const onRefresh = vi.fn();
     renderHistory(<ImportHistory onRefresh={onRefresh} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Retry all failed' }));
-    await waitFor(() => expect(api.retryFailedItems).toHaveBeenCalledWith('job', undefined, undefined));
+    await waitFor(() => expect(api.retryFailedItems).toHaveBeenCalledWith('job', undefined, undefined, VaultAPI));
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 

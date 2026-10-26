@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type ErrorSeverity = 'error' | 'warning' | 'info';
 
@@ -72,7 +72,8 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
 
   // Trigger entrance animation
   useEffect(() => {
-    setTimeout(() => setIsVisible(true), 10);
+    const timeout = setTimeout(() => setIsVisible(true), 10);
+    return () => clearTimeout(timeout);
   }, []);
 
   useEffect(() => {
@@ -85,6 +86,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
       setProgress(remaining);
 
       if (remaining === 0) {
+        clearInterval(interval);
         onDismiss(error.id);
       }
     }, 50);
@@ -116,6 +118,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
 
             {error.action && (
               <button
+                type="button"
                 onClick={() => {
                   error.action?.onClick();
                   onDismiss(error.id);
@@ -128,6 +131,8 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
           </div>
 
           <button
+            type="button"
+            aria-label="Dismiss error"
             onClick={() => onDismiss(error.id)}
             className={`shrink-0 ${styles.icon} hover:opacity-70 transition-opacity duration-fast`}
           >
@@ -192,7 +197,7 @@ export function ErrorToastContainer({
 export function useErrorToast() {
   const [errors, setErrors] = useState<ToastError[]>([]);
 
-  const showError = (
+  const showError = useCallback((
     message: string,
     options?: {
       severity?: ErrorSeverity;
@@ -212,15 +217,15 @@ export function useErrorToast() {
 
     setErrors((prev) => [...prev, error]);
     return error.id;
-  };
+  }, []);
 
-  const dismissError = (id: string) => {
+  const dismissError = useCallback((id: string) => {
     setErrors((prev) => prev.filter((error) => error.id !== id));
-  };
+  }, []);
 
-  const clearAll = () => {
+  const clearAll = useCallback(() => {
     setErrors([]);
-  };
+  }, []);
 
   return {
     errors,

@@ -9,7 +9,10 @@ import type { SpaceDocument } from '@/types';
 
 const listSpaceDocuments = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { listSpaceDocuments } }));
+vi.mock('@/lib/api', () => {
+  const mockApi = { listSpaceDocuments };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 function renderWithClient<Result, Props>(hook: (props: Props) => Result, options?: RenderHookOptions<Props>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

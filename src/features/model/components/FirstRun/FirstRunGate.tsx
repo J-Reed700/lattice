@@ -11,17 +11,19 @@ import { useEffect, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useFirstRunDismissal } from '@/features/model/hooks/useFirstRunDismissal';
 import { firstRunStatusQueryOptions } from '@/features/model/hooks/useFirstRunSetup';
 
 import { ModelSetupModal } from './ModelSetupModal';
 
 export function FirstRunGate() {
+  const api = useApi();
   const { dismissed, isPending, dismiss } = useFirstRunDismissal();
   // `undefined` means the settings read hasn't landed (or failed). Staying
   // quiet is the right failure mode — the catalog is in Settings either way,
   // and so is a failed status check.
-  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(), enabled: !isPending && dismissed === false });
+  const statusQuery = useQuery({ ...firstRunStatusQueryOptions(api), enabled: !isPending && dismissed === false });
   const statusError = statusQuery.error;
   useEffect(() => {
     if (statusError) console.error('Failed to check first-run status:', statusError.message);

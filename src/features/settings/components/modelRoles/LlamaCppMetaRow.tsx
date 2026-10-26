@@ -24,13 +24,10 @@ import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge, RoleToggle } from './RoleButton';
-import { roleDescriptor, type RoleId } from './roleConfig';
+import { CONNECTION_ROLES, roleDescriptor, type ConnectionRole, type RoleId } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
 const NOT_CONFIGURED = 'Set a server URL and model in connection settings first';
-
-type ConnectionRole = Exclude<RoleId, 'embedding'>;
-const CONNECTION_ROLES: ReadonlyArray<ConnectionRole> = ['chat', 'utility', 'learning', 'verifier'];
 
 export function LlamaCppMetaRow() {
   const { data: settings } = useSettingsQuery();

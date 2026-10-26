@@ -1,7 +1,8 @@
 //! Planned searches are typed needs: each states its kind, takes a subject
 //! and a newer-than date only from the gap it serves, keeps to a host only
-//! when the planner set one, and reaches the source finder with every field
-//! it was planned with.
+//! when the planner named one (in `site`, or as `site:` operators in the
+//! query, which become one search per site), and reaches the source finder
+//! with every field it was planned with.
 
 use std::sync::Mutex;
 
@@ -26,6 +27,20 @@ fn scripted(outputs: Vec<String>) -> ScriptedModel {
     }
 }
 
+/// A planned need that stands for one search, as that search.
+trait One {
+    fn one(self) -> Option<PlannedNeed>;
+}
+
+impl One for PlannedNeed {
+    fn one(self) -> Option<PlannedNeed> {
+        self.searches().map(|searches| {
+            assert_eq!(searches.len(), 1, "one search: {searches:?}");
+            searches.into_iter().next().unwrap()
+        })
+    }
+}
+
 fn need(query: &str, kind: NeedKind) -> PlannedNeed {
     PlannedNeed {
         kind,
@@ -40,15 +55,15 @@ fn a_need_is_checked_against_what_a_search_allows() {
         ecosystem: Some(" pypi ".into()),
         ..need("  requests timeout  ", NeedKind::Package)
     }
-    .checked()
+    .one()
     .unwrap();
     assert_eq!(trimmed.query, "requests timeout");
     assert_eq!(trimmed.subject, None);
     assert_eq!(trimmed.ecosystem.as_deref(), Some("pypi"));
 
-    assert_eq!(need("ab", NeedKind::Web).checked(), None, "too short");
+    assert_eq!(need("ab", NeedKind::Web).one(), None, "too short");
     assert_eq!(
-        need("an archived page", NeedKind::Archive).checked(),
+        need("an archived page", NeedKind::Archive).one(),
         None,
         "an archived copy starts from an address"
     );
@@ -56,7 +71,7 @@ fn a_need_is_checked_against_what_a_search_allows() {
         ecosystem: Some("cpan".into()),
         ..need("Moose", NeedKind::Package)
     };
-    assert_eq!(unknown_registry.checked(), None);
+    assert_eq!(unknown_registry.one(), None);
 }
 
 #[test]
@@ -68,13 +83,13 @@ fn rewordings_and_dates_are_checked_like_the_query() {
         as_of: Some(" 2019-03-01 ".into()),
         ..need("upload limit in 2019", NeedKind::Web)
     }
-    .checked()
+    .one()
     .unwrap();
     assert_eq!(dated.identifier.as_deref(), Some(page));
     assert_eq!(dated.alternatives, ["request size limit"]);
     assert_eq!(dated.as_of.as_deref(), Some("2019-03-01"));
 
-    let refused = |need: PlannedNeed| need.checked().is_none();
+    let refused = |need: PlannedNeed| need.one().is_none();
     let base = || need("upload limit", NeedKind::Web);
     assert!(refused(PlannedNeed {
         alternatives: vec!["ok rewording".into(), "ab".into()],
@@ -117,9 +132,115 @@ fn a_known_works_cited_sources_can_be_planned() {
         identifier: Some("10.48550/arXiv.1706.03762".into()),
         ..need("10.48550/arXiv.1706.03762", NeedKind::Leads)
     };
-    assert_eq!(references.clone().checked(), Some(references));
+    assert_eq!(references.clone().one(), Some(references));
     let article = need("Transformer (deep learning architecture)", NeedKind::Leads);
-    assert!(article.checked().is_some());
+    assert!(article.one().is_some());
+}
+
+#[test]
+fn a_site_operator_in_the_query_is_the_search_scope() {
+    let scoped = need(
+        "site:docs.anthropic.com tool use input schema",
+        NeedKind::OfficialDocs,
+    )
+    .one()
+    .unwrap();
+    assert_eq!(scoped.query, "tool use input schema");
+    assert_eq!(scoped.site.as_deref(), Some("docs.anthropic.com"));
+}
+
+#[test]
+fn a_query_naming_several_sites_is_one_search_per_site() {
+    let searches = PlannedNeed {
+        alternatives: vec!["site:platform.openai.com tool result error loop".into()],
+        ..need(
+            "site:platform.openai.com OR site:docs.anthropic.com function calling error handling",
+            NeedKind::OfficialDocs,
+        )
+    }
+    .searches()
+    .unwrap();
+    let scoped: Vec<_> = searches
+        .iter()
+        .map(|search| {
+            (
+                search.query.as_str(),
+                search.site.as_deref(),
+                search.alternatives.as_slice(),
+            )
+        })
+        .collect();
+    let rewording = ["tool result error loop".to_owned()];
+    assert_eq!(
+        scoped,
+        [
+            (
+                "function calling error handling",
+                Some("platform.openai.com"),
+                rewording.as_slice()
+            ),
+            (
+                "function calling error handling",
+                Some("docs.anthropic.com"),
+                rewording.as_slice()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_search_covers_the_addresses_under_its_site() {
+    let manual = PlannedNeed {
+        site: Some("docs.example.org/manual".into()),
+        ..need("random assignment", NeedKind::Web)
+    };
+    for inside in [
+        "https://docs.example.org/manual",
+        "https://docs.example.org/manual/chapter.html",
+        "https://archive.docs.example.org/manual/chapter",
+    ] {
+        assert!(manual.covers(inside), "{inside}");
+    }
+    for outside in [
+        "https://en.wikipedia.org/wiki/Manual",
+        "https://docs.example.org.attacker.test/manual",
+        "https://fakedocs.example.org/manual",
+        "https://docs.example.org/manuals",
+        "https://docs.example.org/other",
+        "not a URL",
+    ] {
+        assert!(!manual.covers(outside), "{outside}");
+    }
+    assert!(need("random assignment", NeedKind::Web).covers("https://anywhere.test/"));
+}
+
+#[test]
+fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
+    let set = PlannedNeed {
+        site: Some(" https://Learn.Microsoft.com/en-us/dotnet/ ".into()),
+        ..need(
+            "site:stackoverflow.com Span<T> async",
+            NeedKind::OfficialDocs,
+        )
+    }
+    .one()
+    .unwrap();
+    assert_eq!(set.query, "Span<T> async");
+    assert_eq!(
+        set.site.as_deref(),
+        Some("learn.microsoft.com/en-us/dotnet")
+    );
+
+    let not_an_address = PlannedNeed {
+        site: Some("the official docs".into()),
+        ..need("Span<T> async", NeedKind::OfficialDocs)
+    };
+    assert_eq!(not_an_address.searches(), None);
+    assert_eq!(
+        need("site:react.dev ab", NeedKind::Web).searches(),
+        None,
+        "the terms left are too short to search"
+    );
 }
 
 #[test]

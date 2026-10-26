@@ -2,7 +2,7 @@ import { useContext } from 'react';
 
 import { QueryClient, QueryClientContext, useMutation, useQuery } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { KeyServiceDto, SourcesStatusDto } from '@/lib/bindings';
 
 export const SOURCES_STATUS_QUERY_KEY = ['sources-status'] as const;
@@ -21,12 +21,13 @@ function useClient() {
  * moves as searches run, so it is read fresh whenever the tab opens.
  */
 export function useSourcesStatus() {
+  const api = useApi();
   const queryClient = useClient();
   return useQuery<SourcesStatusDto>(
     {
       queryKey: SOURCES_STATUS_QUERY_KEY,
       queryFn: async () => {
-        const result = await VaultAPI.getSourcesStatus();
+        const result = await api.getSourcesStatus();
         if (!result.ok) throw new Error(result.error);
         return result.data;
       },
@@ -47,13 +48,14 @@ export function useRefreshSourcesStatus() {
  * with the new status, which says only whether a key is stored.
  */
 export function useSourceKeyMutations() {
+  const api = useApi();
   const queryClient = useClient();
   const settle = (status: SourcesStatusDto) =>
     queryClient.setQueryData(SOURCES_STATUS_QUERY_KEY, status);
   const save = useMutation<SourcesStatusDto, Error, { service: KeyServiceDto; key: string }>(
     {
       mutationFn: async ({ service, key }) => {
-        const result = await VaultAPI.saveSourceKey(service, key);
+        const result = await api.saveSourceKey(service, key);
         if (!result.ok) throw new Error(result.error);
         return result.data;
       },
@@ -64,7 +66,7 @@ export function useSourceKeyMutations() {
   const remove = useMutation<SourcesStatusDto, Error, KeyServiceDto>(
     {
       mutationFn: async (service) => {
-        const result = await VaultAPI.removeSourceKey(service);
+        const result = await api.removeSourceKey(service);
         if (!result.ok) throw new Error(result.error);
         return result.data;
       },

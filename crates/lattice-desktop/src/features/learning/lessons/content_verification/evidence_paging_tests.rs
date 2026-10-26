@@ -31,6 +31,11 @@ pub(super) struct PagingModel {
     pace: Option<lattice_core::application::ports::llm_port::Pace>,
     /// Output tokens it reports per answer.
     answer_tokens: u64,
+    /// A host whose pages it judges a vendor's institutional documentation
+    /// when asked for a source's standing.
+    institutional_host: Option<&'static str>,
+    /// Standing judgements it was asked for on that host.
+    pub(super) standing_requests: AtomicUsize,
 }
 
 impl PagingModel {
@@ -44,7 +49,15 @@ impl PagingModel {
             request_sizes: Mutex::new(Vec::new()),
             pace: None,
             answer_tokens: 0,
+            institutional_host: None,
+            standing_requests: AtomicUsize::new(0),
         }
+    }
+
+    /// Judges pages on `host` a vendor's institutional documentation.
+    pub(super) fn judging_institutional(mut self, host: &'static str) -> Self {
+        self.institutional_host = Some(host);
+        self
     }
 
     /// A backend that reports its pace and `answer_tokens` per answer, so a
@@ -62,6 +75,20 @@ impl PagingModel {
     }
 
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if let Some(host) = self.institutional_host {
+            if prompt.contains("Source signals and content evidence") && prompt.contains(host) {
+                self.standing_requests.fetch_add(1, Ordering::SeqCst);
+                return Ok(serde_json::json!({
+                    "standing": "institutional",
+                    "publisher": { "name": "Example Vendor", "kind": "vendor" },
+                    "editorial": "editorial",
+                    "nature": "documentation",
+                    "flags": [],
+                    "reasons": [{ "code": "publisher_metadata", "text": "The vendor's own documentation." }],
+                })
+                .to_string());
+            }
+        }
         if let Some(rest) = prompt.strip_prefix("Source passages:\n") {
             let (shown, claim) = rest.split_once("\n\nClaim: ").unwrap_or_default();
             self.claims

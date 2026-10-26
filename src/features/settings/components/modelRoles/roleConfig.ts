@@ -7,13 +7,13 @@
  * - `embedding` — semantic vector generator for search
  * - `learning`  — the model every learning job runs on; never a chat's
  * - `verifier`  — audits a lesson's claims before it publishes, for courses
- *                 that opt in; the one role that may be a cloud model
+ *                 that opt in
  *
  * Adding a role is a one-object append here: every consumer picks it up.
- * Chat, utility and embedding live as flags on the model rows; Learning and
- * Verifier live in Settings as model references, which can name an Ollama
- * tag or a llama.cpp model as well as a downloaded file (and, for the
- * Verifier, a cloud model).
+ * Downloaded Chat, Utility and Embedding assignments live as model row flags.
+ * Connected Chat models use the provider setting; connected Utility models,
+ * Learning and Verifier use model references. Every connection offers the
+ * same four language-model roles.
  */
 
 import type { LLMSettings } from '@/types/api/settings';
@@ -21,6 +21,9 @@ import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow, sameModelRef } from '@/utils/chatModelSelection';
 
 export type RoleId = 'chat' | 'utility' | 'embedding' | 'learning' | 'verifier';
+
+export type ConnectionRole = Exclude<RoleId, 'embedding'>;
+export const CONNECTION_ROLES: ReadonlyArray<ConnectionRole> = ['chat', 'utility', 'learning', 'verifier'];
 
 export interface RoleDescriptor {
   id: RoleId;
@@ -51,7 +54,7 @@ export function isChatModelSelected(
 
 /**
  * The row is the utility model. A utility reference in Settings (the
- * llama.cpp connection) wins over the row flag, so the flag counts only
+ * llama.cpp or a cloud connection) wins over the row flag, so the flag counts only
  * while no reference is saved.
  */
 export function isUtilityModel(model: DownloadedModel, settings: LLMSettings | undefined): boolean {
@@ -81,7 +84,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Chat)',
     isActive: (model, settings) => isChatModelSelected(model, settings?.provider),
-    allowedTypes: ['language_model', 'chat'],
+    allowedTypes: ['language_model', 'chat', 'cloud'],
     hint: 'The main model that answers the user.',
   },
   {
@@ -91,7 +94,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Utility)',
     isActive: isUtilityModel,
-    allowedTypes: ['language_model', 'chat'],
+    allowedTypes: ['language_model', 'chat', 'cloud'],
     hint: 'Fast small model for query expansion and routing (HyDE).',
   },
   {
@@ -111,7 +114,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Learning)',
     isActive: isLearningModel,
-    allowedTypes: ['language_model', 'chat'],
+    allowedTypes: ['language_model', 'chat', 'cloud'],
     hint: 'Prepares lessons, outlines, practice and study decks. Needs a large context window.',
   },
   {
@@ -122,7 +125,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     activeLabel: 'Active (Verifier)',
     isActive: isVerifierModel,
     allowedTypes: ['language_model', 'chat', 'cloud'],
-    hint: 'Audits every claim of a lesson against its cited passages before it publishes. May be a cloud model.',
+    hint: 'Audits every claim of a lesson against its cited passages before it publishes.',
   },
 ];
 

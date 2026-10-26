@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { CardText } from '@/features/learning/recall/CardText';
 import { FlashcardSource } from '@/features/learning/recall/flashcards/FlashcardSource';
 import { useReviewFlashcard } from '@/features/learning/recall/flashcards/useFlashcards';
 import type { StudyCardDto, StudyRating } from '@/lib/bindings';
@@ -50,7 +51,7 @@ export function FlashcardSession({ cards, mode, title, onClose }: { cards: Study
     <PageHeader title={mode === 'quiz' ? 'Practice quiz' : 'Flashcards'} meta={`${index + 1} of ${sessionCards.length} · ${title}`} actions={<Button variant="ghost" disabled={review.isPending} onClick={onClose}>End session</Button>} />
     <div className="mb-8 h-1 overflow-hidden rounded-full bg-surface-raised" role="progressbar" aria-label="Session progress" aria-valuenow={index} aria-valuemin={0} aria-valuemax={sessionCards.length}><div className="h-full bg-accent transition-all duration-fast" style={{ width: `${index / sessionCards.length * 100}%` }} /></div>
     {revealed && <p className="mb-4 text-xs text-text-muted">{card.topic}</p>}
-    <h2 className="font-serif text-2xl leading-relaxed text-text-primary">{card.question}</h2>
+    <div role="heading" aria-level={2} className="font-serif text-2xl leading-relaxed text-text-primary"><CardText text={card.question} /></div>
     {mode === 'quiz' && <fieldset className="mt-8 space-y-2" disabled={review.isPending || revealed}>
       <legend className="sr-only">Choose an answer</legend>
       {card.options.map((option, i) => <label key={i} className={cn('flex cursor-pointer items-start gap-3 rounded-md border p-4 text-sm leading-relaxed text-text-primary', selected === i ? 'border-accent bg-accent-muted' : 'border-border-subtle', revealed && i === card.correctIndex && 'border-accent')}>
@@ -60,8 +61,8 @@ export function FlashcardSession({ cards, mode, title, onClose }: { cards: Study
     </fieldset>}
     {revealed && <div className="mt-8 border-t border-border-subtle pt-6" aria-live="polite">
       <h3 className="mb-3 text-sm font-medium text-text-secondary">{mode === 'quiz' ? selected === card.correctIndex ? 'Correct' : 'Review this answer' : 'Answer'}</h3>
-      {mode === 'flashcard' && <p className="mb-4 text-lg leading-relaxed text-text-primary">{card.answer}</p>}
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{card.explanation}</p>
+      {mode === 'flashcard' && <CardText className="mb-4 text-lg leading-relaxed text-text-primary" text={card.answer} />}
+      {card.explanation && <CardText className="text-sm leading-relaxed text-text-secondary" text={card.explanation} />}
       <FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} />
     </div>}
     {review.isError && <p role="alert" className="mt-4 text-sm text-danger-fg">Couldn’t save this review: {review.error.message}</p>}

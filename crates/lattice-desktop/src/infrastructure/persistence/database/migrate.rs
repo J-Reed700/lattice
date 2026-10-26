@@ -40,6 +40,10 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             AppError::Database(format!("Migration failed: {}", error_text))
         })?;
 
+    // Migrations may create or change indexes; let SQLite refresh only the
+    // planner statistics that its bounded optimizer considers useful.
+    sqlx::query("PRAGMA optimize").execute(pool).await?;
+
     tracing::info!("All migrations completed successfully");
     Ok(())
 }

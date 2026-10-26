@@ -24,7 +24,7 @@ const drop = vi.hoisted(() => ({
 const loadConversationLinkedDocuments = vi.hoisted(() => vi.fn());
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
 
-vi.mock('@/lib/api', () => ({ VaultAPI: api }));
+vi.mock('@/lib/api', () => ({ VaultAPI: api, default: api }));
 vi.mock('@/features/chat/model/attachmentImportPoll', () => ({ pollAttachmentImport: poll }));
 vi.mock('@/features/chat/hooks/useChatFileDrop', () => ({
   useChatFileDrop: (_ref: unknown, onDrop: (paths: string[]) => void, stageable: (path: string) => boolean) => {

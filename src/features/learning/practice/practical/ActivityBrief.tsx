@@ -31,6 +31,7 @@ export function ActivityBrief({
   activeActivity: LearningPracticalActivityDto;
 }) {
   const companyUrl = websiteLink(activeActivity.interviewPlan?.companyUrl);
+  const isInterview = activeActivity.kind === "interview" || Boolean(activeActivity.interviewPlan);
   return (
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -48,7 +49,7 @@ export function ActivityBrief({
             {activeActivity.title}
           </h3>
           <div className="mt-3 text-sm leading-7 text-text-secondary">
-            <TiptapViewer content={activeActivity.brief} />
+            <TiptapViewer content={activeActivity.brief} images={isInterview ? [] : undefined} />
           </div>
         </div>
         <span
@@ -115,7 +116,7 @@ export function ActivityBrief({
               Company engineering &amp; culture research
             </div>
             <div className="mt-2 text-sm leading-6 text-text-secondary">
-              <TiptapViewer content={activeActivity.interviewPlan.companySummary} />
+              <TiptapViewer content={activeActivity.interviewPlan.companySummary} images={[]} />
             </div>
           </div>
 
@@ -136,7 +137,7 @@ export function ActivityBrief({
                       </span>
                     </div>
                     <div className="mt-2 text-sm font-semibold text-text-primary">
-                      <TiptapViewer content={question.question} />
+                      <TiptapViewer content={question.question} images={[]} />
                     </div>
                     <div className="mt-1 text-xs leading-5 text-text-secondary">
                       <span className="font-semibold text-text-primary">

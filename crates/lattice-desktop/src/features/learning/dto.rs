@@ -38,11 +38,20 @@ pub enum LearningPreparation {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningBlockKind {
+    /// One core idea's mental model, in plain language.
     Explanation,
+    /// One concrete case of the idea, worked step by step.
     WorkedExample,
+    /// A deceptively similar case beside the idea, and the one feature that
+    /// changes the outcome (learning science lessons §3.2).
+    Contrast,
+    /// A fresh case the learner reasons through and commits an answer to
+    /// before the reasoning below `CHECK_REVEAL` is shown (§3.3).
+    Check,
     GuidedPractice,
     IndependentPractice,
     Recap,
+    /// The learner explains the lesson from memory before the recap (§3.4).
     Reflection,
 }
 /// The role a lesson's own reviewed question played when the lesson was

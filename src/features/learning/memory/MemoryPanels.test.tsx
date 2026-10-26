@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => ({ default: api, VaultAPI: api }));
 vi.mock('@/components/TiptapEditor', () => ({
   TiptapEditor: ({ value, onChange, placeholder, ariaLabel }: { value: string; onChange: (value: string) => void; placeholder?: string; ariaLabel?: string }) => <textarea aria-label={ariaLabel} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />,
+  // Card text renders as Markdown; the test reads its words.
+  TiptapViewer: ({ content }: { content: string }) => <div>{content}</div>,
 }));
 
 const source = { id: 'source-1', title: 'Field guide', url: 'https://example.org/guide', excerpt: 'A source excerpt supporting recall.', acquiredAt: 1_790_000_000_000 };

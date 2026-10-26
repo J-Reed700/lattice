@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { LEARNING_PROGRAMS_KEY, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
-import VaultAPI from '@/lib/api';
+import type VaultAPI from '@/lib/api';
 import type {
   LearningCurriculumRevisionActionRequestDto,
   DiscardLearningCurriculumRevisionRequestDto,
@@ -25,10 +26,11 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
   return result.data;
 }
 export function useLearningPlan(programId: string, preparing = false) {
+  const api = useApi();
   const client = useQueryClient();
   const query = useQuery<LearningPlanDto>({
     queryKey: learningPlanKey(programId),
-    queryFn: async () => unwrap(await VaultAPI.getLearningPlan(programId)),
+    queryFn: async () => unwrap(await api.getLearningPlan(programId)),
     enabled: Boolean(programId),
     staleTime: 3_000,
     refetchInterval: (query) => preparing || query.state.data?.jobs?.some((job) => ['pending', 'running'].includes(job.status)) ? 2_000 : false,
@@ -76,11 +78,35 @@ function usePlanRefreshMutation<TRequest, TResult>(mutation: (request: TRequest)
     },
   });
 }
-export const usePreviewLearningCurriculumRevision = () => usePlanMutation<PreviewLearningCurriculumRevisionRequestDto>(VaultAPI.previewLearningCurriculumRevision);
-export const useAcceptLearningCurriculumRevision = () => usePlanMutation<LearningCurriculumRevisionActionRequestDto>(VaultAPI.acceptLearningCurriculumRevision, true);
-export const useDiscardLearningCurriculumRevision = () => usePlanMutation<DiscardLearningCurriculumRevisionRequestDto>(VaultAPI.discardLearningCurriculumRevision);
-export const useStartLearningDiagnostic = () => usePlanRefreshMutation<StartLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(VaultAPI.startLearningDiagnostic);
-export const useSubmitLearningDiagnostic = () => usePlanRefreshMutation<SubmitLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(VaultAPI.submitLearningDiagnostic);
-export const useSkipLearningDiagnostic = () => usePlanRefreshMutation<SkipLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(VaultAPI.skipLearningDiagnostic);
-export const useCancelLearningGenerationJob = () => usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(VaultAPI.cancelLearningGenerationJob);
-export const useRetryLearningGenerationJob = () => usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(VaultAPI.retryLearningGenerationJob);
+export const usePreviewLearningCurriculumRevision = () => {
+  const api = useApi();
+  return usePlanMutation<PreviewLearningCurriculumRevisionRequestDto>(api.previewLearningCurriculumRevision);
+};
+export const useAcceptLearningCurriculumRevision = () => {
+  const api = useApi();
+  return usePlanMutation<LearningCurriculumRevisionActionRequestDto>(api.acceptLearningCurriculumRevision, true);
+};
+export const useDiscardLearningCurriculumRevision = () => {
+  const api = useApi();
+  return usePlanMutation<DiscardLearningCurriculumRevisionRequestDto>(api.discardLearningCurriculumRevision);
+};
+export const useStartLearningDiagnostic = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<StartLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(api.startLearningDiagnostic);
+};
+export const useSubmitLearningDiagnostic = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<SubmitLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(api.submitLearningDiagnostic);
+};
+export const useSkipLearningDiagnostic = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<SkipLearningDiagnosticRequestDto, LearningDiagnosticAttemptDto>(api.skipLearningDiagnostic);
+};
+export const useCancelLearningGenerationJob = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(api.cancelLearningGenerationJob);
+};
+export const useRetryLearningGenerationJob = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(api.retryLearningGenerationJob);
+};

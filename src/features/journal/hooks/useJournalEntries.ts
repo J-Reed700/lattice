@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import {
   journalEntryPinsKey,
   journalEntryPinsQueryOptions,
   useSetJournalEntryPinnedMutation,
 } from '@/features/journal/api/queries';
 import { useVaultImportStore } from '@/features/vault/stores/vaultImportStore';
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { toast } from '@/stores/toastStore';
 import type { ConversationDto, MessageDto } from '@/types/api/conversation';
@@ -105,11 +106,11 @@ export const journalEntriesKey = (journalSpaceId: string) =>
  * the conversation keys, so any conversation change marks them stale. A failed
  * read is reported at once and keeps what was read before.
  */
-export const journalEntriesQueryOptions = (journalSpaceId: string) =>
+export const journalEntriesQueryOptions = (journalSpaceId: string, api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: journalEntriesKey(journalSpaceId),
     queryFn: async () => {
-      const result = await VaultAPI.listJournalConversations({
+      const result = await api.listJournalConversations({
         journalSpaceId,
         includeArchived: true,
         limit: CONVERSATION_LIMIT,
@@ -133,11 +134,11 @@ export const journalEntryMessagesKey = (conversationId: string) =>
  * again whenever the journal shows them anew. A failed read leaves the entry
  * empty at once rather than retrying.
  */
-export const journalEntryMessagesQueryOptions = (conversationId: string) =>
+export const journalEntryMessagesQueryOptions = (conversationId: string, api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: journalEntryMessagesKey(conversationId),
     queryFn: async () => {
-      const result = await VaultAPI.getConversationMessages(conversationId);
+      const result = await api.getConversationMessages(conversationId);
       if (!result.ok) throw new Error(result.error);
       return result.data.messages.map((m) => normalizeMessage(m));
     },
@@ -171,10 +172,11 @@ export function useJournalEntries(options: {
   journalSpaceId: string | null;
   requestedEntryId: string | null;
 }): UseJournalEntriesResult {
+  const api = useApi();
   const { journalSpaceId, requestedEntryId } = options;
 
   const entriesQuery = useQuery({
-    ...journalEntriesQueryOptions(journalSpaceId ?? ''),
+    ...journalEntriesQueryOptions(journalSpaceId ?? '', api),
     enabled: Boolean(journalSpaceId),
   });
   const entries = journalSpaceId ? entriesQuery.data ?? NO_ENTRIES : NO_ENTRIES;
@@ -186,7 +188,7 @@ export function useJournalEntries(options: {
   const [filter, setFilter] = useState<EntryFilter>('all');
   const queryClient = useQueryClient();
   const pinsQuery = useQuery({
-    ...journalEntryPinsQueryOptions(journalSpaceId ?? ''),
+    ...journalEntryPinsQueryOptions(journalSpaceId ?? '', api),
     enabled: Boolean(journalSpaceId),
   });
   const pinnedIds = useMemo(
@@ -196,7 +198,7 @@ export function useJournalEntries(options: {
   const setEntryPinned = useSetJournalEntryPinnedMutation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedMessagesQuery = useQuery({
-    ...journalEntryMessagesQueryOptions(selectedId ?? ''),
+    ...journalEntryMessagesQueryOptions(selectedId ?? '', api),
     enabled: selectedId !== null,
   });
   const selectedMessages = selectedId ? selectedMessagesQuery.data ?? NO_MESSAGES : NO_MESSAGES;

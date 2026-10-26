@@ -1,7 +1,7 @@
 import { type QueryClient, useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
-import VaultAPI from '@/lib/api';
 import type { GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, UpdateStudyCardRequestDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
@@ -26,30 +26,35 @@ function invalidateDecks(client: QueryClient) {
   return Promise.all([client.invalidateQueries({ queryKey: key }), client.invalidateQueries({ queryKey: ['learning-memory'] })]);
 }
 export function useFlashcardDecks() {
-  return useQuery({ queryKey: [...key, 'decks'], queryFn: () => data(VaultAPI.listStudyDecks()), refetchInterval: 60_000 });
+  const api = useApi();
+  return useQuery({ queryKey: [...key, 'decks'], queryFn: () => data(api.listStudyDecks()), refetchInterval: 60_000 });
 }
 export function useFlashcardDeck(id: string | null) {
-  return useQuery({ queryKey: [...key, 'deck', id], queryFn: () => data(VaultAPI.getStudyDeck(id!)), enabled: Boolean(id) });
+  const api = useApi();
+  return useQuery({ queryKey: [...key, 'deck', id], queryFn: () => data(api.getStudyDeck(id!)), enabled: Boolean(id) });
 }
 export function useFlashcardDocuments() {
-  return useQuery({ queryKey: ['documents', 'study'], queryFn: () => data(VaultAPI.listAllDocuments(10000)), refetchInterval: 15_000 });
+  const api = useApi();
+  return useQuery({ queryKey: ['documents', 'study'], queryFn: () => data(api.listAllDocuments(10000)), refetchInterval: 15_000 });
 }
 export function useGenerateFlashcardDeck() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation({
     mutationKey: documentGenerationKey,
     gcTime: Infinity,
-    mutationFn: (request: GenerateStudyDeckRequestDto) => data(VaultAPI.generateStudyDeck(request)),
+    mutationFn: (request: GenerateStudyDeckRequestDto) => data(api.generateStudyDeck(request)),
     onSuccess: (deck) => { client.setQueryData([...key, 'deck', deck.id], deck); void client.invalidateQueries({ queryKey: key }); toast.success(`${deck.title} is ready`, { message: 'Saved in Studio → Flashcards.' }); },
   });
 }
 export function useGenerateConversationFlashcardDeck() {
+  const api = useApi();
   const client = useQueryClient();
   const navigate = useAppNavigate();
   return useMutation({
     mutationKey: conversationGenerationKey,
     gcTime: Infinity,
-    mutationFn: (request: GenerateConversationStudyDeckRequestDto) => data(VaultAPI.generateConversationStudyDeck(request)),
+    mutationFn: (request: GenerateConversationStudyDeckRequestDto) => data(api.generateConversationStudyDeck(request)),
     onSuccess: (deck) => { client.setQueryData([...key, 'deck', deck.id], deck); void client.invalidateQueries({ queryKey: key }); toast.success(`${deck.title} is ready`, { message: 'Every verified claim and its citations are saved in Studio → Flashcards.', action: { label: 'Open deck', onClick: () => { void navigate(`/studio?deck=${encodeURIComponent(deck.id)}`); } } }); },
   });
 }
@@ -76,14 +81,17 @@ export function useDismissFlashcardGeneration() {
   };
 }
 export function useReviewFlashcard() {
+  const api = useApi();
   const client = useQueryClient();
-  return useMutation({ mutationFn: (request: ReviewStudyCardRequestDto) => data(VaultAPI.reviewStudyCard(request)), onSuccess: () => invalidateDecks(client) });
+  return useMutation({ mutationFn: (request: ReviewStudyCardRequestDto) => data(api.reviewStudyCard(request)), onSuccess: () => invalidateDecks(client) });
 }
 export function useUpdateFlashcard() {
+  const api = useApi();
   const client = useQueryClient();
-  return useMutation({ mutationFn: (request: UpdateStudyCardRequestDto) => data(VaultAPI.updateStudyCard(request)), onSuccess: () => invalidateDecks(client) });
+  return useMutation({ mutationFn: (request: UpdateStudyCardRequestDto) => data(api.updateStudyCard(request)), onSuccess: () => invalidateDecks(client) });
 }
 export function useDeleteFlashcardDeck() {
+  const api = useApi();
   const client = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => data(VaultAPI.deleteStudyDeck(id)), onSuccess: () => invalidateDecks(client) });
+  return useMutation({ mutationFn: (id: string) => data(api.deleteStudyDeck(id)), onSuccess: () => invalidateDecks(client) });
 }

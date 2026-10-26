@@ -31,12 +31,11 @@ pub(super) async fn hydrate_many(
         .fetch(&mut *conn);
         let mut chunks: HashMap<_, Vec<_>> = HashMap::new();
         while let Some(model) = models.try_next().await? {
-            if let Ok(chunk) = ChunkMapper::to_entity(&model) {
-                chunks
-                    .entry(chunk.document_id().as_str().to_owned())
-                    .or_default()
-                    .push(chunk);
-            }
+            let chunk = ChunkMapper::to_entity(&model)?;
+            chunks
+                .entry(chunk.document_id().as_str().to_owned())
+                .or_default()
+                .push(chunk);
         }
         drop(models);
         let rows: Vec<(String, String)> = sqlx::query_as(
@@ -48,9 +47,12 @@ pub(super) async fn hydrate_many(
         .await?;
         let mut tags: HashMap<_, Vec<_>> = HashMap::new();
         for (document_id, tag_id) in rows {
-            if let Ok(tag) = TagId::from_string(tag_id) {
-                tags.entry(document_id).or_default().push(tag);
-            }
+            let tag = TagId::from_string(tag_id).map_err(|error| {
+                lattice_core::shared::error::AppError::InvalidData(format!(
+                    "Invalid tag ID linked to document {document_id}: {error}"
+                ))
+            })?;
+            tags.entry(document_id).or_default().push(tag);
         }
         for document in batch {
             let id = document.id().as_str();

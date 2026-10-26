@@ -28,7 +28,9 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 /// Changes when the plan, the coverage question or their answers change.
-const POLICY: &str = "lesson-evidence-v1";
+/// Distinct from content verification's `lesson-evidence` policy: these
+/// keys hold the lesson's topic plan and coverage judgements, not claims.
+const POLICY: &str = "lesson-topic-evidence";
 /// The plan answer's reservation; inside a lesson job an answer may take
 /// whatever its window leaves.
 const PLAN_OUTPUT_TOKENS: usize = 2000;

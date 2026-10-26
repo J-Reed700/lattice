@@ -7,6 +7,11 @@ import { ResizableColumns } from '@/components/ui/ResizableColumns';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
+import { splitCheck } from '@/features/learning/lessons/active/checkReveal';
+import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
+import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
+import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
+import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
 import { claimsCount, claimsNeedYou, preparingLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
@@ -24,8 +29,8 @@ import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, 
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 const blockLabels: Record<LearningBlockKind, string> = {
-  explanation: 'Understand the idea', worked_example: 'Worked example', guided_practice: 'Try it with guidance',
-  independent_practice: 'Your assignment', reflection: 'Reflect & connect', recap: 'Key takeaways',
+  explanation: 'The idea', worked_example: 'Worked example', contrast: 'Don’t confuse it with', check: 'Your turn',
+  guided_practice: 'Try it with guidance', independent_practice: 'Your assignment', reflection: 'From memory', recap: 'Key takeaways',
 };
 
 export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout, number, notebook, contextVisible = true, onSources }: {
@@ -50,6 +55,17 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   quizCallout?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
+  // The recap opens once the learner has explained the lesson from memory
+  // (learning science lessons §3.4), when a reflection asks them to first.
+  const [comparedFlag, setComparedFlag] = useLessonDraft(`${lesson.id}.compared`);
+  const reflectionAt = lesson.blocks.findIndex((block) => block.kind === 'reflection');
+  const recapAt = lesson.blocks.findIndex((block) => block.kind === 'recap');
+  const recallFirst = reflectionAt >= 0 && recapAt > reflectionAt;
+  const compared = comparedFlag === '1';
+  const compare = () => {
+    setComparedFlag('1');
+    requestAnimationFrame(() => document.getElementById(`lesson-${lesson.id}-section-${recapAt}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  };
   const showCitations = useCitationDisplayStore((state) => state.visible);
   // Preparing reads the course's evidence, so it waits while that indexes,
   // and says so beside the button with the time left.
@@ -155,17 +171,26 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
             <>
               <AuditLessonNow programId={program.summary.id} lessonId={lesson.id} />
               {showCitations && <LessonEvidencePanel key={lesson.id} programId={program.summary.id} lessonId={lesson.id} programRevision={program.summary.revision} report={evidenceReport} />}
+              {!lesson.completed && program.summary.status === 'active' && <LessonWarmUp programId={program.summary.id} />}
               <div className="studio-lesson-sections">
-                {lesson.blocks.map((block, index) => <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
+                {lesson.blocks.map((block, index) => {
+                  const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
+                  const check = block.kind === 'check' ? splitCheck(block.body) : null;
+                  const heldRecap = block.kind === 'recap' && recallFirst && !compared;
+                  return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
                   <div className="studio-section-label">{blockLabels[block.kind]}</div>
                   <h4>{block.title}</h4>
-                  <div className="studio-lesson-prose"><StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={block.body} /></StudyTangentSelection></div>
+                  {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />
+                    : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
+                    : <div className="studio-lesson-prose">{prose(block.body)}</div>}
+                  {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
                   {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                   {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}
                   {block.kind === 'independent_practice' && <Button variant="outline" type="button" onClick={onPractice} className="studio-button studio-button-primary mt-5">Work on this assignment <ArrowRight size={15} /></Button>}
                   <SectionTangentBar moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title} sectionText={`${block.title}\n\n${block.body}`} />
-                </section>)}
+                </section>;
+                })}
               </div>
               <SectionTangentBar moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle={lesson.title} sectionText={`${lesson.title}\n\n${lesson.objective}`} label="Start a tangent on this lesson" />
               {quizCallout}

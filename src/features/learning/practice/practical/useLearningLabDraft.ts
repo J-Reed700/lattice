@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { LearningLabFile, LearningPracticalDraftDto, SaveLearningPracticalDraftRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
@@ -71,6 +71,7 @@ export function useLearningLabDraft({
   /** Pass only editable starter files. The backend enforces that boundary again. */
   starterFiles: LearningLabFile[];
 }) {
+  const api = useApi();
   const [, render] = useState(0);
   const contexts = useRef(new Map<string, DraftContext>());
   const currentKey = activityId ? `${programId}:${activityId}:${activityRevision}` : null;
@@ -103,7 +104,7 @@ export function useLearningLabDraft({
     context.loadState = 'loading'; context.error = null; refresh();
     const promise = (async () => {
       try {
-        const draft = unwrap(await VaultAPI.getLearningPracticalDraft({
+        const draft = unwrap(await api.getLearningPracticalDraft({
           programId: context.programId, activityId: context.activityId, activityRevision: context.activityRevision,
         }));
         if (draft.programId !== context.programId || draft.activityId !== context.activityId || draft.activityRevision !== context.activityRevision) {
@@ -128,7 +129,7 @@ export function useLearningLabDraft({
     })();
     context.loadPromise = promise;
     return promise;
-  }, [refresh]);
+  }, [api, refresh]);
 
   const drainContext = useCallback((context: DraftContext): Promise<boolean> => {
     if (context.inFlight) return context.inFlight;
@@ -153,7 +154,7 @@ export function useLearningLabDraft({
         const operation = context.operation;
         context.saveState = 'saving'; context.error = null; refresh();
         try {
-          const saved: LearningPracticalDraftDto = unwrap(await VaultAPI.saveLearningPracticalDraft(operation.request));
+          const saved: LearningPracticalDraftDto = unwrap(await api.saveLearningPracticalDraft(operation.request));
           if (saved.programId !== context.programId || saved.activityId !== context.activityId || saved.activityRevision !== context.activityRevision) {
             context.saveState = 'error'; context.error = 'The saved lab draft reply belongs to a different activity revision.';
             refresh(); return false;
@@ -181,7 +182,7 @@ export function useLearningLabDraft({
     })();
     context.inFlight = work;
     return work.finally(() => { if (context.inFlight === work) context.inFlight = null; });
-  }, [refresh]);
+  }, [api, refresh]);
 
   if (currentKey && activityId) {
     const context = ensureContext(currentKey, programId, activityId, activityRevision, starterFiles);
@@ -252,14 +253,14 @@ export function useLearningLabDraft({
   }, [current, load, starterFiles]);
 
   const fetchLatest = useCallback(async (context: DraftContext) => {
-    const draft = unwrap(await VaultAPI.getLearningPracticalDraft({
+    const draft = unwrap(await api.getLearningPracticalDraft({
       programId: context.programId, activityId: context.activityId, activityRevision: context.activityRevision,
     }));
     if (draft.programId !== context.programId || draft.activityId !== context.activityId || draft.activityRevision !== context.activityRevision) {
       throw new Error('The saved lab draft belongs to a different activity revision.');
     }
     return draft;
-  }, []);
+  }, [api]);
 
   const keepLocalEdits = useCallback(async () => {
     if (!current) return false;

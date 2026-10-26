@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { ApiProvider } from '@/contexts/ApiContext';
 import { learningApi } from '@/features/learning/api/client';
 import { learningTangentsKey } from '@/features/learning/api/learningQueryKeys';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
@@ -14,6 +15,7 @@ import {
   ProgramTangentsTrigger,
 } from '@/features/learning/tangents/ProgramTangents';
 import type { LearningProgramDto, LearningTangentDto } from '@/lib/bindings';
+import { createTestApi } from '@/tests/apiClient';
 
 const mockNavigate = vi.fn();
 const mockSelectConversation = vi.fn().mockResolvedValue(undefined);
@@ -196,10 +198,13 @@ const mockTangent2: LearningTangentDto = {
 };
 
 function createTestWrapper(client: QueryClient) {
+  const api = createTestApi(learningApi);
   return function TestWrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={client}>
-        <TooltipProvider>{children}</TooltipProvider>
+        <ApiProvider client={api}>
+          <TooltipProvider>{children}</TooltipProvider>
+        </ApiProvider>
       </QueryClientProvider>
     );
   };

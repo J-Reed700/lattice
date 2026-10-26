@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 import { PageHeader, SidebarTabs } from '@/components/ui';
+import { useApi } from '@/contexts/ApiContext';
 import { openDocumentFile, openFilePath } from '@/features/files/hooks/useLibraryDocumentActions';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromSearchResult, type ResolvedReaderTarget } from '@/features/reading/model/sourceAdapter';
@@ -32,6 +33,7 @@ const SEARCH_MODES: ReadonlyArray<{ id: SearchMode; label: string }> = [
  */
 
 export function SearchInterface() {
+  const api = useApi();
   const [query, setQuery] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('hybrid');
   const [previewTarget, setPreviewTarget] = useState<ResolvedReaderTarget | null>(null);
@@ -164,7 +166,7 @@ export function SearchInterface() {
 
     const targetId = result.documentId || result.id || target.source.documentId;
     if (targetId) {
-      const byId = await openDocumentFile(targetId);
+      const byId = await openDocumentFile(targetId, api);
       if (byId.ok) {
         if (byId.data.action === 'render_internal') {
           setPreviewTarget({
@@ -179,7 +181,7 @@ export function SearchInterface() {
       }
 
       if (typeof result.path === 'string' && result.path.length > 0) {
-        const byPath = await openFilePath(result.path);
+        const byPath = await openFilePath(result.path, api);
         if (byPath.ok) {
           if (byPath.data.action === 'render_internal') {
             setPreviewTarget({
@@ -202,7 +204,7 @@ export function SearchInterface() {
     }
 
     setOpenError('Result has no document identifier');
-  }, []);
+  }, [api]);
 
   return (
     <main className="h-full overflow-y-auto bg-bg">

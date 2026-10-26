@@ -1,12 +1,12 @@
 import { queryOptions } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import VaultAPI, { type ApiClient } from '@/lib/api';
 
 /** A source file's text, for the readers that render text, code and saved pages. */
-export const readSourceText = (path: string) => VaultAPI.readFileContent(path);
+export const readSourceText = (path: string, api: ApiClient = VaultAPI) => api.readFileContent(path);
 
 /** A source file's bytes, for the readers that parse a binary format (PDF, DOCX). */
-export const readSourceBytes = (path: string) => VaultAPI.readFileBytes(path);
+export const readSourceBytes = (path: string, api: ApiClient = VaultAPI) => api.readFileBytes(path);
 
 export const readingKeys = {
   all: ['reading'] as const,
@@ -25,11 +25,11 @@ export const readingKeys = {
  * than after retries; a reopened file shows what was read last while it is
  * read again, so edits made elsewhere still come through.
  */
-export const sourceTextQueryOptions = (path: string) =>
+export const sourceTextQueryOptions = (path: string, api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: readingKeys.fileText(path),
     queryFn: async () => {
-      const result = await readSourceText(path);
+      const result = await readSourceText(path, api);
       if (!result.ok) throw new Error(result.error || 'Failed to load file');
       return result.data;
     },

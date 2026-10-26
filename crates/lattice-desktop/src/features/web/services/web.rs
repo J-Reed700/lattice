@@ -38,6 +38,7 @@ use tokio::sync::Semaphore;
 
 mod address_guard;
 mod bounded;
+mod hops;
 mod pacing;
 mod page;
 mod search;
@@ -48,6 +49,7 @@ use address_guard::{
     check_url_host, redirect_policy, refuse_blocked_addresses, PublicOnlyResolver,
 };
 pub use bounded::{BoundedBody, BoundedFetchError};
+pub(crate) use hops::HttpHops;
 pub(crate) use pacing::{SitePacer, MIN_SITE_REQUEST_INTERVAL};
 use page::{parse_fetchable_url, Want};
 
@@ -161,9 +163,19 @@ impl WebService {
                 lattice_core::domain::sourcing::SourcingPolicy::default(),
             ),
         );
+        let site_homes = Arc::new(
+            crate::features::web::services::sourcing::SiteHomes::with_system_clock(
+                Arc::new(HttpHops::new(
+                    build_hop_client(timeout)?,
+                    Arc::clone(&pacer),
+                )),
+                lattice_core::domain::sourcing::SourcingPolicy::default(),
+            ),
+        );
         let sourcing = Arc::new(
             SourcingService::new(finders::keyless_registry(&http), settings, BTreeSet::new())
-                .with_owner_and_http(owner_resolver, http),
+                .with_owner_and_http(owner_resolver, http)
+                .with_site_homes(site_homes),
         );
         Ok(Self {
             client,
@@ -267,6 +279,19 @@ fn build_public_client(timeout: Duration) -> Result<Client> {
     identity::client_builder()
         .timeout(timeout)
         .redirect(redirect_policy())
+        .dns_resolver(Arc::new(PublicOnlyResolver))
+        .build()
+        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+}
+
+/// The client a scoped site's redirects are read with ([`HttpHops`]): the
+/// public client's identity, timeout and public-only resolver, but following
+/// no redirect itself, so each hop's status can be read and each hop checked
+/// as the redirect policy checks a page read's.
+fn build_hop_client(timeout: Duration) -> Result<Client> {
+    identity::client_builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .dns_resolver(Arc::new(PublicOnlyResolver))
         .build()
         .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))

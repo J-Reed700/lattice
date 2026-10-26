@@ -3,7 +3,9 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiProvider } from '@/contexts/ApiContext';
 import { modelApi } from '@/features/model/api/client';
+import { createTestApi } from '@/tests/apiClient';
 import type { ModelMetadata } from '@/types/modelCatalog';
 
 import { ModelVariantPicker } from './ModelVariantPicker';
@@ -23,7 +25,7 @@ const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_q
 function setup() {
   const onSelect = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} capabilities={null} onSelect={onSelect} /></QueryClientProvider>);
+  render(<ApiProvider client={createTestApi(modelApi)}><QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} capabilities={null} onSelect={onSelect} /></QueryClientProvider></ApiProvider>);
   return { user: userEvent.setup(), onSelect };
 }
 

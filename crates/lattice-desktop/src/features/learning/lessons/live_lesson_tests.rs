@@ -26,7 +26,7 @@ mod small;
 #[path = "live_web_trace.rs"]
 mod web_trace;
 
-/// The configured llama.cpp model as the app reaches it, every answer
+/// The configured model as the app reaches it, every answer
 /// recorded under `directory`.
 struct ObservedModel {
     inner: Arc<dyn LLMPort>,
@@ -201,6 +201,46 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
 }
 
 impl ObservedModel {
+    /// Exercise the explicitly configured Learning role on saved-course
+    /// replays. Credentials stay in the normal environment/keyring path.
+    async fn learning(
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
+        directory: std::path::PathBuf,
+    ) -> Result<Self> {
+        use lattice_core::application::contracts::settings::LLMProvider;
+        use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
+        let mut config = settings.clone();
+        match &settings.learning_model {
+            Some(ModelRef::Cloud { provider, model }) => {
+                let (name, provider) = match provider {
+                    CloudProvider::Openai => ("openai", LLMProvider::Openai),
+                    CloudProvider::Anthropic => ("anthropic", LLMProvider::Anthropic),
+                    CloudProvider::Google => ("google", LLMProvider::Google),
+                };
+                config.provider = provider;
+                config.model = model.clone();
+                let key = crate::infrastructure::security::keyring_storage::SecureStorage::new()
+                    .cloud_api_key(name)?
+                    .ok_or_else(|| {
+                        AppError::InvalidConfig(format!(
+                            "No {name} API key saved for the Learning eval"
+                        ))
+                    })?;
+                let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
+                let inner =
+                    crate::features::llm::cloud::CloudLlm::new(&config, key)?.schedule(&schedulers);
+                Ok(Self::observing(inner, directory, 0))
+            }
+            Some(ModelRef::LlamaCpp { model }) => {
+                config.llama_cpp.model = model.clone();
+                Self::new(&config, directory, 0).await
+            }
+            _ => Err(AppError::InvalidConfig(
+                "Saved-course replay requires a cloud or llama.cpp Learning model.".into(),
+            )),
+        }
+    }
+
     /// `settings`' llama.cpp model as the app's factory builds it: behind its
     /// server's scheduler, which measures the backend's pace and calibrates
     /// the token estimate from its answers, with the server's tokenizer for
@@ -881,7 +921,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "writes to LATTICE_LESSON_DATABASE; requires settings, failed job and artifact directory"]
+#[ignore = "writes to LATTICE_LESSON_DATABASE; requires settings, stopped/held job and artifact directory"]
 async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     use crate::features::learning::{
         curriculum::LearningGenerationJobStatus, dto::LearningSourcePolicy,
@@ -894,7 +934,13 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
-    let llm: Arc<dyn LLMPort> = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
+    let observed = if std::env::var("LATTICE_USE_LEARNING_MODEL").as_deref() == Ok("1") {
+        ObservedModel::learning(&config, directory.clone()).await?
+    } else {
+        ObservedModel::new(&config, directory.clone(), 0).await?
+    };
+    let checker_name = observed.model_name().to_owned();
+    let llm: Arc<dyn LLMPort> = Arc::new(observed);
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
         .foreign_keys(true)
@@ -949,6 +995,34 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     }
     let source_pool = pool.clone();
     let web_dir = tempfile::tempdir()?;
+    // A copied index and the configured embedding artifact exercise the same
+    // hybrid retrieval as the app. Never point these at the live index.
+    let courses = if let Ok(indexes) = std::env::var("LATTICE_LESSON_INDEXES") {
+        let gguf = std::env::var("LATTICE_LESSON_EMBEDDING").map_err(|_| {
+            AppError::InvalidConfig("Hybrid replay needs LATTICE_LESSON_EMBEDDING".into())
+        })?;
+        let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
+            std::path::Path::new(&gguf),
+        )
+        .await?;
+        Some(
+            crate::features::learning::references::course_index::CourseIndexes::new(
+                indexes.into(),
+                pool.clone(),
+                Arc::new(page_recall::GivenModel(Some(Arc::new(model)))),
+                Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
+                lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
+                Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+                Arc::default(),
+            ),
+        )
+    } else {
+        None
+    };
+    assert!(
+        !repo.verifier_audit(&old.program_id).await?.on,
+        "This replay has no Verifier audit adapter; it must not bypass an enabled audit"
+    );
     let worker = LessonGenerationWorker {
         runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         research_web: Some(Arc::new(
@@ -960,7 +1034,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
-        courses: None,
+        courses,
         refresh_sources: Arc::new(move |program_id| {
             let pool = source_pool.clone();
             Box::pin(async move {
@@ -976,28 +1050,107 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             })
         }),
     };
-    let job = repo
-        .retry_job(&LearningGenerationJobActionRequestDto {
+    let job = if old.status == LearningGenerationJobStatus::Completed {
+        let lesson_id = old
+            .result_id
+            .as_deref()
+            .and_then(|result| result.strip_prefix("needs_review:"))
+            .and_then(|lessons| lessons.split(',').next())
+            .ok_or_else(|| {
+                AppError::InvalidInput("The completed job is not held for review".into())
+            })?;
+        let service =
+            crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
+                pool.clone(),
+            )
+            .with_checker_model(Some(checker_name));
+        let review = service.review(&old.program_id, lesson_id).await?.unwrap();
+        std::fs::write(
+            directory.join("review-before.json"),
+            serde_json::to_vec_pretty(&review)?,
+        )?;
+        assert!(
+            review.changed_since_stop,
+            "the actual held review must recognize the checker/policy change"
+        );
+        service
+            .resume(
+                &old.program_id,
+                lesson_id,
+                program.summary.revision,
+                uuid::Uuid::new_v4().to_string(),
+            )
+            .await?
+    } else {
+        repo.retry_job(&LearningGenerationJobActionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: old.program_id,
             job_id: old.id,
             expected_revision: program.summary.revision,
         })
-        .await?;
+        .await?
+    };
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     println!("Live lesson job {} started", job.id);
-    super::run_attempt(worker, &job.id).await?;
-    let result = repo.job(&job.id).await?;
+    // The app resumes a deferred outage (a rate limit, an overloaded or
+    // unreachable provider) from its saved checks; so does this run, a few
+    // times, rather than reporting one 529 as a failed publication. A refusal
+    // waiting cannot change (a rejected key) fails the job, not defers it.
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        super::run_attempt(worker.clone(), &job.id).await?;
+        let result = repo.job(&job.id).await?;
+        if result.status != LearningGenerationJobStatus::Pending || attempts == 6 {
+            break result;
+        }
+        let not_before: Option<i64> =
+            sqlx::query_scalar("SELECT retry_not_before FROM jobs WHERE id=?")
+                .bind(&job.id)
+                .fetch_one(&pool)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        let wait = not_before
+            .map(|at| at - chrono::Utc::now().timestamp_millis())
+            .unwrap_or(0)
+            .clamp(1_000, 300_000);
+        println!(
+            "Attempt {attempts} deferred ({:?}); resuming in {}s",
+            result.error,
+            wait / 1_000
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(wait as u64)).await;
+    };
     std::fs::write(
         directory.join("result.json"),
         serde_json::to_vec_pretty(&result)?,
     )?;
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT lesson_id FROM learning_lesson_reviews WHERE job_id=? AND state='needs_review'",
+    )
+    .bind(&job.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| AppError::Database(error.to_string()))?;
+    for lesson in &held {
+        let review =
+            crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
+                pool.clone(),
+            )
+            .review(&job.program_id, lesson)
+            .await?;
+        std::fs::write(
+            directory.join(format!("review-after-{lesson}.json")),
+            serde_json::to_vec_pretty(&review)?,
+        )?;
+    }
     assert_eq!(
         result.status,
         LearningGenerationJobStatus::Completed,
         "Full live worker did not publish: {:?}",
         result
     );
+    assert!(held.is_empty(), "Completed with held lessons is not successful publication: {held:?}; see review-after files");
     let published = LearningRepository::new(pool).get(&job.program_id).await?;
     std::fs::write(
         directory.join("program.json"),

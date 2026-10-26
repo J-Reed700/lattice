@@ -5,14 +5,12 @@
  * which makes Zustand's persist middleware throw during rehydration and leaves
  * a blank window. This check runs first so the stores always start clean.
  */
-import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import ReactDOM from 'react-dom/client'
 
 import App from './App'
+import { AppProviders } from './AppProviders'
 import { RootErrorBoundary } from './components/ErrorBoundary'
-import { ConversationsProvider } from './features/chat/controller/ConversationsProvider'
-import { queryClient } from './lib/queryClient'
 import { installGlobalDiagnostics } from './utils/globalDiagnostics'
 import '@fontsource-variable/inter/opsz.css'
 import '@fontsource-variable/inter/opsz-italic.css'
@@ -60,12 +58,10 @@ if (!rootElement) {
 
 // StrictMode stays off: its double-invoked effects fire IPC commands twice.
 ReactDOM.createRoot(rootElement).render(
-  <QueryClientProvider client={queryClient}>
-    <ConversationsProvider>
-      <RootErrorBoundary>
-        <App />
-      </RootErrorBoundary>
-    </ConversationsProvider>
-    <ReactQueryDevtools initialIsOpen={false} />
-  </QueryClientProvider>,
+  <RootErrorBoundary>
+    <AppProviders>
+      <App />
+      <ReactQueryDevtools initialIsOpen={false} />
+    </AppProviders>
+  </RootErrorBoundary>,
 )

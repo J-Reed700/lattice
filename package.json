@@ -57,6 +57,7 @@
     "bindings:check": "cd crates/lattice-desktop && cargo run --features bindings-export --bin export_bindings -- --check",
     "contracts:check": "node scripts/check-ipc-contracts.mjs --self-test",
     "contracts:sql": "python3 scripts/check-sql-contracts.py",
+    "test:sql": "python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'",
     "contracts:commands": "python3 scripts/check-tauri-command-inventory.py"
   },
   "dependencies": {

@@ -4,10 +4,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Play, Send, Users } from "lucide-react";
 
 import { TiptapViewer } from "@/components/TiptapEditor";
+import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { errorText, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
 import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
-import VaultAPI from "@/lib/api";
 import type {
   FinishLearningSimulationRequestDto,
   LearningPracticalActivityDto,
@@ -30,6 +31,7 @@ export function SimulationPanel({
   onSession: (session: LearningSimulationSessionDto) => void;
   onRestart?: () => void;
 }) {
+  const api = useApi();
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const client = useQueryClient();
   const isInterview = activity.kind === "interview" || Boolean(activity.interviewPlan);
@@ -67,19 +69,19 @@ export function SimulationPanel({
   const start = useMutation({
     retry: false,
     mutationFn: async (request: StartLearningSimulationRequestDto) =>
-      unwrap(await VaultAPI.startLearningSimulation(request)),
+      unwrap(await api.startLearningSimulation(request)),
     onError: refreshAfterError,
   });
   const turn = useMutation({
     retry: false,
     mutationFn: async (request: SendLearningSimulationTurnRequestDto) =>
-      unwrap(await VaultAPI.sendLearningSimulationTurn(request)),
+      unwrap(await api.sendLearningSimulationTurn(request)),
     onError: refreshAfterError,
   });
   const finish = useMutation({
     retry: false,
     mutationFn: async (request: FinishLearningSimulationRequestDto) =>
-      unwrap(await VaultAPI.finishLearningSimulation(request)),
+      unwrap(await api.finishLearningSimulation(request)),
     onError: refreshAfterError,
   });
   const busy = start.isPending || turn.isPending || finish.isPending;
@@ -294,16 +296,16 @@ export function SimulationPanel({
                     </p>
                   ) : (
                     <div className="mt-1 text-sm leading-6 text-text-secondary">
-                      <TiptapViewer content={turnItem.content} />
+                      <TiptapViewer content={turnItem.content} images={isInterview ? [] : undefined} />
                     </div>
                   )}
                   {showCitations && turnItem.citations.map((citation, index) => (
-                    <blockquote
+                    <PracticeCitation
                       key={`${citation.sourceId}:${index}`}
-                      className="mt-2 border-l-2 border-accent/40 pl-2 text-xs italic text-text-muted"
-                    >
-                      “{citation.quote}”
-                    </blockquote>
+                      programId={programId}
+                      citation={citation}
+                      canOpen={activity.practiceMode !== "demonstrate" || session.status === "submitted"}
+                    />
                   ))}
                 </article>
               ))

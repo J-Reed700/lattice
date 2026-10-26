@@ -2,11 +2,13 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
+import { useApi } from '@/contexts/ApiContext';
 import { fetchLibraryDocuments } from '@/features/files/hooks/useLibraryDocumentsQuery';
 import { getErrorMessage } from '@/lib/errorUtils';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 export function LibraryFilePicker({ onAdd, disabled }: { onAdd: (paths: string[]) => void; disabled: boolean }) {
+  const api = useApi();
   const [documents, setDocuments] = useState<DocumentMetadata[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
@@ -15,7 +17,7 @@ export function LibraryFilePicker({ onAdd, disabled }: { onAdd: (paths: string[]
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const all = await fetchLibraryDocuments();
+      const all = await fetchLibraryDocuments(api);
       setDocuments(all.filter(document => document.filePath && !/^https?:/.test(document.filePath)));
     } catch (err) { setError(getErrorMessage(err)); } finally { setLoading(false); }
   };

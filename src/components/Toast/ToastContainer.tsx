@@ -14,9 +14,13 @@ import React, { useEffect } from 'react';
 
 import { ToastItem } from './ToastItem';
 import { useToastStore } from '../../stores/toastStore';
+import './toast.css';
 
 export const ToastContainer: React.FC = () => {
-  const { toasts, config, dismissAll } = useToastStore();
+  const toasts = useToastStore(state => state.toasts);
+  const config = useToastStore(state => state.config);
+  const dismissAll = useToastStore(state => state.dismissAll);
+  const dismissToast = useToastStore(state => state.dismissToast);
 
   // Global keyboard shortcut: Esc to dismiss all toasts
   useEffect(() => {
@@ -121,7 +125,7 @@ export const ToastContainer: React.FC = () => {
         >
           <ToastItem
             toast={toast}
-            onDismiss={(id: string) => useToastStore.getState().dismissToast(id)}
+            onDismiss={dismissToast}
             pauseOnHover={config.pauseOnHover}
             index={index}
           />
@@ -130,32 +134,3 @@ export const ToastContainer: React.FC = () => {
     </div>
   );
 };
-
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes slide-in {
-    from {
-      opacity: 0;
-      transform: translateX(100%);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-
-  .animate-slide-in {
-    animation: slide-in 0.3s ease-out;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .animate-slide-in {
-      animation: none;
-    }
-  }
-`;
-
-if (typeof document !== 'undefined' && !document.querySelector('#toast-animations')) {
-  style.id = 'toast-animations';
-  document.head.appendChild(style);
-}

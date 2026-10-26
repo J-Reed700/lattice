@@ -43,7 +43,7 @@ pub async fn fetch_chunks_for_document(
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch chunks for document: {}", e)))?;
 
-    Ok(ChunkMapper::to_entities(&db_models))
+    ChunkMapper::to_entities(&db_models)
 }
 
 pub async fn fetch_tags_for_document(
@@ -58,10 +58,15 @@ pub async fn fetch_tags_for_document(
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch tags for document: {}", e)))?;
 
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| TagId::from_string(row.tag_id).ok())
-        .collect())
+    rows.into_iter()
+        .map(|row| {
+            TagId::from_string(row.tag_id).map_err(|error| {
+                AppError::InvalidData(format!(
+                    "Invalid tag ID linked to document {doc_id}: {error}"
+                ))
+            })
+        })
+        .collect()
 }
 
 #[instrument(skip(conn, chunks), fields(doc_id = %doc_id, chunk_count = chunks.len()))]
@@ -88,7 +93,10 @@ pub async fn save_chunks(
     }
 
     let batch_count = chunks.len().div_ceil(CHUNK_BATCH_SIZE);
-    let models: Vec<ChunkModel> = chunks.iter().map(ChunkMapper::to_model).collect();
+    let models: Vec<ChunkModel> = chunks
+        .iter()
+        .map(ChunkMapper::to_model)
+        .collect::<Result<_>>()?;
 
     for batch in models.chunks(CHUNK_BATCH_SIZE) {
         let mut query_builder = QueryBuilder::new(

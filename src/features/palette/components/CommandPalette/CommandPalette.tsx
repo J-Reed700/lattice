@@ -25,8 +25,8 @@ import {
   Zap,
 } from 'lucide-react'
 
-
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { useApi } from '@/contexts/ApiContext';
 import { useClearCacheMutation } from '@/features/cache/hooks/useClearCacheMutation'
 import { chooseFiles, chooseFolder } from '@/features/files/hooks/filePickers'
 import { useAddToLibrary } from '@/features/files/hooks/useAddToLibrary'
@@ -58,6 +58,7 @@ const NO_RESULTS: SearchResult[] = []
 const isSearchable = (query: string) => query.length >= 2 && query.trim().length > 0
 
 export function CommandPalette() {
+  const api = useApi();
   const navigate = useAppNavigate()
   const {
     isOpen,
@@ -87,7 +88,7 @@ export function CommandPalette() {
   const quickSearch = useQuery({
     queryKey: ['search', 'quick', debouncedSearchQuery] as const,
     queryFn: async () => {
-      const result = await quickSearchDocuments(debouncedSearchQuery)
+      const result = await quickSearchDocuments(debouncedSearchQuery, api)
       if (!result.ok) throw new Error(describeFailure(result))
       return result.data
     },
@@ -139,7 +140,7 @@ export function CommandPalette() {
   const handleAddFiles = useCallback(async () => {
     run(async () => {
       try {
-        const selected = await chooseFiles()
+        const selected = await chooseFiles(api)
         if (!selected || selected.length === 0) return
         // The palette has closed by now, so a failure the user cannot see
         // is one they never learn about.
@@ -162,12 +163,12 @@ export function CommandPalette() {
         toast.error("Couldn't add files", { message: getErrorMessage(error) })
       }
     })
-  }, [indexFile, run])
+  }, [api, indexFile, run])
 
   const handleAddFolder = useCallback(async () => {
     run(async () => {
       try {
-        const selected = await chooseFolder()
+        const selected = await chooseFolder(api)
         if (!selected) return
         const result = await indexFolder(selected)
         if (!result.ok) {
@@ -179,7 +180,7 @@ export function CommandPalette() {
         toast.error("Couldn't add this folder", { message: getErrorMessage(error) })
       }
     })
-  }, [indexFolder, run])
+  }, [api, indexFolder, run])
 
   const handleClearCache = useCallback(async () => {
     run(async () => {
@@ -212,14 +213,14 @@ export function CommandPalette() {
       run(async () => {
         addRecentDocument(docId, docName)
         try {
-          const docResult = await fetchDocument(docId)
+          const docResult = await fetchDocument(docId, api)
           if (!docResult.ok) {
             logger.error('Failed to retrieve document metadata', { component: 'command-palette', docId, error: docResult.error })
             return
           }
           const { filePath } = docResult.data
           if (!filePath) return
-          const openResult = await openFilePath(filePath)
+          const openResult = await openFilePath(filePath, api)
           if (!openResult.ok) {
             logger.error('Failed to open document', { component: 'command-palette', docId, path: filePath, error: openResult.error })
           }
@@ -232,7 +233,7 @@ export function CommandPalette() {
         }
       })
     },
-    [addRecentDocument, run],
+    [addRecentDocument, api, run],
   )
 
   const handleSearchResultSelect = useCallback(
@@ -244,13 +245,13 @@ export function CommandPalette() {
         const metadataPath = result.metadata.path
         const filePath = result.path ?? (typeof metadataPath === 'string' ? metadataPath : undefined)
         if (!filePath) return
-        const openResult = await openFilePath(filePath)
+        const openResult = await openFilePath(filePath, api)
         if (!openResult.ok) logger.error('Failed to open file:', { error: openResult.error })
       } catch (error) {
         logger.error('Failed to open search result:', { error })
       }
     },
-    [addRecentDocument, addRecentSearch, close, searchQuery],
+    [addRecentDocument, addRecentSearch, api, close, searchQuery],
   )
 
   const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')

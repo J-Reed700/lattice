@@ -60,7 +60,7 @@ impl DatabaseUtils {
 
     /// Run periodic maintenance tasks
     pub async fn run_maintenance(pool: &SqlitePool) -> Result<()> {
-        sqlx::query("ANALYZE").execute(pool).await?;
+        sqlx::query("PRAGMA optimize").execute(pool).await?;
 
         let size: (i64, i64) = sqlx::query_as(
             "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",

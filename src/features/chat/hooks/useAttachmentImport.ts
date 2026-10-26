@@ -2,6 +2,7 @@ import { useCallback, useState, type RefObject } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { useChatFileDrop, type StagedFile } from '@/features/chat/hooks/useChatFileDrop';
 import {
   attachPictures,
@@ -11,7 +12,6 @@ import {
   useStagedPictures,
 } from '@/features/chat/images/stagedPictures';
 import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
-import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
@@ -78,6 +78,7 @@ export function useAttachmentImport({
   conversationId,
   scopedSpaceId,
 }: AttachmentImportOptions): AttachmentImport {
+  const api = useApi();
   const queryClient = useQueryClient();
   const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
   const [isImporting, setIsImporting] = useState(false);
@@ -91,11 +92,11 @@ export function useAttachmentImport({
     if (!conversationId || picturePaths.length === 0) return;
     setAttachingPictures((count) => count + 1);
     try {
-      await attachPictures(conversationId, picturePaths);
+      await attachPictures(conversationId, picturePaths, api);
     } finally {
       setAttachingPictures((count) => count - 1);
     }
-  }, [conversationId]);
+  }, [api, conversationId]);
 
   const {
     isDragging,
@@ -119,13 +120,13 @@ export function useAttachmentImport({
   }, [addStagedPaths, stagePictures]);
 
   const removePicture = useCallback((id: string) => {
-    if (conversationId) void releasePictures(conversationId, [id]);
-  }, [conversationId]);
+    if (conversationId) void releasePictures(conversationId, [id], api);
+  }, [api, conversationId]);
 
   const clear = useCallback(() => {
     clearStagedFiles();
-    if (conversationId) void releasePictures(conversationId, pictures.map((picture) => picture.id));
-  }, [clearStagedFiles, conversationId, pictures]);
+    if (conversationId) void releasePictures(conversationId, pictures.map((picture) => picture.id), api);
+  }, [api, clearStagedFiles, conversationId, pictures]);
 
   const takePictures = useCallback(
     () => (conversationId ? takeStagedPictures(conversationId) : []),
@@ -141,7 +142,7 @@ export function useAttachmentImport({
       // turn can read and cite them, but they stay out of the library and out
       // of every other chat's searches, and they go when this chat goes. The
       // "Add to library" action on the attachment is what files them for good.
-      const started = await VaultAPI.startBatchFileImport(
+      const started = await api.startBatchFileImport(
         staged.map((file) => file.path),
         conversationId
       );
@@ -151,7 +152,7 @@ export function useAttachmentImport({
       }
 
       const outcome = await pollAttachmentImport(started.data, {
-        getStatus: VaultAPI.getBatchJobStatus,
+        getStatus: api.getBatchJobStatus,
         intervalMs: BATCH_POLL_INTERVAL_MS,
         timeoutMs: BATCH_POLL_TIMEOUT_MS,
       });
@@ -165,7 +166,7 @@ export function useAttachmentImport({
       // Creating one behind the user's back would silently narrow every future
       // answer in this thread.
       if (documentIds.length > 0 && scopedSpaceId) {
-        await VaultAPI.setDocumentsSpaceMembership(documentIds, scopedSpaceId, true);
+        await api.setDocumentsSpaceMembership(documentIds, scopedSpaceId, true);
       }
 
       await queryClient.invalidateQueries({
@@ -213,15 +214,7 @@ export function useAttachmentImport({
     } finally {
       setIsImporting(false);
     }
-  }, [
-    conversationId,
-    staged,
-    isImporting,
-    scopedSpaceId,
-    queryClient,
-    loadConversationLinkedDocuments,
-    clearStagedFiles,
-  ]);
+  }, [conversationId, staged, isImporting, api, scopedSpaceId, queryClient, loadConversationLinkedDocuments, clearStagedFiles]);
 
   return {
     isDragging,

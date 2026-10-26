@@ -1,4 +1,4 @@
-import { VaultAPI } from '@/lib/api';
+import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { MessageDto } from '@/lib/bindings';
 import type { ConversationListParams } from '@/shared/conversations/conversationKeys';
 import type {
@@ -15,14 +15,14 @@ export const unwrap = <T,>(result: ApiResult<T>): T => {
   return result.data;
 };
 
-export const fetchConversationList = async (params: ConversationListParams): Promise<Conversation[]> => {
+export const fetchConversationList = async (params: ConversationListParams, api: ApiClient = VaultAPI): Promise<Conversation[]> => {
   const trimmedQuery = params.searchQuery.trim();
   const requiresExplorerQuery = Boolean(
     params.spaceId ||
     trimmedQuery ||
     params.filterMode !== 'all'
   );
-  const explorerResult = await VaultAPI.listConversationsExplorer({
+  const explorerResult = await api.listConversationsExplorer({
     spaceId: params.spaceId ?? undefined,
     query: trimmedQuery || undefined,
     savedOnly: params.filterMode === 'saved' || undefined,
@@ -36,7 +36,7 @@ export const fetchConversationList = async (params: ConversationListParams): Pro
     throw new Error(explorerResult.error);
   }
 
-  const result = explorerResult.ok ? explorerResult : await VaultAPI.listConversations();
+  const result = explorerResult.ok ? explorerResult : await api.listConversations();
   if (!result.ok) {
     throw new Error(result.error);
   }
@@ -46,8 +46,8 @@ export const fetchConversationList = async (params: ConversationListParams): Pro
     : conversations;
 };
 
-export const fetchConversationDetail = async (id: string): Promise<Conversation | null> => {
-  const result = await VaultAPI.getConversation(id);
+export const fetchConversationDetail = async (id: string, api: ApiClient = VaultAPI): Promise<Conversation | null> => {
+  const result = await api.getConversation(id);
   if (!result.ok) throw new Error(result.error);
   return result.data.conversation as Conversation | null;
 };
@@ -61,15 +61,15 @@ export function toConversationMessage(message: MessageDto): ConversationMessage 
   }
 }
 
-export const fetchMessages = async (id: string): Promise<ConversationMessage[]> => {
-  const result = await VaultAPI.getConversationMessages(id);
+export const fetchMessages = async (id: string, api: ApiClient = VaultAPI): Promise<ConversationMessage[]> => {
+  const result = await api.getConversationMessages(id);
   if (!result.ok) throw new Error(result.error);
   const messages = result.data.messages.map(toConversationMessage);
   return messages;
 };
 
-export const fetchBookmarks = async (id: string, query = ''): Promise<ConversationMessageBookmark[]> => {
-  const result = await VaultAPI.listMessageBookmarks({
+export const fetchBookmarks = async (id: string, query = '', api: ApiClient = VaultAPI): Promise<ConversationMessageBookmark[]> => {
+  const result = await api.listMessageBookmarks({
     conversationId: id,
     query: query.trim() || undefined,
     limit: 200,
@@ -79,11 +79,11 @@ export const fetchBookmarks = async (id: string, query = ''): Promise<Conversati
   return result.data.bookmarks as ConversationMessageBookmark[];
 };
 
-export const fetchLinkedDocuments = async (id: string): Promise<ConversationLinkedDocumentDto[]> =>
-  unwrap(await VaultAPI.listConversationLinkedDocuments(id));
+export const fetchLinkedDocuments = async (id: string, api: ApiClient = VaultAPI): Promise<ConversationLinkedDocumentDto[]> =>
+  unwrap(await api.listConversationLinkedDocuments(id));
 
-export const fetchWebSources = async (id: string): Promise<ConversationWebSourceDto[]> =>
-  unwrap(await VaultAPI.listConversationWebSources(id));
+export const fetchWebSources = async (id: string, api: ApiClient = VaultAPI): Promise<ConversationWebSourceDto[]> =>
+  unwrap(await api.listConversationWebSources(id));
 
-export const fetchMemberships = async (documentId: string): Promise<DocumentSpaceMembershipDto[]> =>
-  unwrap(await VaultAPI.listDocumentSpaceMemberships(documentId));
+export const fetchMemberships = async (documentId: string, api: ApiClient = VaultAPI): Promise<DocumentSpaceMembershipDto[]> =>
+  unwrap(await api.listDocumentSpaceMemberships(documentId));

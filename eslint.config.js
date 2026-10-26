@@ -242,8 +242,10 @@ export default [
       // ===================================
       // React Hooks Rules
       // ===================================
-      'react-hooks/rules-of-hooks': 'warn', // Some utility functions use hooks pattern
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+      'react/no-unstable-nested-components': 'error',
+      'react/jsx-no-constructed-context-values': 'error',
 
       // ===================================
       // Import Rules
@@ -529,6 +531,17 @@ export default [
     },
   },
 
+  // React reads the API from context; helpers receive it as a parameter.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/**/__tests__/**', 'src/tests/**'],
+    rules: {
+      'no-restricted-properties': ['error', {
+        object: 'VaultAPI',
+        message: 'Read API dependencies with useApi() in a hook and pass the client to helpers. Plain helpers may default their client parameter to VaultAPI.',
+      }],
+    },
+  },
   // Feature API boundaries must make every asynchronous outcome explicit.
   {
     files: ['src/features/*/api/*.{ts,tsx}', 'src/shared/ipc/*.ts'],

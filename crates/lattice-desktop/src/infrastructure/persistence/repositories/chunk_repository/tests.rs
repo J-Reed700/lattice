@@ -65,6 +65,16 @@ async fn find_first_by_document_reads_only_the_opening_chunks() {
 
     let contents: Vec<_> = chunks.iter().map(|c| c.content().to_owned()).collect();
     assert_eq!(contents, vec!["Chunk 0", "Chunk 1"]);
+
+    let filtered = repo
+        .find_by_filter(&ChunkFilter {
+            document_id: Some(doc_id.as_str().to_owned()),
+            limit: Some(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].index(), 0);
 }
 
 #[tokio::test]

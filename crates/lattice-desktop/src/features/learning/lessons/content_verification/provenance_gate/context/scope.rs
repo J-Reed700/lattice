@@ -2,15 +2,30 @@
 //! versions worth reading before a claim waits for the user, each with the
 //! level a stored fact already gives it (its proxy), read from the trust
 //! store and the library without a model. One ownership judgement may be
-//! made for a subject the store has none for ([`Judgements::judge_owner`]);
-//! nothing else here calls a model.
+//! made for a subject the current checker has none for
+//! ([`Judgements::judge_owner`]); nothing else here calls a model.
+//!
+//! Two rules keep the scope honest across checkers and policy upgrades:
+//!
+//! - A version nobody has judged under the current policy is still read.
+//!   The walk levels every version it reads, so official documentation the
+//!   course holds is reachable before anything has assessed it, and an
+//!   upgraded standing policy never empties the scope.
+//! - Levels (proxies, owners) come only from the current checker's
+//!   judgements; they decide the ceiling. Ownership work is a lead: it
+//!   moves a version forward in the reading order ([`StandingScope::tier`])
+//!   and never levels it. The current checker's call is the lead once it
+//!   has made one; earlier checkers' work leads only a subject it has not
+//!   judged, since an earlier checker's mistake (a personal blog judged the
+//!   owner of "tool schema") would otherwise fill the first page the walk
+//!   reads ahead of the vendor's documentation.
 
 use super::*;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::services::source_trust::OWNERSHIP_POLICY;
 use lattice_core::domain::provenance::{
-    work_level, EditorialProcess, JudgementKey, RiskFlag, SiteStanding, Standing, SubjectRelation,
-    TldRegistry,
+    work_level, EditorialProcess, JudgementKey, RiskFlag, SiteStanding, Standing, SubjectKey,
+    SubjectRelation, TldRegistry,
 };
 use std::collections::HashSet;
 
@@ -25,15 +40,34 @@ const NOT_WHAT_IT_LOOKS: [RiskFlag; 3] = [
 /// Course versions worth reading for a claim's standing, by proxy.
 #[derive(Debug, Clone, Default)]
 pub(in crate::features::learning) struct StandingScope {
-    /// Course versions worth reading for standing, minus what the claim was
-    /// shown.
+    /// Course versions worth reading for standing, minus those already
+    /// counted as supporting the claim.
     pub(in crate::features::learning) candidates: HashSet<String>,
     /// Each candidate's proxy level, for the ceiling; a candidate read only
-    /// because its host is owner-hinted has none.
+    /// because a lead points at it, or one nobody has judged, has none.
     pub(in crate::features::learning) proxies: HashMap<String, TrustLevel>,
+    /// Candidates a lead points at: an origin judged the subject's owner, or
+    /// a host the judge believed the owner publishes on (the current
+    /// checker's judgement, or earlier checkers' when it has none).
+    pub(in crate::features::learning) led: HashSet<String>,
     /// Hosts where the subject's owner is believed to publish, from the
-    /// stored ownership judgements for the subject.
+    /// judgements that lead.
     pub(in crate::features::learning) owner_hosts: Vec<String>,
+}
+
+impl StandingScope {
+    /// Where a candidate stands in the reading order, lowest first: the
+    /// course's strongest on the subject by a current judgement or a lead,
+    /// then versions nobody has judged, then versions judged below
+    /// Established. Relevance orders each tier.
+    pub(in crate::features::learning) fn tier(&self, version_id: &str) -> u8 {
+        match self.proxies.get(version_id) {
+            Some(level) if *level >= TrustLevel::Established => 0,
+            _ if self.led.contains(version_id) => 0,
+            None => 1,
+            Some(_) => 2,
+        }
+    }
 }
 
 /// One live course version as the scope reads it.
@@ -48,8 +82,9 @@ pub(super) struct CourseVersion {
 }
 
 impl Judgements {
-    /// Whether the store holds any ownership judgement for `profile`'s
-    /// subject under this pass's model.
+    /// Whether the current checker has judged who owns `profile`'s subject.
+    /// Earlier checkers' judgements are leads, not this checker's call: a
+    /// new checker makes its own.
     pub(in crate::features::learning) async fn owner_judged(
         &self,
         profile: &ClaimProfile,
@@ -79,26 +114,37 @@ impl Judgements {
         Ok(())
     }
 
-    /// `profile`'s standing scope, without `shown` (the claim's supports and
-    /// everything it was shown): every course version a stored fact says
-    /// stands on the subject, never one the user distrusts.
+    /// `profile`'s standing scope, without sources already counted as
+    /// support and never a version the user distrusts: every course version
+    /// a current judgement levels, a lead points at, or nobody has judged.
+    /// Passage deduplication belongs to retrieval; a silent excerpt must not
+    /// exclude an entire document.
     pub(in crate::features::learning) async fn standing_scope(
         &mut self,
         profile: &ClaimProfile,
-        shown: &[String],
+        supported: &[String],
     ) -> Result<StandingScope> {
         let subject = profile.authority_subject();
-        let authorities = self.subject_authorities(profile).await?;
-        let owners: HashSet<&str> = authorities
+        let current = self.subject_authorities(profile).await?;
+        let owners: HashSet<&str> = current
+            .iter()
+            .filter(|judged| judged.relation == SubjectRelation::Owner)
+            .map(|judged| judged.origin_key.0.as_str())
+            .collect();
+        // The current checker's call supersedes earlier checkers' work,
+        // which leads only a subject it has not judged.
+        let leads = if current.is_empty() {
+            self.subject_leads(profile).await?
+        } else {
+            current.clone()
+        };
+        let led_origins: HashSet<&str> = leads
             .iter()
             .filter(|judged| judged.relation == SubjectRelation::Owner)
             .map(|judged| judged.origin_key.0.as_str())
             .collect();
         let mut owner_hosts: Vec<String> = Vec::new();
-        for hint in authorities
-            .iter()
-            .flat_map(|judged| &judged.owner_origin_hints)
-        {
+        for hint in leads.iter().flat_map(|judged| &judged.owner_origin_hints) {
             let hint = hint.trim().trim_end_matches('.').to_ascii_lowercase();
             if !hint.is_empty() && !owner_hosts.contains(&hint) {
                 owner_hosts.push(hint);
@@ -106,18 +152,17 @@ impl Judgements {
         }
         let mut scope = StandingScope::default();
         for version in self.course_versions().await?.iter() {
-            if shown.contains(&version.version_id) || self.distrusted(version) {
+            if supported.contains(&version.version_id) || self.distrusted(version) {
                 continue;
             }
-            let hinted = version
-                .origin
-                .as_ref()
-                .and_then(|origin| origin.host.as_deref())
-                .is_some_and(|host| {
-                    owner_hosts
-                        .iter()
-                        .any(|hint| host == hint || host.ends_with(&format!(".{hint}")))
-                });
+            let led = version.origin.as_ref().is_some_and(|origin| {
+                led_origins.contains(origin.key.0.as_str())
+                    || origin.host.as_deref().is_some_and(|host| {
+                        owner_hosts
+                            .iter()
+                            .any(|hint| host == hint || host.ends_with(&format!(".{hint}")))
+                    })
+            });
             let owner = version
                 .origin
                 .as_ref()
@@ -139,19 +184,45 @@ impl Judgements {
             .into_iter()
             .flatten()
             .max();
-            if level.is_none() && !hinted {
+            // Only a current judgement below the ladder (community, an
+            // unranked unknown) keeps a version out; a captured version
+            // nobody has judged is read and levelled when read.
+            let unjudged = version.origin.is_some() && version.standing.is_none();
+            if level.is_none() && !led && !unjudged {
                 continue;
             }
             scope.candidates.insert(version.version_id.clone());
             if let Some(level) = level {
                 scope.proxies.insert(version.version_id.clone(), level);
             }
+            if led {
+                scope.led.insert(version.version_id.clone());
+            }
         }
         scope.owner_hosts = owner_hosts;
         Ok(scope)
     }
 
-    /// Every ownership judgement stored for `profile`'s subject.
+    /// Every checker's ownership work on `profile`'s subject and its
+    /// aliases: leads for a subject the current checker has not judged,
+    /// never levels.
+    async fn subject_leads(&self, profile: &ClaimProfile) -> Result<Vec<AuthorityAssessment>> {
+        let Some(subject) = profile.authority_subject() else {
+            return Ok(Vec::new());
+        };
+        let mut keys = vec![subject.key.clone()];
+        for alias in &subject.aliases {
+            let key = SubjectKey::of(alias);
+            if !key.0.is_empty() && !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        self.store
+            .subject_leads(&self.program_id, &keys, OWNERSHIP_POLICY)
+            .await
+    }
+
+    /// The current checker's ownership judgements for `profile`'s subject.
     async fn subject_authorities(
         &self,
         profile: &ClaimProfile,

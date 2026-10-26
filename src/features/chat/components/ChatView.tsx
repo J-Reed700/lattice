@@ -5,6 +5,7 @@ import { MessageSquarePlus, PanelLeft } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { IconButton } from '@/components/ui';
+import { useApi } from '@/contexts/ApiContext';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
@@ -43,6 +44,7 @@ function writeSidebarCollapsed(value: boolean): void {
 }
 
 export function ChatView() {
+  const api = useApi();
   const queryClient = useQueryClient();
   const {
     loadConversations,
@@ -225,20 +227,14 @@ export function ChatView() {
       }
       await loadConversationLinkedDocuments(conversationId);
 
-      const fileName = await fetchDocumentFileName(documentId);
+      const fileName = await fetchDocumentFileName(documentId, api);
       if (!fileName) return;
       // Only claim scoping when retrieval really is scoped.
       toast.success(
         spaceId === GENERAL_SPACE_ID ? `Asking about ${fileName}.` : `Scoped to ${fileName}.`
       );
     })();
-  }, [
-    activeConversationId,
-    conversations,
-    linkDocumentToSpace,
-    loadConversationLinkedDocuments,
-    pendingDocumentLink,
-  ]);
+  }, [activeConversationId, api, conversations, linkDocumentToSpace, loadConversationLinkedDocuments, pendingDocumentLink]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -9,12 +9,13 @@ const ingestWebUrl = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
 
-vi.mock('@/lib/api', () => ({
-  VaultAPI: {
+vi.mock('@/lib/api', () => {
+  const mockApi = {
     quickCapture: (content: string) => quickCapture(content),
     ingestWebUrl: (url: string) => ingestWebUrl(url),
-  },
-}));
+  };
+  return { VaultAPI: mockApi, default: mockApi };
+});
 
 vi.mock('@/stores/toastStore', () => ({
   toast: {

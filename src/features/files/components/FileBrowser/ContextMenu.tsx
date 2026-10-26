@@ -30,6 +30,7 @@ import {
   FolderMinus,
 } from 'lucide-react';
 
+import { useApi } from '@/contexts/ApiContext';
 import {
   openDocumentFile,
   showDocumentInFolder,
@@ -66,6 +67,7 @@ export function ContextMenu({
   onAddToCollection,
   onRemoveFromCollection,
 }: ContextMenuProps) {
+  const api = useApi();
   const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useAppNavigate();
   const spacesQuery = useSpacesQuery();
@@ -189,7 +191,7 @@ export function ContextMenu({
       label: 'Open in system viewer',
       icon: <ExternalLink className="w-4 h-4" />,
       action: async () => {
-        const result = await openDocumentFile(doc.id);
+        const result = await openDocumentFile(doc.id, api);
         if (!result.ok) {
           toast.error('Failed to open file in system viewer', {
             message: result.error,
@@ -209,7 +211,7 @@ export function ContextMenu({
       icon: <FolderOpen className="w-4 h-4" />,
       action: async () => {
         try {
-          await showDocumentInFolder(doc.id);
+          await showDocumentInFolder(doc.id, api);
         } catch (error) {
           toast.error('Failed to show in folder', { message: errorMessage(error) });
         }

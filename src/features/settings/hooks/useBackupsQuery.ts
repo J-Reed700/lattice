@@ -1,16 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
 import type { BackupInfo, CreateBackupResult, ExportSummary } from '@/types/api/backup';
 
 export const BACKUPS_QUERY_KEY = ['backups', 'list'] as const;
 
 /** Backups on disk, newest first. */
 export function useBackupsQuery() {
+  const api = useApi();
   return useQuery<BackupInfo[]>({
     queryKey: BACKUPS_QUERY_KEY,
     queryFn: async () => {
-      const result = await VaultAPI.listBackups();
+      const result = await api.listBackups();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -21,11 +22,12 @@ export function useBackupsQuery() {
 }
 
 export function useCreateBackupMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<CreateBackupResult, Error, void>({
     mutationFn: async () => {
-      const result = await VaultAPI.createBackup();
+      const result = await api.createBackup();
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -38,11 +40,12 @@ export function useCreateBackupMutation() {
 }
 
 export function useRestoreBackupMutation() {
+  const api = useApi();
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, string>({
     mutationFn: async (backupPath) => {
-      const result = await VaultAPI.restoreBackup(backupPath);
+      const result = await api.restoreBackup(backupPath);
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -56,10 +59,11 @@ export function useRestoreBackupMutation() {
 export type ExportFormat = 'markdown' | 'json';
 
 export function useExportMutation() {
+  const api = useApi();
   return useMutation<ExportSummary, Error, ExportFormat>({
     mutationFn: async (format) => {
       const result =
-        format === 'markdown' ? await VaultAPI.exportMarkdown() : await VaultAPI.exportJson();
+        format === 'markdown' ? await api.exportMarkdown() : await api.exportJson();
       if (!result.ok) {
         throw new Error(result.error);
       }

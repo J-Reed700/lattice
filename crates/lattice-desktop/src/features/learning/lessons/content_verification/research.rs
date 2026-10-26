@@ -11,8 +11,6 @@ use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::http::url_identity::identity;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-#[cfg(test)]
-use web_research::within_search_scope;
 
 #[cfg(test)]
 #[path = "research_tests.rs"]
@@ -560,15 +558,22 @@ async fn research<'a>(
         &already_searched,
     )
     .await?;
-    // Each search with the gap it serves; the user's hints serve none.
-    let mut needs: Vec<(Option<usize>, web_research::PlannedNeed)> = hints
-        .iter()
-        .map(|hint| (None, web_research::PlannedNeed::web(hint.clone())))
-        .collect();
+    // Each search with the gap it serves; the user's hints serve none, and
+    // are searches like the planner's, their site written where they wrote it.
+    let mut needs: Vec<(Option<usize>, web_research::PlannedNeed)> = Vec::new();
+    for hint in hints {
+        match web_research::PlannedNeed::web(hint.clone()).searches() {
+            Some(searches) => needs.extend(searches.into_iter().map(|need| (None, need))),
+            None => tracing::warn!(
+                chars = hint.chars().count(),
+                "A research hint is not a search: it needs 3 to 240 characters besides any site: operators"
+            ),
+        }
+    }
     for web_research::GapNeed { gap, need } in planned {
         if !needs
             .iter()
-            .any(|(_, existing)| existing.query == need.query)
+            .any(|(_, existing)| existing.line() == need.line())
         {
             needs.push((Some(gap), need));
         }
@@ -639,15 +644,16 @@ async fn research<'a>(
         }
     }
     for (gap, need) in needs {
+        let line = need.line();
         if !context
             .searched
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(need.query.clone())
+            .insert(line.clone())
         {
             continue;
         }
-        searched.queries.push(need.query.clone());
+        searched.queries.push(line.clone());
         crate::features::learning::lesson_progress::stage(
             "Searching the web for missing lesson evidence",
         );
@@ -685,16 +691,15 @@ async fn research<'a>(
             crate::features::learning::lesson_progress::stage(
                 "Saving an additional reference for lesson verification",
             );
-            let captured =
-                match web_research::capture(context.web.as_ref(), &result, &need.query).await {
-                    Ok(Some(captured)) => captured,
-                    Ok(None) => continue,
-                    Err(error) => {
-                        tracing::warn!(%error, "Lesson research page unavailable");
-                        capture_failed = true;
-                        continue;
-                    }
-                };
+            let captured = match web_research::capture(context.web.as_ref(), &result).await {
+                Ok(Some(captured)) => captured,
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!(%error, "Lesson research page unavailable");
+                    capture_failed = true;
+                    continue;
+                }
+            };
             if let Some(version_id) = saving
                 .save(&mut sources, &mut urls, &result.url, captured, Some(&note))
                 .await?
@@ -706,7 +711,7 @@ async fn research<'a>(
         // Never checkpoint an in-flight search or a transient fetch failure as
         // completed. Captured references are already durable and deduplicated.
         if !capture_failed {
-            completed_queries.insert(need.query);
+            completed_queries.insert(line);
             crate::features::learning::lesson_drafts::record_checkpoint(
                 &search_key,
                 serde_json::to_value(&completed_queries)?,

@@ -1,6 +1,8 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
-import VaultAPI from '@/lib/api';
+import { useApi } from '@/contexts/ApiContext';
+
+
 
 /**
  * useChatEmptyStateStats
@@ -24,12 +26,13 @@ function startOfDayMs(date: Date): number {
 export function useChatEmptyStateStats(
   options?: Omit<UseQueryOptions<ChatEmptyStateStats, Error>, 'queryKey' | 'queryFn'>
 ) {
+  const api = useApi();
   return useQuery<ChatEmptyStateStats, Error>({
     queryKey: ['chat-empty-state-stats'],
     queryFn: async () => {
       const [statsResult, recentResult] = await Promise.all([
-        VaultAPI.getIndexingStats(),
-        VaultAPI.listAllDocuments(10000),
+        api.getIndexingStats(),
+        api.listAllDocuments(10000),
       ]);
 
       const totalDocuments = statsResult.ok

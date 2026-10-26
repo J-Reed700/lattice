@@ -2,10 +2,10 @@ import { useRef, useState } from 'react';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import { learningClaimReviewKey, learningLessonEvidencePrefix } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
-import VaultAPI from '@/lib/api';
 import type { AttachEvidenceDto, AttachScopeDto, ClaimAttachProgressDto, ClaimAttachReportDto } from '@/lib/bindings';
 
 export type AddSourceVariables = {
@@ -23,6 +23,7 @@ export type AddSourceVariables = {
  * server finishes the claim it is on (the ledger is append-only).
  */
 export function useAddSource(programId: string, lessonId: string) {
+  const api = useApi();
   const client = useQueryClient();
   const [progress, setProgress] = useState<ClaimAttachProgressDto | null>(null);
   // Each run gets a token; a cancelled run's late events and result are dropped.
@@ -33,7 +34,7 @@ export function useAddSource(programId: string, lessonId: string) {
     mutationFn: async ({ claimId, expectedRevision, evidence, scope }) => {
       const token = ++run.current;
       setProgress(null);
-      const result = await VaultAPI.attachLearningClaimEvidence(
+      const result = await api.attachLearningClaimEvidence(
         { programId, lessonId, claimId, expectedRevision, evidence, scope },
         (update) => { if (run.current === token) setProgress(update); },
       );

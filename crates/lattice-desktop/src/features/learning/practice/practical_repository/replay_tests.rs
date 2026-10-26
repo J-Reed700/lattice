@@ -64,6 +64,7 @@ fn request(
         allowed_aids: vec![],
         runtime_profile_id: None,
         builtin_runtime: None,
+        interview_target: None,
     }
 }
 

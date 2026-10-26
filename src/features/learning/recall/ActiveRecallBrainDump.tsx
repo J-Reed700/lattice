@@ -254,7 +254,7 @@ export function ActiveRecallBrainDump({
       </div>
 
       <p className="mt-3 text-xs leading-relaxed text-text-secondary">
-        Close your notes and write down or speak everything you remember from scratch. Studies show students who test themselves retain roughly 80% of material compared to just 34% for those who merely reread notes.
+        Close your notes and write down or say everything you remember. Recalling from memory strengthens learning far more reliably than rereading, and what you cannot recall shows you what to revisit.
       </p>
 
       {/* Lock Notice */}
@@ -357,7 +357,7 @@ export function ActiveRecallBrainDump({
                     : 'bg-danger-muted text-danger-fg',
                 )}
               >
-                {evaluation.percent >= 80 ? 'Strong Recall (Target: ~80%)' : evaluation.percent >= 50 ? 'Developing Retention' : 'Needs Review'}
+                {evaluation.percent >= 80 ? 'Strong recall' : evaluation.percent >= 50 ? 'Partial recall' : 'Worth another pass'}
               </span>
             </div>
 

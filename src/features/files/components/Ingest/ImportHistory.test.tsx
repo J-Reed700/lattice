@@ -5,7 +5,9 @@ import { act, fireEvent, render as renderBare, screen, waitFor, within } from '@
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+
 import { JOB_STATUS_EVENT } from '@/features/jobs/api';
+import VaultAPI from '@/lib/api';
 import { jobFixture } from '@/tests/fixtures/jobs';
 
 import { ImportHistory } from './ImportHistory';
@@ -111,7 +113,7 @@ describe('PDF import recovery', () => {
     });
     render(<ImportHistory />);
     await user.click(await screen.findByRole('button', { name: 'Choose replacement for mpep-2100.pdf' }));
-    expect(api.retryFailedItems).toHaveBeenCalledWith('job', 'bad', '/Downloads/corrected.pdf');
+    expect(api.retryFailedItems).toHaveBeenCalledWith('job', 'bad', '/Downloads/corrected.pdf', VaultAPI);
     expect(await screen.findByText('2 imported')).toBeVisible();
     expect(screen.getByText('corrected.pdf')).toBeVisible();
     expect(screen.getAllByText('Imported')).toHaveLength(2);
@@ -141,7 +143,7 @@ describe('PDF import recovery', () => {
     expect(await within(screen.getByRole('region', { name: 'Import job' })).findByText('2 imported')).toBeVisible();
     expect(screen.getByRole('heading', { name: '2 imports' })).toBeVisible();
     expect(screen.getAllByRole('region')).toHaveLength(2);
-    expect(api.retryFailedItems).toHaveBeenCalledWith('job', 'bad', undefined);
+    expect(api.retryFailedItems).toHaveBeenCalledWith('job', 'bad', undefined, VaultAPI);
   });
   it('reads again when the window regains focus without the page being hidden', async () => {
     render(<ImportHistory />);

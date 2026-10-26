@@ -11,8 +11,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
-import VaultAPI from "@/lib/api";
 import type {
   LearningContainerEngine,
   LearningBuiltinRuntimeCapability,
@@ -72,6 +72,7 @@ export function RuntimeSetupPanel({
   onWorkspace?: (workspace: LearningPracticalWorkspaceDto) => void;
   openRequest?: number;
 }) {
+  const api = useApi();
   const client = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [engine, setEngine] = useState<LearningContainerEngine>("docker");
@@ -109,7 +110,7 @@ export function RuntimeSetupPanel({
 
   const catalog = useQuery({
     queryKey: catalogKey,
-    queryFn: async () => unwrap(await VaultAPI.getLearningRuntimeCatalog()),
+    queryFn: async () => unwrap(await api.getLearningRuntimeCatalog()),
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -117,7 +118,7 @@ export function RuntimeSetupPanel({
   const prepare = useMutation({
     retry: false,
     mutationFn: async (request: SetupRequest) =>
-      unwrap(await VaultAPI.prepareLearningRuntimePreset(request)),
+      unwrap(await api.prepareLearningRuntimePreset(request)),
     onSuccess: async (nextWorkspace) => {
       setSetupError(null);
       client.setQueryData(workspaceKey(programId), nextWorkspace);
@@ -130,7 +131,7 @@ export function RuntimeSetupPanel({
   const refreshAvailability = useMutation({
     retry: false,
     mutationFn: async () =>
-      unwrap(await VaultAPI.getLearningPracticalWorkspace(programId)),
+      unwrap(await api.getLearningPracticalWorkspace(programId)),
     onSuccess: (nextWorkspace) => {
       client.setQueryData(workspaceKey(programId), nextWorkspace);
       onWorkspace?.(nextWorkspace);
