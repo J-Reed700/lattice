@@ -299,6 +299,11 @@ async fn serve(
                     break;
                 }
             }
+            // A refused request says why in its body; without it the run only
+            // knows the status.
+            if is_chat && !status.is_success() && record.error.is_none() {
+                record.error = Some(String::from_utf8_lossy(&copy).into_owned());
+            }
             if is_chat {
                 let streamed = content_type.contains("event-stream");
                 record.reply = Some(if is_messages {

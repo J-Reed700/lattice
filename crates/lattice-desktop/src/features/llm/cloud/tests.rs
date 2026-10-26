@@ -173,6 +173,33 @@ fn anthropic_omits_the_thinking_block_when_no_reasoning_is_asked_for() {
     assert_eq!(body["output_config"]["effort"], "low");
 }
 
+/// Requests that share a prompt prefix (a cache key) ask Claude to cache it;
+/// a one-off request does not pay for a cache write it will never read.
+#[test]
+fn anthropic_caches_only_requests_that_share_a_prefix() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let body = |cache_key: Option<&str>| {
+        anthropic
+            .body(
+                &CompletionRequest {
+                    cache_key: cache_key.map(str::to_owned),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        body(Some("conversation-1"))["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert!(body(None).get("cache_control").is_none());
+}
+
 /// Current Claude models 400 on any sampling knob, so a caller's determinism
 /// override must not reach the request.
 #[test]

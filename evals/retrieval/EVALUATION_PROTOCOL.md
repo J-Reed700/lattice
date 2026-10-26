@@ -191,7 +191,9 @@ corpus denominator, and partial runs cannot pass a release gate.
 ### Against a cloud model
 
 A recipe can name a cloud model in place of a server, as
-`shipped-path-recipe-claude-opus-5-5.json` does:
+`shipped-path-recipe-claude-opus-5-5.json` does. That recipe holds the window to 32,768
+tokens: the app sizes evidence from the window, so a cloud model's full window makes every
+turn several times as costly, and a held window keeps runs comparable to each other:
 
 ```json
 "cloud": {"provider": "anthropic", "model": "claude-opus-5-5"}

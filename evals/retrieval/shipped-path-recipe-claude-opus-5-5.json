@@ -11,7 +11,11 @@
   "index": {
     "chunk_tokens": 800
   },
-  "settings": {},
+  "settings": {
+    "llm": {
+      "contextWindow": 32768
+    }
+  },
   "wait": {
     "verification_secs": 300,
     "quiet_ms": 3000,

@@ -303,6 +303,14 @@ impl CloudLlm {
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
+            // Requests that share a cache key share a prompt prefix: a chat's
+            // tool rounds, a course's lessons. Claude caches the longest such
+            // prefix when asked, and a cached read costs a twentieth of a
+            // fresh input token. A cache write costs a quarter more than one,
+            // so a one-off request is not asked.
+            if request.cache_key.is_some() {
+                set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
+            }
             if !request.stop.is_empty() {
                 set_field(&mut body, "stop_sequences", json!(request.stop))?;
             }
