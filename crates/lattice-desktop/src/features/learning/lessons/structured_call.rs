@@ -461,6 +461,9 @@ fn restate(mut request: GroundedRequest, reason: &str) -> GroundedRequest {
 /// Send the request `request` builds for `output_tokens`. An answer cut off
 /// at its output reservation is asked for once more with the reservation
 /// doubled; a doubled request the window cannot hold keeps the first answer.
+/// So does an answer that already had the whole window: doubling its
+/// reservation gives it no more room, and decoding is deterministic, so the
+/// same answer would be cut off at the same place after the same wait.
 async fn send_completing(
     llm: &dyn LLMPort,
     request: impl Fn(usize) -> GroundedRequest,
@@ -469,7 +472,7 @@ async fn send_completing(
     step: Step,
 ) -> Result<GroundedOutput> {
     let output = send(llm, request(output_tokens), progress, step).await?;
-    if !cut_off(&output.finish_reason) {
+    if !cut_off(&output.finish_reason) || fills_window(progress, step) {
         return Ok(output);
     }
     let larger = request(output_tokens.saturating_mul(2));
@@ -482,6 +485,12 @@ async fn send_completing(
         "An answer reached its output limit; asking once more with twice the room"
     );
     send(llm, larger, progress, step).await
+}
+
+/// Whether a step's answer may take the whole window the prompt leaves: a
+/// streamed step under a lesson job or an outline run, other than the draft.
+fn fills_window(progress: Option<&OutlineProgress>, step: Step) -> bool {
+    (progress.is_some() || lesson_progress::active()) && !matches!(step, Step::Draft)
 }
 
 /// Send one learning request, streaming its text to whichever progress the
@@ -500,7 +509,7 @@ async fn send(
     // that the answer step carrying it still fits.
     let lesson_progress = lesson_progress::active();
     let unbounded = progress.is_some() || lesson_progress;
-    request.output_fills_window = unbounded && !matches!(step, Step::Draft);
+    request.output_fills_window = fills_window(progress, step);
     request.call.cache_key = lesson_progress::cache_key();
     let _model_call = lesson_progress.then(lesson_progress::model_call);
     let receive = |text: String| {
@@ -553,7 +562,10 @@ pub(in crate::features::learning) fn cut_off(reason: &str) -> bool {
 
 pub(in crate::features::learning) fn reject_incomplete_finish_reason(reason: &str) -> Result<()> {
     if cut_off(reason) || reason.to_ascii_lowercase().contains("content_filter") {
-        return Err(AppError::InvalidInput("The model response was cut off before the learning material was complete. Try again with a smaller outline or lesson.".into()));
+        // An unusable answer, not bad input: a lesson's passes and the job's
+        // recovery treat it as a refusal they can work around, where an
+        // invalid input failed the whole job.
+        return Err(AppError::ModelAnswerUnusable("The model response was cut off before the learning material was complete. Try again with a smaller outline or lesson.".into()));
     }
     Ok(())
 }

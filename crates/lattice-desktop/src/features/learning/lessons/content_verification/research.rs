@@ -324,6 +324,11 @@ pub(super) struct Searched {
     /// which pass B's break-even weighs (course evidence index D5). `None`
     /// when no round ran.
     pub(super) per_claim: Option<Duration>,
+    /// Whether any search this round answered or any page it opened was
+    /// read. A round that reached nothing (the search engines down, the
+    /// network gone) is not research: recorded as one, it used up each
+    /// claim's one round and sent unsupported claims to be rewritten.
+    pub(super) reached: bool,
 }
 
 /// What a research round did for the lesson's gaps.
@@ -410,13 +415,18 @@ pub(super) async fn expand<'a>(
     };
     let claims = u32::try_from(findings.len()).unwrap_or(u32::MAX);
     // Research adds evidence; it never stops the lesson. A round with no
-    // usable answer leaves its claims held, as one that found nothing does.
+    // usable answer leaves its claims held, as one that found nothing does:
+    // a planner answer that failed validation twice, or a planning prompt
+    // the window cannot hold, failed the whole lesson job before.
     let (expanded, searched) = match research(llm, references, &context, round).await {
         Ok(Expansion::Saved(expanded, searched)) => (*expanded, searched),
         Ok(unresearched) => return Ok(unresearched.timed(started.elapsed().checked_div(claims))),
         Err(
             error @ (AppError::InvalidInput(_)
             | AppError::PromptExceedsWindow { .. }
+            | AppError::ModelAnswerUnusable(_)
+            | AppError::ModelRejected(_)
+            | AppError::InvalidConfig(_)
             | AppError::Other(_)),
         ) => {
             tracing::warn!(%error, claims, "Claim research gave no usable answer; the claims stay held");
@@ -461,6 +471,9 @@ pub(in crate::features::learning) async fn research_topics<'a>(
         Err(
             error @ (AppError::InvalidInput(_)
             | AppError::PromptExceedsWindow { .. }
+            | AppError::ModelAnswerUnusable(_)
+            | AppError::ModelRejected(_)
+            | AppError::InvalidConfig(_)
             | AppError::Other(_)),
         ) => {
             tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
@@ -628,12 +641,16 @@ async fn research<'a>(
         );
         let captured = match web_research::capture_url(context.web.as_ref(), &cited.url).await {
             Ok(Some(captured)) => captured,
-            Ok(None) => continue,
+            Ok(None) => {
+                searched.reached = true;
+                continue;
+            }
             Err(error) => {
                 tracing::warn!(%error, "A cited page could not be read");
                 continue;
             }
         };
+        searched.reached = true;
         if let Some(version_id) = saving
             .save(&mut sources, &mut urls, &cited.url, captured, None)
             .await?
@@ -666,9 +683,18 @@ async fn research<'a>(
             Ok(results) => results,
             Err(error) => {
                 tracing::warn!(%error, "Lesson reference search unavailable");
+                // Not searched: a later round may send it again, and the
+                // planner is not told it was tried.
+                context
+                    .searched
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&line);
+                searched.queries.pop();
                 continue;
             }
         };
+        searched.reached = true;
         let mut capture_failed = false;
         // A search for an independent source never brings back the origins
         // the claim's supports already come from, whatever the planner wrote.
