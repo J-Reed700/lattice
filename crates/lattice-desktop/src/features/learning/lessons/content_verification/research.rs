@@ -324,11 +324,13 @@ pub(super) struct Searched {
     /// which pass B's break-even weighs (course evidence index D5). `None`
     /// when no round ran.
     pub(super) per_claim: Option<Duration>,
-    /// Whether any search this round answered or any page it opened was
-    /// read. A round that reached nothing (the search engines down, the
-    /// network gone) is not research: recorded as one, it used up each
-    /// claim's one round and sent unsupported claims to be rewritten.
-    pub(super) reached: bool,
+    /// The round could not research: every search and page read it tried
+    /// failed (the search engines down, the network gone), or its planner
+    /// gave no usable answer. That is not research: recorded as one, it used
+    /// up each claim's one round and sent unsupported claims to be
+    /// rewritten. A round with nothing to search, or no web to search it
+    /// on, is research that found nothing, as before.
+    pub(super) unreached: bool,
 }
 
 /// What a research round did for the lesson's gaps.
@@ -430,8 +432,11 @@ pub(super) async fn expand<'a>(
             | AppError::Other(_)),
         ) => {
             tracing::warn!(%error, claims, "Claim research gave no usable answer; the claims stay held");
-            return Ok(Expansion::Unchanged(Searched::default())
-                .timed(started.elapsed().checked_div(claims)));
+            return Ok(Expansion::Unchanged(Searched {
+                unreached: true,
+                ..Searched::default()
+            })
+            .timed(started.elapsed().checked_div(claims)));
         }
         Err(error) => return Err(error),
     };
@@ -627,6 +632,8 @@ async fn research<'a>(
         .collect();
     let mut added = 0;
     let mut searched = Searched::default();
+    // Whether anything this round tried answered, and whether anything failed.
+    let (mut reached, mut failed) = (false, false);
     let saving = Saving {
         context,
         program_repo: &program_repo,
@@ -642,15 +649,16 @@ async fn research<'a>(
         let captured = match web_research::capture_url(context.web.as_ref(), &cited.url).await {
             Ok(Some(captured)) => captured,
             Ok(None) => {
-                searched.reached = true;
+                reached = true;
                 continue;
             }
             Err(error) => {
                 tracing::warn!(%error, "A cited page could not be read");
+                failed = true;
                 continue;
             }
         };
-        searched.reached = true;
+        reached = true;
         if let Some(version_id) = saving
             .save(&mut sources, &mut urls, &cited.url, captured, None)
             .await?
@@ -691,10 +699,11 @@ async fn research<'a>(
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(&line);
                 searched.queries.pop();
+                failed = true;
                 continue;
             }
         };
-        searched.reached = true;
+        reached = true;
         let mut capture_failed = false;
         // A search for an independent source never brings back the origins
         // the claim's supports already come from, whatever the planner wrote.
@@ -745,6 +754,7 @@ async fn research<'a>(
             .await?;
         }
     }
+    searched.unreached = failed && !reached;
     if added == 0 && sources.len() == references.sources.len() {
         return Ok(Expansion::Unchanged(searched));
     }

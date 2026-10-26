@@ -209,7 +209,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 research::Expansion::Unchanged(searched) => {
                     // A round that reached no search engine and no page is
                     // not the claims' research: they keep their round.
-                    if searched.reached {
+                    if !searched.unreached {
                         ledger.record_research(&claims, &searched, &report).await?;
                     } else {
                         tracing::info!(
