@@ -244,7 +244,15 @@ export function analyzeFeynmanExplanation(
   };
 }
 
-export function FeynmanTechniquePanel({ program, lesson, module }: FeynmanTechniquePanelProps) {
+/**
+ * Each lesson keeps its own explanation. Choosing another lesson while the
+ * panel is open starts that lesson's, rather than carrying this one over.
+ */
+export function FeynmanTechniquePanel(props: FeynmanTechniquePanelProps) {
+  return <FeynmanWorkbench key={`${props.program.summary.id}:${props.lesson?.id ?? 'general'}`} {...props} />;
+}
+
+function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProps) {
   const defaultConcept = lesson?.title ?? module?.title ?? program.summary.title;
   const [selectedConcept, setSelectedConcept] = useState<string>(defaultConcept);
   const [customConcept, setCustomConcept] = useState('');

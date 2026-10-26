@@ -136,6 +136,18 @@ describe('ActiveRecallBrainDump', () => {
     ).toBe('Raft leader sends randomized heartbeats to followers.');
   });
 
+  it('switches to the chosen lesson’s own dump without overwriting it', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('active-recall-dump:program-1:lesson-2', 'Log replication notes.');
+    const other = { ...mockLesson, id: 'lesson-2', title: 'Raft Log Replication' };
+    const view = renderWithClient(<ActiveRecallBrainDump program={mockProgram} lesson={mockLesson} />);
+    await user.type(screen.getByRole('textbox', { name: /Your free-recall memory dump/i }), 'Election notes.');
+    view.rerender(<QueryClientProvider client={new QueryClient()}><ActiveRecallBrainDump program={mockProgram} lesson={other} /></QueryClientProvider>);
+    expect(screen.getByRole('textbox', { name: /Your free-recall memory dump/i })).toHaveValue('Log replication notes.');
+    expect(localStorage.getItem('active-recall-dump:program-1:lesson-2')).toBe('Log replication notes.');
+    expect(localStorage.getItem('active-recall-dump:program-1:lesson-1')).toBe('Election notes.');
+  });
+
   it('toggles self-test timer and ticks forward', () => {
     vi.useFakeTimers();
     renderWithClient(
@@ -585,6 +597,31 @@ describe('InterleavedStudyPanel', () => {
     expect(dueFilterCheckbox).not.toBeChecked();
     await user.click(dueFilterCheckbox);
     expect(dueFilterCheckbox).toBeChecked();
+  });
+
+  it('keeps the session’s cards when a review refreshes the decks, so none is skipped', async () => {
+    const user = userEvent.setup();
+    let reviewed = false;
+    mocks.getStudyDeck.mockImplementation((id: string) => {
+      if (id === 'deck-2') return Promise.resolve({ ok: true, data: fullDeck2 });
+      // Once reviewed, the first card is no longer due and leaves the filtered list.
+      const cards = fullDeck1.cards.map((card) => card.id === 'card-1' && reviewed ? { ...card, dueAt: Date.now() + 86_400_000, reviewCount: 2 } : card);
+      return Promise.resolve({ ok: true, data: { ...fullDeck1, cards } });
+    });
+    mocks.reviewStudyCard.mockImplementation(async () => {
+      reviewed = true;
+      return { ok: true, data: { ...fullDeck1.cards[0], reviewCount: 2 } };
+    });
+    renderWithClient(<InterleavedStudyPanel decks={sampleDecks} />);
+    await user.click(screen.getByRole('button', { name: /Open interleaved mixer/i }));
+    await user.click(screen.getByLabelText(/Due & weak cards only/i));
+    await user.click(await screen.findByRole('button', { name: /Start Interleaved Session \(3\)/i }));
+    expect(screen.getByText('What is a page fault?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
+    await waitFor(() => expect(mocks.getStudyDeck.mock.calls.length).toBeGreaterThan(2));
+    expect(await screen.findByText('Explain thrashing.')).toBeInTheDocument();
+    expect(screen.getByText(/2 of 3/)).toBeInTheDocument();
   });
 
   it('filters candidate cards and launches practice quiz session', async () => {

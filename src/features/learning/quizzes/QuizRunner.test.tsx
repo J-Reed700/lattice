@@ -85,6 +85,20 @@ describe('quiz runner', () => {
     expect(api.interrupt).toHaveBeenCalledWith(expect.objectContaining({ formId: 'form-1', expectedRevision: 2 }));
   });
 
+  it('retries a failed pause as a pause, never as a submission', async () => {
+    api.interrupt.mockResolvedValueOnce({ ok: false, error: 'Disk is busy.' })
+      .mockResolvedValueOnce(ok(quizForm({ items, status: 'interrupted', revision: 3 })));
+    const { user, onExit } = run(quizForm({ items }));
+    await user.click(screen.getByRole('radio', { name: /Release/ }));
+    await user.click(screen.getByRole('button', { name: 'Pause' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Pause' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Disk is busy.');
+    await user.click(screen.getByRole('button', { name: /Try again/ }));
+    await waitFor(() => expect(onExit).toHaveBeenCalled());
+    expect(api.interrupt).toHaveBeenCalledTimes(2);
+    expect(api.submit).not.toHaveBeenCalled();
+  });
+
   it('says a paused attempt is paused, and resumes it with the next answer', async () => {
     api.submit.mockResolvedValue(ok(quizForm({ items, status: 'submitted' })));
     const { user } = run(quizForm({ items, status: 'interrupted' }));

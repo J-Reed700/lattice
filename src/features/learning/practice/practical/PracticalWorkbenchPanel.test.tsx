@@ -361,8 +361,8 @@ describe("Learning Studio Labs & simulations", () => {
       .mockResolvedValueOnce(fail("Connection interrupted"))
       .mockResolvedValueOnce(ok(session()));
     renderPractical();
-    await user.click(await screen.findByRole("button", { name: /interview/ }));
-    await user.click(screen.getByRole("button", { name: "Start simulation" }));
+    await user.click(await screen.findByRole("button", { name: /interview.*Inspect a data trail/ }));
+    await user.click(screen.getByRole("button", { name: "Start interview" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Connection interrupted",
     );
@@ -709,7 +709,7 @@ describe("Learning Studio Labs & simulations", () => {
     renderPractical();
     expect(await screen.findByText("Explain the retry tradeoff more clearly.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Start another attempt" }));
-    expect(screen.getByRole("button", { name: "Start simulation" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start interview" })).toBeVisible();
     expect(screen.getByLabelText("Your role")).toHaveValue("Candidate");
   });
 
@@ -747,10 +747,10 @@ describe("Learning Studio Labs & simulations", () => {
     renderPractical();
     await user.type(await screen.findByLabelText("Your response"), "I would verify retries.");
     await user.click(screen.getByRole("button", { name: "Send simulation turn" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finish simulation" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Finish simulation" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish interview" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Finish interview" }));
     expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Finish simulation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish interview" })).not.toBeInTheDocument();
   });
 });
