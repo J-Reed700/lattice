@@ -373,6 +373,7 @@ impl ModelLoader {
             auth_header,
             generation_config,
             vision,
+            Some(settings.context_window),
             &self.runtime.schedulers,
         )
         .await

@@ -137,6 +137,7 @@ pub async fn generate_deck(
         study_goal: request.study_goal.trim().into(),
         model_name: llm.model_name().into(),
         created_at: now,
+        target_at: None,
         cards,
     };
     repo.save(&deck).await?;
@@ -162,6 +163,7 @@ pub async fn generate_conversation_deck(
         study_goal: "Recall verified claims and their cited evidence".into(),
         model_name: llm.model_name().into(),
         created_at: now,
+        target_at: None,
         cards,
     };
     repo.save(&deck).await?;
@@ -183,4 +185,49 @@ pub async fn update_card(repo: &StudyRepository, request: UpdateStudyCardRequest
     text(&request.answer, "Answer", 1000)?;
     text(&request.explanation, "Explanation", 3000)?;
     repo.update_card(&request).await
+}
+
+/// A target must be ahead of now and within a few years, so a mistyped date
+/// cannot make every review land in the past or centuries out.
+fn validate_target(target_at: Option<i64>, now: i64) -> Result<()> {
+    const YEAR_MS: i64 = 366 * super::schedule::DAY_MS;
+    match target_at {
+        Some(target) if target <= now => Err(AppError::InvalidInput(
+            "Choose a time that has not passed yet.".into(),
+        )),
+        Some(target) if target > now.saturating_add(5 * YEAR_MS) => Err(AppError::InvalidInput(
+            "Choose a time within the next five years.".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+pub async fn set_target(
+    repo: &StudyRepository,
+    request: SetStudyDeckTargetRequestDto,
+) -> Result<StudyDeckDto> {
+    let now = chrono::Utc::now().timestamp_millis();
+    validate_target(request.target_at, now)?;
+    repo.set_target(&request.deck_id, request.target_at, now)
+        .await?;
+    repo.get(&request.deck_id).await
+}
+
+/// A deck of the interview's questions, checked against its answer guides,
+/// with the interview date as its target when one is given.
+pub async fn create_interview_deck(
+    repo: &StudyRepository,
+    pool: &sqlx::SqlitePool,
+    request: CreateInterviewStudyDeckRequestDto,
+) -> Result<StudyDeckDto> {
+    let now = chrono::Utc::now().timestamp_millis();
+    validate_target(request.target_at, now)?;
+    let material =
+        super::interview_deck::load(pool, &request.program_id, &request.activity_id).await?;
+    let deck = super::interview_deck::deck(&material, now);
+    repo.save(&deck).await?;
+    if request.target_at.is_some() {
+        repo.set_target(&deck.id, request.target_at, now).await?;
+    }
+    repo.get(&deck.id).await
 }

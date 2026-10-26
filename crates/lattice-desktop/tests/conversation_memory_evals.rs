@@ -41,7 +41,7 @@
 //! | `LATTICE_EVAL_AUTH_HEADER_VALUE` | optional header value; never written to traces | unset |
 //! | `LATTICE_EVAL_CONTEXT_TOKENS` | continuation-model window to budget against | `8192` |
 //! | `LATTICE_EVAL_REQUEST_TIMEOUT_SECS` | timeout for one provider attempt | `300` |
-//! | `LATTICE_EVAL_COMPACTION_DEADLINE_SECS` | total deadline for one compaction job | production default (`300`) |
+//! | `LATTICE_EVAL_COMPACTION_DEADLINE_SECS` | total deadline for one compaction job | none: the run ends by cancellation, as in production |
 //! | `LATTICE_EVAL_PROVIDER_ATTEMPTS` | logical attempts for a transient provider failure or empty completion | `3` |
 //! | `LATTICE_EVAL_RETRY_BASE_DELAY_MS` | deterministic exponential-backoff base between provider attempts | `1000` |
 //! | `LATTICE_EVAL_RUNS` | repeats per semantic fixture (§17.1 asks for ≥ 3) | `3` |
@@ -112,7 +112,6 @@ use sqlx::{Row, SqlitePool};
 use lattice::features::conversation::chat::memory_context::build_memory_plan;
 use lattice::features::conversation::memory::{
     prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
-    COMPACTION_DEADLINE,
 };
 use lattice::features::conversation::repository::ConversationRepository;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
@@ -321,7 +320,7 @@ struct EvalConfig {
     auth_header_value: String,
     context_tokens: usize,
     request_timeout: Duration,
-    compaction_deadline: Duration,
+    compaction_deadline: Option<Duration>,
     provider_attempts: usize,
     retry_base_delay: Duration,
     runs: usize,
@@ -393,10 +392,8 @@ impl EvalConfig {
             request_timeout: Duration::from_secs(
                 parsed("LATTICE_EVAL_REQUEST_TIMEOUT_SECS").unwrap_or(300) as u64,
             ),
-            compaction_deadline: Duration::from_secs(
-                parsed("LATTICE_EVAL_COMPACTION_DEADLINE_SECS")
-                    .map_or(COMPACTION_DEADLINE.as_secs(), |seconds| seconds as u64),
-            ),
+            compaction_deadline: parsed("LATTICE_EVAL_COMPACTION_DEADLINE_SECS")
+                .map(|seconds| Duration::from_secs(seconds as u64)),
             provider_attempts: parsed("LATTICE_EVAL_PROVIDER_ATTEMPTS").unwrap_or(3).max(1),
             retry_base_delay: Duration::from_millis(
                 parsed("LATTICE_EVAL_RETRY_BASE_DELAY_MS").unwrap_or(1_000) as u64,
@@ -428,7 +425,7 @@ impl EvalConfig {
             self.endpoint,
             self.context_tokens,
             self.request_timeout.as_secs(),
-            self.compaction_deadline.as_secs(),
+            self.compaction_deadline.map_or_else(|| "none".to_string(), |deadline| deadline.as_secs().to_string()),
             self.provider_attempts,
             self.retry_base_delay.as_millis(),
             prompts::EXTRACTOR_PROMPT_VERSION,

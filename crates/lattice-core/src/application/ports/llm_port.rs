@@ -249,6 +249,14 @@ pub trait LLMPort: Send + Sync {
         None
     }
 
+    /// Whether this model thinks before every answer whatever the request
+    /// asks, so a request needs no step of its own to reason first.
+    ///
+    /// Default: `false`.
+    fn thinks_before_answering(&self) -> bool {
+        false
+    }
+
     /// The provider behind this port (e.g. "ollama", "llamacpp",
     /// "local-sidecar"), for logs and diagnostics.
     ///

@@ -11,12 +11,14 @@ use lattice_core::application::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
+use reply::parse_completion;
 use schema::{anthropic_schema, anthropic_schema_compiles};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 pub mod catalog;
 mod messages;
+mod reply;
 mod schema;
 mod streaming;
 mod timing;
@@ -58,18 +60,36 @@ impl CloudLlm {
                 "Cloud model and API key are required".into(),
             ));
         }
-        let endpoint = match settings.provider {
-            LLMProvider::Openai => "https://api.openai.com/v1/responses",
-            LLMProvider::Anthropic => "https://api.anthropic.com/v1/messages",
-            LLMProvider::Google => {
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-            }
+        let (variable, base, path) = match settings.provider {
+            LLMProvider::Openai => (
+                "LATTICE_OPENAI_BASE_URL",
+                "https://api.openai.com",
+                "/v1/responses",
+            ),
+            LLMProvider::Anthropic => (
+                "LATTICE_ANTHROPIC_BASE_URL",
+                "https://api.anthropic.com",
+                "/v1/messages",
+            ),
+            LLMProvider::Google => (
+                "LATTICE_GOOGLE_BASE_URL",
+                "https://generativelanguage.googleapis.com",
+                "/v1beta/openai/chat/completions",
+            ),
             _ => {
                 return Err(AppError::InvalidConfig(
                     "Expected an explicit cloud provider".into(),
                 ))
             }
         };
+        // An evaluation run sends every request through a local recording
+        // proxy, named here in place of the provider's public host.
+        let base = std::env::var(variable)
+            .ok()
+            .map(|base| base.trim().trim_end_matches('/').to_owned())
+            .filter(|base| !base.is_empty())
+            .unwrap_or_else(|| base.to_owned());
+        let endpoint = format!("{base}{path}");
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
         let client = lattice_core::shared::http::reqwest_client_builder()
@@ -81,7 +101,7 @@ impl CloudLlm {
             provider: settings.provider,
             model: settings.model.clone(),
             key,
-            endpoint: endpoint.into(),
+            endpoint,
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
@@ -109,7 +129,22 @@ impl CloudLlm {
     /// window rather than writing less, as llama.cpp does
     /// (`LlamaCppLlm::output_room_for`). A ceiling that fits is kept.
     fn output_room(&self, request: &CompletionRequest) -> u32 {
-        let requested = request.effective_max_output_tokens(self.max_tokens);
+        self.room_for(
+            request.effective_max_output_tokens(self.max_tokens),
+            request,
+        )
+    }
+
+    /// The output ceiling for a request Claude thinks through: the configured
+    /// one, not the request's. Thinking counts toward `max_tokens` though its
+    /// text is not returned, so a ceiling sized for the reply was spent
+    /// thinking, and a lesson's draft came back with no text at all.
+    fn thinking_room(&self, request: &CompletionRequest) -> u32 {
+        self.room_for(self.max_tokens, request)
+    }
+
+    /// `requested`, cut to the room the prompt leaves in the window.
+    fn room_for(&self, requested: u32, request: &CompletionRequest) -> u32 {
         let prompt_tokens = self.prompt_tokens(request);
         let window = self.context_window;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
@@ -283,23 +318,46 @@ impl CloudLlm {
             // for any non-default value, all of them while thinking), and the
             // overrides callers pass were tuned for local models anyway. A
             // determinism override is not worth a failed call.
-            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.output_room(request),"stream":stream});
+            // Claude thinks unasked from the 5 family on (Opus 5.5 cannot be
+            // told not to), and otherwise when a thinking request or a real
+            // effort level asks; "none" is expressed by leaving the block
+            // out, since requesting adaptive thinking turned "do not think"
+            // into its opposite.
+            let effort = request.reasoning_effort.as_deref();
+            let thinks = claude_thinks_unasked(&self.model)
+                || request.thinking == ThinkingMode::On
+                || effort.is_some_and(|effort| effort != "none");
+            let max_tokens = if thinks {
+                self.thinking_room(request)
+            } else {
+                self.output_room(request)
+            };
+            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":max_tokens,"stream":stream});
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
+            }
+            // Requests that share a cache key share a prompt prefix: a chat's
+            // tool rounds, a course's lessons. Claude caches the longest such
+            // prefix when asked, and a cached read costs a twentieth of a
+            // fresh input token. A cache write costs a quarter more than one,
+            // so a one-off request is not asked.
+            if request.cache_key.is_some() {
+                set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
             }
             if !request.stop.is_empty() {
                 set_field(&mut body, "stop_sequences", json!(request.stop))?;
             }
-            // Extended thinking is off unless a `thinking` block asks for it.
-            // A thinking request asks, and so does a real effort level, which
-            // grades it; "none" is expressed by leaving the block out, since
-            // requesting adaptive thinking turned "do not think" into its
-            // opposite.
-            let effort = request.reasoning_effort.as_deref();
-            let thinks = request.thinking == ThinkingMode::On
-                || effort.is_some_and(|effort| effort != "none");
+            // A block asks for the thinking; on a model that thinks unasked
+            // it is the same request, and says how its thinking is shown.
             if thinks {
-                set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
+                // Thinking is not shown unless asked for: summaries are what a
+                // caller that displays reasoning gets back.
+                let thinking = if request.include_reasoning {
+                    json!({"type":"adaptive","display":"summarized"})
+                } else {
+                    json!({"type":"adaptive"})
+                };
+                set_field(&mut body, "thinking", thinking)?;
             }
             if let Some(effort) = effort {
                 // Anthropic has no "none" effort of its own, so the answer
@@ -441,6 +499,9 @@ impl LLMPort for CloudLlm {
     fn supports_tool_calling(&self) -> bool {
         true
     }
+    fn thinks_before_answering(&self) -> bool {
+        self.provider == LLMProvider::Anthropic && claude_thinks_unasked(&self.model)
+    }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let deadline = request
             .wall_clock_budget()
@@ -513,184 +574,6 @@ impl LLMPort for CloudLlm {
     }
 }
 
-fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionResponse> {
-    if provider == LLMProvider::Google {
-        let mut response = CompletionResponse::default();
-        let choices = field(&value, "choices")
-            .as_array()
-            .ok_or_else(|| AppError::Network("Missing cloud response choices".into()))?;
-        let first_choice = choices
-            .first()
-            .ok_or_else(|| AppError::Network("Empty choices in cloud response".into()))?;
-        let message = field(first_choice, "message");
-        if let Some(content) = field(message, "content").as_str() {
-            response.text.push_str(content);
-        }
-        if let Some(reasoning) = field(message, "reasoning_content")
-            .as_str()
-            .or_else(|| field(message, "reasoning").as_str())
-            .or_else(|| field(message, "thought").as_str())
-            .filter(|t| !t.trim().is_empty())
-        {
-            response.reasoning = Some(reasoning.to_string());
-        }
-        if let Some(tool_calls) = field(message, "tool_calls").as_array() {
-            for call in tool_calls {
-                let id = field(call, "id")
-                    .as_str()
-                    .ok_or_else(|| AppError::Network("Missing tool call ID".into()))?;
-                let function = field(call, "function");
-                let name = field(function, "name")
-                    .as_str()
-                    .ok_or_else(|| AppError::Network("Missing tool name".into()))?;
-                let args_val = field(function, "arguments");
-                let arguments = if let Some(args_str) = args_val.as_str() {
-                    serde_json::from_str(args_str)
-                        .map_err(|e| AppError::Network(format!("Invalid tool arguments: {e}")))?
-                } else if args_val.is_object() {
-                    args_val.clone()
-                } else {
-                    json!({})
-                };
-                response.tool_calls.push(CompletionInput::ToolCall {
-                    id: id.into(),
-                    name: name.into(),
-                    arguments,
-                });
-            }
-        }
-        let usage = field(&value, "usage");
-        response.input_tokens = field(usage, "prompt_tokens").as_u64().unwrap_or(0);
-        response.output_tokens = field(usage, "completion_tokens").as_u64().unwrap_or(0);
-        let mut finish_reason = field(first_choice, "finish_reason")
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
-        if finish_reason == "stop" && !response.tool_calls.is_empty() {
-            finish_reason = "tool_calls".to_string();
-        }
-        response.finish_reason = finish_reason;
-        response.replay = vec![CompletionInput::Native {
-            value: message.clone(),
-        }];
-        response.timing = timing::reported(&value);
-        return Ok(response);
-    }
-    let mut response = CompletionResponse::default();
-    let mut reasoning_parts = Vec::new();
-    let key = if provider == LLMProvider::Openai {
-        "output"
-    } else {
-        "content"
-    };
-    let blocks = field(&value, key)
-        .as_array()
-        .ok_or_else(|| AppError::Network("Missing cloud response content".into()))?;
-    for block in blocks {
-        match field(block, "type").as_str().unwrap_or("") {
-            "message" => {
-                if let Some(parts) = field(block, "content").as_array() {
-                    for part in parts {
-                        if let Some(text) = field(part, "text")
-                            .as_str()
-                            .or_else(|| field(part, "refusal").as_str())
-                        {
-                            response.text.push_str(text);
-                        }
-                    }
-                }
-            }
-            "text" => {
-                if let Some(text) = field(block, "text").as_str() {
-                    response.text.push_str(text);
-                }
-            }
-            "reasoning" if provider == LLMProvider::Openai => {
-                if let Some(summary) = field(block, "summary").as_array() {
-                    reasoning_parts.extend(summary.iter().filter_map(|part| {
-                        field(part, "text")
-                            .as_str()
-                            .map(str::trim)
-                            .filter(|text| !text.is_empty())
-                            .map(str::to_owned)
-                    }));
-                }
-            }
-            "thinking" if provider == LLMProvider::Anthropic => {
-                if let Some(thinking) = field(block, "thinking")
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|text| !text.is_empty())
-                {
-                    reasoning_parts.push(thinking.to_owned());
-                }
-            }
-            "function_call" | "tool_use" => {
-                let id = field(
-                    block,
-                    if provider == LLMProvider::Openai {
-                        "call_id"
-                    } else {
-                        "id"
-                    },
-                )
-                .as_str()
-                .ok_or_else(|| AppError::Network("Missing tool call ID".into()))?;
-                let name = field(block, "name")
-                    .as_str()
-                    .ok_or_else(|| AppError::Network("Missing tool name".into()))?;
-                let arguments = if provider == LLMProvider::Openai {
-                    serde_json::from_str(field(block, "arguments").as_str().unwrap_or(""))
-                        .map_err(|e| AppError::Network(format!("Invalid tool arguments: {e}")))?
-                } else {
-                    field(block, "input").clone()
-                };
-                response.tool_calls.push(CompletionInput::ToolCall {
-                    id: id.into(),
-                    name: name.into(),
-                    arguments,
-                });
-            }
-            _ => {}
-        }
-    }
-    response.input_tokens = field(field(&value, "usage"), "input_tokens")
-        .as_u64()
-        .unwrap_or(0);
-    response.output_tokens = field(field(&value, "usage"), "output_tokens")
-        .as_u64()
-        .unwrap_or(0);
-    response.finish_reason = field(
-        &value,
-        if provider == LLMProvider::Openai {
-            "status"
-        } else {
-            "stop_reason"
-        },
-    )
-    .as_str()
-    .unwrap_or("unknown")
-    .into();
-    if !reasoning_parts.is_empty() {
-        response.reasoning = Some(reasoning_parts.join("\n\n"));
-    }
-    response.timing = timing::reported(&value);
-    // OpenAI replays its output items one by one; Anthropic replays the
-    // content blocks as the assistant message they were, signed thinking
-    // included.
-    response.replay = match (provider, field(&value, key)) {
-        (LLMProvider::Openai, Value::Array(items)) => items
-            .iter()
-            .cloned()
-            .map(|value| CompletionInput::Native { value })
-            .collect(),
-        (_, blocks) => vec![CompletionInput::Native {
-            value: json!({"role": "assistant", "content": blocks}),
-        }],
-    };
-    Ok(response)
-}
-
 fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&Value::Null)
 }
@@ -701,6 +584,24 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
         .ok_or_else(|| AppError::InvalidState("Expected a JSON object".into()))?
         .insert(key.into(), field_value);
     Ok(())
+}
+
+/// Whether this Claude model thinks with no `thinking` block asking: every
+/// model from the 5 family on, where omitting the block runs adaptive
+/// thinking (and Opus 5.5 refuses to have it turned off). The family is the
+/// first number in the id, so `claude-opus-4-8` and `claude-3-5-sonnet` do
+/// not and `claude-sonnet-5-5` does.
+fn claude_thinks_unasked(model: &str) -> bool {
+    model
+        .strip_prefix("claude-")
+        .and_then(|rest| rest.split('-').find_map(|part| part.parse::<u32>().ok()))
+        .is_some_and(|family| family >= 5)
+}
+
+/// Whether this OpenAI model is a reasoning model, which takes an effort
+/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
+fn is_openai_reasoning_model(model: &str) -> bool {
+    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
 }
 
 /// What, if anything, belongs in the Responses API's `reasoning` block.
@@ -715,12 +616,6 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// `low` on the o-series, so a request for no reasoning is clamped to whichever
 /// the target model understands. A non-reasoning model needs no clamp — it never
 /// thinks in the first place.
-/// Whether this OpenAI model is a reasoning model, which takes an effort
-/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
-fn is_openai_reasoning_model(model: &str) -> bool {
-    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
-}
-
 fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
     let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {

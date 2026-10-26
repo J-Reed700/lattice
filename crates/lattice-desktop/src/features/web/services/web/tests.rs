@@ -256,6 +256,47 @@ fn test_extract_article_text() {
     assert!(text.contains("Second paragraph"));
 }
 
+/// A changelog's versions, an answer's code and a support table were dropped
+/// by a reader that took only paragraphs and headings, and the read was still
+/// called whole. A paragraph inside a list item is read once.
+#[test]
+fn lists_tables_code_and_quotes_are_read_once_each() {
+    let service = test_service();
+    let html = r#"
+            <html><body><article>
+                <h1>Release notes</h1>
+                <ul><li>3.12 drops distutils</li><li><p>3.11 adds tomllib</p></li></ul>
+                <pre>pip install --upgrade pip
+python -m venv .venv</pre>
+                <table><tr><th>Version</th><th>Support</th></tr><tr><td>3.8</td><td>ended</td></tr></table>
+                <blockquote>Upgrade before October.</blockquote>
+                <dl><dt>EOL</dt><dd>End of life</dd></dl>
+            </article></body></html>
+        "#;
+
+    let text = service.extract_article_text(html);
+    for fact in [
+        "3.12 drops distutils",
+        "python -m venv .venv",
+        "Version | Support",
+        "3.8 | ended",
+        "Upgrade before October.",
+        "End of life",
+    ] {
+        assert!(text.contains(fact), "missing {fact:?} in {text:?}");
+    }
+    assert_eq!(text.matches("3.11 adds tomllib").count(), 1, "{text}");
+    let menu = service.extract_article_text(
+        "<html><body><nav><ul><li>Home</li><li>Pricing</li></ul></nav>         <ul><li>Install with pip</li></ul><p>Read the guide.</p></body></html>",
+    );
+    assert!(!menu.contains("Pricing"), "a menu is not page text: {menu}");
+    assert!(menu.contains("Install with pip"), "{menu}");
+    assert!(
+        text.contains("--upgrade pip\npython -m venv"),
+        "code keeps its lines: {text:?}"
+    );
+}
+
 /// Pages that failed in a real deep-research turn: one needs TLS 1.3, one
 /// hides its body outside `<article>`. Run by hand; it needs the network.
 #[tokio::test]

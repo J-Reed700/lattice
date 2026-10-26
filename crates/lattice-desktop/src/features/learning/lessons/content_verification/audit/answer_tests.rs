@@ -77,6 +77,49 @@ async fn an_answer_cut_off_at_its_limit_is_sent_again_in_halves() {
     assert_eq!(sent_claims(&texts[2]), [SALT]);
 }
 
+/// The backend's refusal of a batch its window cannot hold, counted exactly.
+fn refused() -> Result<CompletionResponse> {
+    Err(AppError::PromptExceedsWindow {
+        prompt_tokens: 251_588,
+        window: 131_072,
+        counted_exactly: true,
+        message: "This request's prompt is 251588 tokens (counted exactly).".into(),
+    })
+}
+
+/// A batch the estimate sized under the window can measure over it by the
+/// backend's exact count. The refusal halves the batch, as the planner's
+/// does; it used to fail the whole lesson job.
+#[tokio::test]
+async fn a_batch_the_backend_refuses_for_its_size_is_sent_again_in_halves() {
+    for with_web in [false, true] {
+        let harness = Harness::new(vec![verified("a", BOILS), verified("b", SALT)]);
+        let web = SavingWeb {
+            search_fails: false,
+            saved: Mutex::new(Vec::new()),
+        };
+        let llm = ScriptedVerifier::new(BIG, |request, call| {
+            if call == 1 {
+                return refused();
+            }
+            Ok(CompletionResponse::from_text(answer_each(
+                request, &supports,
+            )))
+        });
+
+        let outcome = harness
+            .audit(&llm, with_web.then_some(&web as &dyn VerifierWeb))
+            .await
+            .unwrap();
+
+        assert_eq!(llm.calls(), 3, "with_web={with_web}");
+        assert!(outcome.publishable(), "with_web={with_web}");
+        let texts = llm.user_texts();
+        assert_eq!(sent_claims(&texts[1]), [BOILS]);
+        assert_eq!(sent_claims(&texts[2]), [SALT]);
+    }
+}
+
 /// Pages fetched by the Verifier, saved before it may read them.
 pub(super) struct SavingWeb {
     pub search_fails: bool,

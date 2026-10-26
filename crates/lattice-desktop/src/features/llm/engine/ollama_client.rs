@@ -65,7 +65,15 @@ pub struct OllamaClient {
     /// The geometry the model was declared to see with; `None` refuses
     /// pictures.
     vision: Option<VisionGeometry>,
+    /// The window every request asks for as `num_ctx`, and the one prompts
+    /// are sized against. Ollama otherwise runs at its own server default,
+    /// often 4,096 tokens, and silently drops the front of a longer prompt.
+    context_window: usize,
 }
+
+/// The window assumed when neither the settings nor the server say: the
+/// settings' own default.
+const FALLBACK_CONTEXT_WINDOW: usize = 131_072;
 
 impl OllamaClient {
     /// A client for `model_name` with the default probe and stream timeouts.
@@ -138,7 +146,49 @@ impl OllamaClient {
             config: GenerationConfig::default(),
             circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
             vision: None,
+            context_window: FALLBACK_CONTEXT_WINDOW,
         })
+    }
+
+    /// The window requests ask for and prompts are sized against.
+    pub fn with_context_window(mut self, window: usize) -> Self {
+        self.context_window = window;
+        self
+    }
+
+    /// The window to run this model at: the configured one, held to what the
+    /// model was trained for and to a `num_ctx` its Modelfile pins, as
+    /// `/api/show` reports them. A window past the trained length is
+    /// rope-stretched nonsense, and a pinned one is the owner's choice. When
+    /// the server cannot say, the configured window stands.
+    pub async fn resolve_context_window(&self, configured: Option<usize>) -> usize {
+        let limits = self.show_limits().await;
+        [configured, limits.trained, limits.pinned]
+            .into_iter()
+            .flatten()
+            .filter(|window| *window > 0)
+            .min()
+            .unwrap_or(FALLBACK_CONTEXT_WINDOW)
+    }
+
+    /// What `/api/show` says about the model's window; nothing on any failure,
+    /// since this only narrows a window that is already known.
+    async fn show_limits(&self) -> ShowLimits {
+        let url = format!("{}/api/show", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "model": self.model_name }))
+            .timeout(self.timeout)
+            .send()
+            .await;
+        let Ok(response) = response.and_then(reqwest::Response::error_for_status) else {
+            return ShowLimits::default();
+        };
+        match response.json::<serde_json::Value>().await {
+            Ok(show) => ShowLimits::from_show(&show),
+            Err(_) => ShowLimits::default(),
+        }
     }
 
     /// The sampling defaults and output ceiling every request starts from.
@@ -323,6 +373,10 @@ impl OllamaClient {
                 serde_json::json!(profile.repeat_penalty),
             ),
             (
+                "num_ctx".to_string(),
+                serde_json::json!(self.context_window),
+            ),
+            (
                 "num_predict".to_string(),
                 serde_json::json!(request.effective_max_output_tokens(
                     u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
@@ -461,6 +515,41 @@ fn status_error(status: StatusCode) -> AppError {
         429 => AppError::RateLimitExceeded(description),
         400..=499 => AppError::InvalidState(description),
         _ => AppError::ServiceNotAvailable(description),
+    }
+}
+
+/// The window limits `/api/show` reports for a model.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ShowLimits {
+    /// `model_info["<architecture>.context_length"]`: what it was trained for.
+    trained: Option<usize>,
+    /// A `num_ctx` line in the Modelfile's parameters.
+    pinned: Option<usize>,
+}
+
+impl ShowLimits {
+    fn from_show(show: &serde_json::Value) -> Self {
+        let trained = show
+            .get("model_info")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|info| {
+                info.iter()
+                    .find(|(key, _)| key.ends_with(".context_length"))
+                    .and_then(|(_, value)| value.as_u64())
+            })
+            .and_then(|tokens| usize::try_from(tokens).ok());
+        let pinned = show
+            .get("parameters")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|parameters| {
+                parameters.lines().find_map(|line| {
+                    let mut words = line.split_whitespace();
+                    (words.next() == Some("num_ctx"))
+                        .then(|| words.next()?.parse::<usize>().ok())
+                        .flatten()
+                })
+            });
+        Self { trained, pinned }
     }
 }
 
@@ -624,9 +713,7 @@ impl LLMPort for OllamaClient {
     }
 
     fn max_context_tokens(&self) -> usize {
-        // Default Ollama context window (varies by model)
-        // llama3.1:8b has 128K context window
-        128_000
+        self.context_window
     }
 
     async fn is_ready(&self) -> Result<bool> {

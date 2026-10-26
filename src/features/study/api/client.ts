@@ -35,4 +35,16 @@ export const studyApi = {
 
   deleteStudyDeck: (id: string): Promise<ApiResult<void>> =>
     studyCall('delete_study_deck', { id }),
+
+  /** Sets or clears when a deck must be remembered by, such as an interview. */
+  setStudyDeckTarget: (
+    request: Wire.SetStudyDeckTargetRequestDto,
+  ): Promise<ApiResult<Wire.StudyDeckDto>> =>
+    studyCall('set_study_deck_target', { request }),
+
+  /** Turns a ready interview activity's questions and answer guides into a recall deck. */
+  createInterviewStudyDeck: (
+    request: Wire.CreateInterviewStudyDeckRequestDto,
+  ): Promise<ApiResult<Wire.StudyDeckDto>> =>
+    studyCall('create_interview_study_deck', { request }),
 };

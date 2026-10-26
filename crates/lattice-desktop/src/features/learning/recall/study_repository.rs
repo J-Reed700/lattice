@@ -1,6 +1,6 @@
 //! Canonical storage for decks, cards and review history.
 use super::{
-    schedule::{answered, CardSchedule},
+    schedule::{answered, CardSchedule, FINAL_WINDOW_MS},
     study_dto::*,
 };
 use crate::features::learning::persistence::db;
@@ -307,7 +307,7 @@ pub(in crate::features::learning) async fn record_review(
         }
         return Ok(ReviewOutcome::Replayed);
     }
-    let row = sqlx::query("SELECT stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses FROM study_cards WHERE id=?")
+    let row = sqlx::query("SELECT c.stability,c.difficulty,c.last_reviewed_at,c.due_at,c.interval_days,c.review_count,c.lapses,t.target_at FROM study_cards c LEFT JOIN study_deck_targets t ON t.deck_id=c.deck_id WHERE c.id=?")
         .bind(review.card_id)
         .fetch_optional(&mut **tx)
         .await
@@ -317,7 +317,7 @@ pub(in crate::features::learning) async fn record_review(
     if current.review_count != review.expected_reviews {
         return Ok(ReviewOutcome::Stale);
     }
-    let next = current.review(review.rating, now)?;
+    let next = current.review(review.rating, now, row.get("target_at"))?;
     sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
         .bind(review.review_id)
         .bind(review.card_id)
@@ -515,7 +515,7 @@ impl StudyRepository {
     }
 
     pub async fn list(&self, now: i64) -> Result<Vec<StudyDeckSummaryDto>> {
-        let rows = sqlx::query("SELECT d.*, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id) card_count, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id AND c.due_at<=?) due_count, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz') quiz_attempts, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz' AND r.correct=1) quiz_correct FROM study_decks d ORDER BY d.created_at DESC, d.id")
+        let rows = sqlx::query("SELECT d.*, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id) card_count, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id AND c.due_at<=?) due_count, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz') quiz_attempts, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz' AND r.correct=1) quiz_correct, (SELECT t.target_at FROM study_deck_targets t WHERE t.deck_id=d.id) target_at FROM study_decks d ORDER BY d.created_at DESC, d.id")
             .bind(now).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows
             .into_iter()
@@ -529,12 +529,13 @@ impl StudyRepository {
                 due_count: r.get("due_count"),
                 quiz_attempts: r.get("quiz_attempts"),
                 quiz_correct: r.get("quiz_correct"),
+                target_at: r.get("target_at"),
             })
             .collect())
     }
 
     pub async fn get(&self, id: &str) -> Result<StudyDeckDto> {
-        let row = sqlx::query("SELECT * FROM study_decks WHERE id=?")
+        let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await
@@ -552,8 +553,49 @@ impl StudyRepository {
             study_goal: row.get("study_goal"),
             model_name: row.get("model_name"),
             created_at: row.get("created_at"),
+            target_at: row.get("target_at"),
             cards: rows.iter().map(card).collect::<Result<_>>()?,
         })
+    }
+
+    /// Set or clear the moment a deck must be remembered by. Setting one
+    /// makes every card that would next come up after it due now, so each is
+    /// recalled at least once before the target.
+    pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
+            .bind(deck_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+        if exists.is_none() {
+            return Err(AppError::NotFound("Study deck no longer exists".into()));
+        }
+        match target_at {
+            Some(target) => {
+                sqlx::query("INSERT INTO study_deck_targets(deck_id,target_at) VALUES(?,?) ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at")
+                    .bind(deck_id)
+                    .bind(target)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                sqlx::query("UPDATE study_cards SET due_at=? WHERE deck_id=? AND due_at>?")
+                    .bind(now)
+                    .bind(deck_id)
+                    .bind(target.saturating_sub(FINAL_WINDOW_MS))
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+            }
+            None => {
+                sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
+                    .bind(deck_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+            }
+        }
+        tx.commit().await.map_err(db)
     }
 
     pub async fn review(

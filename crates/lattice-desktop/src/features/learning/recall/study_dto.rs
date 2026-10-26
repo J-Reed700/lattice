@@ -59,6 +59,10 @@ pub struct StudyDeckDto {
     pub study_goal: String,
     pub model_name: String,
     pub created_at: i64,
+    /// When these cards must be remembered by, such as an interview. Reviews
+    /// before then are spaced to land before it.
+    #[serde(default)]
+    pub target_at: Option<i64>,
     pub cards: Vec<StudyCardDto>,
 }
 
@@ -75,6 +79,8 @@ pub struct StudyDeckSummaryDto {
     pub due_count: i64,
     pub quiz_attempts: i64,
     pub quiz_correct: i64,
+    #[serde(default)]
+    pub target_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -128,4 +134,22 @@ pub struct UpdateStudyCardRequestDto {
     pub question: String,
     pub answer: String,
     pub explanation: String,
+}
+
+/// Set or clear the moment a deck must be remembered by.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetStudyDeckTargetRequestDto {
+    pub deck_id: String,
+    pub target_at: Option<i64>,
+}
+
+/// Make a recall deck from a ready interview activity's questions and its
+/// private answer guides.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateInterviewStudyDeckRequestDto {
+    pub program_id: String,
+    pub activity_id: String,
+    pub target_at: Option<i64>,
 }

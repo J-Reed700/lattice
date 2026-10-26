@@ -22,10 +22,13 @@
 //! committed state exactly as it was, and leaves the watermark where it was, so
 //! the same source is offered again next time (§12).
 //!
-//! A run is bounded twice over — a five-minute deadline shared by every call,
-//! and a work cap of 256 messages or 1 MiB of source per attempt. Hitting the
-//! work cap returns [`CompactionStatus::Partial`] with the sequence to resume
-//! from. It never skips the remainder (§7.5).
+//! A run has no wall clock of its own: it ends when it is done, cancelled (the
+//! turn's Stop, app shutdown), or out of the time a caller that has a
+//! deadline lends it. A hand-picked clock counted time spent queued behind
+//! other work, and a slow model on a long chat ran out of it every time,
+//! committing nothing. The work cap of 256 messages or 1 MiB of source per
+//! attempt stays: hitting it returns [`CompactionStatus::Partial`] with the
+//! sequence to resume from. It never skips the remainder (§7.5).
 //!
 //! Extraction and the working summary move separately. Extraction advances the
 //! watermark on every run; the summary is refolded only when a run is asked to,
@@ -75,10 +78,6 @@ use lattice_core::shared::error::AppError;
 // Limits (§7.5). Named so tests assert the contract rather than a literal.
 // ---------------------------------------------------------------------------
 
-/// Wall-clock allowance for one whole compaction, shared across every batch,
-/// repair and review call.
-pub const COMPACTION_DEADLINE: Duration = Duration::from_secs(5 * 60);
-
 /// Repairs allowed per rejected model response. Small local models sometimes
 /// fix one invalid field while leaving a second one behind; a second bounded
 /// repair lets them converge without weakening deterministic validation.
@@ -98,8 +97,8 @@ pub const MAX_SOURCE_BYTES_PER_ATTEMPT: usize = 1024 * 1024;
 
 /// Source bytes one attempt folds back into a dropped summary, so one page adds
 /// a bounded amount of summariser work to the attempt it rides on. A page, not
-/// a cut: consolidation folds page after page while its deadline lasts, and
-/// the next run resumes where this one stopped.
+/// a cut: consolidation folds page after page until the summary is caught up
+/// or it is stopped, and the next run resumes where this one stopped.
 pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 32 * 1024;
 
 /// Complete turns kept out of the compacted prefix (§7.2). The current pending
@@ -213,14 +212,15 @@ impl From<CompactionError> for AppError {
 // Deadline
 // ---------------------------------------------------------------------------
 
-/// The one clock every call in a run shares (§7.5).
+/// The cancellation, and the one clock if the run has one, that every call
+/// in a run shares (§7.5).
 ///
-/// Per-call timeouts would let a job with enough batches run indefinitely. This
-/// is checked before each call and used as that call's own time budget, so the
-/// last batch cannot outlive the job.
+/// With a clock, it is checked before each call and used as that call's own
+/// time budget, so the last batch cannot outlive the job. Without one, calls
+/// end only by cancellation.
 pub struct Deadline {
-    expires_at: Instant,
-    total: Duration,
+    expires_at: Option<Instant>,
+    total: Option<Duration>,
     cancellation: Option<CancellationToken>,
     /// How the run's model calls queue at the backend.
     priority: InferencePriority,
@@ -230,9 +230,9 @@ pub struct Deadline {
 }
 
 impl Deadline {
-    pub fn new(total: Duration, cancellation: Option<CancellationToken>) -> Self {
+    pub fn new(total: Option<Duration>, cancellation: Option<CancellationToken>) -> Self {
         Self {
-            expires_at: Instant::now() + total,
+            expires_at: total.map(|total| Instant::now() + total),
             total,
             cancellation,
             priority: InferencePriority::Maintenance,
@@ -259,21 +259,24 @@ impl Deadline {
         if self.is_cancelled() {
             return Err(CompactionError::Cancelled);
         }
-        if self.left().is_zero() {
-            return Err(CompactionError::DeadlineExceeded(self.total));
+        if self.left().is_some_and(|left| left.is_zero()) {
+            return Err(self.exceeded());
         }
         Ok(())
     }
 
-    /// Time to give one model call, or an error when there is not enough left to
-    /// bother starting it.
-    pub fn slice(&self) -> std::result::Result<Duration, CompactionError> {
+    /// Time to give one model call (`None`: no limit), or an error when there
+    /// is not enough left to bother starting it.
+    pub fn slice(&self) -> std::result::Result<Option<Duration>, CompactionError> {
         self.check()?;
-        let left = self.left();
-        if left < MIN_CALL_SLICE {
-            return Err(CompactionError::DeadlineExceeded(self.total));
+        match self.left() {
+            Some(left) if left < MIN_CALL_SLICE => Err(self.exceeded()),
+            left => Ok(left),
         }
-        Ok(left)
+    }
+
+    fn exceeded(&self) -> CompactionError {
+        CompactionError::DeadlineExceeded(self.total.unwrap_or_default())
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -282,8 +285,10 @@ impl Deadline {
             .is_some_and(CancellationToken::is_cancelled)
     }
 
-    fn left(&self) -> Duration {
-        self.expires_at.saturating_duration_since(Instant::now())
+    /// What is left of the clock; `None` when the run has none.
+    fn left(&self) -> Option<Duration> {
+        self.expires_at
+            .map(|expires_at| expires_at.saturating_duration_since(Instant::now()))
     }
 }
 
@@ -333,7 +338,7 @@ async fn complete_json_within(
     tracing::info!(
         phase,
         provider = llm.provider_name(),
-        timeout_ms = remaining.as_millis() as u64,
+        timeout_ms = remaining.map(|remaining| remaining.as_millis() as u64),
         max_output_tokens,
         "Memory utility model call started"
     );
@@ -360,7 +365,8 @@ async fn complete_json_within(
         // prevents a malformed or uncooperative response from using
         // the model's much larger configured chat-output allowance.
         max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX)),
-        time_budget: Some(remaining),
+        time_budget: remaining,
+        no_time_limit: remaining.is_none(),
         priority: deadline.priority,
         cancel: deadline.cancellation.clone(),
         cache_key: deadline.cache_key.clone(),
@@ -368,13 +374,19 @@ async fn complete_json_within(
     };
     let call = llm.complete(&request);
 
+    let bounded = async {
+        match remaining {
+            Some(remaining) => tokio::time::timeout(remaining, call).await,
+            None => Ok(call.await),
+        }
+    };
     let outcome = match deadline.cancellation.clone() {
         Some(token) => tokio::select! {
             biased;
             _ = token.cancelled() => return Err(CompactionError::Cancelled),
-            outcome = tokio::time::timeout(remaining, call) => outcome,
+            outcome = bounded => outcome,
         },
-        None => tokio::time::timeout(remaining, call).await,
+        None => bounded.await,
     };
     match outcome {
         Ok(Ok(response)) => {
@@ -405,7 +417,7 @@ async fn complete_json_within(
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "Memory utility model call timed out"
             );
-            Err(CompactionError::DeadlineExceeded(deadline.total))
+            Err(deadline.exceeded())
         }
     }
 }
@@ -421,7 +433,9 @@ pub struct CompactionConfig {
     /// Tokens the new working summary may occupy in the **continuation** model's
     /// pool. The job does not compute this; the budget owner supplies it.
     pub summary_token_budget: usize,
-    pub deadline: Duration,
+    /// A wall clock for the whole run, for a caller that has one to lend;
+    /// `None`, the default, ends the run only by cancellation.
+    pub deadline: Option<Duration>,
     /// Ceiling on one repository page read.
     pub source_read_limits: SourceReadLimits,
     /// Work cap for one attempt (§7.5).
@@ -429,8 +443,8 @@ pub struct CompactionConfig {
     pub max_source_bytes_per_attempt: usize,
     /// Source bytes one attempt may fold back into a summary that a delete or a
     /// user correction dropped. Smaller than the work cap on purpose: each page
-    /// commits on its own, so consolidation can stop between pages when its
-    /// deadline nears, and a later run picks up where it stopped.
+    /// commits on its own, so consolidation can stop between pages when it is
+    /// stopped, and a later run picks up where it stopped.
     pub max_refold_bytes_per_attempt: usize,
     pub segment_max_bytes: usize,
     pub segment_overlap_chars: usize,
@@ -444,7 +458,7 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             summary_token_budget: 1_024,
-            deadline: COMPACTION_DEADLINE,
+            deadline: None,
             source_read_limits: SourceReadLimits::DEFAULT,
             max_source_messages_per_attempt: MAX_SOURCE_MESSAGES_PER_ATTEMPT,
             max_source_bytes_per_attempt: MAX_SOURCE_BYTES_PER_ATTEMPT,

@@ -230,6 +230,16 @@ impl FetchMemory {
         })
     }
 
+    /// Forget what the model was given of `url`: the prompt that carried it
+    /// was cut before it went out, or carried another item for the same page
+    /// instead. A request for the page must then be answered with its text,
+    /// not told the text is already in context. The text itself is kept.
+    pub(in crate::features::conversation::chat) fn withdraw(&mut self, url: &str) {
+        if let Some(page) = self.pages.get_mut(&normalize(url)) {
+            page.delivered.clear();
+        }
+    }
+
     /// Fold what another part of the turn learned into this record.
     pub(in crate::features::conversation::chat) fn absorb(&mut self, other: FetchMemory) {
         for (url, reason) in other.failures {
@@ -392,6 +402,19 @@ mod tests {
             memory.recall("https://example.com/recap/", None, 100),
             Some(Recall::AlreadyWhole { word_count: 4 })
         );
+    }
+
+    /// A page cut from the prompt after it was fetched was never seen: a
+    /// request for it gets its text, not "already in your context".
+    #[test]
+    fn a_withdrawn_page_is_handed_over_again() {
+        let mut memory = FetchMemory::default();
+        memory.record_page("https://example.com/a", "one two three", Delivery::Whole);
+        memory.withdraw("https://example.com/a");
+        assert!(matches!(
+            memory.recall("https://example.com/a", None, 100),
+            Some(Recall::Remainder { shown_chars: 0, .. })
+        ));
     }
 
     fn first(n: usize) -> Delivery {

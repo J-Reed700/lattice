@@ -130,8 +130,14 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
                     .filter_map(|idx| source_token_sets.get(*idx)),
             )
         };
-        let supported =
-            matching_tokens >= MIN_MATCHING_TOKENS && overlap_ratio >= MIN_OVERLAP_RATIO;
+        // A sentence that cites nothing is never backed, however many words it
+        // shares with some source: the overlap is with whichever window ranks
+        // best, not with anything the sentence claims to rest on, and "tripled
+        // yields" shares half its words with "improved cold tolerance". Its
+        // overlap is still measured, for diagnostics.
+        let supported = !citation_ids.is_empty()
+            && matching_tokens >= MIN_MATCHING_TOKENS
+            && overlap_ratio >= MIN_OVERLAP_RATIO;
         let copying = if citations_valid && !citation_ids.is_empty() {
             compare_wording(&claim_text, &cited_source_indices, sources, &mut wording)
         } else {
