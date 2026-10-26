@@ -12,7 +12,7 @@ import type { LearningLessonDto, LearningPracticeSessionDto, LearningProgramDto 
 
 const mocks = vi.hoisted(() => ({
   getWorkspace: vi.fn(), getSession: vi.fn(), start: vi.fn(), save: vi.fn(), mode: vi.fn(), openSource: vi.fn(), tutor: vi.fn(), reveal: vi.fn(), submit: vi.fn(), acceptProposal: vi.fn(), rejectProposal: vi.fn(),
-  sourceWorkspace: vi.fn(), sourceVersion: vi.fn(),
+  sourceWorkspace: vi.fn(), sourceVersion: vi.fn(), saveDraft: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({ default: {
@@ -29,6 +29,7 @@ vi.mock('@/lib/api', () => ({ default: {
   rejectLearningPracticeProposal: mocks.rejectProposal,
   getLearningSourceWorkspace: mocks.sourceWorkspace,
   getLearningSourceVersion: mocks.sourceVersion,
+  saveLearningCardDraft: mocks.saveDraft,
 } }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
@@ -260,6 +261,28 @@ describe('Learning Studio grounded practice workbench', () => {
     await user.click(screen.getByRole('button', { name: 'Submit response' }));
     expect(await screen.findByText('Feedback on revision 1')).toBeVisible();
     expect(screen.getByText('There is not enough evidence to judge the connection.')).toBeInTheDocument();
+  });
+
+  it('turns an accepted misconception into a recall card the learner corrects in their own words', async () => {
+    const user = userEvent.setup();
+    currentSession!.proposals[0] = { ...currentSession!.proposals[0], kind: 'misconception', text: 'An observation already proves the inference.' };
+    mocks.saveDraft.mockResolvedValue(ok({ programId: 'program-1' }));
+    renderWorkbench();
+    await screen.findByRole('textbox', { name: 'Your response' });
+    expect(screen.queryByRole('textbox', { name: /What is actually right/ })).not.toBeInTheDocument();
+    const proposals = screen.getByText('Tutor proposals').parentElement!;
+    await user.click(within(proposals).getByRole('button', { name: 'Accept idea' }));
+    const correction = await screen.findByRole('textbox', { name: /What is actually right/ });
+    expect(screen.getByRole('button', { name: 'Make a recall card' })).toBeDisabled();
+    await user.type(correction, 'An observation supports an inference; other explanations must be ruled out.');
+    await user.click(screen.getByRole('button', { name: 'Make a recall card' }));
+    await waitFor(() => expect(mocks.saveDraft).toHaveBeenCalledWith({
+      draftId: null, programId: 'program-1', lessonId: 'lesson-1',
+      question: 'What is wrong with this idea, and what is right instead? “An observation already proves the inference.”',
+      answer: 'An observation supports an inference; other explanations must be ruled out.',
+      explanation: 'Drafted from a misconception found in practice', sourceIds: [],
+    }));
+    expect(await screen.findByText(/Saved as a recall card draft/)).toBeVisible();
   });
 
   it('offers a conflict reload while retaining locally edited response text', async () => {
