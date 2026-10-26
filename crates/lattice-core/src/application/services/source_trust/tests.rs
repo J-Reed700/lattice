@@ -42,6 +42,14 @@ impl LLMPort for Scripted {
     ) -> crate::shared::error::Result<CompletionResponse> {
         self.sent.lock().unwrap().push(request.clone());
         let answer = self.answers.lock().unwrap().pop_front().unwrap_or_default();
+        if answer == REFUSED_BY_THE_BACKEND {
+            return Err(crate::shared::error::AppError::PromptExceedsWindow {
+                prompt_tokens: 251_588,
+                window: self.window,
+                counted_exactly: true,
+                message: "This request's prompt is 251588 tokens (counted exactly).".into(),
+            });
+        }
         Ok(CompletionResponse::from_text(answer))
     }
     fn model_name(&self) -> &str {
@@ -237,6 +245,37 @@ async fn unextracted_signals_are_never_sent() {
     .unwrap();
     assert_eq!(llm.calls(), 0);
     assert_eq!(judged.value.reasons[0].code, ReasonCode::NoSignals);
+}
+
+/// A scripted answer that is the backend refusing the prompt, by its exact
+/// count, after the planner's estimate let it through.
+const REFUSED_BY_THE_BACKEND: &str = "<refused by the backend>";
+
+/// The estimate can let a dense prompt through that the backend then counts
+/// over its window: a PDF saved as a page measured at half its tokens. That
+/// refusal shrinks the evidence shown, as the planner's does, instead of
+/// ending the lesson job.
+#[tokio::test]
+async fn a_prompt_the_backend_counts_over_the_window_shrinks_and_is_judged() {
+    let origin = Origin::of_url("https://prakashkagitha.github.io/llm-stack/").unwrap();
+    let book = ContentEvidence::of(
+        "# Tool use\n\nBy Prakash Kagitha\n\n## Schemas\n",
+        &[],
+        &origin,
+        Chosen {
+            by: AddedBy::Research,
+            note: None,
+        },
+    );
+    assert!(book.can_shrink());
+    let llm = Scripted::new(WINDOW, &[REFUSED_BY_THE_BACKEND, PSF]);
+
+    let judged = judge_standing(&llm, &page("Tool use"), &book, TrackRecord::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.calls(), 2, "refused once, then asked with less shown");
+    assert_eq!(judged.value.standing, Standing::Institutional);
 }
 
 #[tokio::test]
