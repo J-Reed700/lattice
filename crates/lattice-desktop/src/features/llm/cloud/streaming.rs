@@ -1,6 +1,7 @@
 //! Typed cloud streams publish only displayable text through callbacks while
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
+use super::reply::call_arguments;
 use super::timing::{evaluated_prompt_tokens, StreamClock};
 use super::{field, parse_completion, set_field, CompletionResponse, LLMProvider};
 use futures::{Stream, StreamExt};
@@ -411,9 +412,12 @@ impl Decoder {
                 if !self.open_blocks.remove(&index) {
                     return Err(invalid("stop for an unopened content block"));
                 }
+                // A call with no arguments can stream nothing but empty
+                // deltas, and is `{}`. A call cut off or malformed is answered
+                // with why instead of failing the whole reply as a broken
+                // stream.
                 if let Some(input) = self.input_json.remove(&index) {
-                    let input: Value = serde_json::from_str(&input)
-                        .map_err(|_| invalid("invalid tool arguments"))?;
+                    let input = call_arguments(&input);
                     let block = self
                         .blocks
                         .get_mut(&index)

@@ -166,7 +166,17 @@ pub async fn prepare_lesson(
     lesson: &LearningLessonDto,
 ) -> Result<PreparedLearningLesson> {
     let references = ReferenceCollection::lexical(&program.sources)?;
-    prepare_lesson_with_references(llm, runtimes, program, lesson, &references).await
+    // On the heap, as the lesson job keeps it: in debug builds the whole
+    // multi-stage future, held inline, overflowed a Windows test thread's
+    // stack before the first model call.
+    Box::pin(prepare_lesson_with_references(
+        llm,
+        runtimes,
+        program,
+        lesson,
+        &references,
+    ))
+    .await
 }
 
 /// The authoring request without its evidence: what must match for a saved

@@ -347,6 +347,10 @@ impl LLMPort for ScheduledLlm {
         self.inner.supports_tool_calling()
     }
 
+    fn thinks_before_answering(&self) -> bool {
+        self.inner.thinks_before_answering()
+    }
+
     fn vision(&self) -> Option<VisionGeometry> {
         self.inner.vision()
     }

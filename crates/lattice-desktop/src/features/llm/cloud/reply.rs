@@ -2,7 +2,7 @@
 use super::{field, timing};
 use lattice_core::application::{
     contracts::settings::LLMProvider,
-    ports::llm_port::{CompletionInput, CompletionResponse},
+    ports::llm_port::{invalid_tool_arguments, CompletionInput, CompletionResponse},
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -39,8 +39,7 @@ pub(super) fn parse_completion(provider: LLMProvider, value: Value) -> Result<Co
                     .ok_or_else(|| AppError::Network("Missing tool name".into()))?;
                 let args_val = field(function, "arguments");
                 let arguments = if let Some(args_str) = args_val.as_str() {
-                    serde_json::from_str(args_str)
-                        .map_err(|e| AppError::Network(format!("Invalid tool arguments: {e}")))?
+                    call_arguments(args_str)
                 } else if args_val.is_object() {
                     args_val.clone()
                 } else {
@@ -134,8 +133,7 @@ pub(super) fn parse_completion(provider: LLMProvider, value: Value) -> Result<Co
                     .as_str()
                     .ok_or_else(|| AppError::Network("Missing tool name".into()))?;
                 let arguments = if provider == LLMProvider::Openai {
-                    serde_json::from_str(field(block, "arguments").as_str().unwrap_or(""))
-                        .map_err(|e| AppError::Network(format!("Invalid tool arguments: {e}")))?
+                    call_arguments(field(block, "arguments").as_str().unwrap_or(""))
                 } else {
                     field(block, "input").clone()
                 };
@@ -174,6 +172,16 @@ pub(super) fn parse_completion(provider: LLMProvider, value: Value) -> Result<Co
     .as_str()
     .unwrap_or("unknown")
     .into();
+    if response.finish_reason == "refusal" {
+        // Claude's safety classifiers decline with a 200 and name the one
+        // that did; the reply itself says nothing worth logging.
+        tracing::warn!(
+            category = field(field(&value, "stop_details"), "category")
+                .as_str()
+                .unwrap_or("unnamed"),
+            "The model declined the request"
+        );
+    }
     if !reasoning_parts.is_empty() {
         response.reasoning = Some(reasoning_parts.join("\n\n"));
     }
@@ -192,4 +200,17 @@ pub(super) fn parse_completion(provider: LLMProvider, value: Value) -> Result<Co
         }],
     };
     Ok(response)
+}
+
+/// A call's arguments as the provider wrote them. None at all is `{}`, which
+/// a call that takes no arguments is; text that is not JSON (a call cut off
+/// at the output limit) is answered with why, as the local adapter answers
+/// one, rather than failing the whole reply as an outage.
+pub(super) fn call_arguments(raw: &str) -> Value {
+    if raw.trim().is_empty() {
+        return json!({});
+    }
+    serde_json::from_str(raw).unwrap_or_else(|error| {
+        invalid_tool_arguments(raw, &format!("its arguments are not JSON ({error})"))
+    })
 }

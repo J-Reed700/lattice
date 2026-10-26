@@ -693,8 +693,7 @@ async fn the_window_is_asked_for_and_held_to_what_the_server_reports() {
     Mock::given(method("POST"))
         .and(path("/api/show"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "parameters": "stop \"<|im_end|>\"
-        num_ctx 16384",
+            "parameters": "stop \"<|im_end|>\"\nnum_ctx 16384",
             "model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960}
         })))
         .mount(&server)

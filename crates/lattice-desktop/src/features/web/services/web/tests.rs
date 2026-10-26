@@ -292,10 +292,7 @@ python -m venv .venv</pre>
     assert!(!menu.contains("Pricing"), "a menu is not page text: {menu}");
     assert!(menu.contains("Install with pip"), "{menu}");
     assert!(
-        text.contains(
-            "venv
-python"
-        ),
+        text.contains("--upgrade pip\npython -m venv"),
         "code keeps its lines: {text:?}"
     );
 }

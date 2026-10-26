@@ -127,7 +127,22 @@ impl CloudLlm {
     /// window rather than writing less, as llama.cpp does
     /// (`LlamaCppLlm::output_room_for`). A ceiling that fits is kept.
     fn output_room(&self, request: &CompletionRequest) -> u32 {
-        let requested = request.effective_max_output_tokens(self.max_tokens);
+        self.room_for(
+            request.effective_max_output_tokens(self.max_tokens),
+            request,
+        )
+    }
+
+    /// The output ceiling for a request Claude thinks through: the configured
+    /// one, not the request's. Thinking counts toward `max_tokens` though its
+    /// text is not returned, so a ceiling sized for the reply was spent
+    /// thinking, and a lesson's draft came back with no text at all.
+    fn thinking_room(&self, request: &CompletionRequest) -> u32 {
+        self.room_for(self.max_tokens, request)
+    }
+
+    /// `requested`, cut to the room the prompt leaves in the window.
+    fn room_for(&self, requested: u32, request: &CompletionRequest) -> u32 {
         let prompt_tokens = self.prompt_tokens(request);
         let window = self.context_window;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
@@ -301,7 +316,21 @@ impl CloudLlm {
             // for any non-default value, all of them while thinking), and the
             // overrides callers pass were tuned for local models anyway. A
             // determinism override is not worth a failed call.
-            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.output_room(request),"stream":stream});
+            // Claude thinks unasked from the 5 family on (Opus 5.5 cannot be
+            // told not to), and otherwise when a thinking request or a real
+            // effort level asks; "none" is expressed by leaving the block
+            // out, since requesting adaptive thinking turned "do not think"
+            // into its opposite.
+            let effort = request.reasoning_effort.as_deref();
+            let thinks = claude_thinks_unasked(&self.model)
+                || request.thinking == ThinkingMode::On
+                || effort.is_some_and(|effort| effort != "none");
+            let max_tokens = if thinks {
+                self.thinking_room(request)
+            } else {
+                self.output_room(request)
+            };
+            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":max_tokens,"stream":stream});
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
@@ -316,14 +345,8 @@ impl CloudLlm {
             if !request.stop.is_empty() {
                 set_field(&mut body, "stop_sequences", json!(request.stop))?;
             }
-            // Extended thinking is off unless a `thinking` block asks for it.
-            // A thinking request asks, and so does a real effort level, which
-            // grades it; "none" is expressed by leaving the block out, since
-            // requesting adaptive thinking turned "do not think" into its
-            // opposite.
-            let effort = request.reasoning_effort.as_deref();
-            let thinks = request.thinking == ThinkingMode::On
-                || effort.is_some_and(|effort| effort != "none");
+            // A block asks for the thinking; on a model that thinks unasked
+            // it is the same request, and says how its thinking is shown.
             if thinks {
                 // Thinking is not shown unless asked for: summaries are what a
                 // caller that displays reasoning gets back.
@@ -466,6 +489,9 @@ impl LLMPort for CloudLlm {
     fn supports_tool_calling(&self) -> bool {
         true
     }
+    fn thinks_before_answering(&self) -> bool {
+        self.provider == LLMProvider::Anthropic && claude_thinks_unasked(&self.model)
+    }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let deadline = request
             .wall_clock_budget()
@@ -548,6 +574,18 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
         .ok_or_else(|| AppError::InvalidState("Expected a JSON object".into()))?
         .insert(key.into(), field_value);
     Ok(())
+}
+
+/// Whether this Claude model thinks with no `thinking` block asking: every
+/// model from the 5 family on, where omitting the block runs adaptive
+/// thinking (and Opus 5.5 refuses to have it turned off). The family is the
+/// first number in the id, so `claude-opus-4-8` and `claude-3-5-sonnet` do
+/// not and `claude-sonnet-5-5` does.
+fn claude_thinks_unasked(model: &str) -> bool {
+    model
+        .strip_prefix("claude-")
+        .and_then(|rest| rest.split('-').find_map(|part| part.parse::<u32>().ok()))
+        .is_some_and(|family| family >= 5)
 }
 
 /// Whether this OpenAI model is a reasoning model, which takes an effort
