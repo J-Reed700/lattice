@@ -183,10 +183,11 @@ pub fn blueprint_for(
                 ));
                 slots.push(requirement(outcome, pick(&typed, "typed"), 1, 3, 3));
             } else {
-                // Recall over recognition: an answer produced from memory, with
-                // feedback after it, is retained better than one picked from
-                // options (Kang, McDermott & Roediger 2007; McDaniel, Roediger
-                // & McDermott 2007). Both typed formats replace a true/false
+                // A mix with more answers the learner produces: short-answer
+                // practice with feedback outlasted multiple choice (Kang,
+                // McDermott & Roediger 2007; McDaniel et al. 2007), while choice
+                // items with competitive distractors also drive retrieval
+                // (Little et al. 2012). Both typed formats replace a true/false
                 // item, a coin-flip guess, and one of four single-choice items.
                 slots.push(requirement(
                     outcome,

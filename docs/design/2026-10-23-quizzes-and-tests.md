@@ -156,10 +156,13 @@ keeps working because forms are unchanged.
 
 No per-item timers and no attempt limits.
 
-Why this mix (2026-10-26): producing an answer from memory, with feedback
-after it, is retained better than choosing one (Kang, McDermott & Roediger
-2007; McDaniel, Roediger & McDermott 2007), so two typed items replace a
-true/false item and one single-choice item. The earlier-lesson items bring
+Why this mix (2026-10-26): a mix of formats, with more items where the
+learner produces the answer. Short-answer practice with feedback outlasted
+multiple choice in Kang, McDermott & Roediger (2007) and McDaniel, Roediger &
+McDermott (2007); choice items with competitive distractors also drive
+retrieval (Little et al. 2012; Adesope et al. 2017), so the mix keeps three.
+Two typed items replace a true/false item, a coin-flip guess, and one
+single-choice item. The earlier-lesson items bring
 back material the learner answered correctly, which the warm-up's due cards
 (misses and rated checks) never return; retrieval spaced across sessions and
 mixed with new material is what keeps it (Rawson & Dunlosky 2011; Rohrer,

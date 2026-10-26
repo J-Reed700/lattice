@@ -67,7 +67,7 @@ fn a_lesson_keeps_the_quiz_mix_its_blueprint_already_asks() {
 }
 
 #[test]
-fn a_new_lesson_quiz_asks_for_recall_more_than_recognition() {
+fn a_new_lesson_quiz_mixes_in_more_typed_answers() {
     use LearningItemFormat::*;
     let scope = LearningQuizScopeDto {
         kind: LearningQuizScopeKind::Lesson,
