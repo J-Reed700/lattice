@@ -108,7 +108,10 @@ confused approaches, asks for a prediction before running where that applies,
 and asks for a short justification of the approach and how it was checked;
 the rubric grades that reasoning and verification, not only the artifact. A
 simulated counterpart lets the learner's last decision have its realistic
-consequences, so the scenario itself shows whether it worked.
+consequences, so the scenario itself shows whether it worked. A code lab's
+feedback is its hidden checks, so the evaluator names each test for the
+behavior it checks and makes each failure state the expected behavior and the
+observed value, without showing how to implement it.
 
 **Interviews.** The plan orders each round's questions from foundational to
 harder and, where the role has easily confused approaches, asks the learner
