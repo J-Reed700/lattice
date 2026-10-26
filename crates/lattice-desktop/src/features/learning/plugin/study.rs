@@ -99,3 +99,24 @@ pub async fn delete_study_deck(
         .await
         .map_err(ApiError::from)
 }
+#[tauri::command]
+#[specta::specta]
+pub async fn set_study_deck_target(
+    request: SetStudyDeckTargetRequestDto,
+    container: State<'_, Container>,
+) -> Result<StudyDeckDto, ApiError> {
+    service::set_target(&StudyRepository::new(container.db_pool().clone()), request)
+        .await
+        .map_err(ApiError::from)
+}
+#[tauri::command]
+#[specta::specta]
+pub async fn create_interview_study_deck(
+    request: CreateInterviewStudyDeckRequestDto,
+    container: State<'_, Container>,
+) -> Result<StudyDeckDto, ApiError> {
+    let pool = container.db_pool().clone();
+    service::create_interview_deck(&StudyRepository::new(pool.clone()), &pool, request)
+        .await
+        .map_err(ApiError::from)
+}

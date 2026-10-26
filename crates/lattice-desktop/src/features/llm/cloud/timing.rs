@@ -28,13 +28,17 @@ pub(super) fn reported(value: &Value) -> Option<ServedTiming> {
 /// its prompt count less the cached tokens it reports
 /// (`input_tokens_details` on the Responses API, `prompt_tokens_details` on
 /// chat completions). Anthropic counts cache reads apart from
-/// `input_tokens` already.
+/// `input_tokens` already, and the tokens it wrote to the cache apart too,
+/// though it read those like any others.
 pub(super) fn evaluated_prompt_tokens(value: &Value) -> u64 {
     let usage = field(value, "usage");
     let prompt = field(usage, "input_tokens")
         .as_u64()
         .or_else(|| field(usage, "prompt_tokens").as_u64())
-        .unwrap_or(0);
+        .unwrap_or(0)
+        + field(usage, "cache_creation_input_tokens")
+            .as_u64()
+            .unwrap_or(0);
     let cached = ["input_tokens_details", "prompt_tokens_details"]
         .iter()
         .find_map(|details| field(field(usage, details), "cached_tokens").as_u64())

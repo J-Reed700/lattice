@@ -40,6 +40,15 @@ impl FollowupDocument {
             self.file_name, self.document_id, self.content
         ))
     }
+
+    /// The document as [`Self::render`] shows it, under a placeholder label:
+    /// what it takes of the prompt, counted before the sources are numbered.
+    pub(in crate::features::conversation::chat) fn render_for_count(&self) -> String {
+        format!(
+            "[0] Document: {}\nDocument ID: {}\nContent: {}",
+            self.file_name, self.document_id, self.content
+        )
+    }
 }
 
 /// Whether what the conversation already read of the document under

@@ -57,7 +57,7 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::Client;
 use tokio::sync::Semaphore;
 
-use super::web::{parse_html, read_text_bounded, SitePacer};
+use super::web::{check_public_url, parse_html, read_text_bounded, SitePacer};
 
 /// What every finder shares with the page reader: the guarded public client,
 /// the per-host pacer, the HTML parser admission, and the user's optional
@@ -68,6 +68,12 @@ pub(crate) struct FinderHttp {
     pub pacer: Arc<SitePacer>,
     pub parsers: Arc<Semaphore>,
     pub contact: Option<String>,
+    /// Whether [`FinderHttp::get`] refuses a URL whose host is local before
+    /// sending it. Some of what is fetched comes from a model tool call or a
+    /// site's robots.txt, and an IP-literal host never reaches the public
+    /// client's resolver, so the address itself is checked. Off only for the
+    /// user's own SearXNG instance, which may well be on their network.
+    pub public_only: bool,
 }
 
 /// One response, as a finder needs it.
@@ -87,6 +93,11 @@ impl FinderHttp {
     /// One paced GET. The host's slot covers this request only, never a
     /// retry: what happens next is the runner's decision.
     pub(crate) async fn get(&self, url: &str, headers: HeaderMap, max_bytes: usize) -> Fetched {
+        if self.public_only {
+            if let Err(error) = check_public_url(url) {
+                return Fetched::Transport(error.to_string());
+            }
+        }
         let _site_slot = self.pacer.acquire(url).await;
         let response = match self.client.get(url).headers(headers).send().await {
             Ok(response) => response,
@@ -204,6 +215,7 @@ pub(crate) fn registry(
             searxng::Searxng::new(
                 FinderHttp {
                     client: instance.clone(),
+                    public_only: false,
                     ..http.clone()
                 },
                 settings.searxng_url().map(|u| u.to_string()),

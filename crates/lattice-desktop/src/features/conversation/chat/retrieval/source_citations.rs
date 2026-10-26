@@ -88,13 +88,27 @@ pub(in crate::features::conversation::chat) fn web_context_entries(
             Some((url, source.citation_id?))
         })
         .collect();
-    let mut shown = HashSet::new();
+    // One item per URL: the one that says most, which is the one carrying the
+    // fetched page's text when there is one. The wiki's result comes first,
+    // and keeping the first showed its snippet while the page memory recorded
+    // the page as delivered.
+    let mut fullest: HashMap<&str, usize> = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        let chosen = fullest.entry(item.url.trim()).or_insert(index);
+        if items
+            .get(*chosen)
+            .is_some_and(|kept| kept.detail.len() < item.detail.len())
+        {
+            *chosen = index;
+        }
+    }
     items
         .iter()
-        .filter_map(|item| {
+        .enumerate()
+        .filter_map(|(index, item)| {
             let url = item.url.trim();
             let label = *labels.get(url)?;
-            shown.insert(url).then(|| (label, item.render(label)))
+            (fullest.get(url) == Some(&index)).then(|| (label, item.render(label)))
         })
         .collect()
 }
@@ -693,6 +707,29 @@ mod web_context_label_tests {
         assert_eq!(
             rendered.as_deref(),
             Some("[1] Title of https://a.test\nURL: https://a.test")
+        );
+    }
+
+    /// The wiki's result for a URL comes first; when the web search fetched
+    /// the same page, its item carries the page's text, and that is the one
+    /// shown. Keeping the first showed a snippet while the page memory
+    /// recorded the whole page as delivered.
+    #[test]
+    fn the_item_carrying_the_page_text_wins_over_an_earlier_snippet() {
+        let mut sources = build_web_source_citations(&[web_result("https://a.test")], &[], 200);
+        assign_citation_ids(&mut sources);
+        let page = WebContextItem {
+            detail: "URL: https://a.test\nPage text: the whole fetched article.".to_string(),
+            ..item("https://a.test")
+        };
+
+        let rendered = render_web_context(&[item("https://a.test"), page], &sources);
+
+        assert_eq!(
+            rendered.as_deref(),
+            Some(
+                "[1] Title of https://a.test\nURL: https://a.test\nPage text: the whole fetched article."
+            )
         );
     }
 }

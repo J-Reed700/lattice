@@ -1501,20 +1501,24 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
   await expect(page.getByRole('heading', { name: 'Biology review', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Review due (2)' }).click();
   await expect(page.getByText('Chlorophyll', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Reveal answer' }).click();
+  await page.getByRole('button', { name: 'Reveal answer: Not sure' }).click();
   await page.evaluate(() => localStorage.setItem('test:study-fail-review', '1'));
   await page.getByRole('button', { name: 'Good', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Disk full');
   await page.evaluate(() => localStorage.removeItem('test:study-fail-review'));
   await page.getByRole('button', { name: 'Good', exact: true }).click();
   await expect(page.getByText('2 of 2 · Biology review')).toBeVisible();
-  await page.getByRole('button', { name: 'Reveal answer' }).click();
+  await page.getByRole('button', { name: 'Reveal answer: Not sure' }).click();
   await page.getByRole('button', { name: 'Again', exact: true }).click();
+  // A miss comes back in the same session until it is recalled.
+  await expect(page.getByText(/missed this earlier/)).toBeVisible();
+  await page.getByRole('button', { name: 'Reveal answer: Not sure' }).click();
+  await page.getByRole('button', { name: 'Good', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review complete' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to deck' }).click();
   await page.getByRole('button', { name: 'Practice quiz', exact: true }).click();
   await page.getByRole('radio').nth(4).check();
-  await page.getByRole('button', { name: 'Check answer' }).click();
+  await page.getByRole('button', { name: 'Check answer: Not sure' }).click();
   await expect(page.getByText('Review this answer')).toBeVisible();
   await page.getByText('Citation · biology.md', { exact: true }).click();
   await page.getByRole('button', { name: 'Open source' }).click();

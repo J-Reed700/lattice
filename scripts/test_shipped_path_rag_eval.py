@@ -208,6 +208,30 @@ class JudgeAuth(unittest.TestCase):
                     spe.judge_headers()
 
 
+class AnsweringModel(unittest.TestCase):
+    """A scored run names the model that wrote its answers, local or cloud."""
+
+    def test_a_cloud_run_is_named_by_its_model_and_what_served_it(self):
+        meta = {"answering_model": {"kind": "cloud", "model": "claude-opus-5-5",
+                                    "served_as": ["claude-opus-5-5"]}}
+        self.assertEqual(spe.answering_model(meta), ("claude-opus-5-5", "claude-opus-5-5"))
+
+    def test_an_older_local_run_is_named_by_its_server_and_weights(self):
+        meta = {"recipe": {"server": {"model": "Qwen3.5-9B-Q4_K_M.gguf"}}, "gguf_sha256": "abc"}
+        self.assertEqual(spe.answering_model(meta), ("Qwen3.5-9B-Q4_K_M.gguf", "abc"))
+
+    def test_an_anthropic_judge_sends_no_sampling_and_binds_the_verdict(self):
+        request = spe.anthropic_judge_request("claude-opus-5-5", [
+            {"role": "system", "content": "Grade."}, {"role": "user", "content": "Turn."}])
+        for knob in ("temperature", "top_p", "top_k"):
+            self.assertNotIn(knob, request)
+        self.assertEqual(request["system"], "Grade.")
+        self.assertEqual(request["messages"], [{"role": "user", "content": "Turn."}])
+        self.assertFalse(request["output_config"]["format"]["schema"]["additionalProperties"])
+        payload = {"content": [{"type": "text", "text": '{"verdict": "pass", "reason": "ok"}'}]}
+        self.assertEqual(spe.parse_anthropic_verdict(payload), (True, "ok"))
+
+
 class LabelledDataset(unittest.TestCase):
     def test_dataset_rows_are_graded_by_the_answer_harness(self):
         dataset = {"documents": [{"id": "a", "text": "Kept for 14 days."}, {"id": "b", "text": "Other."}],

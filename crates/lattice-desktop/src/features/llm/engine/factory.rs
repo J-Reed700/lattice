@@ -217,6 +217,7 @@ pub(crate) async fn create_llm(
                 auth_header,
                 generation_config,
                 None,
+                None,
                 schedulers,
             )
             .await?;
@@ -492,13 +493,16 @@ fn with_memory_hint(
     }
 }
 
-/// Create an Ollama LLM client.
+/// Create an Ollama LLM client, run at `context_window` (the settings'
+/// window, when there are settings) held to what the server reports for the
+/// model.
 pub(crate) async fn create_ollama_llm(
     endpoint: &str,
     model: &str,
     auth_header: Option<(String, String)>,
     generation_config: GenerationConfig,
     vision: Option<lattice_core::domain::models::vision::VisionGeometry>,
+    context_window: Option<u32>,
     schedulers: &SchedulerRegistry,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
@@ -533,6 +537,11 @@ pub(crate) async fn create_ollama_llm(
             _ => LLMError::ClientUnavailable(e.to_string()),
         }
     })?;
+    let window = client
+        .resolve_context_window(context_window.and_then(|w| usize::try_from(w).ok()))
+        .await;
+    info!(window, "Ollama context window");
+    let client = client.with_context_window(window);
 
     info!("Ollama LLM client created successfully");
     let scheduler = schedulers.ollama(

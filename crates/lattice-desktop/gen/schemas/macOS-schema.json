@@ -4929,6 +4929,12 @@
           "markdownDescription": "Enables the course_index_status command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_interview_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-interview-study-deck",
+          "markdownDescription": "Enables the create_interview_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_learning_canvas command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-create-learning-canvas",
@@ -5475,6 +5481,12 @@
           "markdownDescription": "Enables the set_source_trust_override command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_study_deck_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-set-study-deck-target",
+          "markdownDescription": "Enables the set_study_deck_target command without any pre-configured scope."
+        },
+        {
           "description": "Enables the skip_learning_diagnostic command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-skip-learning-diagnostic",
@@ -5701,6 +5713,12 @@
           "type": "string",
           "const": "learning:deny-course-index-status",
           "markdownDescription": "Denies the course_index_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_interview_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-interview-study-deck",
+          "markdownDescription": "Denies the create_interview_study_deck command without any pre-configured scope."
         },
         {
           "description": "Denies the create_learning_canvas command without any pre-configured scope.",
@@ -6247,6 +6265,12 @@
           "type": "string",
           "const": "learning:deny-set-source-trust-override",
           "markdownDescription": "Denies the set_source_trust_override command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_study_deck_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-set-study-deck-target",
+          "markdownDescription": "Denies the set_study_deck_target command without any pre-configured scope."
         },
         {
           "description": "Denies the skip_learning_diagnostic command without any pre-configured scope.",

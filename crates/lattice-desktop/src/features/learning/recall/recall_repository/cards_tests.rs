@@ -244,6 +244,7 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
                 study_goal: String::new(),
                 model_name: "fixture-model".into(),
                 created_at: 1,
+                target_at: None,
                 cards: vec![card],
             })
             .await?;

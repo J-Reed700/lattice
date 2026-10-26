@@ -493,7 +493,8 @@ const SETTLE_LIMIT: Duration = Duration::from_secs(15);
 /// page's `window`, so a replaced document simply starts over.
 ///
 /// Reports once the text has held still for two looks. The block choice
-/// mirrors `WebService::extract_article_text`: paragraphs and headings, from
+/// mirrors `WebService::extract_article_text`: paragraphs, headings, list
+/// items, code, quotes, definitions and table rows, outermost first, from
 /// `<article>` when that holds at least a third of the page's text, otherwise
 /// from the whole page.
 fn check_script(give_up_on_check: bool, settle_now: bool) -> String {
@@ -557,10 +558,20 @@ const CHECK_SCRIPT: &str = r#"
   state.last = length;
   if (state.steady < 2 && !__SETTLE_NOW__) return;
 
-  const BLOCKS = 'p, h1, h2, h3, h4, h5, h6';
+  // The same blocks as the static reader's: lists, tables, code and quotes
+  // carry a page's facts as often as its paragraphs do. The outermost block
+  // is read, so a paragraph inside a list item is not read twice.
+  const BLOCKS = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, figcaption, dt, dd, tr';
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const text = (el) => el.tagName === 'PRE' ? (el.textContent || '').trim()
+    : el.tagName === 'TR' ? Array.from(el.children).map((cell) => clean(cell.textContent)).filter(Boolean).join(' | ')
+    : clean(el.textContent);
+  const HEADINGS = /^(P|H[1-6])$/;
   const blocks = (roots) => roots.flatMap((root) =>
-    Array.from(root.querySelectorAll(BLOCKS)).map((el) => clean(el.textContent)).filter(Boolean));
+    Array.from(root.querySelectorAll(BLOCKS))
+      .filter((el) => !(el.parentElement && el.parentElement.closest(BLOCKS)))
+      .filter((el) => HEADINGS.test(el.tagName) || !el.closest('nav, footer, aside'))
+      .map(text).filter(Boolean));
   const size = (parts) => parts.reduce((n, p) => n + p.length, 0);
   const article = blocks(Array.from(document.querySelectorAll('article')));
   const page = blocks([document]);

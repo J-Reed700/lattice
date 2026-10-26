@@ -1,0 +1,24 @@
+{
+  "name": "shipped-path-claude-opus-5-5",
+  "corpus": "evals/retrieval/synthetic-library-v3.json",
+  "questions": "evals/retrieval/desktop-path-v1.json",
+  "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
+  "embedding_model_id": "qwen3-embedding-0.6b",
+  "cloud": {
+    "provider": "anthropic",
+    "model": "claude-opus-5-5"
+  },
+  "index": {
+    "chunk_tokens": 800
+  },
+  "settings": {
+    "llm": {
+      "contextWindow": 32768
+    }
+  },
+  "wait": {
+    "verification_secs": 300,
+    "quiet_ms": 3000,
+    "quiet_cap_secs": 600
+  }
+}
