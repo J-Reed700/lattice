@@ -1,8 +1,95 @@
 //! The JSON Schema subset Claude's structured outputs compile: what a
-//! learning schema must lose or move before it reaches Anthropic, and when a
-//! schema is too large to send as a format at all.
+//! learning schema must lose or move before it reaches Anthropic, when a
+//! schema is too large to send as a format at all, and the retry in words when
+//! Claude refuses one anyway.
 
+use std::time::Instant;
+
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
+
+use super::CloudLlm;
+
+/// The rejection that stands for Claude refusing a request's response schema.
+const REFUSAL: &str = "Claude could not compile this request's response schema.";
+
+impl CloudLlm {
+    /// Sends `body`, and once more with its schema asked for in words when
+    /// Claude refuses to compile it. How large a grammar a schema compiles to
+    /// cannot be told from its shape ("The compiled grammar is too large").
+    pub(super) async fn send_with_schema(
+        &self,
+        body: Value,
+        deadline: Option<Instant>,
+        bound_body: bool,
+    ) -> Result<reqwest::Response> {
+        match self.send(&body, deadline, bound_body).await {
+            Err(AppError::ModelRejected(message)) if message == REFUSAL => {
+                tracing::info!("Claude refused the response schema; asking for it in words");
+                self.send(&in_words(body), deadline, bound_body).await
+            }
+            sent => sent,
+        }
+    }
+}
+
+/// Whether `body` asks Claude for a structured response format.
+pub(super) fn asks_for_format(body: &Value) -> bool {
+    body.pointer("/output_config/format").is_some()
+}
+
+/// `error`, or the schema refusal when that is what the 400 says. The reason
+/// is read only to tell the two apart; it is never logged or shown, since a
+/// provider's error can quote what was sent.
+pub(super) async fn refusal_or(response: reqwest::Response, error: AppError) -> AppError {
+    let Ok(reply) = response.json::<Value>().await else {
+        return error;
+    };
+    let reason = reply
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if reason.contains("output_config.format")
+        || reason.contains("grammar")
+        || reason.contains("Schemas contains")
+    {
+        AppError::ModelRejected(REFUSAL.into())
+    } else {
+        error
+    }
+}
+
+/// `body` with its response schema asked for in the system prompt instead of
+/// as a format. The caller's parser checks the reply as it would any other.
+pub(super) fn in_words(mut body: Value) -> Value {
+    let Some(format) = body
+        .get_mut("output_config")
+        .and_then(Value::as_object_mut)
+        .and_then(|config| config.remove("format"))
+    else {
+        return body;
+    };
+    if body["output_config"]
+        .as_object()
+        .is_some_and(serde_json::Map::is_empty)
+    {
+        if let Some(fields) = body.as_object_mut() {
+            fields.remove("output_config");
+        }
+    }
+    let ask = format!(
+        "Reply with only a JSON value that matches this JSON Schema, and no other text:\n{}",
+        format["schema"]
+    );
+    let system = match body.get("system").and_then(Value::as_str) {
+        Some(system) if !system.is_empty() => format!("{system}\n\n{ask}"),
+        _ => ask,
+    };
+    if let Some(fields) = body.as_object_mut() {
+        fields.insert("system".into(), json!(system));
+    }
+    body
+}
 
 /// `schema` as Claude's structured outputs accept it. The API answers
 /// `maxItems`, `uniqueItems`, numeric bounds and a `minItems` above 1 with a
