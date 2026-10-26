@@ -536,7 +536,10 @@ async function runLearningStudioJourney(
     .toEqual({ dueCount: 1, cards: 1 });
 
   await reviewCard
-    .getByRole("button", { name: "Reveal answer", exact: true })
+    .getByLabel(/Your answer/)
+    .fill("The measure over a stated period.");
+  await reviewCard
+    .getByRole("button", { name: "Check my answer", exact: true })
     .click();
   await expect(
     reviewCard.getByText(answerSentinel, { exact: true }),
