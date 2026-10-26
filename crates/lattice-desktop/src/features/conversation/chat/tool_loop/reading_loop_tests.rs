@@ -57,6 +57,7 @@ async fn grounded(model: &Arc<Model>) -> Run {
             .iter()
             .map(|(label, content)| source(*label, content))
             .collect(),
+        time_budget: TURN_TIME,
     };
     run_turn(
         FakeRuntime::default(),
