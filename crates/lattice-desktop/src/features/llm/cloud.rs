@@ -382,32 +382,19 @@ impl CloudLlm {
             }
             if let Some(schema) = &request.json_schema {
                 let schema = anthropic_schema(schema);
-                if anthropic_schema_compiles(&schema) {
-                    let mut config = field(&body, "output_config").clone();
-                    if config.is_null() {
-                        config = json!({});
-                    }
-                    set_field(
-                        &mut config,
-                        "format",
-                        json!({"type":"json_schema","schema":schema}),
-                    )?;
-                    set_field(&mut body, "output_config", config)?;
-                } else {
-                    // Too large for Claude's grammar compiler: the schema is
-                    // asked for in words, and the caller's parser checks the
-                    // reply as it would any other.
-                    let system = field(&body, "system").as_str().unwrap_or_default();
-                    let ask = format!(
-                        "Reply with only a JSON value that matches this JSON Schema, and no \
-                         other text:\n{schema}"
-                    );
-                    let system = if system.is_empty() {
-                        ask
-                    } else {
-                        format!("{system}\n\n{ask}")
-                    };
-                    set_field(&mut body, "system", json!(system))?;
+                let compiles = anthropic_schema_compiles(&schema);
+                let mut config = field(&body, "output_config").clone();
+                if config.is_null() {
+                    config = json!({});
+                }
+                set_field(
+                    &mut config,
+                    "format",
+                    json!({"type":"json_schema","schema":schema}),
+                )?;
+                set_field(&mut body, "output_config", config)?;
+                if !compiles {
+                    body = schema::in_words(body);
                 }
             }
             Ok(body)
@@ -467,6 +454,9 @@ impl CloudLlm {
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             let error = status_error(&self.provider, self.provider_name(), status);
+            if status == reqwest::StatusCode::BAD_REQUEST && schema::asks_for_format(body) {
+                return Err(schema::refusal_or(response, error).await);
+            }
             if attempt == 2 || !(status.as_u16() == 429 || status.is_server_error()) {
                 return Err(error);
             }
@@ -517,7 +507,7 @@ impl LLMPort for CloudLlm {
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
         let response = self
-            .send(&self.body(request, false)?, deadline, true)
+            .send_with_schema(self.body(request, false)?, deadline, true)
             .await?;
         let value: Value = response
             .json()
@@ -549,7 +539,7 @@ impl LLMPort for CloudLlm {
             .within_time_budget(async {
                 let sent = Instant::now();
                 let response = self
-                    .send(&self.body(request, true)?, deadline, false)
+                    .send_with_schema(self.body(request, true)?, deadline, false)
                     .await?;
                 streaming::drain(
                     self.provider,

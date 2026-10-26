@@ -1,6 +1,6 @@
 use super::*;
 use wiremock::{
-    matchers::{header, method, path},
+    matchers::{body_string_contains, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 async fn client(server: &MockServer) -> CloudLlm {
@@ -202,6 +202,82 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
         );
     }
 }
+async fn anthropic_client(server: &MockServer) -> CloudLlm {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        model: "claude-test".into(),
+        ..Default::default()
+    };
+    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    client.endpoint = format!("{}/messages", server.uri());
+    client
+}
+
+fn structured() -> CompletionRequest {
+    CompletionRequest {
+        json_schema: Some(json!({"type":"object","properties":{"ok":{"type":"boolean"}}})),
+        ..Default::default()
+    }
+}
+
+/// Claude refuses some schemas it cannot compile ("The compiled grammar is
+/// too large"), which no shape check predicts; the request goes once more
+/// with the schema asked for in words.
+#[tokio::test]
+async fn a_schema_claude_refuses_is_asked_for_in_words() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("json_schema"))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                "type":"invalid_request_error",
+                "message":"The compiled grammar is too large, which would cause performance issues."
+            }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("matches this JSON Schema"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = anthropic_client(&server)
+        .await
+        .complete(&structured())
+        .await
+        .unwrap();
+    assert_eq!(response.text, "{\"ok\":true}");
+}
+
+/// Any other bad request is the request's own fault: it is not resent, and
+/// the provider's reason is never echoed.
+#[tokio::test]
+async fn any_other_bad_request_is_not_resent() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                "type":"invalid_request_error","message":"messages.0: sensitive-provider-reason"
+            }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = anthropic_client(&server)
+        .await
+        .complete(&structured())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::ModelRejected(_)), "{error:?}");
+    assert!(!error.to_string().contains("sensitive-provider-reason"));
+}
+
 #[tokio::test]
 async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     let server = MockServer::start().await;
