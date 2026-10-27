@@ -855,7 +855,10 @@ async fn a_transcript_longer_than_the_window_keeps_its_newest_turns() -> Result<
     generate_simulation_turn(&llm, &context, &session, &[], false).await?;
     let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
     let sent = requests.last().cloned().unwrap_or_default();
-    assert!(sent.contains("Turn 1199 weighs"), "the newest turn is shown");
+    assert!(
+        sent.contains("Turn 1199 weighs"),
+        "the newest turn is shown"
+    );
     assert!(!sent.contains("Turn 0 weighs"), "the oldest is not");
     assert!(sent.contains("earlier turns not shown"));
     Ok(())
