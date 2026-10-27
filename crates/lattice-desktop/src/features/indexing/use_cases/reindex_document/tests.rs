@@ -480,12 +480,8 @@ async fn test_reindex_document() {
     assert!(response.chunks_created > 0);
 }
 
-/// Reindex must keep the live vector index in step with the database.
-/// Updating SQLite alone left the index holding vectors for chunks that
-/// no longer existed, and never containing the new ones — so semantic
-/// search returned dangling hits and missed the edited content, and a
-/// restart did not repair it because the persisted index is only rebuilt
-/// when empty.
+/// Reindex keeps the live vector index in step with the database: no
+/// vectors for deleted chunks, and the edited content searchable.
 #[tokio::test]
 async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
     let repo = Arc::new(MockDocumentRepo::new());

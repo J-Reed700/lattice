@@ -392,14 +392,9 @@ mod property_tests {
     }
 
     proptest! {
-        /// Property: Sentence boundary preference creates valid chunks
-        ///
-        /// When prefer_sentence_boundaries is enabled, chunks should still be valid
-        ///
-        /// NOTE: Previously hung on edge cases - now fixed via architectural changes:
-        /// 1. Config validation ensures overlap_tokens < max_tokens
-        /// 2. find_sentence_boundary() enforces min chunk size > overlap
-        /// 3. Loop invariant (always advance) is now guaranteed by design
+        /// Property: with `prefer_sentence_boundaries`, chunks are still valid and
+        /// chunking always advances (overlap < max tokens, minimum chunk size >
+        /// overlap).
         #[test]
         fn prop_sentence_boundaries_valid(
             text in sentence_text()
@@ -550,13 +545,8 @@ mod property_tests {
     }
 
     /// A config whose overlap meets or exceeds `max_tokens` cannot make
-    /// progress — each chunk would start at or before the previous one, so
-    /// chunking either loops forever or silently produces nonsense.
-    ///
-    /// These two cases used to build the chunker and hope it coped. It no
-    /// longer can be built: `SemanticChunker::new` rejects the config, which
-    /// is the graceful handling these tests were asking for. The assertion
-    /// moved accordingly — the requirement is "refuse clearly", not "panic".
+    /// progress, so `SemanticChunker::new` refuses it clearly rather than
+    /// looping or panicking.
     #[test]
     fn invalid_configs_are_rejected_rather_than_panicking() {
         for (max_tokens, overlap) in [(50, 50), (20, 30)] {

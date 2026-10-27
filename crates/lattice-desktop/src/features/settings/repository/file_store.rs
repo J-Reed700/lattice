@@ -159,12 +159,10 @@ impl SettingsRepository {
     }
 }
 
-/// Version 1 stored every vault's vectors truncated to 256 dims at i8 by
-/// default; version 2 stores them at full precision, which measured better.
-/// A document still holding exactly the old default never chose compression,
-/// so it takes the new default, and the index rebuilds into its own files on
-/// the next start. Any other compression setting was someone's choice and is
-/// kept.
+/// Version 1 stored vectors at 256 dims and i8 by default; version 2 stores
+/// them at full precision. A document still on the old default never chose
+/// compression, so it takes the new one (the index rebuilds on the next
+/// start); any other setting is kept.
 fn release_untouched_vector_compression(
     settings: &mut crate::features::settings::dto::SettingsDto,
 ) {

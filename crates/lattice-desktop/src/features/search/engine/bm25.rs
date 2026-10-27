@@ -372,8 +372,8 @@ mod tests {
         assert!(!BM25Search::supports_query("   "));
     }
 
-    /// The regression this file exists for: a query with no ASCII letter used
-    /// to produce an empty `MATCH` expression and no lexical branch at all.
+    /// A query with no ASCII letter still produces a `MATCH` expression and a
+    /// lexical branch.
     #[tokio::test]
     async fn a_digits_only_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();

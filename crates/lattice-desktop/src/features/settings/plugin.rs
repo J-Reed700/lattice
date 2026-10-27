@@ -352,12 +352,8 @@ pub async fn update_settings(
         None => None,
     };
 
-    // Audit P0-3 fix: cache invalidation moved into the use case via
-    // `SettingsSideEffectsPort`. The plugin layer is no longer
-    // responsible for it — internal Rust callers
-    // (UpdateSettingsUseCase invoked directly by tests, watch-folder
-    // helpers, etc.) get the same invalidation behavior the IPC
-    // command does.
+    // Cache invalidation lives in the use case (`SettingsSideEffectsPort`), so
+    // internal callers get the same invalidation as this command.
     let updated = container
         .update_settings_use_case()
         .execute(UpdateSettingsRequestDto {

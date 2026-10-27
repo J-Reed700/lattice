@@ -77,21 +77,12 @@ pub async fn update_tag_ddd(
     Ok(response)
 }
 
-/// Deletes a tag and removes all document associations
-///
-/// Permanently removes a tag from the system. This operation also removes the tag
-/// from all documents it was applied to. Cannot be undone.
+/// Permanently deletes a tag and removes it from every document.
 ///
 /// # Errors
 ///
 /// * `AppError::NotFound` - Tag ID does not exist
 /// * `AppError::Other` - Use case execution failed (database error)
-///
-/// # Side Effects
-///
-/// - **Cascade Deletion**: Tag is removed from all documents
-/// - **Irreversible**: Tag cannot be recovered after deletion
-/// - **Search Impact**: Documents will no longer be findable by this tag
 pub async fn delete_tag_ddd(
     container: State<'_, Container>,
     request: DeleteTagRequestDto,

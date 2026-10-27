@@ -109,11 +109,8 @@ impl DownloadSaga {
                             error!("Saga error handling event: {}", e);
                         }
                     }
-                    // Slow consumer dropped events. Channel still live.
-                    // Eviction risk for state events is now mitigated
-                    // (see P1 fix that filters Progress out at publish
-                    // time) but we still log loudly because in-flight
-                    // download-complete is critical state.
+                    // Slow consumer dropped events; the channel is still live. Logged
+                    // loudly because a dropped download-complete is critical state.
                     Err(RecvError::Lagged(n)) => {
                         warn!(
                             dropped = n,
@@ -427,10 +424,8 @@ impl DownloadSaga {
 
         let mut uow = self.uow_factory.create().await?;
 
-        // A file that is already on disk and recorded as complete stays that
-        // way. The failure can belong to a different session for the same file:
-        // cancelling a row left over from an interrupted attempt used to mark a
-        // finished, active model as failed and drop it from the downloaded list.
+        // A file already on disk and recorded as complete stays that way: the
+        // failure can belong to a different session for the same file.
         let already_complete = {
             let model_file_repo = uow.model_file_repository()?;
             model_file_repo

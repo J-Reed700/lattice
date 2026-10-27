@@ -442,8 +442,8 @@ mod tests {
         assert!(version.contains(&"v2".to_string()), "{version:?}");
     }
 
-    /// The regression this rule exists for: the year is the only thing telling
-    /// a superseded policy from the current one.
+    /// The year is kept: it is the only thing telling a superseded policy from
+    /// the current one.
     #[test]
     fn a_year_survives_a_sentence_full_of_words() {
         let terms = terms_of(

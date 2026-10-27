@@ -1,19 +1,7 @@
-//! Set Custom Endpoint Use Case
-//!
-//! Configures custom API endpoints for LLM services (e.g., local Ollama).
-//!
-//! # Dependencies
-//! - `CredentialsPort` - Endpoint configuration storage
-//!
-//! # Security
-//! - Stores endpoint securely in credentials store
-//!
-//! Note: this use case does **not** validate the URL. That is currently safe
-//! because the stored value is never fetched from here, but any code that
-//! starts making requests to it must validate first — see the SSRF guard in
-//! `features/web/services/web.rs`, which resolves DNS and rejects
-//! loopback/link-local/private targets. This comment previously claimed
-//! validation happened here; it did not.
+//! Configures custom API endpoints for LLM services (e.g. local Ollama), kept
+//! in the credentials store. The URL is not validated here, which is safe only
+//! while nothing fetches it from here: code that requests it must go through
+//! the SSRF guard in `features/web/services/web.rs`.
 
 use crate::features::credentials::dto::CredentialOperationResultDto;
 use lattice_core::application::ports::CredentialsPort;

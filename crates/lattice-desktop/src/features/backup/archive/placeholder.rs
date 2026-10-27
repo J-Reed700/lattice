@@ -1,30 +1,13 @@
 //! Cloud-sync awareness: detecting evicted ("dataless") placeholder files
-//! before a restore, and recognising when a path lives inside a cloud-synced
-//! folder.
+//! before a restore, and recognising paths inside cloud-synced folders.
+//! Reading an evicted file blocks for the whole download with no progress
+//! signal (and fails offline), so the metadata is probed before opening, the
+//! user is told which app must download the file, and the read is never
+//! wrapped in a short timeout.
 //!
-//! Why this module exists: on every desktop platform a cloud sync client can
-//! evict a file's contents and leave behind an entry that still `stat()`s with
-//! its full logical size. Reading such a file does not fail — it *blocks* for
-//! the length of the download with no progress signal, and fails outright when
-//! the machine is offline. Measured on macOS 26.6.2, reading **one byte** of an
-//! evicted 4 KB iCloud file took **5.6 seconds**
-//! (`docs/research/2026-09-16-cloud-durability/raw-backup-options.md` §2.3).
-//! Extrapolate that to a multi-gigabyte `.lattice-backup` and the restore looks
-//! like a hang. So: probe the metadata *before* opening, tell the user which
-//! app has to download the file, and never wrap the read in a short timeout.
-//!
-//! Detection per platform:
-//!
-//! | Platform | Signal |
-//! |---|---|
-//! | macOS | `st_flags & SF_DATALESS (0x40000000)`, or logical size > 0 with `st_blocks == 0` |
-//! | Windows | `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` / `_RECALL_ON_OPEN` / `_OFFLINE` |
-//! | Linux | size > 0 with `st_blocks == 0` (rclone/insync style FUSE mounts) |
-//!
-//! Since macOS 12.3 every third-party client (Dropbox, Google Drive, OneDrive,
-//! Box) is a File Provider extension under `~/Library/CloudStorage/`, so they
-//! all share the macOS dataless mechanism.
-//!
+//! Detection: on macOS `SF_DATALESS`, or size > 0 with `st_blocks == 0`
+//! (every File Provider client shares it); on Windows the recall and offline
+//! attributes; on Linux size > 0 with `st_blocks == 0` (FUSE mounts).
 //! See `docs/design/2026-09-16-encrypted-backup-archive.md`.
 
 use std::path::{Component, Path};
@@ -593,16 +576,10 @@ fn spawn_hydration_nudge(path: &Path) {
     }
 }
 
-/// Open the file and read one byte. This is the only portable way to ask for a
-/// download: on macOS it materialises the dataless object, on Windows it
-/// triggers the `CldFlt` recall, and Dropbox publishes no API at all.
-///
-/// Note: `brctl download` is *not* used. It no longer exists — on macOS 26.6.2
-/// `brctl` only offers `diagnose, log, dump, status, accounts, quota, monitor`,
-/// and `fileproviderctl` has no `materialize`
-/// (`docs/research/2026-09-16-cloud-durability/raw-backup-options.md` §2.3).
-/// The blessed alternative is `FileManager.startDownloadingUbiquitousItem`,
-/// which needs an Objective-C bridge we do not have here.
+/// Opens the file and reads one byte: the only portable way to ask for a
+/// download (it materialises a macOS dataless object and triggers the Windows
+/// `CldFlt` recall). `brctl` has no download command, and
+/// `FileManager.startDownloadingUbiquitousItem` needs an Objective-C bridge.
 fn nudge_hydration(path: &Path) {
     use std::io::Read as _;
 

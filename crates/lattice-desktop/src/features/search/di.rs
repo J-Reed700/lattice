@@ -134,10 +134,9 @@ pub async fn build_with_compression(
     // whole corpus after each one is what made indexing a folder quadratic.
     let usearch_index = Arc::new(usearch_index.with_coalesced_saves());
 
-    // SQLite stays authoritative, but agreeing with it is now something the
-    // manifest can establish without reading every vector back. A rebuild is
-    // still what recovers from a crash between an SQLite commit and a save —
-    // it just no longer happens on launches where nothing changed.
+    // SQLite stays authoritative; the manifest establishes agreement with it
+    // without reading every vector back. A rebuild still recovers from a crash
+    // between an SQLite commit and a save.
     let mut coverage: Option<(usize, usize)> = None;
     let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {

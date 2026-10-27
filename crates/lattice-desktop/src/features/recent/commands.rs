@@ -188,11 +188,8 @@ async fn clear_recent_documents_internal(
     Ok(())
 }
 
-// The old implementation here queried the documents table but returned RecentDocument DTO,
-// which was incorrect. The new implementation in document_list.rs queries documents table
-// and returns proper DocumentMetadataDto with all fields needed for organization.
-// Migration: Frontend calls to invoke('list_all_documents') will now use the new command
-// from document_list.rs which returns richer metadata.
+// `list_all_documents` lives in document_list.rs, which returns the full
+// DocumentMetadataDto.
 
 #[cfg(test)]
 mod tests {

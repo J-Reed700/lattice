@@ -380,10 +380,9 @@ fn file_availability_reports_missing_for_absent_paths() {
 #[cfg(unix)]
 #[test]
 fn file_availability_stats_the_symlink_target() {
-    // Regression guard: APFS reports a symlink's own inode with a non-zero
-    // size and `st_blocks == 0`, which is exactly the shape of an evicted
-    // file. Stating the link instead of its target would call every symlink
-    // a placeholder.
+    // APFS reports a symlink's own inode with a non-zero size and
+    // `st_blocks == 0`, the shape of an evicted file, so the target is stated,
+    // not the link.
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("archive.lattice-backup");
     std::fs::write(&target, b"contents are on disk").unwrap();

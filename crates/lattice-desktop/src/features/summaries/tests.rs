@@ -450,9 +450,8 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
         .contains("Key topics: preflight, engines"));
 }
 
-/// A document too long for one call used to be described from its opening
-/// (3,000 tokens of it). It is now read whole: part by part, in order, and
-/// then summarized from the parts' summaries, the contract last every time.
+/// A document too long for one call is read whole, part by part, then
+/// summarized from the parts' summaries, the contract last every time.
 #[tokio::test]
 async fn a_long_document_is_summarized_from_all_of_it_part_by_part() {
     let pool = pool_with_document().await;
@@ -494,7 +493,7 @@ async fn too_few_sections_means_only_a_document_summary() {
     assert_eq!(prompts.lock().len(), 1);
 }
 
-/// Sections past the twelfth used to go unsummarized. Every one is.
+/// Every section is summarized.
 #[tokio::test]
 async fn every_section_is_summarized() {
     let pool = pool_with_document().await;
@@ -891,9 +890,8 @@ async fn a_new_revision_does_not_reuse_the_old_ones_calls() {
     assert_eq!(first_new, prompts.lock()[0], "the new revision starts over");
 }
 
-/// A long document with sections used to be read twice: whole, in parts, for
-/// its own summary, and again section by section. The sections are read once
-/// and the document is described from their summaries.
+/// A long document with sections is read once, section by section, and
+/// described from their summaries.
 #[tokio::test]
 async fn a_long_sectioned_document_is_read_once() {
     let pool = pool_with_document().await;

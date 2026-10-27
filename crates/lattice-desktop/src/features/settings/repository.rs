@@ -58,15 +58,10 @@ impl Default for SettingsFile {
     }
 }
 
-/// Bring a stored document inside the ranges the validator enforces.
-///
-/// `llm.timeout_seconds` used to mean "total request timeout" and now means
-/// "stall timeout", so values written under the old meaning — 120 for a cloud
-/// provider, 300 to escape the old five-minute cap — land outside the new
-/// range. Resolving them to the default keeps them away from the validator,
-/// which would otherwise reject a save of some unrelated field with an error
-/// about a number the user never typed, and stops a stale 300 from disabling
-/// stall detection outright.
+/// Brings a stored document inside the ranges the validator enforces.
+/// `llm.timeout_seconds` is a stall timeout, so values saved under its former
+/// total-timeout meaning fall back to the default rather than failing an
+/// unrelated save or disabling stall detection.
 fn resolve_out_of_range_values(settings: &mut SettingsDto) {
     if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
         .contains(&settings.llm.timeout_seconds)

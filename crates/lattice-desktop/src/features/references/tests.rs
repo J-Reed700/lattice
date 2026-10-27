@@ -190,7 +190,7 @@ fn create_impl_trims_and_rejects_empty_text() {
     ));
 }
 
-/// Saved text used to be cut at 20,000 characters. It is stored whole.
+/// Saved text is stored whole.
 #[test]
 fn create_impl_stores_long_text_whole() {
     let long = "é".repeat(25_000);

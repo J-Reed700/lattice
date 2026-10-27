@@ -199,9 +199,8 @@ impl DeleteDocumentUseCase {
         self.dispose_artifact(&document_id, &file_path, &checksum)
             .await;
 
-        // The corpus changed, so cached search results are now wrong —
-        // without this, a deleted document keeps appearing in repeated
-        // searches for up to the cache TTL.
+        // The corpus changed, so cached search results are wrong: without this a
+        // deleted document keeps appearing for up to the cache TTL.
         if let Some(cache) = &self.query_cache {
             cache.invalidate_corpus();
         }

@@ -1,17 +1,5 @@
-//! Tag Repository Implementation
-//!
-//! Infrastructure implementation for tag persistence using SQLite.
-//!
-//! # Architecture
-//!
-//! This repository implements the `RepositoryPort<TagEntity>` trait,
-//! providing CRUD operations for tags using SQLite. All database
-//! operations go through the TagMapper layer to maintain clean
-//! separation between domain entities and database models.
-//!
-//! # Migration Notes
-//!
-//! - DB models are now internal and NOT exported
+//! SQLite tag persistence implementing `RepositoryPort<TagEntity>`, through
+//! the `TagMapper` layer; DB models stay internal.
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};

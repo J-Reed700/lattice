@@ -397,7 +397,7 @@ pub fn search_with_bounds(
 
 /// The first `max_results` matches, and how many more the walk found past
 /// them. Each file is streamed line by line to its end, so a match deep in a
-/// large file is found; a fixed prefix used to stop reading at a megabyte.
+/// large file is found.
 pub fn search_counting(
     scope: &Scope,
     request: &SearchRequest<'_>,

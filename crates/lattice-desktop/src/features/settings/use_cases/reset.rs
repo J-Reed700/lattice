@@ -7,16 +7,8 @@ use lattice_core::application::ports::{
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
-/// Use case for resetting application settings to defaults.
-///
-/// # Responsibilities
-///
-/// - Reset all settings or a specific category to default values
-/// - Preserve settings not being reset
-/// - Trigger downstream cache invalidation via
-///   `SettingsSideEffectsPort` (audit P0-3: prior implementation had
-///   no invalidation at all on reset — a "reset to defaults" left
-///   the LLM cache pointing at the old config until app restart).
+/// Resets all settings, or one category, to defaults, keeping the rest, and
+/// invalidates caches through `SettingsSideEffectsPort`.
 pub struct ResetSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
     side_effects: Arc<dyn SettingsSideEffectsPort>,

@@ -133,13 +133,9 @@ fn validate_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the caller-supplied destination and require it to sit under the
-/// models root.
-///
-/// `ValidatedFilePath` alone is not sufficient — it rejects `..` but accepts
-/// any absolute path, so a compromised renderer could previously write the
-/// fetched bytes to e.g. `~/Library/LaunchAgents/com.evil.plist` and obtain
-/// code execution at next login.
+/// Resolves the caller-supplied destination and requires it under the models
+/// root: `ValidatedFilePath` rejects `..` but accepts any absolute path, which
+/// would let a compromised renderer write anywhere (a LaunchAgent, say).
 fn validate_destination(path: &str) -> Result<PathBuf> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput(

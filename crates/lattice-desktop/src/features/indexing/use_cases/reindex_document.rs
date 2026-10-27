@@ -39,14 +39,9 @@ pub struct ReindexDocumentUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
-    /// The live vector index.
-    ///
-    /// Reindex used to update SQLite only. The in-memory USearch index kept
-    /// the vectors of chunks that no longer existed, and never learned about
-    /// the new ones — so after editing a file, semantic search returned
-    /// dangling results for deleted chunks and never surfaced the new content.
-    /// A restart did not repair it either, because the persisted index is only
-    /// rebuilt when it is *empty*.
+    /// The live vector index, updated alongside SQLite: the persisted index is
+    /// rebuilt only when empty, so a reindex that skipped it would leave dangling
+    /// vectors and miss the new chunks until then.
     vector_search: Arc<dyn VectorSearchPort>,
     /// Search results cached against the corpus, dropped once the rebuilt
     /// chunks are live.

@@ -1,23 +1,9 @@
-//! Summaries feature dependency injection.
-//!
-//! The tier is opt-in and off by default, so nothing here is built until
-//! [`register`] is called with `enabled: true`. Until then the only cost is a
-//! read of an empty slot in [`SummaryTrigger::notify_document_indexed`] and a
-//! `None` from [`Container::summary_search`].
-//!
-//! ## Index files
-//!
+//! Summaries feature dependency injection. The tier is opt-in and off by
+//! default, so nothing is built until [`register`] runs with `enabled: true`.
 //! Summary vectors live in `summaries-<identity>.usearch` beside the chunk
-//! index's `usearch-<identity>.usearch`, using the same identity key. A model
-//! switch therefore lands on a fresh, empty summary index for free, and the
-//! rows written under the old identity are pruned when the new one registers —
-//! the summary tier turns itself off until the documents are re-summarized,
-//! which is the honest state rather than a stale one.
-//!
-//! One `USearchVectorIndex` per path is shared app-wide through
-//! [`SummaryTier`], so the generator writing a summary and the chat turn
-//! reading it are looking at the same in-memory HNSW graph rather than two
-//! snapshots of one file.
+//! index, keyed by the same identity, so a model switch starts an empty index
+//! and prunes the old rows. One `USearchVectorIndex` per path is shared
+//! app-wide through [`SummaryTier`].
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

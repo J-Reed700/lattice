@@ -62,11 +62,9 @@ impl Container {
         ))
     }
 
-    /// Settings reset use case, wired with the side-effects port. See
-    /// `update_settings_use_case` for the bootstrap-order rationale.
-    /// Audit P0-3 fix: reset previously did NOT invalidate any caches,
-    /// so a "reset to defaults" left stale LLM caches until app
-    /// restart.
+    /// Settings reset use case, wired with the side-effects port so a reset
+    /// invalidates the LLM caches. See `update_settings_use_case` for the
+    /// bootstrap order.
     pub fn reset_settings_use_case(&self) -> Arc<ResetSettingsUseCase> {
         Arc::new(ResetSettingsUseCase::with_side_effects(
             self.system.settings_repo().clone(),

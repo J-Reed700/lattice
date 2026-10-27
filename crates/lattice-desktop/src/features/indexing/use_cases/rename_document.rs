@@ -107,24 +107,13 @@ impl RenameDocumentUseCase {
         // 3. Store old name for response message
         let old_name = document.file_name().to_string();
 
-        // 4. Apply the rename as a metadata-only update.
-        // This used to rebuild the aggregate with `Document::with_id` and call
-        // `save()`. `with_id` produces a document with `chunks: Vec::new()`,
-        // and the aggregate save deletes every existing chunk before inserting
-        // that empty set — so renaming a file destroyed its chunks, cascaded
-        // its embeddings away, and dropped the document out of search. A
-        // rename touches one column; it must not travel through a path that
-        // rewrites children.
+        // 4. Apply the rename as a metadata-only update: a path that rebuilds the
+        // aggregate and saves it would delete every chunk and embedding.
         //
-        // The chunks' stored context prefix (`embedding_input::context_prefix`)
-        // names the file, and their dense vectors and FTS rows were built from
-        // it, so both keep the old name until the document is next reindexed.
-        // The re-embed backfill cannot pick this up: it keys on
-        // `contextualized_content`, vectors in `text_embeddings` are restored
-        // without a hash check, and it only runs at startup when the index is
-        // short of chunks. Refreshing the prefix here would mean rewriting every
-        // chunk row, dropping its vectors from the live index and re-embedding —
-        // a reindex without the extraction, which this use case has no ports for.
+        // The chunks' stored context prefix names the file, and their vectors and
+        // FTS rows were built from it, so both keep the old name until the next
+        // reindex. Refreshing them here would be a reindex without the extraction,
+        // which this use case has no ports for.
         self.document_repo.rename(&document_id, &new_name).await?;
 
         // 6. Build success response

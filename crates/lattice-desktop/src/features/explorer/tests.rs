@@ -361,8 +361,7 @@ mod model_tools {
             1_000_000,
         )
         .unwrap();
-        // The read used to stop at 400 lines whatever the room. A room that
-        // holds the whole file gets the whole file.
+        // A room that holds the whole file gets the whole file.
         assert!(
             first.starts_with("src/long.txt · lines 1–1000 of 1000\n"),
             "{first:.200}"
@@ -383,8 +382,7 @@ mod model_tools {
         assert!(tail.ends_with("[End of file.]"));
     }
 
-    /// A file over the viewer's 2 MiB used to be refused outright, though
-    /// the tool reads by lines. It is now read as a stream, a window at a time.
+    /// A file over the viewer's 2 MiB is read as a stream, a window at a time.
     #[test]
     fn read_file_streams_a_file_too_large_to_load() {
         let (_dir, scope) = fixture();
@@ -764,8 +762,7 @@ fn locate_file_does_not_auto_open_a_match_from_an_incomplete_search() {
     );
 }
 
-/// A file with no newline in it used to be read as one line into one buffer
-/// the size of the file. It streams in pieces, each part of line 1, never
+/// A file with no newline streams in pieces, each part of line 1 and never
 /// longer than a piece, and nothing of it is lost.
 #[test]
 fn a_newline_free_file_streams_in_bounded_pieces() {

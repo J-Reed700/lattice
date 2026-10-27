@@ -1,51 +1,14 @@
 //! # Cross-Encoder Reranker (Candle)
 //!
 //! [`load_reranker`] reads a checkpoint's `config.json` and loads either a
-//! BERT sequence classifier (cross-encoder/ms-marco-MiniLM-L-6-v2, below) or
-//! a Qwen3 yes/no reranker ([`Qwen3RerankerService`]). The app downloads
-//! Qwen/Qwen3-Reranker-0.6B; both run on the platform accelerator.
+//! BERT sequence classifier (cross-encoder/ms-marco-MiniLM-L-6-v2) or a Qwen3
+//! yes/no reranker ([`Qwen3RerankerService`]); the app downloads
+//! Qwen/Qwen3-Reranker-0.6B. Both run on the platform accelerator.
 //!
-//! ## Why we changed both runtime and model
-//!
-//! The old setup combined two latent bugs:
-//!
-//! 1. **Wrong tensor index.** mxbai-rerank-base-v2 outputs shape
-//!    `[batch, 1]` (single regression score), but the old code did
-//!    `output_tensor.get([i, 1])` which read the second column — which
-//!    doesn't exist. The fallback `.get([i, 0])` then provided the
-//!    actual score, so ranking still ~worked, but in a non-obvious way
-//!    that masked an out-of-bounds access.
-//!
-//! 2. **Wrong tokenization.** mxbai uses a Qwen2 tokenizer with no
-//!    `[SEP]` token. The old code's `format!("{} [SEP] {}", query, doc)`
-//!    silently fell back to splitting `[`, `S`, `E`, `P`, `]` into
-//!    separate tokens, polluting attention with irrelevant junk.
-//!
-//! Both bugs were invisible because reranking only re-orders existing
-//! BM25/vector hits — the user can't see the score axis directly, only
-//! which docs end up first. Result quality degrades subtly.
-//!
-//! ms-marco-MiniLM-L-6-v2 is a 22M-param classic BERT cross-encoder
-//! trained on MS MARCO. Its tokenizer DOES have `[SEP]`. Its config
-//! correctly declares `num_labels=1`. Architecture matches candle's
-//! `BertModel` directly.
-//!
-//! ## Output semantics
-//!
-//! Sigmoided to `[0, 1]`. Higher = more relevant. The model's HF
-//! config technically says `sbert_ce_default_activation_function:
-//! Identity` — meaning the trained logit isn't a calibrated
-//! probability. But the downstream consumer (the rerank stage of
-//! `HybridSearchUseCase`, through [`blend_rerank_scores`])
-//! `.clamp(0.0, 1.0)`s the score before blending it with normalized
-//! fused scores. Returning raw logits would make the clamp
-//! collapse all positive logits to 1.0 (destroying ranking), so we
-//! sigmoid here to give the consumer a smooth `[0, 1]` curve.
-//!
-//! Sigmoid is monotonic, so the ordering candle would have produced
-//! from raw logits is preserved. The blend weights the consumer
-//! applies (0.65 reranker, 0.35 original) work because both inputs
-//! are now on the same scale.
+//! Scores are sigmoided to `[0, 1]`, higher meaning more relevant: the
+//! consumer ([`blend_rerank_scores`]) clamps to `[0, 1]` before blending,
+//! which would collapse raw positive logits to 1.0. Sigmoid is monotonic, so
+//! the ordering is kept.
 
 use candle_core::{DType, Device};
 use candle_nn::{linear, Linear, VarBuilder};

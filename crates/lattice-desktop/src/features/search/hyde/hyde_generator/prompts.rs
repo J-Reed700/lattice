@@ -146,15 +146,9 @@ Latest user input:
 
 Search query:"#;
 
-/// Prompt template for deep-research follow-up searches.
-///
-/// The follow-ups used to be mined from the first search's snippets: the words
-/// several results shared, two at a time, bolted onto the query's own words.
-/// What several snippets share is the pages' furniture as often as their
-/// subject, so they went out as "steps greens garden step learn" and "steps
-/// greens garden beginner right". Choosing another angle on a subject takes
-/// understanding it, so the utility model writes them from the same reading of
-/// the turn the main query came from.
+/// Prompt template for deep-research follow-up searches, written by the
+/// utility model from its reading of the turn: words that several snippets
+/// share are as often page furniture as subject.
 pub(super) const RESEARCH_FOLLOWUPS_TEMPLATE: &str = r#"You are planning web searches for a research question.
 
 The main search is already written. Write {count} MORE searches that each look
