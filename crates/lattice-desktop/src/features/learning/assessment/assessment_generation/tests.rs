@@ -179,3 +179,102 @@ async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
     assert!(llm.prompts.lock().is_ok_and(|prompts| prompts.is_empty()));
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);
 }
+
+/// Judges short answers from a script: a request holding more than `fits`
+/// items, or the item `cut`, has its reply cut off at the output limit;
+/// any other is judged equivalent, item by item.
+struct Grader {
+    fits: usize,
+    cut: &'static str,
+    sizes: Mutex<Vec<usize>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Grader {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::features::learning::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user)?;
+        let ids: Vec<String> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
+            .collect();
+        self.sizes.lock().unwrap().push(ids.len());
+        if ids.len() > self.fits || ids.iter().any(|id| id == self.cut) {
+            return Ok(CompletionResponse {
+                finish_reason: "length".into(),
+                ..CompletionResponse::from_text("{\"items\":[{\"itemId\":")
+            });
+        }
+        let items: Vec<Value> = ids
+            .iter()
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "grader"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn short(id: &str) -> ShortAnswer {
+    ShortAnswer {
+        item_id: id.into(),
+        prompt: "When did the mill close?".into(),
+        accepted: vec!["1887".into()],
+        answer: "In 1887.".into(),
+        reference: "The mill closed in 1887.".into(),
+        learner_note: None,
+    }
+}
+
+#[tokio::test]
+async fn a_grading_reply_cut_off_is_asked_again_in_halves_and_grades_every_item() {
+    let grader = Grader {
+        fits: 2,
+        cut: "",
+        sizes: Mutex::new(Vec::new()),
+    };
+    let answers: Vec<ShortAnswer> = ["a", "b", "c", "d", "e"].map(short).to_vec();
+    let graded = judge_short_answers(&grader, &answers).await.unwrap();
+    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        ["a", "b", "c", "d", "e"],
+        "nothing was lost to the cut-off replies"
+    );
+    let sizes = grader.sizes.lock().unwrap().clone();
+    assert_eq!(
+        sizes,
+        [5, 2, 2, 1],
+        "five cut off, then the rest at the smaller size"
+    );
+}
+
+#[tokio::test]
+async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_graded() {
+    let grader = Grader {
+        fits: usize::MAX,
+        cut: "b",
+        sizes: Mutex::new(Vec::new()),
+    };
+    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
+    let graded = judge_short_answers(&grader, &answers)
+        .await
+        .expect("one overlong reply no longer fails the grading");
+    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a", "c"], "[b] stays pending");
+}
