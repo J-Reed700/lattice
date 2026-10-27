@@ -19,26 +19,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// This entity focuses on the business concept of "what is embedded and when",
 /// not the technical details of how vectors are stored or computed.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::entities::embedding::Embedding;
-/// use lattice_core::shared::types::ChunkId;
-///
-/// use lattice_core::domain::models::embedding_defaults::{
-///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
-/// };
-/// let chunk_id = ChunkId::new();
-/// let embedding = Embedding::new(
-///     chunk_id.clone(),
-///     DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-///     DEFAULT_EMBEDDING_DIM,
-/// );
-///
-/// assert_eq!(embedding.model_name(), DEFAULT_EMBEDDING_MODEL_NAME);
-/// assert_eq!(embedding.dimension(), DEFAULT_EMBEDDING_DIM);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Embedding {
     /// ID of the chunk this embedding represents
@@ -59,26 +39,6 @@ pub struct Embedding {
 
 impl Embedding {
     /// Create a new embedding metadata.
-    ///
-    /// # Arguments
-    ///
-    /// * `chunk_id` - ID of the embedded chunk
-    /// * `model_name` - Name of the embedding model (e.g., DEFAULT_EMBEDDING_MODEL_NAME)
-    /// * `dimension` - Vector dimension
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::entities::embedding::Embedding;
-    /// use lattice_core::shared::types::ChunkId;
-    ///
-    /// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
-    /// let embedding = Embedding::new(
-    ///     ChunkId::new(),
-    ///     DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-    ///     1536,
-    /// );
-    /// ```
     pub fn new(chunk_id: ChunkId, model_name: String, dimension: usize) -> Self {
         Self {
             chunk_id,
@@ -90,13 +50,6 @@ impl Embedding {
     }
 
     /// Create embedding metadata with model version.
-    ///
-    /// # Arguments
-    ///
-    /// * `chunk_id` - ID of the embedded chunk
-    /// * `model_name` - Name of the embedding model
-    /// * `model_version` - Model version string
-    /// * `dimension` - Vector dimension
     pub fn with_version(
         chunk_id: ChunkId,
         model_name: String,
@@ -163,23 +116,6 @@ impl Embedding {
     /// Check if this embedding is compatible with a given model.
     ///
     /// Two embeddings are compatible if they use the same model and dimension.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::entities::embedding::Embedding;
-    /// use lattice_core::shared::types::ChunkId;
-    ///
-    /// let emb1 = Embedding::new(
-    ///     ChunkId::new(),
-    ///     "model-a".to_string(),
-    ///     384,
-    /// );
-    ///
-    /// assert!(emb1.is_compatible_with("model-a", 384));
-    /// assert!(!emb1.is_compatible_with("model-b", 384));
-    /// assert!(!emb1.is_compatible_with("model-a", 512));
-    /// ```
     pub fn is_compatible_with(&self, model_name: &str, dimension: usize) -> bool {
         self.model_name == model_name && self.dimension == dimension
     }
@@ -187,10 +123,6 @@ impl Embedding {
     /// Check if the embedding is stale and needs recomputation.
     ///
     /// Business rule: Embeddings older than the given age threshold are considered stale.
-    ///
-    /// # Arguments
-    ///
-    /// * `max_age` - Maximum age in seconds
     pub fn is_stale(&self, max_age_seconds: i64) -> bool {
         let age = Utc::now()
             .signed_duration_since(self.computed_at)

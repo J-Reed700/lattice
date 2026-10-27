@@ -37,26 +37,6 @@ pub use factory::StoredDocument;
 /// - File name cannot be empty
 /// - Checksum validates content integrity
 /// - Modified timestamp must be <= indexed timestamp
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::entities::document::Document;
-/// use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
-/// use std::path::PathBuf;
-///
-/// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();
-/// let doc = Document::new(
-///     path,
-///     "file.txt".to_string(),
-///     "text/plain".to_string(),
-///     1024,
-///     "abc123".to_string(),
-/// );
-///
-/// assert_eq!(doc.file_name(), "file.txt");
-/// assert_eq!(doc.mime_type(), "text/plain");
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
@@ -382,11 +362,6 @@ impl Document {
     /// This allows the indexing use case to set chunk metadata while maintaining
     /// Document as the sole currency for persistence.
     ///
-    /// # Arguments
-    ///
-    /// * `index` - The zero-based index of the chunk to update
-    /// * `token_count` - The number of tokens in the chunk
-    ///
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
@@ -397,11 +372,6 @@ impl Document {
     }
 
     /// Set word count for a specific chunk by index.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The zero-based index of the chunk to update
-    /// * `word_count` - The number of words in the chunk
     ///
     /// # Panics
     ///
@@ -414,11 +384,6 @@ impl Document {
 
     /// Set code detection flag for a specific chunk by index.
     ///
-    /// # Arguments
-    ///
-    /// * `index` - The zero-based index of the chunk to update
-    /// * `has_code` - Whether the chunk contains code
-    ///
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
@@ -429,11 +394,6 @@ impl Document {
     }
 
     /// Set section/heading for a specific chunk by index.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The zero-based index of the chunk to update
-    /// * `section` - The section or heading text, if any
     ///
     /// # Panics
     ///
@@ -463,15 +423,6 @@ impl Document {
     /// Resets the document status to Pending and updates the modified timestamp.
     /// This is typically called when the file content has changed and needs to be
     /// reindexed.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - New document content
-    /// * `chunking_strategy` - Strategy for chunking
-    ///
-    /// # Returns
-    ///
-    /// Returns Ok(()) if successful
     pub fn reindex(
         &mut self,
         content: String,

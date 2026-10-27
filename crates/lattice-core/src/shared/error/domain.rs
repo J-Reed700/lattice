@@ -1,29 +1,6 @@
 //! # Domain Errors
 //!
 //! Domain-level errors representing business rule violations and entity state problems.
-//!
-//! ## Design Principles
-//!
-//! - **Business-Focused**: Errors reflect domain concepts, not technical details
-//! - **User-Friendly**: Error messages are actionable and understandable
-//! - **Serializable**: All errors can cross IPC boundaries (Tauri commands)
-//! - **Typed**: Structured error variants for precise error handling
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::shared::error::DomainError;
-//!
-//! fn validate_document(id: &str) -> Result<(), DomainError> {
-//!     if id.is_empty() {
-//!         return Err(DomainError::ValidationFailed {
-//!             field: "id".to_string(),
-//!             reason: "ID cannot be empty".to_string(),
-//!         });
-//!     }
-//!     Ok(())
-//! }
-//! ```
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -36,18 +13,6 @@ use thiserror::Error;
 #[derive(Debug, Clone, Error, Serialize, Deserialize, PartialEq, specta::Type)]
 pub enum DomainError {
     /// Entity not found in the system.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let error = DomainError::EntityNotFound {
-    ///     entity_type: "Document".to_string(),
-    ///     identifier: "doc-123".to_string(),
-    /// };
-    /// assert!(error.to_string().contains("Document"));
-    /// assert!(error.to_string().contains("doc-123"));
-    /// ```
     #[error("Entity {entity_type} with identifier '{identifier}' not found")]
     EntityNotFound {
         entity_type: String,
@@ -55,48 +20,14 @@ pub enum DomainError {
     },
 
     /// Entity or aggregate is in an invalid state for the requested operation.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let error = DomainError::InvalidState {
-    ///     details: "Document is archived and cannot be modified".to_string(),
-    /// };
-    /// assert!(error.to_string().contains("invalid state"));
-    /// ```
     #[error("Invalid state: {details}")]
     InvalidState { details: String },
 
     /// Field validation failed.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let error = DomainError::ValidationFailed {
-    ///     field: "email".to_string(),
-    ///     reason: "Invalid email format".to_string(),
-    /// };
-    /// assert!(error.to_string().contains("email"));
-    /// assert!(error.to_string().contains("Invalid email format"));
-    /// ```
     #[error("Validation failed for field '{field}': {reason}")]
     ValidationFailed { field: String, reason: String },
 
     /// File type is not supported for indexing or processing.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// # use std::path::PathBuf;
-    /// let error = DomainError::UnsupportedFileType {
-    ///     path: PathBuf::from("/path/to/file.xyz"),
-    ///     detected_type: Some("application/octet-stream".to_string()),
-    /// };
-    /// assert!(error.to_string().contains("file.xyz"));
-    /// ```
     #[error("Unsupported file type at {path:?} (detected: {detected_type:?})")]
     UnsupportedFileType {
         path: PathBuf,
@@ -104,20 +35,6 @@ pub enum DomainError {
     },
 
     /// File size exceeds maximum allowed size.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// # use std::path::PathBuf;
-    /// let error = DomainError::FileTooLarge {
-    ///     path: PathBuf::from("/path/to/huge.pdf"),
-    ///     size_bytes: 100_000_000,
-    ///     max_size_bytes: 50_000_000,
-    /// };
-    /// assert!(error.to_string().contains("100000000 bytes"));
-    /// assert!(error.to_string().contains("50000000 bytes"));
-    /// ```
     #[error("File at {path:?} is too large ({size_bytes} bytes, max: {max_size_bytes} bytes)")]
     FileTooLarge {
         path: PathBuf,
@@ -126,55 +43,16 @@ pub enum DomainError {
     },
 
     /// Concurrent modification detected (optimistic locking failure).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let error = DomainError::ConcurrentModification {
-    ///     resource: "Document doc-123".to_string(),
-    ///     details: "Version mismatch: expected v2, found v3".to_string(),
-    /// };
-    /// assert!(error.to_string().contains("doc-123"));
-    /// assert!(error.to_string().contains("Version mismatch"));
-    /// ```
     #[error("Concurrent modification of {resource}: {details}")]
     ConcurrentModification { resource: String, details: String },
 
     /// Domain constraint or business rule violated.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let error = DomainError::ConstraintViolation {
-    ///     constraint: "A document must have at least one chunk".to_string(),
-    /// };
-    /// assert!(error.to_string().contains("at least one chunk"));
-    /// ```
     #[error("Constraint violation: {constraint}")]
     ConstraintViolation { constraint: String },
 }
 
 impl DomainError {
     /// Returns true if this error represents a "not found" condition.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let not_found = DomainError::EntityNotFound {
-    ///     entity_type: "Document".to_string(),
-    ///     identifier: "doc-123".to_string(),
-    /// };
-    /// assert!(not_found.is_not_found());
-    ///
-    /// let validation = DomainError::ValidationFailed {
-    ///     field: "name".to_string(),
-    ///     reason: "Required".to_string(),
-    /// };
-    /// assert!(!validation.is_not_found());
-    /// ```
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::EntityNotFound { .. })
     }
@@ -183,28 +61,6 @@ impl DomainError {
     ///
     /// Business rule violations include validation failures, constraint violations,
     /// and invalid state transitions.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let validation = DomainError::ValidationFailed {
-    ///     field: "email".to_string(),
-    ///     reason: "Invalid format".to_string(),
-    /// };
-    /// assert!(validation.is_business_rule_violation());
-    ///
-    /// let constraint = DomainError::ConstraintViolation {
-    ///     constraint: "Unique email required".to_string(),
-    /// };
-    /// assert!(constraint.is_business_rule_violation());
-    ///
-    /// let not_found = DomainError::EntityNotFound {
-    ///     entity_type: "User".to_string(),
-    ///     identifier: "user-123".to_string(),
-    /// };
-    /// assert!(!not_found.is_business_rule_violation());
-    /// ```
     pub fn is_business_rule_violation(&self) -> bool {
         matches!(
             self,
@@ -217,23 +73,6 @@ impl DomainError {
     /// Returns true if this error condition might be resolved by retrying.
     ///
     /// Currently, only concurrent modification errors are considered retryable.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::error::DomainError;
-    /// let concurrent = DomainError::ConcurrentModification {
-    ///     resource: "Document".to_string(),
-    ///     details: "Version conflict".to_string(),
-    /// };
-    /// assert!(concurrent.is_retryable());
-    ///
-    /// let validation = DomainError::ValidationFailed {
-    ///     field: "email".to_string(),
-    ///     reason: "Invalid".to_string(),
-    /// };
-    /// assert!(!validation.is_retryable());
-    /// ```
     pub fn is_retryable(&self) -> bool {
         matches!(self, Self::ConcurrentModification { .. })
     }

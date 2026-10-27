@@ -2,27 +2,6 @@
 //!
 //! This module provides mock implementations using the `mockall` crate.
 //! These mocks are designed to be used in service layer tests.
-//!
-//! # Example Usage
-//!
-//! ```rust
-//! use lattice_core::domain::repositories::mocks::{MockUnitOfWork, MockUnitOfWorkFactory};
-//! use mockall::predicate::*;
-//!
-//! #[tokio::test]
-//! async fn test_with_mock_uow() {
-//!     let mut mock_uow = MockUnitOfWork::new();
-//!
-//!     // Set expectations
-//!     mock_uow.expect_commit()
-//!         .times(1)
-//!         .returning(|| Ok(()));
-//!
-//!     // Use in service
-//!     let result = mock_uow.commit().await;
-//!     assert!(result.is_ok());
-//! }
-//! ```
 
 #![cfg(any(test, feature = "test-support"))]
 
@@ -319,32 +298,6 @@ mock! {
     /// This mock allows you to set expectations for model repository operations
     /// used by ModelService (not to be confused with MockModelRepo which implements
     /// ModelRepositoryPort for UnitOfWork).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use lattice_core::domain::repositories::mocks::MockModelRepository;
-    /// use mockall::predicate::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_model_service_creates_model() {
-    ///     let mut mock_repo = MockModelRepository::new();
-    ///
-    ///     // Expect find_by_model_id to return None (no duplicate)
-    ///     mock_repo.expect_find_by_model_id()
-    ///         .with(eq("test-model-id"))
-    ///         .times(1)
-    ///         .returning(|_| Ok(None));
-    ///
-    ///     // Expect create to succeed
-    ///     mock_repo.expect_create()
-    ///         .times(1)
-    ///         .returning(|_| Ok(()));
-    ///
-    ///     // Use in ModelService...
-    ///     let service = ModelService::new(Arc::new(mock_repo));
-    /// }
-    /// ```
     pub ModelRepository {}
 
     #[async_trait]
@@ -363,27 +316,6 @@ mock! {
     ///
     /// This mock allows you to set expectations for repository access
     /// and transaction operations (commit/rollback).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use lattice_core::domain::repositories::mocks::MockUnitOfWork;
-    /// use mockall::predicate::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_service_commits() {
-    ///     let mut mock_uow = MockUnitOfWork::new();
-    ///
-    ///     // Expect commit to be called once
-    ///     mock_uow.expect_commit()
-    ///         .times(1)
-    ///         .returning(|| Ok(()));
-    ///
-    ///     // Use mock in service...
-    ///     let result = mock_uow.commit().await;
-    ///     assert!(result.is_ok());
-    /// }
-    /// ```
     pub UnitOfWork {}
 
     #[async_trait]
@@ -403,29 +335,6 @@ mock! {
     /// Mock implementation of UnitOfWorkFactory trait
     ///
     /// This mock allows you to control what UnitOfWork instances are created.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use lattice_core::domain::repositories::mocks::{MockUnitOfWorkFactory, MockUnitOfWork};
-    /// use mockall::predicate::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_factory_creates_uow() {
-    ///     let mut mock_factory = MockUnitOfWorkFactory::new();
-    ///     let mut mock_uow = MockUnitOfWork::new();
-    ///
-    ///     mock_uow.expect_commit()
-    ///         .returning(|| Ok(()));
-    ///
-    ///     mock_factory.expect_create()
-    ///         .times(1)
-    ///         .returning(move || Ok(Box::new(mock_uow)));
-    ///
-    ///     let uow = mock_factory.create().await.unwrap();
-    ///     // Use uow...
-    /// }
-    /// ```
     pub UnitOfWorkFactory {}
 
     #[async_trait]

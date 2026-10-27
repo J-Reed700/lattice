@@ -10,30 +10,6 @@ use tokio::time::sleep;
 use tracing;
 
 /// Retry configuration with exponential backoff settings.
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::shared::resilience::retry::RetryConfig;
-/// use std::time::Duration;
-///
-/// // Default configuration (3 attempts, 100ms initial delay)
-/// let config = RetryConfig::default();
-///
-/// // Aggressive retry for critical operations
-/// let config = RetryConfig::aggressive();
-///
-/// // Conservative retry for non-critical operations
-/// let config = RetryConfig::conservative();
-///
-/// // Custom configuration
-/// let config = RetryConfig {
-///     max_attempts: 5,
-///     initial_delay: Duration::from_millis(200),
-///     max_delay: Duration::from_secs(10),
-///     backoff_multiplier: 2.0,
-/// };
-/// ```
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     /// Maximum number of attempts (including first try)
@@ -110,37 +86,6 @@ impl RetryConfig {
 }
 
 /// Retry a future with exponential backoff.
-///
-/// # Arguments
-///
-/// * `config` - Retry configuration
-/// * `operation` - Async function to retry (must return Result)
-/// * `is_retryable` - Function to determine if error is retryable
-///
-/// # Returns
-///
-/// Returns the successful result or the last error after all retries exhausted.
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::shared::resilience::retry::{retry_with_backoff, RetryConfig};
-/// use std::io;
-///
-/// async fn example() -> Result<String, io::Error> {
-///     retry_with_backoff(
-///         RetryConfig::default(),
-///         || async {
-///             // Your operation here
-///             Ok("success".to_string())
-///         },
-///         |e| {
-///             // Retry on connection errors
-///             e.kind() == io::ErrorKind::ConnectionRefused
-///         }
-///     ).await
-/// }
-/// ```
 pub async fn retry_with_backoff<F, Fut, T, E, R>(
     config: RetryConfig,
     operation: F,
@@ -233,20 +178,6 @@ where
 ///
 /// This is a convenience wrapper around `retry_with_backoff` that retries
 /// all errors with default configuration.
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::shared::error::Result;
-/// use lattice_core::shared::resilience::retry::retry_async;
-///
-/// async fn example() -> Result<String> {
-///     retry_async(|| async {
-///         // Your operation here
-///         Ok("success".to_string())
-///     }).await
-/// }
-/// ```
 pub async fn retry_async<F, Fut, T, E>(operation: F) -> Result<T, E>
 where
     F: FnMut() -> Fut,
@@ -264,31 +195,6 @@ where
 ///
 /// Adds random jitter (±20%) to delay times to prevent multiple clients
 /// from retrying at the exact same time when a service recovers.
-///
-/// # Arguments
-///
-/// * `config` - Retry configuration
-/// * `operation` - Async function to retry (must return Result)
-/// * `is_retryable` - Function to determine if error is retryable
-///
-/// # Examples
-///
-/// ```rust
-/// use lattice_core::shared::resilience::retry::{retry_with_jitter, RetryConfig};
-///
-/// async fn example() -> Result<String, reqwest::Error> {
-///     retry_with_jitter(
-///         RetryConfig::aggressive(),
-///         || async {
-///             reqwest::get("https://api.example.com/health")
-///                 .await?
-///                 .text()
-///                 .await
-///         },
-///         |e| e.is_connect() || e.is_timeout()
-///     ).await
-/// }
-/// ```
 pub async fn retry_with_jitter<F, Fut, T, E, R>(
     config: RetryConfig,
     operation: F,

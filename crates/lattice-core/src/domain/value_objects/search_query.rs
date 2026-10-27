@@ -17,42 +17,17 @@ const MIN_QUERY_LENGTH: usize = 1;
 /// - Query is non-empty after trimming whitespace
 /// - Query length is between 1 and 1000 characters
 /// - Query is normalized (trimmed, no excessive whitespace)
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::search_query::SearchQuery;
-///
-/// let query = SearchQuery::new("machine learning algorithms")?;
-/// assert_eq!(query.as_str(), "machine learning algorithms");
-/// assert_eq!(query.word_count(), 3);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SearchQuery(String);
 
 impl SearchQuery {
     /// Create a new validated search query.
     ///
-    /// # Arguments
-    ///
-    /// * `query` - The search query string
-    ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Query is empty after trimming
     /// - Query is too long (> 1000 characters)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("rust programming")?;
-    /// assert!(query.contains("rust"));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(query: impl Into<String>) -> Result<Self> {
         let normalized = Self::normalize(query.into())?;
         Ok(Self(normalized))
@@ -110,32 +85,11 @@ impl SearchQuery {
     }
 
     /// Get the number of words in the query.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("machine learning")?;
-    /// assert_eq!(query.word_count(), 2);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn word_count(&self) -> usize {
         self.0.split_whitespace().count()
     }
 
     /// Check if the query contains a given substring (case-insensitive).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("Rust Programming")?;
-    /// assert!(query.contains_ignore_case("rust"));
-    /// assert!(query.contains_ignore_case("PROGRAMMING"));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn contains_ignore_case(&self, substring: &str) -> bool {
         self.0.to_lowercase().contains(&substring.to_lowercase())
     }
@@ -153,17 +107,6 @@ impl SearchQuery {
     }
 
     /// Split the query into individual words.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_query::SearchQuery;
-    ///
-    /// let query = SearchQuery::new("machine learning algorithms")?;
-    /// let words = query.words();
-    /// assert_eq!(words, vec!["machine", "learning", "algorithms"]);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn words(&self) -> Vec<&str> {
         self.0.split_whitespace().collect()
     }

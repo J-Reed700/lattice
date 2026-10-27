@@ -39,20 +39,6 @@ impl FileExpectation {
 ///
 /// Checks that a model directory contains at least one valid model file
 /// (`.gguf` or `.bin`) with a minimum size.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::models::validation::ModelFileValidator;
-/// use std::path::Path;
-///
-/// let validator = ModelFileValidator::new();
-/// let model_dir = Path::new("/path/to/model");
-///
-/// if validator.has_valid_model_files(model_dir) {
-///     println!("Model is valid");
-/// }
-/// ```
 pub struct ModelFileValidator {
     min_file_size: u64,
     checksum_service: Arc<dyn ChecksumService>,
@@ -64,11 +50,6 @@ impl ModelFileValidator {
     const MIN_FILE_SIZE: u64 = 1024;
 
     /// Create a new model file validator with dependency injection.
-    ///
-    /// # Arguments
-    ///
-    /// * `checksum_service` - Service for calculating file checksums
-    /// * `file_system` - Service for file system operations
     pub fn new(
         checksum_service: Arc<dyn ChecksumService>,
         file_system: Arc<dyn FileSystemAccess>,
@@ -91,15 +72,6 @@ impl ModelFileValidator {
     /// - `.model` file (tokenizer model, e.g., .bpe.model)
     ///
     /// Files must be ≥ 1KB in size.
-    ///
-    /// # Arguments
-    ///
-    /// * `model_dir` - Directory to check
-    ///
-    /// # Returns
-    ///
-    /// * `true` - Directory contains valid model files
-    /// * `false` - Directory doesn't exist, is empty, or has no valid files
     pub async fn has_valid_model_files(&self, model_dir: &Path) -> bool {
         if !self.file_system.exists(model_dir).await.unwrap_or(false) {
             return false;
@@ -215,16 +187,6 @@ impl ModelFileValidator {
     }
 
     /// Check if a specific file is a valid model file.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - File to check
-    /// * `file_size` - File size in bytes
-    ///
-    /// # Returns
-    ///
-    /// * `true` - File is a valid model file (`.gguf`, `.bin`, `.onnx`, `.onnx_data`, `.json`, or `.model` with size ≥ 1KB)
-    /// * `false` - File is invalid or doesn't meet criteria
     async fn is_valid_model_file(&self, file_path: &Path, file_size: u64) -> bool {
         let Some(extension) = file_path.extension() else {
             return false;

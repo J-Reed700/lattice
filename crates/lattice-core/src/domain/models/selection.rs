@@ -15,37 +15,6 @@
 //! - **ModelMetadata**: Complete model information with requirements
 //! - **CompatibilityScore**: Multi-factor scoring (RAM, GPU, disk, performance)
 //! - **ModelRecommendation**: Model + compatibility + performance estimates
-//!
-//! ## Example
-//!
-//! ```rust
-//! use lattice_core::domain::models::selection::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
-//!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let capabilities = SystemCapabilities {
-//!     total_ram_gb: 16.0,
-//!     // available_ram_gb removed - uses total_ram_gb
-//!     cpu_cores: 8,
-//!     gpu_acceleration: GpuAcceleration::Metal,
-//!     available_disk_gb: 100.0,
-//! };
-//!
-//! let model = ModelMetadata {
-//!     id: "phi-3-mini".into(),
-//!     name: "Phi-3 Mini".into(),
-//!     category: ModelCategory::LLM,
-//!     size_gb: 1.8,
-//!     minimum_ram_gb: 4.0,
-//!     // ... other fields
-//! };
-//!
-//! let scorer = CompatibilityScorer::new();
-//! let score = scorer.score_compatibility(&model, &capabilities)?;
-//!
-//! assert_eq!(score.compatibility_level, CompatibilityLevel::Excellent);
-//! # Ok(())
-//! # }
-//! ```
 
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};

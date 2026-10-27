@@ -16,18 +16,6 @@ use serde::{Deserialize, Serialize};
 /// Different strategies optimize for different use cases:
 /// - `FixedSize`: Simple, predictable chunks by character count
 /// - `Semantic`: Context-aware chunking (requires external service)
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
-/// use lattice_core::shared::types::DocumentId;
-///
-/// let strategy = ChunkingStrategy::FixedSize { size: 512 };
-/// let doc_id = DocumentId::new();
-/// let chunks = strategy.chunk("Long document content...", &doc_id)?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChunkingStrategy {
     /// Fixed-size chunking by character count.
@@ -105,18 +93,6 @@ impl ChunkingStrategy {
     /// # Errors
     ///
     /// Returns an error if chunking fails or produces no chunks.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
-    /// use lattice_core::shared::types::DocumentId;
-    ///
-    /// let strategy = ChunkingStrategy::FixedSize { size: 100 };
-    /// let chunks = strategy.chunk("Document text here", &DocumentId::new())?;
-    /// assert!(!chunks.is_empty());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn chunk(&self, content: &str, document_id: &DocumentId) -> Result<Vec<Chunk>> {
         match self {
             ChunkingStrategy::FixedSize { size } => {

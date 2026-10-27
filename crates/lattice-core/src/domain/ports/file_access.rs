@@ -13,15 +13,6 @@ use std::path::{Path, PathBuf};
 #[async_trait::async_trait]
 pub trait ChecksumService: Send + Sync {
     /// Calculate SHA256 checksum for a file.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - Path to the file to checksum
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(String)` - Hexadecimal string representation of SHA256 hash
-    /// * `Err(AppError)` - If file cannot be read or checksum calculation fails
     async fn calculate_sha256(&self, file_path: &Path) -> Result<String, AppError>;
 }
 

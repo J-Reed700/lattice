@@ -28,25 +28,6 @@ impl ChunkingService {
     }
 
     /// Chunk text by fixed size with overlap.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - Input text to chunk
-    /// * `chunk_size` - Size of each chunk in characters
-    /// * `overlap` - Number of characters to overlap between chunks
-    ///
-    /// # Returns
-    ///
-    /// Vector of text chunks as strings
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::services::chunking_service::ChunkingService;
-    ///
-    /// let service = ChunkingService::new();
-    /// let chunks = service.chunk_fixed_size("Long text here", 10, 2);
-    /// ```
     pub fn chunk_fixed_size(&self, text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
         if text.is_empty() || chunk_size == 0 {
             return vec![];
@@ -85,24 +66,6 @@ impl ChunkingService {
     ///
     /// Detects sentence endings (., !, ?) and splits text accordingly.
     /// Handles common abbreviations (Dr., Mr., etc.) to avoid false splits.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - Input text to chunk
-    ///
-    /// # Returns
-    ///
-    /// Vector of sentences as strings
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::services::chunking_service::ChunkingService;
-    ///
-    /// let service = ChunkingService::new();
-    /// let sentences = service.chunk_by_sentences("First sentence. Second sentence!");
-    /// assert_eq!(sentences.len(), 2);
-    /// ```
     pub fn chunk_by_sentences(&self, text: &str) -> Vec<String> {
         if text.is_empty() {
             return vec![];
@@ -156,25 +119,6 @@ impl ChunkingService {
     /// Chunk text by paragraphs.
     ///
     /// Splits text on double newlines or paragraph breaks.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - Input text to chunk
-    ///
-    /// # Returns
-    ///
-    /// Vector of paragraphs as strings
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::services::chunking_service::ChunkingService;
-    ///
-    /// let service = ChunkingService::new();
-    /// let text = "First paragraph.\n\nSecond paragraph.";
-    /// let paragraphs = service.chunk_by_paragraphs(text);
-    /// assert_eq!(paragraphs.len(), 2);
-    /// ```
     pub fn chunk_by_paragraphs(&self, text: &str) -> Vec<String> {
         text.split("\n\n")
             .map(|para| para.trim().to_string())
@@ -185,25 +129,6 @@ impl ChunkingService {
     /// Chunk text by word count.
     ///
     /// Splits text into chunks of approximately equal word count.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - Input text to chunk
-    /// * `words_per_chunk` - Target number of words per chunk
-    ///
-    /// # Returns
-    ///
-    /// Vector of text chunks
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::services::chunking_service::ChunkingService;
-    ///
-    /// let service = ChunkingService::new();
-    /// let chunks = service.chunk_by_word_count("word1 word2 word3 word4", 2);
-    /// assert_eq!(chunks.len(), 2);
-    /// ```
     pub fn chunk_by_word_count(&self, text: &str, words_per_chunk: usize) -> Vec<String> {
         if text.is_empty() || words_per_chunk == 0 {
             return vec![];
@@ -241,15 +166,6 @@ impl ChunkingService {
     }
 
     /// Count words in text.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::services::chunking_service::ChunkingService;
-    ///
-    /// let service = ChunkingService::new();
-    /// assert_eq!(service.word_count("hello world"), 2);
-    /// ```
     pub fn word_count(&self, text: &str) -> usize {
         text.split_whitespace().count()
     }

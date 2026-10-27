@@ -22,19 +22,6 @@ use serde::{Deserialize, Serialize};
 /// - Checksum is a valid hex string
 /// - Checksum is non-empty
 /// - For SHA-256: exactly 64 hex characters
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::checksum::Checksum;
-///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create from existing hash
-/// let checksum = Checksum::new("a".repeat(64))?;
-/// println!("Checksum: {}", checksum.as_str());
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Checksum(String);
@@ -48,16 +35,6 @@ impl Checksum {
     /// # Errors
     ///
     /// Returns an error if the hash string is empty or invalid format.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::checksum::Checksum;
-    ///
-    /// let hash = "a".repeat(64); // Valid SHA-256 length
-    /// let checksum = Checksum::new(hash)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(hash: String) -> Result<Self> {
         if hash.is_empty() {
             return Err(AppError::InvalidInput("Checksum cannot be empty".into()));

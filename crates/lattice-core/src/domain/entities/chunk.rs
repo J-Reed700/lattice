@@ -34,19 +34,6 @@ pub struct ChunkParams {
 /// This entity contains only business logic. Infrastructure concerns like
 /// embeddings, database persistence, and search indexes are handled by
 /// the infrastructure layer.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::entities::chunk::Chunk;
-/// use lattice_core::shared::types::DocumentId;
-///
-/// let doc_id = DocumentId::new();
-/// let chunk = Chunk::new(doc_id, "This is chunk content".to_string(), 0);
-///
-/// assert_eq!(chunk.content(), "This is chunk content");
-/// assert_eq!(chunk.index(), 0);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Chunk {
@@ -113,23 +100,6 @@ impl Chunk {
     }
 
     /// Create new chunk.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of the parent document
-    /// * `content` - Text content of the chunk
-    /// * `index` - Position index within the document (0-based)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::entities::chunk::Chunk;
-    /// use lattice_core::shared::types::DocumentId;
-    ///
-    /// let doc_id = DocumentId::new();
-    /// let chunk = Chunk::new(doc_id.clone(), "Content here".to_string(), 0);
-    /// assert_eq!(chunk.document_id(), &doc_id);
-    /// ```
     pub fn new(document_id: DocumentId, content: String, index: usize) -> Self {
         Self {
             id: ChunkId::new(),
