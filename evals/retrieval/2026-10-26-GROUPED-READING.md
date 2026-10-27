@@ -73,6 +73,27 @@ Seconds are this machine's, the A/B sharing it with a Rust build for part of the
 Groups of four (`PASSAGES_PER_GROUP`): the most facts noted, the fewest readings missing one and the lowest
 median time of every size tried (1, 2, 4, 6, 8).
 
+## The answers
+
+`scripts/replay_answer_ab.py` writes the answers on 30 of the same prompts (the 2026-10-23 runs: 24 long
+readings, 6 short), every arm on the same server, writes with calls forbidden (a replay cannot run them),
+seed 1, scored by the rubric's accepted forms in the answer:
+
+| Arm | Facts stated | Answers with every fact | Long: facts | Short: answers right | Median s |
+|---|---|---|---|---|---|
+| DIRECT: the answer from the passages, no reading | 137/152 | 19/30 | 131/144 | 5/6 | 6.8 |
+| NOTES: grouped reading, then the answer, then coverage | 149/152 | 28/30 | 143/144 | 5/6 | 25.7 |
+| **NOTESV: as NOTES, only verified notes replayed** | **149/152** | **28/30** | **143/144** | 5/6 | 24.9 |
+| CHECK: DIRECT's answer, then the grouped notes as a coverage check | 148/152 | 27/30 | 142/144 | 5/6 | 25.4 |
+
+- The reading earns its time on the long questions: answered from the passages alone, 11 of 30 answers left
+  out a fact, against 2 of 30 from the notes.
+- On the six short questions it changes nothing (every arm 5/6, the same item missed by all) and costs 10 to
+  25 s an answer.
+- Replaying only the notes that copy their own passage loses no fact, so it is built: a line that copies no
+  passage, or another passage's, is replayed as a hyphen.
+- Answering first and checking after recovers most of DIRECT's misses but not all, and is no faster.
+
 ## Running it
 
 One llama-server with the 9B (`-ngl 99 --ctx-size 16384 -np 1 --jinja`), the eight `.calls.jsonl.gz` logs of

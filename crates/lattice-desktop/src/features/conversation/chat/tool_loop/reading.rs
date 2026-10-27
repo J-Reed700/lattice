@@ -156,8 +156,9 @@ pub(super) struct Notes {
     /// replayed to the model as its own message, and shown on the reading
     /// step.
     text: String,
-    /// Each label's note, `None` for a hyphen, with a note copied from another
-    /// passage under that passage's label too (see [`notes::attribute`]).
+    /// Each label's note when it copies that passage, `None` otherwise: a
+    /// hyphen, or a line that copies no passage or another one (a copy of
+    /// another passage is that passage's note, see [`notes::attribute`]).
     lines: BTreeMap<u32, Option<String>>,
     /// The labels whose note is copied word for word from that passage. Only
     /// these can find an answer incomplete: a note that is a paraphrase, a
@@ -208,6 +209,17 @@ pub(super) async fn read_passages(
         return Ok(None);
     }
     let (noted, moved) = attribute(&mut lines, passages);
+    // Only a note that copies its own passage reaches the writer. A line
+    // copying no passage, or another passage's, would put under its label
+    // words that passage does not say; replayed as a hyphen it costs nothing,
+    // since the passage itself is still in the prompt. Replayed this way the
+    // answers kept every fact the full notes gave them (149 of 152 facts on
+    // 30 questions, evals/retrieval/2026-10-26-GROUPED-READING.md).
+    for (label, note) in &mut lines {
+        if !noted.contains(label) {
+            *note = None;
+        }
+    }
     let quoted = lines.values().filter(|note| note.is_some()).count();
     if noted.is_empty() {
         info!(

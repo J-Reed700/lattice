@@ -369,7 +369,8 @@ async fn the_writer_is_given_the_notes_as_kept_and_only_the_reading_stops_at_the
         writing.stop.is_empty(),
         "the answer is not bound by the labels"
     );
-    let kept = format!("[2] {TOLL}\n[5] {OPENING}\n[7] {TOLL}\n[9] -");
+    // [2]'s line copies [7]: it is [7]'s note, and not replayed under [2].
+    let kept = format!("[2] -\n[5] {OPENING}\n[7] {TOLL}\n[9] -");
     assert_eq!(writing.input[2].text(), kept);
     let step = run
         .steps

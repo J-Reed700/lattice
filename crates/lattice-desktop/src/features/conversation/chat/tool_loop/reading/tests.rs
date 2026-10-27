@@ -559,7 +559,8 @@ async fn a_note_written_under_the_wrong_label_is_replayed_under_its_own_too() {
     assert_eq!(notes.noted, [3].into());
     assert_eq!(
         notes.text,
-        format!("[1] {mühle}\n[2] -\n[3] {mühle}\n[4] -")
+        format!("[1] -\n[2] -\n[3] {mühle}\n[4] -"),
+        "a line is replayed only under the passage it copies"
     );
     assert_eq!(notes.tokens, model.count_tokens(&notes.text));
 }
