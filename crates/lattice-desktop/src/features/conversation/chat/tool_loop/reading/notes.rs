@@ -144,30 +144,6 @@ pub(super) fn attribute(
     (noted, moved)
 }
 
-/// The notes to give the writing round when they are not what the model
-/// wrote: the lines as kept, one per label in label order, as `[label] note`.
-///
-/// `None` when every line of the model's text is a note kept as written and
-/// none moved: that text is replayed byte for byte, so the writing round's
-/// prompt runs on from the one the reading was cached under. A paragraph
-/// after the lines, a line the reading did not keep or a note moved, and the
-/// text is rebuilt: replayed as the model's own words, it is what the writer
-/// would repeat and cite.
-pub(super) fn corrected(
-    text: &str,
-    lines: &BTreeMap<u32, Option<String>>,
-    moved: &[(u32, u32)],
-) -> Option<String> {
-    let as_written = moved.is_empty()
-        && text
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .all(|line| {
-                parse_line(line).is_some_and(|(label, note)| lines.get(&label) == Some(&note))
-            });
-    (!as_written).then(|| as_kept(lines))
-}
-
 /// The lines as kept, one per label in label order, as `[label] note` or
 /// `[label] -`.
 pub(super) fn as_kept(lines: &BTreeMap<u32, Option<String>>) -> String {

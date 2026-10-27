@@ -89,7 +89,6 @@ const ANSWER: &str = "The roof was mended in 1851 [2]. The bridge opened on 1932
 async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     let model = Model::new([
         reply(NOTES),
-        reply("[9] -"),
         reply(ANSWER),
         reply("A toll of two pence was charged from the start [7]."),
     ]);
@@ -100,18 +99,23 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     assert_eq!(streamed(&run), format!("{ANSWER}\n\n{added}"));
 
     let requests = model.requests();
-    assert_eq!(requests.len(), 4);
-    let (reading, close_read, writing, continuation) =
-        (&requests[0], &requests[1], &requests[2], &requests[3]);
-    assert_eq!(reading.input.len(), 2, "the planned request, as it is");
+    assert_eq!(requests.len(), 3, "four passages are one group");
+    let (reading, writing, continuation) = (&requests[0], &requests[1], &requests[2]);
+    assert_eq!(
+        reading.input.len(),
+        2,
+        "the planned prompt, its message closed by the group"
+    );
+    assert!(last_text(reading).contains(&format!("\n\n[9] {COOKING}\n\n")));
     assert_eq!(reading.tool_choice, Some(ToolChoice::None));
     assert_eq!(reading.thinking, ThinkingMode::Off);
     assert_eq!(reading.max_output_tokens, Some(512));
 
-    assert!(last_text(close_read).contains("[9]"));
+    assert_eq!(json_of(&writing.input[0]), json_of(&reading.input[0]));
     assert_eq!(
-        json_of(&writing.input[..2].to_vec()),
-        json_of(&reading.input)
+        writing.input[1].text(),
+        message(),
+        "the answer is written on the planned message"
     );
     assert_eq!(writing.input[2].text(), NOTES);
     assert_eq!(last_text(writing), WRITE_INSTRUCTION);
@@ -134,7 +138,6 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     let labels: Vec<&str> = run.steps.iter().map(|step| step.label.as_str()).collect();
     for label in [
         "Reading the passages",
-        "Reading the marked passages again",
         "Writing the answer",
         "Adding what was left out",
     ] {
@@ -210,7 +213,6 @@ async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
 async fn a_continuation_the_provider_fails_leaves_the_answer_as_it_was() {
     let model = Model::new([
         Scripted::from(reply(NOTES)),
-        Scripted::from(reply("[9] -")),
         Scripted::from(reply(ANSWER)),
         Scripted::Fail("The provider is down".into()),
     ]);
@@ -218,7 +220,7 @@ async fn a_continuation_the_provider_fails_leaves_the_answer_as_it_was() {
     let outcome = run.outcome.as_ref().expect("the finished answer stands");
     assert_eq!(outcome.response, ANSWER);
     assert_eq!(streamed(&run), outcome.response);
-    assert_eq!(model.requests().len(), 4);
+    assert_eq!(model.requests().len(), 3);
 }
 
 #[tokio::test]
@@ -227,7 +229,6 @@ async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
     let call = "<tool_call>\n{\"name\": \"search_documents\", \"arguments\": {\"query\": \"toll\"}}\n</tool_call>";
     let model = Model::new([
         reply(NOTES),
-        reply("[9] -"),
         reply(ANSWER),
         reply(&format!("{added}\n{call}")),
     ]);
@@ -235,7 +236,7 @@ async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
     let outcome = run.outcome.as_ref().expect("an answer");
     assert_eq!(outcome.response, format!("{ANSWER}\n\n{added}"));
     assert_eq!(streamed(&run), outcome.response);
-    assert_eq!(model.requests().len(), 4, "[7] added: nothing left out");
+    assert_eq!(model.requests().len(), 3, "[7] added: nothing left out");
 }
 
 #[tokio::test]
@@ -295,7 +296,6 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
 async fn a_continuation_that_adds_no_passage_ends_the_check() {
     let model = Model::new([
         reply(NOTES),
-        reply("[9] -"),
         reply("The roof was mended in 1851 [2]."),
         reply("Nothing more to add."),
     ]);
@@ -304,7 +304,7 @@ async fn a_continuation_that_adds_no_passage_ends_the_check() {
         run.outcome.expect("an answer").response,
         "The roof was mended in 1851 [2].\n\nNothing more to add."
     );
-    assert_eq!(model.requests().len(), 4, "no second continuation");
+    assert_eq!(model.requests().len(), 3, "no second continuation");
 }
 
 #[tokio::test]
@@ -357,14 +357,13 @@ async fn the_writer_is_given_the_notes_as_kept_and_only_the_reading_stops_at_the
         reply(&format!(
             "[2] {TOLL}\n[5] {OPENING}\n[7] -\n[9] -\n\nThe bridge opened in 1932 [5]."
         )),
-        reply("[9] -"),
         reply(answer),
     ]);
     let run = grounded(&model).await;
     assert_eq!(run.outcome.as_ref().expect("an answer").response, answer);
     let requests = model.requests();
-    assert_eq!(requests.len(), 3, "every passage the notes copy is cited");
-    let (reading, writing) = (&requests[0], &requests[2]);
+    assert_eq!(requests.len(), 2, "every passage the notes copy is cited");
+    let (reading, writing) = (&requests[0], &requests[1]);
     assert_eq!(reading.stop, ["[10]", "\n10."]);
     assert!(
         writing.stop.is_empty(),
@@ -407,32 +406,4 @@ async fn a_message_without_numbered_passages_reads_nothing() {
         .steps
         .iter()
         .any(|step| step.label == "Reading the passages"));
-}
-
-#[tokio::test]
-async fn a_grounded_answer_close_reads_and_cites_the_flipped_passage() {
-    let initial_notes = "[2] The roof was mended in 1851.\n[5] -\n[7] -\n[9] -";
-    let close_read = format!("[5] {OPENING}\n[7] -\n[9] -");
-    let answer = "The roof was mended in 1851 [2]. The bridge opened on 1932-05-01 [5].";
-    let model = Model::new([reply(initial_notes), reply(&close_read), reply(answer)]);
-    let run = grounded(&model).await;
-    let outcome = run.outcome.as_ref().expect("an answer");
-    assert_eq!(outcome.response, answer);
-    assert_eq!(streamed(&run), answer);
-
-    let requests = model.requests();
-    assert_eq!(requests.len(), 3, "reading, one close read, writing");
-    let writing = &requests[2];
-    let expected_notes = format!("[2] The roof was mended in 1851.\n[5] {OPENING}\n[7] -\n[9] -");
-    assert_eq!(writing.input[2].text(), expected_notes);
-    let step = run
-        .steps
-        .iter()
-        .find(|step| step.label == "Reading the marked passages again")
-        .expect("a close-read step");
-    assert_eq!(
-        step.reasoning.as_deref(),
-        Some(expected_notes.as_str()),
-        "the turn record shows the notes the writer was given"
-    );
 }

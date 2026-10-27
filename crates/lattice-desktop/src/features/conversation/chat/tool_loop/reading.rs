@@ -8,30 +8,30 @@
 //! some were dropped did not. It is the multi-needle shortfall long-context
 //! benchmarks measure, and neither a shorter prompt nor thinking cured it.
 //!
-//! So a grounded answer is written in two rounds on one cached prompt. The
+//! So a grounded answer is written from notes on one cached prompt. The
 //! model first reads (Chain-of-Note, with the notes copied rather than
-//! paraphrased): one line per numbered passage, the sentences of it that bear
-//! on the question as written, or a hyphen. It then writes the answer from its
-//! own notes. Between the two, the passages the notes mark with a hyphen are
-//! shown to it again, and a line that copies one takes the hyphen's place
-//! (see `reading::close_read`). Last, the app compares the notes and the
-//! answer: a passage the notes copy word for word that the answer never cites
-//! was skipped, and the model is asked to add it. Grounding asks whether
-//! every cited claim is in a passage; this asks whether every passage the
-//! model found is in the answer.
+//! paraphrased), a few passages at a time, each group shown again where the
+//! message closes: one line per passage, the sentences of it that bear on
+//! the question as written, or a hyphen (see `reading::groups`). It then
+//! writes the answer from its own notes. Last, the app compares the notes and
+//! the answer: a passage the notes copy word for word that the answer never
+//! cites was skipped, and the model is asked to add it. Grounding asks
+//! whether every cited claim is in a passage; this asks whether every passage
+//! the model found is in the answer.
 //!
 //! Nothing here looks at the question or depends on its language. The inputs
 //! are the labels the message shows, the model's notes and the labels in its
 //! answer. Every loop ends when a finite set of labels stops shrinking. The
-//! notes are written out of the answer's output reservation, all their sweeps
-//! together, and the close read shows passages again only in the room the
-//! window has left beside that reservation; the answer is held to what the
-//! window has left after the notes, and goes without them when they would
-//! take more of it than they leave. The turn's clock and Stop bound all of it.
+//! notes are written out of the answer's output reservation, all the groups
+//! and their sweeps together; the answer is held to what the window has left
+//! after the notes, and goes without them when they would take more of it
+//! than they leave. The turn's clock and Stop bound all of it.
 //!
 //! `scripts/replay_answer_round.py` sends these same instructions to measure
-//! the rounds, and `scripts/replay_reading_ab.py` measured the close read;
-//! docs/design/2026-10-23-answer-coverage.md has the numbers.
+//! the rounds, and `scripts/replay_grouped_reading_ab.py` measured the
+//! grouped reading against the single reading and its close read;
+//! docs/design/2026-10-23-answer-coverage.md and
+//! evals/retrieval/2026-10-26-GROUPED-READING.md have the numbers.
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
@@ -54,17 +54,17 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-mod close_read;
+mod groups;
 mod notes;
-use close_read::close_read;
-use notes::{attribute, corrected, parse_notes};
+use groups::read_in_groups;
+use notes::{as_kept, attribute};
 
 /// Closes a message that shows numbered passages. It is part of the message,
 /// so the round that reads and the round that writes share the prompt to its
 /// last token, and the turn's budget prices it with the rest.
 pub(in crate::features::conversation::chat) const READING_INSTRUCTION: &str = "Before answering, go through every numbered passage above in order and write one line for each: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. Account for every label. Write only these lines; the answer comes after.";
 
-/// Said after notes that left labels out. `{labels}` lists them.
+/// Said after a group's lines that left labels out. `{labels}` lists them.
 pub(super) const SWEEP_INSTRUCTION: &str =
     "You did not account for {labels}. Write one line for each of them, in the same form.";
 
@@ -78,8 +78,9 @@ pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these pa
 /// Between the answer and what a continuation adds to it.
 const PARAGRAPH_BREAK: &str = "\n\n";
 
-/// A numbered passage the message shows: its trimmed text for re-presentation
-/// in close reading, and its whitespace-normalized text for verifying copies.
+/// A numbered passage the message shows: its trimmed text for showing it
+/// again in its group, and its whitespace-normalized text for verifying
+/// copies.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Passage {
     pub(super) raw: String,
@@ -146,18 +147,14 @@ impl Passages {
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
-    pub(super) fn contains_key(&self, label: &u32) -> bool {
-        self.0.contains_key(label)
-    }
 }
 
 /// What the reading round wrote.
 #[derive(Debug)]
 pub(super) struct Notes {
-    /// The note lines and nothing else: replayed to the model as its own
-    /// message, and shown on the reading step. The model's own text when that
-    /// is all it wrote, else the lines as kept (see [`notes::corrected`]).
+    /// The note lines and nothing else, as kept (see [`notes::as_kept`]):
+    /// replayed to the model as its own message, and shown on the reading
+    /// step.
     text: String,
     /// Each label's note, `None` for a hyphen, with a note copied from another
     /// passage under that passage's label too (see [`notes::attribute`]).
@@ -183,18 +180,9 @@ pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<
         .filter(|passages| !passages.is_empty())
 }
 
-/// The reading round: one line per passage, then a sweep for the labels the
-/// notes left out, asked for again while each sweep accounts for at least one
-/// of them.
-///
-/// The writing round reads the notes back out of the room the answer was
-/// given, so all the sweeps together write no more than the answer may: each
-/// is asked for what the reservation has left after the notes kept so far,
-/// and the reading ends when nothing is left.
-///
-/// Each note is then put under the passage it was copied from, and the notes
-/// replayed are the note lines and nothing after them. The passages they
-/// mark with a hyphen are then read again (see `close_read`).
+/// The reading: every passage read in its group (see `reading::groups`),
+/// each note then put under the passage it was copied from, and the notes
+/// replayed as the lines as kept.
 ///
 /// `Ok(None)` when no notes came of it — the provider failed, the model wrote
 /// no line under a label, or no note is a copy of its passage — and the
@@ -213,128 +201,46 @@ pub(super) async fn read_passages(
         "Reading the passages",
         Some(format!("{} passages", passages.len())),
     );
-    let reserved = request.max_output_tokens;
-    // Nothing past the last label shown is a note: a reading that numbers
-    // its lines would otherwise run on to the reservation.
-    let stop = past_the_last(passages);
-    let mut text = String::new();
-    let mut lines: BTreeMap<u32, Option<String>> = BTreeMap::new();
-    // Tokens of `text`, measured each time it grows.
-    let mut written = 0usize;
-    let mut sweeps = 0usize;
-    loop {
-        let missing = unaccounted(passages, &lines);
-        let ceiling = reserved
-            .map(|reserved| reserved.saturating_sub(u32::try_from(written).unwrap_or(u32::MAX)));
-        if ceiling == Some(0) {
-            break;
-        }
-        let mut input = request.input.clone();
-        if !text.is_empty() {
-            if missing.is_empty() {
-                break;
-            }
-            input.push(assistant(&text));
-            say_last(&mut input, &sweep_instruction(&missing));
-            sweeps += 1;
-        }
-        let remaining = clock.remaining()?;
-        let reading = reading_request(request, input, ceiling, &stop, Some(remaining));
-        let completion = timeout(remaining, llm.complete(&reading));
-        let response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(cancelled_error()),
-            result = completion => result.map_err(|_| clock.exhausted())?,
-        };
-        let response = match response {
-            Ok(response) => response,
-            Err(_) if cancel.is_cancelled() => return Err(cancelled_error()),
-            Err(error) => {
-                warn!(%error, "The model could not read the passages; keeping what it had read");
-                break;
-            }
-        };
-        let whole = whole_lines(&response.text, &response.finish_reason);
-        let mut accounted = false;
-        for (label, note) in parse_notes(whole) {
-            // The first reading takes every line it wrote; a sweep only the
-            // labels it was asked for, so it cannot overwrite a note.
-            let wanted = if text.is_empty() {
-                passages.contains_key(&label)
-            } else {
-                missing.contains(&label)
-            };
-            if wanted {
-                accounted |= missing.contains(&label);
-                lines.insert(label, note);
-            }
-        }
-        // A reading that accounts for no label it was asked for has nothing
-        // to add, and the next would read the same way: the sweep ends.
-        if !accounted {
-            break;
-        }
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(whole.trim());
-        written = tokens(llm, &text).await;
-    }
+    let mut lines = read_in_groups(llm, request, passages, cancel, clock).await?;
     if lines.is_empty() {
-        warn!("The reading round wrote no notes; answering without them");
+        warn!("The reading wrote no notes; answering without them");
         step.failed(Some("No notes".into()));
         return Ok(None);
     }
     let (noted, moved) = attribute(&mut lines, passages);
+    let quoted = lines.values().filter(|note| note.is_some()).count();
     if noted.is_empty() {
-        let quoted = lines.values().filter(|note| note.is_some()).count();
         info!(
             passages = passages.len(),
             accounted = lines.len(),
             quoted,
-            sweeps,
             "The reading copied no passage word for word; answering without it"
         );
         step.failed(Some("No passage copied".into()));
         return Ok(None);
     }
-    let rebuilt = match corrected(&text, &lines, &moved) {
-        Some(lines_only) => {
-            text = lines_only;
-            written = tokens(llm, &text).await;
-            true
-        }
-        None => false,
-    };
-    let quoted = lines.values().filter(|note| note.is_some()).count();
+    let text = as_kept(&lines);
+    let written = tokens(llm, &text).await;
     step.set_reasoning(Some(&text));
     step.done(Some(format!(
         "{quoted} of {} passages bear on the question",
         passages.len()
     )));
-    let mut notes = Notes {
+    info!(
+        passages = passages.len(),
+        accounted = lines.len(),
+        quoted,
+        verbatim = noted.len(),
+        moved = ?moved,
+        tokens = written,
+        "Read the passages before answering"
+    );
+    Ok(Some(Notes {
         text,
         lines,
         noted,
         tokens: written,
-    };
-    let read_again = close_read(
-        llm, request, passages, &stop, &mut notes, recorder, cancel, clock,
-    )
-    .await?;
-    info!(
-        passages = passages.len(),
-        accounted = notes.lines.len(),
-        quoted = quoted + read_again,
-        verbatim = notes.noted.len(),
-        moved = ?moved,
-        rebuilt = rebuilt || read_again > 0,
-        read_again,
-        sweeps,
-        tokens = notes.tokens,
-        "Read the passages before answering"
-    );
-    Ok(Some(notes))
+    }))
 }
 
 /// Give the writing round the notes, as the model's own message, and the
@@ -381,16 +287,27 @@ pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
 /// Take the reading instruction back out of the turn's message when no notes
 /// came of it, so the answer is asked for exactly as before reading existed.
 pub(super) fn withdraw(input: &mut [CompletionInput]) {
+    replace_reading(input, "");
+}
+
+/// Close the turn's message with `instead` where the reading instruction
+/// stood, or with nothing after its passages and question when it is empty.
+fn replace_reading(input: &mut [CompletionInput], instead: &str) {
     let said = format!("\n\n{READING_INSTRUCTION}");
+    let instead = if instead.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{instead}")
+    };
     let Some(item) = input.iter_mut().rev().find(|item| item.is_user()) else {
         return;
     };
     match item {
-        CompletionInput::Message { content, .. } => *content = content.replacen(&said, "", 1),
+        CompletionInput::Message { content, .. } => *content = content.replacen(&said, &instead, 1),
         CompletionInput::Multimodal { parts, .. } => {
             for part in parts {
                 if let ContentPart::Text { text } = part {
-                    *text = text.replacen(&said, "", 1);
+                    *text = text.replacen(&said, &instead, 1);
                 }
             }
         }
@@ -512,40 +429,29 @@ pub(super) fn whole_lines<'t>(text: &'t str, finish_reason: &str) -> &'t str {
     }
 }
 
-/// The labels the notes have not accounted for yet, in label order.
-pub(super) fn unaccounted(passages: &Passages, lines: &BTreeMap<u32, Option<String>>) -> Vec<u32> {
-    passages
-        .labels()
-        .filter(|label| !lines.contains_key(label))
-        .collect()
-}
-
 /// The passages the notes quote that the answer does not cite.
 pub(super) fn left_out(noted: &BTreeSet<u32>, cited: &BTreeSet<u32>) -> BTreeSet<u32> {
     noted.difference(cited).copied().collect()
 }
 
-/// Where a reading of `passages` ends: at the first label past the last one
-/// shown, bracketed or numbering a line. Nothing written after it can be a
-/// note.
-fn past_the_last(passages: &Passages) -> Vec<String> {
-    passages
-        .labels()
-        .last()
-        .map(|last| {
-            let next = last.saturating_add(1);
-            vec![format!("[{next}]"), format!("\n{next}.")]
-        })
-        .unwrap_or_default()
+/// Where the lines of a reading that ends at `last` end: at the next label,
+/// bracketed or numbering a line. Nothing written after it is one of them.
+fn past(last: u32) -> Vec<String> {
+    let next = last.saturating_add(1);
+    vec![format!("[{next}]"), format!("\n{next}.")]
 }
 
 fn sweep_instruction(labels: &[u32]) -> String {
-    let labels = labels
+    SWEEP_INSTRUCTION.replace("{labels}", &label_list(labels))
+}
+
+/// `[1], [2], [3]`.
+fn label_list(labels: &[u32]) -> String {
+    labels
         .iter()
         .map(|label| format!("[{label}]"))
         .collect::<Vec<_>>()
-        .join(", ");
-    SWEEP_INSTRUCTION.replace("{labels}", &labels)
+        .join(", ")
 }
 
 fn continue_instruction(left: &BTreeSet<u32>, notes: &Notes) -> String {
