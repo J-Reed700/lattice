@@ -183,12 +183,9 @@ pub(in crate::features::conversation::chat) fn search_text_without_url_tracking(
         .join(" ")
 }
 
-/// Above this many content terms a message has stopped being query-shaped.
-/// Search engines weigh every word they are given, so a rambling paragraph
-/// buries its own subject under filler ("really", "need", "watched") and the
-/// deep-research branch queries then append yet more terms to that paragraph.
-/// Past the ceiling the keyword builder earns its keep: it ranks the terms and
-/// keeps the top handful.
+/// Above this many content terms a message has stopped being query-shaped:
+/// search engines weigh every word, so past it the keyword builder keeps the
+/// top-ranked terms.
 const MAX_RAW_WEB_QUERY_TERMS: usize = 12;
 
 fn should_use_raw_web_query(query: &str) -> bool {

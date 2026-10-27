@@ -16,14 +16,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
-/// Why a running download task is being told to stop.
-///
-/// Pause and cancel previously shared one signal carrying no payload, so the
-/// task could only assume the terminal case: it ran `session.cancel()` on
-/// every stop. Because `Paused → Cancelled` is a permitted transition, pausing
-/// a download drove the row to `Cancelled` — and `resume_download` only accepts
-/// `Paused | Failed`, so resume then refused forever. The one button that still
-/// worked, retry, deletes the partial file.
+/// Why a running download task is being told to stop. Pause and cancel are
+/// told apart so a pause is not treated as a cancel: `Paused → Cancelled` is a
+/// legal transition, and a cancelled row cannot be resumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StopReason {
     /// Stop transferring but keep the partial file and leave the row in

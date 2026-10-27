@@ -1,20 +1,9 @@
-//! The provenance gate: whether a supported claim's support is enough for
-//! its kind (source provenance §6.2) and the one rule that may take a
-//! supported verdict away (§11).
-//!
-//! After the checker supports a claim, [`weigh`] levels each supporting
-//! source for the claim's subject from cached judgements (standing,
-//! ownership, the claim's profile) and asks lattice-core's `decide` whether
-//! those independent supports meet the bar for the claim's kind. The result,
-//! [`FindingTrust`], travels with the finding; [`ProvenanceGate`] turns it
-//! into the claim ledger's sufficiency through `overturn`, so the checker's
-//! verdict is never overturned by doubt: only by contrary evidence that
-//! outranks the support, or by support that fails its bar. A support that
-//! fails becomes an unsupported claim with the gate's reason, and research
-//! follows its next steps ([`super::scrutiny`]) before repair or the user.
-//!
-//! The gate never calls the model to decide: the decision is a pure function
-//! of judgements that are cached once per source and claim.
+//! The provenance gate: whether a supported claim's support is enough for its
+//! kind (source provenance §6.2), and the one rule that may take a supported
+//! verdict away (§11). [`weigh`] levels each supporting source from cached
+//! judgements and asks lattice-core's `decide` whether they meet the bar; only
+//! contrary evidence that outranks the support, or support that fails its bar,
+//! overturns the checker. No model is called.
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6, §10, §11.
 
 use super::support_gate::{Sufficiency, Support as Supported, SupportGate};

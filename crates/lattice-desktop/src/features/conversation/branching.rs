@@ -427,13 +427,9 @@ fn with_pictures(metadata: Option<String>, pictures: &[ChatImageDto]) -> Option<
     Some(serde_json::Value::Object(map).to_string())
 }
 
-/// Put a lifted question back on the thread after a failed regenerate.
-///
-/// The chat turn persists the question itself once retrieval is done and marks
-/// it failed when generation fails, so restoring it unconditionally left two
-/// failed copies. Only a turn that failed before that point — the thread no
-/// longer than it was when the question was lifted — needs it put back.
-/// Returns the id of the question it put back, if it put one back.
+/// Puts a lifted question back on the thread after a failed regenerate, only
+/// when the turn failed before saving it again (the thread no longer than when
+/// it was lifted). Returns the id of the question it put back, if any.
 async fn restore_lifted_question(
     branches: &dyn ConversationBranches,
     conversation_id: &str,

@@ -18,24 +18,6 @@
 //! Factories encapsulate the creation logic for complex value objects that require
 //! infrastructure dependencies. The domain layer remains pure (no I/O, no external deps),
 //! while the application layer coordinates between domain and infrastructure.
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::factories::{ChecksumFactory, FileMetadataFactory};
-//! use std::path::Path;
-//!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let path = Path::new("/path/to/file.txt");
-//!
-//! // Create domain value objects using factories
-//! let checksum = ChecksumFactory::from_path(path)?;
-//! let metadata = FileMetadataFactory::from_path(path)?;
-//!
-//! println!("File: {}, Checksum: {}", metadata.file_name(), checksum.as_str());
-//! # Ok(())
-//! # }
-//! ```
 
 pub mod checksum_factory;
 pub mod file_metadata_factory;

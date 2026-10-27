@@ -204,8 +204,7 @@ mod tests {
         );
     }
 
-    /// A chunk referencing a nonexistent document must be refused. This is
-    /// the constraint that the re-index id bug used to trip on every edit.
+    /// A chunk referencing a nonexistent document must be refused.
     #[tokio::test]
     async fn test_chunk_with_unknown_document_is_rejected() {
         let (pool, _temp_dir) = setup_test_db().await;

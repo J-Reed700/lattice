@@ -49,27 +49,12 @@ impl DocumentLockGuard {
 pub trait TagServiceTrait: Send + Sync {
     /// Create a new tag
     ///
-    /// # Arguments
-    /// * `name` - Tag name (1-100 characters)
-    /// * `color` - Optional hex color code
-    ///
-    /// # Returns
-    /// Created tag
-    ///
     /// # Errors
     /// - `AppError::InvalidInput` if name is invalid
     /// - `AppError::Database` if database operation fails
     async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<Tag>;
 
     /// Update an existing tag
-    ///
-    /// # Arguments
-    /// * `tag_id` - Tag ID to update
-    /// * `name` - Optional new name
-    /// * `color` - Optional new color
-    ///
-    /// # Returns
-    /// Updated tag
     ///
     /// # Errors
     /// - `AppError::InvalidInput` if name is invalid
@@ -83,17 +68,11 @@ pub trait TagServiceTrait: Send + Sync {
 
     /// Delete a tag
     ///
-    /// # Arguments
-    /// * `tag_id` - Tag ID to delete
-    ///
     /// # Errors
     /// - `AppError::Database` if database operation fails
     async fn delete_tag(&self, tag_id: &str) -> Result<()>;
 
     /// Get all tags
-    ///
-    /// # Returns
-    /// List of all tags
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
@@ -101,20 +80,11 @@ pub trait TagServiceTrait: Send + Sync {
 
     /// Get all tags with document counts
     ///
-    /// # Returns
-    /// List of tags with associated document counts, ordered by name
-    ///
     /// # Errors
     /// - `AppError::Database` if database query fails
     async fn get_all_tags_with_counts(&self) -> Result<Vec<TagWithCountDto>>;
 
     /// Get tags for a document
-    ///
-    /// # Arguments
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    /// List of tags associated with the document
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
@@ -129,13 +99,6 @@ pub trait TagServiceTrait: Send + Sync {
 
     /// Apply tags to a document
     ///
-    /// # Arguments
-    /// * `document_id` - Document ID
-    /// * `tag_names` - Tag names to apply
-    ///
-    /// # Returns
-    /// Updated list of tags for the document
-    ///
     /// # Errors
     /// - `AppError::Database` if database operation fails
     async fn apply_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<Vec<Tag>>;
@@ -145,21 +108,11 @@ pub trait TagServiceTrait: Send + Sync {
 
     /// Remove a tag from a document
     ///
-    /// # Arguments
-    /// * `document_id` - Document ID
-    /// * `tag_id` - Tag ID to remove
-    ///
     /// # Errors
     /// - `AppError::Database` if database operation fails
     async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()>;
 
     /// Search documents by tag name
-    ///
-    /// # Arguments
-    /// * `tag_name` - Tag name to search for
-    ///
-    /// # Returns
-    /// List of document IDs with the tag
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
@@ -169,13 +122,6 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// **NOTE**: Currently disabled pending local LLM port
     ///
-    /// # Arguments
-    /// * `document_id` - Document ID
-    /// * `max_tags` - Maximum number of tags to generate
-    ///
-    /// # Returns
-    /// Generated tag names
-    ///
     /// # Errors
     /// - `AppError::Other` - Feature disabled
     async fn generate_tags(&self, document_id: &str, max_tags: usize) -> Result<Vec<String>>;
@@ -183,12 +129,6 @@ pub trait TagServiceTrait: Send + Sync {
     /// Auto-tag all documents
     ///
     /// **NOTE**: Currently disabled pending local LLM port
-    ///
-    /// # Arguments
-    /// * `max_documents` - Maximum documents to tag
-    ///
-    /// # Returns
-    /// Number of documents tagged
     ///
     /// # Errors
     /// - `AppError::Other` - Feature disabled
@@ -199,12 +139,6 @@ pub trait TagServiceTrait: Send + Sync {
     /// Ensures only one tag operation can occur per document at a time,
     /// preventing race conditions during tag generation and merging.
     ///
-    /// # Arguments
-    /// * `document_id` - The document to lock
-    ///
-    /// # Returns
-    /// Lock guard that releases the lock when dropped
-    ///
     /// # Errors
     /// - `AppError::Other` if lock acquisition times out (30 seconds)
     async fn acquire_lock_with_timeout(&self, document_id: &str) -> Result<DocumentLockGuard>;
@@ -212,12 +146,6 @@ pub trait TagServiceTrait: Send + Sync {
     /// Acquire exclusive lock for document tag operations (simpler version)
     ///
     /// Mock-friendly version without timeout parameter.
-    ///
-    /// # Arguments
-    /// * `document_id` - The document to lock
-    ///
-    /// # Returns
-    /// Lock guard that releases the lock when dropped
     ///
     /// # Errors
     /// - `AppError::Other` if lock acquisition fails
@@ -227,41 +155,16 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// If tag with name exists, returns it. Otherwise creates new tag.
     ///
-    /// # Arguments
-    /// * `name` - Tag name
-    /// * `color` - Tag color (hex code)
-    ///
-    /// # Returns
-    /// Existing or newly created tag
-    ///
     /// # Errors
     /// - `AppError::Database` if database operation fails
     async fn get_or_create(&self, name: &str, color: &str) -> Result<Tag>;
 
     /// Get all tags with document counts (alternative to get_all_tags_with_counts)
     ///
-    /// # Returns
-    /// List of tags with associated document counts
-    ///
     /// # Errors
     /// - `AppError::Database` if database query fails
     async fn get_all_with_counts(&self) -> Result<Vec<TagWithCountDto>>;
 
     /// Merge existing and generated tags, removing duplicates (case-insensitive)
-    ///
-    /// # Arguments
-    /// * `existing` - Tags already associated with document
-    /// * `generated` - Newly generated tags to add
-    ///
-    /// # Returns
-    /// Combined list with duplicates removed, preserving original case of existing tags
-    ///
-    /// # Example
-    /// ```rust
-    /// let existing = vec!["Rust".to_string()];
-    /// let generated = vec!["rust".to_string(), "Programming".to_string()];
-    /// let merged = service.merge_tags(existing, generated);
-    /// // Result: ["Rust", "Programming"]
-    /// ```
     fn merge_tags(&self, existing: Vec<String>, generated: Vec<String>) -> Vec<String>;
 }

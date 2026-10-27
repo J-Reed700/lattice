@@ -1,32 +1,11 @@
-//! What this app has already read from the web, kept across turns.
-//!
-//! A deep-research turn searches, then opens the top results. The turn's own
-//! [`FetchMemory`] stops it reading the same page twice, but it dies with the
-//! turn: a follow-up question, a regenerate, or the user opening a cited
-//! article in the reader all went back to the network for text we already had
-//! — and back to sites that had already answered 403. That is slow, it is how
-//! we get rate limited, and it is rude to the sites.
-//!
-//! So pages live on disk instead, one JSON file per entry under `web-cache/`
-//! in the app data directory. There is deliberately no table and no migration:
-//! nothing here is worth keeping, and a user who deletes the folder loses
-//! nothing but a few seconds.
-//!
-//! Refusals are remembered too, but only the ones a retry a minute later
-//! cannot change — an authorization wall, a missing page, a legal block. A
-//! timeout, a dropped connection, a 429 or a 5xx are the site having a moment,
-//! and those must stay retryable.
-//!
-//! The Internet Archive's answers live here too (design §3.7, §3.8): a lookup
-//! (the capture nearest a day, or that there is none) for the archive-lookup
-//! TTL, and an archived copy under its own key, the original and the capture
-//! time, with no TTL because a capture never changes; the bounds evict it.
-//! A refusal is remembered only when the archive had nothing either, so a URL
-//! the archive rescued is never remembered as refused.
-//!
-//! Every failure in here is a miss. A broken cache directory, a half-written
-//! file, a disk that is full — none of them may stop a fetch, so they are
-//! logged and stepped over.
+//! What this app has already read from the web, kept across turns as one JSON
+//! file per entry under `web-cache/` (no table or migration: deleting it loses
+//! nothing), so a follow-up, a regenerate or the reader does not refetch pages
+//! or retry sites that refused. Only refusals a retry cannot change are
+//! remembered (an authorization wall, a missing page, a legal block), and only
+//! when the archive had nothing either. The Internet Archive's lookups and
+//! copies live here too (design §3.7, §3.8). Every failure here is a miss:
+//! nothing in the cache may stop a fetch.
 //!
 //! [`FetchMemory`]: crate::features::conversation::chat
 
@@ -344,16 +323,9 @@ impl PageCache {
         self.prune(&path).await;
     }
 
-    /// Bring the directory back under [`MAX_ENTRIES`] by deleting the entries
-    /// written longest ago. `just_written` is spared: it is the one entry we
-    /// know is wanted, and file timestamps are too coarse to rely on when a
-    /// wave of fetches lands together.
-    ///
-    /// The whole sweep runs in one blocking hop rather than as a few hundred
-    /// separate `tokio::fs` calls, which is the difference between a prune
-    /// costing nothing and a prune costing more than the fetch it followed.
-    /// Nothing here can fail a fetch — the caller has already written its
-    /// entry and does not wait on the outcome.
+    /// Brings the directory back under [`MAX_ENTRIES`] by deleting the oldest
+    /// entries, sparing `just_written` (timestamps are too coarse when a wave of
+    /// fetches lands together). One blocking sweep that never fails a fetch.
     async fn prune(&self, just_written: &Path) {
         let dir = self.dir.clone();
         let just_written = just_written.to_path_buf();

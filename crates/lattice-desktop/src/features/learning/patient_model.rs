@@ -1,12 +1,8 @@
 //! A model that waits out a temporary outage instead of failing the work.
-//!
 //! Outline generation and repair run as one request with progress and a stop
-//! button. A model server that answers 503 while loading, rate limits, drops
-//! the connection or times out (the same errors lesson jobs defer) is waited
-//! for here, call by call: the failed request is sent again after a backoff
-//! growing to five minutes, so every completed model call and search stands.
-//! The wait is shown as progress and ends when the learner cancels. Any other
-//! error fails the call as before.
+//! button, so a 503 while loading, a rate limit, a dropped connection or a
+//! timeout is retried call by call with a backoff growing to five minutes,
+//! and every completed call stands. Any other error fails the call.
 
 use std::future::Future;
 use std::time::Duration;

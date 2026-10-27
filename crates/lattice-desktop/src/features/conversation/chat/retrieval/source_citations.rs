@@ -15,13 +15,9 @@ use lattice_core::shared::text::build_excerpt;
 /// Anything that counts, scopes or filters vault documents must check it.
 pub const WEB_SOURCE_PREFIX: &str = "web:";
 
-/// Number the sources the user will see, so the prompt can cite the same
-/// numbers.
-///
-/// This must be the *only* place citation numbers are assigned, and it must
-/// run after every step that reorders or filters the list (dedup, score sort,
-/// appending tool/web sources). Numbering in two places is what made
-/// footnotes open the wrong document.
+/// Numbers the sources the user will see, so the prompt can cite the same
+/// numbers. This must be the only place citation numbers are assigned, and it
+/// must run after every step that reorders or filters the list.
 pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
     let mut next = sources
         .iter()
@@ -88,10 +84,8 @@ pub(in crate::features::conversation::chat) fn web_context_entries(
             Some((url, source.citation_id?))
         })
         .collect();
-    // One item per URL: the one that says most, which is the one carrying the
-    // fetched page's text when there is one. The wiki's result comes first,
-    // and keeping the first showed its snippet while the page memory recorded
-    // the page as delivered.
+    // One item per URL: the one that says most, which carries the fetched page's
+    // text when there is one.
     let mut fullest: HashMap<&str, usize> = HashMap::new();
     for (index, item) in items.iter().enumerate() {
         let chosen = fullest.entry(item.url.trim()).or_insert(index);
@@ -113,12 +107,9 @@ pub(in crate::features::conversation::chat) fn web_context_entries(
         .collect()
 }
 
-/// Drop the KB sources whose passage the prompt budget cut.
-///
-/// A passage the model never saw is not a source: listing it would footnote
-/// text the answer could not have drawn on, and the trace would count it as
-/// read. Only chunks of `searched` that are missing from `kept` go, so
-/// attachment, follow-up, prior-evidence and web sources are untouched.
+/// Drops the KB sources whose passage the prompt budget cut: a passage the
+/// model never saw is not a source. Only chunks of `searched` missing from
+/// `kept` go.
 pub(in crate::features::conversation::chat) fn drop_unbudgeted_sources(
     sources: &mut Vec<SourceDto>,
     searched: &[SearchResultDto],
@@ -143,19 +134,11 @@ pub(super) fn citation_ids_by_chunk(sources: &[SourceDto]) -> HashMap<String, u3
         .collect()
 }
 
-/// Fold sources produced by a tool call into the turn's source list, returning
-/// the chunk ids the caller should quote back to the model as citable passages.
-///
-/// A web page is one source, no matter how often the turn reaches for it. The
-/// search results give a URL as a snippet; `fetch_url_content` then gives the
-/// same URL as full text. Appending both leaves two entries that the UI groups
-/// back into one card by URL — the list says ten sources while the citation
-/// numbers run to eleven, so the last footnote points at nothing the reader can
-/// open. Upgrading the entry in place keeps the number the model was already
-/// given and swaps a snippet for the article.
-///
-/// Only web sources fold this way. Two passages of the same vault document are
-/// genuinely two sources, and collapsing those would throw evidence away.
+/// Folds sources produced by a tool call into the turn's list, returning the
+/// chunk ids to quote back to the model as citable passages. A web page is one
+/// source however often the turn reaches for it: a fetch upgrades the search
+/// snippet's entry in place and keeps its number. Two passages of one vault
+/// document stay two sources.
 pub(super) fn merge_tool_sources(
     sources: &mut Vec<SourceDto>,
     incoming: Vec<SourceDto>,
@@ -480,9 +463,8 @@ mod merge_tool_sources_tests {
         }
     }
 
-    /// The reported bug: the search snippet and the fetched article are the same
-    /// page, so they must stay one entry with one number. Two entries render as
-    /// one card, and the eleventh footnote then opens nothing.
+    /// The search snippet and the fetched article are the same page, so they stay
+    /// one entry with one number.
     #[test]
     fn fetching_a_page_already_in_the_list_upgrades_it_instead_of_adding_a_source() {
         let mut sources = vec![source(
@@ -625,9 +607,8 @@ mod web_context_label_tests {
         }
     }
 
-    /// The pipeline used to number web results from 1 on its own, so with two
-    /// KB passages ahead of them the prompt said [1] and [2] for pages the
-    /// source list called [3] and [4].
+    /// Web results are numbered after the KB passages ahead of them, as the source
+    /// list numbers them.
     #[test]
     fn web_results_after_two_passages_are_labelled_with_their_source_numbers() {
         let urls = ["https://a.test/one", "https://b.test/two"];
@@ -710,10 +691,8 @@ mod web_context_label_tests {
         );
     }
 
-    /// The wiki's result for a URL comes first; when the web search fetched
-    /// the same page, its item carries the page's text, and that is the one
-    /// shown. Keeping the first showed a snippet while the page memory
-    /// recorded the whole page as delivered.
+    /// When the wiki and the web search return the same URL, the item carrying the
+    /// page's text is the one shown.
     #[test]
     fn the_item_carrying_the_page_text_wins_over_an_earlier_snippet() {
         let mut sources = build_web_source_citations(&[web_result("https://a.test")], &[], 200);

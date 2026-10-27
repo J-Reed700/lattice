@@ -8,12 +8,6 @@
 //! # Security
 //! - Validates backup file integrity before restoration
 //! - Creates automatic backup before restore operation
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = RestoreBackupUseCase::new(backup_port);
-//! use_case.execute(PathBuf::from("/backups/vault_20240115.db")).await?;
-//! ```
 
 use crate::features::backup::dto::RestoreBackupResultDto;
 use lattice_core::application::ports::BackupPort;

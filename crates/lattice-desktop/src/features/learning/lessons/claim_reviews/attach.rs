@@ -1,17 +1,9 @@
-//! Attaching evidence to a claim (§5.4): the user's link, file, pasted text
-//! or saved passage becomes a source of the course, the claim is checked
-//! against that source alone by the publication judge, and every other open
-//! claim of the lesson the source mentions is checked against it too. The
-//! check is recorded on the ledger (`EvidenceAttached` for the claim,
-//! `Checked` for the others); a supported result resolves the claim. A
-//! source the user added is never weighted differently: it is checked like
-//! any other.
-//!
-//! Concurrency (§9): the user's `expected_revision` must be current when the
-//! attach starts; fetching and checking take a while, so each event is then
-//! appended at the ledger's revision of the moment, after re-reading that the
-//! claim still takes it. A preparation job running meanwhile picks the
-//! result up at its next sync point.
+//! Attaching evidence to a claim (§5.4): the user's link, file, pasted text or
+//! saved passage becomes a source of the course, and the claim, with every
+//! other open claim of the lesson the source mentions, is checked against that
+//! source alone by the publication judge. Each event is appended at the
+//! ledger's revision of the moment, after re-reading that the claim still
+//! takes it (§9).
 
 mod acquire;
 mod check;

@@ -179,9 +179,8 @@ mod tests {
         }
     }
 
-    /// Recall fuses at the library search's constant and weights, not the old
-    /// flat `k = 60`: a message only semantic recall found, first, beats one
-    /// both modes ranked seventh (`0.7/11 > 1/17`; flat, `1/61 < 2/67`). An
+    /// Recall fuses at the library search's constant and weights: a message only
+    /// semantic recall found, first, beats one both modes ranked seventh. An
     /// exact-identifier hit still leads whatever its fused score.
     #[test]
     fn recall_fuses_at_the_shared_constant_and_weights() {

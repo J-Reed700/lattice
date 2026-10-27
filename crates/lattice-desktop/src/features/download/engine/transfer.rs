@@ -38,12 +38,9 @@ impl HttpDownloadEngine {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// The destination already holds every byte the server advertises, so
-    /// there is nothing left to transfer. A ranged request from that offset
-    /// is answered with 416 Range Not Satisfiable, which is how re-downloading
-    /// a model whose files were still intact on disk (fresh database, weights
-    /// kept) used to fail. Hash the file so the caller's checksum path runs
-    /// exactly as it would after a real transfer.
+    /// The destination already holds every byte the server advertises (a ranged
+    /// request from there would get 416), so the file is hashed and the caller's
+    /// checksum path runs as it would after a real transfer.
     pub(super) async fn complete_from_local_file(
         &self,
         url: &str,

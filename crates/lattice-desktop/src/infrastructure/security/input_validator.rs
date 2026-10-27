@@ -32,23 +32,6 @@ impl InputValidator {
     /// SQL injection protection is provided by SQLx's parameterized queries (.bind()),
     /// not by character filtering. All database queries in this application use
     /// parameterized queries, which prevent SQL injection by design.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - The search query to validate
-    ///
-    /// # Returns
-    ///
-    /// Returns the trimmed query string, or an error if the query is empty or too long.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let validator = InputValidator::new();
-    /// assert!(validator.validate_search_query("machine learning").is_ok());
-    /// assert!(validator.validate_search_query("O'Brien's research").is_ok());
-    /// assert!(validator.validate_search_query("").is_err());
-    /// ```
     pub fn validate_search_query(&self, query: &str) -> Result<String> {
         if query.trim().is_empty() {
             return Err(AppError::InvalidInput(
@@ -266,14 +249,6 @@ impl InputValidator {
     ///
     /// Prevents path traversal and ensures basic format compliance.
     ///
-    /// # Arguments
-    ///
-    /// * `name` - The model name/ID to validate
-    ///
-    /// # Returns
-    ///
-    /// Returns the trimmed model name, or an error if validation fails.
-    ///
     /// # Security
     ///
     /// - Rejects empty strings
@@ -281,15 +256,6 @@ impl InputValidator {
     /// - Rejects path traversal attempts (..)
     /// - Rejects path separators (/, \)
     /// - Rejects null bytes
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let validator = InputValidator::new();
-    /// assert!(validator.validate_model_name("llama-3.2-1b-instruct").is_ok());
-    /// assert!(validator.validate_model_name("../../../etc/passwd").is_err());
-    /// assert!(validator.validate_model_name("model/name").is_err());
-    /// ```
     pub fn validate_model_name(&self, name: &str) -> Result<String> {
         if name.trim().is_empty() {
             return Err(AppError::InvalidInput(
@@ -332,15 +298,6 @@ impl InputValidator {
     /// - Non-absolute paths
     /// - Non-existent directories
     ///
-    /// # Arguments
-    ///
-    /// * `path` - The directory path to validate
-    /// * `require_exists` - If true, path must exist as a directory
-    ///
-    /// # Returns
-    ///
-    /// Returns the validated path string, or an error describing why validation failed.
-    ///
     /// # Security Checks
     ///
     /// 1. Path must not be empty
@@ -348,21 +305,6 @@ impl InputValidator {
     /// 3. Must not contain .. (path traversal CWE-22)
     /// 4. Must be an absolute path
     /// 5. If require_exists is true, must exist and be a directory
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let validator = InputValidator::new();
-    ///
-    /// // Valid path
-    /// assert!(validator.validate_directory_path("/Users/example/Documents", true).is_ok());
-    ///
-    /// // Path traversal attempt
-    /// assert!(validator.validate_directory_path("/Users/example/../../../etc", false).is_err());
-    ///
-    /// // Relative path (not allowed)
-    /// assert!(validator.validate_directory_path("Documents/folder", false).is_err());
-    /// ```
     pub fn validate_directory_path(&self, path: &str, require_exists: bool) -> Result<String> {
         // Check 1: Path must not be empty
         if path.trim().is_empty() {
@@ -425,15 +367,6 @@ impl InputValidator {
     /// - Non-existent files
     /// - Symlink attacks
     ///
-    /// # Arguments
-    ///
-    /// * `path` - The file path to validate
-    /// * `models_dir` - The allowed models directory
-    ///
-    /// # Returns
-    ///
-    /// Returns the canonical path if valid, or an error describing why validation failed.
-    ///
     /// # Security Checks
     ///
     /// 1. Path must exist as a regular file
@@ -441,23 +374,6 @@ impl InputValidator {
     /// 3. Must not contain null bytes
     /// 4. Must not contain .. (path traversal)
     /// 5. Canonical path must be under models_dir (no symlink escapes)
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use std::path::{Path, PathBuf};
-    /// use input_validator::InputValidator;
-    ///
-    /// let validator = InputValidator::new();
-    /// let models_dir = PathBuf::from("/home/user/.lattice/models");
-    /// let path = PathBuf::from("/home/user/.lattice/models/embeddings/model.onnx");
-    ///
-    /// assert!(validator.validate_model_path(&path, &models_dir).is_ok());
-    ///
-    /// // Path traversal attempt
-    /// let malicious = PathBuf::from("../../../etc/passwd");
-    /// assert!(validator.validate_model_path(&malicious, &models_dir).is_err());
-    /// ```
     pub fn validate_model_path(
         &self,
         path: &std::path::Path,

@@ -1,9 +1,7 @@
-//! Finders: one adapter per service, each with its descriptor (design §3.10).
-//!
-//! A finder answers one need for one page and never retries across
+//! Finders: one adapter per service, each with its descriptor (design
+//! §3.10). A finder answers one need for one page and never retries across
 //! providers; the runner in `super::sourcing` decides what runs, when, and
-//! what a failure means for the finder's breaker. Wave 0 holds the three
-//! search providers that used to live in `web/providers.rs`.
+//! what a failure means for the finder's breaker.
 
 pub(crate) mod arxiv;
 pub(crate) mod bing_html;

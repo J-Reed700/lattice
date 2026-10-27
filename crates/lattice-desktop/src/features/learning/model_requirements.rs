@@ -1,17 +1,9 @@
 //! What each learning job needs from the Learning model, and the refusal a
-//! model gets when its window is smaller.
-//!
-//! A floor comes from the job's own answer reservation and the budget
-//! planner's rule for it: the planner never reserves more than half a model's
-//! window for the answer (`BudgetAllocation::plan`), so a job that reserves
-//! `n` tokens for its answer needs a window of at least `2n`, and a smaller
-//! window cuts the answer itself short. Jobs whose calls size their answers
-//! to fit state no floor and are refused, if at all, by the planner on the
-//! request that does not fit.
-//!
-//! Requirements go to `learning_llm`, which can refuse before anything is
-//! loaded; [`ensure_window`] checks the model that was loaded, before any
-//! research or model call is spent on the job.
+//! model gets when its window is smaller. The planner never reserves more
+//! than half a window for the answer, so a job reserving `n` answer tokens
+//! needs a window of at least `2n`. Requirements go to `learning_llm`, which
+//! can refuse before loading; [`ensure_window`] checks the loaded model before
+//! any research or model call is spent.
 
 use crate::features::learning::generation::{
     recall_output_tokens, LESSON_OUTPUT_RESERVE, OUTLINE_OUTPUT_RESERVE,

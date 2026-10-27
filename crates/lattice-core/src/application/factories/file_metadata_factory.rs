@@ -31,19 +31,6 @@ impl FileMetadataFactory {
     /// - File does not exist
     /// - Cannot read file metadata
     /// - File name is invalid or empty
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::factories::file_metadata_factory::FileMetadataFactory;
-    /// use std::path::Path;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let metadata = FileMetadataFactory::from_path(Path::new("/path/to/file.txt"))?;
-    /// println!("File: {}, Size: {} bytes", metadata.file_name(), metadata.size_bytes());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn from_path(path: &Path) -> Result<FileMetadata> {
         let fs_metadata = std::fs::metadata(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file metadata for {:?}: {}", path, e),

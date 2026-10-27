@@ -65,12 +65,6 @@ impl<T> CommandSender<T> {
     /// Wraps the payload in an envelope with a fresh
     /// `command_enqueued` span snapshotted from the caller's current
     /// tracing context.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` — command was queued.
-    /// - `Err(SendError)` — the consumer half has been dropped; no
-    ///   further commands can be sent on this channel.
     pub async fn send(&self, command: T) -> Result<(), mpsc::error::SendError<T>> {
         let span = tracing::info_span!(
             "command_enqueued",

@@ -107,16 +107,10 @@ pub(super) async fn prepare_turn(
     let turn_id = request_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    // Register the turn before any of the slow work below it — request
-    // validation, opening the conversation, a cold model load. The composer
-    // shows Stop from the moment it sends, so a turn that only becomes
-    // cancellable once that work is done leaves every stop press in the
-    // meantime with nothing to act on. When the caller named the conversation
-    // (every store caller does) the turn registers right here, under the id
-    // exactly as the caller wrote it — the same id `get_or_create_conversation_id`
-    // hands back and the same one a cancel arrives with, which is what lets the
-    // registry match the three up. Only a brand-new conversation has to wait
-    // until its id exists.
+    // Register the turn before the slow work below (validation, opening the
+    // conversation, a cold model load): the composer shows Stop from the moment it
+    // sends. A named conversation registers here under the id exactly as the
+    // caller wrote it, the same id a cancel arrives with; only a new one waits.
     let turn_cancellation = container.turn_cancellation();
     let mut turn_guard = match conversation_id.as_deref() {
         Some(id) if !id.trim().is_empty() => Some(TurnCancellationGuard::start(
@@ -204,12 +198,8 @@ pub(super) async fn prepare_turn(
         search_flags.closed_book,
     )
     .await;
-    // A focus that survived the intersection is an explicit instruction to read
-    // those documents, so the vault is searched whether or not the router would
-    // have asked for it. A focus that survived *nothing* forces the search too,
-    // because that is the only path that reports why the turn read nothing —
-    // skipping it would leave a fail-closed turn silently indistinguishable
-    // from one that simply had no reason to search.
+    // A surviving focus forces the vault search; so does a focus that survived
+    // nothing, since only that path reports why the turn read nothing.
     let search_flags = SearchFlags {
         force_kb_search: search_flags.force_kb_search || focus.is_requested(),
         ..search_flags

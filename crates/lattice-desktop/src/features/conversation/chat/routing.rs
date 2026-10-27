@@ -177,15 +177,11 @@ fn is_trivial_conversational_message(message: &str) -> bool {
     )
 }
 
-/// Inference may add a vault search and follow-up mode to a turn, and never
-/// takes away what the user or the focus scope asked for. It never forces the
-/// web. `needs_web` becomes `web_fallback`: the vault is searched first, and
-/// the web only if the vault comes back empty or too weak to answer from. A
-/// question about the user's own files then stays on the machine whenever the
-/// files answer it. The fallback comes from this turn's intent alone, never
-/// from the flags passed in, so a follow-up has to be judged again to reach
-/// the web. A closed book stays closed: the gate already skips it, and the
-/// merge refuses to reopen it.
+/// Inference may add a vault search and follow-up mode, and never takes away
+/// what the user or the focus scope asked for. It never forces the web:
+/// `needs_web` becomes `web_fallback`, from this turn's intent alone, so a
+/// question the user's files answer stays on the machine. A closed book stays
+/// closed.
 pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
     if search_flags.closed_book {
         return search_flags;
@@ -198,12 +194,8 @@ pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) 
     }
 }
 
-/// Route the turn, and keep what the router said about it.
-///
-/// The decision used to be reduced to its `action` the moment it arrived, so an
-/// answer could be steered by a 0.31-confidence guess with a rationale nobody
-/// ever saw. Both now reach the turn record, and the only paths that report no
-/// router are the ones where no router ran.
+/// Routes the turn and keeps the router's decision, with its confidence and
+/// rationale, for the turn record.
 pub(super) async fn resolve_router_decision(
     container: &dyn ChatRuntime,
     conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],

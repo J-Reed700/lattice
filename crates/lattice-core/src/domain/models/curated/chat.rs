@@ -594,11 +594,11 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         }),
     },
     // UD-Q4_K_XL because Unsloth's KL-divergence table for this architecture
-    // (measured on Qwen 3.5 35B A3B) puts it at 0.0137 against Q4_K_M's 0.0192
-    // for about 0.7 GB more; no such table exists for the other entries, which
-    // therefore stay on Q4_K_M. 40 blocks, 10 full attention (2 KV heads,
-    // 256-wide). Template: thinking ON unless `enable_thinking: false`;
-    // `preserve_thinking` (default off) keeps prior reasoning in the prefix.
+    // puts it closer to full precision than Q4_K_M for about 0.7 GB more; no
+    // such table exists for the other entries, which stay on Q4_K_M. 40 blocks,
+    // 10 full attention (2 KV heads, 256-wide). Template: thinking ON unless
+    // `enable_thinking: false`; `preserve_thinking` (default off) keeps prior
+    // reasoning in the prefix.
     CuratedChatModel {
         id: "qwen3.6-35b-a3b-ud-q4_k_xl",
         name: "Qwen 3.6 35B A3B",

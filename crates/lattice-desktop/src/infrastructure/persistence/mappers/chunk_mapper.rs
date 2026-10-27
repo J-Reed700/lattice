@@ -66,27 +66,9 @@ pub struct ChunkMapper;
 impl ChunkMapper {
     /// Convert domain entity to database model.
     ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain chunk entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
-    ///
     /// # Note
     ///
     /// Preserves contextual indexing text and exact source provenance.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
-    /// use lattice_core::domain::entities::chunk::Chunk;
-    ///
-    /// let entity = Chunk::new(/* ... */);
-    /// let db_model = ChunkMapper::to_model(&entity);
-    /// ```
     pub fn to_model(entity: &DomainChunk) -> Result<ChunkModel> {
         let to_sqlite_integer = |value: usize, field: &str| {
             i64::try_from(value).map_err(|_| {
@@ -122,14 +104,6 @@ impl ChunkMapper {
 
     /// Convert database model to domain entity.
     ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
-    ///
     /// # Errors
     ///
     /// - `AppError::InvalidData` if chunk ID is invalid
@@ -139,15 +113,6 @@ impl ChunkMapper {
     /// # Note
     ///
     /// Restores contextual prefix and source offsets/page without changing text.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
-    ///
-    /// let db_model = /* from database */;
-    /// let entity = ChunkMapper::to_entity(&db_model)?;
-    /// ```
     pub fn to_entity(model: &ChunkModel) -> Result<DomainChunk> {
         let id = ChunkId::from_string(model.id.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
@@ -239,14 +204,6 @@ impl ChunkMapper {
     }
 
     /// Convert a batch of domain entities to database models.
-    ///
-    /// # Arguments
-    ///
-    /// * `entities` - Vector of domain entities
-    ///
-    /// # Returns
-    ///
-    /// Vector of database models ready for persistence.
     pub fn to_models(entities: &[DomainChunk]) -> Result<Vec<ChunkModel>> {
         entities.iter().map(Self::to_model).collect()
     }

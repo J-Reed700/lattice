@@ -15,10 +15,9 @@ impl ExternalLookup<'_> {
         self.wiki_planned || self.web_planned
     }
 
-    /// Interpret the turn and rewrite the web query side by side, then run the
+    /// Interprets the turn and rewrites the web query side by side, then runs the
     /// wiki and web searches side by side. `allow_lookup` false still runs the
-    /// interpretation, as the sequential pipeline always did. `web_reason` is
-    /// why the web is searched, for the turn record.
+    /// interpretation. `web_reason` is why the web is searched, for the record.
     pub(super) async fn run(
         &self,
         base_interpretation: &HyDEInterpretation,
@@ -59,11 +58,8 @@ impl ExternalLookup<'_> {
                 if !interpret {
                     return None;
                 }
-                // The expansion is a full utility-model generation, and in this
-                // phase only the wiki search reads it: the web search has its
-                // own rewritten query, and everything else wants the turn's
-                // type. Generating it regardless held the web search back until
-                // it finished — on a single-slot local model, behind it.
+                // The expansion is a full utility-model generation that only the wiki search
+                // reads, so it is generated only when the wiki is searched.
                 if search_wiki {
                     return hyde_service
                         .interpret_with_context(
@@ -351,8 +347,7 @@ impl ExternalLookup<'_> {
 }
 
 /// The prompt items of a wiki search: every result, its snippet whole. The
-/// turn's budget decides how many the prompt shows; three, each cut at 1,200
-/// characters, was a setting's guess.
+/// turn's budget decides how many the prompt shows.
 fn wiki_context(results: &[WebSearchResult]) -> Vec<WebContextItem> {
     results
         .iter()

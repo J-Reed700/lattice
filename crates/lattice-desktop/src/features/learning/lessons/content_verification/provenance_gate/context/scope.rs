@@ -1,24 +1,10 @@
 //! The claim's standing scope (claim sources design §7.3): the course's
 //! versions worth reading before a claim waits for the user, each with the
-//! level a stored fact already gives it (its proxy), read from the trust
-//! store and the library without a model. One ownership judgement may be
-//! made for a subject the current checker has none for
-//! ([`Judgements::judge_owner`]); nothing else here calls a model.
-//!
-//! Two rules keep the scope honest across checkers and policy upgrades:
-//!
-//! - A version nobody has judged under the current policy is still read.
-//!   The walk levels every version it reads, so official documentation the
-//!   course holds is reachable before anything has assessed it, and an
-//!   upgraded standing policy never empties the scope.
-//! - Levels (proxies, owners) come only from the current checker's
-//!   judgements; they decide the ceiling. Ownership work is a lead: it
-//!   moves a version forward in the reading order ([`StandingScope::tier`])
-//!   and never levels it. The current checker's call is the lead once it
-//!   has made one; earlier checkers' work leads only a subject it has not
-//!   judged, since an earlier checker's mistake (a personal blog judged the
-//!   owner of "tool schema") would otherwise fill the first page the walk
-//!   reads ahead of the vendor's documentation.
+//! level a stored fact already gives it, read without a model except for one
+//! ownership judgement ([`Judgements::judge_owner`]). A version nobody judged
+//! under the current policy is still read. Levels come only from the current
+//! checker's judgements; earlier checkers' ownership work only orders a
+//! subject the current one has not judged.
 
 use super::*;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;

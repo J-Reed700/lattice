@@ -1,15 +1,7 @@
 //! One course's index as a reader holds it, and what a search reads from it.
-//!
-//! A [`CourseSearch`] is held for as long as its reader reads: a lesson job
-//! for its whole run, a claim review or a source search for one command.
-//! Each [`CourseSearch::ensure_current`] brings the index in line with the
-//! course and leaves an [`IndexView`]: the store, the one hybrid search over
-//! its vectors and full text when anything is embedded with the active model,
-//! the mode and the embedding identity. A collection opened on the search
-//! takes the view as it is then, so one collection is one mode.
-//!
-//! While any reader holds a course, a capture does not queue a background
-//! build of it: the reader's next `ensure_current` picks the change up.
+//! Each [`CourseSearch::ensure_current`] brings the index in line and leaves an
+//! [`IndexView`] (store, hybrid search, mode, embedding identity); while any
+//! reader holds a course, a capture does not queue a background build of it.
 
 use super::manager::CourseIndexes;
 use super::sync::CourseProgress;

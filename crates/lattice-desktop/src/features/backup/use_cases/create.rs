@@ -8,13 +8,6 @@
 //! # Security
 //! - Validates backup path to prevent directory traversal
 //! - Includes checksum verification for backup integrity
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = CreateBackupUseCase::new(backup_port);
-//! let result = use_case.execute(Some(PathBuf::from("/backups"))).await?;
-//! println!("Backup created at: {}", result.path);
-//! ```
 
 use crate::features::backup::dto::CreateBackupResultDto;
 use lattice_core::application::ports::BackupPort;

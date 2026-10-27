@@ -93,9 +93,8 @@ fn an_underscore_inside_a_word_is_not_emphasis() {
 
 #[test]
 fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
-    // Its only possible evidence would be whichever sources ranked first,
-    // which it never claimed anything about. A closing summary line was
-    // marked "contradicted" that way, against a different document.
+    // Its only possible evidence would be whichever sources ranked first, which
+    // it never claimed anything about.
     let claims = lexical_pass(
         "Potatoes want 4–6 inches of cover [1].\n\
              So: fully buried at first, then buried deeper as the plant grows.",

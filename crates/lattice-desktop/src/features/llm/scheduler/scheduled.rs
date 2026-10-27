@@ -62,18 +62,11 @@ impl ScheduledLlm {
     }
 
     /// The room the request's prompt leaves in the configured window for an
-    /// answer; or, before it is queued or sent, the refusal of a request whose
-    /// prompt leaves none.
-    ///
-    /// The answer's size is a ceiling, never a demand, so nothing else is
-    /// refused: a caller that sized its answer to the room its own count left,
-    /// and counts the prompt a few tokens lower than this does, gets a few
-    /// tokens less answer. The calibrated estimate decides when the prompt
-    /// plainly leaves room. When it does not, a backend with a tokenizer
-    /// counts the prompt's text exactly before anything is refused. Opaque
-    /// provider state (signed reasoning) is not text and is left out of both
-    /// counts, so it never causes a refusal. Pictures are charged in both by
-    /// their declared geometry, never as their bytes.
+    /// answer, or, before it is queued, the refusal of a request whose prompt
+    /// leaves none. The answer's size is a ceiling, so nothing else is refused.
+    /// When the estimate does not plainly leave room, a backend with a tokenizer
+    /// counts exactly first. Opaque provider state is not counted; pictures count
+    /// by their declared geometry.
     async fn room_for_answer(&self, request: &CompletionRequest) -> Result<usize> {
         let window = self.inner.max_context_tokens();
         let image_tokens = request.image_tokens();

@@ -392,9 +392,8 @@ pub(super) async fn run_kb_retrieval(
                 sufficiency_line(&verdict)
             )));
         } else {
-            // No planner, or a plan that only repeated what had already failed.
-            // The first pass's evidence stands, which is not a failure of the
-            // corrective step so much as its honest outcome.
+            // No planner, or a plan that only repeated what failed: the first pass's
+            // evidence stands.
             corrective_step.done(Some("no better plan to try".to_string()));
         }
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
@@ -467,14 +466,10 @@ fn candidate_limit(enable_reranking: bool, kb_search_limit: usize) -> usize {
     }
 }
 
-/// Rerank a pass's pool when reranking is on, and whether the cross-encoder's
-/// scores were applied.
-///
-/// Every plan is reranked, ordered reading included. Reading order is one
-/// evidence source in the pool, never the whole of it: `finalize_rerank`
-/// keeps the leading openings where the plan put them, so a request to read
-/// a document still reads it first, and the passages searched for behind
-/// them compete as they do on any other turn.
+/// Reranks a pass's pool when reranking is on, and says whether the
+/// cross-encoder's scores were applied. Every plan is reranked;
+/// `finalize_rerank` keeps an ordered reading's leading openings where the
+/// plan put them.
 async fn rerank_pass(
     container: &dyn ChatRuntime,
     enable_reranking: bool,
@@ -513,8 +508,6 @@ fn bound_leading_structural(results: &mut Vec<SearchResultDto>, evidence_limit: 
     }
 }
 
-/// What a search pass came back with, counted the way the trace counts it:
-/// passages, and the documents they came from.
 /// The retrieval trace carries at most this many characters of the search
 /// failure; the frontend schema caps `unavailableReason` at the same length.
 const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
@@ -549,11 +542,8 @@ fn passage_count_line(results: &[SearchResultDto]) -> String {
     )
 }
 
-/// The sufficiency verdict in one line.
-///
-/// A plain sufficient verdict is the expected case and says so in three words;
-/// an insufficient one carries its reasons, which are the only thing that makes
-/// the verdict checkable. In words: this line is persisted and read by people.
+/// The sufficiency verdict in one line, for people: a sufficient verdict in
+/// three words, an insufficient one with its reasons.
 fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
     if verdict.sufficient {
         return "enough support".to_string();

@@ -1,12 +1,6 @@
-//! What a turn did, as it does it.
-//!
-//! One structure is streamed while the turn runs and persisted when it ends, so
-//! what the reader watched is what the record says. The old design had two
-//! half-answers to the same question — an `activity` event with a sentence and
-//! no history, and a `retrying` event that overwrote the answer bubble — and
-//! neither survived the turn. A step both goes out on the wire and stays in the
-//! recorder, which is the whole point: the timeline under a finished answer is
-//! the same list the reader watched tick past.
+//! What a turn did, as it does it. One structure is streamed while the turn
+//! runs and persisted when it ends, so the timeline under a finished answer is
+//! the same list the reader watched.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -39,10 +33,8 @@ const MAX_STEP_LINKS: usize = 12;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStepKind {
-    /// The turn was asked to research rather than answer. Not work in itself:
-    /// it is on the record so that what follows — several searches, several
-    /// rounds, minutes of reading — is read as the request it was, live and in
-    /// a week, without the UI having to remember how the composer was set.
+    /// The turn was asked to research rather than answer, recorded so what follows
+    /// reads as the request it was.
     DeepResearch,
     Route,
     Plan,
@@ -69,11 +61,8 @@ pub enum TurnStepState {
     Failed,
 }
 
-/// A page a step found or opened.
-///
-/// A sentence like "10 results" says a search happened and nothing about where
-/// it led. On a research turn that runs for minutes, the addresses are the only
-/// evidence a reader has that the model is looking somewhere sensible.
+/// A page a step found or opened: on a long research turn, the addresses show
+/// where the model is looking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStepLinkDto {
@@ -194,10 +183,6 @@ pub struct TurnTokensDto {
 }
 
 /// What the router decided, and how sure it was.
-///
-/// `resolve_router_decision` used to throw both of these away the moment it had
-/// them, so an answer could be steered by a 0.31-confidence guess and say
-/// nothing about it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnRouterDto {
@@ -352,12 +337,8 @@ impl TurnRecorder {
         id
     }
 
-    /// Start a step whose end is guaranteed.
-    ///
-    /// The tool loop and the retrieval pipeline both return early from the
-    /// middle of a step — a budget exhausted, a stop pressed, a search that
-    /// threw — and a step left running forever is worse than one marked
-    /// failed. Dropping the guard without a verdict records a failure.
+    /// Starts a step whose end is guaranteed: dropping the guard without a verdict
+    /// records a failure, since callers return early from the middle of a step.
     pub fn begin_guarded(
         &self,
         kind: TurnStepKind,
@@ -451,9 +432,8 @@ impl TurnRecorder {
         self.send(updated);
     }
 
-    /// Record something that is already over — no waiting, no duration worth
-    /// naming. A router decision is the shape of this: by the time there is
-    /// anything to say, it has happened.
+    /// Records something that is already over, with no duration worth naming (a
+    /// router decision, say).
     pub fn note(
         &self,
         kind: TurnStepKind,

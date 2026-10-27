@@ -12,19 +12,6 @@
 //! - `context`: Contextualized chunk storage
 //! - `checksum`: File checksum utilities
 //! - `stats`: Statistics queries
-//!
-//! # Example
-//!
-//! ```no_run
-//! use sqlx::SqlitePool;
-//! use crate::features::indexing::engine::storage::IndexStorage;
-//!
-//! # async fn example(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
-//! let storage = IndexStorage::new(pool);
-//! let exists = storage.document_exists(Path::new("doc.pdf")).await?;
-//! # Ok(())
-//! # }
-//! ```
 
 mod checksum;
 mod chunks;

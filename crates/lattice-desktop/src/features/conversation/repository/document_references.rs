@@ -18,11 +18,8 @@ impl ConversationRepository {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
-        // Both inserts must commit together. If the membership insert
-        // fails after the conversation_documents insert, we'd otherwise
-        // have a doc linked to the conversation that is invisible in
-        // the conversation's space — breaks the invariant that linked
-        // chat docs are also space members. Drop-on-error rolls back.
+        // Both inserts commit together, so a document linked to the conversation
+        // is always also a member of its space.
         let mut tx = self.pool.begin().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to open tx for add_document_reference: {}",

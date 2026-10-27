@@ -7,27 +7,6 @@
 //! - **Router**: Routes function calls by name to handlers
 //! - **Security**: Rate limiting, input validation, audit logging
 //! - **Error Handling**: Comprehensive error handling with user-friendly messages
-//!
-//! # Example
-//! ```rust,no_run
-//! use lattice::infrastructure::services::function_executor::FunctionExecutor;
-//! use lattice_core::domain::function_call::FunctionCall;
-//! use serde_json::json;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let executor = FunctionExecutor::new(/* dependencies */);
-//!
-//! let call = FunctionCall::new(
-//!     "call_123",
-//!     "semantic_search",
-//!     json!({"query": "machine learning", "limit": 5})
-//! );
-//!
-//! let result = executor.execute(call).await?;
-//! assert!(result.success);
-//! # Ok(())
-//! # }
-//! ```
 
 mod custom_tools;
 mod dispatch;

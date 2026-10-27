@@ -388,11 +388,9 @@ impl CompactionJob {
                 match summary {
                     Ok(summary) => Some(summary),
                     // What extraction accepted does not depend on the
-                    // summary. A fold that will not fit its pool or comes back
-                    // empty does so the same way every time under greedy
-                    // decoding, and it threw the accepted batches away with
-                    // it, so the same batches were offered again after every
-                    // answer. They commit; the summary stays as it was.
+                    // summary: a fold that does not fit or comes back
+                    // empty would do so every time, so the accepted batches
+                    // commit and the summary stays as it was.
                     Err(
                         error @ (CompactionError::SummaryTooLarge { .. }
                         | CompactionError::SummaryEmpty),

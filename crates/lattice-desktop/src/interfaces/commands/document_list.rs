@@ -6,19 +6,6 @@
 //!
 //! - `list_all_documents` - Query all indexed documents from documents table
 //!
-//! # Purpose
-//!
-//! This command provides the source of truth for all indexed documents in the system.
-//! It queries the `documents` table directly (NOT `recent_documents` which is just
-//! an access tracking table).
-//!
-//! # Use Cases
-//!
-//! - **File Browser**: Display all documents in library view
-//! - **Search Results**: Get complete document metadata for search hits
-//! - **Document Management**: List all indexed files for batch operations
-//! - **Analytics**: Get document corpus statistics
-//!
 //! # Database Schema
 //!
 //! Queries the `documents` table:
@@ -78,27 +65,10 @@ pub struct DocumentMetadataDto {
 
 /// List all indexed documents with metadata.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-/// * `limit` - Maximum number of documents to return (1-10000)
-///
-/// # Returns
-///
-/// Vector of DocumentMetadataDto with all indexed documents.
-///
 /// # Errors
 ///
 /// - `AppError::InvalidInput` if limit is out of range
 /// - `AppError::Database` if query fails
-///
-/// # Example (Frontend)
-///
-/// ```typescript
-/// // Get all documents for file browser
-/// const result = await invoke('list_all_documents', { limit: 10000 });
-/// console.log(`Found ${result.length} documents`);
-/// ```
 pub async fn list_all_documents(
     container: State<'_, Container>,
     limit: usize,
@@ -139,15 +109,6 @@ pub async fn list_all_documents(
 }
 
 /// Core implementation - Get document metadata by ID
-///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-/// * `document_id` - Unique document identifier (UUID)
-///
-/// # Returns
-///
-/// DocumentMetadataDto if found, error if not found or invalid ID.
 pub async fn get_document_impl(
     container: &Container,
     document_id: String,
@@ -185,21 +146,6 @@ pub async fn get_document_impl(
 }
 
 /// Legacy Tauri shim - Get document metadata by ID
-///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-/// * `document_id` - Unique document identifier (UUID)
-///
-/// # Example
-///
-/// ```typescript
-/// // Get document by ID to open from recent list
-/// const result = await VaultAPI.getDocument(docId);
-/// if (result.ok && result.data.filePath) {
-///   await VaultAPI.openFile(result.data.filePath);
-/// }
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_document(

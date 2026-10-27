@@ -1,34 +1,6 @@
-//! Conversation-based Chat Command
-//!
-//! Provides chat functionality with conversation history and context window management.
-//! Desktop transport, wire contracts, routing policy, and turn orchestration live
-//! in separate modules; the public command and DTO paths are preserved.
-//!
-//! # Features
-//!
-//! - **Conversation History**: Maintains persistent chat history
-//! - **Context Window Management**: one budget from the context assembler for
-//!   the prompt's every pool and the generation reservation
-//! - **Auto-titling**: Generates conversation titles from first message
-//! - **Security**: Input validation
-//!
-//! # Usage
-//!
-//! ```typescript
-//! import { invoke } from '@tauri-apps/api/core';
-//!
-//! // Start new conversation
-//! const response = await invoke<ChatResponse>('chat_with_conversation', {
-//!   conversationId: null,  // null = create new
-//!   message: 'What is RAG?'
-//! });
-//!
-//! // Continue existing conversation
-//! const nextResponse = await invoke<ChatResponse>('chat_with_conversation', {
-//!   conversationId: response.conversationId,
-//!   message: 'Can you explain more?'
-//! });
-//! ```
+//! Conversation chat: the `chat_with_conversation` command and its turn
+//! orchestration. Desktop transport, wire contracts, routing policy and the
+//! turn itself live in submodules.
 
 use self::intent::{IntentClassifier, TurnIntent};
 use self::router::{RouterAction, RouterInput, RouterService};
@@ -275,12 +247,8 @@ async fn get_or_create_conversation_id(
     }
 }
 
-/// Derive a conversation title from the user's first message.
-///
-/// Truncation is by **characters**, not bytes. `&message[..50]` panics when
-/// byte 50 lands inside a multi-byte character, so any first message longer
-/// than 50 bytes containing an accent, CJK character, or emoji took down the
-/// chat command handler.
+/// Derives a conversation title from the user's first message, truncated by
+/// characters: slicing bytes panics inside a multi-byte character.
 fn generate_title(message: &str) -> String {
     const MAX_CHARS: usize = 50;
 

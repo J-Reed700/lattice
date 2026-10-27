@@ -38,28 +38,9 @@ pub fn merge_json_update(target: &mut serde_json::Value, update: serde_json::Val
 /// # Thread Safety
 ///
 /// Implementations must be `Send + Sync` for concurrent access.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use crate::application::ports::SettingsRepositoryPort;
-///
-/// async fn update_search_settings(
-///     repo: &impl SettingsRepositoryPort,
-/// ) -> Result<()> {
-///     let mut settings = repo.get_all().await?;
-///     settings.search.max_results = 20;
-///     repo.save_all(&settings).await?;
-///     Ok(())
-/// }
-/// ```
 #[async_trait]
 pub trait SettingsRepositoryPort: Send + Sync {
     /// Get all settings.
-    ///
-    /// # Returns
-    ///
-    /// Complete settings structure with all categories
     ///
     /// # Errors
     ///
@@ -68,14 +49,6 @@ pub trait SettingsRepositoryPort: Send + Sync {
 
     /// Get a specific settings category.
     ///
-    /// # Arguments
-    ///
-    /// * `category` - Category to retrieve
-    ///
-    /// # Returns
-    ///
-    /// Settings for the specified category as JSON value
-    ///
     /// # Errors
     ///
     /// Returns error if category doesn't exist or cannot be loaded
@@ -83,25 +56,12 @@ pub trait SettingsRepositoryPort: Send + Sync {
 
     /// Save all settings.
     ///
-    /// # Arguments
-    ///
-    /// * `settings` - Complete settings structure to save
-    ///
     /// # Errors
     ///
     /// Returns error if settings cannot be persisted
     async fn save_all(&self, settings: &SettingsDto) -> Result<()>;
 
     /// Update specific settings fields.
-    ///
-    /// # Arguments
-    ///
-    /// * `category` - Optional category to update (updates all if None)
-    /// * `updates` - Key-value pairs of settings to update
-    ///
-    /// # Returns
-    ///
-    /// Updated complete settings structure
     ///
     /// # Errors
     ///
@@ -118,24 +78,12 @@ pub trait SettingsRepositoryPort: Send + Sync {
 
     /// Reset settings to defaults.
     ///
-    /// # Arguments
-    ///
-    /// * `category` - Optional category to reset (resets all if None)
-    ///
-    /// # Returns
-    ///
-    /// Settings structure after reset
-    ///
     /// # Errors
     ///
     /// Returns error if reset cannot be saved
     async fn reset(&self, category: Option<SettingsCategory>) -> Result<SettingsDto>;
 
     /// Export settings to a file.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path where settings should be exported (JSON format)
     ///
     /// # Errors
     ///
@@ -147,15 +95,6 @@ pub trait SettingsRepositoryPort: Send + Sync {
 
     /// Import settings from a file.
     ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to settings file (JSON format)
-    /// * `merge` - If true, merge with existing settings; if false, replace all
-    ///
-    /// # Returns
-    ///
-    /// Validated, persisted settings and the transition observed under the write lock.
-    ///
     /// # Errors
     ///
     /// Returns error if:
@@ -166,25 +105,9 @@ pub trait SettingsRepositoryPort: Send + Sync {
     async fn import(&self, path: &str, merge: bool) -> Result<SettingsImportOutcome>;
 
     /// Validate settings structure and values.
-    ///
-    /// # Arguments
-    ///
-    /// * `settings` - Settings to validate
-    ///
-    /// # Returns
-    ///
-    /// Validation result with errors and warnings
     fn validate(&self, settings: &SettingsDto) -> ValidationResult;
 
     /// Check if a file path is valid and accessible.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to validate
-    ///
-    /// # Returns
-    ///
-    /// `true` if path exists and is a readable directory
     fn validate_folder_path(&self, path: &str) -> bool;
 }
 
@@ -195,19 +118,6 @@ pub struct SettingsImportOutcome {
 }
 
 /// Mock implementation for testing.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use crate::application::ports::MockSettingsRepository;
-///
-/// #[tokio::test]
-/// async fn test_settings_update() {
-///     let repo = MockSettingsRepository::new();
-///     let settings = repo.get_all().await.unwrap();
-///     assert_eq!(settings.search.max_results, 10);
-/// }
-/// ```
 pub struct MockSettingsRepository {
     settings: tokio::sync::RwLock<SettingsDto>,
 }

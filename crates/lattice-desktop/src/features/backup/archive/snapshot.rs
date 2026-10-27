@@ -159,29 +159,12 @@ fn fts_external_content_table(sql: &str) -> Option<String> {
     }
 }
 
-/// Deal with the FTS5 indexes after the excluded tables have been emptied.
-///
-/// Decision, from reading the schema (`migrations/20260916000000_init_schema.sql`):
-///
-/// `chunks_fts`, `documents_fts` and `conversation_search_fts` are *ordinary*
-/// FTS5 tables. None of them declares a `content=` option, so each stores its
-/// own text in its `%_content` shadow table, and each is kept in sync by
-/// AFTER INSERT/UPDATE/DELETE triggers on `text_chunks`, `conversations`,
-/// `conversation_messages` and `conversation_message_bookmarks` — every one of
-/// which is a table we *keep*. Consequently:
-///
-/// * they are not external-content indexes over a cleared table, so they are
-///   not stale after the deletes above;
-/// * `INSERT INTO x(x) VALUES('rebuild')` would only re-derive the index from
-///   the very shadow content we are already copying — pure cost, no benefit;
-/// * `DELETE FROM x` would throw the text away with nothing left to rebuild
-///   it from, since no trigger fires during a restore (the base rows are
-///   copied by the snapshot, not re-inserted), permanently breaking search.
-///
-/// So the FTS content is carried verbatim. The loop below only exists so that
-/// a *future* migration introducing `content='<an excluded table>'` is handled
-/// correctly (rebuild against the now-empty content table) instead of shipping
-/// an index that points at rows the archive no longer has.
+/// Deals with the FTS5 indexes after the excluded tables have been emptied.
+/// They are ordinary FTS5 tables kept in sync by triggers on kept tables, so
+/// their content is carried verbatim: a rebuild would only re-derive what is
+/// copied, and a delete would lose text no restore trigger rebuilds. The loop
+/// handles a future external-content index over an excluded table by
+/// rebuilding it.
 async fn reconcile_fts_tables(
     pool: &SqlitePool,
     cleared: &[String],

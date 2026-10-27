@@ -1,25 +1,8 @@
 //! Sharing of live child processes, keyed by the configuration that started
-//! them.
-//!
-//! The chat, router and utility roles each own an independent model cache, and
-//! each cache loads through the factory. Nothing between them knew what the
-//! others were running, so three roles pointing at one GGUF started three
-//! `llama-server` processes and loaded the same weights three times — on an
-//! 8 GB machine the second load is what turns a working app into an OOM.
-//!
-//! This pool is the missing shared fact. Callers ask for a configuration
-//! instead of a process: an identical request that is still alive gets an
-//! `Arc` to the running one, and only a genuinely new configuration starts
-//! anything.
-//!
-//! # Lifetime
-//!
-//! The pool holds `Weak` references, never strong ones, so it cannot keep a
-//! process alive past its last user. Reference counting *is* the shutdown
-//! rule: the value's `Drop` runs when the last caller releases it, which for
-//! a sidecar means the process is killed. Swapping the chat model therefore
-//! leaves the server up if the utility role is still on it, and tears it down
-//! if not — with no lifetime bookkeeping of its own.
+//! them, so roles pointing at one GGUF share one `llama-server` rather than
+//! loading the same weights twice. The pool holds `Weak` references, so the
+//! value's `Drop` (which kills a sidecar) runs when its last user releases
+//! it.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -29,23 +12,16 @@ use std::sync::{Arc, Weak};
 use parking_lot::Mutex as SyncMutex;
 use tokio::sync::Mutex as AsyncMutex;
 
-/// A pooled value that can stop working without being dropped — a child
-/// process that exits, crashes, or is killed from outside.
-///
-/// The pool needs this because reference counting alone cannot answer "is
-/// this usable". A crashed server's handle stays perfectly alive as an `Arc`
-/// for as long as any role holds it, and without this check a role loading
-/// afterwards would be handed that corpse instead of starting a server —
-/// worse, invalidating a role's cache to recover would hand it straight back,
-/// so a single crash would be unrecoverable short of a restart.
+/// A pooled value that can stop working without being dropped (a child
+/// process that exits or is killed), so a role loading after a crash starts
+/// a new server rather than being handed the dead one.
 pub trait Liveness {
     /// `false` once the thing behind this value is gone for good.
     fn is_running(&self) -> bool;
 }
 
-/// Where a value handed back by [`SharedProcesses::get_or_start`] came from.
-/// Callers log the difference; without it, sharing is invisible in the log and
-/// a regression back to duplicate loads would be silent.
+/// Where a value handed back by [`SharedProcesses::get_or_start`] came from,
+/// so sharing shows in the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     /// Nothing matching was alive, so the starter ran.

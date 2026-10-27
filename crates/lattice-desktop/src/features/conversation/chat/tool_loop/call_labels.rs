@@ -54,11 +54,8 @@ pub(super) fn tool_step_kind(tool: &str) -> TurnStepKind {
     }
 }
 
-/// A tool call's arguments in one line, for the step's detail.
-///
-/// The interesting arguments are short and named the same way across tools; the
-/// rest is noise a reader cannot act on, and `TurnRecorder` clips whatever gets
-/// through.
+/// A tool call's short, commonly named arguments in one line, for the step's
+/// detail.
 pub(super) fn tool_argument_summary(arguments: &serde_json::Value) -> String {
     const INTERESTING: [&str; 7] = [
         "query",
@@ -88,10 +85,8 @@ pub(super) fn tool_argument_summary(arguments: &serde_json::Value) -> String {
     }
 }
 
-/// What the model is told when it asks for a page this turn already read.
-///
-/// Says where the text already is, because "already fetched" alone invites the
-/// model to conclude the content was lost and ask a third way.
+/// What the model is told when it asks for a page this turn already read. It
+/// says where the text is, since "already fetched" alone makes models ask again.
 pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
     match recall {
         Recall::AlreadyWhole { word_count } => format!(
@@ -144,9 +139,8 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
     }
 }
 
-/// What to show while one tool call runs. Names the host for a fetch, because
-/// "Reading thereviewgeek.com" is the difference between visible progress and a
-/// spinner, and a blocked site is then obvious rather than mysterious.
+/// What to show while one tool call runs. Names the host for a fetch so progress
+/// and a blocked site are visible.
 pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
     match tool {
         "fetch_url_content" => match fetch_memory::fetch_target(arguments)

@@ -59,10 +59,6 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
     }
 
     /// Delete a downloaded model by model_id if it's not the active model
-    ///
-    /// # Returns
-    ///
-    /// Ok(true) if deleted, Ok(false) if not deleted (because it's active or doesn't exist)
     async fn delete_by_model_id_if_not_active(
         &self,
         model_id: &str,

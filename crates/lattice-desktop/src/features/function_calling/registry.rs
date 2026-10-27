@@ -7,32 +7,6 @@
 //! - **Thread-safe**: Uses RwLock for concurrent access
 //! - **Validation**: Validates tool definitions on registration
 //! - **Statistics**: Tracks usage metrics
-//!
-//! # Example
-//! ```rust,no_run
-//! use lattice::infrastructure::services::function_registry::FunctionRegistry;
-//! use lattice_core::application::contracts::tools::ToolDefinition;
-//! use serde_json::json;
-//!
-//! let registry = FunctionRegistry::new();
-//!
-//! let tool = ToolDefinition::new(
-//!     "semantic_search",
-//!     "Search documents using semantic similarity",
-//!     json!({
-//!         "type": "object",
-//!         "properties": {
-//!             "query": {"type": "string"},
-//!             "limit": {"type": "integer", "default": 10}
-//!         },
-//!         "required": ["query"]
-//!     })
-//! )?;
-//!
-//! registry.register(tool)?;
-//! let tools = registry.list_tools();
-//! # Ok::<(), String>(())
-//! ```
 
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
@@ -65,12 +39,6 @@ impl FunctionRegistry {
 
     /// Create a registry pre-populated with tools
     ///
-    /// # Arguments
-    /// * `tools` - Initial tools to register
-    ///
-    /// # Returns
-    /// Registry with all tools registered
-    ///
     /// # Errors
     /// Returns error if any tool fails to register (duplicate names, validation errors)
     pub fn with_tools(tools: Vec<ToolDefinition>) -> Result<Self> {
@@ -82,9 +50,6 @@ impl FunctionRegistry {
     }
 
     /// Record a function call for statistics
-    ///
-    /// # Arguments
-    /// * `function_name` - Name of function that was called
     pub fn record_call(&self, function_name: &str) {
         let mut stats = self.stats.write();
         stats.record_call(function_name);
@@ -157,9 +122,6 @@ impl FunctionRegistryTrait for FunctionRegistry {
 /// - find_image
 /// - wiki_search
 /// - wiki_summary
-///
-/// # Returns
-/// Fully initialized registry
 pub fn init_function_registry() -> Result<FunctionRegistry> {
     use serde_json::json;
 

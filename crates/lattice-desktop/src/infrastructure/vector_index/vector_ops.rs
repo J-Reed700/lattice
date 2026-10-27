@@ -1,19 +1,9 @@
 #![allow(unsafe_code)]
 
-/// True when the two vectors can be compared at all.
-///
-/// This has to be a **runtime** check, not `debug_assert_eq!`. The assert was
-/// downgraded to debug-only so a dimension mismatch wouldn't panic in release
-/// — but that traded a panic for something strictly worse. The SIMD paths
-/// derive their load offsets from `a.len()` and read `b` at those offsets, so
-/// in release a shorter `b` produced an out-of-bounds SIMD read: undefined
-/// behaviour, not a graceful degradation.
-///
-/// Mismatched dimensions are reachable in practice, not merely a programming
-/// error — the embeddings table can hold vectors from more than one model
-/// (see IDX-2 and IDX-4), so a 384-dim query really can meet a 768-dim row.
-///
-/// One comparison against a dot product over hundreds of lanes is free.
+/// True when the two vectors can be compared at all. A runtime check, not
+/// `debug_assert_eq!`: the SIMD paths read `b` at offsets derived from
+/// `a.len()`, so a mismatch would be an out-of-bounds read in release, and
+/// vectors from different models really can meet.
 #[inline]
 fn dimensions_match(a: &[f32], b: &[f32]) -> bool {
     if a.len() == b.len() {

@@ -1,27 +1,12 @@
-//! Turning selected material into typed messages.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §10.4, as revised by
-//! `docs/design/2026-10-12-llm-stack-sota-audit.md` item 2.
-//!
-//! Three properties this module exists to hold:
-//!
-//! * **Generated text never acquires system authority.** The working summary is
-//!   rendered as assistant context and labelled fallible. A stored memory item
-//!   is rendered as historical user-role data. Neither is concatenated into the
-//!   application's system prompt, because a summary that can rewrite policy is a
-//!   summary that can revoke a restriction by paraphrasing it.
-//! * **Quoted source text cannot close its own wrapper.** Every quotation is
-//!   emitted as a JSON string value, so a passage containing the delimiter is
-//!   escaped rather than ending the block early. This is not a claim that prompt
-//!   injection is solved — role separation, scope and tool permissions all still
-//!   do their own work.
-//! * **Whatever changes from turn to turn is rendered after the history.**
-//!   llama-server reuses its KV cache only up to the first token that differs
-//!   from the previous request, and on a hybrid model such as Qwen 3.5 any
-//!   earlier difference rolls back to a checkpoint that can sit thousands of
-//!   tokens before it. Recall, memory, evidence and the date therefore travel
-//!   as labelled sections of the one final user message, never ahead of the
-//!   verbatim turns.
+//! Turning selected material into typed messages (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §10.4, revised by
+//! `docs/design/2026-10-12-llm-stack-sota-audit.md` item 2). Generated text
+//! never acquires system authority: the summary is fallible assistant context
+//! and memory items are historical user-role data, so a paraphrase cannot
+//! revoke a restriction. Quotations are JSON string values, so a passage
+//! cannot close its own wrapper. Whatever changes per turn is rendered after
+//! the history, since llama-server reuses its KV cache only up to the first
+//! differing token.
 
 use crate::application::ports::llm_port::CompletionInput;
 use crate::domain::conversation::memory::{
@@ -263,13 +248,11 @@ pub fn render_date_line(today: chrono::NaiveDate) -> String {
     format!("Today is {}.", today.format("%Y-%m-%d, %A"))
 }
 
-/// The one user message that closes the request.
-///
-/// Everything that depends on this turn's question or on the clock lives here,
-/// after the verbatim history, so consecutive turns share every message before
-/// it. Evidence comes before the question: putting the gold passage first is
-/// worth about 15 F1 on models of the size Lattice runs (Ok & Lee, ACL 2026
-/// Findings), and it keeps the live request where the policy says it is.
+/// The one user message that closes the request. Everything that depends on
+/// this turn's question or on the clock lives here, after the verbatim
+/// history, so consecutive turns share every message before it. Evidence comes
+/// before the question, which helps models of this size (Ok & Lee, ACL 2026
+/// Findings).
 #[derive(Debug, Clone)]
 pub struct FinalUserMessage {
     pub recalled: Option<String>,

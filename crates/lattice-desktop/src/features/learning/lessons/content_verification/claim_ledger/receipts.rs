@@ -1,12 +1,8 @@
 //! What supports a claim the user brought evidence for (§5.4). The attach
-//! runs outside a pass, often while the job is finished, so its check cannot
-//! be saved as a job checkpoint, and a pass would select other passages and
-//! miss it anyway. The ledger keeps the check instead, and it is the claim's
-//! receipt: while the passages it compared are unchanged in the collection,
-//! and the checker and its window are the pass's own (what a receipt key
-//! names), every later pass takes that check's finding without asking the
-//! model again. Otherwise the pass checks the claim as usual.
-//! The lesson then cites the source on the claim's unit, with no rewrite.
+//! check runs outside a pass, so the ledger keeps it as the claim's receipt:
+//! while its passages, checker and window are unchanged, every later pass
+//! takes its finding without asking the model again. The lesson then cites
+//! the source on the claim's unit, with no rewrite.
 
 use super::super::*;
 use super::ClaimLedger;

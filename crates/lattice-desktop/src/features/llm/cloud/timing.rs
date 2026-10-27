@@ -1,12 +1,7 @@
 //! What a cloud or OpenAI-compatible request cost in time, for the backend's
-//! pace (`LLMPort::pace`). A llama.cpp-style `timings` object, which an
-//! OpenAI-compatible llama-server adds, is taken as the server reports it.
-//! Otherwise only a streamed answer is timed, by the app's own clock on its
-//! own request: until the first streamed delta the backend was reading the
-//! prompt, after it it was writing the answer. Hidden reasoning a provider
-//! does not stream falls on the reading side; that is what the delay costs
-//! the app either way. A whole answer at once, without timings, has no edge
-//! between the two and is not timed.
+//! pace (`LLMPort::pace`): a llama-server `timings` object as reported,
+//! otherwise a streamed answer timed by the app's clock (reading until the
+//! first delta, writing after). A whole answer without timings is not timed.
 
 use super::field;
 use crate::features::llm::llama_cpp::streaming::ServerTimings;

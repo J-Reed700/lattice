@@ -1,10 +1,6 @@
-//! Turning a stored document back into text a prompt can carry.
-//!
-//! Two paths lift a whole document into a turn — the follow-up reuse of the
-//! last document, and the files a reader attaches to a message. Both need the
-//! same two things: the document's text in reading order, and a way to cut it
-//! down to what the context window has left. One copy of each means the two
-//! paths can never disagree about what "the document" is.
+//! Turning a stored document back into text a prompt can carry: its text in
+//! reading order and a cut to the window's budget. Shared by the follow-up
+//! reuse of the last document and by attachments, so both read the same text.
 
 use std::sync::Arc;
 

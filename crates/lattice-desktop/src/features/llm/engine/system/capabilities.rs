@@ -106,16 +106,7 @@ impl SystemCapabilities {
     }
 }
 
-/// Detect system capabilities.
-///
-/// This function gathers information about:
-/// - RAM (total and available)
-/// - CPU (cores, threads, model)
-/// - GPU (vendor, model, VRAM)
-/// - Platform (OS type and version)
-///
-/// # Returns
-/// A `SystemCapabilities` struct with detected hardware information.
+/// Detects RAM, CPU, GPU and platform information.
 pub async fn detect_capabilities() -> SystemCapabilities {
     detect_capabilities_inner(None).await
 }
@@ -142,11 +133,8 @@ async fn detect_capabilities_inner(
     // Detect RAM
     let total_ram_gb = SystemCapabilities::bytes_to_gb(sys.total_memory());
 
-    // Use total RAM for availability check - let the OS handle memory management
-    // The app shouldn't prevent downloads based on "available" memory since:
-    // 1. OS will swap/manage memory automatically
-    // 2. "available" memory reporting is unreliable on some platforms (macOS)
-    // 3. User knows their system better than we do
+    // Total RAM, not "available": the OS manages memory, and available-memory
+    // reporting is unreliable on some platforms (macOS).
     let available_ram_gb = total_ram_gb;
 
     // The context window, unlike a download, does care what is available

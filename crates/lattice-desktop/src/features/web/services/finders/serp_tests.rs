@@ -11,9 +11,8 @@ fn test_normalize_search_url_accepts_bing_redirect_links() {
     );
 }
 
-/// The exact href shape DuckDuckGo's HTML endpoint emits. This is the one
-/// that used to slip through: protocol-relative, so it was made absolute
-/// and returned without ever being unwrapped.
+/// The exact protocol-relative href shape DuckDuckGo's HTML endpoint emits is
+/// unwrapped.
 #[test]
 fn a_protocol_relative_duckduckgo_redirect_resolves_to_its_destination() {
     let raw = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.thereviewgeek.com%2Fsilo%2Ds1e2review%2F&rut=c99505e363ada8be";

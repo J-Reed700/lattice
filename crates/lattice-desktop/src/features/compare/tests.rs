@@ -180,8 +180,7 @@ fn cells_are_ordered_and_complete() {
 
 #[test]
 fn salvage_does_not_panic_on_non_ascii_text() {
-    // `İ` lowercases to two chars under Unicode rules, which used to shift
-    // every byte offset and slice `raw` mid-character. The salvage pass must
+    // `İ` lowercases to two chars under Unicode rules; the salvage pass must
     // stay on char boundaries whatever the model emits.
     let raw = "İ method—\"value\": \"survey\", \"quote\": \"Bir çalışma—yöntem.\"";
     let parsed = parse_compare_response(raw, &columns());
@@ -466,9 +465,8 @@ impl LLMPort for FailsAfterFirstCall {
     }
 }
 
-/// A row split across calls used to be all or nothing: the second call
-/// failing threw away the cells the first had filled. They are kept, and the
-/// columns not reached are left empty and named.
+/// A row split across calls keeps the cells the first call filled when the
+/// second fails; the columns not reached are left empty and named.
 #[tokio::test]
 async fn a_failed_later_call_keeps_the_cells_earlier_calls_filled() {
     let contents: Vec<String> = (0..6).map(|index| format!("passage {index}")).collect();

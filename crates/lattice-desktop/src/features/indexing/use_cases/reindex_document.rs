@@ -8,18 +8,6 @@
 //! 3. Reindexes with new chunking strategy
 //! 4. Generates new embeddings
 //! 5. Updates repository
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
-//!
-//! # async fn example(use_case: ReindexDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute("doc-123".to_string()).await?;
-//! println!("Reindexed with {} chunks", response.chunks_created);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -39,13 +27,6 @@ use lattice_core::shared::error::{AppError, Result};
 ///
 /// Updates an existing document's index with current content.
 ///
-/// ## Use Cases
-///
-/// - File content has changed
-/// - Switching to a different chunking strategy
-/// - Fixing indexing errors
-/// - Updating embeddings with new model
-///
 /// ## Dependencies
 ///
 /// - `FileStoragePort`: Reads updated file content
@@ -58,14 +39,9 @@ pub struct ReindexDocumentUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
-    /// The live vector index.
-    ///
-    /// Reindex used to update SQLite only. The in-memory USearch index kept
-    /// the vectors of chunks that no longer existed, and never learned about
-    /// the new ones — so after editing a file, semantic search returned
-    /// dangling results for deleted chunks and never surfaced the new content.
-    /// A restart did not repair it either, because the persisted index is only
-    /// rebuilt when it is *empty*.
+    /// The live vector index, updated alongside SQLite: the persisted index is
+    /// rebuilt only when empty, so a reindex that skipped it would leave dangling
+    /// vectors and miss the new chunks until then.
     vector_search: Arc<dyn VectorSearchPort>,
     /// Search results cached against the corpus, dropped once the rebuilt
     /// chunks are live.
@@ -112,14 +88,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Create a new reindex document use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_storage` - Service for reading file content
-    /// * `embedding_service` - Service for generating embeddings
-    /// * `document_repo` - Repository for document persistence
-    /// * `embedding_repo` - Repository for persisting embeddings
-    /// * `vector_search` - Live vector index, kept in step with the database
     pub fn new(
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
@@ -139,14 +107,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Execute document reindexing.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to reindex
-    ///
-    /// # Returns
-    ///
-    /// Response with updated indexing statistics
     ///
     /// # Errors
     ///
@@ -363,15 +323,6 @@ impl ReindexDocumentUseCase {
     }
 
     /// Execute reindexing with a specific chunking strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to reindex
-    /// * `strategy` - New chunking strategy to use
-    ///
-    /// # Returns
-    ///
-    /// Response with updated indexing statistics
     pub async fn execute_with_strategy(
         &self,
         document_id: String,

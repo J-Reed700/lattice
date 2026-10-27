@@ -112,14 +112,10 @@ struct RawJudgeItem {
     response_to_note: Option<String>,
 }
 
-/// Send `values` in as many requests as the window needs, each holding as
-/// many items as fit, and collect each request's parsed `items`.
-///
-/// A reply cut off at its output limit, or one that is not JSON, used to fail
-/// the whole grading: every answer of the quiz stayed ungraded for one item's
-/// overlong rationale. Its items now go again in halves, and the rest of the
-/// quiz with them at the smaller size; an item whose reply fails alone stays
-/// pending, as an item the grader leaves out does.
+/// Sends `values` in as many requests as the window needs, each holding as
+/// many items as fit, and collects each request's parsed `items`. A reply cut
+/// off at its output limit, or not JSON, goes again in halves; an item whose
+/// reply fails alone stays pending.
 async fn batched(
     llm: &dyn LLMPort,
     system: &str,

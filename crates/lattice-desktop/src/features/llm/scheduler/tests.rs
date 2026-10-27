@@ -466,8 +466,8 @@ fn the_estimate_learns_the_backends_ratio_from_reported_usage() {
     assert_eq!(estimator.chars_per_token(), before);
 }
 
-/// The owner's logged run read ~8.5k prompt tokens in 10 s and wrote 1,130
-/// answer tokens in 100 s: 850 and 11.3 tokens a second.
+/// About 8.5k prompt tokens read in 10 s and 1,130 answer tokens written in
+/// 100 s: 850 and 11.3 tokens a second.
 fn logged_run() -> ServedTiming {
     ServedTiming {
         prompt_tokens: 8_500,

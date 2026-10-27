@@ -1,27 +1,12 @@
 //! Deciding when the vector index is read from disk, and when it is written.
-//!
-//! Two halves of the same bargain.
-//!
-//! **Startup** used to rebuild the HNSW graph unconditionally, on the grounds
-//! that SQLite is authoritative and a rebuild also sweeps up keys a crash left
-//! behind. It is still authoritative, but proving agreement by rebuilding
-//! costs a full-table read of every embedding blob plus an O(N log N) graph
-//! construction on every launch. [`open_or_rebuild`] asks the manifest first
-//! and rebuilds only when the answer is anything other than "unchanged".
-//!
-//! **Saving** used to happen after every mutation, which meant indexing a
-//! thousand-document folder wrote the whole corpus a thousand times. Mutations
-//! now only mark the index dirty; [`IndexPersistence`] writes it when a run
-//! goes quiet, at a periodic checkpoint through a long run, and on shutdown.
-//! Losing a coalesced write to a crash is safe precisely because of the first
-//! half: the next launch sees SQLite ahead of the index and rebuilds.
-//!
-//! The order matters. The stamp is read *before* the index is written and the
-//! manifest *after*, so a write that lands during a save makes the manifest
-//! look stale and buys a rebuild. The opposite order would let a manifest
-//! vouch for vectors the index never received.
-//! A commit that precedes the stamp can still await publication, so startup
-//! additionally compares source counts and key membership with the snapshot.
+//! Startup asks the manifest ([`open_or_rebuild`]) and rebuilds the HNSW graph
+//! only when SQLite changed. Mutations only mark the index dirty;
+//! [`IndexPersistence`] writes it when a run goes quiet, at periodic
+//! checkpoints and on shutdown, which is safe because a lost write makes the
+//! next launch rebuild. The stamp is read before the index is written and the
+//! manifest after, so a write during a save makes the manifest look stale
+//! rather than vouch for missing vectors; startup also compares source counts
+//! and key membership.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

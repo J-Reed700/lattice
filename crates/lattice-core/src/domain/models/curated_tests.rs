@@ -13,9 +13,8 @@ fn test_llm_models_count() {
     assert_eq!(models.len(), 9);
 }
 
-/// The fresh-install bugs of September came from catalog URLs nobody had
-/// fetched. Every chat entry is now one file whose size and digest were
-/// read from Hugging Face, and the download is checked against both.
+/// Every chat entry is one file whose size and digest were read from Hugging
+/// Face, and the download is checked against both.
 #[test]
 fn every_chat_entry_downloads_one_pinned_file() {
     for model in get_curated_llm_models() {
@@ -342,10 +341,8 @@ fn every_transcription_entry_declares_its_three_files() {
     }
 }
 
-/// Regression guard: the original entries pointed at
-/// `model-base-q80.gguf` / `config-base.json` / `melfilters.bytes` in
-/// `lmz/candle-whisper`, none of which exist — every download 404'd. Keep
-/// the remote filenames pinned to ones that were actually fetched.
+/// The remote filenames stay pinned to ones that were actually fetched from
+/// `lmz/candle-whisper`.
 #[test]
 fn transcription_urls_point_at_files_that_exist() {
     let urls: Vec<String> = get_curated_transcription_models()

@@ -209,16 +209,6 @@ pub struct StoredDownloadedModel {
 impl DownloadedModel {
     /// Create a new downloaded model record
     ///
-    /// # Arguments
-    ///
-    /// * `id` - Unique identifier for this record
-    /// * `model_name` - Human-readable name
-    /// * `model_id` - Unique model identifier
-    /// * `file_path` - Absolute path to model file
-    /// * `file_size_bytes` - Size of file in bytes
-    /// * `architecture` - Model architecture family (e.g., "llama", "mistral", "phi")
-    /// * `metadata` - Optional JSON metadata
-    ///
     /// # Business Logic
     ///
     /// - Sets `downloaded_at` to current timestamp
@@ -388,10 +378,6 @@ impl DownloadedModel {
 
     /// Set whether this model is active for chat
     ///
-    /// # Arguments
-    ///
-    /// * `active` - True to set as active chat model, false otherwise
-    ///
     /// # Business Logic
     ///
     /// - Database trigger ensures only one model can be active for chat
@@ -401,10 +387,6 @@ impl DownloadedModel {
     }
 
     /// Set whether this model is active for the utility role
-    ///
-    /// # Arguments
-    ///
-    /// * `active` - True to set as active utility model, false otherwise
     ///
     /// # Business Logic
     ///
@@ -423,10 +405,6 @@ impl DownloadedModel {
 
     /// Deserialize metadata from JSON string
     ///
-    /// # Arguments
-    ///
-    /// * `json` - JSON string to parse
-    ///
     /// # Errors
     ///
     /// Returns error if JSON is invalid
@@ -438,22 +416,6 @@ impl DownloadedModel {
     }
 
     /// Validate that model type matches the intended operation
-    ///
-    /// # Arguments
-    ///
-    /// * `for_chat` - True if validating for chat operations
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) if model type is compatible, Err with user-friendly message otherwise
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let chat_model = DownloadedModel::new(..., PathBuf::from("model.gguf"), ...)?;
-    /// assert!(chat_model.validate_for_operation(true).is_ok());
-    /// assert!(chat_model.validate_for_operation(false).is_err());
-    /// ```
     pub fn validate_for_operation(&self, for_chat: bool) -> Result<()> {
         if for_chat {
             if !self.model_type.is_chat_compatible() {

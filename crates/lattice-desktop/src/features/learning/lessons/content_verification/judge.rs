@@ -3,15 +3,10 @@
 use super::*;
 use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
 
-/// The order in which a claim's check needs `page`'s passages, most first,
-/// as positions in the page. Passages the app placed on the page lead: the
-/// section's cited passages, what research found for the claim, a passage the
-/// user picked, a passed example run. Their score is no rank. Retrieved
-/// passages follow by retrieval score, ties in page order. A page is sorted
-/// by source to key it (`canonicalize_evidence`), so its own order says
-/// nothing about which passage matters: a page too long for the judge's
-/// window loses passages from the end of this order instead, and a pass B
-/// page is read in an order built on it (`reading_order`).
+/// The order a claim's check needs `page`'s passages in, most first, as
+/// positions: passages the app placed (cited, researched, user-picked, example
+/// runs) lead, then retrieved ones by score. A page too long for the judge
+/// loses passages from the end of this order.
 pub(in crate::features::learning) fn ranking(page: &[EvidencePassage]) -> Vec<usize> {
     let placed = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
         CITED => 0,
@@ -59,21 +54,12 @@ impl Judged {
     }
 }
 
-/// The strict judgment of one claim against `passages`, the positions of
-/// the passages the judge was shown, in page order, and what its answer
-/// cost. `ranking` orders the
-/// passages by how much the check needs them, most first (see [`ranking`]).
-/// A page too long for this judge's window loses passages from the end of
-/// that order: those the count of the request says do not fit, the
-/// backend's own count where it can be asked, then, should the backend
-/// still count the prompt past the window, as many more as its refusal
-/// says, and the judge is asked again. The judge always reads the
-/// passages it is shown in their page order. A passage it was not shown is no
-/// part of the judgment, so the caller binds the finding to the shown ones
-/// alone. Only when not even the most needed passage fits is the claim left
-/// unchecked. Whether a supported verdict's support is enough is the
-/// provenance gate's decision, never a second model call (source provenance
-/// §11).
+/// The strict judgment of one claim against `passages`, the positions the
+/// judge was shown (in page order), and what its answer cost. A page too long
+/// for the window loses passages from the end of `ranking`, by the request's
+/// count and then by any refusal; the claim is left unchecked only when not
+/// even the most needed passage fits. Whether support is enough is the
+/// provenance gate's decision.
 pub(in crate::features::learning) async fn judge_for_publication(
     llm: &dyn LLMPort,
     claim: &str,
@@ -197,14 +183,10 @@ pub(in crate::features::learning) async fn judge_in_order(
     }
 }
 
-/// How many of the `kept` most needed passages (`ranking` into `passages`) a
-/// claim check keeps once its prompt was counted at `prompt_tokens`, leaving
-/// less than the answer's room in `window`: the least needed go until those
-/// dropped cover the overshoot and the answer's room. Each dropped passage's
-/// estimate is scaled by how far the count ran from the estimate of the
-/// whole prompt, so one step usually lands; a step that does not is counted
-/// again. At least one passage always goes, so each count is of less than
-/// the last.
+/// How many of the `kept` most needed passages a claim check keeps once its
+/// prompt counted `prompt_tokens`: the least needed go until the overshoot and
+/// the answer's room are covered, scaled by how far the count ran from the
+/// estimate. At least one goes, so each count is of less than the last.
 fn kept_after_count(
     llm: &dyn LLMPort,
     checker: &ClaimChecker<'_>,

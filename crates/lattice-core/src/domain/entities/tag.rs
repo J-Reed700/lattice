@@ -26,19 +26,6 @@ use serde::{Deserialize, Serialize};
 /// - Tag name is unique (enforced by repository)
 /// - Color must be valid hex format (#RRGGBB)
 /// - Created timestamp is immutable
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::entities::tag::Tag;
-/// use lattice_core::shared::types::TagName;
-///
-/// let name = TagName::new("rust".to_string()).unwrap();
-/// let tag = Tag::new(name, "#ff5733".to_string());
-///
-/// assert_eq!(tag.name().as_str(), "rust");
-/// assert_eq!(tag.color(), "#ff5733");
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {
@@ -51,23 +38,6 @@ pub struct Tag {
 
 impl Tag {
     /// Create new tag.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Validated tag name (non-empty, <= 50 characters)
-    /// * `color` - Hex color code (#RRGGBB format)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::entities::tag::Tag;
-    /// use lattice_core::shared::types::TagName;
-    ///
-    /// let name = TagName::new("machine-learning".to_string()).unwrap();
-    /// let tag = Tag::new(name, "#6366f1".to_string());
-    /// assert!(!tag.id().as_str().is_empty());
-    /// assert_eq!(tag.color(), "#6366f1");
-    /// ```
     pub fn new(name: TagName, color: String) -> Self {
         let now = Utc::now();
         Self {

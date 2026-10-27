@@ -1,12 +1,8 @@
-//! The judgements the provenance gate reads, loaded for one verification
-//! pass: the course's overrides, relations and calibrated bars, each claim's
-//! profile, and each supporting version's provenance, standing and
-//! ownership for the claim's subject. A judgement the store lacks is made
-//! once with the lesson's model (§12) and saved, so a later pass, an
-//! override or a new relation re-decides without a model call (§18.3).
-//! A version's standing is judged from its signals and the content evidence
-//! of its saved text (`source-standing-v2`); the standing scope (`scope`)
-//! reads what the store already holds about the course's other versions.
+//! The judgements the provenance gate reads for one verification pass:
+//! overrides, relations, calibrated bars, each claim's profile, and each
+//! supporting version's provenance, standing and ownership. A missing
+//! judgement is made once with the lesson's model (§12) and saved, so later
+//! re-decisions need no model (§18.3).
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
 //! docs/design/2026-10-21-claim-official-sources.md §4.3, §7.3.
 

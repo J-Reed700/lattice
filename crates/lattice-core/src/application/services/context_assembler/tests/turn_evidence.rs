@@ -15,7 +15,7 @@ const BARE: &str = "Question: What is the current budget?";
 const TOOL_TOKENS: usize = 1_000;
 
 /// A system policy that, with the memory rules and the tools above, comes to
-/// about the 2,100 tokens the baseline measured.
+/// about 2,100 tokens.
 fn policy() -> String {
     "rule ".repeat(540)
 }
@@ -48,7 +48,7 @@ fn turn<'a>(
     request
 }
 
-/// What the request used to charge as fixed: the message with its evidence.
+/// The message with its evidence, charged as fixed.
 fn charged_whole(policy: &str, capacity: usize, message: &str) -> PromptBudgetExceeded {
     let mut request = turn(policy, capacity, None);
     request.current_input = message;
@@ -78,7 +78,7 @@ fn an_8k_window_cuts_the_lowest_ranked_evidence_instead_of_refusing_the_turn() {
         fixed.system + fixed.tools
     );
 
-    // Charged whole, the message is refused, as 31 of 34 baseline turns were.
+    // Charged whole, the message is refused.
     let refused = charged_whole(&policy, 8_192, &render(24));
     assert_eq!(refused.available, 5_734);
     assert!((5_847..=8_691).contains(&refused.required), "{refused:?}");
@@ -124,8 +124,8 @@ fn an_8k_window_cuts_the_lowest_ranked_evidence_instead_of_refusing_the_turn() {
 #[test]
 fn a_16k_window_assembles_the_turns_the_baseline_refused() {
     let policy = policy();
-    // About 11,600 and 13,250 tokens charged whole: the two ends of what the
-    // baseline refused against 11,468.
+    // About 11,600 and 13,250 tokens charged whole, against a budget of
+    // 11,468.
     for count in [36, 42] {
         let render = passages(count);
         let refused = charged_whole(&policy, 16_384, &render(count));

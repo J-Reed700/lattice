@@ -1,13 +1,10 @@
 //! # Chat pictures: find, fetch, validate, store, lease, serve
 //!
-//! The `find_image` tool's backend. A picture is found on Wikimedia Commons
-//! (or taken from a page the model names), fetched through the web feature's
-//! guarded client and site pacer, sniffed and bounded, written under
-//! `~/.lattice/chat-images/<id>.<ext>`, recorded in `chat_images` leased to
-//! the turn's request, attached to the answer when it persists, and served to
-//! the main webview over the private `lattice-image` URL scheme after a hash
-//! check. The conversation feature reaches all of it through
-//! `lattice_core::application::ports::ChatImagesPort`.
+//! The `find_image` tool's backend: a picture is found on Wikimedia Commons or
+//! a named page, fetched through the guarded client, sniffed and bounded,
+//! stored under `~/.lattice/chat-images/`, leased to the turn's request until
+//! the answer attaches it, and served over the private `lattice-image` scheme
+//! after a hash check. Reached through `ChatImagesPort`.
 //! Design: `docs/design/2026-10-17-chat-images-and-diagrams.md` §5, §7.3–7.7.
 
 pub mod commons;

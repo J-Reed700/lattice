@@ -32,18 +32,9 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
 }
 
 /// Model files the bundled engine cannot read, keyed by path and stamped with
-/// the file's size and mtime. Only that verdict is kept: a start that timed
-/// out or was killed for memory says nothing about the file.
-///
-/// Starting a local model means launching a sidecar and reading several
-/// gigabytes of tensors, and a file llama-server cannot parse fails only after
-/// paying all of that. The utility role asks on every single turn, so one
-/// unsupported GGUF would tax every message with a doomed load. Remembering
-/// the failure makes the second ask cheap.
-///
-/// The stamp is what allows recovery without a restart: a re-downloaded or
-/// repaired file has a different size or mtime, so it is a different key and
-/// gets a fresh attempt.
+/// size and mtime, so a doomed load is not repeated every turn while a
+/// repaired or re-downloaded file gets a fresh attempt. Only that verdict is
+/// kept: a timeout or a memory kill says nothing about the file.
 #[derive(Default)]
 pub(crate) struct UnloadableArtifacts {
     known: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
@@ -87,10 +78,8 @@ fn artifact_stamp(path: &std::path::Path) -> Option<ArtifactStamp> {
 }
 
 impl UnloadableArtifacts {
-    /// Preserve the failure as well as avoiding another expensive load.
-    /// Returning `None` from the loader means no model was selected, which
-    /// makes warmup claim success and hides the reason the selected utility
-    /// model is not being used.
+    /// The remembered failure for `path`, so the reason is kept: returning `None`
+    /// would make warmup report success and hide why the model is unused.
     fn known_failure(&self, path: &std::path::Path) -> Option<String> {
         let stamp = artifact_stamp(path)?;
         let mut known = match self.known.lock() {

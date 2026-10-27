@@ -44,14 +44,6 @@ impl OpenFileUseCase {
 
     /// Execute the use case.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path to open
-    ///
-    /// # Returns
-    ///
-    /// Success DTO if file was opened successfully.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if file does not exist

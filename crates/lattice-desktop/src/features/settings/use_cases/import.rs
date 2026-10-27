@@ -24,10 +24,6 @@ pub struct ImportSettingsUseCase {
 
 impl ImportSettingsUseCase {
     /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `repository` - Settings repository port implementation
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
         Self::with_side_effects(repository, Arc::new(NoopSettingsSideEffects))
     }
@@ -44,14 +40,6 @@ impl ImportSettingsUseCase {
 
     /// Execute the use case to import settings.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Import request with source path and merge flag
-    ///
-    /// # Returns
-    ///
-    /// Import response with updated settings and status
-    ///
     /// # Errors
     ///
     /// Returns error if:
@@ -60,26 +48,6 @@ impl ImportSettingsUseCase {
     /// - Invalid JSON format
     /// - Invalid settings structure
     /// - Settings validation fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = ImportSettingsUseCase::new(repository);
-    ///
-    /// // Replace all settings
-    /// let request = ImportSettingsRequestDto {
-    ///     path: "/home/user/settings-backup.json".to_string(),
-    ///     merge: false,
-    /// };
-    /// let response = use_case.execute(request).await?;
-    ///
-    /// // Merge with existing settings
-    /// let request = ImportSettingsRequestDto {
-    ///     path: "/home/user/partial-settings.json".to_string(),
-    ///     merge: true,
-    /// };
-    /// let response = use_case.execute(request).await?;
-    /// ```
     pub async fn execute(
         &self,
         request: ImportSettingsRequestDto,
@@ -118,10 +86,6 @@ impl ImportSettingsUseCase {
     }
 
     /// Validate the import path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to validate
     ///
     /// # Errors
     ///

@@ -56,14 +56,10 @@ fn sentence_region(current: &str, (start, end): (usize, usize)) -> (usize, usize
         })
 }
 
-/// The heirs of `repairs` (claims `orphaned` by the identity rules only):
-/// for each, the unowned extracted claims of its field whose quote is new
-/// text overlapping the field's changed region (a claim located by a whole
-/// passage reaches past it; claim sources design §18.4 iv); the one sharing
-/// most words with the sentence the repair replaced continues it (ties to
-/// the earliest), the rest are its children. `previous` is the lesson before
-/// the repairs, `current` after; `field_of` names a claim's field;
-/// `field_text` reads one.
+/// The heirs of `repairs` (claims orphaned by the identity rules): for each,
+/// the unowned extracted claims of its field whose quote is new text in the
+/// changed region (claim sources design §18.4 iv). The one sharing most words
+/// with the replaced sentence continues it; the rest are its children.
 pub(super) fn heirs(
     repairs: &[RepairRecord],
     orphaned: &[ClaimId],
@@ -173,9 +169,9 @@ mod tests {
 
     #[test]
     fn a_repaired_claims_id_stays_with_its_own_rewritten_sentence() {
-        // The reported case: the quotation claim is repaired; the field also
-        // holds the `required` sentence verbatim from before, a claim no one
-        // owned. The id goes to the sentence the repair wrote, never to it.
+        // The quotation claim is repaired; the field also holds the `required`
+        // sentence verbatim from before, a claim no one owned. The id goes to the
+        // sentence the repair wrote, never to it.
         let before = format!("{QUOTED} {REQUIRED}");
         let rewritten = "A tool schema names each argument and its type.";
         let after = format!("{rewritten} {REQUIRED}");

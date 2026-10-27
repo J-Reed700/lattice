@@ -290,9 +290,8 @@ mod tests {
         assert!(!text.contains("ignore"));
     }
 
-    /// The scan used to index a lowercased copy with a *char* counter, so any
-    /// multi-byte character before a tag either shifted the lookahead or
-    /// panicked on a byte that is not a character boundary.
+    /// A multi-byte character before a tag neither shifts the lookahead nor
+    /// slices a byte that is not a character boundary.
     #[test]
     fn non_ascii_content_is_stripped_without_panicking() {
         let html = "<p>日本語のテキスト🧪です</p><script>ignore()</script><p>Ωmega</p>";

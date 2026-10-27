@@ -475,8 +475,8 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
         .all(|request| request.thinking == ThinkingMode::Off));
 }
 
-/// With tools in the prompt and calls forbidden, Qwen3.5-9B thinking wrote
-/// its call as text and answered nothing. A thinking answer gets no tools.
+/// A thinking answer gets no tools: with calls forbidden, a thinking model
+/// writes its call as text.
 #[tokio::test]
 async fn a_thinking_answer_is_asked_for_without_tools() {
     let model = Model::new([

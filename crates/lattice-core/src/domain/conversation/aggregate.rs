@@ -22,39 +22,6 @@
 //! 1. **Conversation History**: User and assistant messages
 //! 2. **System Prompt**: Instructions for the LLM
 //! 3. **Document Context**: Relevant articles/chunks from RAG
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::domain::{ConversationAggregate, MessageRole};
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut conversation = ConversationAggregate::new(
-//!     "My Conversation".to_string(),
-//!     Some("You are a helpful assistant.".to_string()),
-//! );
-//!
-//! // Add user message
-//! conversation.add_message(
-//!     MessageRole::User,
-//!     "What is RAG?".to_string(),
-//!     50, // token count
-//! )?;
-//!
-//! // Add assistant response
-//! conversation.add_message(
-//!     MessageRole::Assistant,
-//!     "RAG stands for...".to_string(),
-//!     200,
-//! )?;
-//!
-//! // Check if we need to prune due to token limits
-//! if conversation.total_tokens() > 10000 {
-//!     conversation.prune_to_token_limit(8000)?;
-//! }
-//! # Ok(())
-//! # }
-//! ```
 
 use super::ChatModelChoice;
 use crate::shared::error::{AppError, Result};
@@ -91,11 +58,6 @@ impl ConversationAggregate {
     /// Create a new conversation. It follows the Settings default model until
     /// the chat chooses its own.
     ///
-    /// # Arguments
-    ///
-    /// * `title` - Human-readable conversation title
-    /// * `system_prompt` - Optional system instructions for the LLM
-    ///
     /// # Errors
     ///
     /// Returns an error if the title is empty.
@@ -127,22 +89,6 @@ impl ConversationAggregate {
     ///
     /// This method is used by the repository layer to reconstruct aggregates from the database.
     /// Unlike `new()`, this does not validate since data from the database is already trusted.
-    ///
-    /// # Arguments
-    ///
-    /// * `conversation` - The conversation entity from the database
-    /// * `messages` - All messages for this conversation
-    /// * `document_context` - All document references for this conversation
-    ///
-    /// # Usage
-    ///
-    /// This is primarily for repository use:
-    /// ```rust,no_run
-    /// # use lattice_core::domain::{Conversation, ConversationMessage, DocumentReference, ConversationAggregate};
-    /// # fn example(conversation: Conversation, messages: Vec<ConversationMessage>, refs: Vec<DocumentReference>) {
-    /// let aggregate = ConversationAggregate::from_persistence(conversation, messages, refs, None);
-    /// # }
-    /// ```
     pub fn from_persistence(
         conversation: Conversation,
         messages: Vec<ConversationMessage>,
@@ -173,13 +119,6 @@ impl ConversationAggregate {
     }
 
     /// Add a message with a specific status (for two-phase commit).
-    ///
-    /// # Arguments
-    ///
-    /// * `role` - Message role (User, Assistant, System)
-    /// * `content` - Message content
-    /// * `tokens` - Token count
-    /// * `status` - Message status ('pending', 'completed', 'failed')
     ///
     /// # Errors
     ///
@@ -225,11 +164,6 @@ impl ConversationAggregate {
     /// Update the status of a message.
     ///
     /// Used for two-phase commit pattern to update message status after operations complete.
-    ///
-    /// # Arguments
-    ///
-    /// * `message_id` - ID of the message to update
-    /// * `status` - New status ('pending', 'completed', 'failed')
     ///
     /// # Errors
     ///
@@ -336,9 +270,8 @@ impl ConversationAggregate {
     /// stops one caller from carrying the summary and another the raw history.
     pub fn context_preamble(&self) -> Option<String> {
         self.compaction.as_ref().map(|record| {
-            // Shared framing, not a local format string: this used to say only
-            // "summarized", which let the QA and context-window paths present a
-            // model's paraphrase as though it were the transcript.
+            // The shared framing, so every path says the summary is a model's
+            // paraphrase, not the transcript.
             crate::domain::conversation::memory::frame_generated_summary(&record.summary_text)
         })
     }

@@ -1,40 +1,18 @@
-//! The single owner of what reaches the model.
+//! The single owner of what reaches the model (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §10). Every caller goes
+//! through [`ContextAssembler::assemble`], whose eviction loop is the one
+//! place the order things are given up in is written down: optional material
+//! first, in rank order, evidence included even when rendered into the
+//! current message ([`InlineEvidence`]). The current input and active
+//! constraints are kept, and dropping unprocessed messages marks the plan as
+//! needing compaction.
 //!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §10.
-//!
-//! Before this existed, four places independently decided what to drop when a
-//! prompt got large: `ContextWindowBuilder` scanned newest-first and stopped at
-//! a budget, conversational QA truncated differently, HyDE concatenated the
-//! whole completed history, and the tool loop grew the prompt with every tool
-//! result. None of them knew about a recorded user constraint, so each of them
-//! could drop one.
-//!
-//! Now they all call [`ContextAssembler::assemble`], and the order in which
-//! things are given up is written down once, in [`ContextAssembler::assemble`]'s
-//! eviction loop. The short version: optional material goes first, in rank
-//! order. Evidence is optional even when the caller rendered it into the
-//! current message ([`InlineEvidence`]): only the policy, the tool schemas and
-//! the bare message are charged as fixed, so a window too small for all of a
-//! turn's evidence carries the best of it rather than refusing the turn. The
-//! current input and active constraints are retained; any omission of
-//! unprocessed original messages marks the plan as requiring compaction before
-//! generation.
-//!
-//! The rendered order is chosen for the server's prompt cache as much as for
-//! the model: the system policy, then the summary when older turns are out of
-//! the window, then the verbatim recent turns, then one user message carrying
-//! everything that depends on this turn — recall, recorded requirements,
-//! supporting material, the date and the request, in that order. Two turns of
-//! the same conversation therefore share every message up to the newest
-//! answer, and the server re-reads only what was added.
-//!
-//! That holds past the window too, because the window is anchored: it opens
-//! right after the last message the summary covers and stays there while the
-//! budget allows, rather than reaching back as far as it can and starting one
-//! turn later every time a turn is added. When it no longer fits it has to
-//! start later, and the plan asks for the summary to be refolded over what it
-//! dropped ([`ContextPlan::summary_refold`]). Consolidation does that after
-//! the answer, and the window then opens at the summary's new end.
+//! The rendered order serves the server's prompt cache: the system policy,
+//! the summary when older turns are out of the window, the verbatim recent
+//! turns, then one user message with everything that depends on this turn.
+//! The window is anchored right after the summary's last message, so turns
+//! extend an unchanged prefix; when it no longer fits, the plan asks for a
+//! refold ([`ContextPlan::summary_refold`]).
 
 mod anchor;
 pub mod budget;
@@ -479,14 +457,10 @@ impl ContextAssembler {
         let mut evidence_blocks = Vec::new();
         let mut evidence_tokens = 0usize;
         // Everything the history left, not only the evidence share: room a
-        // memory pool reserved and did not use (no summary yet, few active
-        // facts, a short recall) goes to saved memories and ranked evidence.
-        // Capped at the evidence share, a 32K model gave optional saved
-        // memories about 3K tokens once the memory pools lost their fixed
-        // ceilings, however little of those pools a turn used. The pools are
-        // still charged first, and every recalled passage that fit was taken
-        // above, so a document only ever has room no recalled passage could
-        // use.
+        // memory pool reserved and did not use goes to saved memories and ranked
+        // evidence. The pools are charged first and every recalled passage that
+        // fit was taken above, so a document only gets room no recalled passage
+        // could use.
         let evidence_pool = remaining.saturating_sub(inline_tokens);
         for item in evidence {
             let block = format!("- {}\n{}", item.label, item.content);

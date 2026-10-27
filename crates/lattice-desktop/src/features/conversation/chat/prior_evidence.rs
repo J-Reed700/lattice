@@ -29,14 +29,11 @@ pub(super) struct Recalled {
     pub(super) left_out: usize,
 }
 
-/// Search the entire saved source history before applying a prompt budget.
-/// An old citation is not excluded merely because newer research followed it.
-/// Document evidence still obeys the current scope and explicit focus.
-///
-/// Sources are read from the archive one at a time, best first, and reading
-/// stops at the first the budget cannot give a useful share: a long history
-/// does not load every page it ever cited to recall a few of them. The ones
-/// left out are counted, and the prompt says so.
+/// Searches the entire saved source history before applying a prompt budget,
+/// so an old citation is not excluded because newer research followed it.
+/// Document evidence still obeys the current scope and focus. Sources are read
+/// best first, stopping at the first the budget cannot give a useful share;
+/// the rest are counted in the prompt.
 pub(super) async fn recall(
     container: &dyn ChatStorage,
     conversation_id: &str,
@@ -110,12 +107,8 @@ pub(super) async fn recall(
 }
 
 /// How many of `sources`, from the front, `budget_chars` gives every one a
-/// useful share of.
-///
-/// Adding a source never raises another's share, so once a prefix leaves one
-/// short every longer prefix does too, and the longest that works is found by
-/// halving: a few allocations, not one for every prefix (which made recalling
-/// a long research chat's sources cubic in their number).
+/// useful share of. Adding a source never raises another's share, so the
+/// longest prefix that works is found by halving.
 fn useful_count(sources: &[SourceDto], budget_chars: usize) -> usize {
     let lengths: Vec<usize> = sources
         .iter()
@@ -141,11 +134,8 @@ fn useful_count(sources: &[SourceDto], budget_chars: usize) -> usize {
 }
 
 /// Every ranked source the budget can carry, best first, each given a fair
-/// share of `budget_chars`: a source shorter than its share is recalled whole
-/// and leaves the rest to the others, a longer one is cut to the stretch that
-/// best matches `terms` and marked as an excerpt. Sources are taken in rank
-/// order while every one taken still gets a useful share, so how many are
-/// recalled follows the budget rather than a fixed count.
+/// share of `budget_chars`: shorter ones whole, longer ones cut to the stretch
+/// that best matches `terms` and marked as an excerpt.
 fn fit_to_budget(sources: Vec<SourceDto>, terms: &[String], budget_chars: usize) -> Vec<SourceDto> {
     let taken = useful_count(&sources, budget_chars);
     let lengths: Vec<usize> = sources
@@ -442,9 +432,8 @@ mod tests {
             .collect()
     }
 
-    /// The old recall took eight sources and cut each to 2,400 characters
-    /// whatever the budget. With room, a long archived page comes back whole,
-    /// and the ninth source is not dropped.
+    /// With room, a long archived page comes back whole, and a ninth source is not
+    /// dropped.
     #[test]
     fn a_budget_with_room_recalls_every_source_whole() {
         let page = format!("{}the closing finding", "Long page text. ".repeat(1_000));
@@ -496,9 +485,8 @@ mod tests {
         assert_eq!(render(&[], 0), None);
     }
 
-    /// The longest prefix every source of which gets a useful share, found
-    /// by halving, is the one trying every prefix in turn found; and two
-    /// thousand sources take a handful of allocations, not two thousand.
+    /// Halving finds the same prefix as trying every prefix, in a handful of
+    /// allocations for two thousand sources.
     #[test]
     fn the_useful_count_is_found_by_halving_and_matches_every_prefix() {
         let every_prefix =

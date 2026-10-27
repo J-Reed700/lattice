@@ -28,15 +28,6 @@ impl MetadataExtractor {
     /// Priority:
     /// 1. Programming language (from file extension)
     /// 2. Natural language (from content heuristics)
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Document text content
-    /// * `file_ext` - File extension (e.g., "rs", "py", "txt")
-    ///
-    /// # Returns
-    ///
-    /// Detected language enum
     pub fn detect_language(&self, content: &str, file_ext: &str) -> Language {
         match file_ext.to_lowercase().as_str() {
             "rs" => Language::Rust,
@@ -64,16 +55,6 @@ impl MetadataExtractor {
     /// Categorize document based on content and metadata.
     ///
     /// Uses keyword-based classification to determine document category.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Document text content
-    /// * `file_name` - Name of the file
-    /// * `mime_type` - MIME type (e.g., "text/plain")
-    ///
-    /// # Returns
-    ///
-    /// Category enum
     pub fn categorize(&self, content: &str, file_name: &str, mime_type: &str) -> Category {
         let content_lower = content.to_lowercase();
         let name_lower = file_name.to_lowercase();
@@ -152,16 +133,6 @@ impl MetadataExtractor {
     /// - Readability (alphabetic character ratio)
     /// - Structure (paragraphs, formatting)
     /// - Recency (newer documents scored higher)
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Document text content
-    /// * `file_size` - File size in bytes
-    /// * `modified_at` - Last modification timestamp
-    ///
-    /// # Returns
-    ///
-    /// Quality score between 0.0 and 1.0
     pub fn calculate_quality_score(
         &self,
         content: &str,
@@ -230,14 +201,6 @@ impl MetadataExtractor {
     /// Count words in content.
     ///
     /// Uses whitespace-based splitting, which works well for most text.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Text content to count
-    ///
-    /// # Returns
-    ///
-    /// Word count as i32
     pub fn count_words(&self, content: &str) -> i32 {
         content.split_whitespace().count() as i32
     }
@@ -246,14 +209,6 @@ impl MetadataExtractor {
     ///
     /// Uses approximation: ~1.3 tokens per word (based on typical English text).
     /// This is a rough heuristic and could be improved with actual tokenization.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Text content to count tokens
-    ///
-    /// # Returns
-    ///
-    /// Estimated token count as i32
     pub fn count_tokens(&self, content: &str) -> i32 {
         let word_count = content.split_whitespace().count();
         (word_count as f32 * 1.3) as i32

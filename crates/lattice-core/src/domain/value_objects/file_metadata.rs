@@ -15,26 +15,6 @@ use serde::{Deserialize, Serialize};
 /// - `file_name` is non-empty
 /// - `size_bytes` is non-negative
 /// - `modified_at` is a valid timestamp
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::file_metadata::FileMetadata;
-/// use chrono::Utc;
-///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Pure domain construction; to read metadata off disk use
-/// // `FileMetadataFactory::from_path()` from the application layer.
-/// let metadata = FileMetadata::new(
-///     "file.txt".to_string(),
-///     "text/plain".to_string(),
-///     1024,
-///     Utc::now(),
-/// )?;
-/// println!("File: {}, Size: {} bytes", metadata.file_name(), metadata.size_bytes());
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FileMetadata {
     file_name: String,
@@ -55,21 +35,6 @@ impl FileMetadata {
     /// Returns an error if:
     /// - File name is empty
     /// - Size is negative
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::file_metadata::FileMetadata;
-    /// use chrono::Utc;
-    ///
-    /// let metadata = FileMetadata::new(
-    ///     "document.pdf".to_string(),
-    ///     "application/pdf".to_string(),
-    ///     1024,
-    ///     Utc::now(),
-    /// )?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(
         file_name: String,
         mime_type: String,

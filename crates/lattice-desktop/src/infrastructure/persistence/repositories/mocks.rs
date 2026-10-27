@@ -9,20 +9,6 @@
 //! - **Studs (Public Interface)**: Implement the same traits as production repositories
 //! - **Bricks (Implementation)**: In-memory HashMaps for storage
 //! - **Regeneratable**: Can be swapped with real repositories without code changes
-//!
-//! # Usage
-//!
-//! ```rust
-//! use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
-//! use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
-//!
-//! #[tokio::test]
-//! async fn test_with_mock() {
-//!     let repo = MockDocumentRepository::new();
-//!     let doc = repo.create("/test.txt", "test.txt", "text/plain", 100, "2024-01-01", "abc123").await.unwrap();
-//!     assert_eq!(doc.file_name, "test.txt");
-//! }
-//! ```
 
 // Tag removed - migrated to DDD (MockTagRepository now in shared/traits.rs)
 // Chunk removed - migrated to DDD (use lattice_core::domain::entities::chunk::Chunk)
@@ -35,12 +21,3 @@ mod document;
 
 pub use chunk::MockChunkRepository;
 pub use document::MockDocumentRepository;
-
-// MockTagRepository REMOVED - migrated to DDD
-// The old MockTagRepository using crate::models::tag::Tag has been removed.
-// Use the DDD version instead:
-// - Location: src/shared/traits.rs
-// - Uses: lattice_core::domain::entities::tag::Tag (domain entity)
-// - Trait: lattice_core::shared::traits::TagRepositoryTrait
-// Migration note: This mock was obsolete and using the old Tag model.
-// The canonical mock is in shared/traits.rs with proper DDD structure.

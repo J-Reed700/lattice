@@ -1,17 +1,9 @@
 //! What a claim's two passes decide together (course evidence index §5.1).
-//!
-//! Pass A says whether the section's own citation supports the claim; pass B
-//! says whether the course does. Support in A stands, and a contradiction B
-//! found beside it travels with the finding as a contrary passage, for the
-//! provenance gate's overturn rule to weigh. Support in B alone means the
-//! claim stands and its citation is wrong: the finding names the passage B
-//! found (`supported_by`), the ledger records it as supported elsewhere, and
-//! the section repair rewrites the citation to it. A contradiction stands
-//! when no pass supports the claim; otherwise the claim is unresolved, with
-//! everything both passes compared. When both passes support it, both
-//! supports travel with the finding (`also_supported`), so the gate weighs
-//! two origins together (claim sources design §8); the standing reach adds
-//! what the course's strongest sources say ([`with_standing`], §7.5).
+//! Support in pass A stands, with any pass B contradiction carried as a
+//! contrary passage for the overturn rule. Support in B alone means the
+//! citation is wrong: the finding names B's passage (`supported_by`) and
+//! repair rewrites the citation. A contradiction stands when nothing supports
+//! the claim; when both passes support it, both supports travel together.
 use super::walk::Reach;
 use super::*;
 
@@ -136,15 +128,10 @@ fn supporting_of(finding: &Finding) -> Option<SupportingPassage> {
 }
 
 /// A finding with what the standing reach found on the course's strongest
-/// sources for its subject (claim sources design §7.5): `found` is the
-/// deciding standing page's finding, where it was read (its reach and page),
-/// and `cited` what the claim's section cites.
-///
-/// Found support becomes the claim's support, the prior one moving to
-/// `also_supported`; found contradiction joins a supported claim's contrary
-/// passages, for the overturn rule to weigh, and decides an unsupported one.
-/// Nothing found leaves the finding as it was, its evidence unextended so its
-/// fingerprint and receipts stay the same.
+/// sources for its subject (claim sources design §7.5). Found support becomes
+/// the claim's support (the prior one moving to `also_supported`); found
+/// contradiction is weighed by the overturn rule, or decides an unsupported
+/// claim; nothing found leaves the finding unchanged, receipts included.
 pub(in crate::features::learning::lessons::content_verification) fn with_standing(
     mut prior: Finding,
     found: Option<(Finding, Reach, usize)>,

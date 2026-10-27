@@ -70,8 +70,8 @@ async fn program_read_keeps_header_and_children_in_the_same_snapshot() -> Result
     let repo = LearningRepository::new(pool.clone());
     let program = fixture();
     repo.create(&program).await?;
-    // Queue the reader, then a writer. A pool read per query used to let the
-    // writer commit between the program header and its lesson rows.
+    // Queue the reader, then a writer: the writer must not commit between the
+    // program header and its lesson rows.
     let held = pool.acquire().await?;
     let mut read = Box::pin(repo.get(&program.summary.id));
     assert!(futures::poll!(&mut read).is_pending());

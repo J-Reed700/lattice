@@ -1,23 +1,8 @@
-//! A claim's corroboration list (course evidence index §5.4, §5.5): one
-//! ranking of the collection for the claim, its counter query fused in, cut
-//! where the passages stop mentioning what the claim is about.
-//!
-//! The claim itself is the query; when it gives its subject a value (a
-//! number, a month, a name) or negates, a counter query asks for the subject
-//! without those values, and its dense and full-text branches join the
-//! claim's in the same fusion, so a passage both framings find rises and one
-//! only the counter framing finds enters where fusion places it. There is
-//! one order: the fused one.
-//!
-//! The list's end is set by content, never by a count or a score: the last
-//! passage that mentions the claim's subject. A claim with no term in the
-//! collection has an empty list; one whose every term is in every passage
-//! (a course of one short source) cannot be told apart by them, so its list
-//! is the whole ranking. Retrieval fetches a depth and
-//! doubles it while the fetched tail still mentions the subject and the
-//! scope may hold more, so the depth is found, not chosen. Passages before
-//! the end stay in fused order whether or not they mention the subject, so
-//! a passage the dense branch ranks high without sharing a word is read.
+//! A claim's corroboration list (course evidence index §5.4, §5.5): one fused
+//! ranking of the collection for the claim and its counter query, cut after
+//! the last passage that mentions the claim's subject. The end is set by
+//! content, never a count or score; retrieval doubles its depth while the
+//! tail still mentions the subject. Passages before the end keep fused order.
 use super::subject::{content_terms, Subject};
 use super::*;
 use lattice_core::shared::text::{
@@ -124,14 +109,10 @@ fn overlapping(a: &ReferencePassage, b: &ReferencePassage) -> bool {
 }
 
 impl ReferenceCollection<'_> {
-    /// `claim`'s corroboration list over `scope`: the claim and its counter
-    /// query ranked together, each hit widened to its surrounding source
-    /// text, minus passages overlapping `shown`, ending at the last passage
-    /// that mentions the claim's subject. A claim with no term in the
-    /// collection has an empty list; one the collection cannot tell its
-    /// passages apart by is on every passage. Branch and fused scores at the
-    /// list's end are
-    /// logged; none of them ends it.
+    /// `claim`'s corroboration list over `scope`: the claim and its counter query
+    /// ranked together, hits widened to their source text, minus passages
+    /// overlapping `shown`, ending at the last passage that mentions the claim's
+    /// subject.
     pub(in crate::features::learning) async fn claim_list(
         &self,
         claim: &str,

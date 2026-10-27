@@ -92,13 +92,9 @@ const DEFAULT_SPACE_ID: &str = "space_general";
 const CLARIFY_NO_RECENT_DOCUMENT_PROMPT: &str =
     "I don't see a recent linked document yet. Do you want me to search your documents, or answer this generally?";
 
-/// The post-rerank sufficiency verdict, in the one shape callers outside the
-/// chat feature can read.
-///
-/// [`SufficiencyVerdict`] and the planner's `CorpusSearchPlan` are internal and
-/// stay that way; this is the narrow projection the retrieval evaluation
-/// harness needs so a run row can carry the same verdict the pipeline would
-/// have acted on, computed by the same code rather than a copy of it.
+/// The post-rerank sufficiency verdict, projected for callers outside the chat
+/// feature (the retrieval evaluation harness) and computed by the pipeline's
+/// own code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievalSufficiency {
     /// False only when a corrective retry could plausibly do better.
@@ -115,16 +111,10 @@ pub struct RetrievalSufficiency {
     pub reasons: Vec<&'static str>,
 }
 
-/// Judge one pass of retrieval from a bare query list.
-///
-/// The plan built here is the ordinary keyword-search shape — the given
-/// queries, no opening documents, no start-at-beginning — so none of the
-/// ordered-reading exemptions apply and the verdict is the score, spread and
-/// coverage judgement itself. `reranked` must be true only when a cross-encoder
-/// actually rescored the candidates; passing true otherwise thresholds RRF
-/// ranks as if they were relevance probabilities, which they are not.
-/// Coverage reads every passage in `results`: the caller hands the ranking it
-/// is judging.
+/// Judges one pass of retrieval from a bare query list, as the keyword-search
+/// plan shape (no ordered-reading exemptions). `reranked` must be true only
+/// when a cross-encoder rescored the candidates: RRF ranks are not relevance
+/// probabilities.
 pub fn assess_retrieval_sufficiency(
     results: &[SearchResultDto],
     queries: &[String],
@@ -167,12 +157,8 @@ pub(super) struct RetrievalPipelineOutcome {
     pub(super) web_context: Vec<WebContextItem>,
     pub(super) web_search_error: Option<String>,
     pub(super) kb_unavailable_reason: Option<String>,
-    /// Whether the knowledge base was actually searched this turn.
-    ///
-    /// Distinct from "found nothing". A turn that never reached the vault and a
-    /// turn that read it and came back empty are two different facts, and a
-    /// prompt that reports the second when the first happened tells the reader
-    /// their documents were consulted when they were not.
+    /// Whether the knowledge base was actually searched this turn, as distinct
+    /// from searched and found nothing.
     pub(super) kb_attempted: bool,
     pub(super) sources: Vec<SourceDto>,
     /// The evidence budget retrieval was handed, unchanged: what retrieval
@@ -395,14 +381,10 @@ async fn load_space_document_scope(
     load_space_document_scope_impl(container, conversation_id).await
 }
 
-/// The documents a conversation remembers citing, minus any its space no longer
-/// allows.
-///
-/// A reference is only a record that a document was once in scope. The
-/// conversation may have moved space since, or the document may have been filed
-/// elsewhere, and both the router and the follow-up path reopen the last
-/// reference by id, with no search — and so no scope filter — in between.
-/// An unresolvable scope keeps nothing, as KB retrieval does.
+/// The documents a conversation remembers citing, minus any its space no
+/// longer allows. The router and the follow-up path reopen a reference by id
+/// with no scope filter in between, so the scope is applied here; an
+/// unresolvable scope keeps nothing.
 pub(super) async fn confine_document_context(
     container: &dyn ChatRuntime,
     conversation_id: &str,

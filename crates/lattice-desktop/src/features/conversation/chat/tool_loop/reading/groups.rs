@@ -1,31 +1,11 @@
-//! The reading, a few passages at a time.
+//! The reading, a few passages at a time: the turn's message closes with a
+//! group of its passages shown again, and the model writes their lines.
 //!
-//! Read in one pass, a long reading decides each passage in a token or two,
-//! thousands of tokens after the passage itself, and the local 9B marked
-//! passages that bore on the question with a hyphen, the later in the list
-//! the likelier. Shown again a few at a time, the passages were read: every
-//! fact the close read once recovered stood first or second in the group it
-//! was shown in (evals/retrieval/2026-10-24-CLOSE-READ.md). So every passage
-//! is read that way from the start, and nothing is read twice to repair a
-//! first pass: the turn's message closes with a group of its passages shown
-//! again, in place of the reading instruction, and the model writes their
-//! lines. Shown one at a time the 9B marked fact passages with a hyphen more
-//! often than in a group: it judges a passage better beside a few others.
-//! evals/retrieval/2026-10-26-GROUPED-READING.md has the A/B that chose the
-//! group's size.
-//!
-//! Each group's request is the turn's prompt up to its closing instruction,
-//! so a server that keeps the prompt reads only the group, and a provider
-//! that caches it bills the prompt once. The groups go one after another: on
-//! a llama.cpp server that keeps the conversation's slot, and on a provider
-//! each request reads the prompt the one before it cached.
-//!
-//! The notes are written out of the answer's output reservation, all the
-//! groups and their sweeps together, and each group's out of what the window
-//! has left beside it. A group the window cannot hold beside the prompt is
-//! split in two; a passage it cannot hold shown again is read by its label
-//! on the prompt as planned, which leaves the reservation by construction,
-//! so every passage is read. The turn's clock and Stop bound it.
+//! Each group's request is the turn's prompt up to its closing instruction, so
+//! a server or provider that caches the prompt reads only the group, and the
+//! groups go one after another so each reuses the cache the one before left. A
+//! group the window cannot hold is split; a passage it cannot hold is read by
+//! its label. See evals/retrieval/2026-10-26-GROUPED-READING.md.
 
 use super::super::clock::TurnClock;
 use super::super::final_round::say_last;
@@ -44,17 +24,16 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 /// Closes the turn's message for one group, in place of the reading
-/// instruction. `{passages}` is each passage of the group as `[label] text`,
-/// a blank line apart. The criterion and its place after the passages are
-/// the close read's, measured there: said before them, or as "the same
-/// form", the 9B copied whole passages that said nothing on the question.
+/// instruction. `{passages}` is each passage as `[label] text`, a blank line
+/// apart. The criterion must follow the passages: said before them, the model
+/// copies whole passages that do not bear on the question.
 pub(super) const GROUP_INSTRUCTION: &str = "Before answering, read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or its label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines.";
 
 /// Closes the turn's message for a passage the window cannot hold shown
 /// again: it is read where it stands. `{labels}` lists the labels.
 pub(super) const LABELS_INSTRUCTION: &str = "Before answering, write one line for each of the passages {labels} above: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or its label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines.";
 
-/// Passages read together, in label order: the size the A/B chose.
+/// Passages read together, in label order.
 pub(super) const PASSAGES_PER_GROUP: usize = 4;
 
 /// A group to read, and the prompt it is read on.
@@ -63,10 +42,9 @@ pub(super) struct Reading {
     pub(super) input: Vec<CompletionInput>,
 }
 
-/// The groups in label order, each with the prompt that shows it again when
-/// the window holds that and a copy of its passages beside it, the most its
-/// lines can be: a group it cannot hold is split in two, and a passage it
-/// cannot hold is read by its label.
+/// The groups in label order, each with the prompt that shows it again. A group
+/// the window cannot hold is split in two; a passage it cannot hold is read by
+/// its label.
 pub(super) async fn planned(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
@@ -107,10 +85,9 @@ pub(super) async fn planned(
     readings
 }
 
-/// Each label's line, `None` for a hyphen, from every group read, in label
-/// order, out of what the reservation has left after the groups before. A
-/// group whose request the provider failed adds nothing, and the rest are
-/// still read; only Stop and the turn's deadline are errors.
+/// Each label's line (`None` for a hyphen) from every group, within what the
+/// reservation has left. A group the provider fails adds nothing; only Stop and
+/// the turn's deadline are errors.
 pub(super) async fn read_in_groups(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
@@ -132,9 +109,8 @@ pub(super) async fn read_in_groups(
     Ok(lines)
 }
 
-/// One group read on its prompt, then a sweep for the labels its lines left
-/// out, asked for again while each sweep accounts for at least one of them,
-/// within `ceiling` and what the window has left beside each request.
+/// Reads one group, then sweeps for the labels its lines left out while each
+/// sweep accounts for at least one of them.
 async fn read_group(
     llm: &dyn LLMPort,
     request: &CompletionRequest,

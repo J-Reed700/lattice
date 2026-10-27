@@ -1,17 +1,9 @@
-//! Every LLM loaded right now, for every role, keyed by what it is.
-//!
-//! One pool replaces the single-slot chat, router and utility caches: a chat
-//! on one model, a chat on another, the utility model and the Learning model
-//! can all be loaded at once, and picking a model for one chat unloads
-//! nothing another is using. A key names a model, how its server is launched
-//! and how its client generates; it never names a role, so two roles that
-//! resolve to the same key share one client and one server.
-//!
-//! Before a new bundled server starts, admission prices it against the GPU
-//! memory the running servers leave and unloads idle models to make room.
-//! Nothing in use is ever unloaded, and nothing is refused on that estimate:
-//! a window the machine cannot hold fails in llama-server, and its error
-//! carries the numbers.
+//! Every LLM loaded right now, for every role, in one pool keyed by what it
+//! is: a model, how its server is launched and how its client generates,
+//! never a role, so two roles resolving to one key share a client and server.
+//! Before a new bundled server starts, admission prices it against free GPU
+//! memory and unloads idle models to make room; nothing in use is unloaded,
+//! and nothing is refused on that estimate.
 
 use std::sync::{Arc, Mutex};
 
@@ -386,11 +378,8 @@ impl LlmInstances {
     }
 
     /// The model `request.key` names, loading it with `load` when it is not
-    /// loaded. A new bundled server is admitted first: when it does not fit
-    /// in the GPU memory the others leave, idle models are unloaded to make
-    /// room, and it starts either way. New servers are admitted one at a
-    /// time, each priced after the one before it has started. Requests for
-    /// one key share one load.
+    /// loaded, after admitting a new bundled server one at a time (see `admit`).
+    /// Requests for one key share one load.
     pub(crate) async fn acquire<F, Fut>(
         &self,
         request: Acquire<'_>,

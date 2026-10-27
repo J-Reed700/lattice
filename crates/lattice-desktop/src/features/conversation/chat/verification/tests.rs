@@ -274,9 +274,8 @@ async fn a_plain_near_verbatim_claim_never_reaches_the_judge() {
     assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
 }
 
-/// `cp-025` from the claim-checker pairs. Every content word is in the
-/// passage and the claim has no "not", so the old strong-overlap rule
-/// certified it supported without a model ever reading it.
+/// `cp-025` from the claim-checker pairs: every content word is in the passage
+/// and there is no "not", but overlap alone does not certify it.
 #[tokio::test]
 async fn a_claim_that_keeps_the_passage_words_and_drops_its_negation_reaches_the_judge() {
     let pair = super::gate_tests::pair("cp-025");
@@ -333,10 +332,8 @@ fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize) -> ClaimJudge {
     ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler, 4096)) as Arc<dyn LLMPort>)
 }
 
-/// A slow judge is not a failed one. On a one-slot backend each call takes
-/// two minutes, longer than the whole 90-second budget the judge used to
-/// have, and the three calls run one after another: six minutes of judging.
-/// Every claim is still judged; none is left unverified for want of time.
+/// A slow judge is not a failed one: three two-minute calls in a row are all
+/// judged, and none is left unverified for want of time.
 #[tokio::test(start_paused = true)]
 async fn a_slow_judge_still_judges_every_claim() {
     let response = "Yields rose by 42 percent in treated plots [1].\n\

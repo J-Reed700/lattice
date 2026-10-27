@@ -2,28 +2,10 @@
 //!
 //! Port for accessing system hardware capabilities.
 //!
-//! ## Purpose
-//!
-//! Provides an abstraction for detecting system hardware (RAM, CPU, GPU)
-//! to enable model recommendation based on available resources.
-//!
 //! ## Implementations
 //!
 //! - **Production**: Uses `sysinfo` crate for real hardware detection
 //! - **Mock**: Configurable mock for testing different hardware profiles
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use crate::application::ports::SystemInfoPort;
-//!
-//! async fn check_capabilities(port: &dyn SystemInfoPort) -> Result<()> {
-//!     let info = port.get_system_info().await?;
-//!     println!("Total RAM: {} GB", info.total_ram_gb);
-//!     println!("CPU cores: {}", info.cpu_cores);
-//!     Ok(())
-//! }
-//! ```
 
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -85,10 +67,6 @@ impl ComputeType {
 #[async_trait]
 pub trait SystemInfoPort: Send + Sync {
     /// Get current system hardware information.
-    ///
-    /// # Returns
-    /// - `Ok(SystemInfo)` - System hardware details
-    /// - `Err(AppError)` - Failed to read system information
     async fn get_system_info(&self) -> Result<SystemInfo, AppError>;
 }
 

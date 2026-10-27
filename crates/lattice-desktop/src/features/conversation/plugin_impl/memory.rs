@@ -46,19 +46,11 @@ pub async fn get_conversation_memory_impl(
     .map_err(ApiError::from)
 }
 
-/// Compact a conversation's older messages.
-///
-/// Routed through [`CompactionJob`], the only compaction implementation: it
-/// extracts source-backed memory items and a bounded working summary and commits
-/// both in one transaction. The rollout switch gates whether a *turn* consults
-/// the ledger, not whether `/compact` builds one, so an explicit request always
-/// does the real work.
-///
-/// This deliberately does not go through the chat pipeline: that path validates
-/// its input as a user-typed query (10k characters), generates a title, and runs
-/// the whole router and retrieval stack — none of which applies to an internal
-/// summarization, and the length cap alone would reject every conversation long
-/// enough to be worth compacting.
+/// Compacts a conversation's older messages through [`CompactionJob`], the
+/// only compaction implementation. The rollout switch gates whether a turn
+/// consults the ledger, not whether `/compact` builds one. It bypasses the
+/// chat pipeline, whose user-query validation and length cap do not apply to
+/// an internal summary.
 ///
 /// [`CompactionJob`]: crate::features::conversation::memory::CompactionJob
 pub async fn compact_conversation_impl(

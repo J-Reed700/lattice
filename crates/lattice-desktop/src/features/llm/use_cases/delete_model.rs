@@ -1,39 +1,6 @@
-//! Delete Model Use Case
-//!
-//! Removes a downloaded model from local storage AND database.
-//!
-//! # Purpose
-//!
-//! Deletes a locally downloaded LLM model and all its files,
-//! calculating freed disk space. This use case ensures BOTH
-//! filesystem and database records are deleted to maintain consistency.
-//!
-//! # Repository Barrier Rule (DB-as-SSOT)
-//!
-//! The database is the Single Source of Truth for "does this model
-//! exist". Existence and size are sourced from the `models` table, NOT
-//! from the filesystem.
-//!
-//! Filesystem deletion is then performed best-effort: missing files
-//! (e.g. user removed them via Finder) are logged and ignored. The
-//! authoritative deletion is the DB row removal, which is propagated
-//! on failure. This prevents the orphan-on-FS-miss bug where a
-//! manually-deleted file made the model un-deletable from the UI
-//! because the FS check happened before the DB delete.
-//!
-//! # Dependencies
-//! - `ModelStoragePort` - Filesystem model storage
-//! - `DownloadedModelRepository` - Database tracking (Registry/Usage bounded context)
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DeleteModelUseCase::new(storage_port, repository);
-//! let request = DeleteModelRequestDto {
-//!     model_id: "phi-3-mini".to_string(),
-//! };
-//! let response = use_case.execute(request).await?;
-//! println!("Freed {} GB", response.freed_space_gb);
-//! ```
+//! Deletes a downloaded model's database row and files. The `models` table
+//! decides whether a model exists; file deletion is best-effort, so files
+//! removed outside the app never make a model undeletable.
 
 use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use lattice_core::application::ports::model_storage::ModelStoragePort;
@@ -50,10 +17,6 @@ pub struct DeleteModelUseCase {
 
 impl DeleteModelUseCase {
     /// Create a new DeleteModelUseCase with both filesystem and database deletion
-    ///
-    /// # Arguments
-    /// * `storage` - Filesystem storage port for deleting model files
-    /// * `repository` - Database repository for deleting model records
     pub fn new(
         storage: Arc<dyn ModelStoragePort>,
         repository: Arc<dyn DownloadedModelRepository>,
@@ -488,10 +451,8 @@ mod tests {
         }
     }
 
-    /// Regression: the pre-fix code returned NotFound from
-    /// `is_model_downloaded()` before touching the DB, so a model whose files
-    /// the user removed via Finder stayed in the `models` table forever and
-    /// could never be deleted from the UI.
+    /// A model whose files were removed outside the app is still deleted from the
+    /// `models` table.
     #[tokio::test]
     async fn test_delete_model_db_path_handles_missing_file_gracefully() {
         let repo = setup_repo().await;

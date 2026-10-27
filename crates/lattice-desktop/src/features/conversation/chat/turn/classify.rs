@@ -2,16 +2,10 @@
 use super::prepare::PreparedTurn;
 use super::*;
 
-/// The flags the turn runs with.
-///
-/// The utility model infers what an unflagged turn needs (vault search, web,
-/// follow-up) so an obvious case retrieves even with every toggle on its
-/// default. It can add a vault search and follow-up mode, never take any
-/// away. The web it can only allow as a fallback: searched after the vault,
-/// and only when the vault came back empty or too weak to answer from.
-///
-/// Not in an Explorer turn: its subject is the folder on screen, and the
-/// library and the web are read there only when the user turns them on.
+/// The flags the turn runs with. The utility model may add a vault search and
+/// follow-up mode to an unflagged turn, and allow the web only as a fallback
+/// after the vault. Not in an Explorer turn, which reads the library and the
+/// web only when the user turns them on.
 pub(super) async fn classify_turn(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,

@@ -445,9 +445,8 @@ mod tests {
         }
     }
 
-    /// An entry used to reach the model as its first 6,000 characters, each
-    /// message as its first 900. It is now read whole: split into marked
-    /// parts across prompts when one prompt cannot hold it.
+    /// An entry is read whole, split into marked parts across prompts when one
+    /// prompt cannot hold it.
     #[test]
     fn a_long_entry_is_read_whole_across_marked_parts() {
         let transcript: String = (0..4_000)

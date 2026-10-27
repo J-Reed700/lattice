@@ -1,15 +1,7 @@
-//! Pinning a chat to particular documents.
-//!
-//! The composer's `@` lets a reader say "only these files". That is a request,
-//! and a request may only ever **narrow** what a turn can read. The ids are
-//! intersected with the conversation's space scope — the same allow-list every
-//! other retrieval path derives from — and anything outside it is dropped.
-//!
-//! The empty-after-intersection case is the one that matters. A request that
-//! named documents this chat cannot reach must leave the turn searching
-//! nothing, not falling back to the whole space: falling back would turn "only
-//! the Halvorsen paper" into "everything except the Halvorsen paper", which is
-//! the opposite of what was asked and looks exactly like a scope leak.
+//! Pinning a chat to particular documents. The composer's `@` ids may only
+//! narrow what a turn reads: they are intersected with the conversation's
+//! space scope. When nothing survives the intersection the turn searches
+//! nothing, never falling back to the whole space.
 
 use std::collections::HashSet;
 

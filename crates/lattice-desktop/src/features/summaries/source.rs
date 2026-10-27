@@ -163,8 +163,7 @@ mod tests {
         assert!(source.body.contains("loose"));
     }
 
-    /// The body used to stop at 24,000 characters and each section at
-    /// 12,000. Both are read whole.
+    /// The body and every section are read whole.
     #[test]
     fn body_and_sections_are_read_whole() {
         let chunks: Vec<(Option<String>, String)> = (0..40)

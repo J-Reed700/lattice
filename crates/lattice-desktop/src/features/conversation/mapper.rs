@@ -1,8 +1,4 @@
-//! # Conversation Mapper
-//!
-//! Converts between domain conversation models and DTOs.
-//!
-//! This mapper handles conversion between conversation domain models and their DTO representations.
+//! Converts between conversation domain models and DTOs.
 
 use crate::features::conversation::dto::{CompactionRecordDto, ConversationDto};
 use lattice_core::domain::{Conversation, ConversationAggregate};
@@ -11,15 +7,7 @@ use lattice_core::domain::{Conversation, ConversationAggregate};
 pub struct ConversationDtoMapper;
 
 impl ConversationDtoMapper {
-    /// Convert Conversation domain model to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `conversation` - Domain conversation entity
-    ///
-    /// # Returns
-    ///
-    /// Conversation DTO for JSON serialization
+    /// Converts a domain conversation to its DTO.
     pub fn to_dto(conversation: &Conversation) -> ConversationDto {
         ConversationDto {
             id: conversation.id.to_string(),
@@ -50,15 +38,7 @@ impl ConversationDtoMapper {
         }
     }
 
-    /// Convert ConversationAggregate to DTO (extracts the conversation entity).
-    ///
-    /// # Arguments
-    ///
-    /// * `aggregate` - Conversation aggregate root
-    ///
-    /// # Returns
-    ///
-    /// Conversation DTO for JSON serialization
+    /// Converts a conversation aggregate to its DTO.
     pub fn aggregate_to_dto(aggregate: &ConversationAggregate) -> ConversationDto {
         let mut dto = Self::to_dto(aggregate.conversation());
         dto.compaction = aggregate.compaction().map(CompactionRecordDto::from_record);

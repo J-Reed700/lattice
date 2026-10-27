@@ -1,15 +1,9 @@
-//! # Conversation DTOs
-//!
-//! Data Transfer Objects for conversation management operations.
-//!
-//! These DTOs handle requests and responses for creating, updating, and managing conversations.
+//! Conversation DTOs for creating, updating and managing conversations.
 
 use lattice_core::domain::conversation::ChatModelChoice;
 use serde::{Deserialize, Serialize};
 
 /// Conversation representation.
-///
-/// Simple DTO for conversation data across application boundaries.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationDto {
@@ -92,8 +86,6 @@ pub struct ConversationDto {
 }
 
 /// Conversation message representation.
-///
-/// Simple DTO for message data across application boundaries.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageDto {
@@ -307,12 +299,8 @@ pub struct CompactConversationResponseDto {
     /// The compaction that was applied
     pub compaction: CompactionRecordDto,
 
-    /// Memory accounting for this pass.
-    ///
-    /// Not optional: every compaction goes through the one job, which always
-    /// commits a ledger alongside the summary. It was an `Option` while a
-    /// summary-only path still existed; that path is gone, and leaving the
-    /// `Option` would invite a caller to handle a case that cannot occur.
+    /// Memory accounting for this pass. Every compaction commits a ledger
+    /// alongside the summary, so this is not optional.
     pub memory: crate::features::conversation::memory_dto::CompactionMemoryDto,
 }
 

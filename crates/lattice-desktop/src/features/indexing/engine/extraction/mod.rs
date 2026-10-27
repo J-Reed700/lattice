@@ -15,20 +15,6 @@
 //! - `markup`: tag cursor, entity and byte decoding shared by the extractors
 //! - `csv`: CSV/TSV file extraction
 //! - `streaming`: Streaming text extraction
-//!
-//! # Example
-//!
-//! ```no_run
-//! use std::path::Path;
-//! use crate::features::indexing::engine::extraction::ContentExtractor;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let extractor = ContentExtractor::new();
-//! let content = extractor.extract_from_file(Path::new("document.pdf")).await?;
-//! println!("Extracted {} characters", content.metadata.char_count);
-//! # Ok(())
-//! # }
-//! ```
 
 mod archive_budget;
 mod csv;
@@ -135,27 +121,6 @@ impl ContentExtractor {
     }
 
     /// Extract content from a file, automatically detecting the type.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the file to extract
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(ExtractedContent)` - Successfully extracted content with metadata
-    /// * `Err(IndexingError)` - File not found, unsupported type, or extraction error
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::path::Path;
-    /// # use crate::features::indexing::engine::extraction::ContentExtractor;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let extractor = ContentExtractor::new();
-    /// let content = extractor.extract_from_file(Path::new("doc.pdf")).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn extract_from_file(&self, path: &Path) -> Result<ExtractedContent> {
         let mime_type = mime::detect_mime_type(path)?;
 

@@ -10,18 +10,6 @@ use serde::{Deserialize, Serialize};
 /// - **Vector**: Semantic search using embeddings and cosine similarity
 /// - **BM25**: Keyword-based search using BM25 ranking
 /// - **Hybrid**: Combines both vector and BM25 with configurable weights
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::value_objects::search_mode::SearchMode;
-///
-/// let mode = SearchMode::Vector;
-/// assert!(mode.is_vector());
-///
-/// let hybrid = SearchMode::Hybrid { vector_weight: 0.7, bm25_weight: 0.3 };
-/// assert!(hybrid.is_hybrid());
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum SearchMode {
     /// Vector-based semantic search using embeddings.
@@ -56,15 +44,6 @@ pub enum SearchMode {
 
 impl SearchMode {
     /// Create a hybrid search mode with equal weights.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_mode::SearchMode;
-    ///
-    /// let mode = SearchMode::hybrid_balanced();
-    /// assert!(mode.is_hybrid());
-    /// ```
     pub fn hybrid_balanced() -> Self {
         SearchMode::Hybrid {
             vector_weight: 0.5,
@@ -74,23 +53,9 @@ impl SearchMode {
 
     /// Create a hybrid search mode with custom weights.
     ///
-    /// # Arguments
-    ///
-    /// * `vector_weight` - Weight for vector similarity (0.0 to 1.0)
-    /// * `bm25_weight` - Weight for BM25 score (0.0 to 1.0)
-    ///
     /// # Note
     ///
     /// Weights are not automatically normalized. For best results, they should sum to 1.0.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_mode::SearchMode;
-    ///
-    /// // Favor vector search more heavily
-    /// let mode = SearchMode::hybrid(0.8, 0.2);
-    /// ```
     pub fn hybrid(vector_weight: f32, bm25_weight: f32) -> Self {
         SearchMode::Hybrid {
             vector_weight,
@@ -132,46 +97,12 @@ impl SearchMode {
     }
 
     /// Check if the weights are normalized (sum to approximately 1.0).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_mode::SearchMode;
-    ///
-    /// let balanced = SearchMode::hybrid_balanced();
-    /// assert!(balanced.is_normalized());
-    ///
-    /// let unnormalized = SearchMode::hybrid(0.8, 0.8);
-    /// assert!(!unnormalized.is_normalized());
-    /// ```
     pub fn is_normalized(&self) -> bool {
         let sum = self.vector_weight() + self.bm25_weight();
         (sum - 1.0).abs() < 0.01 // Allow small floating-point error
     }
 
     /// Combine two scores according to this search mode.
-    ///
-    /// # Arguments
-    ///
-    /// * `vector_score` - Vector similarity score (0.0 to 1.0)
-    /// * `bm25_score` - BM25 relevance score (0.0 to 1.0)
-    ///
-    /// # Returns
-    ///
-    /// Combined score according to the mode:
-    /// - Vector mode: returns vector_score
-    /// - BM25 mode: returns bm25_score
-    /// - Hybrid mode: weighted combination
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::value_objects::search_mode::SearchMode;
-    ///
-    /// let mode = SearchMode::hybrid(0.7, 0.3);
-    /// let combined = mode.combine_scores(0.9, 0.5);
-    /// assert_eq!(combined, 0.7 * 0.9 + 0.3 * 0.5);
-    /// ```
     pub fn combine_scores(&self, vector_score: f32, bm25_score: f32) -> f32 {
         match self {
             SearchMode::Vector => vector_score,

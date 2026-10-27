@@ -146,10 +146,8 @@ pub(super) fn parse_completion(provider: LLMProvider, value: Value) -> Result<Co
             _ => {}
         }
     }
-    // The whole prompt: Anthropic counts the part it read from its cache and
-    // the part it wrote to it apart from `input_tokens`, so a cached turn
-    // reported only its uncached tail, and the token estimate learned from
-    // it that every prompt was a fraction of its size.
+    // The whole prompt: Anthropic counts cache reads and writes apart from
+    // `input_tokens`.
     response.input_tokens = [
         "input_tokens",
         "cache_creation_input_tokens",

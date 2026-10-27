@@ -168,13 +168,8 @@ impl DailyNotesRepository {
     }
 
     /// The journal a capture with no journal of its own belongs to: the one
-    /// written to last, else the first in the sidebar. `None` only when no
-    /// journal exists yet.
-    ///
-    /// The journal screen lists pages per journal and nothing else, so a page
-    /// owned by no journal cannot be opened from anywhere. Captures used to be
-    /// written to exactly such a page: the toast said "saved" and the text was
-    /// unreachable.
+    /// written to last, else the first in the sidebar; `None` only when no
+    /// journal exists. A page no journal owns could not be opened from anywhere.
     pub async fn capture_journal_id(&self) -> Result<Option<String>> {
         sqlx::query_scalar::<_, String>(
             "SELECT j.id FROM journals j \

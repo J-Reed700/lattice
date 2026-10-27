@@ -19,23 +19,11 @@ pub struct ExportSettingsUseCase {
 
 impl ExportSettingsUseCase {
     /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `repository` - Settings repository port implementation
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
         Self { repository }
     }
 
     /// Execute the use case to export settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Export request with target path
-    ///
-    /// # Returns
-    ///
-    /// Export response with the actual path where settings were saved
     ///
     /// # Errors
     ///
@@ -43,17 +31,6 @@ impl ExportSettingsUseCase {
     /// - Path is invalid or not writable
     /// - Cannot serialize settings to JSON
     /// - File write operation fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = ExportSettingsUseCase::new(repository);
-    /// let request = ExportSettingsRequestDto {
-    ///     path: "/home/user/settings-backup.json".to_string(),
-    /// };
-    /// let response = use_case.execute(request).await?;
-    /// println!("Settings exported to: {:?}", response.path);
-    /// ```
     pub async fn execute(
         &self,
         request: ExportSettingsRequestDto,
@@ -71,10 +48,6 @@ impl ExportSettingsUseCase {
     }
 
     /// Validate the export path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to validate
     ///
     /// # Errors
     ///

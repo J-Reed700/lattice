@@ -1,35 +1,15 @@
-//! One admission point in front of each inference backend.
+//! One admission point in front of each inference backend: every model call
+//! is admitted here, by a scheduler that knows the backend's concurrency and,
+//! for a llama-server, the window its slots share.
 //!
-//! Every model call that reaches a backend — a chat turn, the grounding judge,
-//! memory consolidation, lesson generation — is admitted here first, by a
-//! scheduler that knows how many requests the backend runs at once and, for a
-//! llama-server, the context window its slots share. Before this each feature
-//! brought its own limiter (Ollama's semaphore, one lesson job at a time, one
-//! consolidation at a time, three judge calls at a time), none of them knew
-//! about the others, and chat itself was not limited at all: a turn could wait
-//! behind a lesson generation it had no way to outrank.
-//!
-//! # Admission rules
-//!
-//! - Highest [`InferencePriority`] first; arrival order within a priority.
-//! - When the backend has more than one slot, one is kept for interactive
-//!   work: anything else is admitted only while two or more slots are free.
-//! - On a shared window, a request reserves its estimated prompt plus its
-//!   output allowance, and is admitted only while every reservation in flight
-//!   still fits. A request with nothing else in flight is always admitted, so
-//!   a prompt larger than the window fails at the server rather than waiting
-//!   forever here.
-//! - Strictly in order: when the head of the queue cannot be admitted, nothing
-//!   behind it is either, so a large interactive prompt is never starved by a
-//!   stream of small background ones.
-//! - A queued request whose cancellation fires leaves the queue with an error.
-//!
-//! # Slots
-//!
-//! On llama-server every admitted request is pinned to a slot (`id_slot`). A
-//! request carrying a cache key goes back to the slot that last served that
-//! key when it is free, so the server reuses the shared prefix from its KV
-//! cache instead of prefilling the whole conversation again.
+//! Highest [`InferencePriority`] first, arrival order within one; with several
+//! slots one is kept for interactive work. On a shared window a request
+//! reserves its estimated prompt plus output and waits while reservations
+//! would overflow, though a request alone is always admitted. Admission is
+//! strictly in order, so a large interactive prompt is never starved, and a
+//! cancelled queued request leaves with an error. On llama-server a keyed
+//! request is pinned back to the slot that last served its key, so the server
+//! reuses the cached prefix.
 
 mod estimator;
 mod registry;

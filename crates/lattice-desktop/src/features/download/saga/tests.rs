@@ -300,10 +300,8 @@ fn cancelled(
     }
 }
 
-/// Cancelling a row left over from an interrupted attempt reports a failure
-/// for a file that a later attempt already finished. It used to mark the
-/// finished, active model as failed, which removed it from the downloaded
-/// list.
+/// Cancelling a row left over from an interrupted attempt does not mark a
+/// model a later attempt finished as failed.
 #[tokio::test]
 async fn a_failure_for_a_file_that_already_completed_changes_nothing() {
     let (saga, pool) = saga_with_one_file("completed", "completed").await;

@@ -1,6 +1,4 @@
-//! Mock implementations for testing
-//!
-//! This module provides mock implementations of service traits.
+//! Mock implementations of the conversation service traits, for tests.
 
 #[cfg(test)]
 use super::trait_def::ConversationServiceTrait;
@@ -12,11 +10,7 @@ use lattice_core::shared::error::Result;
 use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
-/// Mock conversation service for testing
-///
-/// Simulates conversation management without database.
-/// Allows configuration and tracking of conversation operations.
-/// All operations are deterministic and thread-safe.
+/// In-memory conversation service for tests.
 pub struct MockConversationService {
     conversations: Arc<
         RwLock<

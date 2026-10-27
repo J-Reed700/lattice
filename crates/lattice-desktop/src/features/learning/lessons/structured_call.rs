@@ -1,14 +1,8 @@
-//! Learning's structured model calls as the generators make them: one
-//! schema-constrained request, or, for authoring work, a prose draft followed
-//! by a schema-constrained answer built from it.
-//!
-//! The two-step form exists because asking for a format in the same request
-//! that does the thinking is what costs small open models most of their
-//! structured-output accuracy; reasoning first and formatting second recovers
-//! most of it. The grammar itself is not the cost at 4B and above, so the
-//! second step keeps it. That step continues the first as a conversation (the
-//! task, the model's own draft, then a request for the final answer), so it
-//! opens with exactly the prompt the server has just read and can reuse.
+//! Learning's structured model calls: one schema-constrained request, or, for
+//! authoring work, a prose draft followed by a schema-constrained answer built
+//! from it, since asking for a format while thinking costs small models their
+//! structured-output accuracy. The answer step continues the draft's
+//! conversation, so it reuses the prompt the server just read.
 
 use serde_json::{json, Value};
 

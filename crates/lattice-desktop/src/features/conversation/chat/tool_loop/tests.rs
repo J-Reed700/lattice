@@ -85,10 +85,8 @@ fn a_round_of_results_is_made_to_fit_a_small_window() {
     );
 }
 
-/// The model in the log has a 131k window. Each of four results gets a
-/// fifth of what is left, a share being kept for the next round, which is
-/// far past the 50,000 characters a configured ceiling used to cut every
-/// result to.
+/// With a 131k window, each of four results gets a fifth of what is left, a
+/// share being kept for the next round.
 #[test]
 fn a_large_window_gives_each_result_its_share_with_no_ceiling() {
     let window = window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN);
@@ -134,8 +132,7 @@ fn a_window_with_room_keeps_the_floor() {
     );
 }
 
-/// On a 4k-token local window the schemas alone are a large share, and a
-/// round that ignored them handed out room the window did not have.
+/// On a 4k-token local window the schemas alone take a large share of the room.
 #[test]
 fn tool_schemas_are_charged_against_a_small_window() {
     let tools = vec![lattice_core::application::ports::ToolDefinition {
@@ -216,9 +213,8 @@ fn a_malformed_call_is_answered_with_the_error() {
     assert!(reply.contains("{query: rust"), "{reply}");
 }
 
-/// A lone page read used to be given the whole window, so the round after
-/// it had nothing left to read with and one long page ended the research.
-/// Half is kept back; the rest of the page is a further call by offset.
+/// A lone page read leaves half the window for the next round; the rest of the
+/// page is a further call by offset.
 #[test]
 fn a_lone_result_leaves_the_next_round_room_to_read() {
     let window = window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN);

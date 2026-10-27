@@ -40,14 +40,8 @@ pub(super) struct TraceCounts {
     pub(super) web_pages: usize,
 }
 
-/// Split a turn's sources into vault documents and web pages.
-///
-/// Web results are shaped like document sources so citations can treat them
-/// alike, and the counts used to be taken over the whole list. A web-only
-/// answer in a space containing no documents therefore announced "10 passages
-/// from 10 files" — a claim to have read ten of the user's documents, made by a
-/// turn that never touched the vault. The prefix on the id is what separates
-/// them.
+/// Splits a turn's sources into vault documents and web pages by their id
+/// prefix, so web results are never counted as the user's files.
 pub(super) fn trace_counts(sources: &[SourceDto]) -> TraceCounts {
     let (vault, web): (Vec<_>, Vec<_>) = sources
         .iter()
@@ -81,13 +75,9 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
-/// Retrieval trace for one turn.
-///
-/// `searched_documents` is the size of the document set the hard space-scope
-/// filter actually allowed, not the size of the corpus — a scoped conversation
-/// must not claim to have read the whole vault.
-///
-/// Shared by streaming events, persisted message metadata, and generated bindings.
+/// Retrieval trace for one turn, shared by streaming events, persisted message
+/// metadata and generated bindings. `searched_documents` is the size of the
+/// scoped document set, not the corpus.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievalTraceDto {
@@ -95,13 +85,8 @@ pub struct RetrievalTraceDto {
     pub passages: usize,
     pub files: usize,
 
-    /// Web pages carried into the answer, counted apart from `files`.
-    ///
-    /// `files` means documents in the user's vault and nothing else. Web
-    /// results used to be counted there too, so a web-only answer in a space
-    /// holding no documents still reported "10 passages from 10 files" — which
-    /// reads as though it had searched the vault, and is the sort of claim that
-    /// makes a correctly scoped answer look like a leak.
+    /// Web pages carried into the answer, counted apart from `files`, which means
+    /// vault documents only.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub web_pages: usize,
     /// "vault" | "linked"
@@ -110,12 +95,8 @@ pub struct RetrievalTraceDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
 
-    /// The post-rerank sufficiency verdict, after any corrective pass.
-    ///
-    /// Additive and absent by default: traces persisted before the sufficiency
-    /// check existed carry no verdict, and absent is not the same as
-    /// insufficient. Every consumer must tolerate `null` rather than read a
-    /// missing verdict as a failure.
+    /// The post-rerank sufficiency verdict, after any corrective pass. Absent on
+    /// traces saved before the check existed; absent is not insufficient.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kb_sufficient: Option<bool>,
 
@@ -159,13 +140,9 @@ pub struct ChatStreamEventDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieval: Option<RetrievalTraceDto>,
 
-    /// One step of the turn, starting or finishing.
-    ///
-    /// A tool round emits no text at all while the model reasons and writes its
-    /// tool calls — on a slow model that is minutes of a spinner with nothing
-    /// behind it, which is indistinguishable from a hang. This is what the UI
-    /// has during that stretch, and unlike the sentence it replaces it is kept:
-    /// the timeline under the finished answer is this same list.
+    /// One step of the turn, starting or finishing. A tool round streams no text,
+    /// so this is what the UI shows meanwhile; the finished answer's timeline is
+    /// this same list.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<TurnStepDto>,
 
@@ -216,12 +193,9 @@ pub struct ToolPreferences {
     pub turn_mode: Option<String>,
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
-    /// Documents this chat is pinned to. Empty or absent means the whole space.
-    ///
-    /// A request may only ever narrow what the turn can read, so these ids are
-    /// intersected with the conversation's space scope before anything uses
-    /// them; ids from outside it are dropped. See `focus_scope` in the
-    /// retrieval pipeline.
+    /// Documents this chat is pinned to; empty or absent means the whole space. A
+    /// request may only narrow what the turn reads, so these are intersected with
+    /// the space scope (see `focus_scope` in the retrieval pipeline).
     #[serde(default)]
     pub focus_document_ids: Option<Vec<String>>,
     /// The file open in Explorer and its selected lines, sent with each turn
@@ -229,14 +203,10 @@ pub struct ToolPreferences {
     /// folder; ignored when it has none, and dropped when it does not resolve.
     #[serde(default)]
     pub explorer_focus: Option<ExplorerFocusDto>,
-    /// The message already carries everything the turn may use: no retrieval of
-    /// any kind runs, no tools are offered, and nothing is verified against
-    /// sources. Backend callers only — it is never deserialized, so the
-    /// frontend can neither set nor see it.
-    ///
-    /// `knowledge_base: false` does not mean this. It only declines to *force*
-    /// a vault search; the router still ran one, which is how a journal
-    /// synthesis of one space's chat was handed another space's documents.
+    /// The message already carries everything the turn may use: no retrieval,
+    /// tools or source verification. Backend callers only; never deserialized. Not
+    /// the same as `knowledge_base: false`, which only declines to force a vault
+    /// search while the router may still run one.
     #[serde(skip)]
     pub closed_book: bool,
 }

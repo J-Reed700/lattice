@@ -18,10 +18,6 @@ impl GetActiveEmbeddingModelUseCase {
     }
 
     /// Execute the use case
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if an active embedding model exists, None otherwise
     pub async fn execute(&self) -> Result<Option<DownloadedModel>> {
         self.active_models.get_active_embedding_model().await
     }

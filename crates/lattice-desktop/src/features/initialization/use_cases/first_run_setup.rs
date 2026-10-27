@@ -322,8 +322,8 @@ mod tests {
         };
 
         let repo = setup_repo().await;
-        // Exercise the actual onboarding response, including the AMD APU case
-        // the old vendor-based test mislabeled as a discrete GPU.
+        // Exercise the actual onboarding response, including an AMD APU, which is
+        // not a discrete GPU.
         for (ram, expected) in [
             (4.0, "qwen3.5-2b-q4_k_m"),
             (8.0, "qwen3.5-4b-q4_k_m"),

@@ -1,16 +1,9 @@
-//! Trust changes in the claim ledger (source provenance §13, §18.7,
-//! decision 2). An override set or cleared, or a bar the user's verdicts
-//! moved, re-decides every claim whose state the provenance gate decided
-//! and whose assessment the change touches: the supports are levelled
-//! again from stored judgements (an override) or kept (a bar), and
-//! lattice-core's `decide` runs again with the bars in force. No model is
-//! called. Each re-decision that changes anything is one `StandingAssessed`
-//! event with its cause, whose replay verifies, reopens or re-queues the
-//! claim; a human verdict is never touched.
-//!
-//! The user's verdicts reach calibration here too: [`record_verdict`] writes
-//! a verdict's outcomes and re-decides the kinds whose bar they moved, and
-//! [`forget_verdict`] undoes both.
+//! Trust changes in the claim ledger (source provenance §13, §18.7). An
+//! override set or cleared, or a bar the user's verdicts moved, re-decides
+//! every gate-decided claim the change touches with lattice-core's `decide`,
+//! calling no model; each change is one `StandingAssessed` event, and a human
+//! verdict is never touched. [`record_verdict`] and [`forget_verdict`] feed
+//! calibration and undo it.
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{

@@ -33,14 +33,6 @@ pub struct OpenFileByIdUseCase {
 
 impl OpenFileByIdUseCase {
     /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repository` - Repository for document lookups
-    /// * `file_system` - File system operations port
-    /// * `file_storage` - File storage operations port
-    /// * `file_access_config` - File access security configuration
-    /// * `vault_path` - Root lattice path for resolving relative paths
     pub fn new(
         document_repository: Arc<dyn DocumentRepositoryPort>,
         file_system: Arc<dyn FileSystemPort>,
@@ -58,14 +50,6 @@ impl OpenFileByIdUseCase {
     }
 
     /// Execute the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the document ID
-    ///
-    /// # Returns
-    ///
-    /// Success DTO if file was opened successfully.
     ///
     /// # Errors
     ///

@@ -18,15 +18,10 @@ use lattice_core::shared::text::build_excerpt;
 /// vault passage gets.
 const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
 
-/// The lines that give a result's new sources their citation numbers, and
-/// what is left of `allowance` for the result itself.
-///
-/// The lines are charged to the result's own allowance, so the two together
-/// fit it. A source whose text the result already shows (`shown`, the result
-/// as it reads with the whole allowance) is named by number, title and
-/// address rather than repeated. One whose text the result does not show
-/// carries it, each such source an equal share of half the allowance, whole
-/// when it fits its share and otherwise cut there and marked.
+/// The lines that give a result's new sources their citation numbers, and what
+/// is left of `allowance` for the result itself. A source the result already
+/// shows is named by number, title and address; any other carries its text,
+/// each an equal share of half the allowance, cut and marked when longer.
 pub(super) fn citable_passages(
     citable: &[(u32, &SourceDto)],
     shown: &str,
@@ -88,15 +83,10 @@ fn continues_note(source: &SourceDto, at: usize, total: usize) -> String {
     format!(" […passage continues at character {at} of {total}; {how}]")
 }
 
-/// A tool result and its citation lines, together within `allowance`, the
-/// lines decided against the result as it is finally rendered.
-///
-/// A source counts as already shown only when the text the model receives
-/// carries it. Decided against the result rendered with the whole allowance
-/// and then rendered smaller to make room for the lines, a source could be
-/// named as "in this result above" when the smaller render no longer held it.
-/// The room shrinks until the render fits what its lines leave; a smaller
-/// render shows less, so the lines only grow and this ends.
+/// A tool result and its citation lines, together within `allowance`, with the
+/// lines decided against the result as finally rendered. The room shrinks until
+/// the render fits what its lines leave; a smaller render only grows the lines,
+/// so this ends.
 pub(super) fn render_with_citations(
     citable: &[(u32, &SourceDto)],
     allowance: usize,
@@ -245,9 +235,7 @@ pub(super) fn collect_tool_sources(
                     file_size_bytes: output.word_count as i64,
                     modified_at,
                     // The card's short preview, not the page: the UI refuses an
-                    // excerpt over 2000 characters, and a whole-page excerpt here
-                    // dropped the source — its `[n]` chip went dead and it was
-                    // missing from the list under the answer.
+                    // excerpt over 2000 characters.
                     excerpt: Some(build_excerpt(
                         &output.content,
                         highlight_terms,
@@ -362,9 +350,8 @@ mod citable_tests {
         }
     }
 
-    /// The citation lines used to be added after the result, uncounted, with
-    /// up to 4,000 characters of passage each. They come out of the result's
-    /// allowance now, and text the result already shows is not repeated.
+    /// Citation lines come out of the result's allowance, and text the result
+    /// already shows is not repeated.
     #[test]
     fn citable_passages_are_charged_to_the_allowance_and_not_repeated() {
         let page = "The station opened in 1932 and was rebuilt after the fire. ".repeat(20);
@@ -385,9 +372,8 @@ mod citable_tests {
         assert_eq!(left, 600 - text.chars().count());
     }
 
-    /// A fetched page and a Wikipedia summary were stored cut at the excerpt
-    /// setting, and synthesis read the cut text. They are stored whole, as a
-    /// cited web page is archived; the card keeps its short preview.
+    /// A fetched page and a Wikipedia summary are stored whole; the card keeps its
+    /// short preview.
     #[test]
     fn fetched_and_wiki_sources_are_stored_whole() {
         let body = format!(
@@ -448,11 +434,8 @@ mod citable_tests {
         assert!(text.contains(&format!("and offset {offset} reads on]")));
     }
 
-    /// Whether a source is already in the result is decided against the
-    /// result the model gets. Decided against the render with the whole
-    /// allowance, this page counted as shown, and the result was then
-    /// rendered smaller, without the page, under a line saying its text was
-    /// "in this result above".
+    /// Whether a source is already in the result is decided against the render
+    /// the model gets, not the one with the whole allowance.
     #[test]
     fn shown_is_decided_against_the_final_render() {
         let page = format!("{} and then much more of the page.", "ab ".repeat(24));

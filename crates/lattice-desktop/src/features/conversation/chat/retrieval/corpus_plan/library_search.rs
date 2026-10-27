@@ -13,14 +13,9 @@ use super::{
     MAX_QUERY_WORDS,
 };
 
-/// One query searched exactly as first-pass retrieval searches it: the
-/// library search orchestrator's branches, weights and RRF constant.
-///
-/// The model's own `semantic_search` calls come through here. They used the
-/// generic hybrid endpoint instead — even weights, a higher vector floor and a
-/// lexical-support filter — so a follow-up search ranked the same space
-/// differently from the search that opened the turn, and could miss passages
-/// the first pass would have found.
+/// One query searched exactly as first-pass retrieval searches it (the
+/// orchestrator's branches, weights and RRF constant), so the model's
+/// `semantic_search` calls rank the space the same way.
 pub(in crate::features::conversation::chat) async fn fused_search(
     hybrid: &dyn HybridSearchTrait,
     query: &str,
@@ -79,12 +74,9 @@ pub(in super::super) async fn retrieve(
         branches.extend(query_branches.branches);
     }
 
-    // The documents the planner named: one more search inside just those, for
-    // what the question asks of them, whether or not the plan also reads them
-    // from the start. Their titles already put them on the shortlist, so title
-    // words would only rank the passages that repeat the name; the rest of the
-    // question and the planner's rewrites are what find the passage that
-    // answers it.
+    // The documents the planner named get one more search inside just those, for
+    // what the question asks of them. Title words are left out: they would only
+    // rank the passages that repeat the name.
     let mut scoped = Vec::new();
     if !reading_ids.is_empty() {
         let chosen_titles: Vec<&str> = catalog
@@ -301,15 +293,9 @@ fn scoped_query(question: &str, queries: &[String], chosen_titles: &[&str]) -> O
     Some(terms.join(" "))
 }
 
-/// Cut the results to the `limit` hits, then append every hit's unseen section
-/// neighbours after all of them as context.
-///
-/// The hits are the evidence, in rank order, and nothing is placed among them.
-/// Context follows hit by hit in rank order, each neighbourhood in the order
-/// the section reads. How much of it reaches the prompt is the evidence
-/// budget's call: it walks hits before context and keeps what fits, so a
-/// neighbour only ever uses room no hit could, and is never fetched in place
-/// of one.
+/// Cuts the results to the `limit` hits, then appends every hit's unseen
+/// section neighbours after all of them as context. The evidence budget walks
+/// hits before context, so a neighbour only uses room no hit could.
 pub(in super::super) async fn append_context(
     repository: &dyn ChatRecords,
     results: &mut Vec<SearchResultDto>,
@@ -331,13 +317,9 @@ pub(in super::super) async fn append_context(
     Ok(())
 }
 
-/// Union two retrieval passes by chunk id and re-rank them by RRF over both.
-///
-/// Rank, not score, is what fuses: the first pass arrives already reranked on a
-/// blended 0-1 scale while the second carries raw RRF weights, and those two
-/// scales cannot be compared. Reciprocal rank does not care. A passage both
-/// passes found rises above one that only the retry did, which is the whole
-/// point of correcting rather than replacing.
+/// Unions two retrieval passes by chunk id and re-ranks them by RRF over both:
+/// the first pass is on a blended 0-1 scale and the second on raw RRF
+/// weights, which cannot be compared, but their ranks can.
 pub(in super::super) fn fuse_passes(
     hybrid: &dyn HybridSearchTrait,
     first: Vec<SearchResultDto>,

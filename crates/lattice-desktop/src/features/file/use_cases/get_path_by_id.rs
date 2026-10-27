@@ -41,14 +41,6 @@ impl GetFilePathByIdUseCase {
 
     /// Execute the use case.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the document ID
-    ///
-    /// # Returns
-    ///
-    /// Response containing the file path and whether it exists on disk.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if document does not exist

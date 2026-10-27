@@ -1,13 +1,8 @@
 //! Whether a claim's support is sufficient to verify it: the one place the
-//! claim ledger turns a checker's "supported" into `ResolvedByEvidence`.
-//!
-//! The gate is [`super::provenance_gate::ProvenanceGate`] (source provenance
-//! and trust, docs/design/2026-10-18-source-provenance-and-trust.md §6.2,
-//! §11): the quotation must be in the passage it names, and the overturn
-//! rule must leave the support standing. An insufficient support becomes an
-//! unsupported claim with the gate's reason, and a winning contrary passage
-//! a contradicted one, so each goes through research, repair and the user's
-//! queue like any other. Nothing else in the loop decides sufficiency.
+//! claim ledger turns a checker's "supported" into `ResolvedByEvidence`, via
+//! [`super::provenance_gate::ProvenanceGate`] (source provenance §6.2, §11).
+//! An insufficient support becomes an unsupported claim, and a winning
+//! contrary passage a contradicted one.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §4.
 
 use super::provenance_gate::FindingTrust;

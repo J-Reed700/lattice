@@ -1,15 +1,8 @@
-//! A minimal reader for the GGUF header, enough to learn what a model was
-//! trained for and what a server of it costs in memory.
-//!
-//! Sizing a context window is guesswork without this. Ask for more than the
-//! model was trained on and llama.cpp silently rope-scales, degrading quality
-//! in a way nothing reports; ask for a flat conservative default and a 28 GB
-//! GPU runs an 8 K window it could carry four times over. Both failures are
-//! invisible, so the honest input is the model's own `context_length`.
-//!
-//! Only the key/value header is parsed. Tensor data is never touched, and an
-//! unreadable or unfamiliar file yields `None` rather than an error — the
-//! caller falls back to sizing from hardware alone.
+//! A minimal reader for the GGUF header: what a model was trained for and
+//! what a server of it costs in memory. Context sizing needs the model's own
+//! `context_length`, since asking for more makes llama.cpp silently
+//! rope-scale. Only the key/value header is parsed; an unreadable file yields
+//! `None` and the caller sizes from hardware alone.
 
 use std::fs::File;
 use std::io::{BufReader, Read};

@@ -66,12 +66,8 @@ async fn missing_conversation_stops_pruning_before_write() {
     ));
 }
 
-/// Create a test database pool from the real migration.
-///
-/// Deliberately not a hand-maintained subset of the schema: a copy drifts,
-/// and a test that passes against a schema production does not have is
-/// worse than no test. Adding `conversations.next_message_sequence` broke
-/// every one of these while production was fine.
+/// A test database pool from the real migration, not a hand-maintained subset
+/// of the schema.
 async fn create_test_pool() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
@@ -84,13 +80,8 @@ async fn create_test_pool() -> SqlitePool {
     pool
 }
 
-/// Insert the `documents` rows a fixture is about to reference.
-///
-/// `conversation_documents.document_id` really does have a foreign key to
-/// `documents`, and these tests now run with enforcement on, so a linked
-/// document has to exist. Seeding it is also more honest than the old
-/// unenforced schema: a reference to a document that was never indexed is not
-/// a state the application can reach.
+/// Inserts the `documents` rows a fixture is about to reference:
+/// `conversation_documents.document_id` has an enforced foreign key.
 async fn seed_documents(pool: &SqlitePool, ids: &[&str]) {
     for id in ids {
         sqlx::query(

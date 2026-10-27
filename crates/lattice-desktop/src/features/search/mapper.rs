@@ -20,24 +20,6 @@ use lattice_core::shared::error::Result;
 pub struct SearchMapper;
 
 /// Infer human-readable category from MIME type.
-///
-/// # Arguments
-///
-/// * `mime_type` - MIME type string (e.g., "application/pdf", "text/markdown")
-///
-/// # Returns
-///
-/// Human-readable category string
-///
-/// # Examples
-///
-/// ```
-/// use lattice_core::application::mappers::search_mapper::infer_category;
-///
-/// assert_eq!(infer_category("application/pdf"), "PDF Document");
-/// assert_eq!(infer_category("text/markdown"), "Markdown");
-/// assert_eq!(infer_category("text/x-rust"), "Code");
-/// ```
 pub fn infer_category(mime_type: &str) -> String {
     match mime_type {
         "application/pdf" => "PDF Document",
@@ -65,14 +47,6 @@ pub fn infer_category(mime_type: &str) -> String {
 
 impl SearchMapper {
     /// Convert domain SearchResult to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `result` - Domain search result
-    ///
-    /// # Returns
-    ///
-    /// Flat DTO representation for JSON serialization
     pub fn to_dto(result: SearchResult) -> SearchResultDto {
         SearchResultDto {
             id: result.id().to_string(),
@@ -99,19 +73,6 @@ impl SearchMapper {
     }
 
     /// Convert DTO SearchResult to domain model.
-    ///
-    /// # Arguments
-    ///
-    /// * `dto` - DTO search result
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchResult entity
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchResult entity. If score validation fails, returns result with
-    /// score clamped to 0.0.
     pub fn to_domain(dto: SearchResultDto) -> SearchResult {
         // Clamp invalid scores to 0.0 rather than panicking
         let score = if dto.score.is_nan() || dto.score.is_infinite() {
@@ -135,23 +96,10 @@ impl SearchMapper {
     /// This is used at the port boundary to map infrastructure results
     /// to domain entities.
     ///
-    /// # Arguments
-    ///
-    /// * `port_dto` - Port DTO from infrastructure layer
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchResult entity
-    ///
     /// # Design Rationale
     ///
     /// This method bridges the port boundary, ensuring infrastructure
     /// does not depend on domain entities (Clean Architecture principle).
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchResult entity. If score validation fails, returns result with
-    /// score clamped to 0.0.
     pub fn port_dto_to_domain(port_dto: SearchResultRecord) -> SearchResult {
         // Clamp invalid scores to 0.0 rather than panicking
         let score = if port_dto.score.is_nan() || port_dto.score.is_infinite() {
@@ -171,14 +119,6 @@ impl SearchMapper {
     }
 
     /// Convert multiple port DTOs to domain entities.
-    ///
-    /// # Arguments
-    ///
-    /// * `port_dtos` - Vector of port DTOs from infrastructure
-    ///
-    /// # Returns
-    ///
-    /// Vector of domain SearchResult entities
     pub fn port_dtos_to_domain(port_dtos: Vec<SearchResultRecord>) -> Vec<SearchResult> {
         port_dtos
             .into_iter()
@@ -187,15 +127,6 @@ impl SearchMapper {
     }
 
     /// Convert multiple search results to response DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `results` - Vector of domain search results
-    /// * `query_time_ms` - Query execution time in milliseconds
-    ///
-    /// # Returns
-    ///
-    /// Response DTO with results and metadata
     pub fn to_response_dto(results: Vec<SearchResult>, query_time_ms: u64) -> SearchResponseDto {
         let total = results.len();
         let result_dtos = results.into_iter().map(Self::to_dto).collect();
@@ -208,14 +139,6 @@ impl SearchMapper {
     }
 
     /// Convert SearchMode domain to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - Domain search mode
-    ///
-    /// # Returns
-    ///
-    /// DTO representation of search mode
     pub fn mode_to_dto(mode: SearchMode) -> SearchModeDto {
         match mode {
             SearchMode::Vector => SearchModeDto::Vector,
@@ -231,14 +154,6 @@ impl SearchMapper {
     }
 
     /// Convert SearchModeDto to domain.
-    ///
-    /// # Arguments
-    ///
-    /// * `dto` - DTO search mode
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchMode value object
     pub fn mode_to_domain(dto: SearchModeDto) -> SearchMode {
         match dto {
             SearchModeDto::Vector => SearchMode::Vector,
@@ -254,14 +169,6 @@ impl SearchMapper {
     }
 
     /// Convert SearchRequestDto to domain SearchQuery.
-    ///
-    /// # Arguments
-    ///
-    /// * `dto` - Search request DTO
-    ///
-    /// # Returns
-    ///
-    /// Domain SearchQuery value object
     ///
     /// # Errors
     ///

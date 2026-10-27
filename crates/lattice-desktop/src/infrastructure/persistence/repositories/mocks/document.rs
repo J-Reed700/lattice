@@ -189,20 +189,6 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
 ///
 /// Implements both `RepositoryPort<Document>` and `DocumentRepositoryPort`
 /// for comprehensive testing without database dependencies.
-///
-/// # Example
-///
-/// ```rust
-/// use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
-/// use lattice_core::application::ports::{RepositoryPort, DocumentRepositoryPort};
-///
-/// let mock = Arc::new(MockDocumentRepository::new());
-/// let repo: Arc<dyn RepositoryPort<Document> + DocumentRepositoryPort> = mock;
-///
-/// // Use in tests
-/// repo.save(&document).await?;
-/// let found = repo.find_by_id(doc.id()).await?;
-/// ```
 pub struct MockDocumentRepository {
     documents: Arc<RwLock<HashMap<String, Document>>>,
     paths: Arc<RwLock<HashMap<String, String>>>, // file_path -> id

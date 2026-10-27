@@ -293,8 +293,8 @@ mod chunking {
         }
         assert_eq!(chunks.last().unwrap().end_line, 1_000);
 
-        // A line longer than a chunk used to be clipped at 500 characters.
-        // It is indexed whole, in parts that each point at that line.
+        // A line longer than a chunk is indexed whole, in parts that each point at
+        // that line.
         let long = format!("short\n{}\nafter\n", "y".repeat(10_000));
         let chunks = chunk_text(&long);
         let parts: Vec<&Chunk> = chunks
@@ -395,8 +395,7 @@ mod rules {
         assert_eq!(status.state, FolderIndexState::TooLarge);
         assert_eq!(status.files_total, 8);
         let message = status.message.unwrap();
-        // Indexed up to the bound, the rest counted; a folder one file past
-        // the bound used to have nothing indexed at all.
+        // Indexed up to the bound, with the rest counted.
         assert!(
             message.contains("5 of 8 files are indexed")
                 && message.contains("other 3")

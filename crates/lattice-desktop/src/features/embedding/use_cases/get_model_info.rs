@@ -5,20 +5,6 @@
 //! This use case orchestrates:
 //! 1. Model information retrieval from embedding service
 //! 2. Metadata formatting
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
-//!
-//! # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let info = use_case.execute().await?;
-//! println!("Model: {}", info.model_name);
-//! println!("Dimension: {}", info.dimension);
-//! println!("Max tokens: {}", info.max_tokens);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -49,44 +35,15 @@ pub struct GetEmbeddingModelInfoUseCase {
 
 impl GetEmbeddingModelInfoUseCase {
     /// Create a new get embedding model info use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `embedding_service` - Service for embedding generation
     pub fn new(embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self { embedding_service }
     }
 
     /// Execute model info retrieval.
     ///
-    /// # Returns
-    ///
-    /// Model metadata including name, dimension, and max tokens
-    ///
     /// # Errors
     ///
     /// Returns error if model information cannot be retrieved
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
-    /// # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let info = use_case.execute().await?;
-    ///
-    /// println!("Model Information:");
-    /// println!("  Name: {}", info.model_name);
-    /// println!("  Dimension: {}", info.dimension);
-    /// println!("  Max Tokens: {}", info.max_tokens);
-    ///
-    /// // Use info to validate embeddings
-    /// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
-    /// if info.dimension != DEFAULT_EMBEDDING_DIM {
-    ///     println!("Warning: Unexpected dimension!");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(&self) -> Result<EmbeddingModelInfoDto> {
         // 1. Get dimension from embedding service
         let dimension = self.embedding_service.dimension();

@@ -7,21 +7,6 @@
 //! 2. Embedding service availability check
 //! 3. LLM readiness, as the caller reports it
 //! 4. Overall system status determination
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::health::HealthCheckUseCase;
-//!
-//! # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute(false).await?;
-//! println!("System status: {}", response.status);
-//! println!("Database: {}", response.database);
-//! println!("Embedding: {}", response.embedding_model);
-//! println!("LLM: {}", response.llm);
-//! # Ok(())
-//! # }
-//! ```
 
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -53,27 +38,6 @@ pub struct HealthCheckUseCase {
 
 impl HealthCheckUseCase {
     /// Create a new health check use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `db_pool` - SQLite connection pool
-    /// * `embedding_service` - Service for generating embeddings
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::application::use_cases::health::HealthCheckUseCase;
-    /// # use std::sync::Arc;
-    /// # use sqlx::SqlitePool;
-    /// # use lattice_core::application::ports::EmbeddingPort;
-    ///
-    /// # async fn example(
-    /// #     pool: SqlitePool,
-    /// #     embedder: Arc<dyn EmbeddingPort>,
-    /// # ) {
-    /// let use_case = HealthCheckUseCase::new(pool, embedder);
-    /// # }
-    /// ```
     pub fn new(db_pool: SqlitePool, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self {
             db_pool,
@@ -86,33 +50,11 @@ impl HealthCheckUseCase {
     /// `llm_ready` is whether a language model is loaded and not degraded;
     /// it is reported as given.
     ///
-    /// # Returns
-    ///
-    /// Health check response with status of all services
-    ///
     /// # Errors
     ///
     /// This operation is designed to never fail. Individual service failures
     /// are captured in the response as `false` values, but the overall
     /// health check always returns a response.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::health::HealthCheckUseCase;
-    /// # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let response = use_case.execute(false).await?;
-    ///
-    /// if response.status == "healthy" {
-    ///     println!("All systems operational");
-    /// } else if response.status == "degraded" {
-    ///     println!("Some systems unavailable");
-    /// } else {
-    ///     println!("Critical systems down");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(&self, llm_ready: bool) -> Result<HealthCheckResponseDto> {
         // 1. Check database health
         let db_healthy = self.check_database().await;
@@ -158,12 +100,6 @@ impl HealthCheckUseCase {
     /// - "healthy": Database and embedding service are both healthy (LLM is optional)
     /// - "degraded": Database is healthy but embedding service is not
     /// - "unhealthy": Database is not healthy (critical failure)
-    ///
-    /// # Arguments
-    ///
-    /// * `db_healthy` - Database health status
-    /// * `embedding_healthy` - Embedding service health status
-    /// * `llm_healthy` - LLM service health status (currently unused in logic)
     fn determine_status(
         &self,
         db_healthy: bool,

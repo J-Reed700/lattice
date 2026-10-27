@@ -90,11 +90,9 @@ pub(crate) async fn judge<T>(
                     cause: error.to_string(),
                 })
             }
-            // The backend's own refusal, by its exact count, of a prompt the
-            // planner's estimate let through: nothing was sent either, and the
-            // caller shrinks what it shows as it does for the planner's.
-            // Unread binary text (a PDF saved as a page) measured at half its
-            // tokens by the estimate, and this ended the lesson job.
+            // The backend's own refusal of a prompt the planner's estimate let
+            // through: nothing was sent, and the caller shrinks what it shows as it
+            // does for the planner's.
             Err(GroundedGenerationError::Model(
                 error @ crate::shared::error::AppError::PromptExceedsWindow { .. },
             )) => {

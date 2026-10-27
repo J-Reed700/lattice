@@ -243,7 +243,7 @@ mod tests {
         assert!(!prompt.contains("Section headings"));
     }
 
-    /// The list used to stop at 24 headings. Every heading is listed.
+    /// Every heading is listed.
     #[test]
     fn document_prompt_lists_every_heading() {
         let many: Vec<String> = (0..80).map(|i| format!("Heading {i}")).collect();

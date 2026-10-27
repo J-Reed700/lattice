@@ -355,12 +355,8 @@ async fn test_generate_web_search_query_normalizes_prefix() {
     );
 }
 
-/// The turn in the log: asked for crops beyond the ones they already grow,
-/// the model answered with the reader's list copied back out. The old cap
-/// cut that to its first twenty-four words and searched for it, ending on
-/// a dangling "continuous" — and a search engine given a paragraph matches
-/// on one common word, so the sources came back including the dictionary
-/// definition of "indoor".
+/// A reply that copies the reader's own list back out is not searched as a
+/// paragraph: a search engine matches a paragraph on one common word.
 #[tokio::test]
 async fn test_generate_web_search_query_rejects_a_retelling() {
     let mock_llm = Arc::new(MockLLM::new(

@@ -40,12 +40,8 @@ async fn start_one(
         .expect("start download")
 }
 
-/// Pausing must leave the session in `Paused`. It used to reach the task's
-/// stop branch, which unconditionally ran `session.cancel()` — and since
-/// `Paused → Cancelled` is a legal transition, the row ended up
-/// `Cancelled`. `resume_download` only accepts `Paused | Failed`, so
-/// resume then refused forever and the only working button, retry,
-/// deletes the partial file.
+/// Pausing leaves the session `Paused`, not `Cancelled`, so
+/// `resume_download` (which accepts `Paused | Failed`) can resume it.
 #[tokio::test]
 async fn pausing_leaves_the_session_paused_and_resumable() {
     let repository = Arc::new(MockDownloadRepository::new());

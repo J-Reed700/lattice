@@ -1,17 +1,8 @@
-//! The working-summary fold and its budget gate (§7.3 steps 8-9, §15).
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §7.3, §15.
-//!
-//! The summary is generated, fallible assistant context. It is capped
-//! independently of the ledger, and it is measured against the **continuation**
-//! model's pool rather than the utility model's window: the utility model could
-//! happily return four thousand tokens of prose that will not fit the prompt it
-//! is meant to travel in. The caller injects the token counter for that reason
-//! — this module must not invent its own accounting.
-//!
-//! An oversized or empty candidate gets exactly one bounded regeneration and is
-//! then rejected. Persisting it and hoping the next turn shrinks it would leave
-//! a prompt that cannot be built at all.
+//! The working-summary fold and its budget gate (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §7.3, §15). The summary is
+//! measured against the continuation model's pool with an injected counter,
+//! not the utility model's window. An oversized or empty candidate gets one
+//! bounded regeneration and is then rejected.
 
 use tracing::{debug, warn};
 
@@ -205,14 +196,9 @@ pub async fn fold_summary(
 /// How much of the new passages a fold carries forward: a quarter.
 const NEW_TEXT_SHARE: usize = 4;
 
-/// The summary a fold asks for: the previous summary carried whole and a
-/// quarter of what the new passages add, never under the smallest useful
-/// summary and never over `pool`, what the next turn can carry.
-///
-/// Sized from the pool alone, a two-line exchange was asked for a tenth of
-/// the continuation window (4.9K tokens on a 32K window, 39K on a 262K one)
-/// with half as much again of answer room, which held the model for minutes
-/// after every answer and ran the job past its deadline.
+/// The summary a fold asks for: the previous summary whole plus a quarter of
+/// what the new passages add, never under the smallest useful summary and
+/// never over `pool`, so a short exchange is not asked for a long summary.
 fn summary_target(previous_tokens: usize, new_tokens: usize, pool: usize) -> usize {
     previous_tokens
         .saturating_add(new_tokens / NEW_TEXT_SHARE)
@@ -270,14 +256,9 @@ struct FoldPiece<'a> {
     text: String,
 }
 
-/// Split the passages into fold steps that each fit `room_chars`. Never
-/// called with none.
-///
-/// One step is the common case. A very long processed range becomes several,
-/// each rewriting the running summary, which is lossier than a single pass and
-/// is the reason the fold is paged rather than the input truncated. A message
-/// longer than a whole step is split into marked parts, every part folded in
-/// turn, so nothing past its opening is lost to the summary.
+/// Splits the passages into fold steps that each fit `room_chars`; never
+/// called with none. Paged rather than truncated: a message longer than a step
+/// is folded in marked parts, so nothing is lost.
 fn plan_fold(passages: &[SourceMessage], room_chars: usize) -> Vec<Vec<FoldPiece<'_>>> {
     let framing = chars_within_tokens(PASSAGE_FRAMING_TOKENS, 4.0);
     let room = room_chars.max(framing + 1);
@@ -359,8 +340,7 @@ mod tests {
         );
     }
 
-    /// A long message used to reach the summariser as its first 4,000
-    /// characters. It is now folded in parts, and every character arrives.
+    /// A long message is folded in parts, and every character arrives.
     #[test]
     fn a_message_longer_than_a_step_is_folded_in_marked_parts_with_nothing_lost() {
         let long: String = (0..3_000).map(|index| format!("w{index} ")).collect();

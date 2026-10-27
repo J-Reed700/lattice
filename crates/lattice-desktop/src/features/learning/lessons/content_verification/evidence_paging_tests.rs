@@ -985,10 +985,8 @@ fn strict_checker(
     )
 }
 
-/// The course eval of 2026-10-21 sized its claim checks by the estimate,
-/// which its pages ran past by thousands of tokens: nearly every check was
-/// refused and asked again. A check sized by the count of what it sends is
-/// never refused, and keeps its answer's room.
+/// A check sized by the count of what it sends is never refused, and keeps
+/// its answer's room.
 #[tokio::test]
 async fn a_claim_check_is_sized_by_the_count_of_what_it_sends() -> Result<()> {
     use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;

@@ -3,36 +3,6 @@
 //! Provides a standardized result wrapper for IPC gateway responses.
 //! This module defines the `ApiResult<T>` type that wraps all gateway responses
 //! in a consistent format with success/error discrimination and structured error codes.
-//!
-//! ## Design Principles
-//!
-//! - **Consistent Structure**: All responses follow `{ ok: bool, data?: T, error?: ApiError }` format
-//! - **Type-Safe**: Uses Rust's type system for compile-time safety
-//! - **Serializable**: Untagged enum for clean JSON serialization
-//! - **Error Codes**: Comprehensive error categorization for frontend handling
-//! - **Details Preservation**: Optional error details for debugging without exposing internals
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-//!
-//! // Success response
-//! let result = ApiResult::success(vec![1, 2, 3]);
-//! // Serializes to: { "ok": true, "data": [1, 2, 3] }
-//!
-//! // Error response
-//! let error = ApiResult::<()>::error(ErrorCode::NotFound, "Document not found");
-//! // Serializes to: { "ok": false, "error": { "code": "NOT_FOUND", "message": "..." } }
-//!
-//! // Error with details
-//! let error = ApiResult::<()>::error_with_details(
-//!     ErrorCode::ValidationError,
-//!     "Invalid input",
-//!     "Field 'email' is required"
-//! );
-//! // Serializes to: { "ok": false, "error": { "code": "VALIDATION_ERROR", "message": "...", "details": "..." } }
-//! ```
 
 use crate::shared::error::AppError;
 use crate::shared::error::{ApplicationError, DomainError};
@@ -49,17 +19,6 @@ mod conversions;
 ///
 /// - Success: `{ "ok": true, "data": <T> }`
 /// - Error: `{ "ok": false, "error": { "code": "...", "message": "...", "details"?: "..." } }`
-///
-/// # Examples
-///
-/// ```rust
-/// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-/// let success = ApiResult::success("hello");
-/// assert!(success.is_ok());
-///
-/// let error = ApiResult::<String>::error(ErrorCode::NotFound, "Not found");
-/// assert!(!error.is_ok());
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(untagged)]
 pub enum ApiResult<T> {
@@ -81,27 +40,11 @@ pub enum ApiResult<T> {
 
 impl<T> ApiResult<T> {
     /// Creates a success result.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::ApiResult;
-    /// let result = ApiResult::success(42);
-    /// assert!(result.is_ok());
-    /// ```
     pub fn success(data: T) -> Self {
         Self::Success { ok: true, data }
     }
 
     /// Creates an error result without details.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-    /// let result = ApiResult::<()>::error(ErrorCode::NotFound, "Resource not found");
-    /// assert!(!result.is_ok());
-    /// ```
     pub fn error(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::Error {
             ok: false,
@@ -114,18 +57,6 @@ impl<T> ApiResult<T> {
     }
 
     /// Creates an error result with additional details.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::{ApiResult, ErrorCode};
-    /// let result = ApiResult::<()>::error_with_details(
-    ///     ErrorCode::ValidationError,
-    ///     "Invalid request",
-    ///     "Field 'name' is required"
-    /// );
-    /// assert!(!result.is_ok());
-    /// ```
     pub fn error_with_details(
         code: ErrorCode,
         message: impl Into<String>,
@@ -142,22 +73,6 @@ impl<T> ApiResult<T> {
     }
 
     /// Creates an ApiResult from a standard Result.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::ApiResult;
-    /// # use lattice_core::application::error::ApplicationError;
-    /// let ok: Result<i32, ApplicationError> = Ok(42);
-    /// let result = ApiResult::from_result(ok);
-    /// assert!(result.is_ok());
-    ///
-    /// let err: Result<i32, ApplicationError> = Err(ApplicationError::InvalidConfig {
-    ///     details: "Bad config".to_string(),
-    /// });
-    /// let result = ApiResult::from_result(err);
-    /// assert!(!result.is_ok());
-    /// ```
     pub fn from_result<E>(result: Result<T, E>) -> Self
     where
         E: Into<ApiError>,
@@ -175,39 +90,11 @@ impl<T> ApiResult<T> {
     }
 
     /// Returns true if this is a success result.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::ApiResult;
-    /// let success = ApiResult::success(42);
-    /// assert!(success.is_ok());
-    ///
-    /// let error = ApiResult::<i32>::error(
-    ///     lattice_core::shared::ipc::ErrorCode::NotFound,
-    ///     "Not found"
-    /// );
-    /// assert!(!error.is_ok());
-    /// ```
     pub fn is_ok(&self) -> bool {
         matches!(self, Self::Success { .. })
     }
 
     /// Returns true if this is an error result.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use lattice_core::shared::ipc::ApiResult;
-    /// let success = ApiResult::success(42);
-    /// assert!(!success.is_err());
-    ///
-    /// let error = ApiResult::<i32>::error(
-    ///     lattice_core::shared::ipc::ErrorCode::NotFound,
-    ///     "Not found"
-    /// );
-    /// assert!(error.is_err());
-    /// ```
     pub fn is_err(&self) -> bool {
         matches!(self, Self::Error { .. })
     }
@@ -229,17 +116,6 @@ impl<T> ApiResult<T> {
 ///
 /// Contains an error code for programmatic handling, a human-readable message,
 /// and optional details for debugging.
-///
-/// # Examples
-///
-/// ```rust
-/// # use lattice_core::shared::ipc::{ApiError, ErrorCode};
-/// let error = ApiError {
-///     code: ErrorCode::NotFound,
-///     message: "Document not found".to_string(),
-///     details: Some("ID: doc-123".to_string()),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ApiError {
     /// Error code for programmatic handling
@@ -260,15 +136,6 @@ pub struct ApiError {
 ///
 /// Error codes serialize to SCREAMING_SNAKE_CASE for consistency with typical
 /// API conventions.
-///
-/// # Examples
-///
-/// ```rust
-/// # use lattice_core::shared::ipc::ErrorCode;
-/// let code = ErrorCode::NotFound;
-/// let json = serde_json::to_string(&code).unwrap();
-/// assert_eq!(json, "\"NOT_FOUND\"");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
@@ -385,16 +252,6 @@ pub enum ErrorCode {
 /// - Connection strings
 /// - Table/column names that might reveal schema
 /// - Specific error codes that could aid attackers
-///
-/// # Examples
-///
-/// ```rust
-/// # use lattice_core::shared::ipc::sanitize_database_error;
-/// let error = "error in SQL: SELECT * FROM users WHERE password = 'secret'";
-/// let sanitized = sanitize_database_error(error);
-/// assert!(!sanitized.contains("SELECT"));
-/// assert!(!sanitized.contains("secret"));
-/// ```
 pub(crate) fn sanitize_database_error(msg: &str) -> String {
     // Remove SQL queries (anything between quotes or after "SQL:")
     let msg = msg.split("SQL:").next().unwrap_or(msg);

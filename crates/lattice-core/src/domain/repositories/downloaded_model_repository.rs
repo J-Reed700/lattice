@@ -37,28 +37,12 @@ use async_trait::async_trait;
 pub trait DownloadedModelRepository: Send + Sync {
     /// Delete a downloaded model by its model_id
     ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The unique model identifier
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) if the model was deleted successfully, or if it didn't exist
-    ///
     /// # Errors
     ///
     /// Returns error if the database operation fails
     async fn delete(&self, model_id: &str) -> Result<()>;
 
     /// Find a downloaded model by its model_id
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The unique model identifier
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if found, None otherwise
     ///
     /// # Errors
     ///
@@ -67,25 +51,12 @@ pub trait DownloadedModelRepository: Send + Sync {
 
     /// List all downloaded models
     ///
-    /// # Returns
-    ///
-    /// A vector of all downloaded models
-    ///
     /// # Errors
     ///
     /// Returns error if the database operation fails
     async fn list(&self) -> Result<Vec<DownloadedModel>>;
 
     /// Delete a downloaded model by model_id if it's not the active model
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The unique model identifier
-    /// * `active_model_id` - The currently active model ID (will not delete if matches)
-    ///
-    /// # Returns
-    ///
-    /// Ok(true) if deleted, Ok(false) if not deleted (because it's active)
     ///
     /// # Errors
     ///
@@ -97,10 +68,6 @@ pub trait DownloadedModelRepository: Send + Sync {
     ) -> Result<bool>;
 
     /// Find a downloaded model by its record id (not its model_id)
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if found, None otherwise
     async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>>;
 
     /// Insert or update a downloaded model record
@@ -117,11 +84,6 @@ pub trait DownloadedModelRepository: Send + Sync {
 
     /// Delete a downloaded model by its record id unless it is active for
     /// chat or embedding, in one atomic statement
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) with the deleted model, or None if no record
-    /// has this id (deleting is idempotent)
     ///
     /// # Errors
     ///

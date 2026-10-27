@@ -155,10 +155,8 @@ fn a_claim_joining_two_far_apart_facts_is_shown_both() {
     assert!(parts.iter().all(|part| part.text.chars().count() <= 4_000));
 }
 
-/// A page longer than one judge call is split across calls, not cut: the
-/// one passage that supports the claim, deep in the page, is in some part.
-/// The old evidence held three windows and 4,000 characters, so support
-/// outside the three best-scoring windows was never seen.
+/// A page longer than one judge call is split across calls, not cut: the one
+/// passage that supports the claim, deep in the page, is in some part.
 #[test]
 fn support_deep_in_a_long_page_reaches_the_judge_in_a_later_part() {
     let page = format!(
@@ -357,10 +355,8 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     assert!(request.reasoning_effort.is_none());
     // No clock cuts a judge call off: stall detection and shutdown do.
     assert!(request.no_time_limit);
-    // A verdict is a classification. Sampling one from the chat model's
-    // distribution made the same claim against the same passage come back
-    // supported, unsupported and contradicted across repeats of one request;
-    // the explanation follows the first label without changing that signal.
+    // A verdict is a classification, so it is not sampled from the chat model's
+    // distribution; the explanation follows the first label.
     let sampling = request.sampling.expect("the judge sets its own sampling");
     assert_eq!(sampling.temperature, Some(0.0));
     assert_eq!(sampling.top_k, Some(1));
@@ -525,9 +521,8 @@ fn evidence_room_follows_the_judge_window() {
     assert!(room > 8_000 && room < 12_288, "got {room}");
 }
 
-/// A paraphrase shares no words with its source. Its windows used to be
-/// dropped, so a long source that supported it in other words was reported
-/// as having no text at all. Every window is judged now, scored ones first.
+/// A paraphrase shares no words with its source, so every window is judged,
+/// scored ones first.
 #[test]
 fn a_paraphrase_with_no_shared_words_still_reaches_the_judge() {
     let page = format!(
@@ -601,9 +596,8 @@ impl LLMPort for OrderingLlm {
     }
 }
 
-/// A claim citing a long page used to be judged part after part before the
-/// claims after it got a call, so they waited on every part of it. Every
-/// claim's best part goes first now.
+/// Every claim's best part goes first, so claims after one citing a long page
+/// do not wait on all of its parts.
 #[tokio::test]
 async fn every_claims_best_part_is_judged_before_any_claims_second() {
     let llm = Arc::new(OrderingLlm {

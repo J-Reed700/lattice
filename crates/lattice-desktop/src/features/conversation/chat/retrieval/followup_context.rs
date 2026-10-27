@@ -52,13 +52,9 @@ impl FollowupDocument {
 }
 
 /// Whether what the conversation already read of the document under
-/// discussion (its name and the passages cited from it) shares a term with
-/// the follow-up.
-///
-/// The cited passages, not the whole text: a whole book shares some term with
-/// almost any question, so testing all of it stopped the gate filtering at
-/// all, and it built a token set of the entire book every turn. The scan
-/// stops at the first anchor it meets.
+/// discussion shares a term with the follow-up: its name and the passages
+/// cited from it, not the whole text, which shares a term with almost any
+/// question.
 fn document_mentions_an_anchor(
     file_name: &str,
     passages: &[String],
@@ -127,8 +123,7 @@ pub(super) async fn build_followup_context(
     llm: &Arc<dyn LLMPort>,
     excerpt_chars: usize,
 ) -> Option<(FollowupDocument, Vec<SourceDto>)> {
-    // No room for the document is no document: a fixed excerpt in its place
-    // overran the budget it was given.
+    // No room for the document means no document.
     if token_budget == 0 {
         return None;
     }
@@ -406,8 +401,8 @@ mod followup_label_tests {
         }
     }
 
-    /// The follow-up text was hardcoded as [1]; with a file attached to the
-    /// same message the attachment is [1] and the document is [2].
+    /// With a file attached to the same message, the attachment is [1] and the
+    /// document [2].
     #[test]
     fn a_followup_behind_an_attachment_is_labelled_two() {
         let mut sources = vec![source("attached"), source("earlier")];
@@ -452,9 +447,8 @@ mod tests {
         ));
     }
 
-    /// The whole text of a book shares some word with almost any question,
-    /// so testing all of it never filtered anything. Only what was cited
-    /// from it counts.
+    /// Only what was cited from a book counts toward the follow-up gate, not its
+    /// whole text.
     #[test]
     fn a_term_only_elsewhere_in_the_book_does_not_keep_it() {
         assert!(!document_mentions_an_anchor(

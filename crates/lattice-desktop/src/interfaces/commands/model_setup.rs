@@ -112,68 +112,10 @@ pub async fn download_default_embedding_model_impl(
 /// real-time progress updates via events, validates downloaded file integrity, and
 /// handles network errors gracefully with retry logic.
 ///
-/// # Arguments
-///
-/// * `model_id` - Unique identifier of the model to download (e.g., "llama-3-8b")
-/// * `container` - Service container with use cases
-///
-/// # Returns
-///
-/// * `Ok(DownloadModelResponseDto)` - Download completion status with path
-/// * `Err(AppError)` - If download fails or verification fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Model ID invalid or not in catalog
 /// * `AppError::Other` - Network error, storage full, or integrity check failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-/// import { listen } from '@tauri-apps/api/event';
-///
-/// interface DownloadProgress {
-///   modelId: string;
-///   bytesDownloaded: number;
-///   totalBytes: number;
-///   percentComplete: number;
-///   downloadSpeed: number;      // Bytes per second
-///   estimatedTimeRemaining: number; // Seconds
-/// }
-///
-/// interface DownloadComplete {
-///   modelId: string;
-///   path: string;
-///   sizeBytes: number;
-///   downloadTimeSeconds: number;
-/// }
-///
-/// // Listen for progress updates using the unified download:progress event
-/// const unlisten = await listen<DownloadStateSnapshot>('download:progress', (event) => {
-///   const snapshot = event.payload;
-///   if (snapshot.kind === 'single') {
-///     console.log(`Downloading ${snapshot.filename}: ${snapshot.percentage}%`);
-///     console.log(`Speed: ${(snapshot.bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s`);
-///     console.log(`ETA: ${snapshot.etaSeconds}s`);
-///   }
-/// });
-///
-/// try {
-///   // Start download
-///   const result = await invoke<DownloadComplete>('download_model', {
-///     modelId: 'llama-3-8b'
-///   });
-///
-///   console.log(`Download complete: ${result.path}`);
-///   console.log(`Downloaded in ${result.downloadTimeSeconds}s`);
-///   console.log(`Size: ${(result.sizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
-/// } catch (error) {
-///   console.error('Download failed:', error);
-/// } finally {
-///   unlisten();
-/// }
-/// ```
 ///
 /// # Download Process
 ///
@@ -200,29 +142,9 @@ pub async fn download_default_embedding_model_impl(
 /// - **Path Validation**: Downloads only to safe, validated paths (CWE-22)
 /// - **Size Limits**: Rejects downloads exceeding maximum size (100GB)
 ///
-/// # Performance
-///
-/// **Download Speeds** (typical):
-/// - **Small Models** (<5GB): 2-5 minutes on 100Mbps connection
-/// - **Medium Models** (5-15GB): 5-15 minutes on 100Mbps connection
-/// - **Large Models** (15-50GB): 15-60 minutes on 100Mbps connection
-/// - **Ultra Models** (>50GB): 1+ hours on 100Mbps connection
-///
-/// **Resource Usage**:
-/// - **Memory**: ~100-200MB for download buffer
-/// - **Disk I/O**: Sequential writes, minimal system impact
-/// - **Network**: Sustained download, may affect other network operations
-///
 /// # Architecture
 ///
 /// Thin controller delegating to `DownloadModelUseCase`.
-///
-/// # Command Flow
-///
-/// 1. Get use case from container
-/// 2. Create request DTO with model ID
-/// 3. Execute download (validate, download, verify)
-/// 4. Return DownloadModelResponseDto with path
 ///
 /// # Note
 ///

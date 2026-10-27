@@ -44,31 +44,8 @@ impl Default for CircuitBreakerConfig {
     }
 }
 
-/// Circuit breaker implementation.
-///
-/// Thread-safe circuit breaker that protects external LLM service calls from
-/// cascading failures. Uses RwLock for efficient concurrent access.
-///
-/// # Example
-///
-/// ```no_run
-/// use lattice::features::llm::engine::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
-///
-/// let result = cb.call(async {
-///     // Make external API call
-///     Ok::<_, String>("response".to_string())
-/// }).await;
-///
-/// match result {
-///     Ok(response) => println!("Success: {}", response),
-///     Err(e) => eprintln!("Error: {:?}", e),
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Thread-safe circuit breaker protecting external LLM service calls from
+/// cascading failures.
 #[derive(Clone)]
 pub struct CircuitBreaker {
     state: Arc<RwLock<CircuitBreakerState>>,
@@ -96,15 +73,7 @@ impl CircuitBreaker {
         }
     }
 
-    /// Execute a future with circuit breaker protection.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Async function to execute
-    ///
-    /// # Returns
-    ///
-    /// Returns the result from `f` or a circuit breaker error if the circuit is open.
+    /// Runs `f` under the circuit breaker.
     ///
     /// # Errors
     ///

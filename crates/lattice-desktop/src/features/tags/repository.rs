@@ -1,17 +1,5 @@
-//! Tag Repository Implementation
-//!
-//! Infrastructure implementation for tag persistence using SQLite.
-//!
-//! # Architecture
-//!
-//! This repository implements the `RepositoryPort<TagEntity>` trait,
-//! providing CRUD operations for tags using SQLite. All database
-//! operations go through the TagMapper layer to maintain clean
-//! separation between domain entities and database models.
-//!
-//! # Migration Notes
-//!
-//! - DB models are now internal and NOT exported
+//! SQLite tag persistence implementing `RepositoryPort<TagEntity>`, through
+//! the `TagMapper` layer; DB models stay internal.
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
@@ -64,23 +52,11 @@ pub struct TagRepository {
 
 impl TagRepository {
     /// Create a new tag repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Find tag by name (case-insensitive).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Tag name
-    ///
-    /// # Returns
-    ///
-    /// `Some(TagEntity)` if found, `None` if not found.
     ///
     /// # Errors
     ///
@@ -110,15 +86,6 @@ impl TagRepository {
     /// If a tag with the given name exists, it is returned. Otherwise, a new
     /// tag is created with the provided name and color.
     ///
-    /// # Arguments
-    ///
-    /// * `name` - Tag name
-    /// * `color` - Optional color (defaults to "#6366f1")
-    ///
-    /// # Returns
-    ///
-    /// The existing or newly created tag entity.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
@@ -140,10 +107,6 @@ impl TagRepository {
     }
 
     /// Get all tags with document counts.
-    ///
-    /// # Returns
-    ///
-    /// Vector of tuples (tag, document_count) ordered by name.
     ///
     /// # Errors
     ///
@@ -187,16 +150,6 @@ impl TagRepository {
 
     /// Update tag (name and/or color).
     ///
-    /// # Arguments
-    ///
-    /// * `tag_id` - Tag ID
-    /// * `name` - Optional new name
-    /// * `color` - Optional new color
-    ///
-    /// # Returns
-    ///
-    /// Updated tag entity.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if tag doesn't exist
@@ -230,14 +183,6 @@ impl TagRepository {
 
     /// Get or create tags in batch.
     ///
-    /// # Arguments
-    ///
-    /// * `tag_names` - Tag names
-    ///
-    /// # Returns
-    ///
-    /// Vector of tag entities.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if operations fail
@@ -254,15 +199,6 @@ impl TagRepository {
     ///
     /// Creates tag and returns it on success. If tag with same name exists,
     /// updates its color and returns the updated tag.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Tag name
-    /// * `color` - Optional color (defaults to "#6366f1")
-    ///
-    /// # Returns
-    ///
-    /// The newly created or updated tag entity.
     ///
     /// # Errors
     ///
@@ -309,10 +245,6 @@ impl TagRepository {
     ///
     /// This method exists for API compatibility with tag service.
     ///
-    /// # Returns
-    ///
-    /// Vector of all tag entities ordered by name.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
@@ -323,10 +255,6 @@ impl TagRepository {
     /// Delete a tag by ID (wrapper for RepositoryPort::delete).
     ///
     /// This method exists for API compatibility with tag service.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Tag ID to delete
     ///
     /// # Errors
     ///

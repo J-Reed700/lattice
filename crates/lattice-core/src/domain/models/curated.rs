@@ -14,17 +14,6 @@
 //! - License compatibility
 //! - Community adoption
 //! - Quantization availability
-//!
-//! ## Example
-//!
-//! ```rust
-//! use lattice_core::domain::models::curated::get_curated_llm_models;
-//!
-//! let llms = get_curated_llm_models();
-//! for model in llms {
-//!     println!("{}: {} GB", model.name, model.size_gb);
-//! }
-//! ```
 
 use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 
@@ -59,12 +48,6 @@ pub fn get_all_curated_models() -> Vec<ModelMetadata> {
 }
 
 /// Get curated models by category.
-///
-/// # Arguments
-/// - `category` - Model category to filter by
-///
-/// # Returns
-/// List of models in the specified category.
 pub fn get_curated_models_by_category(category: ModelCategory) -> Vec<ModelMetadata> {
     match category {
         ModelCategory::LLM => get_curated_llm_models(),
@@ -78,21 +61,6 @@ pub fn get_curated_models_by_category(category: ModelCategory) -> Vec<ModelMetad
 ///
 /// Searches all curated model lists (chat, embedding, OCR) to find the matching
 /// model and return its category.
-///
-/// # Arguments
-/// * `model_id` - The model identifier (case-insensitive)
-///
-/// # Returns
-/// * `Some(ModelCategory)` if found in any curated list
-/// * `None` if not found in catalog
-///
-/// # Example
-/// ```
-/// use crate::domain::models::curated::{get_model_category_by_id, ModelCategory};
-///
-/// let category = get_model_category_by_id("qwen3-embedding-0.6b");
-/// assert_eq!(category, Some(ModelCategory::Embedding));
-/// ```
 pub fn get_model_category_by_id(model_id: &str) -> Option<ModelCategory> {
     let normalized_id = model_id.to_lowercase();
 

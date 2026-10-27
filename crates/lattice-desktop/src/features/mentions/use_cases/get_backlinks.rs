@@ -8,13 +8,6 @@
 //! # Security
 //! - Validates document ID to prevent injection
 //! - Rate limited to prevent enumeration attacks
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetBacklinksUseCase::new(mention_repo);
-//! let backlinks = use_case.execute("doc123".into()).await?;
-//! println!("Document referenced by {} other documents", backlinks.backlinks.len());
-//! ```
 
 use crate::features::mentions::dto::BacklinksResultDto;
 use lattice_core::application::ports::MentionRepositoryPort;

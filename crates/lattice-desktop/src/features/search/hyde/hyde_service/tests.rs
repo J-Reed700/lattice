@@ -52,9 +52,7 @@ impl MockLLM {
     }
 }
 
-/// A web-only turn needs the turn's type and nothing else. Working that out
-/// must not cost a model call — the expansion it used to generate alongside
-/// took the utility model over five seconds and nothing read it.
+/// A web-only turn needs the turn's type and nothing else, at no model call.
 #[tokio::test]
 async fn classifying_a_first_question_never_calls_the_model() {
     let mock_llm = Arc::new(MockLLM::new("Should not be called"));

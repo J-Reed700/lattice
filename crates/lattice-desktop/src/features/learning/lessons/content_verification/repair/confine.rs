@@ -1,15 +1,8 @@
 //! A repair changes only the failed sentences (claim sources design §10).
-//!
-//! Every sentence of the section under repair that a live claim stands on and
-//! that is not a target of this repair is *protected*: verified, confirmed,
-//! accepted, queued or simply not sent. [`confine`] compares the repaired
-//! section with the section as it was, sentence by sentence, and keeps a
-//! change only where it touches a failed sentence: any other change is
-//! reverted to the bytes it had, a change that rewrites a failed and a
+//! [`confine`] compares the repaired section sentence by sentence: a change
+//! outside the failed sentences is reverted, one that rewrites a failed and a
 //! protected sentence together rejects the repair, and every protected
-//! sentence must come out byte-identical. The model's edit and the
-//! regenerated-section fallback are confined the same way, and so is the
-//! teaching review's rewrite after a repair.
+//! sentence must come out byte-identical. Every rewrite path is confined so.
 
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;

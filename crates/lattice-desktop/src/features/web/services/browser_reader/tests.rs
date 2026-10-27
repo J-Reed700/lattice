@@ -111,9 +111,8 @@ fn piece(part: usize, parts: usize, snapshot: &str, text: &str) -> Report {
     }
 }
 
-/// A page's text used to be cut at 60,000 UTF-16 units before it was
-/// sent. It now goes in parts, which arrive in any order and more than
-/// once, and come back together whole.
+/// A page's text goes in parts, which arrive in any order and more than once,
+/// and come back together whole.
 #[test]
 fn a_report_sent_in_parts_comes_back_whole() {
     let mut assembly = Assembly::default();
@@ -166,9 +165,8 @@ fn parts_of_two_readings_are_never_joined() {
     assert_eq!(whole.text, "new start new end");
 }
 
-/// Time running out partway through a long page used to throw away every
-/// part that had arrived. What arrived is kept, and each missing part is
-/// marked where it belongs.
+/// When time runs out partway through a long page, what arrived is kept, and
+/// each missing part is marked where it belongs.
 #[test]
 fn what_arrived_before_the_timeout_is_kept_with_the_gaps_marked() {
     let mut assembly = Assembly::default();

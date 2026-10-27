@@ -1,21 +1,4 @@
-//! Get System Capabilities Use Case
-//!
 //! Detects hardware capabilities for model recommendation.
-//!
-//! # Purpose
-//!
-//! Retrieves system information (RAM, CPU, GPU) to help recommend
-//! appropriate LLM models based on available hardware resources.
-//!
-//! # Dependencies
-//! - `SystemInfoPort` - Hardware detection
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetSystemCapabilitiesUseCase::new(system_info_port);
-//! let caps = use_case.execute().await?;
-//! println!("Available RAM: {} GB", caps.available_ram_gb);
-//! ```
 
 use crate::features::llm::dto::{GpuInfoDto, SystemCapabilitiesDto};
 use lattice_core::application::ports::system_info::SystemInfoPort;

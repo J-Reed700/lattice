@@ -1,17 +1,11 @@
-//! Tool calls a model wrote into its text instead of making them.
+//! Tool calls a model wrote into its text instead of making them. Qwen3.6 on
+//! llama.cpp sometimes leaves out the `<tool_call>` opener (llama.cpp issue
+//! #30118), so the whole call arrives as content with a `stop` finish.
 //!
-//! A server reads a model's calls out of what it generates and returns them
-//! apart from its text. A call written in a shape the server does not expect
-//! comes back as text. Qwen3.6 on llama.cpp sometimes leaves out the
-//! `<tool_call>` opener (llama.cpp issue #30118), and the whole call then
-//! arrives as the reply's content, with no calls and a `stop` finish. Taken as
-//! the answer, it ended the turn on a call nobody ran.
-//!
-//! On a round that may call tools, a call written in Qwen's XML form, with or
-//! without its opener, or as Hermes JSON inside `<tool_call>`, is read back
-//! into the call it was meant to be and run like any other. Every call has to
-//! parse and name a tool the round offered, and nothing but calls may follow
-//! the first one, so an answer that only mentions a call stays an answer.
+//! On a round that may call tools, a call in Qwen's XML form or as Hermes JSON
+//! inside `<tool_call>` is read back and run. Every call must parse and name an
+//! offered tool, and only calls may follow the first, so an answer that only
+//! mentions a call stays an answer.
 
 use super::final_round::leaked_tool_call_start;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};

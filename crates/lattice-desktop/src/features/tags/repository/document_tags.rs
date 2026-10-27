@@ -12,14 +12,6 @@ use super::TagRepository;
 impl TagRepository {
     /// Get all tags for a document.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    ///
-    /// Vector of tag entities associated with the document.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
@@ -44,11 +36,6 @@ impl TagRepository {
 
     /// Add tag to document (idempotent).
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    /// * `tag_id` - Tag ID
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if insert fails
@@ -65,11 +52,6 @@ impl TagRepository {
     }
 
     /// Remove tag from document.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    /// * `tag_id` - Tag ID
     ///
     /// # Errors
     ///
@@ -88,14 +70,6 @@ impl TagRepository {
 
     /// Find documents by tag ID.
     ///
-    /// # Arguments
-    ///
-    /// * `tag_id` - Tag ID
-    ///
-    /// # Returns
-    ///
-    /// Vector of document IDs that have this tag.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
@@ -112,14 +86,6 @@ impl TagRepository {
     }
 
     /// Find documents by tag name (case-insensitive).
-    ///
-    /// # Arguments
-    ///
-    /// * `tag_name` - Tag name
-    ///
-    /// # Returns
-    ///
-    /// Vector of document IDs that have a tag with this name.
     ///
     /// # Errors
     ///
@@ -144,15 +110,6 @@ impl TagRepository {
     /// Add multiple tags to a document by tag names.
     ///
     /// Creates tags if they don't exist.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    /// * `tag_names` - Tag names
-    ///
-    /// # Returns
-    ///
-    /// Vector of tags that were added.
     ///
     /// # Errors
     ///
@@ -221,14 +178,6 @@ impl TagRepository {
     ///
     /// Handles SQLite's 999 parameter limit by batching.
     ///
-    /// # Arguments
-    ///
-    /// * `document_ids` - Document IDs
-    ///
-    /// # Returns
-    ///
-    /// HashMap mapping document IDs to their tags.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
@@ -292,10 +241,6 @@ impl TagRepository {
 
     /// Remove all tags from a document.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if delete fails
@@ -329,14 +274,6 @@ impl TagRepository {
     }
 
     /// Bulk add tags to multiple documents.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_tags` - Vector of (document_id, tag_names) pairs
-    ///
-    /// # Returns
-    ///
-    /// Number of tag associations created.
     ///
     /// # Errors
     ///

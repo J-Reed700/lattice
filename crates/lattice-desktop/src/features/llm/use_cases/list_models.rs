@@ -1,23 +1,4 @@
-//! List Downloaded Models Use Case
-//!
 //! Lists all locally downloaded models.
-//!
-//! # Purpose
-//!
-//! Scans local storage for downloaded LLM models and returns
-//! their metadata, sorted by download date (newest first).
-//!
-//! # Dependencies
-//! - `ModelStoragePort` - Local model storage access
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ListDownloadedModelsUseCase::new(storage_port);
-//! let downloaded = use_case.execute().await?;
-//! for model in downloaded.models {
-//!     println!("{}: {} GB", model.model_id, model.size_gb);
-//! }
-//! ```
 
 use crate::features::llm::dto::{DownloadedModelDto, DownloadedModelsDto};
 use lattice_core::application::ports::model_storage::ModelStoragePort;

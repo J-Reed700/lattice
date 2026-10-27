@@ -42,40 +42,6 @@
 //! - **Fusion**: Combines vector and keyword results using weighted Reciprocal Rank Fusion
 //! - **Recency Scoring**: Boosts recent documents in search results
 //!
-//! ## Performance Characteristics
-//!
-//! | Search Type | Time Complexity | Memory | Accuracy |
-//! |-------------|----------------|---------|----------|
-//! | HNSW        | O(log N)       | High    | ~95%     |
-//! | BM25        | O(k)           | Low     | Good     |
-//! | Hybrid      | O(log N + k)   | High    | Excellent|
-//!
-//! Where:
-//! - N = total number of embeddings
-//! - k = number of matching documents for keyword search
-//!
-//! ## Usage Examples
-//!
-//! ### Basic Semantic Search
-//!
-//! ```rust,no_run
-//! use lattice::infrastructure::vector_index::USearchVectorIndex;
-//!
-//! let index = USearchVectorIndex::new(768, None)?;
-//!
-//! let query_embedding = vec![0.1, 0.2, 0.3]; // From embedding service
-//! let results = service.search(&query_embedding, 10).await?;
-//! ```
-//!
-//! ### Hybrid Search (Recommended)
-//!
-//! The engine supplies the branches; the fusion arithmetic is
-//! `lattice_core::application::contracts::search::ReciprocalRankFusion`. The
-//! orchestrator that runs them is
-//! [`HybridSearchUseCase`](crate::features::search::use_cases::HybridSearchUseCase),
-//! which chat, the tool executor, the search page and the retrieval
-//! evaluation all share.
-//!
 //! ## Performance Tips
 //!
 //! 1. **Use HNSW for >10k documents**: Much faster than brute force

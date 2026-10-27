@@ -9,130 +9,31 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Trait for article extraction operations
-///
-/// Extracts clean, readable article content from HTML, similar to
-/// Firefox Reader Mode or Pocket's article view.
-///
-/// # Features
-///
-/// - **Main Content Detection**: Identifies article container via heuristics
-/// - **Boilerplate Removal**: Removes ads, navigation, sidebars, footers
-/// - **Metadata Extraction**: Extracts author, publication date
-/// - **Text Extraction**: Provides both clean HTML and plain text
-/// - **Reading Time**: Calculates reading time at 200 WPM
-/// - **Excerpt Generation**: Creates summary from first ~200 characters
-///
-/// # Implementations
-/// - `ArticleExtractorService`: Production implementation with scraper
-/// - `MockArticleExtractorService`: In-memory mock for testing
+/// Extracts clean, readable article content from HTML, like Firefox Reader
+/// Mode.
 #[async_trait]
 pub trait ArticleExtractorServiceTrait: Send + Sync {
-    /// Extract clean article content from HTML
-    ///
-    /// Applies readability algorithm to extract main article content:
-    /// 1. Finds main content container (semantic tags, class names)
-    /// 2. Removes unwanted elements (scripts, ads, navigation)
-    /// 3. Cleans up remaining HTML
-    /// 4. Extracts plain text for word count
-    /// 5. Calculates reading time (word_count / 200 minutes)
-    ///
-    /// # Arguments
-    /// * `html` - The HTML content to extract from
-    /// * `url` - The source URL (used for context and metadata extraction)
-    ///
-    /// # Returns
-    /// `CleanArticle` containing:
-    /// - `title`: Extracted article title
-    /// - `author`: Author name if found
-    /// - `content`: Clean HTML content
-    /// - `text_content`: Plain text (no HTML)
-    /// - `word_count`: Number of words
-    /// - `reading_time_minutes`: Estimated minutes to read
-    /// - `published_date`: Publication date if found
-    /// - `excerpt`: First ~200 characters
+    /// Extracts the main article content from `html` with the readability
+    /// algorithm.
     ///
     /// # Errors
     /// - `AppError::InvalidInput` if HTML is empty or malformed
     /// - `AppError::ContentExtraction` if article content cannot be found
     /// - `AppError::Other` if HTML parsing fails
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// use lattice::features::web::traits::ArticleExtractorServiceTrait;
-    ///
-    /// # async fn example<S: ArticleExtractorServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
-    /// let html = r#"<html><body><article><h1>Title</h1><p>Content...</p></article></body></html>"#;
-    /// let article = service.extract_article(html, "https://example.com/article").await?;
-    /// println!("Title: {}", article.title);
-    /// println!("Word count: {}", article.word_count);
-    /// println!("Reading time: {} minutes", article.reading_time_minutes);
-    /// # Ok(())
-    /// # }
-    /// ```
     async fn extract_article(&self, html: &str, url: &str) -> Result<CleanArticle>;
 
-    /// Extract article content from a web URL
-    ///
-    /// Fetches the URL and extracts article content in one operation.
-    /// This method handles URL validation (SSRF prevention) and HTTP fetching.
-    ///
-    /// # Arguments
-    /// * `url` - The URL to fetch and extract (must be valid HTTP/HTTPS URL)
-    ///
-    /// # Returns
-    /// `CleanArticle` containing extracted article content
+    /// Fetches `url`, validated against SSRF, and extracts its article content.
     ///
     /// # Errors
     /// - `AppError::InvalidUrl` if URL validation fails (SSRF prevention)
     /// - `AppError::Network` if HTTP request fails or times out
     /// - `AppError::InvalidInput` if HTML is empty or malformed
     /// - `AppError::ContentExtraction` if article content cannot be found
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// use lattice::features::web::traits::ArticleExtractorServiceTrait;
-    ///
-    /// # async fn example<S: ArticleExtractorServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
-    /// let article = service.extract_article_from_url("https://example.com/article").await?;
-    /// println!("Title: {}", article.title);
-    /// # Ok(())
-    /// # }
-    /// ```
     async fn extract_article_from_url(&self, url: &str) -> Result<CleanArticle>;
 }
 
-/// Mock implementation of ArticleExtractorServiceTrait for testing
-///
-/// Provides deterministic responses for testing without actual HTML parsing.
-/// Configure expected responses using `set_response`.
-///
-/// # Example
-/// ```rust
-/// use lattice::features::web::traits::MockArticleExtractorService;
-/// use lattice_core::application::dtos::function_calling_dto::CleanArticle;
-///
-/// let mock = MockArticleExtractorService::new();
-///
-/// // Configure expected response
-/// let expected_article = CleanArticle {
-///     title: "Test Article".to_string(),
-///     author: Some("Test Author".to_string()),
-///     content: "<p>Test content</p>".to_string(),
-///     text_content: "Test content".to_string(),
-///     word_count: 2,
-///     reading_time_minutes: 1,
-///     published_date: None,
-///     excerpt: Some("Test content".to_string()),
-/// };
-/// mock.set_response("https://example.com", expected_article);
-///
-/// // Mock will return configured response
-/// # tokio_test::block_on(async {
-/// let result = mock.extract_article("<html>...</html>", "https://example.com").await.unwrap();
-/// assert_eq!(result.title, "Test Article");
-/// # });
-/// ```
+/// Mock article extractor for tests, answering with responses configured by
+/// `set_response`.
 pub struct MockArticleExtractorService {
     /// Configured responses keyed by URL
     responses: Arc<Mutex<HashMap<String, CleanArticle>>>,
@@ -146,22 +47,8 @@ impl MockArticleExtractorService {
         }
     }
 
-    /// Create a disabled service that returns errors with a custom message
-    ///
-    /// Used as a fallback when ArticleExtractorService fails to initialize.
-    /// All extraction attempts will return an error with the provided message.
-    ///
-    /// # Arguments
-    /// * `error_message` - The error message to return for all extraction attempts
-    ///
-    /// # Example
-    /// ```rust
-    /// use lattice::features::web::traits::MockArticleExtractorService;
-    ///
-    /// let disabled = MockArticleExtractorService::new_disabled(
-    ///     "Article extraction unavailable: SSL certificate error".to_string()
-    /// );
-    /// ```
+    /// A disabled service whose every extraction fails with `error_message`: the
+    /// fallback when the real service fails to initialize.
     pub fn new_disabled(error_message: String) -> Self {
         let service = Self::new();
         service.responses.lock().insert(
@@ -180,14 +67,7 @@ impl MockArticleExtractorService {
         service
     }
 
-    /// Configure a response for a specific URL
-    ///
-    /// When `extract_article` is called with this URL, the configured
-    /// article will be returned.
-    ///
-    /// # Arguments
-    /// * `url` - The URL to match
-    /// * `article` - The article to return
+    /// Configures the article `extract_article` returns for `url`.
     pub fn set_response(&self, url: &str, article: CleanArticle) {
         self.responses.lock().insert(url.to_string(), article);
     }

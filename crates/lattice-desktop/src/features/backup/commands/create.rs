@@ -12,16 +12,6 @@ use std::path::PathBuf;
 /// Backups are saved with a `.lattice-backup` extension in version 1.0 format. Useful
 /// for disaster recovery, pre-upgrade snapshots, or data migration.
 ///
-/// # Arguments
-///
-/// * `backup_path` - Optional custom backup file path; uses default location if `None`
-/// * `container` - Service container with security context
-///
-/// # Returns
-///
-/// * `Ok(String)` - Path to the created backup file
-/// * `Err(AppError)` - If path validation fails or backup creation fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid backup path (directory traversal detected)
@@ -50,14 +40,6 @@ use std::path::PathBuf;
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
-/// # Use Cases
-///
-/// - **Disaster Recovery**: Protect against data loss or corruption
-/// - **Pre-Upgrade Snapshots**: Create backup before major upgrades
-/// - **Data Migration**: Export data for transfer to new device
-/// - **Testing**: Create test data snapshots for development
-/// - **Scheduled Backups**: Automate regular backup creation
-///
 /// # Default Location
 ///
 /// If `backup_path` is `None`, backup is saved to:
@@ -65,27 +47,11 @@ use std::path::PathBuf;
 /// {app_data_dir}/backups/lattice-{timestamp}.lattice-backup
 /// ```
 ///
-/// # Performance
-///
-/// - Backup time scales with database size
-/// - Typical speed: ~100-500 MB/second
-/// - Does not block indexing or search operations
-/// - Uses async I/O to prevent UI freezing
-///
 /// # Architecture
 ///
 /// Command flow:
 /// 1. Path validation via ValidatedFilePath (CWE-22)
 /// 2. Backup creation (database snapshot)
-///
-/// # Command Flow
-///
-/// 1. Path validation if custom path provided
-/// 2. Generate default path if needed
-/// 3. Create database backup file
-/// 4. Return backup file path
-///
-/// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn create_backup_impl(
     backup_path: Option<String>,
     container: &Container,

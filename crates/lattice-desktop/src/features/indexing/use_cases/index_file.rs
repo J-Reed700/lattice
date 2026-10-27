@@ -8,27 +8,6 @@
 //! 3. Document aggregate creation with chunking
 //! 4. Embedding generation for chunks
 //! 5. Persistence to repository
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
-//! use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
-//!
-//! # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = IndexFileRequestDto {
-//!     path: "/path/to/document.txt".to_string(),
-//!     chunking_strategy: ChunkingStrategyDto::FixedSize { size: 512 },
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Indexed document {} with {} chunks",
-//!     response.document_id,
-//!     response.chunks_created
-//! );
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -113,15 +92,6 @@ pub struct IndexFileUseCase {
 
 impl IndexFileUseCase {
     /// Create a new index file use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `content_storage` - Service for importing files to library
-    /// * `file_storage` - Service for reading file content
-    /// * `content_extractor` - Service for extracting content from files
-    /// * `embedding_service` - Service for generating embeddings
-    /// * `document_repo` - Repository for persisting documents
-    /// * `embedding_repo` - Repository for persisting embeddings
     pub fn new(
         content_storage: Arc<dyn ContentAddressedStoragePort>,
         file_storage: Arc<dyn FileStoragePort>,
@@ -176,14 +146,6 @@ impl IndexFileUseCase {
 
     /// Execute file indexing.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Index request containing file path and chunking strategy
-    ///
-    /// # Returns
-    ///
-    /// Response with document ID and indexing statistics
-    ///
     /// # Errors
     ///
     /// Returns error if:
@@ -192,25 +154,6 @@ impl IndexFileUseCase {
     /// - Chunking fails
     /// - Embedding generation fails
     /// - Persistence fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::indexing::index_file::IndexFileUseCase;
-    /// # use lattice_core::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
-    /// # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = IndexFileRequestDto {
-    ///     path: "/docs/paper.pdf".to_string(),
-    ///     chunking_strategy: ChunkingStrategyDto::Semantic { max_tokens: 512 },
-    /// };
-    ///
-    /// match use_case.execute(request).await {
-    ///     Ok(response) => println!("Success: {} chunks", response.chunks_created),
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     #[instrument(skip(self, request), fields(file_path = %request.path))]
     pub async fn execute(&self, request: IndexFileRequestDto) -> Result<IndexFileResponseDto> {
         match self.prepare_for_indexing(request).await? {

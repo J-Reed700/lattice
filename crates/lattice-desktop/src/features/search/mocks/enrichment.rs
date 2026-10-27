@@ -32,25 +32,6 @@ impl MockSearchEnrichmentService {
     /// Set metadata for a chunk ID
     ///
     /// When `enrich_results` is called with this chunk ID, the configured metadata will be returned.
-    ///
-    /// # Arguments
-    /// * `chunk_id` - The chunk ID to match
-    /// * `metadata` - The DocumentMetadata to return
-    ///
-    /// # Example
-    /// ```rust
-    /// let service = MockSearchEnrichmentService::new();
-    /// service.set_metadata(
-    ///     "chunk1",
-    ///     DocumentMetadata {
-    ///         snippet: "Custom snippet".to_string(),
-    ///         metadata: HashMap::from([
-    ///             ("filename".to_string(), json!("custom.txt")),
-    ///             ("file_type".to_string(), json!("text/plain")),
-    ///         ]),
-    ///     }
-    /// );
-    /// ```
     pub fn set_metadata(
         &self,
         chunk_id: &str,

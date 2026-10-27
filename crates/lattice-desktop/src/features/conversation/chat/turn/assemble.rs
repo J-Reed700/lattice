@@ -80,9 +80,8 @@ impl RenderedPrompt {
         if self.sources.len() == before {
             return;
         }
-        // A page cut from the prompt was recorded as read when it was
-        // fetched. Left so, the model's request for it was answered "its text
-        // is in your context above", which it never was.
+        // A page cut from the prompt was recorded as read when it was fetched;
+        // withdraw it so a request for it gets its text.
         let pages_after = web_pages(&self.sources);
         for url in pages_before.difference(&pages_after) {
             self.pages_read.withdraw(url);
@@ -124,9 +123,8 @@ pub(super) fn render_prompt(
     } = retrieved;
     let llm = &turn.llm;
 
-    // An attachment is in the prompt whole, so the same document coming back
-    // as search passages is a second copy of text the model already has and a
-    // footnote pointing at the same file twice.
+    // An attachment is in the prompt whole, so its search passages would be a
+    // second copy.
     let carried_attachment_ids = attachments.carried_document_ids();
     if !carried_attachment_ids.is_empty() {
         retrieval.search_response.results.retain(|result| {
@@ -137,10 +135,9 @@ pub(super) fn render_prompt(
                 .unwrap_or(true)
         });
     }
-    // Fetched web pages are carried whole where the window allows, so they are
-    // no longer small enough to ignore: what they fill is not there for the
-    // user's own passages. Counted before the numbers exist; a label is a token
-    // or two either way.
+    // Fetched web pages are carried whole where the window allows, so they count
+    // against the user's own passages. Counted before the numbers exist; a label
+    // is a token or two either way.
     let mut evidence = retrieval.evidence;
     evidence.charge(
         retrieval
@@ -149,9 +146,8 @@ pub(super) fn render_prompt(
             .map(|item| llm.count_tokens(&item.render(0)))
             .sum(),
     );
-    // The pages earlier turns linked and the document a follow-up reopens are
-    // in the prompt too. Uncharged, they pushed the request past its budget,
-    // and the cut that followed took this turn's own pages first.
+    // The pages earlier turns linked and the document a follow-up reopens are in
+    // the prompt too, so they are charged.
     if let Some(linked) = turn.linked_web_sources_context.as_deref() {
         evidence.charge(llm.count_tokens(linked));
     }
@@ -401,22 +397,16 @@ pub(super) struct PlannedRequest {
     pub(super) summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
 }
 
-/// Choose the turn's tools and plan its input.
-///
-/// With bounded memory on, the context assembler plans the whole request —
-/// policy, tool schemas, memory, history and the prompt — against the
-/// window; a plan that would drop unprocessed history compacts first, once.
-/// The prompt's evidence goes to it as evidence rather than as part of the
-/// message, so a window that cannot hold all of it carries the best of it,
-/// and the sources of what was left out are dropped from `prompt`. With it
-/// off, the string history goes out as it is, already charged whole by the
-/// turn's budget.
+/// Chooses the turn's tools and plans its input. With bounded memory on, the
+/// context assembler plans the whole request against the window, compacting
+/// once if it would drop unprocessed history; evidence it cannot carry is cut
+/// and its sources dropped from `prompt`. With it off, the string history goes
+/// out whole.
 ///
 /// # Errors
 ///
 /// The assembler's refusals: a prompt larger than the window, an unusable
-/// model, active requirements that do not fit, or history compaction could
-/// not cover. Each is reported rather than resolved by dropping something.
+/// model, requirements that do not fit, or history compaction could not cover.
 pub(super) async fn plan_request(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -712,21 +702,14 @@ pub(super) fn offered_tools(
     } else {
         &tool_definitions
     };
-    // A closed-book turn loses every external tool — offering it `semantic_search`
-    // would reopen the vault one tool call later — but it keeps read-only access
-    // to its own transcript. This conversation is internal task context, not an
-    // external source, so a turn that may not search the web must still be able
-    // to recover a requirement the user stated twenty turns ago.
-    //
-    // Gated on `supports_tools` because a model without tool calling must not be
-    // handed a schema it cannot use: telling it to call a tool that was never
-    // supplied is its own failure mode.
+    // A closed-book turn loses every external tool (`semantic_search` would
+    // reopen the vault) but keeps read-only access to its own transcript, which
+    // is task context, not an external source. Gated on `supports_tools`: a model
+    // without tool calling must not be handed a schema.
     let mut turn_tools =
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
     // An Explorer turn searches the library only when the user turns it on
-    // (`classify_turn`). Offered the search tools anyway, the model searched
-    // it unasked and cited what it found in answers about the folder. Reading
-    // a document the message names stays open.
+    // (`classify_turn`); reading a document the message names stays open.
     if explorer.is_some() && !flags.force_kb_search {
         turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));
     }

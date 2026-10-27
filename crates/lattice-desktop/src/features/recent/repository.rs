@@ -30,10 +30,6 @@ pub struct RecentDocumentsRepository {
 
 impl RecentDocumentsRepository {
     /// Create a new recent documents repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }

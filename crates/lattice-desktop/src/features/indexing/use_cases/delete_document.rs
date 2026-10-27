@@ -14,18 +14,6 @@
 //! - a web archive article: deleted through the archive service;
 //! - anything else — a vault note, a file indexed where the user keeps it —
 //!   is logged and left alone.
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::features::indexing::use_cases::DeleteDocumentUseCase;
-//!
-//! # async fn example(use_case: DeleteDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute("doc-123".to_string()).await?;
-//! println!("Document deleted: {}", response.message);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::path::Path;
 use std::sync::Arc;
@@ -91,15 +79,6 @@ pub struct DeleteDocumentUseCase {
 
 impl DeleteDocumentUseCase {
     /// Create a new delete document use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repo` - Repository for document persistence
-    /// * `vector_search` - Service for managing vector embeddings
-    /// * `uow_factory` - Unit of work factory for transactional operations
-    /// * `library` - Content-addressed library, consulted for path ownership
-    /// * `library_gc` - Releases library blobs once nothing references them
-    /// * `web_archive` - Owns archived web articles
     pub fn new(
         document_repo: Arc<dyn DocumentRepositoryPort>,
         vector_search: Arc<dyn VectorSearchPort>,
@@ -136,14 +115,6 @@ impl DeleteDocumentUseCase {
 
     /// Execute document deletion.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to delete
-    ///
-    /// # Returns
-    ///
-    /// Response with deletion status and confirmation message
-    ///
     /// # Errors
     ///
     /// Returns error if:
@@ -152,19 +123,6 @@ impl DeleteDocumentUseCase {
     /// - Vector embedding removal fails (AppError::SearchFailed)
     /// - Chunk deletion fails (AppError::Database)
     /// - Document deletion fails (AppError::Database)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice::features::indexing::use_cases::DeleteDocumentUseCase;
-    /// # async fn example(use_case: DeleteDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// match use_case.execute("doc-123".to_string()).await {
-    ///     Ok(response) => println!("Success: {}", response.message),
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(&self, document_id: String) -> Result<DeleteDocumentResponseDto> {
         // 1. Read what the artifact is before the row that describes it goes.
         //    Both lookups are metadata-only: a document that failed before it
@@ -241,9 +199,8 @@ impl DeleteDocumentUseCase {
         self.dispose_artifact(&document_id, &file_path, &checksum)
             .await;
 
-        // The corpus changed, so cached search results are now wrong —
-        // without this, a deleted document keeps appearing in repeated
-        // searches for up to the cache TTL.
+        // The corpus changed, so cached search results are wrong: without this a
+        // deleted document keeps appearing for up to the cache TTL.
         if let Some(cache) = &self.query_cache {
             cache.invalidate_corpus();
         }

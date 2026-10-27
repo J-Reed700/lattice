@@ -1,46 +1,18 @@
-//! Full-precision side store backing exact rescoring of compressed candidates.
+//! Full-precision side store backing exact rescoring of compressed
+//! candidates: with
+//! [`VectorIndexCompression`](super::compression::VectorIndexCompression) the
+//! USearch vectors are truncated, so the index only generates candidates.
 //!
-//! When [`VectorIndexCompression`](super::compression::VectorIndexCompression)
-//! is active the USearch index no longer holds enough information to produce a
-//! true cosine score: the vectors in it are truncated, and usually `i8`. The
-//! index becomes a candidate generator and something else has to hold the
-//! full-precision vectors used to rank the over-fetched candidates.
+//! Not read from SQLite, because `VectorSearchPort::search` is synchronous:
+//! the store is written by the same `insert_internal` call as USearch, so the
+//! two cannot drift, and read with positional reads (`pread`, offset
+//! `ReadFile`), so concurrent searches never queue. Not kept in memory, which
+//! would defeat compression: only over-fetched candidates are materialized.
 //!
-//! # Why not read them back out of SQLite
-//!
-//! The f32 vectors *are* already persisted — `text_embeddings.embedding` and
-//! `embedding_generation_vectors.embedding` both hold them, and the startup
-//! rebuild in `features::search::di` streams them straight back into the index.
-//! But `VectorSearchPort::search` is synchronous while `sqlx` is not, so the
-//! query path cannot reach those rows without blocking a runtime thread inside
-//! a lock. This store is instead written by the same `insert_internal` call
-//! that writes USearch, so the two cannot drift apart, and read at query time
-//! with a positional read — `pread` on Unix, `ReadFile` with an explicit
-//! offset on Windows. A positional read carries its own offset instead of
-//! moving the file cursor, so it needs no exclusive access to the handle and
-//! concurrent searches never queue behind one another.
-//!
-//! # Why not keep them in memory
-//!
-//! Because that would defeat the point. Compression exists to shrink resident
-//! vector storage; holding a 4 KB `f32` copy of every 1024-d vector in a
-//! `HashMap` would make a compressed index cost *more* RAM than an
-//! uncompressed one. Only the over-fetched candidates — `top_k * factor`
-//! vectors per query — are ever materialized.
-//!
-//! # Layout
-//!
-//! A flat array of fixed-width slots: slot `key - 1` starts at
-//! `(key - 1) * dimension * 4`. USearch keys are allocated monotonically from
-//! 1 and never reused, so no offset table is needed and none has to be kept in
-//! sync. Removing a vector zeroes its slot; an all-zero slot reads back as
-//! absent, as does a slot past the end of a truncated or missing file. Every
-//! absent read degrades to the approximate USearch score rather than failing
-//! the query.
-//!
-//! Slots of removed vectors are not reclaimed — the file is sparse and a
-//! rebuild (`clear`) truncates it back to nothing, which is the same bargain
-//! the USearch index file itself makes.
+//! Layout: fixed-width slots, slot `key - 1` at `(key - 1) * dimension * 4`;
+//! keys are monotonic and never reused. A removed vector's slot is zeroed, and
+//! an all-zero or missing slot reads as absent, degrading to the approximate
+//! score. Slots are not reclaimed until a rebuild truncates the file.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

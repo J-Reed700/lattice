@@ -1,17 +1,5 @@
-//! Chunk Repository Implementation
-//!
-//! Infrastructure implementation for text chunk persistence using SQLite.
-//!
-//! # Architecture
-//!
-//! This repository implements the `RepositoryPort<ChunkEntity>` trait,
-//! providing CRUD operations for chunks using SQLite. All database
-//! operations go through the ChunkMapper layer to maintain clean
-//! separation between domain entities and database models.
-//!
-//! # Migration Notes
-//!
-//! - DB models are now internal and NOT exported
+//! SQLite chunk persistence implementing `RepositoryPort<ChunkEntity>`,
+//! through the `ChunkMapper` layer; DB models stay internal.
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use async_trait::async_trait;
@@ -62,23 +50,11 @@ pub struct ChunkRepository {
 
 impl ChunkRepository {
     /// Create a new chunk repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Find chunks by document ID.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    ///
-    /// Vector of chunk entities ordered by chunk_index ascending.
     ///
     /// # Errors
     ///
@@ -126,10 +102,6 @@ impl ChunkRepository {
 
     /// Delete all chunks for a document.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if deletion fails
@@ -143,14 +115,6 @@ impl ChunkRepository {
     }
 
     /// Count chunks for a document.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    ///
-    /// Total count of chunks for the document.
     ///
     /// # Errors
     ///

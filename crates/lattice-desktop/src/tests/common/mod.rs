@@ -2,23 +2,6 @@
 //!
 //! This module provides test harness infrastructure that matches the
 //! production container architecture.
-//!
-//! # Usage
-//!
-//! ```rust,no_run
-//! use lattice::tests::common::setup_test_container;
-//!
-//! #[tokio::test]
-//! async fn test_search_plugin() {
-//!     let container = setup_test_container().await.unwrap();
-//!     let result = search_commands::semantic_search(
-//!         "test query".to_string(),
-//!         Some(10),
-//!         tauri::State::from(&container)
-//!     ).await;
-//!     assert!(result.is_ok());
-//! }
-//! ```
 
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::interfaces::di::Container;
@@ -34,16 +17,6 @@ pub mod query_counts;
 /// This function creates a production-aligned Container using the same
 /// Container::new() signature as main.rs, but with in-memory SQLite
 /// and minimal configuration suitable for smoke testing.
-///
-/// # Returns
-///
-/// A fully initialized Container ready for plugin command testing
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// let container = setup_test_container().await.unwrap();
-/// ```
 pub async fn setup_test_container() -> Result<Container> {
     let db_pool = SqlitePool::connect(":memory:")
         .await

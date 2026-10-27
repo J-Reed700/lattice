@@ -21,15 +21,7 @@ impl CreateConversationUseCase {
         }
     }
 
-    /// Execute the use case
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - CreateConversationRequestDto containing title and optional system_prompt
-    ///
-    /// # Returns
-    ///
-    /// CreateConversationResponseDto with the created conversation
+    /// Creates the conversation.
     ///
     /// # Errors
     ///

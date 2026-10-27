@@ -171,16 +171,6 @@ async fn assign_document_memberships(
 }
 
 /// Core implementation - Indexes a single file (DDD use case)
-///
-/// # Arguments
-///
-/// * `container` - Service container with use cases and security context
-/// * `request` - Index request DTO with file path and options
-///
-/// # Returns
-///
-/// * `ApiResult::success(IndexFileResponseDto)` - Response with document ID and indexing metadata
-/// * `ApiResult::error(...)` - If validation fails or indexing fails
 pub async fn index_file_impl(
     container: &Container,
     request: IndexFileRequestDto,
@@ -319,16 +309,6 @@ pub(crate) async fn index_single_file(
 ///
 /// Indexes all supported files in a directory and optionally all subdirectories.
 /// Processes files in batches with progress tracking.
-///
-/// # Arguments
-///
-/// * `container` - Service container with use cases and security context
-/// * `request` - Index request DTO with directory path and recursion flag
-///
-/// # Returns
-///
-/// * `ApiResult::success(IndexDirectoryResponseDto)` - Response with indexed file count and stats
-/// * `ApiResult::error(...)` - If validation fails or indexing fails
 pub async fn index_directory_impl(
     container: &Container,
     request: IndexDirectoryRequestDto,
@@ -411,16 +391,6 @@ pub async fn reindex_document_impl(
 }
 
 /// Core implementation - Deletes a document and all associated data (DDD use case)
-///
-/// # Arguments
-///
-/// * `container` - Service container with use cases and security context
-/// * `document_id` - Unique identifier of the document to delete
-///
-/// # Returns
-///
-/// * `ApiResult::success(())` - Document successfully deleted
-/// * `ApiResult::error(...)` - If deletion fails
 pub async fn delete_document_impl(container: &Container, document_id: String) -> ApiResult<()> {
     let use_case = container.delete_document_use_case();
     match delete_indexed_document(use_case.as_ref(), document_id).await {
@@ -451,15 +421,6 @@ pub(crate) async fn delete_indexed_document(
 }
 
 /// Core implementation - Get indexing statistics
-///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-///
-/// # Returns
-///
-/// * `ApiResult::success(IndexingStatsDto)` - Statistics with document and chunk counts
-/// * `ApiResult::error(...)` - If database query fails
 pub async fn get_indexing_stats_impl(container: &Container) -> ApiResult<IndexingStatsDto> {
     let repo = container.document_repository();
 
@@ -481,17 +442,6 @@ pub async fn get_indexing_stats_impl(container: &Container) -> ApiResult<Indexin
 }
 
 /// Core implementation - Renames a document's display name
-///
-/// # Arguments
-///
-/// * `container` - Service container with use cases and security context
-/// * `document_id` - Document ID to rename
-/// * `new_name` - New display name for the document
-///
-/// # Returns
-///
-/// * `ApiResult::success(RenameDocumentResponseDto)` - Response with new name
-/// * `ApiResult::error(...)` - If rename fails
 pub async fn rename_document_impl(
     container: &Container,
     document_id: String,
@@ -531,14 +481,6 @@ pub struct IndexProgress {
 /// Core implementation - Retrieves current indexing progress
 ///
 /// Returns real-time progress from the indexing service.
-///
-/// # Arguments
-///
-/// * `container` - Service container with indexing module
-///
-/// # Returns
-///
-/// * `ApiResult::success(IndexProgress)` - Current indexing status
 pub async fn get_index_progress_impl(container: &Container) -> ApiResult<IndexProgress> {
     let state = container.indexing.indexing_state();
     let snapshot = state.get_snapshot();

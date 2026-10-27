@@ -214,9 +214,8 @@ fn external_result(url: &str, context: Option<&str>) -> pipeline::ExternalSearch
     }
 }
 
-/// The turn in the log: retrieval read three pages, one of them blocked, and
-/// the tool loop then started blank and asked for all three again. Whatever
-/// the web phase learned has to reach the outcome the tool loop is handed.
+/// Whatever the web phase learned, a blocked page included, reaches the
+/// outcome the tool loop starts from.
 #[test]
 fn what_the_web_phase_read_reaches_the_outcome_the_tool_loop_starts_from() {
     use crate::features::conversation::chat::fetch_memory::{Delivery, Recall};
@@ -544,9 +543,9 @@ fn public_sufficiency_facade_reports_the_pipelines_own_verdict() {
     assert_eq!(empty.reasons, ["no_results"]);
 }
 
-/// A chat moved out of a space, or a document filed elsewhere since, leaves a
-/// reference behind. The follow-up path reopens the last reference by id, so a
-/// stale one put a document the space no longer holds straight into the prompt.
+/// A stale reference (a chat moved out of a space, or a document filed
+/// elsewhere) does not put a document the space no longer holds into the
+/// prompt.
 #[test]
 fn a_remembered_document_outside_the_space_is_forgotten() {
     let reference = |id: &str| lattice_core::domain::conversation::DocumentReference {
@@ -606,10 +605,8 @@ fn web_query_strips_tracking_even_for_a_short_product_link() {
     assert!(!query.contains("unrelated"), "{query}");
 }
 
-/// The intent classifier wanting the web used to switch the vault off, then
-/// ran the web beside it, so a question about the user's own policy went out
-/// as a public search and the pages joined the answer. Now `needs_web` is a
-/// fallback: the plan still searches the vault, and never beside the web.
+/// `needs_web` is a fallback: the plan still searches the vault, and never
+/// runs the web beside it.
 #[test]
 fn an_intent_that_needs_the_web_searches_the_vault_first() {
     let intent = crate::features::conversation::chat::intent::TurnIntent {
@@ -637,7 +634,7 @@ fn an_intent_that_needs_the_web_searches_the_vault_first() {
     assert!(!kb_can_run_alongside_external(merged));
 }
 
-/// The user's own toggle keeps what it always had: the web beside the vault.
+/// The user's own toggle runs the web beside the vault.
 #[test]
 fn a_web_search_the_user_asked_for_still_runs_beside_the_vault() {
     let toggled = flags(false, true, false, false);
@@ -697,10 +694,9 @@ fn a_web_search_step_says_why_it_ran() {
     }
 }
 
-/// An Explorer turn is about the folder on screen. The router's default "new
-/// search" no longer reaches into the library by itself; the knowledge-base
-/// toggle does, and so does the web toggle, because web adds to the vault and
-/// never replaces it.
+/// An Explorer turn is about the folder on screen: the router's default "new
+/// search" does not reach the library by itself; the knowledge-base and web
+/// toggles do.
 #[test]
 fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
     let explorer_decision = RouterDecisionOutcome {
@@ -724,9 +720,8 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
     assert!(web.should_search_web);
 }
 
-/// KB retrieval used to clamp every turn to 16 passages, so a 128k window
-/// carried about as much of the vault as an 8k one. The depth now comes from
-/// the evidence budget and what a passage of the library measures.
+/// The retrieval depth comes from the evidence budget and what a passage of
+/// the library measures, not a fixed clamp.
 #[test]
 fn retrieval_depth_follows_the_evidence_budget() {
     // 90k evidence tokens, 2,000-character passages at four characters a

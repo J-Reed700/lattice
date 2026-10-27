@@ -1,12 +1,9 @@
-//! `ChatImageGc::sweep`, run at startup (§7.6): drops rows no message holds
-//! with their files — a turn cannot survive a restart, except a research turn
-//! that resumes, whose request the caller keeps, and neither can a composer's
-//! staged pictures, except those staged since this start — then every file
-//! no row claims. That second half also runs alone after a truncate or regenerate
-//! (`remove_unclaimed_files`). Touches nothing but direct children of the
-//! image directory whose names it recognises: `<id>.<ext>` and
-//! `<id>.<ext>.part`, and in its `prepared/` cache `<id>-<w>x<h>.<ext>` (and
-//! `.part`) whose `<id>` no row names.
+//! `ChatImageGc::sweep`, run at startup (§7.6): drops the rows no message
+//! holds, with their files (except a resuming research turn's and pictures
+//! staged since this start), then every file no row claims; the second half
+//! also runs after a truncate or regenerate (`remove_unclaimed_files`). It
+//! touches only direct children of the image directory with names it
+//! recognises, and `prepared/` cache files whose `<id>` no row names.
 
 use super::is_allowed_extension;
 use super::repository::{ImageRepository, ImageRow};

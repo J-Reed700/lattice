@@ -1060,10 +1060,8 @@ fn memory_payloads_are_compact_json() {
     );
 }
 
-/// llama.cpp compiles the schema to a grammar and throws away the whole
-/// grammar when any `maxLength` or `maxItems` exceeds its repetition
-/// threshold. A 2048-byte quote bound did exactly that on the local sidecar:
-/// the model then answered with invented fields and every compaction failed.
+/// llama.cpp throws away the whole grammar when any `maxLength` or `maxItems`
+/// exceeds its repetition threshold, so no schema bound may.
 #[test]
 fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
     for (name, schema) in [
@@ -1090,10 +1088,9 @@ fn object_keys(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// llama.cpp builds the grammar in the order the schema lists properties.
-/// Memory was measured with sorted keys, which ask for an item's evidence
-/// before its kind and label and for a reason before its verdict; the
-/// workspace's `preserve_order` must not turn that around.
+/// llama.cpp builds the grammar in schema order. Sorted keys ask for an item's
+/// evidence before its kind and label and for a reason before its verdict;
+/// the workspace's `preserve_order` must not turn that around.
 #[test]
 fn memory_grammars_ask_for_the_grounds_before_the_decision() {
     let patch = super::prompts::patch_schema();
@@ -1118,8 +1115,7 @@ fn memory_grammars_ask_for_the_grounds_before_the_decision() {
 }
 
 /// The passages to extract are the last thing the extractor reads before it
-/// answers, after the coverage manifest and the rules, as they were when
-/// memory was measured.
+/// answers, after the coverage manifest and the rules.
 #[test]
 fn the_extraction_request_ends_with_the_passages_to_extract() {
     let source = message(
@@ -1542,10 +1538,9 @@ async fn an_unreviewed_optional_addition_is_not_committed_as_ambiguous_memory() 
     assert_eq!(port.watermark(), 0);
 }
 
-/// What extraction accepted does not depend on the summary. A fold that will
+/// What extraction accepted does not depend on the summary: a fold that will
 /// not fit its pool after one regeneration leaves the summary as it was, and
-/// the extraction commits: thrown away with it, the same batches were offered
-/// again after every answer.
+/// the extraction commits.
 #[tokio::test]
 async fn an_oversized_summary_is_regenerated_once_then_left_as_it_was_while_extraction_commits() {
     let messages = four_turns();
@@ -1872,10 +1867,9 @@ fn refolding(through: i64) -> CompactionRequest {
     }
 }
 
-/// Regenerate takes back the last answer. A refold had ended the summary on
-/// that answer, so the delete took the summary with it while the clamped
-/// watermark still covers the earlier turn. The next fold must fold that turn
-/// back in, not summarise only the new answer.
+/// Regenerate takes back the last answer and the summary that ended on it,
+/// while the clamped watermark still covers the earlier turn: the next fold
+/// folds that turn back in.
 #[tokio::test]
 async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
     let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 0);
@@ -2310,8 +2304,7 @@ fn fact_quoting(id: &str, source: &SourceMessage, needle: &str) -> MemoryItem {
     item
 }
 
-/// The summariser was told only the 32 most recently forgotten facts, so an
-/// older one could come back in a summary. It is told every one.
+/// The summariser is told every forgotten fact, not only the most recent.
 #[tokio::test]
 async fn every_forgotten_fact_is_named_to_the_summariser() {
     let messages = private_turns();

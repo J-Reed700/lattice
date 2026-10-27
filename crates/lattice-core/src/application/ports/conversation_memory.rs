@@ -1,21 +1,11 @@
-//! Ports for bounded conversation memory.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §14.
-//!
-//! Three capabilities, deliberately separate because they have different
-//! failure modes and different consequences when unavailable:
-//!
-//! * [`ConversationMemoryPort`] — the authoritative ledger: a consistent
-//!   snapshot read, bounded paging over original messages, and one atomic
-//!   commit. If this is unavailable, memory cannot be updated at all.
-//! * [`ConversationMemoryReadPort`] — recall over the original transcript.
-//!   Optional evidence. If this is unavailable the turn still runs with its
-//!   constraints intact; it simply reports that recall did not.
-//!
-//! Invalidation on a transcript rewrite has no port method on purpose. It is
-//! enforced by SQL triggers in the schema, so it participates in whatever
-//! transaction performed the rewrite and cannot be forgotten by a new call
-//! site. See `trg_conversation_memory_invalidate_*` in the init migration.
+//! Ports for bounded conversation memory (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §14), kept apart because
+//! they fail differently: [`ConversationMemoryPort`] is the authoritative
+//! ledger (snapshot read, paging, one atomic commit), and
+//! [`ConversationMemoryReadPort`] is optional recall over the transcript.
+//! Invalidation on a transcript rewrite has no port method: SQL triggers
+//! (`trg_conversation_memory_invalidate_*`) enforce it in the rewrite's own
+//! transaction.
 
 use crate::domain::conversation::memory::{
     ConversationMemoryState, MemoryCommit, MemoryId, MemorySnapshot, SourceMessage, SourceRole,
@@ -302,13 +292,9 @@ pub trait ConversationMemoryPort: Send + Sync {
     ) -> Result<Vec<SuppressedSpan>>;
 
     /// Labels of every item the user asked memory to forget in this
-    /// conversation, distinct, most recently changed first.
-    ///
-    /// The summariser is told to leave all of these out. That covers what no
-    /// stored span marks: a later message that repeats or corrects a
-    /// forgotten value. Every one, because a fact left off the list can come
-    /// back in the next summary.
-    /// Without a default for the same reason as [`Self::suppressed_spans`].
+    /// conversation, distinct, most recently changed first. The summariser leaves
+    /// them all out, covering restatements no stored span marks. No default, as
+    /// for [`Self::suppressed_spans`].
     async fn forgotten_labels(&self, conversation_id: &str) -> Result<Vec<String>>;
 
     /// Apply a validated candidate under `preconditions`, or fail without

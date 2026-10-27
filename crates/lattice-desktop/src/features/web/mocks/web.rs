@@ -43,31 +43,7 @@ impl MockWebIngestionService {
         }
     }
 
-    /// Configure mock to return specific result for a URL
-    ///
-    /// When `ingest_url` is called with this URL, the configured result will be returned.
-    ///
-    /// # Arguments
-    /// * `url` - The URL to match
-    /// * `result` - The WebIngestionResult to return
-    ///
-    /// # Example
-    /// ```rust
-    /// let service = MockWebIngestionService::new();
-    /// service.set_result_for_url(
-    ///     "https://example.com",
-    ///     WebIngestionResult {
-    ///         document_id: "custom-id".to_string(),
-    ///         url: "https://example.com".to_string(),
-    ///         title: "Custom Title".to_string(),
-    ///         word_count: 500,
-    ///         chunks_created: 10,
-    ///         site_name: Some("Example".to_string()),
-    ///         author: None,
-    ///         reading_time_minutes: Some(3),
-    ///     }
-    /// );
-    /// ```
+    /// Configures the result `ingest_url` returns for `url`.
     pub fn set_result_for_url(&self, url: &str, result: WebIngestionResult) {
         self.mock_results
             .write()
@@ -75,13 +51,7 @@ impl MockWebIngestionService {
             .insert(url.to_string(), result);
     }
 
-    /// Get list of URLs that were ingested
-    ///
-    /// Returns a clone of all URLs that have been ingested via `ingest_url`.
-    /// Useful for verifying that expected URLs were processed.
-    ///
-    /// # Returns
-    /// Vector of URLs in the order they were ingested
+    /// The URLs ingested so far, in order.
     pub fn get_ingested_urls(&self) -> Vec<String> {
         self.ingested_urls
             .read()

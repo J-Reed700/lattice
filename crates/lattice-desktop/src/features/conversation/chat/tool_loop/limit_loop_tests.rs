@@ -22,9 +22,8 @@ fn on_web(web: &Arc<Web>) -> FakeRuntime {
     }
 }
 
-/// Two hours of research used to end in an error when the deadline passed
-/// during a page read. The read that did not finish is answered as not run,
-/// and the turn answers from what the others found, past its deadline.
+/// A page read cut off by the deadline is answered as not run, and the turn
+/// answers from what the others found.
 #[tokio::test]
 async fn a_turn_out_of_time_in_its_reads_answers_from_what_it_found() {
     let model = Model::new([

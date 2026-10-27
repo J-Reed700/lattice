@@ -29,9 +29,7 @@ fn a_clipped_page_says_how_much_is_shown_and_how_to_get_the_rest() {
 }
 
 /// How many results are opened comes from the page budget and a useful share
-/// of a page, not a setting: a large window opens many, a small one at least
-/// one, and a budget with room for one useful share opens one, not one per
-/// 400 characters as when every result was opened and shared out equally.
+/// of a page: a large window opens many, a small one at least one.
 #[test]
 fn the_pages_read_follow_the_page_budget() {
     assert_eq!(pages_the_budget_carries(0), 0);
@@ -47,9 +45,8 @@ fn the_pages_read_follow_the_page_budget() {
     );
 }
 
-/// Turning page reading off is a search that answers from its snippets: no
-/// page is opened, however much room the window has. It was lost with the
-/// page-count setting, whose 0 meant exactly this.
+/// Turning page reading off answers from snippets: no page is opened, however
+/// much room the window has.
 #[test]
 fn with_page_reading_off_no_page_is_opened() {
     let large = MIN_USEFUL_PAGE_CHARS * 20;
@@ -64,8 +61,8 @@ fn with_page_reading_off_no_page_is_opened() {
     );
 }
 
-/// The blocked page in the log was requested again a round later because
-/// nothing in the prompt said it had already failed.
+/// A page that already failed is said so in the prompt, so it is not requested
+/// again.
 #[test]
 fn a_page_that_could_not_be_read_says_why_and_not_to_try_again() {
     let body = render_page_body(Some(&PageOutcome::Unreadable(

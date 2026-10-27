@@ -61,14 +61,10 @@ impl ClaimChecker<'_> {
             .saturating_add(self.llm.count_tokens(&prompt))
     }
 
-    /// The tokens a durable located check of `claim` against `passages`
-    /// sends, its instructions and its prompt as `check_inner` sends them,
-    /// counted by the backend's own tokenizer where it can be asked and by
-    /// the calibrated estimate where it cannot. The estimate is one average
-    /// over every request, and a page's text can tokenize far denser than it
-    /// (the claim pages of one course eval ran from 1.8 to 4.4 characters a
-    /// token): a check sized by the estimate alone can run past the window,
-    /// or leave its answer no room.
+    /// The tokens a durable located check of `claim` against `passages` sends,
+    /// counted by the backend's tokenizer where it can be asked and by the
+    /// calibrated estimate otherwise: page text can tokenize far denser than the
+    /// estimate's average, so the estimate alone can overrun the window.
     pub async fn located_prompt_tokens_measured(&self, claim: &str, passages: &[String]) -> usize {
         let reasoned = self.policy.strict();
         let sent = format!(

@@ -1,28 +1,10 @@
-//! Every course's index: where each lives, who holds it, the background
-//! builds that keep it current, and its removal with its course.
-//!
-//! - Builds are jobs of kind `learning.course_index` on the app's job
-//!   runtime, one at a time and never two of one course, separate from
-//!   Explorer's folder builds so a course never queues behind a large folder.
-//!   A build stopped by a restart resumes at the next start.
-//! - A capture, adoption, reimport or deletion of a source queues a build,
-//!   named by the course's set of active versions so repeats coalesce, unless
-//!   a reader holds the course: its next `ensure_current` picks the change up.
-//! - Row changes serialise on the index's `writing` lock, held only while
-//!   rows change; embedding serialises on its `embedding` lock. A lesson job
-//!   that finds a build embedding waits for it, which is the same work; a
-//!   user's command takes `writing` alone and never waits for embedding.
-//! - At startup, after the sweep, every course whose index has not recorded
-//!   its current revision as embedded is queued, with the same coalescing
-//!   build name as a capture's.
-//! - The embedding model is the app's, shared with chat and Explorer through
-//!   the composition root's `EmbedderSource`; the search is the library's
-//!   orchestrator, built by the composition root's `HybridSearchFactory`.
-//! - The course open in its workspace, and any course a lesson is about to
-//!   read, goes first ([`first`]): its index is claimed as awaited in the
-//!   turn order every index shares, so folder builds and other courses'
-//!   builds hold at their next batch while it embeds, and its build takes
-//!   this kind's slot ahead of other courses'.
+//! Every course's index: where each lives, who holds it, the background builds
+//! (`learning.course_index` jobs, one at a time and never two of one course)
+//! that keep it current, and its removal with its course. Builds are named by
+//! the course's active versions, so repeats coalesce. Row changes serialise on
+//! the index's `writing` lock and embedding on its `embedding` lock, so a
+//! user's command never waits for embedding. The course open in its
+//! workspace, or about to be read by a lesson, goes first ([`first`]).
 
 use super::job::CourseIndexJob;
 use super::search::{CourseSearch, IndexView};

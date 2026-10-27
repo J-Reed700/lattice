@@ -15,17 +15,6 @@ pub struct TagMapper;
 
 impl TagMapper {
     /// Create a TagDto from basic components.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Tag identifier
-    /// * `name` - Tag name
-    /// * `color` - Optional color hex code
-    /// * `description` - Optional description
-    ///
-    /// # Returns
-    ///
-    /// Tag DTO for JSON serialization
     pub fn create_dto(
         id: TagId,
         name: String,
@@ -41,27 +30,11 @@ impl TagMapper {
     }
 
     /// Convert TagId to string for DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `tag_id` - Domain tag identifier
-    ///
-    /// # Returns
-    ///
-    /// String representation for JSON serialization
     pub fn id_to_string(tag_id: &TagId) -> String {
         tag_id.to_string()
     }
 
     /// Convert string to TagId.
-    ///
-    /// # Arguments
-    ///
-    /// * `id_str` - String tag ID from DTO
-    ///
-    /// # Returns
-    ///
-    /// Domain TagId value object
     ///
     /// # Errors
     ///
@@ -72,14 +45,6 @@ impl TagMapper {
     }
 
     /// Extract data from create request DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Create tag request DTO
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (name, color, description) for domain model creation
     pub fn from_create_request(
         request: CreateTagRequestDto,
     ) -> (String, Option<String>, Option<String>) {

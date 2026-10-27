@@ -1,37 +1,8 @@
-//! Reading every passage before writing the answer, then checking the answer
-//! used what the reading found.
-//!
-//! Asked for everything a document records about a subject, the local 9B
-//! skimmed: one bullet per passage it happened to notice, then it stopped,
-//! leaving out one to three of the passages that held the facts — the second
-//! passage as often as the twentieth. Which ones changed with the seed; that
-//! some were dropped did not. It is the multi-needle shortfall long-context
-//! benchmarks measure, and neither a shorter prompt nor thinking cured it.
-//!
-//! So a grounded answer is written from notes on one cached prompt. The
-//! model first reads (Chain-of-Note, with the notes copied rather than
-//! paraphrased), a few passages at a time, each group shown again where the
-//! message closes: one line per passage, the sentences of it that bear on
-//! the question as written, or a hyphen (see `reading::groups`). It then
-//! writes the answer from its own notes. Last, the app compares the notes and
-//! the answer: a passage the notes copy word for word that the answer never
-//! cites was skipped, and the model is asked to add it. Grounding asks
-//! whether every cited claim is in a passage; this asks whether every passage
-//! the model found is in the answer.
-//!
-//! Nothing here looks at the question or depends on its language. The inputs
-//! are the labels the message shows, the model's notes and the labels in its
-//! answer. Every loop ends when a finite set of labels stops shrinking. The
-//! notes are written out of the answer's output reservation, all the groups
-//! and their sweeps together; the answer is held to what the window has left
-//! after the notes, and goes without them when they would take more of it
-//! than they leave. The turn's clock and Stop bound all of it.
-//!
-//! `scripts/replay_answer_round.py` sends these same instructions to measure
-//! the rounds, and `scripts/replay_grouped_reading_ab.py` measured the
-//! grouped reading against the single reading and its close read;
-//! docs/design/2026-10-23-answer-coverage.md and
-//! evals/retrieval/2026-10-26-GROUPED-READING.md have the numbers.
+//! Reads the numbered passages into notes before the answer is written, then
+//! asks again for any passage the notes quote that the answer does not cite.
+//! Notes are copied lines, one per passage, read a few passages at a time (see
+//! `reading::groups`). Every loop ends when a finite set of labels stops
+//! shrinking. See docs/design/2026-10-23-answer-coverage.md.
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
@@ -59,9 +30,8 @@ mod notes;
 use groups::read_in_groups;
 use notes::{as_kept, attribute};
 
-/// Closes a message that shows numbered passages. It is part of the message,
-/// so the round that reads and the round that writes share the prompt to its
-/// last token, and the turn's budget prices it with the rest.
+/// Closes a message that shows numbered passages. It is part of the message so
+/// the reading and writing rounds share the cached prompt.
 pub(in crate::features::conversation::chat) const READING_INSTRUCTION: &str = "Before answering, go through every numbered passage above in order and write one line for each: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. Account for every label. Write only these lines; the answer comes after.";
 
 /// Said after a group's lines that left labels out. `{labels}` lists them.
@@ -78,9 +48,7 @@ pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these pa
 /// Between the answer and what a continuation adds to it.
 const PARAGRAPH_BREAK: &str = "\n\n";
 
-/// A numbered passage the message shows: its trimmed text for showing it
-/// again in its group, and its whitespace-normalized text for verifying
-/// copies.
+/// A numbered passage: trimmed for showing again, normalized for checking copies.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Passage {
     pub(super) raw: String,
@@ -109,9 +77,8 @@ impl<T: Into<String>> From<T> for Passage {
 pub(super) struct Passages(pub(super) BTreeMap<u32, Passage>);
 
 impl Passages {
-    /// The sources whose label the message shows. A source the message does
-    /// not number is not one the model was asked to read. Several sources
-    /// under one label — an attachment carried in chunks — read as one text.
+    /// The sources whose label the message shows. Sources sharing a label (an
+    /// attachment in chunks) read as one text.
     fn shown(sources: &[SourceDto], message: &str) -> Self {
         let mut texts: BTreeMap<u32, String> = BTreeMap::new();
         for source in sources {
@@ -152,27 +119,20 @@ impl Passages {
 /// What the reading round wrote.
 #[derive(Debug)]
 pub(super) struct Notes {
-    /// The note lines and nothing else, as kept (see [`notes::as_kept`]):
-    /// replayed to the model as its own message, and shown on the reading
-    /// step.
+    /// The note lines as kept (see [`notes::as_kept`]), replayed and shown on the step.
     text: String,
-    /// Each label's note when it copies that passage, `None` otherwise: a
-    /// hyphen, or a line that copies no passage or another one (a copy of
-    /// another passage is that passage's note, see [`notes::attribute`]).
+    /// Each label's note when it copies that passage; `None` for a hyphen or a
+    /// line that copies no passage or another one (see [`notes::attribute`]).
     lines: BTreeMap<u32, Option<String>>,
-    /// The labels whose note is copied word for word from that passage. Only
-    /// these can find an answer incomplete: a note that is a paraphrase, a
-    /// "none", or a quote found in several passages proves nothing.
+    /// Labels whose note is a word-for-word copy. Only these can find an answer
+    /// incomplete; a paraphrase or a quote found in several passages proves nothing.
     noted: BTreeSet<u32>,
     /// `text` in tokens, as the backend counts them where it can.
     tokens: usize,
 }
 
-/// The passages to read, when the turn's message asks for a reading: it
-/// closes with [`READING_INSTRUCTION`], which the prompt builder adds only to
-/// a message that shows numbered passages. `None` too when none of the labels
-/// it shows is a source the turn holds: there is nothing to read, and the
-/// instruction is taken back (see [`withdraw`]).
+/// The passages to read when the turn's message closes with
+/// [`READING_INSTRUCTION`]; `None` when none of its labels is a source the turn holds.
 pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<Passages> {
     let message = input.iter().rev().find(|item| item.is_user())?.text();
     message
@@ -181,14 +141,9 @@ pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<
         .filter(|passages| !passages.is_empty())
 }
 
-/// The reading: every passage read in its group (see `reading::groups`),
-/// each note then put under the passage it was copied from, and the notes
-/// replayed as the lines as kept.
-///
-/// `Ok(None)` when no notes came of it — the provider failed, the model wrote
-/// no line under a label, or no note is a copy of its passage — and the
-/// answer is then asked for as it was before reading existed (see
-/// [`withdraw`]). Only Stop and the turn's deadline are errors.
+/// Reads every passage in its group (see `reading::groups`) and attributes each
+/// note to the passage it copies. `Ok(None)` when no usable notes came of it
+/// (see [`withdraw`]); only Stop and the turn's deadline are errors.
 pub(super) async fn read_passages(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
@@ -209,12 +164,8 @@ pub(super) async fn read_passages(
         return Ok(None);
     }
     let (noted, moved) = attribute(&mut lines, passages);
-    // Only a note that copies its own passage reaches the writer. A line
-    // copying no passage, or another passage's, would put under its label
-    // words that passage does not say; replayed as a hyphen it costs nothing,
-    // since the passage itself is still in the prompt. Replayed this way the
-    // answers kept every fact the full notes gave them (149 of 152 facts on
-    // 30 questions, evals/retrieval/2026-10-26-GROUPED-READING.md).
+    // Only a note that copies its own passage reaches the writer; any other line is
+    // replayed as a hyphen, since the passage itself is still in the prompt.
     for (label, note) in &mut lines {
         if !noted.contains(label) {
             *note = None;
@@ -255,17 +206,10 @@ pub(super) async fn read_passages(
     }))
 }
 
-/// Give the writing round the notes, as the model's own message, and the
-/// instruction to write, said last. Everything before them is the reading
-/// round's request unchanged, so the server reads only these.
-///
-/// The prompt was planned to leave the answer its reservation, and the notes
-/// and the instruction now take part of it. So the writing round is measured
-/// as it will be sent, and its answer held to the room left in the window the
-/// turn was planned against, never more than the reservation. When that room
-/// is smaller than the notes themselves, the notes would cost the answer more
-/// than they give it: they are not given, the request is left as it was, and
-/// `false` says so.
+/// Gives the writing round the notes, as the model's own message, then the
+/// instruction to write. The answer is held to the room left in the planned
+/// window; when that is smaller than the notes, nothing is added and this
+/// returns `false`.
 pub(super) async fn append_notes(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -327,16 +271,11 @@ fn replace_reading(input: &mut [CompletionInput], instead: &str) {
     }
 }
 
-/// Ask the model to add the passages its notes quote and its answer does not
-/// cite, after the answer, for as long as each continuation cites at least
-/// one of them. The set shrinks every time round, so it ends.
-///
-/// A continuation is written whole before any of it is shown, then shown and
-/// kept as one piece, so what the reader saw and what is saved are the same
-/// text, and a continuation that fails or runs out of time takes nothing from
-/// an answer that was already finished: the answer stands as written. An
-/// answer stopped at its output limit is left as it is too: it already says
-/// why it ends there. Only Stop is an error.
+/// Asks the model to add the passages its notes quote that the answer does not
+/// cite, while each continuation cites at least one of them (the set shrinks,
+/// so it ends). A continuation is shown only once written whole, so a failed one
+/// leaves the answer as it was. An answer cut at its output limit is left alone.
+/// Only Stop is an error.
 pub(super) async fn add_what_was_left_out(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -426,9 +365,8 @@ pub(super) async fn add_what_was_left_out(
     Ok(())
 }
 
-/// The lines a reading round wrote that can be trusted whole. A reply cut at
-/// the output limit loses its last line, which may stop mid-sentence; a sweep
-/// asks for that label again. A tool call written as text is not a note.
+/// The lines a reading round wrote that can be trusted whole: a reply cut at the
+/// output limit drops its last line, and a written tool call is not a note.
 pub(super) fn whole_lines<'t>(text: &'t str, finish_reason: &str) -> &'t str {
     let text = match written_call_start(text) {
         Some(start) => &text[..start],
@@ -495,9 +433,7 @@ pub(super) async fn room_left(llm: &dyn LLMPort, request: &CompletionRequest) ->
         .saturating_sub(prompt_tokens(llm, request).await)
 }
 
-/// `request`'s prompt in tokens, as the send-time gates measure one: every
-/// message with its role, every call and result and the tool schemas, plus
-/// the chat template's framing and each picture's declared cost.
+/// `request`'s prompt in tokens, counted as the send-time gates count it.
 pub(super) async fn prompt_tokens(llm: &dyn LLMPort, request: &CompletionRequest) -> usize {
     let text = request
         .input
@@ -533,10 +469,8 @@ pub(super) async fn tokens(llm: &dyn LLMPort, text: &str) -> usize {
     }
 }
 
-/// A request of the reading round on `input`. It carries the planned
-/// request's tools, forbidden: without them the prompt would differ from its
-/// first token and the server would read it all again. It is a
-/// transcription, so the same passages should read the same way every time.
+/// A reading-round request on `input`. It keeps the planned request's tools,
+/// forbidden, so the prompt still matches the cache from its first token.
 fn reading_request(
     request: &CompletionRequest,
     input: Vec<CompletionInput>,

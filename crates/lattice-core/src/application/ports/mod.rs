@@ -3,71 +3,6 @@
 //! This module defines the port interfaces that infrastructure implementations
 //! must satisfy. Ports follow the Hexagonal Architecture pattern, allowing
 //! the application core to remain independent of infrastructure details.
-//!
-//! # Port Types
-//!
-//! - **Embedding** - Text embedding generation (a GGUF on the bundled llama-server)
-//! - **Vector Search** - Similarity search (USearch HNSW)
-//! - **Text Search** - Keyword search (SQLite FTS, Tantivy, etc.)
-//! - **LLM** - Language model interaction (Ollama, Claude, GPT, etc.)
-//! - **File Storage** - File system operations with security validation
-//! - **Repository** - Generic data persistence (SQLite, PostgreSQL, etc.)
-//! - **Notification** - Event broadcasting (Tauri IPC, webhooks, logs, etc.)
-//!
-//! # Design Principles
-//!
-//! 1. **Dependency Inversion** - Application depends on ports, not implementations
-//! 2. **Testability** - Mock implementations for testing
-//! 3. **Flexibility** - Swap implementations without changing application logic
-//! 4. **Thread Safety** - All ports are `Send + Sync`
-//!
-//! # Example: Using Ports
-//!
-//! ```rust
-//! use crate::application::ports::{EmbeddingPort, VectorSearchPort};
-//!
-//! async fn index_and_search(
-//!     embedder: &impl EmbeddingPort,
-//!     searcher: &mut impl VectorSearchPort,
-//!     document: &str,
-//!     query: &str,
-//! ) -> Result<Vec<SearchResult>> {
-//!     // Use port interfaces, not concrete implementations
-//!     let doc_embedding = embedder.embed_single(document).await?;
-//!     searcher.add_embedding("doc-1".into(), doc_embedding)?;
-//!
-//!     let query_embedding = embedder.embed_single(query).await?;
-//!     searcher.search(&query_embedding, 10, 0.7)
-//! }
-//! ```
-//!
-//! # Example: Implementing a Port
-//!
-//! ```rust
-//! use crate::application::ports::EmbeddingPort;
-//! use async_trait::async_trait;
-//!
-//! struct ServerEmbedder {
-//!     server: EmbeddingServer,
-//!     dimension: usize,
-//! }
-//!
-//! #[async_trait]
-//! impl EmbeddingPort for ServerEmbedder {
-//!     async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
-//!         // Infrastructure implementation
-//!         self.server.embed(text).await
-//!     }
-//!
-//!     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-//!         self.server.embed_batch(texts).await
-//!     }
-//!
-//!     fn dimension(&self) -> usize {
-//!         self.dimension
-//!     }
-//! }
-//! ```
 
 pub mod active_models;
 pub mod activity;
@@ -211,23 +146,6 @@ use crate::domain::entities::Document;
 /// trait object usage without E0225 errors.
 ///
 /// This is a marker trait - implementers must satisfy both parent traits.
-///
-/// # Purpose
-///
-/// Rust doesn't allow combining a generic trait with a specific trait in a
-/// single trait object (e.g., `dyn RepositoryPort<Document> + DocumentRepositoryPort`
-/// causes E0225). This unified trait solves the issue by creating a single
-/// trait that extends both.
-///
-/// # Example
-///
-/// ```rust
-/// // Instead of this (E0225 error):
-/// // let repo: Arc<dyn RepositoryPort<Document> + DocumentRepositoryPort>;
-///
-/// // Use this:
-/// let repo: Arc<dyn DocumentRepository>;
-/// ```
 pub trait DocumentRepository: RepositoryPort<Document> + DocumentRepositoryPort {
     // This is a marker trait - no additional methods needed.
     // Implementers must satisfy both parent traits.

@@ -7,14 +7,6 @@
 //!
 //! # Security
 //! - Aggregated metrics only, no user-identifiable information
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetMetricsUseCase::new(metrics_port);
-//! let metrics = use_case.execute().await?;
-//! println!("Documents indexed: {}", metrics.documents_indexed);
-//! println!("Searches performed: {}", metrics.searches_performed);
-//! ```
 
 use crate::features::metrics::dto::MetricsSnapshotDto;
 use lattice_core::application::ports::MetricsPort;

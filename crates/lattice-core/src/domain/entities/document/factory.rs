@@ -35,18 +35,6 @@ impl Document {
     /// This is a factory method for creating documents from file system data,
     /// used by indexing use cases.
     ///
-    /// # Arguments
-    ///
-    /// * `file_path` - Validated file path
-    /// * `metadata` - File metadata from file system
-    /// * `checksum` - Content checksum
-    /// * `content` - Document text content
-    /// * `chunking_strategy` - Strategy for chunking this document
-    ///
-    /// # Returns
-    ///
-    /// A new Document instance with chunks generated from content.
-    ///
     /// # Errors
     ///
     /// Returns `AppError::InvalidState` if non-empty content produces no chunks.
@@ -120,32 +108,6 @@ impl Document {
     }
 
     /// Create new document.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - Validated file path
-    /// * `file_name` - Name of the file
-    /// * `mime_type` - MIME type (e.g., "text/plain")
-    /// * `size_bytes` - File size in bytes
-    /// * `checksum` - Content checksum (e.g., SHA-256 hash)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::entities::document::Document;
-    /// use lattice_core::shared::types::ValidatedFilePath;
-    /// use std::path::PathBuf;
-    ///
-    /// let path = ValidatedFilePath::new(PathBuf::from("/docs/report.pdf")).unwrap();
-    /// let doc = Document::new(
-    ///     path,
-    ///     "report.pdf".to_string(),
-    ///     "application/pdf".to_string(),
-    ///     2048,
-    ///     "sha256:abc123".to_string(),
-    /// );
-    /// assert_eq!(doc.size_bytes(), 2048);
-    /// ```
     pub fn new(
         file_path: ValidatedFilePath,
         file_name: String,
@@ -241,30 +203,10 @@ impl Document {
     /// necessary to enforce its invariants. Since "must have chunks" is a core
     /// invariant, the Document Entity must hold the chunks and tags directly.
     ///
-    /// # Arguments
-    ///
-    /// * `self` - The Document entity metadata (loaded from the documents table)
-    /// * `chunks` - The chunks belonging to this document (loaded from chunks table)
-    /// * `tags` - The tag IDs associated with this document (loaded from document_tags table)
-    ///
     /// # Errors
     ///
     /// Returns `AppError::InvalidState` if:
     /// - The chunks vector is empty (violates invariant)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::domain::entities::Document;
-    /// # use lattice_core::domain::entities::chunk::Chunk;
-    /// # use lattice_core::shared::types::TagId;
-    /// # use lattice_core::shared::error::Result;
-    /// # fn example(metadata: Document, chunks: Vec<Chunk>, tags: Vec<TagId>) -> Result<Document> {
-    /// // Repository loads metadata, chunks, and tags separately, then reconstructs:
-    /// let complete_entity = metadata.from_parts(chunks, tags)?;
-    /// # Ok(complete_entity)
-    /// # }
-    /// ```
     pub fn from_parts(mut self, chunks: Vec<Chunk>, tags: Vec<TagId>) -> Result<Self> {
         use crate::shared::error::AppError;
 

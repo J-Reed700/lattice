@@ -1,54 +1,16 @@
 //! # Course index
 //!
 //! Every course keeps an index of its evidence on disk, apart from
-//! `lattice.db`: `<data_dir>/course-index/<program_id>/` holds one
-//! `passages.db` (passages and their full-text index) and one
-//! `vectors-<identity>.usearch`, made by whichever embedding model is
-//! active. It is the shared passage index
-//! (`crate::infrastructure::passage_index`), the one Explorer keeps for a
-//! folder; the course owns only what its index means.
-//!
-//! - A document is a source's active version, keyed by the version's
-//!   immutable id: a refreshed, adopted or reimported source is a new key,
-//!   so nothing is ever updated in place. Web pages, pasted text and library
-//!   documents alike: a document captured from the library is indexed again
-//!   in each course that holds it, so one course is one ranking over one
-//!   corpus (design D3).
-//! - A passage is a byte span of the version's text, cut by the span chunker
-//!   at the widths the reference collection ranks by, so a hit is the span
-//!   the claim checker widens, with no relocation. A passage is embedded
-//!   under its source's title; the title is never stored with it.
-//! - [`CourseIndexes::ensure_current`] is the one idempotent step that brings
-//!   an index in line with its course: versions no longer active leave,
-//!   new ones are chunked in, and pending passages are embedded. A
-//!   background job (`learning.course_index`) runs it after a source is
-//!   captured, adopted, reimported or deleted, and at startup for every
-//!   course whose index is not current; a lesson job runs it inline before
-//!   it reads, waiting for a background build that is embedding.
-//! - A user's command (attaching evidence to a claim, searching the course's
-//!   sources) never waits for embedding: its text-only step
-//!   ([`CourseSearch::bring_text_current`]) chunks new versions in, drops
-//!   retired ones, searches what is embedded by meaning and the rest by
-//!   words, and queues a build for the embedding.
-//! - Without an embedding model the index is searched by text alone, and an
-//!   embedding that stops part-way leaves the rest to text until the next
-//!   run. Either is an [`IndexMode`], said in the lesson's stage text and
-//!   recorded in its verification report; never silent, never a stop.
-//! - The index is rebuilt from `learning_source_versions`, so it needs no
-//!   migration, and backups and packs carry none of it. Deleting a course
-//!   removes its directory; a startup sweep removes directories whose course
-//!   is gone.
-//!
-//! ## Public surface
-//!
-//! - [`CourseIndexes`] — every course's index: `search`, `ensure_current`,
-//!   `refresh`, `delete`, `sweep`, `backfill`, `register`, `open` and
-//!   `close` (the course in its workspace goes first), and `status`, the
-//!   cheap read the course workspace shows ([`CourseIndexStatusDto`]): while a
-//!   course indexes, lesson preparation waits for it and says why
-//! - [`CourseSearch`] — one course's index held by a reader, and the
-//!   [`IndexView`] it last brought current
-//! - [`IndexMode`], [`CourseProgress`]
+//! `lattice.db`: `<data_dir>/course-index/<program_id>/` holds the shared
+//! passage index (`crate::infrastructure::passage_index`) over the course's
+//! active source versions, keyed by immutable version id and cut into the byte
+//! spans the reference collection ranks. [`CourseIndexes::ensure_current`] is
+//! the one idempotent step that brings an index in line with its course: a
+//! background job runs it after source changes and at startup, and a lesson
+//! job before it reads. A user's command never waits for embedding
+//! ([`CourseSearch::bring_text_current`]); without an embedding model the
+//! index is searched by text alone ([`IndexMode`]). The index is rebuilt from
+//! `learning_source_versions`, so it needs no migration.
 
 mod job;
 mod manager;

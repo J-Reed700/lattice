@@ -15,9 +15,8 @@ fn make_test_index(dim: usize) -> USearchVectorIndex {
     })
 }
 
-/// Inserting more vectors than the initially reserved capacity used to walk
-/// off the end of USearch's node array and take the whole process down with
-/// SIGSEGV. `ensure_capacity` must grow the reservation transparently.
+/// Inserting more vectors than the initially reserved capacity grows the
+/// reservation (`ensure_capacity`) rather than overrunning USearch's nodes.
 #[test]
 fn growing_past_initial_capacity_does_not_crash() {
     let dim = 4;
@@ -109,7 +108,7 @@ fn test_remove() {
         .remove_embedding("doc1")
         .unwrap_or_else(|e| panic!("remove failed: {}", e));
 
-    // count() now uses key map length which accurately reflects live entries
+    // count() reflects the live entries in the key map.
     assert_eq!(index.count(), 0);
 }
 
@@ -828,10 +827,8 @@ fn a_missing_full_vector_falls_back_to_the_approximate_score() {
     assert!(hits[0].score > 0.99, "score was {}", hits[0].score);
 }
 
-/// The predicate runs inside the graph traversal now, so the properties
-/// that used to fall out of post-filtering have to be pinned explicitly:
-/// nothing out of scope survives, and a scope with enough members still
-/// yields a full `top_k`.
+/// The predicate runs inside the graph traversal, so nothing out of scope
+/// survives, and a scope with enough members still yields a full `top_k`.
 #[test]
 fn a_scoped_search_returns_only_allowed_documents_and_still_fills_top_k() {
     scoped_search_fills_top_k_with_the_best_in_scope_chunks(EXACT_SEARCH_MAX_VECTORS);

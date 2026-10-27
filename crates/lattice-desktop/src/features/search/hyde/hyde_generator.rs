@@ -4,12 +4,6 @@
 //! Uses LLM to rewrite questions into retrieval-oriented intent expansions
 //! that semantically match what relevant documents would contain.
 //!
-//! ## Purpose
-//!
-//! - For greetings: Fast-path with no LLM call
-//! - For questions: Generate hypothetical document via LLM
-//! - For commands: Generate expanded command interpretation
-//!
 //! ## Architecture
 //!
 //! ```text
@@ -59,18 +53,8 @@ use text::{
 /// below the provider's ten-minute default for these pre-retrieval calls.
 const REWRITE_TIME_BUDGET: Duration = Duration::from_secs(3 * 60);
 
-/// Service for generating HyDE interpretations.
-///
-/// Coordinates LLM calls to expand queries into hypothetical documents
-/// for semantic search enhancement.
-///
-/// # Design Decision: No Tool Intent Classification
-///
-/// Tool intent classification (vault_only, web_only, etc.) was previously
-/// performed as a second LLM call per query, but the result was never consumed
-/// by the RAG pipeline. This added 500-2000ms of wasted latency per query.
-/// The classification has been removed; if routing is needed in the future,
-/// it should be wired end-to-end before being re-enabled.
+/// Generates HyDE interpretations: LLM calls that expand queries into
+/// hypothetical documents for semantic search.
 pub struct HyDEGenerator {
     llm: Arc<dyn LLMPort>,
     /// The turn's stop button, when the rewrites run inside one.

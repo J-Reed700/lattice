@@ -454,7 +454,7 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
     assert_eq!(middle.next_offset, Some(2000));
     assert!(middle.content_truncated);
 
-    // Past the old schema's 100,000-character maximum: the whole document.
+    // A room past 100,000 characters gets the whole document.
     let large_room = read(json!({
         "document_id": document_id,
         "include_metadata": false,
@@ -465,7 +465,7 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
     assert_eq!(large_room.next_offset, None);
     assert!(!large_room.content_truncated);
 
-    // Below the old 1,000-character minimum: a short part, and where to go on.
+    // A room under 1,000 characters gets a short part and where to go on.
     let small_room = read(json!({
         "document_id": document_id,
         "include_metadata": false,

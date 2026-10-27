@@ -11,34 +11,12 @@ use std::path::PathBuf;
 /// indexes them with full semantic search capabilities. Preserves Obsidian's YAML
 /// front matter and wiki-style links (`[[note]]`).
 ///
-/// # Arguments
-///
-/// * `vault_path` - Path to the Obsidian lattice directory (e.g., `/Users/example/Documents/MyVault`)
-///
-/// # Returns
-///
-/// * `Ok(usize)` - Number of files successfully imported from the lattice
-/// * `Err(AppError)` - If path validation fails, lattice not found, or import fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid lattice path (directory traversal detected)
 /// * `AppError::Other` - Lattice directory not found at specified path
 /// * `AppError::Other` - Failed to access lattice directory (permissions error)
 /// * `AppError::Other` - Import operation failed (parsing error, database error)
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Import Obsidian lattice
-/// const importedCount = await invoke<number>('import_obsidian_vault', {
-///   vaultPath: '/Users/example/Documents/ObsidianVault'
-/// });
-///
-/// console.log(`Imported ${importedCount} notes from Obsidian`);
-/// ```
 ///
 /// # Obsidian Lattice Structure
 ///
@@ -93,22 +71,6 @@ use std::path::PathBuf;
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 ///
-/// # Use Cases
-///
-/// - **Migration**: Move knowledge base from Obsidian to Lattice
-/// - **Hybrid Workflow**: Keep using Obsidian, import for semantic search
-/// - **Backup**: Import Obsidian lattice as searchable backup
-/// - **Knowledge Integration**: Combine Obsidian notes with other documents
-/// - **Graph Building**: Import for network visualization
-///
-/// # Performance
-///
-/// - Import time scales with lattice size
-/// - Typical speed: ~50-200 notes/second
-/// - Large vaults (1000+ notes) may take 10-30 seconds
-/// - Async operation prevents UI blocking
-/// - Progress tracking via separate progress API
-///
 /// # Compatibility
 ///
 /// - **Obsidian Version**: All versions (Markdown is universal)
@@ -124,17 +86,6 @@ use std::path::PathBuf;
 /// 3. Recursive directory traversal
 /// 4. Markdown file parsing and indexing
 /// 5. Link and tag extraction
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Check lattice directory exists asynchronously
-/// 3. Validate lattice structure (contains .md files)
-/// 4. Recursively scan for Markdown files
-/// 5. Parse YAML front matter and extract metadata
-/// 6. Preserve wiki links and tags
-/// 7. Index each file with embeddings
-/// 8. Return imported file count
 pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError> {
     let validated_path = ValidatedFilePath::new(PathBuf::from(&vault_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid lattice path: {}", e)))?;
@@ -160,39 +111,12 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// directory, converting Notion pages to searchable documents with full semantic
 /// search capabilities. Supports both HTML and Markdown export formats.
 ///
-/// # Arguments
-///
-/// * `export_path` - Path to the Notion export directory or ZIP file
-///
-/// # Returns
-///
-/// * `Ok(usize)` - Number of pages successfully imported from Notion export
-/// * `Err(AppError)` - If path validation fails, export not found, or import fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid export path (directory traversal detected)
 /// * `AppError::Other` - Export directory/file not found at specified path
 /// * `AppError::Other` - Failed to access export (permissions, corrupted ZIP)
 /// * `AppError::Other` - Import operation failed (parsing error, unsupported format)
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Import Notion export (directory)
-/// const importedCount = await invoke<number>('import_notion_export', {
-///   exportPath: '/Users/example/Downloads/Notion-Export-2024-01-15'
-/// });
-///
-/// console.log(`Imported ${importedCount} pages from Notion`);
-///
-/// // Import Notion export (ZIP file)
-/// const importedCount2 = await invoke<number>('import_notion_export', {
-///   exportPath: '/Users/example/Downloads/notion-export.zip'
-/// });
-/// ```
 ///
 /// # Notion Export Structure
 ///
@@ -264,23 +188,6 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 /// - **ZIP Extraction**: Safe ZIP extraction (prevents zip bomb attacks)
 ///
-/// # Use Cases
-///
-/// - **Migration**: Move knowledge base from Notion to Lattice
-/// - **Backup**: Import Notion export as searchable backup
-/// - **Data Liberation**: Extract data from Notion for local control
-/// - **Knowledge Integration**: Combine Notion pages with other documents
-/// - **Archival**: Create permanent archive of Notion workspace
-///
-/// # Performance
-///
-/// - Import time scales with export size
-/// - Typical speed: ~20-100 pages/second
-/// - Large workspaces (1000+ pages) may take 30-60 seconds
-/// - ZIP extraction adds ~5-10 seconds overhead
-/// - Async operation prevents UI blocking
-/// - Progress tracking via separate progress API
-///
 /// # Export Format Compatibility
 ///
 /// - **HTML Export**: Recommended (preserves formatting)
@@ -309,19 +216,6 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 /// 6. HTML/Markdown parsing and metadata extraction
 /// 7. Link conversion (Notion → Lattice)
 /// 8. Indexing with embeddings
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Check export exists asynchronously
-/// 3. Extract ZIP if needed (safe extraction)
-/// 4. Detect export format (HTML or Markdown)
-/// 5. Recursively scan for pages
-/// 6. Parse HTML/Markdown and extract properties
-/// 7. Convert Notion links to Lattice links
-/// 8. Index each page with embeddings
-/// 9. Import CSV databases
-/// 10. Return imported page count
 pub async fn import_notion_export(export_path: String) -> Result<usize, AppError> {
     let validated_path = ValidatedFilePath::new(PathBuf::from(&export_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid export path: {}", e)))?;
@@ -348,34 +242,12 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 /// semantic search capabilities. Preserves Roam's unique features like daily notes
 /// and nested blocks.
 ///
-/// # Arguments
-///
-/// * `json_path` - Path to the Roam Research JSON export file (e.g., `roam-export.json`)
-///
-/// # Returns
-///
-/// * `Ok(usize)` - Number of pages successfully imported from Roam export
-/// * `Err(AppError)` - If path validation fails, file not found, or import fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid export path (directory traversal detected)
 /// * `AppError::Other` - Export file not found at specified path
 /// * `AppError::Other` - Failed to access export file (permissions error)
 /// * `AppError::Other` - Import operation failed (invalid JSON, parsing error)
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Import Roam Research export
-/// const importedCount = await invoke<number>('import_roam_json', {
-///   jsonPath: '/Users/example/Downloads/roam-export-2024-01-15.json'
-/// });
-///
-/// console.log(`Imported ${importedCount} pages from Roam Research`);
-/// ```
 ///
 /// # Roam JSON Structure
 ///
@@ -450,23 +322,6 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 /// - **No Rate Limiting**: One-time bulk import (rate limiting would be counterproductive)
 /// - **JSON Parsing**: Safe JSON parsing (prevents malicious JSON attacks)
 ///
-/// # Use Cases
-///
-/// - **Migration**: Move knowledge base from Roam Research to Lattice
-/// - **Backup**: Import Roam export as searchable backup
-/// - **Data Liberation**: Extract data from Roam for local control
-/// - **Knowledge Integration**: Combine Roam pages with other documents
-/// - **Network Analysis**: Import for bidirectional link graph visualization
-///
-/// # Performance
-///
-/// - Import time scales with export size
-/// - Typical speed: ~100-500 pages/second
-/// - Large exports (5k+ pages) may take 20-60 seconds
-/// - JSON parsing optimized for large files
-/// - Async operation prevents UI blocking
-/// - Progress tracking via separate progress API
-///
 /// # Roam Export Types
 ///
 /// - **JSON Export**: Primary format (recommended)
@@ -499,21 +354,6 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 /// 6. Link and reference extraction
 /// 7. Attribute conversion to metadata
 /// 8. Indexing with embeddings
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Check JSON file exists asynchronously
-/// 3. Parse JSON file safely
-/// 4. Validate JSON structure (array of pages)
-/// 5. Process each page:
-///    - Extract title and metadata
-///    - Flatten nested blocks to text
-///    - Convert [[page links]] to Lattice links
-///    - Extract #tags and attributes
-///    - Preserve daily note metadata
-/// 6. Index each page with embeddings
-/// 7. Return imported page count
 pub async fn import_roam_json(json_path: String) -> Result<usize, AppError> {
     let validated_path = ValidatedFilePath::new(PathBuf::from(&json_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid export path: {}", e)))?;

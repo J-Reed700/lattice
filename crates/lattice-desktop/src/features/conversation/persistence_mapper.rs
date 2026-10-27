@@ -1,11 +1,5 @@
-//! # Conversation Mapper
-//!
-//! Maps between database models and domain entities for conversations.
-//!
-//! This mapper handles the transformation of conversation-related data:
-//! - Conversation metadata
-//! - Conversation messages
-//! - Document references
+//! Maps between database models and domain entities for conversations, their
+//! messages and document references.
 
 use chrono::{DateTime, Utc};
 use lattice_core::domain::conversation::{
@@ -17,12 +11,8 @@ use lattice_core::shared::types::ConversationId;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-/// Database model for conversations.
-///
-/// Anemic data structure that mirrors the database schema.
-/// Contains no business logic - only data transfer.
-///
-/// **Important**: This type should NEVER leak outside the infrastructure layer.
+/// Database model for conversations, mirroring the schema. Must not leak
+/// outside the infrastructure layer.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ConversationModel {
     pub id: String,
@@ -88,15 +78,7 @@ pub struct ConversationSummaryModel {
 pub struct ConversationRowMapper;
 
 impl ConversationRowMapper {
-    /// Convert domain entity to database model.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain conversation entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
+    /// Converts a domain conversation to its database model.
     ///
     /// # Errors
     ///
@@ -114,15 +96,7 @@ impl ConversationRowMapper {
         })
     }
 
-    /// Convert database model to domain entity.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
+    /// Converts a database model to a domain conversation.
     ///
     /// # Errors
     ///
@@ -152,17 +126,7 @@ impl ConversationRowMapper {
         })
     }
 
-    /// Convert a batch of database models to domain entities.
-    ///
-    /// Continues processing on errors, collecting all successful conversions.
-    ///
-    /// # Arguments
-    ///
-    /// * `models` - Slice of database models
-    ///
-    /// # Returns
-    ///
-    /// Vector of successfully converted entities.
+    /// Converts a batch of database models, skipping any that fail to convert.
     pub fn to_entities(models: &[ConversationModel]) -> Vec<Conversation> {
         models
             .iter()

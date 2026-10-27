@@ -1,61 +1,7 @@
-//! Web archive service implementation
-//!
-//! Manages full-fidelity web article archives on the local filesystem.
-//!
-//! ## Architecture
-//!
-//! This service provides filesystem-based archival of web articles:
-//! - Stores each article in its own directory
-//! - Preserves both markdown AND full HTML snapshots
-//! - Includes JSON metadata for programmatic access
-//! - Organizes articles by domain (e.g., `github.com/`, `arxiv.org/`)
-//! - Creates helpful README.md explaining the archive structure
-//!
-//! ## Storage Structure
-//!
-//! Each article is stored as a directory:
-//! ```
-//! web-archive/
-//! ├── github.com/
-//! │   └── rust-best-practices-abc123/
-//! │       ├── article.md          # Markdown with frontmatter
-//! │       ├── page.html           # Full HTML snapshot
-//! │       └── metadata.json       # Structured metadata
-//! ```
-//!
-//! ### article.md Format
-//! ```markdown
-//! ---
-//! title: "Article Title"
-//! author: "Author Name"
-//! url: "https://example.com/article"
-//! published_date: "2024-01-15T10:30:00Z"
-//! word_count: 1500
-//! reading_time_minutes: 8
-//! archived_at: "2024-01-20T14:22:00Z"
-//! ---
-//!
-//! # Article Title
-//!
-//! Article content here...
-//! ```
-//!
-//! ### metadata.json Format
-//! ```json
-//! {
-//!   "url": "https://example.com/article",
-//!   "title": "Article Title",
-//!   "author": "Author Name",
-//!   "published_date": "2024-01-15T10:30:00Z",
-//!   "archived_at": "2024-01-20T14:22:00Z",
-//!   "word_count": 1500,
-//!   "reading_time_minutes": 8,
-//!   "links": [
-//!     "https://example.com/related-article",
-//!     "https://example.com/reference"
-//!   ]
-//! }
-//! ```
+//! Web archive service: articles archived on the local filesystem, one
+//! directory per article under its domain (`web-archive/<domain>/<title-id>/`)
+//! holding `article.md` (markdown with YAML frontmatter), `page.html` (a full
+//! HTML snapshot) and `metadata.json`.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -209,13 +155,8 @@ pub struct WebArchiveService {
 }
 
 impl WebArchiveService {
-    /// Create a new web archive service
-    ///
-    /// Initializes the archive directory at `~/.lattice/web-archive` and
-    /// ensures the README.md exists.
-    ///
-    /// # Returns
-    /// `WebArchiveService` instance ready to use
+    /// Creates the service over `~/.lattice/web-archive`, ensuring its README.md
+    /// exists.
     ///
     /// # Errors
     /// - `AppError::ConfigError` if home directory cannot be determined
@@ -248,10 +189,7 @@ impl WebArchiveService {
         &self.base_dir
     }
 
-    /// Initialize the archive directory structure
-    ///
-    /// Creates the base directory and README.md if they don't exist.
-    /// This is called automatically by commands that use the service.
+    /// Creates the base directory and README.md if they are missing.
     ///
     /// # Errors
     /// - `AppError::Io` if directory creation or file writing fails

@@ -41,14 +41,6 @@ impl Drop for TemporarySnapshot {
 /// - Literal `..` sequences
 /// - URL-encoded patterns like `%2e%2e`, `%2f`
 /// - Absolute paths (starts with `/` or `\`)
-///
-/// # Arguments
-///
-/// * `filename` - The filename to validate
-///
-/// # Returns
-///
-/// `Ok(())` if filename is safe, `Err(AppError::Security)` if dangerous patterns detected
 fn validate_safe_filename(filename: &str) -> Result<()> {
     if filename.contains("..") {
         return Err(AppError::Security(
@@ -95,24 +87,6 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
 /// - SQL keywords (DROP, DELETE, INSERT, etc.)
 /// - Comment sequences (-- and /* */)
 /// - Null bytes
-///
-/// # Arguments
-///
-/// * `path` - The file path to validate
-///
-/// # Returns
-///
-/// `Ok(())` if path is safe, `Err(AppError::Security)` if dangerous patterns detected
-///
-/// # Example
-///
-/// ```
-/// let safe_path = "/backup/file.db";
-/// validate_sql_safe_path(safe_path)?; // OK
-///
-/// let unsafe_path = "/backup'; DROP TABLE users; --";
-/// validate_sql_safe_path(unsafe_path)?; // Error
-/// ```
 fn validate_sql_safe_path(path: &str) -> Result<()> {
     // SQL keywords are valid in paths and are not rejected here.
     // that would block legitimate paths like "Dropbox", "update_v2", etc.
@@ -146,21 +120,10 @@ fn validate_sql_safe_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Connection options for opening an existing backup file read-only.
-///
-/// Built from `SqliteConnectOptions` rather than from a `sqlite://…?mode=ro`
-/// string on purpose, and it must stay that way: a DSN is a URL, and a Windows
-/// path is not a URL component. `Path::canonicalize` on Windows returns the
-/// verbatim form (`\\?\C:\Users\me\backups\x.db`), and sqlx splits a DSN at its
-/// *first* `?` — so the `\\?\` prefix alone truncated the filename to `\\` and
-/// turned the rest of the path plus `mode=ro` into one nonsense query
-/// parameter, failing with "unknown query parameter". Every backup path this
-/// adapter produces is canonicalized, so validation and restore were broken for
-/// all Windows users, not just in tests. Handing the `Path` straight to sqlx
-/// means no quoting, escaping or separator convention is ever involved.
-///
-/// `mode=ro` is the only thing the old URL encoded; everything else is left at
-/// sqlx's defaults so behaviour is unchanged.
+/// Connection options for opening an existing backup file read-only, built
+/// from `SqliteConnectOptions` rather than a `sqlite://…?mode=ro` DSN: a
+/// canonical Windows path (`\\?\C:\...`) contains a `?`, where sqlx splits a
+/// DSN. The `Path` goes to sqlx as is, with no quoting or escaping involved.
 fn read_only_backup_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new().filename(path).read_only(true)
 }

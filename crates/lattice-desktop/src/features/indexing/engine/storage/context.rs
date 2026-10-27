@@ -327,9 +327,8 @@ mod tests {
             .await
             .expect("open in-memory db");
 
-        // Foreign keys are enabled in production (see database/connection.rs).
-        // Without this pragma the bug under test is invisible: the bad chunk
-        // inserts would simply succeed and dangle.
+        // Foreign keys are enabled in production (see database/connection.rs);
+        // without this pragma bad chunk inserts would succeed and dangle.
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -362,10 +361,8 @@ mod tests {
             .expect("count query")
     }
 
-    /// Re-indexing a modified file used to fail with `FOREIGN KEY constraint
-    /// failed` on every attempt, because the upsert kept the row's original id
-    /// while chunks were bound to a freshly-generated UUID. The stale chunks
-    /// survived and search kept serving pre-edit content indefinitely.
+    /// Re-indexing a modified file binds its chunks to the row's own id, so the
+    /// stale chunks are replaced rather than left serving pre-edit content.
     #[tokio::test]
     async fn reindexing_a_modified_file_replaces_its_chunks() {
         let pool = setup_pool().await;

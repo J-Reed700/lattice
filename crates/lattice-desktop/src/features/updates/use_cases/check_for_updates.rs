@@ -10,15 +10,6 @@
 //! - Uses HTTPS for all update checks
 //! - Verifies release signatures (if available)
 //! - Rate limited to respect GitHub API limits
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = CheckForUpdatesUseCase::new(update_checker);
-//! let update_info = use_case.execute().await?;
-//! if update_info.update_available {
-//!     println!("Update available: {}", update_info.latest_version);
-//! }
-//! ```
 
 use crate::features::updates::dto::UpdateInfoDto;
 use lattice_core::application::ports::UpdateCheckerPort;

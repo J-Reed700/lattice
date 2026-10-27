@@ -1,14 +1,9 @@
 //! The user's actions on a lesson's claims (§5.1): each is one event in the
 //! claim's log, written under the review's revision so an action and the
-//! running job never overwrite each other (§9). The draft is not written
-//! here: an edit or a removal is applied to the draft by the next pass's
-//! review step, so a waiting lesson's draft changes only inside a job. Every
-//! verdict on a claim the local checker flagged is also a labelled example of
-//! the checker's accuracy (§15), and every verdict on a claim the provenance
-//! gate decided is an outcome calibration learns from (source provenance
-//! §13); a bar that outcome moves re-decides its claims at once.
-//! Attaching evidence (§5.4) is the attach pipeline's, not this service's.
-//! Design: docs/design/2026-10-16-lesson-claim-review.md §5.1, §6.2, §9, §15.
+//! running job never overwrite each other (§9). Edits and removals reach the
+//! draft through the next pass's review step. Every verdict also feeds the
+//! checker-accuracy examples (§15) and trust calibration (source provenance
+//! §13). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
@@ -84,14 +79,10 @@ impl ClaimReviewService {
         &self.drafts
     }
 
-    /// Resume verification (§6.2): a new attempt of the lesson's job that
-    /// carries the user's actions into the draft and checks what changed.
-    /// A lesson waiting for review continues its completed job. While a
-    /// claim waits for the user it is refused until one changed; a lesson
-    /// held by the Verifier audit alone (its stop, or a hold with no claim
-    /// waiting) resumes at once, since its fix is made in Settings or with
-    /// the course's switch, not on a claim (§14.6). A lesson whose job
-    /// failed or stopped retries it. `expected_revision` is the course's.
+    /// Resume verification (§6.2): a new attempt of the lesson's job that carries
+    /// the user's actions into the draft and checks what changed. Refused while a
+    /// claim waits for the user and none changed; a lesson held by the Verifier
+    /// audit alone resumes at once (§14.6). `expected_revision` is the course's.
     pub async fn resume(
         &self,
         program_id: &str,
@@ -426,12 +417,8 @@ impl ClaimReviewService {
         })
     }
 
-    /// The claim's field as the lesson's draft has it now. Edits and
-    /// removals change a draft that waits for review; a published lesson is
-    /// prepared again instead.
-    /// The claim's sentence in the draft (claim sources design §18.3); the
-    /// stored quote when the draft cannot be read, as for a published
-    /// lesson, whose text no longer changes.
+    /// The claim's sentence in the draft (claim sources design §18.3), or the
+    /// stored quote when the draft cannot be read, as for a published lesson.
     async fn bound_quote(
         &self,
         review: &LessonReview,

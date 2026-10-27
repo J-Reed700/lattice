@@ -1,21 +1,8 @@
-//! The one encoding for embedding vectors stored in `text_embeddings.embedding`.
-//!
-//! This module exists because the column previously had two writers that did
-//! not agree. `EmbeddingRepository` wrote `bincode::serialize(&Vec<f32>)`,
-//! which prefixes an 8-byte little-endian length header; the indexing engine
-//! wrote bare little-endian `f32` bytes with no header. The readers were split
-//! the same way, so each silently mishandled the other's rows: under the raw
-//! decoder a bincode row appears to have `dim + 2` floats and gets filtered
-//! out of the vector index, and under the bincode decoder a raw row simply
-//! errors.
-//!
-//! The consequence was that documents indexed through one path vanished from
-//! semantic search after an index rebuild, with nothing logged.
-//!
-//! Raw little-endian `f32` is the canonical format: it is what USearch wants,
-//! it is compact, and it needs no framing. `decode_embedding` still accepts
-//! the legacy bincode layout so rows written before this change keep working —
-//! see `looks_like_bincode` for how the two are told apart.
+//! The one encoding for embedding vectors stored in
+//! `text_embeddings.embedding`: raw little-endian `f32`, which is what USearch
+//! wants and needs no framing. `decode_embedding` still accepts the legacy
+//! bincode layout (an 8-byte length header) so older rows keep working; see
+//! `looks_like_bincode` for how the two are told apart.
 
 use crate::shared::error::AppError;
 use crate::shared::error::Result;
@@ -27,19 +14,10 @@ const F32_BYTES: usize = 4;
 const BINCODE_LEN_PREFIX: usize = 8;
 
 /// The canonical identity of an embedding, used both as the
-/// `text_embeddings.id` primary key and as the vector-index key.
-///
-/// There must be exactly one scheme. Previously the repository wrote
-/// `emb_{chunk_id}` while the indexing engine wrote a bare `Uuid::new_v4()`,
-/// and the startup rebuild keyed the vector index off whichever `id` it found
-/// — but deletion always looked for `emb_{chunk_id}`. For engine-written rows
-/// the two never matched, so removals silently missed (`remove_embedding`
-/// returns `Ok` for an absent key) and deleted documents kept coming back in
-/// semantic search forever.
-///
-/// Deriving the key from `chunk_id` also makes it deterministic, so a
-/// re-index produces the same key for the same chunk instead of orphaning the
-/// old one.
+/// `text_embeddings.id` primary key and as the vector-index key. There must
+/// be exactly one scheme, or deletion misses keys and deleted documents stay
+/// in semantic search. Derived from `chunk_id`, so a re-index produces the
+/// same key for the same chunk.
 pub fn vector_key(chunk_id: &str) -> String {
     format!("emb_{}", chunk_id)
 }
@@ -155,8 +133,8 @@ mod tests {
         assert_eq!(encode_embedding(&sample()).len(), 384 * F32_BYTES);
     }
 
-    /// Rows written by the old `EmbeddingRepository` must keep decoding — a
-    /// user's existing index should survive the change, not be discarded.
+    /// Rows in the legacy bincode layout keep decoding, so an existing index
+    /// survives.
     #[test]
     fn reads_legacy_bincode_rows() {
         let original = sample();

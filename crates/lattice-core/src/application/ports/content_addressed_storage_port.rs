@@ -1,28 +1,11 @@
-//! Content-addressed storage port.
-//!
-//! This port defines the interface for the library of imported files: the
-//! copy that Lattice owns and is therefore allowed to delete.
-//!
-//! # Purpose
-//!
-//! - Import files to library storage (`~/.lattice/files/{hash}/filename`)
-//! - Detect duplicates by content hash (not file path)
-//! - Preserve original filenames for UX
-//! - Decide ownership: only files under the library root may be removed, and
-//!   only by hash, never by an arbitrary path handed in from a row
-//! - Keep an import and a concurrent delete of the same content from racing
-//!
-//! # Ownership rule
-//!
-//! Removal is expressed as [`ContentAddressedStoragePort::remove_if_unreferenced`],
-//! which refuses while any import holds a [`BlobLease`] on the hash and while
-//! the caller's [`BlobReferenceCheck`] still finds a document pointing at it.
-//! The hash is validated as 64 lowercase hex characters before any filesystem
-//! call, so a removal can never reach outside `{library_root}/{hash}`.
-//!
-//! # Infrastructure Implementations
-//!
-//! - `ContentAddressedStorage` - SHA-256 based storage in `~/.lattice/files/`
+//! Content-addressed storage port: the library of imported files
+//! (`~/.lattice/files/{hash}/filename`), the copy Lattice owns and may delete.
+//! Duplicates are detected by content hash and original filenames kept.
+//! Removal goes only through
+//! [`ContentAddressedStoragePort::remove_if_unreferenced`], which refuses
+//! while an import holds a [`BlobLease`] or a [`BlobReferenceCheck`] finds a
+//! referencing document, and validates the hash as 64 lowercase hex characters
+//! first, so it can never reach outside `{library_root}/{hash}`.
 
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -218,13 +201,8 @@ pub trait BlobReferenceCheck: Send + Sync {
     async fn is_referenced(&self, hash: &str) -> Result<bool>;
 }
 
-/// Port for content-addressed file storage.
-///
-/// Implementations must:
-/// - Store files in content-addressed layout (hash-based directories)
-/// - Detect duplicates by content hash (not file path)
-/// - Preserve original filenames for UX
-/// - Be thread-safe (`Send + Sync`)
+/// Content-addressed file storage: hash-based directories, duplicates
+/// detected by content hash, original filenames kept.
 #[async_trait]
 pub trait ContentAddressedStoragePort: Send + Sync {
     /// Import a file into the library and lease the blob.

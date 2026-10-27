@@ -1,47 +1,7 @@
-//! Article extractor service for clean content extraction
-//!
-//! Provides production-quality article extraction from HTML pages,
-//! implementing a simplified readability algorithm similar to Firefox
-//! Reader Mode or Pocket's article view.
-//!
-//! # Algorithm
-//!
-//! 1. **Parse HTML**: Use scraper to parse the HTML document
-//! 2. **Find Main Content**: Look for semantic tags and common class names
-//!    - Semantic tags: `<article>`, `<main>`
-//!    - Common classes: `.content`, `.article`, `.post-content`, `.entry-content`
-//!    - Fallback: Find largest text block with high paragraph density
-//! 3. **Remove Boilerplate**: Strip unwanted elements
-//!    - Scripts, styles, navigation, sidebars, footers, headers
-//!    - Elements with ad-related classes
-//! 4. **Extract Metadata**: Pull author and date from meta tags
-//! 5. **Calculate Metrics**: Word count and reading time (200 WPM)
-//! 6. **Generate Excerpt**: First ~200 characters of text
-//!
-//! # Example
-//! ```rust,no_run
-//! use lattice::infrastructure::services::article_extractor::ArticleExtractorService;
-//! use lattice::features::web::traits::ArticleExtractorServiceTrait;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let service = ArticleExtractorService::new()?;
-//!
-//! let html = r#"<html>
-//!     <body>
-//!         <article>
-//!             <h1>Article Title</h1>
-//!             <p>This is the main article content...</p>
-//!         </article>
-//!     </body>
-//! </html>"#;
-//!
-//! let article = service.extract_article(html, "https://example.com/article").await?;
-//! println!("Title: {}", article.title);
-//! println!("Word count: {}", article.word_count);
-//! println!("Reading time: {} minutes", article.reading_time_minutes);
-//! # Ok(())
-//! # }
-//! ```
+//! Article extraction from HTML pages, a simplified readability algorithm like
+//! Firefox Reader Mode: find the main content (semantic tags, common class
+//! names, or the densest text block), strip boilerplate, and pull the author,
+//! date, word count, reading time (200 WPM) and an excerpt.
 
 use crate::features::web::services::identity;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
@@ -325,18 +285,13 @@ impl ArticleExtractorService {
         self.extract_youtube_article_from_html(&html, &final_url)
     }
 
-    /// Create a new article extractor service with default configuration
+    /// Creates the service with its default configuration.
     ///
     /// # Errors
     ///
-    /// Returns `AppError::InternalError` if HTTP client initialization fails.
-    /// Common causes:
-    /// - SSL/TLS certificate issues (e.g., system CA certificates not found)
-    /// - Network configuration problems
-    /// - Platform-specific TLS backend initialization failures
-    ///
-    /// When this fails, app initialization will use a disabled fallback service
-    /// that returns helpful error messages instead of crashing the app.
+    /// Returns `AppError::InternalError` if the HTTP client cannot be built (TLS
+    /// or network configuration); app initialization then uses a disabled
+    /// fallback service.
     pub fn new() -> Result<Self> {
         let client = identity::client_builder()
             .timeout(Duration::from_secs(30))

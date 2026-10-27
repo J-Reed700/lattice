@@ -1,13 +1,8 @@
-//! Lexical grounding pre-filter.
-//!
-//! Stemmed token overlap between each claim sentence and the passages it cites.
-//! Cheap and deterministic, so it runs first on every turn and decides which
-//! sentences are worth an LLM call. It cannot read meaning: a sentence that
-//! reuses the source's vocabulary while inverting its meaning still scores
-//! high. So overlap alone never settles a cited claim. Only a near-verbatim
-//! copy of the passage skips the judge, and only when the claim carries no
-//! number, date or negation and cut none, and no name, from the sentence it
-//! copies.
+//! Lexical grounding pre-filter: stemmed token overlap between each claim
+//! sentence and the passages it cites. Cheap and deterministic, so it runs
+//! first and decides which sentences are worth an LLM call. Overlap cannot
+//! read meaning, so it never settles a cited claim alone: only a near-verbatim
+//! copy that carries and cuts no number, date, negation or name skips the judge.
 
 use lattice_core::application::contracts::sources::SourceDto;
 pub(super) use lattice_core::application::services::evidence_retrieval::{
@@ -52,8 +47,7 @@ pub(super) struct LexicalClaim {
     pub(super) citation_ids: Vec<u32>,
     /// Zero-based source indices those citation numbers resolve to.
     pub(super) cited_source_indices: Vec<usize>,
-    /// Kept for tests and debugging. No decision reads it any more: a ratio
-    /// says how many words a claim shares, not what it says with them.
+    /// Kept for tests and debugging; no decision reads it.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) overlap_ratio: f32,
     pub(super) matching_tokens: usize,
@@ -131,10 +125,7 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
             )
         };
         // A sentence that cites nothing is never backed, however many words it
-        // shares with some source: the overlap is with whichever window ranks
-        // best, not with anything the sentence claims to rest on, and "tripled
-        // yields" shares half its words with "improved cold tolerance". Its
-        // overlap is still measured, for diagnostics.
+        // shares with some source. Its overlap is still measured, for diagnostics.
         let supported = !citation_ids.is_empty()
             && matching_tokens >= MIN_MATCHING_TOKENS
             && overlap_ratio >= MIN_OVERLAP_RATIO;
@@ -160,27 +151,12 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
     claims
 }
 
-/// Whether this claim is worth an LLM call.
-///
-/// Every cited claim is, except a near-verbatim copy of its passage that
-/// leaves nothing out. Overlap used to settle any plain sentence with more
-/// than half its words in the window. On the 2026-10-12 claim-checker
-/// bake-off that certified 17 false claims no model ever read: a dropped
-/// "not", a swapped owner, a reversal, an extra clause, a widened scope, each
-/// built from the passage's own words. A token count cannot tell those from
-/// a paraphrase, so it no longer decides. A claim skips the judge only when
-/// every run of four of its words is in one window of a cited passage, it has
-/// at least [`MIN_COPIED_TOKENS`] content words, it carries no number, date
-/// or negation, and nothing it cut from the sentence it copies is a negation,
-/// number, date or name.
-///
-/// A sentence with no citation is never escalated. The judge rules a claim
-/// against the passages it cites, and a sentence that cites nothing has none —
-/// the only evidence to hand it would be whichever sources happened to rank
-/// first, which it was never making a statement about. Asking a judge to rule
-/// on unrelated text does not produce "unverified", it produces a verdict, and
-/// a closing line that summarises the cited ones has been marked contradicted
-/// on the strength of passages from an entirely different document.
+/// Whether this claim is worth an LLM call. Every cited claim is, except a
+/// near-verbatim copy of its passage: every run of four of its words in one
+/// window, at least [`MIN_COPIED_TOKENS`] content words, no number, date or
+/// negation, and nothing cut from the copied sentence that is one, or a name.
+/// A sentence with no citation is never escalated: it has no passages to be
+/// judged against.
 pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
     if claim.citation_ids.is_empty() {
         return false;
@@ -327,11 +303,7 @@ fn compare_wording(
 
 /// Whether `sentence`, which the claim copies, carries something the claim
 /// left out: a negation, a number, a weekday or month, or a capitalised name.
-///
-/// The whole sentence is read, not only the words the claim kept. "Do not
-/// widen the pool on Garnetline" copied as "Widen the pool on Garnetline"
-/// keeps every run of four words and loses the instruction: the "not" is in
-/// the part that was cut.
+/// The whole sentence is read, since the part that was cut may hold the "not".
 fn drops_a_marker(claim: &str, sentence: &str) -> bool {
     let claim_padded = padded_lowercase(claim);
     let sentence_padded = padded_lowercase(sentence);
@@ -378,20 +350,10 @@ fn word_runs(words: &[String]) -> HashSet<String> {
         .collect()
 }
 
-/// A full stop ends a sentence only when the text pauses after it. One inside
-/// a token ("1.2 °C", "v2.1", "example.com") does not, and splitting there cut
-/// every sentence with a decimal in half: the claims most worth checking were
-/// judged as two fragments, neither of which says what the sentence says.
-/// Every sentence with the citations it answers to.
-///
-/// A marker covers the point it closes, not only the sentence it sits in:
-/// "…LED lights are the stated workaround [11]. So 'a lot of sun' becomes
-/// '6–8 hours of strong light'." is one cited point written as two sentences.
-/// Scored alone, the second read as uncited and the answer said "No source
-/// cited for this" beside a visible `[11]`. So a sentence without a marker of
-/// its own takes the next marker in its paragraph or list item, or failing
-/// that the previous one. Its line is the boundary: a heading or a paragraph
-/// with no marker at all stays uncited, which is what it is.
+/// Every sentence with the citations it answers to. A full stop inside a token
+/// ("1.2 °C", "example.com") does not end a sentence. A sentence without a
+/// marker of its own takes the next marker in its paragraph or list item, or
+/// failing that the previous one; a line with no marker at all stays uncited.
 fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
     let mut out = Vec::new();
     for block in response.split('\n') {
@@ -415,19 +377,10 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
     out
 }
 
-/// Drop markdown emphasis so it cannot be read as sentence structure.
-///
-/// [`split_sentences`] breaks after a full stop whose next character is not
-/// alphanumeric, and a bolded opening sentence closes *after* its full stop:
-/// `**Bury it all the way.** The ideal depth is 4–6 inches [24].` split at the
-/// stop inside the emphasis, leaving one claim cut off before its closing `**`
-/// and the next one beginning `** The ideal depth…`. Both went to the judge
-/// malformed, and the stray marker was shown to the user in the verification
-/// panel as part of the claim.
-///
-/// Asterisk runs always go. Underscores go only when they are not inside a
-/// word, so `snake_case` in a quoted identifier survives. A formula keeps
-/// both: `$a_{ij}$` and `$x^*$` are its own.
+/// Drops markdown emphasis so it cannot be read as sentence structure: a
+/// bolded sentence closes after its full stop, and splitting there leaves
+/// stray `**` in the claims. Asterisk runs always go; underscores only outside
+/// a word, so `snake_case` survives. A formula keeps both.
 fn strip_emphasis_markers(text: &str) -> String {
     map_prose(text, strip_prose_emphasis)
 }
@@ -513,10 +466,8 @@ fn is_claim_candidate(sentence: &str) -> bool {
     if lattice_core::shared::text::contains_line_reference(s) {
         return false;
     }
-    // The app's own lines, appended when the model hit its output limit, ran
-    // out of tool rounds or time, or filled its window. The splitter stops at a full stop, so compare the
-    // words, not the wrapper — and the emphasis around them is gone by now, so
-    // match either form.
+    // The app's own notes, appended when the model hit a limit. The splitter
+    // stops at a full stop, so compare the words, in either emphasis form.
     let app_note = |note: &'static str| {
         note.trim()
             .trim_start_matches('_')
@@ -658,16 +609,9 @@ pub(in crate::features::conversation::chat) fn cited_labels(text: &str) -> BTree
         .collect()
 }
 
-/// Characters per scoring window over a long passage.
-///
-/// A cited web page arrives whole, and one token set over a whole article
-/// matches almost any sentence on its topic. Scoring against windows asks
-/// instead whether one stretch of the page says what the claim says.
-/// The sentence of `text` that shares the most vocabulary with `claim`.
-///
-/// Shown beside a verdict as the words it rests on. Taken from the passage
-/// rather than asked of the model: a one-word judge cannot quote, and a quote
-/// a model writes has to be checked against the page anyway.
+/// The sentence of `text` that shares the most vocabulary with `claim`, shown
+/// beside a verdict as the words it rests on. Taken from the passage, since a
+/// one-word judge cannot quote.
 pub(super) fn best_sentence(claim: &str, text: &str) -> Option<String> {
     let claim_tokens = extract_normalized_tokens(claim);
     let mut best: Option<(usize, String)> = None;

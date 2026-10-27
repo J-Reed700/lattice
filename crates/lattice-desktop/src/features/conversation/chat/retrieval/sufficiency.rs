@@ -1,27 +1,9 @@
-//! Post-rerank sufficiency signal for corrective retrieval.
-//!
-//! Retrieval always returns *something*: RRF ranks every candidate it saw, so
-//! an empty result list is the only failure the pipeline used to notice. This
-//! module adds a cheap, purely local second opinion — no model call — that the
-//! pipeline consults once, after reranking and before context assembly, to
-//! decide whether one replanned retry is worth its latency.
-//!
-//! Three signals, deliberately weak on their own:
-//!
-//! * **Top blended score.** Only meaningful when the cross-encoder actually
-//!   ran. `blend_rerank_scores` mixes `0.35 * normalized_first_stage + 0.65 *
-//!   rerank`, so the first-stage winner alone is worth `0.35`. A top score
-//!   below that floor means no passage earned any cross-encoder relevance.
-//!   Without a reranker the scores are RRF ranks, which are not probabilities
-//!   and must never be thresholded, so the score is reported and ignored.
-//! * **Spread** between the first and fifth result. A reranker that separated
-//!   nothing has not ranked; its top score is then no more trustworthy than an
-//!   RRF rank, so we fall back to the no-reranker rule.
-//! * **Lexical term coverage**: the fraction of the planner's informative query
-//!   terms that appear anywhere in the passages that will reach the answer —
-//!   the first `evidence_depth` of the ranking. This is the signal that
-//!   catches the real failure mode — a confident ranking over passages that
-//!   simply never mention what was asked about.
+//! Post-rerank sufficiency signal for corrective retrieval: a cheap, local
+//! second opinion, consulted once after reranking, on whether one replanned
+//! retry is worth its latency. Three weak signals: the top blended score (only
+//! when the cross-encoder ran; RRF ranks are never thresholded), the spread
+//! between the first and fifth results, and how many of the plan's query
+//! terms appear in the passages that will reach the answer.
 
 use std::collections::HashSet;
 
@@ -128,11 +110,9 @@ pub(super) fn assess_sufficiency(
     let term_coverage = term_coverage(results, plan, evidence_depth);
 
     let mut reasons = Vec::new();
-    // Reading in order is the planner's judgement of the request, and a small
-    // planner sets it on questions whose answer sits deep in the document. It
-    // is recorded, not obeyed: coverage judges this plan like any other, and
-    // a corrective plan never reads in order, so a misread request is still
-    // searched for what it asked.
+    // Reading in order is recorded, not obeyed: coverage judges this plan like
+    // any other, and a corrective plan never reads in order, so a misread request
+    // is still searched for what it asked.
     if plan.start_at_beginning {
         reasons.push(reason::ORDERED_READING);
     }

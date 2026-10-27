@@ -1,21 +1,8 @@
-//! Bringing a course's index in line with the course, in the three steps
-//! every run is made of; the manager takes the locks around them.
-//!
-//! - Rows ([`sync_rows`], under the index's `writing` lock): the course's
-//!   active versions are the truth. A stored version that is no longer
-//!   active (replaced by a refresh, an adoption or a reimport, or its source
-//!   deleted) leaves with its passages and their vectors; an active version
-//!   the store lacks is chunked in, and the full-text index follows by
-//!   trigger. Fast, and needs no model, so a user's command can run it.
-//! - Embedding ([`embed`], under the `embedding` lock): whatever is not
-//!   embedded with the active model is embedded, under the source's title.
-//!   The store is the checkpoint: a version is marked embedded only after a
-//!   save that holds all of its passages, so a run cut short resumes where
-//!   it stopped. Rows may change meanwhile; a vector for a passage that left
-//!   is never a hit, since a hit is read back through the rows.
-//! - Settling ([`settle`]): the mode the index is in, and, once every
-//!   passage is embedded, the course's revision recorded in the store's
-//!   meta, which is how the startup backfill tells a current index.
+//! Bringing a course's index in line with the course, in three steps the
+//! manager locks around: rows ([`sync_rows`], no model, under `writing`),
+//! embedding ([`embed`], under `embedding`; a version is marked embedded only
+//! once all its passages are saved, so a cut run resumes), and settling
+//! ([`settle`]: the mode, and the course's revision once all is embedded).
 
 use super::{IndexMode, CHUNK_CHARS, STEP_CHARS};
 use crate::features::learning::persistence::hash_text;

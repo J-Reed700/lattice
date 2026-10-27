@@ -1,15 +1,8 @@
 //! A course's sources as the Sources tab, the override menu and a claim card
-//! read their trust (§19): each version's level with its reasons, its
-//! publisher's standing, what capture recorded, its relations, its origin's
-//! track record and the overrides that can touch it. For a claim, each
-//! support is levelled for the claim's subject, beside the bar for its kind.
-//!
-//! Reads judgements already made and never calls a model: a version whose
-//! standing nobody has judged says so, and "Assess" judges it
-//! (`judgements::reassess_source`). Each judgement read is the latest made
-//! for its input, whichever model made it. The level follows lattice-core's
-//! `trust_level` with the same inputs the gate gives it, so the Sources tab
-//! and a claim card show what the gate decided on.
+//! read their trust (§19): each version's level and reasons, its publisher's
+//! standing, relations, track record and overrides. It reads judgements
+//! already made and never calls a model, levelling with the same
+//! `trust_level` inputs the gate uses.
 
 use super::calibration;
 use super::dto_map;

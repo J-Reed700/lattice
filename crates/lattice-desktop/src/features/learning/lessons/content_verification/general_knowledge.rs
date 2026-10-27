@@ -1,15 +1,8 @@
-//! Which unsupported lesson claims the machine proposes as general knowledge,
-//! and the human resolutions a published claim may carry.
-//!
-//! A claim the saved references neither support nor contradict, without
-//! invented specifics, is *proposed* as general knowledge: the claim waits for
-//! the user, who accepts the label or not (§13 D1). Only an accepted label, or
-//! the user's confirmation, lets a claim publish without a supporting passage.
-//! The exceptions are where invented specifics concentrate: a number,
-//! version, date or percentage that the claim's evidence does not give, or an
-//! absolute. Those are plain unsupported claims, so repair removes or softens
-//! them. Contradicted and unverified claims are never general knowledge.
-//! Design: docs/design/2026-10-16-lesson-claim-review.md §5.6, §13 D1.
+//! Which unsupported lesson claims the machine proposes as general knowledge
+//! (§13 D1): one the references neither support nor contradict, without
+//! invented specifics, waits for the user to accept the label. A number,
+//! version, date, percentage or absolute its evidence does not give is a plain
+//! unsupported claim. Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 use super::{ClaimVerdict, Finding};
 use serde::{Deserialize, Serialize};

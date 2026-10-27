@@ -5,14 +5,7 @@ use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
-    /// Delete specific messages from a conversation
-    ///
-    /// # Arguments
-    /// * `conversation_id` - Conversation ID
-    /// * `message_ids` - Array of message IDs to delete
-    ///
-    /// # Returns
-    /// Number of messages deleted
+    /// Deletes specific messages from a conversation; returns how many.
     pub async fn delete_messages(
         &self,
         conversation_id: &str,
@@ -33,14 +26,9 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to commit pruning: {}", e)))?;
         Ok(deleted)
     }
-    /// Delete every message created after `message_id` in `conversation_id`,
-    /// and `message_id` itself when `inclusive`.
-    ///
-    /// Also deletes `conversation_message_bookmarks` rows for the removed
-    /// messages in the same transaction: a bookmark that outlived its message
-    /// is a reference the ReferenceInbox cannot open.
-    ///
-    /// Returns the number of messages deleted.
+    /// Deletes every message created after `message_id` (and `message_id` itself
+    /// when `inclusive`), with their bookmarks in the same transaction. Returns
+    /// the number deleted.
     pub async fn truncate_after(
         &self,
         conversation_id: &str,
@@ -78,15 +66,10 @@ impl ConversationRepository {
         Ok(deleted)
     }
 
-    /// Delete the trailing assistant/system messages that follow the last user
-    /// message, plus that user message, and return its content and token count.
-    ///
-    /// This is what makes regenerate not duplicate the question: the chat flow
-    /// re-persists the returned content through its normal pending → completed
-    /// path, so the thread ends up with exactly one copy of the user turn.
-    ///
-    /// Returns `None` when the conversation has no user message; nothing is
-    /// deleted in that case.
+    /// Deletes the trailing assistant/system messages after the last user message,
+    /// plus that message, and returns its content and token count, so regenerate
+    /// re-persists exactly one copy of the question. `None`, deleting nothing,
+    /// when there is no user message.
     pub async fn take_last_user_turn(
         &self,
         conversation_id: &str,

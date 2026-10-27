@@ -9,12 +9,6 @@
 //! # Security
 //! - Validates mention type enum to prevent invalid queries
 //! - Rate limited to prevent abuse
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetMentionsByTypeUseCase::new(mention_repo, mapper);
-//! let wiki_links = use_case.execute(MentionType::WikiLink).await?;
-//! ```
 
 use crate::features::mentions::dto::MentionDto;
 use crate::features::mentions::mapper::MentionMapper;

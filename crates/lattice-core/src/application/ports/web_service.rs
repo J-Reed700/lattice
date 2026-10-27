@@ -20,23 +20,11 @@ pub const NO_PROVENANCE_READER: &str = "this fetcher does not extract provenance
 pub trait WebServiceTrait: Send + Sync {
     /// Search the web using configured public providers (DuckDuckGo/Bing/Wikipedia)
     ///
-    /// # Arguments
-    /// * `input` - Search query/options including pagination and provider hints
-    ///
-    /// # Returns
-    /// Web search output with results, pagination metadata, and provider details
-    ///
     /// # Errors
     /// Returns error if search fails or timeout occurs
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput>;
 
     /// Fetch and extract content from a URL
-    ///
-    /// # Arguments
-    /// * `url` - URL to fetch
-    ///
-    /// # Returns
-    /// Extracted web content with text and metadata
     ///
     /// # Errors
     /// Returns error if:
@@ -92,11 +80,5 @@ pub trait WebServiceTrait: Send + Sync {
     /// - Private IP ranges (RFC 1918)
     /// - Link-local addresses
     /// - Metadata endpoints (169.254.169.254)
-    ///
-    /// # Arguments
-    /// * `url` - URL to validate
-    ///
-    /// # Returns
-    /// Ok if URL is safe, Err if blocked
     fn validate_url(&self, url: &str) -> Result<()>;
 }

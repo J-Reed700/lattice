@@ -5,12 +5,9 @@ use std::path::Path;
 use crate::features::llm::engine::gguf_metadata;
 use lattice_core::application::ports::llm_port::ThinkingPolicy;
 
-/// The thinking policy a local model file needs.
-///
-/// Laguna XS 2.1 (APEX-I-Compact, measured 2026-10-13 on llama.cpp v0.6.0)
-/// repeats one special token until the output limit when its template's
-/// thinking is switched off, greedy or sampled, and parsed no tool call in
-/// three tries; with thinking on it answers. So it thinks on every request.
+/// The thinking policy a local model file needs. Laguna XS 2.1 repeats one
+/// special token until the output limit when its template's thinking is off,
+/// so it thinks on every request.
 pub fn thinking_policy_for(model_path: &Path) -> ThinkingPolicy {
     let architecture =
         gguf_metadata::read_model_info(model_path).and_then(|info| info.architecture);

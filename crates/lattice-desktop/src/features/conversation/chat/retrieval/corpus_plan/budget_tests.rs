@@ -201,9 +201,7 @@ async fn a_large_vault_is_shown_as_a_shortlist_that_fills_the_window() {
     assert!(prompt.contains(r#""catalog_total":379"#), "{prompt}");
 }
 
-/// The prompt grows with the planner's window. It used to be held near
-/// 2,560 tokens, what a 9B model on one machine read inside the planner's
-/// 20-second timeout, whatever the window.
+/// The prompt grows with the planner's window.
 #[tokio::test]
 async fn the_planners_prompt_is_sized_from_its_window() {
     let small = UtilityStub::new(8_192, true);
@@ -468,9 +466,8 @@ async fn a_prompt_that_cannot_fit_the_window_is_never_sent() {
     assert_eq!(health.prompt_tokens(&stub), window_room(&stub));
 }
 
-/// The planner used to be cut off after 20 seconds and the turn fell back to
-/// the local plan. A planner that answers after 30 seconds is slow, not dead:
-/// its plan is used, and the next attempt is not made smaller for it.
+/// A planner that answers after 30 seconds is slow, not dead: its plan is
+/// used, and the next attempt is not made smaller for it.
 #[tokio::test(start_paused = true)]
 async fn a_slow_planner_is_waited_for() {
     let health = PlannerHealth::default();
@@ -631,9 +628,8 @@ async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     assert_eq!(health.prompt_tokens(&stub), window_room(&stub));
 }
 
-/// The planner's excerpt of the conversation was cut by characters from its
-/// start, mid-message and without a word. It keeps whole lines, newest
-/// first, and counts the ones left out.
+/// The planner's excerpt keeps whole lines, newest first, and counts the ones
+/// left out.
 #[test]
 fn the_planners_history_is_whole_lines_with_the_rest_counted() {
     let stub = UtilityStub::new(16_384, true);

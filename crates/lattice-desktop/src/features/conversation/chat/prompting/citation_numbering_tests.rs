@@ -46,11 +46,8 @@ fn source(chunk_id: &str, document_id: &str, file_name: &str, citation_id: u32) 
     }
 }
 
-/// The exact scenario from the audit: one document contributes three
-/// chunks and a second contributes one. The prompt used to number the
-/// four *chunks* [1][2][3][4] while the UI resolved [n] against a
-/// two-entry, per-document list — so [3] and [4] pointed at nothing
-/// sensible and [2] opened the wrong file.
+/// One document contributes three chunks and a second one: the prompt's
+/// numbers must match the UI's per-source list, so every [n] opens its source.
 #[test]
 fn separate_passages_from_one_document_get_distinct_citations() {
     let results = [

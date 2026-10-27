@@ -1,19 +1,8 @@
 //! Source provenance and trust in Learning Studio: the store over the trust
-//! tables, the capture hook every source-saving path calls inside its own
-//! transaction, the override changes that tell the ledger which sources to
-//! re-decide, the outcomes and calibrated bars the user's verdicts make,
-//! and the rows a course pack carries.
-//!
-//! The commands' reads (P6) sit beside them: the trust view of a course's
-//! sources and of a claim's supports, the site overrides and the
-//! calibration Settings shows, the two judgements the user can ask for
-//! again, and the eval export. What an override change re-decides is the
-//! claim ledger's (`claim_reviews::{trust_changed, trust_overrides}`).
-//!
-//! The rules (origin, signals, levels, relations) are lattice-core's
-//! `domain::provenance`; storage is its `application::ports::SourceTrustStore`
-//! port, implemented here over the pool as the other learning repositories
-//! are. Nothing here imports another feature.
+//! tables, the capture hook source-saving paths call in their own transaction,
+//! override changes, the outcomes and calibrated bars verdicts make, the rows
+//! a pack carries, and the commands' reads. The rules are lattice-core's
+//! `domain::provenance`; storage is its `SourceTrustStore` port.
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §16-§18.
 
 pub mod calibration;

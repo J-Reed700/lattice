@@ -1,16 +1,8 @@
-//! Building one turn's bounded, typed model input from memory plus recall.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §10, §18.
-//!
-//! This is the seam between the chat feature and the shared
-//! [`ContextAssembler`]. The assembler owns the budget and the selection order
-//! and knows nothing about Tauri, settings or providers; this module gathers the
-//! inputs it needs and reports what happened.
-//!
-//! It runs only when `settings.llm.bounded_conversation_memory` is on (§18).
-//! While the switch is off, the existing string-context path is untouched, and
-//! [`build_memory_plan`] returns `None`. When enabled, even a conversation with
-//! no ledger must be checked: its raw history may already exceed the budget.
+//! Building one turn's bounded, typed model input from memory plus recall
+//! (design: `docs/design/2026-09-19-conversation-memory.md` §10, §18). This
+//! gathers the inputs the shared [`ContextAssembler`] needs and reports what
+//! happened. It runs only when `settings.llm.bounded_conversation_memory` is
+//! on; [`build_memory_plan`] returns `None` otherwise.
 
 use std::sync::Arc;
 
@@ -91,17 +83,15 @@ fn incomplete_history(cause: Option<&AppError>) -> AppError {
     ))
 }
 
-/// Assemble a bounded typed plan for this turn, or `None` to leave the existing
-/// path in charge.
-///
-/// `None` means only that the rollout switch is off. An empty or rebuilding
-/// ledger must still account for raw source before permitting generation.
+/// Assembles a bounded typed plan for this turn, or `None` when the rollout
+/// switch is off. An empty or rebuilding ledger must still account for raw
+/// source before permitting generation.
 ///
 /// # Errors
 ///
-/// Propagates the assembler's budget errors — an oversized current message, an
-/// unusable model, or active requirements that do not fit. Those are reported to
-/// the user rather than resolved by dropping a constraint.
+/// The assembler's budget errors (an oversized message, an unusable model, or
+/// requirements that do not fit), reported rather than resolved by dropping a
+/// constraint.
 pub async fn build_memory_plan(
     memory: &dyn ConversationMemoryPort,
     recall: &dyn ConversationMemoryReadPort,
@@ -298,14 +288,10 @@ pub async fn build_memory_plan_for_query(
     }))
 }
 
-/// Count the finished plan with the backend's own tokenizer, where it has one.
-///
-/// Selection runs on the calibrated estimate, because it counts every
-/// candidate; whether the request fits is the one decision that is final, so
-/// that is made on an exact count. When the estimate read low and the plan no
-/// longer fits, it is planned again once with the estimate scaled by what the
-/// tokenizer measured, and that plan is counted exactly in turn. An
-/// unreachable tokenizer leaves the estimated plan as it was.
+/// Counts the finished plan with the backend's own tokenizer, where it has
+/// one. Selection runs on the calibrated estimate; when the exact count shows
+/// the plan no longer fits, it is planned once more with the estimate scaled
+/// to match.
 async fn settle_exact_count(
     llm: &Arc<dyn LLMPort>,
     plan: ContextPlan,
@@ -365,15 +351,9 @@ struct RecentCandidates {
 }
 
 /// The newest messages as assembler candidates, and what was left unread.
-///
-/// Paged from the end rather than loading the aggregate: prompt construction
-/// does not read the entire conversation. Pages are read newest first until
-/// the candidates outweigh the recent-history pool (`pool_tokens`) beyond the
-/// newest message, which the assembler keeps whatever it costs. How far back
-/// that reaches is the window's business, not a message count: a large
-/// window carries hundreds of short turns verbatim before anything needs
-/// compaction. Messages the ledger already covers are not missing, so only an
-/// unread message above the watermark counts as unread source.
+/// Paged from the end until the candidates outweigh the recent-history pool
+/// beyond the newest message. Only an unread message above the ledger's
+/// watermark counts as unread source.
 async fn load_recent(
     memory: &dyn ConversationMemoryPort,
     conversation_id: &str,

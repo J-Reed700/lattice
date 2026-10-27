@@ -2,12 +2,6 @@
 //!
 //! Creates database schema and runs migrations for first-run setup.
 //!
-//! # Purpose
-//!
-//! Ensures the SQLite database is created with the correct schema.
-//! Idempotent - safe to run multiple times. On first run, creates the schema.
-//! On subsequent runs, verifies schema is up to date.
-//!
 //! # Business Logic
 //!
 //! 1. Get application data directory
@@ -15,18 +9,6 @@
 //! 3. Run schema initialization (CREATE TABLE IF NOT EXISTS)
 //! 4. Verify schema version
 //! 5. Return database path and metadata
-//!
-//! # Example
-//!
-//! ```rust
-//! let use_case = InitializeDatabaseUseCase::new(pool);
-//! let response = use_case.execute().await?;
-//!
-//! if response.success {
-//!     println!("Database ready at: {}", response.database_path);
-//!     println!("Schema version: {}", response.schema_version.unwrap());
-//! }
-//! ```
 
 use crate::features::initialization::dto::InitializeDatabaseResponseDto;
 use lattice_core::shared::error::AppError;
@@ -44,19 +26,11 @@ pub struct InitializeDatabaseUseCase {
 
 impl InitializeDatabaseUseCase {
     /// Create a new instance of the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `database_pool` - SQLite connection pool
     pub fn new(database_pool: Arc<SqlitePool>) -> Self {
         Self { database_pool }
     }
 
     /// Execute the use case.
-    ///
-    /// # Returns
-    ///
-    /// Response DTO with database initialization status and metadata.
     ///
     /// # Errors
     ///

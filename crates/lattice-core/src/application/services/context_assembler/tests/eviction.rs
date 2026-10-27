@@ -123,9 +123,8 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
 }
 
 /// Room flows down the pools in order: recalled passages get what the pools
-/// above them left before any document does. One recalled passage too long
-/// for that room used to end recall and leave documents nothing as well; it
-/// is passed over and named, the shorter passages after it go in, and the
+/// above left before any document does. A recalled passage too long for that
+/// room is passed over and named, the shorter ones after it go in, and the
 /// documents get what recall did not use.
 #[test]
 fn a_recalled_passage_too_long_for_the_room_is_passed_over_and_named() {

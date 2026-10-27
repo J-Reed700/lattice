@@ -552,14 +552,9 @@ async fn evidence_for(
     Ok(evidence)
 }
 
-/// The order the judge reads a pass B `page` in, as positions in the page:
-/// by need ([`ranking`]), the most needed first, the next last and the rest
-/// inward alternately, so the most relevant passages sit at the edges and
-/// the least relevant at the centre, where a long prompt's middle is read
-/// least closely. The page's own order stays canonical: it keys the
-/// comparison and its receipt, whatever order the judge read. The most
-/// needed passages of a page cut for the window keep this order among
-/// themselves, so a shortened page reads the same way.
+/// The order the judge reads a pass B `page` in: most needed first, the next
+/// last, the rest inward, so the most relevant passages sit at the edges of a
+/// long prompt. The page's canonical order still keys the comparison.
 fn reading_order(page: &[EvidencePassage]) -> Vec<usize> {
     let (mut front, mut back) = (Vec::new(), Vec::new());
     for (need, position) in ranking(page).into_iter().enumerate() {

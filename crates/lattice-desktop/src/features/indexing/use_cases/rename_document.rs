@@ -13,18 +13,6 @@
 //! This operation only updates the database record. It does NOT rename
 //! the actual file on disk. The file_name field is metadata for display
 //! purposes, while file_path remains the source of truth for the actual file.
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
-//!
-//! # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute("doc-123".to_string(), "New Name.txt".to_string()).await?;
-//! println!("Document renamed: {}", response.message);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -89,24 +77,11 @@ pub struct RenameDocumentUseCase {
 
 impl RenameDocumentUseCase {
     /// Create a new rename document use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repo` - Repository for document persistence
     pub fn new(document_repo: Arc<dyn DocumentRepositoryPort>) -> Self {
         Self { document_repo }
     }
 
     /// Execute document rename.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to rename
-    /// * `new_name` - New display name for the document
-    ///
-    /// # Returns
-    ///
-    /// Response with rename status and confirmation message
     ///
     /// # Errors
     ///
@@ -114,20 +89,6 @@ impl RenameDocumentUseCase {
     /// - Document not found (AppError::NotFound)
     /// - New name is invalid (AppError::InvalidInput)
     /// - Document update fails (AppError::Database)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
-    /// # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// // Rename a document
-    /// match use_case.execute("doc-123".to_string(), "Updated Name.txt".to_string()).await {
-    ///     Ok(response) => println!("Success: {}", response.message),
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(
         &self,
         document_id: String,
@@ -146,24 +107,13 @@ impl RenameDocumentUseCase {
         // 3. Store old name for response message
         let old_name = document.file_name().to_string();
 
-        // 4. Apply the rename as a metadata-only update.
-        // This used to rebuild the aggregate with `Document::with_id` and call
-        // `save()`. `with_id` produces a document with `chunks: Vec::new()`,
-        // and the aggregate save deletes every existing chunk before inserting
-        // that empty set — so renaming a file destroyed its chunks, cascaded
-        // its embeddings away, and dropped the document out of search. A
-        // rename touches one column; it must not travel through a path that
-        // rewrites children.
+        // 4. Apply the rename as a metadata-only update: a path that rebuilds the
+        // aggregate and saves it would delete every chunk and embedding.
         //
-        // The chunks' stored context prefix (`embedding_input::context_prefix`)
-        // names the file, and their dense vectors and FTS rows were built from
-        // it, so both keep the old name until the document is next reindexed.
-        // The re-embed backfill cannot pick this up: it keys on
-        // `contextualized_content`, vectors in `text_embeddings` are restored
-        // without a hash check, and it only runs at startup when the index is
-        // short of chunks. Refreshing the prefix here would mean rewriting every
-        // chunk row, dropping its vectors from the live index and re-embedding —
-        // a reindex without the extraction, which this use case has no ports for.
+        // The chunks' stored context prefix names the file, and their vectors and
+        // FTS rows were built from it, so both keep the old name until the next
+        // reindex. Refreshing them here would be a reindex without the extraction,
+        // which this use case has no ports for.
         self.document_repo.rename(&document_id, &new_name).await?;
 
         // 6. Build success response
@@ -175,14 +125,6 @@ impl RenameDocumentUseCase {
     }
 
     /// Validate the new document name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The proposed new name
-    ///
-    /// # Returns
-    ///
-    /// Trimmed, validated name
     ///
     /// # Errors
     ///

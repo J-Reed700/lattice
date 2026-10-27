@@ -41,13 +41,9 @@ pub struct PassageGroup {
     pub already_in_context: Vec<String>,
     /// Sequence of the candidate this group was built around.
     pub anchor_sequence: i64,
-    /// Order this group was selected in, best first.
-    ///
-    /// Kept because the two consumers want opposite orders: the model reads the
-    /// thread in the order it happened, while `ContextAssembler` evicts recalled
-    /// passages from the tail of the list it is handed. Rendering chronologically
-    /// from a rank-ordered list would otherwise mean the newest passage is the
-    /// one dropped when the recall pool is short, rather than the weakest.
+    /// Order this group was selected in, best first. The model reads groups
+    /// chronologically, but `ContextAssembler` evicts from the tail, so the rank is
+    /// kept to drop the weakest group rather than the newest.
     pub selection_rank: usize,
     /// True when the anchor came from exact-identifier matching rather than
     /// ranking, which is the case where lexical rank is least trustworthy.
@@ -150,9 +146,8 @@ pub async fn recall_for_turn(
         });
     }
 
-    // The message being answered is saved before recall runs, so the search
-    // can find it. It is already the prompt's question; recalled as well, it
-    // reached the model as an "older passage" of itself.
+    // The message being answered is saved before recall runs; it is already the
+    // prompt's question, so it is not recalled as well.
     let mut already: Vec<&str> = vec![request.user_input];
     already.extend(request.recent_turns.iter().map(String::as_str));
     already.extend(request.active_memory.iter().map(String::as_str));

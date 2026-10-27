@@ -207,13 +207,9 @@ impl SemanticChunker {
                 continue;
             }
 
-            // `offsets` holds **byte** offsets — the same values used to slice
-            // `text[start_char..end_char]` when chunks are built. Indexing with
-            // `chars().nth(byte_offset)` therefore inspected the wrong
-            // character on any text containing accents, CJK, or emoji, giving
-            // arbitrary mid-sentence splits that only degrade retrieval
-            // quality, never fail loudly. `chars().nth()` was also O(n) per
-            // probe, making boundary search quadratic on large documents.
+            // `offsets` holds byte offsets, the same values used to slice `text`, so
+            // boundaries are inspected by byte, not with `chars().nth()`, which would
+            // read the wrong character on non-ASCII text and be O(n) per probe.
             let byte_end = offsets.get(i).map(|o| o.1).unwrap_or(0);
             if byte_end > 0 && byte_end <= text.len() && text.is_char_boundary(byte_end) {
                 // Last character *ending* at this byte offset.

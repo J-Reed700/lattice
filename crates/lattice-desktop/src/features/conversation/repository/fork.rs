@@ -6,26 +6,13 @@ use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
 
 impl ConversationRepository {
-    /// Create a sibling conversation in the same space and copy messages up to
-    /// and including `up_to_message_id` (all when `None`), preserving role,
-    /// content, tokens, metadata, status and relative ordering with fresh ids.
-    /// Also copies `conversation_documents` and `conversation_web_sources`.
-    ///
-    /// Deliberately does **not** copy `conversation_summaries` (it points at
-    /// message ids that mean something else in the new thread) or
-    /// `conversation_memory_vectors` (keyed `UNIQUE(message_id)`, regenerated
-    /// on the next turn).
-    ///
-    /// The memory ledger is not copied either, for the same reason and a
-    /// stronger one: every evidence span names a parent message id, and reusing
-    /// those ids would let a later correction in the parent leak into a branch
-    /// taken before it. The fork gets fresh message ids and a fresh sequence
-    /// run, and rebuilds its own memory lazily on the next compaction.
-    ///
-    /// An `up_to_message_id` that is not in the conversation copies **zero**
-    /// messages — an unknown anchor must never be read as "copy everything".
-    ///
-    /// Returns `(new conversation id, copied message count)`.
+    /// Creates a sibling conversation in the same space and copies messages up to
+    /// and including `up_to_message_id` (all when `None`) with fresh ids and a
+    /// fresh sequence run, plus `conversation_documents` and
+    /// `conversation_web_sources`. Summaries, memory vectors and the memory ledger
+    /// are not copied: their message ids would let the parent's later corrections
+    /// leak into the branch. An `up_to_message_id` not in the conversation copies
+    /// zero messages. Returns `(new conversation id, copied message count)`.
     pub async fn fork(
         &self,
         conversation_id: &str,

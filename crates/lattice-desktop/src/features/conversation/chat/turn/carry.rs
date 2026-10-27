@@ -22,11 +22,9 @@ pub(super) async fn carry_material(
     attachment_ids: Vec<String>,
     evidence: &mut EvidenceBudget,
 ) -> CarriedMaterial {
-    // The files this turn brought in are read, not searched for. Retrieval can
-    // miss them, and on a forced-web turn the vault is not searched at all, so
-    // carrying them is the only way an attachment reliably reaches the model.
-    // `closed_book` still wins: that turn carries its own material by
-    // definition and reads nothing else.
+    // The files this turn brought in are carried, not searched for: retrieval can
+    // miss them, and a forced-web turn does not search the vault. `closed_book`
+    // still wins.
     let attachments = if flags.closed_book {
         TurnAttachments::default()
     } else if attachment_ids.is_empty() {

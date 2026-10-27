@@ -89,8 +89,7 @@ fn one_page_cited_twice_is_kept_once() {
     assert_eq!(kept[0].excerpt.as_deref(), Some("first"));
 }
 
-/// A deep-research turn can cite dozens of pages. Every one of them is kept:
-/// a fixed count here used to drop the ninth and later citations for good.
+/// A deep-research turn can cite dozens of pages, and every one is kept.
 #[test]
 fn every_cited_page_of_a_long_research_turn_is_kept() {
     let sources: Vec<SourceDto> = (0..40)
@@ -122,9 +121,7 @@ fn a_turn_that_cited_no_web_page_stores_nothing() {
     assert!(cited_web_sources(&[]).is_empty());
 }
 
-/// A page the turn read was kept twice: whole in the archive and whole again
-/// as this row's excerpt, which every later turn loaded to list one link. The
-/// row keeps the page's preview; the page itself is in the archive once.
+/// The row keeps the page's preview; the page itself is in the archive once.
 #[test]
 fn a_read_page_is_kept_as_its_preview_not_a_second_copy() {
     let page = "Long article text. ".repeat(5_000);

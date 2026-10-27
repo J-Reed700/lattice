@@ -23,33 +23,6 @@
 //!     expires_at INTEGER NOT NULL  -- Unix timestamp
 //! );
 //! ```
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::infrastructure::model_cache_adapter::ModelCacheAdapter;
-//! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use lattice_core::application::ports::ModelCatalogPort;
-//! use sqlx::SqlitePool;
-//! use std::sync::Arc;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let pool = SqlitePool::connect("sqlite::memory:").await?;
-//!     let huggingface = Arc::new(HuggingFaceAdapter::new());
-//!     let cached = ModelCacheAdapter::new(pool, huggingface).await?;
-//!
-//!     // First call: cache miss, hits API
-//!     let models = cached.search_models("llama", 10).await?;
-//!     println!("Found {} models (cache miss)", models.len());
-//!
-//!     // Second call: cache hit, no API call
-//!     let models = cached.search_models("llama", 10).await?;
-//!     println!("Found {} models (cache hit)", models.len());
-//!
-//!     Ok(())
-//! }
-//! ```
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -76,13 +49,6 @@ pub struct ModelCacheAdapter {
 
 impl ModelCacheAdapter {
     /// Create a new cache adapter.
-    ///
-    /// # Arguments
-    /// - `pool` - SQLite connection pool
-    /// - `upstream` - Upstream model catalog port (e.g., HuggingFaceAdapter)
-    ///
-    /// # Returns
-    /// Cache adapter or error.
     pub async fn new(
         pool: SqlitePool,
         upstream: Arc<dyn ModelCatalogPort>,
@@ -99,11 +65,6 @@ impl ModelCacheAdapter {
     }
 
     /// Create with custom TTL.
-    ///
-    /// # Arguments
-    /// - `pool` - SQLite connection pool
-    /// - `upstream` - Upstream model catalog port
-    /// - `ttl_seconds` - Cache TTL in seconds
     pub async fn with_ttl(
         pool: SqlitePool,
         upstream: Arc<dyn ModelCatalogPort>,

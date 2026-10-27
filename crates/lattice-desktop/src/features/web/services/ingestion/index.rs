@@ -8,16 +8,8 @@ use lattice_core::shared::error::Result;
 const WEB_ARTICLE_CONTEXT_PREFIX: &str = "[Document: Web Article]";
 
 impl WebIngestionService {
-    /// Split text losslessly within the loaded model's token budget.
-    /// The shared policy includes the document prefix and special tokens.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - The text to chunk
-    ///
-    /// # Returns
-    ///
-    /// Vector of contextualized chunks with metadata
+    /// Splits text losslessly within the loaded model's token budget, document
+    /// prefix and special tokens included.
     ///
     /// # Errors
     ///

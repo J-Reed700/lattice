@@ -4,32 +4,13 @@ use super::*;
 pub struct SidecarManager;
 
 impl SidecarManager {
-    /// Get the sidecar serving `config`, starting one if nothing is.
-    ///
-    /// This is the entry point production code should use. `config` is the
-    /// identity of a server, so two roles that resolve to the same model file
-    /// on the same hardware settings — the chat model also being the utility
-    /// or router model, which is the common setup, not an edge case — share
-    /// one process. Before this, each role's cache loaded independently and a
-    /// 4 GB model was resident two or three times over.
-    ///
-    /// What is *not* shared is per-role generation settings: those travel on
-    /// each request, so the roles keep their own `LlamaCppLlm` (and its
-    /// own `GenerationConfig`) over one server.
-    ///
-    /// Sharing costs much less concurrency than it looks like it should. We
-    /// pass no `--parallel`, and this build's default is auto, which picks
-    /// several slots over a unified KV cache — the pinned b8981 logs
-    /// `n_parallel = 4 and kv_unified = true` — so two roles are served side by
-    /// side rather than one queueing behind the other. What they do share is
-    /// the single `--ctx-size` window behind those slots, so concurrent long
-    /// prompts can crowd each other. That is a far cheaper failure than a
-    /// second multi-gigabyte copy of the same weights, which on the machines
-    /// this matters for does not fit at all.
-    ///
-    /// Falls back to an unshared server when no [`SidecarRegistry`] is managed
-    /// (tests, or any host that never called `manage`) so sharing is an
-    /// optimization rather than a requirement.
+    /// Gets the sidecar serving `config`, starting one if nothing is: the entry
+    /// point production code should use. `config` is a server's identity, so
+    /// roles resolving to the same model on the same settings share one process,
+    /// each keeping its own `LlamaCppLlm` and generation settings; the server's
+    /// default `--parallel` serves them side by side over one `--ctx-size`
+    /// window. Without a managed [`SidecarRegistry`] (tests) the server is
+    /// unshared.
     pub async fn start_shared(
         app: &AppHandle,
         config: SidecarConfig,
@@ -46,9 +27,8 @@ impl SidecarManager {
             .await?;
 
         if origin == Origin::Reused {
-            // The whole point of the change, so it says so out loud: without
-            // this line a regression to duplicate loads looks identical in
-            // the log to the fix working.
+            // Logged so sharing is visible: duplicate loads would otherwise look the
+            // same in the log.
             tracing::info!(
                 endpoint = %handle.endpoint(),
                 binary = handle.binary().label(),
@@ -61,31 +41,11 @@ impl SidecarManager {
         Ok(handle)
     }
 
-    /// Spawn a llama-server sidecar, falling back until something runs.
-    ///
-    /// The first attempt uses `config` on the primary build. Each failure
-    /// is classified (`AttemptFailure`) and `next_attempt` decides what to
-    /// try next:
-    ///
-    /// - The binary itself cannot run (missing dylib/DLL, wrong
-    ///   architecture, unsupported CPU instructions): retrying the same
-    ///   executable cannot help, so Windows/Linux go straight to the
-    ///   CPU-only build and macOS fails immediately.
-    /// - GPU or model startup failure with offload requested: retry the
-    ///   same build with `n_gpu_layers = 0`. Covers Vulkan driver crashes,
-    ///   Metal context-creation races on cold boot, and out-of-VRAM
-    ///   during weight allocation.
-    /// - That CPU-mode retry failing in a way that still points at the
-    ///   binary or the GPU backend (a Vulkan build initializes its backend
-    ///   even with no layers offloaded): try the CPU-only build on
-    ///   Windows/Linux.
-    ///
-    /// When every attempt fails, the binary-unusable error wins (it names
-    /// the fix); otherwise the first error, from the requested
-    /// configuration, is reported. The others are summarized beneath it.
-    ///
-    /// The build that finally ran is logged under
-    /// `target = "sidecar_fallback"` and recorded on the handle.
+    /// Spawns a llama-server sidecar, falling back until something runs: each
+    /// failure is classified (`AttemptFailure`) and `next_attempt` picks the next
+    /// try (see its table). When every attempt fails, a binary-unusable error
+    /// wins, since it names the fix; otherwise the first error is reported, with
+    /// the others summarized beneath it.
     pub async fn start_with_fallback(
         app: &AppHandle,
         config: SidecarConfig,
@@ -139,11 +99,9 @@ impl SidecarManager {
                     return Ok(handle);
                 }
                 Err(err) => {
-                    // A retryable failure is one the same configuration can
-                    // still win: the port was taken between allocation and
-                    // llama-server's own bind. Degrading the configuration
-                    // for it is how a port collision used to pin a whole
-                    // session to CPU-only at half context.
+                    // A retryable failure (the port taken between allocation and
+                    // llama-server's bind) is one the same configuration can still win, so
+                    // the configuration is not degraded for it.
                     let retryable = err.kind == AttemptFailure::Retry
                         && retries < MAX_SAME_CONFIG_RETRIES
                         && Instant::now() < deadline;

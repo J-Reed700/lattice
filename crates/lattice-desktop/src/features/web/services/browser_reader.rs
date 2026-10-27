@@ -1,33 +1,14 @@
-//! Reading a page through a real, hidden browser window.
+//! Reading a page through a real, hidden browser window, for sites that answer
+//! a plain HTTP client with a JavaScript check or an empty shell scripts fill
+//! in: the page loads in an invisible window of the system webview, on the
+//! user's machine, as a normal visit would.
 //!
-//! Some sites answer a plain HTTP client with a JavaScript check (Cloudflare's
-//! "Just a moment…") or ship an empty shell that scripts fill in. No choice of
-//! headers gets past either: the page has to run. The app already contains a
-//! browser engine — the system webview Tauri draws its own UI with — so a page
-//! that refuses the HTTP client is loaded once more in an invisible window of
-//! that engine, on the user's machine, exactly as if they had opened it.
-//! Nothing is proxied or hosted; the request leaves from where a normal visit
-//! would.
-//!
-//! # How the text gets back
-//!
-//! Tauri's `eval` returns nothing, and granting a remote page the app's IPC
-//! would let any site we read call into Lattice. So the page never talks to the
-//! app. An injected script waits for the page to settle, pulls out its text,
-//! and navigates to a reserved `.invalid` address carrying that text in the
-//! fragment. The window's navigation hook recognizes the address, takes the
-//! text, and cancels the navigation — it never reaches a network.
-//!
-//! # Containment
-//!
-//! - The window is labelled outside every capability (capabilities name the
-//!   `main` window only), so the page has no access to app commands.
-//! - It is incognito: no cookies or storage outlive the read, and nothing it
-//!   stores mixes with any other page's.
-//! - Navigations to non-web schemes and to local or private hosts are refused,
-//!   so a redirect cannot turn the reader against the user's own network.
-//! - Downloads are refused, the window is never shown, and it is destroyed
-//!   when the read ends, however it ends.
+//! The page never talks to the app, since granting it IPC would let any site
+//! call into Lattice: an injected script navigates to a reserved `.invalid`
+//! address carrying the text in its fragment, which the navigation hook takes
+//! and cancels. The window is outside every capability and incognito, refuses
+//! non-web schemes, private hosts and downloads, is never shown, and is
+//! destroyed when the read ends.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

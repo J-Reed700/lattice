@@ -9,26 +9,6 @@
 //! 2. Generating hypothetical answers that match the query semantically
 //! 3. Using those answers to search for similar document chunks
 //! 4. Enriching context with retrieved documents
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
-//!
-//! // Create interpretation for a greeting
-//! let greeting = HyDEInterpretation::for_greeting("Hello!");
-//! assert_eq!(greeting.query_type, QueryType::Greeting);
-//! assert_eq!(greeting.search_strategy, SearchStrategy::RawOnly);
-//!
-//! // Create interpretation for a question
-//! let question = HyDEInterpretation {
-//!     query_type: QueryType::Question,
-//!     original_query: "What is DDD?".to_string(),
-//!     hyde_text: Some("Domain-Driven Design is...".to_string()),
-//!     search_strategy: SearchStrategy::HyDEOnly,
-//!     tool_intent: ToolIntent::VaultThenWeb,
-//! };
-//! ```
 
 use serde::{Deserialize, Serialize};
 
@@ -129,23 +109,6 @@ impl std::fmt::Display for ToolIntent {
 ///
 /// Contains the classified query type, original query text,
 /// optional HyDE-generated hypothetical answer, and recommended search strategy.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
-///
-/// let interpretation = HyDEInterpretation {
-///     query_type: QueryType::Question,
-///     original_query: "What is Rust?".to_string(),
-///     hyde_text: Some("Rust is a systems programming language...".to_string()),
-///     search_strategy: SearchStrategy::HyDEOnly,
-///     tool_intent: ToolIntent::VaultThenWeb,
-/// };
-///
-/// assert!(interpretation.hyde_text.is_some());
-/// assert_eq!(interpretation.search_strategy, SearchStrategy::HyDEOnly);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyDEInterpretation {
     /// Classified query type
@@ -163,17 +126,6 @@ pub struct HyDEInterpretation {
 
 impl HyDEInterpretation {
     /// Create interpretation for a greeting (no search needed).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
-    ///
-    /// let greeting = HyDEInterpretation::for_greeting("Hello!");
-    /// assert_eq!(greeting.query_type, QueryType::Greeting);
-    /// assert_eq!(greeting.search_strategy, SearchStrategy::RawOnly);
-    /// assert!(greeting.hyde_text.is_none());
-    /// ```
     pub fn for_greeting(query: impl Into<String>) -> Self {
         Self {
             query_type: QueryType::Greeting,
@@ -185,18 +137,6 @@ impl HyDEInterpretation {
     }
 
     /// Create interpretation for a question with HyDE text.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice_core::domain::qa::HyDEInterpretation;
-    ///
-    /// let question = HyDEInterpretation::for_question(
-    ///     "What is DDD?",
-    ///     "Domain-Driven Design is a software design approach..."
-    /// );
-    /// assert!(question.hyde_text.is_some());
-    /// ```
     pub fn for_question(query: impl Into<String>, hyde_text: impl Into<String>) -> Self {
         Self {
             query_type: QueryType::Question,
@@ -264,28 +204,6 @@ impl HyDEInterpretation {
 ///
 /// Contains the original query interpretation plus documents retrieved
 /// from the knowledge base that are relevant to answering the query.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
-///
-/// let interpretation = HyDEInterpretation::for_greeting("Hello");
-/// let context = EnrichedContext::new(interpretation);
-///
-/// // Add documents
-/// let doc = DocumentChunk {
-///     content: "Relevant content here".to_string(),
-///     file_path: "/path/to/doc.txt".to_string(),
-///     similarity_score: 0.95,
-///     chunk_index: 0,
-///     total_chunks: 1,
-///     metadata: None,
-/// };
-///
-/// let context = context.with_document(doc);
-/// assert_eq!(context.documents.len(), 1);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichedContext {
     /// Original query interpretation
@@ -449,18 +367,6 @@ impl ChunkMetadata {
 ///
 /// Contains the answer to the user's query along with metadata
 /// about sources, reasoning, and performance metrics.
-///
-/// ## Example
-///
-/// ```rust,no_run
-/// use lattice_core::domain::qa::{ChatResponse, ResponseMetadata};
-///
-/// let response = ChatResponse {
-///     answer: "Domain-Driven Design is...".to_string(),
-///     sources: vec![],
-///     metadata: ResponseMetadata::default(),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
     /// Generated answer to the query

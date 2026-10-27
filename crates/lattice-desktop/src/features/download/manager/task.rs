@@ -162,12 +162,9 @@ impl DownloadManagerService {
                     None
                 };
 
-            // `Some(result)` when the transfer ran to completion or failed;
-            // `None` when we were told to stop. Note this branch no longer
-            // returns early — doing so skipped the cleanup below, so the
-            // session kept its slot in `active_downloads` forever. With a
-            // concurrency limit of 2, pausing two files wedged the queue for
-            // the rest of the process and leaked the auth token with it.
+            // `Some(result)` when the transfer ran to completion or failed; `None`
+            // when told to stop. No early return here: the cleanup below must run, or
+            // the session keeps its concurrency slot and auth token.
             let transfer = engine.download(DownloadOptions {
                 url: url.clone(),
                 destination: destination.clone(),

@@ -1574,14 +1574,6 @@ async lastLearningWindowShortfall() : Promise<Result<LearningWindowShortfallDto 
  * - CPU (cores, model)
  * - GPU (type, acceleration, VRAM)
  * - Disk (available space)
- *
- * # Example
- *
- * ```typescript
- * const capabilities = await invoke('detect_system_capabilities');
- * console.log(`RAM: ${capabilities.total_ram_gb} GB`);
- * console.log(`GPU: ${capabilities.gpu_type}`);
- * ```
  */
 async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, AppError>> {
     try {
@@ -1596,25 +1588,6 @@ async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, Ap
  *
  * Returns models ranked by compatibility score, with detailed
  * compatibility analysis for each model.
- *
- * # Arguments
- * - `category` - "LLM", "Embedding", or "OCR"
- *
- * # Returns
- * List of model recommendations sorted by ranking score (best first).
- *
- * # Example
- *
- * ```typescript
- * const models = await invoke('get_compatible_models', {
- * category: 'LLM'
- * });
- *
- * for (const model of models) {
- * console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
- * console.log(`Score: ${model.ranking_score}/100`);
- * }
- * ```
  */
 async getCompatibleModels(category: string) : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1628,13 +1601,6 @@ async getCompatibleModels(category: string) : Promise<Result<ModelRecommendation
  * Get all recommended models across all categories.
  *
  * Returns models ranked by compatibility, grouped by category.
- *
- * # Example
- *
- * ```typescript
- * const allModels = await invoke('get_all_recommended_models');
- * console.log(`Total compatible models: ${allModels.length}`);
- * ```
  */
 async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1656,23 +1622,6 @@ async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppEr
  * - Ranks by relevance score (0-100)
  * - Caches results for 1 hour (TTL)
  * - Graceful degradation on API errors
- *
- * # Example
- *
- * ```typescript
- * const results = await invoke('search_model_catalog', {
- * query: 'llama chat',
- * category: 'LLM',
- * max_size_gb: 5.0,
- * required_capabilities: ['chat', 'code'],
- * limit: 10
- * });
- *
- * for (const result of results) {
- * console.log(`${result.model.name}: ${result.relevance_score}/100`);
- * console.log(`Source: ${result.source}`);
- * }
- * ```
  */
 async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<ModelSearchResultDto[], AppError>> {
     try {
@@ -1698,13 +1647,6 @@ async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppE
  * Refresh model catalog cache.
  *
  * Clears the catalog cache to force fresh API calls on next search.
- *
- * # Example
- *
- * ```typescript
- * await invoke('refresh_model_catalog');
- * console.log('Catalog cache refreshed');
- * ```
  */
 async refreshModelCatalog() : Promise<Result<null, AppError>> {
     try {
@@ -1718,13 +1660,6 @@ async refreshModelCatalog() : Promise<Result<null, AppError>> {
  * Clear model catalog cache.
  *
  * Removes all cached catalog entries, forcing fresh API calls.
- *
- * # Example
- *
- * ```typescript
- * const deleted = await invoke('clear_model_catalog_cache');
- * console.log(`Cleared ${deleted} cache entries`);
- * ```
  */
 async clearModelCatalogCache() : Promise<Result<number, AppError>> {
     try {
@@ -1738,15 +1673,6 @@ async clearModelCatalogCache() : Promise<Result<number, AppError>> {
  * Get model catalog cache statistics.
  *
  * Returns metrics about cache usage and effectiveness.
- *
- * # Example
- *
- * ```typescript
- * const stats = await invoke('get_model_catalog_stats');
- * console.log(`Total: ${stats.total_entries}`);
- * console.log(`Valid: ${stats.valid_entries}`);
- * console.log(`Expired: ${stats.expired_entries}`);
- * ```
  */
 async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
     try {
@@ -1763,47 +1689,10 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * query result caching. Supports multiple search modes and returns enriched results with
  * metadata, snippets, and ranking information. Cache hits dramatically improve response times.
  *
- * # Arguments
- *
- * * `container` - Service container with search services, cache, and security context
- * * `options` - Search configuration including query, mode, filters, and limit
- *
- * # Returns
- *
- * * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
- * * `Err(ApiError)` - If validation fails or search execution fails
- *
  * # Errors
  *
  * * `AppError::InvalidInput` - Query validation failed (empty, too long, malicious content)
  * * `AppError::Other` - Embedding generation or search execution failed
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * interface SearchOptions {
- * query: string;
- * searchMode?: 'semantic' | 'keyword' | 'hybrid';
- * limit?: number;
- * filter?: Record<string, string>;
- * }
- *
- * // Semantic search with caching
- * const response = await invoke('search_documents', {
- * options: {
- * query: 'machine learning algorithms',
- * searchMode: 'semantic',
- * limit: 20
- * }
- * });
- *
- * console.log(`Found ${response.results.length} results`);
- * console.log(`From cache: ${response.fromCache}`);
- * console.log(`Execution time: ${response.executionTimeMs}ms`);
- * console.log(`Cache hit rate: ${response.cacheStats.hitRate}%`);
- * ```
  *
  * # Security
  *
@@ -1822,17 +1711,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * - **Cache Hit**: Returns cached results, bypasses expensive embedding/search
  * - **Cache Miss**: Executes search, stores result with timestamp and execution time
  * - **TTL**: Cached results automatically expire based on LRU eviction
- *
- * # Command Flow
- *
- * 1. Input validation (sanitize query)
- * 2. Generate cache key from query + options
- * 3. **Cache lookup** - if hit, return cached results immediately
- * 4. Embed query using embedding service
- * 5. Execute search based on mode (vector/keyword/hybrid)
- * 6. Enrich results with document metadata and snippets
- * 7. Store results in cache for future requests
- * 8. Track document access asynchronously
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
@@ -1849,50 +1727,9 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  * metadata enrichment. Ideal for autocomplete, quick lookups, or when only IDs are needed.
  * Does not use caching (results too lightweight to justify cache overhead).
  *
- * # Arguments
- *
- * * `container` - Service container with search service and security context
- * * `query` - Search query string
- * * `limit` - Maximum number of results to return
- *
- * # Returns
- *
- * * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
- * * `Err(ApiError)` - If validation fails or search fails
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Fast search without metadata; a failure rejects with an ApiError
- * const hits = await invoke<[string, number][]>('search_fast', {
- * query: 'neural networks',
- * limit: 10
- * });
- *
- * hits.forEach(([chunkId, score]) => {
- * console.log(`${chunkId}: ${score}`);
- * });
- * ```
- *
  * # Security
  *
  * - **Input Validation**: Sanitizes query
- *
- * # Performance
- *
- * - **No Caching**: Results are lightweight, cache overhead not justified
- * - **No Enrichment**: Skips expensive metadata/snippet lookup
- * - **Pure Vector Search**: Always uses semantic similarity (no hybrid)
- * - **Typical Response**: < 100ms for most queries
- *
- * # Use Cases
- *
- * - Autocomplete suggestions
- * - Quick ID lookups for subsequent operations
- * - Pre-filtering before enriched search
- * - Real-time search-as-you-type
  */
 async searchFast(query: string, limit: number) : Promise<Result<([string, number])[], ApiError>> {
     try {
@@ -1925,38 +1762,10 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * content as the search query. Automatically filters out the source chunk from results
  * to avoid self-matches. Useful for "more like this" features.
  *
- * # Arguments
- *
- * * `container` - Service container with search and enrichment services
- * * `chunk_id` - ID of the chunk to find similar documents for
- * * `limit` - Maximum number of similar documents to return (default: 10)
- *
- * # Returns
- *
- * * `Ok(Vec<SearchResultDto>)` - Similar documents ranked by semantic similarity
- * * `Err(AppError)` - If chunk not found or search fails
- *
  * # Errors
  *
  * * `AppError::NotFound` - Chunk ID not found in database
  * * `AppError::Other` - Embedding or search execution failed
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Find similar documents to a chunk
- * const similar = await invoke('find_similar', {
- * chunkId: 'chunk_abc123',
- * limit: 10
- * });
- *
- * console.log(`Found ${similar.length} similar documents`);
- * similar.forEach(doc => {
- * console.log(`${doc.title}: ${doc.score}`);
- * });
- * ```
  *
  * # Algorithm
  *
@@ -1966,24 +1775,6 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * 4. Filter out source chunk from results (prevent self-match)
  * 5. Take top N results after filtering
  * 6. Enrich with metadata
- *
- * # Use Cases
- *
- * - "More like this" document recommendations
- * - Related content suggestions
- * - Document clustering visualization
- * - Duplicate detection
- *
- * # Command Flow
- *
- * 1. Fetch chunk content using enrichment service
- * 2. Error if chunk not found
- * 3. Embed chunk content
- * 4. Vector similarity search (limit + 1 to account for self-match)
- * 5. Filter out source chunk
- * 6. Take top `limit` results
- * 7. Enrich with metadata
- * 8. Return similar documents
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -2015,48 +1806,10 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * similarity with temporal decay to surface fresh content while maintaining relevance.
  * Configurable recency weight and maximum age filter.
  *
- * # Arguments
- *
- * * `container` - Service container with hybrid search service
- * * `options` - Search options including query, recency weight, and age filter
- *
- * # Returns
- *
- * * `Ok(Vec<SearchResultDto>)` - Search results ranked with recency boost
- * * `Err(AppError)` - If validation fails or execution fails
- *
  * # Errors
  *
  * * `AppError::InvalidInput` - Query validation failed, invalid recency weight, or negative max_age_days
  * * `AppError::Other` - Embedding or search execution failed
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * interface RecencySearchOptions {
- * query: string;
- * limit?: number;
- * recencyWeight?: number;  // 0.0 to 1.0
- * maxAgeDays?: number;     // positive integer
- * }
- *
- * // Search with recency boost (favor recent documents)
- * const results = await invoke('search_with_recency', {
- * options: {
- * query: 'project status',
- * limit: 15,
- * recencyWeight: 0.3,  // 30% weight to recency
- * maxAgeDays: 90       // Only last 3 months
- * }
- * });
- *
- * console.log('Recent relevant documents:');
- * results.forEach(doc => {
- * console.log(`${doc.title} (score: ${doc.score})`);
- * });
- * ```
  *
  * # Security
  *
@@ -2080,24 +1833,6 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * - `recency_weight` must be in range [0.0, 1.0]
  * - `max_age_days` must be positive (> 0)
  * - Empty validation errors return `AppError::InvalidInput`
- *
- * # Use Cases
- *
- * - Finding recent project updates
- * - News/blog search favoring fresh content
- * - Status report queries
- * - Time-sensitive document retrieval
- *
- * # Command Flow
- *
- * 1. Input validation (query, recency_weight, max_age_days)
- * 2. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
- * 3. Validate recency_weight ∈ [0, 1]
- * 4. Validate max_age_days > 0
- * 5. Run the library search orchestrator
- * 6. Enrich results with metadata
- * 7. Boost recently updated documents
- * 8. Return time-boosted results
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -2115,33 +1850,9 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  * Processes multiple search queries efficiently in a single operation,
  * returning results for each query in the same order as provided.
  *
- * ## Arguments
- *
- * * `container` - DI container with services
- * * `queries` - List of search queries to process
- * * `limit` - Maximum results per query (default: 10)
- * * `search_mode` - Search algorithm to use (Vector, Keyword, Hybrid)
- *
- * ## Returns
- *
- * Vector of result vectors, one for each query in input order.
- *
  * ## Security
  *
  * - Each query validated individually
- *
- * ## Example
- *
- * ```javascript
- * const results = await VaultAPI.batchSearch(
- * ['query1', 'query2', 'query3'],
- * 10,
- * 'hybrid'
- * );
- * // results[0] = results for 'query1'
- * // results[1] = results for 'query2'
- * // results[2] = results for 'query3'
- * ```
  */
 async batchSearch(queries: string[], limit: number | null, searchMode: string | null) : Promise<Result<SearchResultDto[][], AppError>> {
     try {
@@ -2397,37 +2108,6 @@ async setCloudApiKey(provider: string, key: string) : Promise<Result<null, ApiEr
  * Opens the specified file using the operating system's default application for that file type.
  * For web articles (detected by article.md + page.html), returns internal rendering info instead.
  * Uses platform-specific APIs to prevent command injection vulnerabilities.
- *
- * # Arguments
- *
- * * `path` - The absolute path to the file to open
- * * `container` - Service container with security context and path validator
- *
- * # Returns
- *
- * * `Ok(OpenFileResponseDto)` - Response indicating action taken:
- * - `render_internal`: For web articles, returns path to HTML for internal rendering
- * - `opened_external`: For regular files, indicates file was opened externally
- * * `Err(AppError)` - If validation fails, file doesn't exist, or opening fails
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Open a document (returns action info)
- * const response = await invoke<OpenFileResponseDto>('open_file', {
- * path: '/Users/example/Documents/report.pdf'
- * });
- *
- * if (response.action === 'render_internal') {
- * // Render HTML internally
- * renderHTML(response.contentPath, response.title);
- * } else {
- * // File opened externally
- * console.log('Opened externally:', response.contentPath);
- * }
- * ```
  */
 async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
@@ -2439,26 +2119,6 @@ async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
 },
 /**
  * Legacy Tauri shim - Opens a file by database ID in the system's default application or returns internal rendering info
- *
- * # Arguments
- *
- * * `file_id` - The unique database identifier for the document (from documents table)
- * * `container` - Service container with database pool and security context
- *
- * # Returns
- *
- * * `Ok(OpenFileResponseDto)` - Response indicating action taken
- * * `Err(AppError)` - If file not found, validation fails, or opening fails
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * const response = await invoke<OpenFileResponseDto>('open_file_by_id', {
- * fileId: 'doc_abc123xyz'
- * });
- * ```
  */
 async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
@@ -2470,13 +2130,6 @@ async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppErro
 },
 /**
  * Legacy Tauri shim - Reads the content of a file for preview purposes
- *
- * # Arguments
- * - `path`: The absolute path to the file to read
- * - `container`: Service container with security context
- *
- * # Returns
- * The file content as a UTF-8 string
  */
 async readFileContent(path: string) : Promise<Result<string, AppError>> {
     try {
@@ -2488,13 +2141,6 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
 },
 /**
  * Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
- *
- * # Arguments
- * - `path`: The absolute path to the file to read
- * - `container`: Service container with security context
- *
- * # Returns
- * The file content as raw bytes
  */
 async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
     try {
@@ -2506,21 +2152,6 @@ async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
 },
 /**
  * Legacy Tauri shim - Reveals a file in the system file explorer
- *
- * # Arguments
- *
- * * `path` - The absolute path to the file to reveal
- * * `container` - Service container with security context
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * await invoke('show_in_folder', {
- * path: '/Users/example/Documents/report.pdf'
- * });
- * ```
  */
 async showInFolder(path: string) : Promise<Result<null, AppError>> {
     try {
@@ -2532,21 +2163,6 @@ async showInFolder(path: string) : Promise<Result<null, AppError>> {
 },
 /**
  * Legacy Tauri shim - Get document metadata by ID
- *
- * # Arguments
- *
- * * `container` - Service container with document repository
- * * `document_id` - Unique document identifier (UUID)
- *
- * # Example
- *
- * ```typescript
- * // Get document by ID to open from recent list
- * const result = await VaultAPI.getDocument(docId);
- * if (result.ok && result.data.filePath) {
- * await VaultAPI.openFile(result.data.filePath);
- * }
- * ```
  */
 async getDocument(documentId: string) : Promise<Result<DocumentMetadataDto, AppError>> {
     try {
@@ -2614,21 +2230,6 @@ async indexDirectory(path: string, recursive: boolean, spaceId: string | null) :
 },
 /**
  * Legacy Tauri shim - Retrieves file metadata (size and modification time) for a given path
- *
- * # Arguments
- *
- * * `path` - The absolute path to the file
- * * `container` - Service container with security context
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * const metadata = await invoke<FileMetadata>('get_file_metadata', {
- * path: '/Users/example/Documents/report.pdf'
- * });
- * ```
  */
 async getFileMetadata(path: string) : Promise<Result<FileMetadataDto, AppError>> {
     try {
@@ -2896,20 +2497,6 @@ async isFavorite(documentId: string) : Promise<Result<boolean, ApiError>> {
  * Provides backward compatibility for frontend code using the generic `clear_cache` name.
  * Delegates to `clear_search_cache` which clears the search query cache.
  *
- * # Returns
- *
- * * `Ok(())` - Cache cleared successfully
- * * `Err(AppError)` - Cache clear failed (rare)
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Clear cache using short name
- * await invoke('clear_cache');
- * ```
- *
  * # Note
  *
  * This is a convenience alias for `clear_search_cache`. Both commands perform
@@ -2930,45 +2517,6 @@ async clearCache() : Promise<Result<null, AppError>> {
  * capacity, hit/miss counts, time saved, and calculated hit rate. Useful for
  * monitoring cache effectiveness and tuning cache size.
  *
- * # Returns
- *
- * * `Ok(CacheStats)` - Detailed cache statistics
- * * `Err(AppError)` - Stats retrieval failed (rare)
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * interface CacheStats {
- * size: number;              // Current entries (e.g., 42)
- * capacity: number;          // Max entries (e.g., 100)
- * hits: number;              // Cache hits (e.g., 127)
- * misses: number;            // Cache misses (e.g., 85)
- * totalTimeSavedMs: number;  // Time saved by cache hits (e.g., 6350ms)
- * hitRate: number;           // Hit rate 0.0-1.0 (e.g., 0.599 = 59.9%)
- * }
- *
- * // Get cache stats
- * const stats = await invoke<CacheStats>('get_cache_stats');
- *
- * console.log(`Cache: ${stats.size}/${stats.capacity} entries`);
- * console.log(`Hit rate: ${(stats.hitRate * 100).toFixed(1)}%`);
- * console.log(`Time saved: ${(stats.totalTimeSavedMs / 1000).toFixed(1)}s`);
- *
- * // Display in UI
- * updateCacheDisplay({
- * usage: `${stats.size} / ${stats.capacity}`,
- * hitRate: `${(stats.hitRate * 100).toFixed(1)}%`,
- * timeSaved: `${(stats.totalTimeSavedMs / 1000).toFixed(1)}s`
- * });
- *
- * // Monitor cache effectiveness
- * if (stats.hitRate < 0.3) {
- * console.warn('Low cache hit rate. Consider increasing capacity.');
- * }
- * ```
- *
  * # Statistics Breakdown
  *
  * - **size**: Current number of cached entries
@@ -2977,19 +2525,6 @@ async clearCache() : Promise<Result<null, AppError>> {
  * - **misses**: Number of cache misses since startup
  * - **total_time_saved_ms**: Estimated time saved by cache hits
  * - **hit_rate**: hits / (hits + misses), 0.0 to 1.0
- *
- * # Use Cases
- *
- * - **Dashboard**: Display cache performance in admin UI
- * - **Monitoring**: Track cache effectiveness over time
- * - **Tuning**: Determine optimal cache capacity
- * - **Diagnostics**: Troubleshoot search performance issues
- *
- * # Performance
- *
- * - **Access Time**: ~1μs (atomic counter reads)
- * - **No Locking**: Lock-free atomic operations
- * - **Synchronous**: Instant return
  *
  * # Architecture
  *
@@ -3009,43 +2544,6 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  * Provides focused performance metrics without size/capacity information. Lighter
  * weight than `get_cache_stats` for frequent polling or metric collection.
  *
- * # Returns
- *
- * * `Ok(CacheMetrics)` - Performance metrics (hits, misses, time saved, hit rate)
- * * `Err(AppError)` - Metrics retrieval failed (rare)
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * interface CacheMetrics {
- * hits: number;              // Cache hits
- * misses: number;            // Cache misses
- * totalTimeSavedMs: number;  // Time saved (ms)
- * hitRate: number;           // Hit rate 0.0-1.0
- * }
- *
- * // Get cache metrics
- * const metrics = await invoke<CacheMetrics>('get_cache_metrics');
- * console.log(`Cache efficiency: ${(metrics.hitRate * 100).toFixed(1)}%`);
- * console.log(`Performance gain: ${metrics.totalTimeSavedMs}ms`);
- *
- * // Periodic metrics collection
- * setInterval(async () => {
- * const metrics = await invoke<CacheMetrics>('get_cache_metrics');
- * logMetrics('cache.hits', metrics.hits);
- * logMetrics('cache.misses', metrics.misses);
- * logMetrics('cache.hit_rate', metrics.hitRate);
- * }, 60000); // Every minute
- *
- * // Display compact metrics
- * updateMetricsBar({
- * hits: metrics.hits,
- * hitRate: `${(metrics.hitRate * 100).toFixed(0)}%`
- * });
- * ```
- *
  * # Metrics Breakdown
  *
  * - **hits**: Number of cache hits since startup
@@ -3058,12 +2556,6 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  * - **Lighter**: Excludes size/capacity information
  * - **Focused**: Performance metrics only
  * - **Use Case**: Frequent polling, metrics dashboards
- *
- * # Performance
- *
- * - **Access Time**: ~1μs (atomic counter reads)
- * - **No Locking**: Lock-free atomic operations
- * - **Synchronous**: Instant return
  *
  * # Architecture
  *
@@ -3085,52 +2577,11 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
  * after indexing operations, but manual clearing may be useful for testing or
  * troubleshooting.
  *
- * # Returns
- *
- * * `Ok(())` - Cache cleared successfully
- * * `Err(AppError)` - Cache clear failed (rare)
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Clear cache manually
- * await invoke('clear_search_cache');
- * console.log('Search cache cleared');
- *
- * // Clear cache after settings change
- * const handleSettingsChange = async () => {
- * await updateSettings();
- * await invoke('clear_search_cache'); // Force fresh results
- * refreshSearchResults();
- * };
- *
- * // Clear cache button
- * const handleClearCache = async () => {
- * await invoke('clear_search_cache');
- * showNotification('Cache cleared. Next search will be fresh.');
- * };
- * ```
- *
  * # Side Effects
  *
  * - All cached search results removed
  * - Next searches will be slower (no cache hits)
  * - Cache metrics reset to 0
- *
- * # Use Cases
- *
- * - **Testing**: Verify search behavior without cache
- * - **Troubleshooting**: Clear stale cache entries
- * - **Settings Changes**: Force fresh results after config changes
- * - **Manual Maintenance**: User-initiated cache clearing
- *
- * # Performance
- *
- * - **Clear Time**: ~1-10ms (depends on cache size)
- * - **Thread-Safe**: Locked operation
- * - **Synchronous**: Blocks until complete
  *
  * # Architecture
  *
@@ -4550,17 +4001,6 @@ export type AdoptLearningSourceVersionRequestDto = { operationId: string; progra
  *
  * Contains an error code for programmatic handling, a human-readable message,
  * and optional details for debugging.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::ipc::{ApiError, ErrorCode};
- * let error = ApiError {
- * code: ErrorCode::NotFound,
- * message: "Document not found".to_string(),
- * details: Some("ID: doc-123".to_string()),
- * };
- * ```
  */
 export type ApiError = {
 /**
@@ -4783,157 +4223,42 @@ export type ApplicationError =
  * Domain error (business logic violation).
  *
  * Wraps domain-level errors from aggregates, entities, and domain services.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * # use lattice_core::shared::error::DomainError;
- * let domain_err = DomainError::EntityNotFound {
- * entity_type: "Document".to_string(),
- * identifier: "doc-123".to_string(),
- * };
- * let app_err = ApplicationError::from(domain_err);
- * assert!(app_err.is_domain_error());
- * ```
  */
 { Domain: DomainError } |
 /**
  * Invalid configuration.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::InvalidConfig {
- * details: "Missing required field 'api_key'".to_string(),
- * };
- * assert!(error.to_string().contains("api_key"));
- * assert!(error.is_config_error());
- * ```
  */
 { InvalidConfig: { details: string } } |
 /**
  * Required service is not available.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::ServiceNotAvailable {
- * service: "EmbeddingService".to_string(),
- * reason: "Model not loaded".to_string(),
- * };
- * assert!(error.to_string().contains("EmbeddingService"));
- * assert!(!error.is_config_error());
- * ```
  */
 { ServiceNotAvailable: { service: string; reason: string } } |
 /**
  * Processing queue is full (backpressure).
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::QueueFull {
- * queue_name: "indexing_queue".to_string(),
- * };
- * assert!(error.to_string().contains("indexing_queue"));
- * assert!(error.is_recoverable());
- * ```
  */
 { QueueFull: { queue_name: string } } |
 /**
  * Serialization failed.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::SerializationFailed {
- * context: "DocumentDTO".to_string(),
- * reason: "Invalid UTF-8 in field 'content'".to_string(),
- * };
- * assert!(error.to_string().contains("DocumentDTO"));
- * ```
  */
 { SerializationFailed: { context: string; reason: string } } |
 /**
  * Deserialization failed.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::DeserializationFailed {
- * context: "SearchRequest".to_string(),
- * reason: "Missing required field 'query'".to_string(),
- * };
- * assert!(error.to_string().contains("SearchRequest"));
- * ```
  */
 { DeserializationFailed: { context: string; reason: string } } |
 /**
  * JSON parsing error with location.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::JsonError {
- * message: "Expected comma".to_string(),
- * line: 42,
- * column: 15,
- * };
- * assert!(error.to_string().contains("line 42"));
- * assert!(error.to_string().contains("column 15"));
- * ```
  */
 { JsonError: { message: string; line: number; column: number } } |
 /**
  * Generic parsing error.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::ParsingError {
- * context: "CSV file".to_string(),
- * reason: "Unexpected end of file".to_string(),
- * };
- * assert!(error.to_string().contains("CSV file"));
- * ```
  */
 { ParsingError: { context: string; reason: string } } |
 /**
  * Use case execution failed.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::UseCaseFailed {
- * use_case: "IndexDocumentUseCase".to_string(),
- * reason: "Embedding generation timed out".to_string(),
- * };
- * assert!(error.to_string().contains("IndexDocumentUseCase"));
- * ```
  */
 { UseCaseFailed: { use_case: string; reason: string } } |
 /**
  * DTO mapping failed.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::ApplicationError;
- * let error = ApplicationError::MappingError {
- * context: "Document -> DocumentDTO".to_string(),
- * reason: "Missing required field".to_string(),
- * };
- * assert!(error.to_string().contains("Document -> DocumentDTO"));
- * ```
  */
 { MappingError: { context: string; reason: string } }
 export type ApplyLearningPackImportRequestDto = { operationId: string; previewId: string; expectedRootSha256: string }
@@ -5097,15 +4422,6 @@ backupPath: string;
 compressBackups: boolean }
 /**
  * Options for batch import operations.
- *
- * # Example
- * ```rust
- * use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
- *
- * let options = BatchImportOptionsDto {
- * extract_article: Some(true),
- * };
- * ```
  */
 export type BatchImportOptionsDto = {
 /**
@@ -5348,13 +4664,9 @@ starters: ChatStarterDto[]; documentCount: number }
  */
 export type ChatStreamEventDto = { conversationId: string; requestId: string; done: boolean; content?: string | null; status?: string | null; retrieval?: RetrievalTraceDto | null;
 /**
- * One step of the turn, starting or finishing.
- *
- * A tool round emits no text at all while the model reasons and writes its
- * tool calls — on a slow model that is minutes of a spinner with nothing
- * behind it, which is indistinguishable from a hang. This is what the UI
- * has during that stretch, and unlike the sentence it replaces it is kept:
- * the timeline under the finished answer is this same list.
+ * One step of the turn, starting or finishing. A tool round streams no text,
+ * so this is what the UI shows meanwhile; the finished answer's timeline is
+ * this same list.
  */
 step?: TurnStepDto | null;
 /**
@@ -5715,12 +5027,8 @@ export type CompactConversationResponseDto = {
  */
 compaction: CompactionRecordDto;
 /**
- * Memory accounting for this pass.
- *
- * Not optional: every compaction goes through the one job, which always
- * commits a ledger alongside the summary. It was an `Option` while a
- * summary-only path still existed; that path is gone, and leaving the
- * `Option` would invite a caller to handle a case that cannot occur.
+ * Memory accounting for this pass. Every compaction commits a ledger
+ * alongside the summary, so this is not optional.
  */
 memory: CompactionMemoryDto }
 /**
@@ -5888,8 +5196,6 @@ export type ContinueInNewConversationResponseDto = {
 conversation: ConversationDto }
 /**
  * Conversation representation.
- *
- * Simple DTO for conversation data across application boundaries.
  */
 export type ConversationDto = {
 /**
@@ -6282,112 +5588,30 @@ export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; i
 export type DomainError =
 /**
  * Entity not found in the system.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * let error = DomainError::EntityNotFound {
- * entity_type: "Document".to_string(),
- * identifier: "doc-123".to_string(),
- * };
- * assert!(error.to_string().contains("Document"));
- * assert!(error.to_string().contains("doc-123"));
- * ```
  */
 { EntityNotFound: { entity_type: string; identifier: string } } |
 /**
  * Entity or aggregate is in an invalid state for the requested operation.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * let error = DomainError::InvalidState {
- * details: "Document is archived and cannot be modified".to_string(),
- * };
- * assert!(error.to_string().contains("invalid state"));
- * ```
  */
 { InvalidState: { details: string } } |
 /**
  * Field validation failed.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * let error = DomainError::ValidationFailed {
- * field: "email".to_string(),
- * reason: "Invalid email format".to_string(),
- * };
- * assert!(error.to_string().contains("email"));
- * assert!(error.to_string().contains("Invalid email format"));
- * ```
  */
 { ValidationFailed: { field: string; reason: string } } |
 /**
  * File type is not supported for indexing or processing.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * # use std::path::PathBuf;
- * let error = DomainError::UnsupportedFileType {
- * path: PathBuf::from("/path/to/file.xyz"),
- * detected_type: Some("application/octet-stream".to_string()),
- * };
- * assert!(error.to_string().contains("file.xyz"));
- * ```
  */
 { UnsupportedFileType: { path: string; detected_type: string | null } } |
 /**
  * File size exceeds maximum allowed size.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * # use std::path::PathBuf;
- * let error = DomainError::FileTooLarge {
- * path: PathBuf::from("/path/to/huge.pdf"),
- * size_bytes: 100_000_000,
- * max_size_bytes: 50_000_000,
- * };
- * assert!(error.to_string().contains("100000000 bytes"));
- * assert!(error.to_string().contains("50000000 bytes"));
- * ```
  */
 { FileTooLarge: { path: string; size_bytes: number; max_size_bytes: number } } |
 /**
  * Concurrent modification detected (optimistic locking failure).
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * let error = DomainError::ConcurrentModification {
- * resource: "Document doc-123".to_string(),
- * details: "Version mismatch: expected v2, found v3".to_string(),
- * };
- * assert!(error.to_string().contains("doc-123"));
- * assert!(error.to_string().contains("Version mismatch"));
- * ```
  */
 { ConcurrentModification: { resource: string; details: string } } |
 /**
  * Domain constraint or business rule violated.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::error::DomainError;
- * let error = DomainError::ConstraintViolation {
- * constraint: "A document must have at least one chunk".to_string(),
- * };
- * assert!(error.to_string().contains("at least one chunk"));
- * ```
  */
 { ConstraintViolation: { constraint: string } }
 export type DownloadModelResponse = { download_id: string; status: string }
@@ -6490,15 +5714,6 @@ export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: 
  *
  * Error codes serialize to SCREAMING_SNAKE_CASE for consistency with typical
  * API conventions.
- *
- * # Examples
- *
- * ```rust
- * # use lattice_core::shared::ipc::ErrorCode;
- * let code = ErrorCode::NotFound;
- * let json = serde_json::to_string(&code).unwrap();
- * assert_eq!(json, "\"NOT_FOUND\"");
- * ```
  */
 export type ErrorCode =
 /**
@@ -7034,20 +6249,6 @@ export type ForkConversationResponseDto = { conversation: ConversationDto; copie
  * A function call request from the LLM
  *
  * Represents an LLM's intent to execute a specific function with arguments.
- *
- * # Example
- * ```rust
- * use serde_json::json;
- *
- * let call = FunctionCall {
- * id: "call_abc123".to_string(),
- * name: "semantic_search".to_string(),
- * arguments: json!({
- * "query": "machine learning papers",
- * "limit": 5
- * }),
- * };
- * ```
  */
 export type FunctionCall = {
 /**
@@ -7070,24 +6271,6 @@ arguments: JsonValue }
  * Result of executing a function call
  *
  * Encapsulates success or failure with detailed error information.
- *
- * # Example (Success)
- * ```rust
- * use serde_json::json;
- *
- * let result = FunctionResult::success(json!({
- * "results": ["doc1.pdf", "doc2.txt"],
- * "total_found": 2
- * }));
- * ```
- *
- * # Example (Failure)
- * ```rust
- * let result = FunctionResult::error(
- * "DOCUMENT_NOT_FOUND",
- * "Document with ID abc123 not found"
- * );
- * ```
  */
 export type FunctionResult = {
 /**
@@ -8976,8 +8159,6 @@ export type MentionDto = { id: string; name: string; mentionType: string; metada
 export type MentionWithContextDto = { id: string; name: string; mentionType: string; documentId: string; context: string; position: number; createdAt: string }
 /**
  * Conversation message representation.
- *
- * Simple DTO for message data across application boundaries.
  */
 export type MessageDto = {
 /**
@@ -9632,23 +8813,14 @@ externalHydeInterpretationMs: number; wikiSearchMs: number;
  */
 webSearchMs: number; totalMs: number }
 /**
- * Retrieval trace for one turn.
- *
- * `searched_documents` is the size of the document set the hard space-scope
- * filter actually allowed, not the size of the corpus — a scoped conversation
- * must not claim to have read the whole vault.
- *
- * Shared by streaming events, persisted message metadata, and generated bindings.
+ * Retrieval trace for one turn, shared by streaming events, persisted message
+ * metadata and generated bindings. `searched_documents` is the size of the
+ * scoped document set, not the corpus.
  */
 export type RetrievalTraceDto = { searchedDocuments: number; passages: number; files: number;
 /**
- * Web pages carried into the answer, counted apart from `files`.
- *
- * `files` means documents in the user's vault and nothing else. Web
- * results used to be counted there too, so a web-only answer in a space
- * holding no documents still reported "10 passages from 10 files" — which
- * reads as though it had searched the vault, and is the sort of claim that
- * makes a correctly scoped answer look like a leak.
+ * Web pages carried into the answer, counted apart from `files`, which means
+ * vault documents only.
  */
 webPages: number;
 /**
@@ -9660,12 +8832,8 @@ scope: string;
  */
 unavailableReason?: string | null;
 /**
- * The post-rerank sufficiency verdict, after any corrective pass.
- *
- * Additive and absent by default: traces persisted before the sufficiency
- * check existed carry no verdict, and absent is not the same as
- * insufficient. Every consumer must tolerate `null` rather than read a
- * missing verdict as a failure.
+ * The post-rerank sufficiency verdict, after any corrective pass. Absent on
+ * traces saved before the check existed; absent is not insufficient.
  */
 kbSufficient?: boolean | null;
 /**
@@ -10290,12 +9458,9 @@ archiveFallback: boolean;
  */
 finderConcurrency: number }
 /**
- * One document a chat in this space is allowed to read.
- *
- * This is what `@` offers in the composer, so it is derived from
- * `space_document_scope` and nothing else: the picker must never name a
- * document retrieval could not reach, or the user pins a chat to a file it
- * then cannot answer from.
+ * One document a chat in this space is allowed to read, as the composer's `@`
+ * offers it. Derived from `space_document_scope` alone, so the picker never
+ * names a document retrieval could not reach.
  */
 export type SpaceDocumentDto = { documentId: string; fileName: string; category: string | null; modifiedAt: string | null }
 /**
@@ -10349,23 +9514,6 @@ jobId: string }
  * Request to start a batch URL import job.
  *
  * Creates a batch job that processes multiple URLs concurrently.
- *
- * # Example
- * ```rust,no_run
- * use lattice_core::application::dtos::batch_dto::{
- * StartBatchUrlImportRequestDto, BatchImportOptionsDto
- * };
- *
- * let request = StartBatchUrlImportRequestDto {
- * urls: vec![
- * "https://example.com/article1".to_string(),
- * "https://example.com/article2".to_string(),
- * ],
- * options: Some(BatchImportOptionsDto {
- * extract_article: Some(true),
- * }),
- * };
- * ```
  */
 export type StartBatchUrlImportRequestDto = {
 /**
@@ -10631,24 +9779,6 @@ export type ThinkingOverrideDto =
  * - Tool name must be non-empty and alphanumeric + underscore
  * - Description must be clear and actionable
  * - Parameters must have valid JSON schema
- *
- * # Example
- * ```rust
- * use serde_json::json;
- *
- * let tool = ToolDefinition {
- * name: "semantic_search".to_string(),
- * description: "Search user's documents using semantic similarity".to_string(),
- * input_schema: json!({
- * "type": "object",
- * "properties": {
- * "query": {"type": "string"},
- * "limit": {"type": "integer", "default": 10}
- * },
- * "required": ["query"]
- * }),
- * };
- * ```
  */
 export type ToolDefinition = {
 /**
@@ -10705,12 +9835,9 @@ getDocumentTemplate: string;
 semanticSearchTemplate: string }
 export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
 /**
- * Documents this chat is pinned to. Empty or absent means the whole space.
- *
- * A request may only ever narrow what the turn can read, so these ids are
- * intersected with the conversation's space scope before anything uses
- * them; ids from outside it are dropped. See `focus_scope` in the
- * retrieval pipeline.
+ * Documents this chat is pinned to; empty or absent means the whole space. A
+ * request may only narrow what the turn reads, so these are intersected with
+ * the space scope (see `focus_scope` in the retrieval pipeline).
  */
 focusDocumentIds?: string[] | null;
 /**
@@ -10819,10 +9946,6 @@ seesImages: boolean }
 export type TurnRecordDto = { model: TurnModelDto | null; steps: TurnStepDto[]; timing: TurnTimingDto; tokens: TurnTokensDto; router: TurnRouterDto | null }
 /**
  * What the router decided, and how sure it was.
- *
- * `resolve_router_decision` used to throw both of these away the moment it had
- * them, so an answer could be steered by a 0.31-confidence guess and say
- * nothing about it.
  */
 export type TurnRouterDto = { action: string; confidence: number; rationale: string | null }
 /**
@@ -10867,10 +9990,8 @@ links: TurnStepLinkDto[] }
  */
 export type TurnStepKind =
 /**
- * The turn was asked to research rather than answer. Not work in itself:
- * it is on the record so that what follows — several searches, several
- * rounds, minutes of reading — is read as the request it was, live and in
- * a week, without the UI having to remember how the composer was set.
+ * The turn was asked to research rather than answer, recorded so what follows
+ * reads as the request it was.
  */
 "deep_research" | "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" |
 /**
@@ -10878,11 +9999,8 @@ export type TurnStepKind =
  */
 "find_image" | "tool" | "generate" | "verify" | "retry"
 /**
- * A page a step found or opened.
- *
- * A sentence like "10 results" says a search happened and nothing about where
- * it led. On a research turn that runs for minutes, the addresses are the only
- * evidence a reader has that the model is looking somewhere sensible.
+ * A page a step found or opened: on a long research turn, the addresses show
+ * where the model is looking.
  */
 export type TurnStepLinkDto = { url: string; title?: string | null }
 export type TurnStepState = "running" | "done" | "failed"

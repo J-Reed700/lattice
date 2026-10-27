@@ -8,12 +8,6 @@
 //! # Security
 //! - Securely deletes credentials from OS keyring
 //! - Idempotent (succeeds even if key doesn't exist)
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DeleteApiKeyUseCase::new(credentials_port);
-//! use_case.execute("anthropic".into()).await?;
-//! ```
 
 use crate::features::credentials::dto::CredentialOperationResultDto;
 use lattice_core::application::ports::CredentialsPort;

@@ -1,14 +1,9 @@
-//! Scrutiny (source provenance §11): what research does for a claim the
-//! checker supported but whose support the provenance gate found
-//! insufficient, or that a contrary passage disputes. It replaces the
-//! evidence challenge and never decides a verdict: it turns the gate's
-//! next steps into research — citations to follow (§8, followed
-//! automatically by decision 3), searches on the hosts where the subject's
-//! owner publishes, a search for an independent source or for newer
-//! material — and the recheck that follows decides. The research planner is
-//! its one model call. A search for an independent source keeps out the
-//! origins the claim's supports already come from in code, not only by
-//! asking the planner.
+//! Scrutiny (source provenance §11): research for a claim the checker
+//! supported but whose support the provenance gate found insufficient, or
+//! that a contrary passage disputes. It turns the gate's next steps into
+//! research (citations to follow, searches on the subject owner's hosts, an
+//! independent or newer source) and the recheck that follows decides. The
+//! research planner is its one model call.
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6.2, §8, §11.
 
 use super::provenance_gate::FindingTrust;

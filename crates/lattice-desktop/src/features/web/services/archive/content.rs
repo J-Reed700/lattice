@@ -56,12 +56,7 @@ impl WebArchiveService {
         markdown
     }
 
-    /// Create a standalone HTML snapshot for offline viewing
-    ///
-    /// Generates a complete HTML document with:
-    /// - Metadata in header
-    /// - Clean article content
-    /// - Simple, readable styling
+    /// A standalone HTML snapshot of the article, for offline viewing.
     pub(super) fn create_html_snapshot(article: &CleanArticle) -> String {
         let mut html = String::new();
 

@@ -1,31 +1,4 @@
-//! # Ingest Web URL Use Case
-//!
-//! Fetches web content from a URL and indexes it into the document lattice.
-//!
-//! This use case orchestrates:
-//! 1. URL validation (HTTP/HTTPS only)
-//! 2. URL safety check (block malicious domains)
-//! 3. Content fetching via HTTP
-//! 4. Article metadata extraction
-//! 5. Content cleaning (readability)
-//! 6. Document indexing with embeddings
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-//! use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
-//!
-//! # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = IngestWebUrlRequestDto {
-//!     url: "https://example.com/article".to_string(),
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Indexed document {} with {} chunks", response.document_id, response.chunks_created);
-//! # Ok(())
-//! # }
-//! ```
+//! Ingest web URL: fetches a URL's content and indexes it into the library.
 
 use std::sync::Arc;
 
@@ -33,41 +6,21 @@ use crate::features::web::dto::{IngestWebUrlRequestDto, IngestWebUrlResponseDto}
 use crate::features::web::WebIngestionServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Ingest web URL use case.
-///
-/// Coordinates web content ingestion, including:
-/// - URL validation and safety checks
-/// - Content fetching and extraction
-/// - Document indexing with embeddings
-///
-/// ## Dependencies
-///
-/// - `WebIngestionServiceTrait`: Handles the complete web ingestion pipeline
+/// Ingests a web URL: validation and safety checks, fetching and extraction,
+/// then indexing with embeddings.
 pub struct IngestWebUrlUseCase {
     web_ingestion_service: Arc<dyn WebIngestionServiceTrait>,
 }
 
 impl IngestWebUrlUseCase {
     /// Create a new ingest web URL use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `web_ingestion_service` - Service for web content ingestion
     pub fn new(web_ingestion_service: Arc<dyn WebIngestionServiceTrait>) -> Self {
         Self {
             web_ingestion_service,
         }
     }
 
-    /// Execute web URL ingestion.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the URL to ingest
-    ///
-    /// # Returns
-    ///
-    /// Response with document ID and ingestion statistics
+    /// Runs the ingestion.
     ///
     /// # Errors
     ///
@@ -77,30 +30,6 @@ impl IngestWebUrlUseCase {
     /// - Network request fails
     /// - Content extraction fails
     /// - Indexing fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-    /// # use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
-    /// # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = IngestWebUrlRequestDto {
-    ///     url: "https://blog.example.com/article".to_string(),
-    /// };
-    ///
-    /// match use_case.execute(request).await {
-    ///     Ok(response) => {
-    ///         println!("Success!");
-    ///         println!("  Document ID: {}", response.document_id);
-    ///         println!("  Title: {}", response.title);
-    ///         println!("  Word Count: {}", response.word_count);
-    ///         println!("  Chunks: {}", response.chunks_created);
-    ///     }
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(
         &self,
         request: IngestWebUrlRequestDto,
@@ -125,15 +54,7 @@ impl IngestWebUrlUseCase {
         })
     }
 
-    /// Validate URL is HTTP or HTTPS.
-    ///
-    /// # Arguments
-    ///
-    /// * `url` - URL to validate
-    ///
-    /// # Returns
-    ///
-    /// Ok if URL is valid, Err otherwise
+    /// Validates that the URL is HTTP or HTTPS.
     ///
     /// # Errors
     ///

@@ -1,8 +1,7 @@
 use super::*;
 
-/// Why a bundled build cannot run, at the granularity the user can act on.
-/// A missing Vulkan runtime and a truncated download both used to be reported
-/// as "reinstall Lattice", which fixes only one of them.
+/// Why a bundled build cannot run, at the granularity the user can act on: a
+/// missing Vulkan runtime is not fixed by reinstalling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnusableReason {
     /// The executable loaded nothing because the machine has no GPU runtime
@@ -621,15 +620,9 @@ pub(super) fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
-/// A path spelled the way a person writes it, for messages and logs.
-///
-/// `tauri::utils::platform::current_exe` canonicalises, to resolve symlinks
-/// before trusting the executable's location, and on Windows canonicalisation
-/// yields a *verbatim* path: `\\?\D:\Program Files\Lattice\llama-server.exe`.
-/// That prefix turns off the Win32 path parser, which is why nobody should be
-/// asked to read it, retype it or paste it into a support thread — and why it
-/// is worth stripping before the path reaches a string, not merely cosmetic:
-/// plenty of programs and older Win32 entry points reject `\\?\` outright.
+/// A path spelled the way a person writes it, for messages and logs: Windows
+/// canonicalisation yields a verbatim `\\?\` path, which nobody should have to
+/// read and many Win32 programs reject.
 #[cfg(not(windows))]
 pub(super) fn plainly_spelled(path: PathBuf) -> PathBuf {
     path
@@ -725,15 +718,8 @@ impl OutputTail {
 }
 
 /// Facts about a starting sidecar, recorded as its output streams and never
-/// forgotten.
-///
-/// Classification cannot read these off [`OutputTail`]: the tail keeps the
-/// last 40 lines, and a large model prints dozens of `load_tensors:` lines
-/// after the loader banner, so by the time an attempt fails the proof that
-/// the model loader ran has rolled off — and a healthy GPU machine got walked
-/// down the degradation ladder for it. Symmetrically, a Vulkan error in the
-/// first seconds of a long wait was missed. The tail stays purely for the
-/// human-readable report.
+/// forgotten: the 40-line [`OutputTail`] loses the loader banner behind a
+/// large model's `load_tensors:` lines, so classification cannot read it.
 #[derive(Debug, Default)]
 pub(super) struct StartupSignals {
     /// Output lines seen. The readiness wait watches this to tell a slow

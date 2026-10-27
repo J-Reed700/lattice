@@ -43,16 +43,10 @@ pub(crate) fn is_challenge_page(html: &str) -> bool {
         || (lower.contains("403 - forbidden") && lower.contains("automated queries"))
 }
 
-/// Normalize an extracted search-result href into the URL of the page it
-/// actually points at.
-///
-/// Made of two steps on purpose. Making the href absolute and unwrapping a
-/// search engine's redirect used to be tangled together, and a
-/// protocol-relative `//duckduckgo.com/l/?uddg=...` — which is exactly what
-/// DuckDuckGo's HTML endpoint emits — matched the "starts with //" arm first
-/// and was returned as the result, redirect and all. Every fetch of one of
-/// those comes back as an empty page, so the model is handed a result it can
-/// never read and goes looking for the same page again.
+/// Normalizes an extracted search-result href into the URL of the page it
+/// points at, in two steps: make it absolute, then unwrap a search engine's
+/// redirect, so a protocol-relative `//duckduckgo.com/l/?uddg=...` is
+/// unwrapped too.
 pub(crate) fn normalize_search_url(raw: &str) -> Option<String> {
     let absolute = absolutize_search_url(raw.trim())?;
     Some(unwrap_redirect_url(&absolute).unwrap_or(absolute))
@@ -85,15 +79,10 @@ fn absolutize_search_url(trimmed: &str) -> Option<String> {
     None
 }
 
-/// The destination behind a search engine's click-tracking redirect, when
-/// the URL is one. Returns `None` for an ordinary URL, so a caller can keep
-/// what it already had.
-///
-/// Both engines carry the destination in the link itself, so there is no
-/// reason to spend a request finding out where it goes: DuckDuckGo puts it
-/// in `uddg` as plain text, Bing in `u` as base64url behind a two-character
-/// prefix. Fetching the wrapper instead returns a page of script with no
-/// article text in it.
+/// The destination behind a search engine's click-tracking redirect, or
+/// `None` for an ordinary URL. DuckDuckGo carries it in `uddg` as plain text
+/// and Bing in `u` as base64url behind a two-character prefix, so no request
+/// is spent on the wrapper.
 fn unwrap_redirect_url(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let host = parsed.host_str()?;

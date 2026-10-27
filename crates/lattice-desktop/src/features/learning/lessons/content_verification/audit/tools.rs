@@ -1,15 +1,8 @@
-//! The Verifier's web tools (lesson claim review §14.5), offered only when
-//! the course allows the Verifier to search and a web service is available.
-//!
-//! `search_web` takes a typed need, so the source finder routes it to the
-//! finders that hold its kind of source, and returns titles, links and
-//! snippets; a snippet is never evidence. `fetch_page` has the app fetch a page and save it as a learning
-//! source added by the Verifier, and only then shows the model the saved
-//! text, so every page a verdict can quote is reproducible.
-//!
-//! The rounds are bounded by the window, not by a count: each round's
-//! results are cut to the room the planner leaves, and once no room is left
-//! the model is asked to answer without tools.
+//! The Verifier's web tools (lesson claim review §14.5), offered when the
+//! course allows search and a web service is available. `search_web` returns
+//! titles, links and snippets (never evidence); `fetch_page` saves the page as
+//! a learning source before the model sees it, so every quotable page is
+//! reproducible. Rounds are bounded by the window, not a count.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

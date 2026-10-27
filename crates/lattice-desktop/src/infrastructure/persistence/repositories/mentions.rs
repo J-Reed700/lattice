@@ -132,15 +132,6 @@ impl MentionRepository {
     /// This is a public wrapper for the trait method, allowing direct calls
     /// on MentionRepository instances without going through the trait.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    /// * `text` - Document text content to extract mentions from
-    ///
-    /// # Returns
-    ///
-    /// Vector of extracted mentions with context and position.
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if storage operations fail

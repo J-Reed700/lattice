@@ -7,16 +7,8 @@ use lattice_core::application::ports::{
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
-/// Use case for resetting application settings to defaults.
-///
-/// # Responsibilities
-///
-/// - Reset all settings or a specific category to default values
-/// - Preserve settings not being reset
-/// - Trigger downstream cache invalidation via
-///   `SettingsSideEffectsPort` (audit P0-3: prior implementation had
-///   no invalidation at all on reset — a "reset to defaults" left
-///   the LLM cache pointing at the old config until app restart).
+/// Resets all settings, or one category, to defaults, keeping the rest, and
+/// invalidates caches through `SettingsSideEffectsPort`.
 pub struct ResetSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
     side_effects: Arc<dyn SettingsSideEffectsPort>,
@@ -45,33 +37,9 @@ impl ResetSettingsUseCase {
 
     /// Execute the use case to reset settings.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Reset request with optional category
-    ///
-    /// # Returns
-    ///
-    /// Settings structure after reset
-    ///
     /// # Errors
     ///
     /// Returns error if reset cannot be saved
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = ResetSettingsUseCase::new(repository);
-    ///
-    /// // Reset only search settings
-    /// let request = ResetSettingsRequestDto {
-    ///     category: Some(SettingsCategory::Search),
-    /// };
-    /// let settings = use_case.execute(request).await?;
-    ///
-    /// // Reset all settings
-    /// let request = ResetSettingsRequestDto { category: None };
-    /// let settings = use_case.execute(request).await?;
-    /// ```
     pub async fn execute(&self, request: ResetSettingsRequestDto) -> Result<SettingsDto> {
         let previous_llm = self
             .repository
@@ -101,14 +69,6 @@ impl ResetSettingsUseCase {
     }
 
     /// Reset a specific settings category.
-    ///
-    /// # Arguments
-    ///
-    /// * `category` - Category to reset
-    ///
-    /// # Returns
-    ///
-    /// Settings structure after reset
     pub async fn reset_category(&self, category: SettingsCategory) -> Result<SettingsDto> {
         let request = ResetSettingsRequestDto {
             category: Some(category),
@@ -117,10 +77,6 @@ impl ResetSettingsUseCase {
     }
 
     /// Reset all settings to defaults.
-    ///
-    /// # Returns
-    ///
-    /// Settings structure with all defaults
     pub async fn reset_all(&self) -> Result<SettingsDto> {
         let request = ResetSettingsRequestDto { category: None };
         self.execute(request).await

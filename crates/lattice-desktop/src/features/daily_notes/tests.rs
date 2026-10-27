@@ -468,8 +468,8 @@ async fn capture_appends_to_todays_page_and_ignores_a_newer_unrelated_page() {
         ))
         .await
         .unwrap();
-    // A week synthesis written after today's page. The old rule ("append to the
-    // most recent page") would have put the capture here.
+    // A week synthesis written after today's page: the capture must not land
+    // here.
     repository
         .insert(&record(
             "note_week",
@@ -609,9 +609,8 @@ async fn deleting_a_journal_deletes_the_pages_it_owns() {
     assert!(remaining.contains(&"unfiled".to_string()));
 }
 
-/// The reported bug: a synthesis was "saved" to a page no journal owned, and
-/// the journal screen — which lists pages per journal and nothing else — had no
-/// way to show it.
+/// A synthesis is saved to a page a journal owns, so the journal screen can
+/// show it.
 #[tokio::test]
 async fn a_capture_lands_in_the_journal_written_to_last() {
     let pool = fresh_pool().await;

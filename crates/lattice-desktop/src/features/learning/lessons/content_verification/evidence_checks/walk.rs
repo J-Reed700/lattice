@@ -1,38 +1,10 @@
 //! Pass B, corroboration (course evidence index §5.2–§5.4): the claim read
-//! against the course by relevance, one page at a time.
-//!
-//! A reach is one scope's list for the claim (`ReferenceCollection::
-//! claim_list`): the claim and its counter query ranked together, without
-//! what the claim was shown, ending at the last passage on the claim's
-//! subject. Pages are its consecutive slices, each as large as the page
-//! budget (`page_budget`) and as a check alone can hold in the window, a
-//! passage never split. A reach whose list has run out gives way to the
-//! next in [`REACHES`]; when none is left, the claim goes to the targeted
-//! web research of the pass that follows, with nothing more read from the
-//! course. A claim research has just found sources for reads only those.
-//!
-//! Every claim's first page is checked (D1), sized once the job has
-//! measured an answer ([`PageBudget`]). A claim still unsupported reads on,
-//! page by page, only while [`B_DEPTH`] says so: break-even (D5), "rent or
-//! buy". It reads the next page while what pass B has spent on it past its
-//! first page, with that page, costs no more than researching one claim on
-//! the web. A page costs its reading and one more answer at the backend's
-//! measured pace (`page_seconds`); researching costs what a claim research
-//! round last measured per claim, from the ledger's `Researched` events of
-//! any course, then from this job's own rounds as they finish. Until both
-//! are measured a claim reads its first page only, and the round it goes to
-//! is measured for next time. Besides that rule, the judge's verdict on each
-//! page is the only stop: no count, no score and no round that settles
-//! nothing ends a walk.
-//!
-//! The page-recall eval on the owner's lesson (hybrid retrieval; 850 prompt
-//! and 11.3 output tokens a second, 130 answer tokens a claim) chose it.
-//! Read to the list's end, 64 claims were found in the course and 7 went to
-//! the web, the worst claim spending 27 min in pass B and the lesson about
-//! 138–145 min with web research at 60–120 s a claim. Break-even at 60 s a
-//! claim found 50 and sent 21, worst 1.4 min, 70 min in all; at 120 s, 60
-//! and 11, worst 2.3 min, 87 min. The first page alone found 32 and sent 39,
-//! worst 0.4 min.
+//! against the course by relevance, one page at a time. A reach is one
+//! scope's ranked list for the claim; pages are its consecutive slices, sized
+//! by the page budget and the window. When every reach runs out the claim
+//! goes to web research. Every claim's first page is checked (D1); a claim
+//! still unsupported reads on only while [`B_DEPTH`]'s break-even rule (D5)
+//! says the next page costs less than researching the claim on the web.
 use super::*;
 use crate::features::learning::reference_collection::{ClaimList, Scope};
 use std::collections::BTreeMap;
@@ -59,8 +31,7 @@ pub(in crate::features::learning) enum Reach {
     Standing,
 }
 
-/// The order pass B reads in: the one line that holds decision D2, pure
-/// relevance, until the page-recall eval confirms it.
+/// The order pass B reads in: decision D2, pure relevance.
 pub(in crate::features::learning) const REACHES: &[Reach] = &[Reach::Course];
 
 /// The three orders of §5.2 by the page-recall eval's names: pure relevance,
@@ -113,7 +84,7 @@ impl Depth {
     }
 }
 
-/// Decision D5's switch: the break-even rule, as the page-recall eval chose.
+/// Decision D5's switch: the break-even rule.
 pub(in crate::features::learning) const B_DEPTH: Depth = Depth::BreakEven;
 
 /// How pass B pages: its reaches in order and how deep it reads.

@@ -14,25 +14,6 @@
 //! - `refresh_model_catalog` - Refresh catalog cache
 //! - `clear_model_catalog_cache` - Clear all cached catalog entries
 //! - `get_model_catalog_stats` - Get cache statistics
-//!
-//! ## Example Usage (TypeScript)
-//!
-//! ```typescript
-//! import { invoke } from '@tauri-apps/api/core';
-//!
-//! // Detect system capabilities
-//! const capabilities = await invoke('detect_system_capabilities');
-//! console.log(`RAM: ${capabilities.total_ram_gb} GB`);
-//!
-//! // Get recommended LLM models
-//! const models = await invoke('get_recommended_models', {
-//!   category: 'LLM'
-//! });
-//!
-//! for (const model of models) {
-//!   console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
-//! }
-//! ```
 
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::features::model_management::domain::ModelMetadata;
@@ -87,14 +68,6 @@ impl SystemCapabilitiesResponse {
 /// - CPU (cores, model)
 /// - GPU (type, acceleration, VRAM)
 /// - Disk (available space)
-///
-/// # Example
-///
-/// ```typescript
-/// const capabilities = await invoke('detect_system_capabilities');
-/// console.log(`RAM: ${capabilities.total_ram_gb} GB`);
-/// console.log(`GPU: ${capabilities.gpu_type}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn detect_system_capabilities(
@@ -122,25 +95,6 @@ pub async fn detect_system_capabilities(
 ///
 /// Returns models ranked by compatibility score, with detailed
 /// compatibility analysis for each model.
-///
-/// # Arguments
-/// - `category` - "LLM", "Embedding", or "OCR"
-///
-/// # Returns
-/// List of model recommendations sorted by ranking score (best first).
-///
-/// # Example
-///
-/// ```typescript
-/// const models = await invoke('get_compatible_models', {
-///   category: 'LLM'
-/// });
-///
-/// for (const model of models) {
-///   console.log(`${model.model.name}: ${model.compatibility.compatibility_level}`);
-///   console.log(`Score: ${model.ranking_score}/100`);
-/// }
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_compatible_models(
@@ -212,13 +166,6 @@ pub async fn get_compatible_models(
 /// Get all recommended models across all categories.
 ///
 /// Returns models ranked by compatibility, grouped by category.
-///
-/// # Example
-///
-/// ```typescript
-/// const allModels = await invoke('get_all_recommended_models');
-/// console.log(`Total compatible models: ${allModels.length}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_all_recommended_models(
@@ -574,23 +521,6 @@ fn default_limit() -> usize {
 /// - Ranks by relevance score (0-100)
 /// - Caches results for 1 hour (TTL)
 /// - Graceful degradation on API errors
-///
-/// # Example
-///
-/// ```typescript
-/// const results = await invoke('search_model_catalog', {
-///   query: 'llama chat',
-///   category: 'LLM',
-///   max_size_gb: 5.0,
-///   required_capabilities: ['chat', 'code'],
-///   limit: 10
-/// });
-///
-/// for (const result of results) {
-///   console.log(`${result.model.name}: ${result.relevance_score}/100`);
-///   console.log(`Source: ${result.source}`);
-/// }
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn search_model_catalog(
@@ -703,13 +633,6 @@ pub async fn get_model_variants(
 /// Refresh model catalog cache.
 ///
 /// Clears the catalog cache to force fresh API calls on next search.
-///
-/// # Example
-///
-/// ```typescript
-/// await invoke('refresh_model_catalog');
-/// console.log('Catalog cache refreshed');
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn refresh_model_catalog(container: State<'_, Container>) -> Result<()> {
@@ -725,13 +648,6 @@ pub async fn refresh_model_catalog(container: State<'_, Container>) -> Result<()
 /// Clear model catalog cache.
 ///
 /// Removes all cached catalog entries, forcing fresh API calls.
-///
-/// # Example
-///
-/// ```typescript
-/// const deleted = await invoke('clear_model_catalog_cache');
-/// console.log(`Cleared ${deleted} cache entries`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_model_catalog_cache(container: State<'_, Container>) -> Result<u64> {
@@ -747,15 +663,6 @@ pub async fn clear_model_catalog_cache(container: State<'_, Container>) -> Resul
 /// Get model catalog cache statistics.
 ///
 /// Returns metrics about cache usage and effectiveness.
-///
-/// # Example
-///
-/// ```typescript
-/// const stats = await invoke('get_model_catalog_stats');
-/// console.log(`Total: ${stats.total_entries}`);
-/// console.log(`Valid: ${stats.valid_entries}`);
-/// console.log(`Expired: ${stats.expired_entries}`);
-/// ```
 #[tauri::command]
 #[specta::specta]
 pub async fn get_model_catalog_stats(container: State<'_, Container>) -> Result<ModelCatalogStats> {

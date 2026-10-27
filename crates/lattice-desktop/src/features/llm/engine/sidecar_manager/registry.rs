@@ -1,66 +1,26 @@
 use super::*;
 use crate::features::llm::engine::gguf_metadata::read_model_info;
 
-/// Process-wide registry of live sidecars.
+/// Process-wide registry of live sidecars, held as Tauri-managed state so the
+/// `RunEvent::ExitRequested` handler can drain it synchronously before the
+/// tokio runtime tears down. Each entry holds a strong reference to a child,
+/// so one whose only other owner is a cancelled startup future is reachable.
 ///
-/// Held as Tauri-managed state via `app.manage()` so the app's
-/// `RunEvent::ExitRequested` handler can synchronously drain it before
-/// the tokio runtime tears down. Each entry holds a strong reference to a
-/// child and an id its owner releases on drop, so a child whose only other
-/// owner is a cancelled startup future is still reachable here.
+/// Zombie protection has four layers: `Drop` kills a handle; the exit sweep
+/// kills everything on quit; on Windows a `KILL_ON_JOB_CLOSE` Job Object has
+/// the kernel kill sidecars when Lattice dies (see `JobObjectGuard`); and on
+/// macOS and Linux the boot-time `reap_orphan_sidecars()` catches what
+/// survived a crash. The mutex is `parking_lot`, not tokio's, because the
+/// shutdown consumer is a synchronous callback where `block_on` can deadlock.
 ///
-/// # Four layers of zombie protection
-///
-/// 1. **Normal Drop.** Handle goes out of scope → `Drop` calls
-///    `kill()`. Covers happy path (model swap, container teardown
-///    while runtime is alive).
-///
-/// 2. **`RunEvent::ExitRequested` sweep.** Tauri's "user closed the
-///    window" hook walks the registry and synchronously kills
-///    everything before returning to shutdown. Covers normal app
-///    quit where the tokio runtime is mid-teardown and Drop racing
-///    against runtime shutdown is unreliable.
-///
-/// 3. **Windows Job Object.** On Windows, every sidecar is assigned
-///    to a kernel Job Object configured with `KILL_ON_JOB_CLOSE`.
-///    The OS guarantees they die when our process handle closes —
-///    even if Lattice segfaults, gets `taskkill /f`'d, or otherwise
-///    bypasses our shutdown hooks. This is the load-bearing layer:
-///    layers 1+2 are best-effort, 3 is a hardware-level guarantee.
-///    See `JobObjectGuard` below.
-///
-/// 4. **Boot-time orphan reap.** `reap_orphan_sidecars()` at app
-///    startup catches anything that survived the previous run.
-///    This is the load-bearing layer **on macOS and Linux** where
-///    no Job Object equivalent exists: `kill -9` on Lattice itself
-///    will leak the sidecar until Lattice is next started, at which
-///    point the reaper finds and kills it. A future improvement on
-///    Linux is to use `prctl(PR_SET_PDEATHSIG, SIGKILL)` as a
-///    pre-exec hook on the spawn — but `tauri-plugin-shell` doesn't
-///    expose a pre-exec hook, so doing that requires dropping to
-///    raw `std::process::Command::pre_exec` and giving up the
-///    plugin's bundled-binary resolution. Tracked as a follow-up;
-///    the boot-time reap is good enough for v1.
-///
-/// # Why `parking_lot::Mutex` (sync) not `tokio::Mutex` (async)
-///
-/// The shutdown-time consumer is a synchronous Tauri callback. Using
-/// a tokio::Mutex would force `Handle::current().block_on()`, which
-/// can deadlock during runtime teardown. `CommandChild::kill()` itself
-/// is synchronous (it just calls into `shared_child::SharedChild`),
-/// so the entire kill path can stay sync.
+/// TODO: on Linux, `prctl(PR_SET_PDEATHSIG)` would need a pre-exec hook,
+/// which `tauri-plugin-shell` does not expose.
 pub struct SidecarRegistry {
     pub(super) entries: SyncMutex<RegistryState>,
 
-    /// Live servers keyed by the configuration that started them, so the
-    /// chat, router and utility roles pointing at one GGUF share a process
-    /// instead of loading the same weights once each. Lives here because
-    /// this type is already the process-wide truth about sidecars, and
-    /// sharing is a fact about the set as a whole, not about any one child.
-    ///
-    /// Orthogonal to `entries`: that is the kill list, this is the sharing
-    /// map. A shared server holds exactly one `entries` slot however many
-    /// roles are using it.
+    /// Live servers keyed by the configuration that started them, so roles
+    /// pointing at one GGUF share a process. Orthogonal to `entries`, the kill
+    /// list: a shared server holds one `entries` slot however many roles use it.
     pub(super) shared: SharedProcesses<SidecarConfig, SidecarHandle>,
 
     /// Ports reserved for this app's sidecars, so two concurrent spawns are
@@ -89,10 +49,8 @@ pub(super) struct RegistryState {
 }
 
 pub(super) struct RegistryEntry {
-    /// Identifies the slot so its owner can release it. A `Weak` used to
-    /// stand in for ownership, but a `Weak` cannot keep alive the one case
-    /// registering early exists for: a child whose only strong reference is
-    /// a cancelled startup future.
+    /// Identifies the slot so its owner can release it, even when its only strong
+    /// reference is a cancelled startup future.
     pub(super) id: u64,
     pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
     pub(super) endpoint: String,
@@ -547,36 +505,12 @@ impl Drop for JobObjectGuard {
 // for `JobObjectGuard` since its only field is HANDLE — no manual
 // `unsafe impl` needed.
 
-/// Kill orphan `llama-server` processes left by a crashed Lattice instance.
-///
-/// Called once from `main.rs` at app boot, after the registry is
-/// managed but before the DI container spawns any new sidecars.
-///
-/// # Match strategy
-///
-/// A process is ours only if its executable is an installed sidecar file
-/// (`llama-server[.exe]` or `llama-server-cpu[.exe]`) sitting in the same
-/// directory as the running Lattice executable — the only place
-/// `tauri-plugin-shell` launches sidecars from (`is_installed_sidecar`).
-/// A user's own `~/code/llama.cpp/build/bin/llama-server`, or another
-/// app's bundled copy, lives elsewhere and is never touched.
-///
-/// The executable path comes from the OS (`Process::exe`), falling back
-/// to argv[0], which tauri-plugin-shell sets to the full resolved path.
-/// An install whose directory changes between launches (a re-mounted
-/// AppImage, a translocated macOS app) leaves its orphans alone; missing
-/// one is better than killing someone else's server.
-///
-/// A matching process is left alone while its parent is this Lattice
-/// executable (`has_live_lattice_parent`): launching the app a second time
-/// used to SIGKILL the first window's model mid-turn. The parent has to be the
-/// executable itself, not any program in its directory: a .deb installs into
-/// `/usr/bin`, where an orphan re-parented to a subreaper such as
-/// `/usr/bin/tini` or a container's `/usr/bin/sleep` would otherwise pass for
-/// a running Lattice and never be reaped.
-///
-/// Best-effort: `sysinfo` failures collapse to "no orphans found" and
-/// the scan continues. We never panic from here.
+/// Kills orphan `llama-server` processes left by a crashed Lattice, once at
+/// boot before any sidecar starts. A process is ours only when its executable
+/// is an installed sidecar file beside the running Lattice executable, and it
+/// is left alone while its parent is this Lattice executable
+/// (`has_live_lattice_parent`). Best-effort: `sysinfo` failures mean no
+/// orphans found.
 pub fn reap_orphan_sidecars() {
     let Some(lattice_exe) = tauri::utils::platform::current_exe()
         .ok()
