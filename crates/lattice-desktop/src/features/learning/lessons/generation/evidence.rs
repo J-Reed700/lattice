@@ -22,7 +22,7 @@ use crate::features::learning::reference_collection::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -104,21 +104,31 @@ pub(super) async fn plan(
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert("referenceCatalog".into(), references.catalog(llm));
     }
-    let raw = complete_json(
+    let planned = match complete_json(
         llm,
         PLAN_SYSTEM,
         prompt.to_string(),
         plan_schema(),
         PLAN_OUTPUT_TOKENS,
     )
-    .await?;
-    let topics = parse_plan(&raw).unwrap_or_else(|| {
+    .await
+    {
+        Ok(raw) => parse_plan(&raw),
+        Err(AppError::ModelAnswerUnusable(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let Some(topics) = planned else {
+        // Unrecorded, so a resumed job plans again.
         tracing::warn!("The lesson evidence plan was unusable; planning one topic from the lesson title and objective");
-        vec![Topic {
+        return Ok(vec![Topic {
             topic: lesson.title.trim().to_owned(),
-            queries: vec![format!("{} {}", lesson.title.trim(), lesson.objective.trim())],
-        }]
-    });
+            queries: vec![format!(
+                "{} {}",
+                lesson.title.trim(),
+                lesson.objective.trim()
+            )],
+        }]);
+    };
     record_checkpoint(&key, json!(topics)).await?;
     tracing::info!(topics = topics.len(), "Planned the lesson's evidence");
     Ok(topics)
@@ -598,8 +608,13 @@ async fn judge(
                         brief: COVERAGE_BRIEF,
                     },
                 )
-                .await?;
-                match parse_json::<Value>(&raw) {
+                .await;
+                let answer = match raw {
+                    Ok(raw) => parse_json::<Value>(&raw).map_err(|error| error.to_string()),
+                    Err(AppError::ModelAnswerUnusable(reason)) => Err(reason),
+                    Err(error) => return Err(error),
+                };
+                match answer {
                     Ok(answer) => {
                         record_checkpoint(&key, answer.clone()).await?;
                         answer

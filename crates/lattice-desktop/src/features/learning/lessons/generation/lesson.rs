@@ -302,17 +302,19 @@ pub async fn prepare_lesson_with_references<'a>(
             return Err(invalid("No saved passages match this lesson. Add relevant references in Sources, or narrow the lesson objective."));
         }
         let active = gathered.expanded.as_ref().unwrap_or(references);
-        let mut added = evidence::pack(llm, &gathered, active, room);
-        // The pack is sized by estimate; drop its last passages until the
-        // prompt is measured to fit.
-        let (prompt, sources) = loop {
-            let (sources, map) = evidence::assemble(&gathered, &topics, active, &added);
-            if sources.is_empty() {
-                return Err(model_call::window_too_small(
-                    llm,
-                    "No saved passage fits beside this lesson's prompt",
-                ));
-            }
+        let added = evidence::pack(llm, &gathered, active, room);
+        // The pack is sized by estimate; the longest start of it the prompt
+        // is measured to fit is sent, found by halving.
+        let (mut low, mut high) = (1, added.len());
+        let mut count = high;
+        let mut fitted = None;
+        while low <= high {
+            let (sources, map) = evidence::assemble(
+                &gathered,
+                &topics,
+                active,
+                added.get(..count).unwrap_or_default(),
+            );
             let prompt = lesson_prompt(
                 llm,
                 program,
@@ -322,15 +324,24 @@ pub async fn prepare_lesson_with_references<'a>(
                 map,
                 true,
             )?;
-            if fits(llm, &lesson_system(true), &prompt, reserve).await {
-                break (prompt, sources);
+            if !sources.is_empty() && fits(llm, &lesson_system(true), &prompt, reserve).await {
+                fitted = Some((count, prompt, sources));
+                low = count + 1;
+            } else {
+                high = count - 1;
             }
-            added.pop();
+            count = (low + high) / 2;
+        }
+        let Some((passages, prompt, sources)) = fitted else {
+            return Err(model_call::window_too_small(
+                llm,
+                "No saved passage fits beside this lesson's prompt",
+            ));
         };
         tracing::info!(
             topics = topics.len(),
             sources = sources.len(),
-            passages = added.len(),
+            passages,
             room,
             "Packed the lesson's evidence"
         );
