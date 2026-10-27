@@ -1,5 +1,11 @@
 # Answer coverage: read every passage, then write — design
 
+> **Status (2026-10-26).** The reading round no longer reads every passage in one pass and then close-reads the
+> ones it marked with a hyphen (§10): it reads them four at a time, each group shown again where the message
+> closes (`chat/tool_loop/reading/groups.rs`). On 60 saved readings it noted 294 of 300 fact passages against
+> 281 as shipped, in a lower median time; `evals/retrieval/2026-10-26-GROUPED-READING.md` has the A/B. The
+> writing round and the coverage check below are unchanged.
+
 Date: 2026-10-23. Code read at #167 (per-document cap removed). Data: the shipped-path run of #167 on Qwen3.5-9B, a replay of its captured answer requests across passage depth, tools and seeds, and a replay of the same requests with thinking on. The replay harness is `scripts/replay_answer_round.py`.
 
 ## 1. Verdict
