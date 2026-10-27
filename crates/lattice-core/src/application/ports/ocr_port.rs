@@ -1,43 +1,15 @@
-//! Port for optical character recognition of document pages.
+//! Port for optical character recognition of document pages. A scanned page
+//! has no content-stream text, so it is reported per page
+//! (`ExtractedContent::needs_ocr`) and handed here one page at a time.
 //!
-//! PDF extraction reconstructs text from a page's content stream. A scanned
-//! page has no content stream text — only an image — so those pages are
-//! reported per page (`ExtractedContent::needs_ocr`) and, when a provider is
-//! configured, handed to this port one page at a time.
-//!
-//! # Why `(&Path, page)` and not image bytes
-//!
-//! The obvious alternative is for the caller to hand over pixels. It was
-//! rejected because the caller cannot produce them honestly:
-//!
-//! - A scanned page's image XObject can be CCITTFax, JBIG2 or JPXDecode.
-//!   Neither `llama-server` nor a native vision path accepts those, so
-//!   something would still have to rasterize — and rasterizing is exactly the
-//!   infrastructure dependency (pdfium / MuPDF / CoreGraphics) that the
-//!   extraction engine must not grow.
-//! - A page is not always one image. Rendering the page is the only faithful
-//!   input for a page that mixes several image fragments, or a scan with a
-//!   vector overlay.
-//!
-//! So the port receives the document path plus a one-based physical page
-//! number, and the adapter owns rasterization plus inference. That is the same
-//! shape as [`crate::application::ports::TranscriptionPort`], which also takes
-//! a path and lets the adapter own decoding.
-//!
-//! An image file (PNG or JPEG) is a one-page document: `page` is `1`.
-//!
-//! # The adapter
-//!
-//! `features::ocr::VisionOcr` renders the page to a PNG, starts a dedicated
-//! `llama-server` with the OCR model and its vision projector (`--mmproj`) only
-//! when a page needs it, and asks `/v1/chat/completions` for the page's text.
-//! It is a separate process from the chat sidecar because it serves a
-//! different model with its own window, wanted for minutes at a time while
-//! the chat model is resident for hours.
-//!
-//! Implementations must be `Send + Sync`, must not load a model until the
-//! first `recognize_page` call (nothing may block app startup), and must run
-//! inference off the async runtime.
+//! The port takes `(&Path, page)` rather than image bytes: a scan's image may
+//! be CCITTFax, JBIG2 or JPXDecode and a page may mix fragments, so only
+//! rendering the page is faithful, and rasterizing belongs to the adapter, not
+//! the extraction engine (as with `TranscriptionPort`). An image file is a
+//! one-page document. `features::ocr::VisionOcr` starts a dedicated
+//! `llama-server` with the OCR model only when a page needs it.
+//! Implementations must not load a model before the first `recognize_page`
+//! call, and must run inference off the async runtime.
 
 use async_trait::async_trait;
 use std::fmt;

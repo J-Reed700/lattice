@@ -27,24 +27,11 @@ pub struct ExtractedContentData {
     pub char_count: usize,
 }
 
-/// Port for content extraction operations.
-///
-/// Implementations must:
-/// - Detect file type automatically
-/// - Handle binary files (PDF, DOCX) correctly
-/// - Extract text from various formats
-/// - Be thread-safe (`Send + Sync`)
+/// Text extraction from files of various formats, binary ones (PDF, DOCX)
+/// included.
 #[async_trait]
 pub trait ContentExtractionPort: Send + Sync {
-    /// Extract text content from a file.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - The file path to extract from
-    ///
-    /// # Returns
-    ///
-    /// Extracted text content with metadata
+    /// The text content of the file at `path`.
     ///
     /// # Errors
     ///

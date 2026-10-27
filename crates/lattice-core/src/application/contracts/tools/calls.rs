@@ -27,24 +27,6 @@ use std::collections::HashMap;
 /// - Tool name must be non-empty and alphanumeric + underscore
 /// - Description must be clear and actionable
 /// - Parameters must have valid JSON schema
-///
-/// # Example
-/// ```rust
-/// use serde_json::json;
-///
-/// let tool = ToolDefinition {
-///     name: "semantic_search".to_string(),
-///     description: "Search user's documents using semantic similarity".to_string(),
-///     input_schema: json!({
-///         "type": "object",
-///         "properties": {
-///             "query": {"type": "string"},
-///             "limit": {"type": "integer", "default": 10}
-///         },
-///         "required": ["query"]
-///     }),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ToolDefinition {
     /// Function name (alphanumeric + underscores)
@@ -64,14 +46,6 @@ pub struct ToolDefinition {
 
 impl ToolDefinition {
     /// Create a new tool definition with validation
-    ///
-    /// # Arguments
-    /// * `name` - Tool name (must be alphanumeric + underscores)
-    /// * `description` - Clear description of functionality
-    /// * `input_schema` - JSON Schema for parameters
-    ///
-    /// # Returns
-    /// Validated ToolDefinition
     ///
     /// # Errors
     /// Returns error if name is invalid or schema is malformed
@@ -120,20 +94,6 @@ impl ToolDefinition {
 /// A function call request from the LLM
 ///
 /// Represents an LLM's intent to execute a specific function with arguments.
-///
-/// # Example
-/// ```rust
-/// use serde_json::json;
-///
-/// let call = FunctionCall {
-///     id: "call_abc123".to_string(),
-///     name: "semantic_search".to_string(),
-///     arguments: json!({
-///         "query": "machine learning papers",
-///         "limit": 5
-///     }),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionCall {
     /// Unique identifier for this function call
@@ -168,24 +128,6 @@ impl FunctionCall {
 /// Result of executing a function call
 ///
 /// Encapsulates success or failure with detailed error information.
-///
-/// # Example (Success)
-/// ```rust
-/// use serde_json::json;
-///
-/// let result = FunctionResult::success(json!({
-///     "results": ["doc1.pdf", "doc2.txt"],
-///     "total_found": 2
-/// }));
-/// ```
-///
-/// # Example (Failure)
-/// ```rust
-/// let result = FunctionResult::error(
-///     "DOCUMENT_NOT_FOUND",
-///     "Document with ID abc123 not found"
-/// );
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionResult {
     /// Whether the function executed successfully

@@ -1,19 +1,9 @@
-//! One path from gathered evidence to a model's answer.
-//!
-//! A generator hands over its instructions, its task and the evidence it
-//! gathered, each passage under a stable id. [`BudgetAllocation`] divides the
-//! model's window — instructions, history, evidence and the output
-//! reservation — and this service selects the evidence that fits, renders one
-//! typed request and calls the model at the caller's priority.
-//!
-//! Nothing is clipped. A request whose fixed parts, or whose required
-//! evidence, do not fit is refused with a typed [`PromptBudgetExceeded`], and
-//! evidence that selection left out is reported by id rather than dropped
-//! quietly.
-//!
-//! [`measure`] counts a request exactly as it would be sent, with the
-//! backend's own tokenizer where it has one, so a caller can fit its material
-//! to the window before sending rather than learn from a refusal.
+//! One path from gathered evidence to a model's answer: [`BudgetAllocation`]
+//! divides the model's window, this service selects the evidence that fits,
+//! renders one typed request and calls the model at the caller's priority.
+//! Nothing is clipped: a request whose fixed parts or required evidence do not
+//! fit is refused with [`PromptBudgetExceeded`], and evidence left out is
+//! reported by id. [`measure`] counts a request exactly as it would be sent.
 
 use std::time::Duration;
 

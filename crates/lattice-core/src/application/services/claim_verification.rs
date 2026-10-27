@@ -48,10 +48,8 @@ pub enum CheckPolicy {
     Chat,
     Strict,
     /// Does the extracted inventory preserve the original teaching assertions?
-    /// This is representation checking, not factual publication approval.
-    /// Production coverage no longer uses this judge (lessons/content_verification/coverage.rs
-    /// has its own fidelity instructions). Kept only for the live fidelity controls in
-    /// lessons/live_lesson_tests.rs and live_small_lesson.rs; delete together with them.
+    /// Used only by the live fidelity controls in lessons/live_lesson_tests.rs
+    /// and live_small_lesson.rs; delete it together with them.
     Fidelity,
 }
 impl CheckPolicy {

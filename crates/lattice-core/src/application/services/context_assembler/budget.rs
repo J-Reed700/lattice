@@ -89,12 +89,9 @@ const MANDATORY_BORROW_FRACTION: f64 = 0.50;
 /// for a long written answer plus its reasoning, not for the answer alone.
 const OUTPUT_RESERVATION_CAP: usize = 32_768;
 
-/// Default generation reservation when the caller configures none.
-///
-/// This reservation becomes the request's `max_tokens`. It was once capped at
-/// 4096, which a reasoning model on a 128K window exhausted mid-answer — the
-/// server stopped with `length` and the turn failed while most of the window
-/// sat unused.
+/// Default generation reservation when the caller configures none. It
+/// becomes the request's `max_tokens`, so a small fixed cap would cut a
+/// reasoning model off mid-answer on a large window.
 fn default_output_reservation(capacity: usize) -> usize {
     (capacity / 4).min(OUTPUT_RESERVATION_CAP)
 }

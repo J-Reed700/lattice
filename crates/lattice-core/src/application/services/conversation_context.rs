@@ -397,8 +397,8 @@ mod tests {
         }
     }
 
-    /// Sources past the tenth used to be invisible. Every page is listed by
-    /// title and address while the share of the window holds them.
+    /// Every page is listed by title and address while the share of the window
+    /// holds them.
     #[test]
     fn every_linked_page_is_listed_when_the_window_holds_it() {
         let rows: Vec<_> = (0..30).map(|index| row(index, "short note")).collect();

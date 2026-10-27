@@ -251,10 +251,8 @@ async fn unextracted_signals_are_never_sent() {
 /// count, after the planner's estimate let it through.
 const REFUSED_BY_THE_BACKEND: &str = "<refused by the backend>";
 
-/// The estimate can let a dense prompt through that the backend then counts
-/// over its window: a PDF saved as a page measured at half its tokens. That
-/// refusal shrinks the evidence shown, as the planner's does, instead of
-/// ending the lesson job.
+/// A dense prompt the estimate let through and the backend counts over its
+/// window shrinks the evidence shown rather than ending the lesson job.
 #[tokio::test]
 async fn a_prompt_the_backend_counts_over_the_window_shrinks_and_is_judged() {
     let origin = Origin::of_url("https://prakashkagitha.github.io/llm-stack/").unwrap();
