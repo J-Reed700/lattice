@@ -10,17 +10,6 @@
 //! - **Studs (Public Interface)**: The trait methods define clear contracts
 //! - **Bricks (Implementations)**: Concrete repositories and mocks implement these traits
 //! - **Regeneratable**: Can swap implementations without breaking dependents
-//!
-//! # Usage
-//!
-//! ```rust
-//! use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
-//!
-//! async fn process_document<R: DocumentRepositoryTrait>(repo: &R, id: &str) {
-//!     let doc = repo.find_by_id(id).await?;
-//!     // ... process document
-//! }
-//! ```
 
 use lattice_core::domain::entities::Document;
 use lattice_core::shared::error::Result;
@@ -40,17 +29,6 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait DocumentRepositoryTrait: Send + Sync {
     /// Create a new document record
-    ///
-    /// # Arguments
-    /// * `file_path` - Absolute path to the file
-    /// * `file_name` - Name of the file
-    /// * `mime_type` - MIME type of the file
-    /// * `size_bytes` - File size in bytes
-    /// * `modified_at` - Last modification timestamp (RFC3339 format)
-    /// * `checksum` - File content checksum (e.g., SHA-256)
-    ///
-    /// # Returns
-    /// The created document with generated ID
     async fn create(
         &self,
         file_path: &str,
@@ -65,9 +43,6 @@ pub trait DocumentRepositoryTrait: Send + Sync {
     ///
     /// If a document with the same file path exists, updates it.
     /// Otherwise, creates a new document.
-    ///
-    /// # Returns
-    /// The document ID (newly created or existing)
     async fn upsert(
         &self,
         file_path: &str,
@@ -79,25 +54,15 @@ pub trait DocumentRepositoryTrait: Send + Sync {
     ) -> Result<String>;
 
     /// Find a document by its ID
-    ///
-    /// # Returns
-    /// `Some(Document)` if found, `None` if not found
     async fn find_by_id(&self, id: &str) -> Result<Option<Document>>;
 
     /// Find a document by its file path
-    ///
-    /// # Returns
-    /// `Some(Document)` if found, `None` if not found
     async fn find_by_path(&self, file_path: &str) -> Result<Option<Document>>;
 
     /// List all documents ordered by indexed timestamp (descending)
     async fn list_all(&self) -> Result<Vec<Document>>;
 
     /// Update the status of a document
-    ///
-    /// # Arguments
-    /// * `id` - Document ID
-    /// * `status` - New status (e.g., "indexed", "processing", "error")
     async fn update_status(&self, id: &str, status: &str) -> Result<()>;
 
     /// Delete a document by ID
@@ -113,9 +78,6 @@ pub trait DocumentRepositoryTrait: Send + Sync {
     async fn exists(&self, file_path: &str) -> Result<bool>;
 
     /// Find documents matching a file path pattern (SQL LIKE)
-    ///
-    /// # Arguments
-    /// * `pattern` - SQL LIKE pattern (e.g., "/docs/%", "%.pdf")
     async fn find_by_path_pattern(&self, pattern: &str) -> Result<Vec<Document>>;
 
     /// Alias for `find_by_id` (for compatibility)

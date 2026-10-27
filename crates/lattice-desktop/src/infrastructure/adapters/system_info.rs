@@ -18,23 +18,6 @@
 //!    - Linux: NVIDIA via `/proc/driver/nvidia/gpus`, AMD/Intel via `lspci`
 //!    - Windows: DirectX/CUDA via WMI
 //! 4. **Disk**: Available space from `sysinfo`
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::infrastructure::adapters::system_info::SystemInfoAdapter;
-//! use lattice_core::application::ports::{NoAcceleratorProbe, SystemInfoPort};
-//! use std::sync::Arc;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let adapter = SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe));
-//! let info = adapter.get_system_info().await?;
-//!
-//! println!("RAM: {} GB", info.total_ram_gb);
-//! println!("GPU: {:?}", info.gpu_info);
-//! # Ok(())
-//! # }
-//! ```
 
 use async_trait::async_trait;
 use lattice_core::application::ports::{

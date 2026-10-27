@@ -27,16 +27,6 @@ pub struct EmbeddingMapper;
 
 impl EmbeddingMapper {
     /// Convert domain entity + vector to DTO for storage
-    ///
-    /// # Arguments
-    /// * `entity` - Domain embedding (metadata)
-    /// * `vector` - Actual embedding vector
-    ///
-    /// # Example
-    /// ```rust
-    /// let entity = Embedding::new(chunk_id, "model".into(), 384);
-    /// let dto = EmbeddingMapper::to_dto(&entity, vector);
-    /// ```
     pub fn to_dto(entity: &Embedding, vector: Vec<f32>) -> EmbeddingDTO {
         EmbeddingDTO {
             chunk_id: entity.chunk_id().to_string(),
@@ -52,11 +42,6 @@ impl EmbeddingMapper {
     ///
     /// Returns entity (metadata) separately from vector.
     /// Caller must extract vector from DTO separately.
-    ///
-    /// # Example
-    /// ```rust
-    /// let (entity, vector) = EmbeddingMapper::from_dto(dto)?;
-    /// ```
     pub fn from_dto(dto: &EmbeddingDTO) -> Result<Embedding> {
         let chunk_id = ChunkId::from_string(dto.chunk_id.clone())?;
 

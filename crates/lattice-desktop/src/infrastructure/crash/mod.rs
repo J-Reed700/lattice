@@ -38,13 +38,6 @@ fn crashes_directory() -> Option<PathBuf> {
 /// This function MUST be called early in main(), before any other initialization.
 /// It captures the app data directory for crash log storage.
 ///
-/// # Example
-///
-/// ```rust
-/// install_panic_hook();
-/// // ... rest of app initialization
-/// ```
-///
 /// # Crash Log Location
 ///
 /// Crashes are logged to: `{app_data_dir}/crashes/crash-{timestamp}-{uuid}.json`
@@ -90,16 +83,6 @@ pub fn install_panic_hook() {
 /// Set the crashes directory to app data directory.
 ///
 /// This should be called in bootstrap::initialize_app() once the app handle is available.
-///
-/// # Example
-///
-/// ```rust
-/// pub fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-///     let app_dir = app.path().app_data_dir()?;
-///     crate::infrastructure::crash::set_crashes_directory(app_dir);
-///     // ... rest of initialization
-/// }
-/// ```
 pub fn set_crashes_directory(app_data_dir: PathBuf) {
     let crashes_dir = app_data_dir.join("crashes");
 

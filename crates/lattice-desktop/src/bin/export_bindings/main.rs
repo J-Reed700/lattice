@@ -3,13 +3,6 @@
 //! Standalone binary that generates TypeScript type definitions for registered
 //! Specta-compatible plugin commands.
 //!
-//! # Usage
-//!
-//! ```bash
-//! cargo run --features bindings-export --bin export_bindings
-//! cargo run --features bindings-export --bin export_bindings -- --check
-//! ```
-//!
 //! # Output
 //!
 //! Creates `src/lib/bindings.ts` with:

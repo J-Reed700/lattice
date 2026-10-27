@@ -53,21 +53,6 @@ pub struct DocumentInfo {
 }
 
 /// Parser for extracting wikilinks from markdown documents.
-///
-/// # Example
-///
-/// ```
-/// use lattice::infrastructure::extraction::LinkParser;
-///
-/// let parser = LinkParser::new();
-/// let content = "See [[todo]] and [[projects/ml|Machine Learning]]";
-/// let links = parser.parse_document(content, "notes/index.md");
-///
-/// assert_eq!(links.len(), 2);
-/// assert_eq!(links[0].target, "todo");
-/// assert_eq!(links[1].target, "projects/ml");
-/// assert_eq!(links[1].display_text, Some("Machine Learning".to_string()));
-/// ```
 pub struct LinkParser;
 
 impl LinkParser {
@@ -77,34 +62,6 @@ impl LinkParser {
     }
 
     /// Extract all wikilinks from document content.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Markdown document content
-    /// * `source_path` - Path to the source document
-    ///
-    /// # Returns
-    ///
-    /// List of WikiLink objects found in the document
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use lattice::infrastructure::extraction::LinkParser;
-    ///
-    /// let parser = LinkParser::new();
-    /// let content = r#"
-    /// # My Notes
-    /// See [[todo]] for tasks.
-    /// Check [[projects/ml#architecture|ML Architecture]].
-    /// "#;
-    /// let links = parser.parse_document(content, "index.md");
-    ///
-    /// assert_eq!(links.len(), 2);
-    /// assert_eq!(links[0].target, "todo");
-    /// assert_eq!(links[1].target, "projects/ml");
-    /// assert_eq!(links[1].header, Some("architecture".to_string()));
-    /// ```
     pub fn parse_document(&self, content: &str, source_path: &str) -> Vec<WikiLink> {
         let mut links = Vec::new();
 
@@ -166,52 +123,6 @@ impl LinkParser {
     /// 2. Path without extension: [[notes/todo]] -> notes/todo.md
     /// 3. Title match: [[Todo List]] -> notes/todo.md (if title matches)
     /// 4. Fuzzy match: [[todo]] -> notes/todo.md (filename contains target)
-    ///
-    /// # Arguments
-    ///
-    /// * `target` - Link target text from `[[target]]`
-    /// * `source_path` - Path of document containing the link
-    /// * `all_documents` - List of available documents with paths and titles
-    ///
-    /// # Returns
-    ///
-    /// Resolved file path or None if not found
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use lattice::infrastructure::extraction::{LinkParser, DocumentInfo};
-    ///
-    /// let parser = LinkParser::new();
-    /// let docs = vec![
-    ///     DocumentInfo {
-    ///         file_path: "notes/todo.md".to_string(),
-    ///         title: Some("Todo List".to_string()),
-    ///     },
-    ///     DocumentInfo {
-    ///         file_path: "projects/ml.md".to_string(),
-    ///         title: Some("Machine Learning".to_string()),
-    ///     },
-    /// ];
-    ///
-    /// // Exact match
-    /// assert_eq!(
-    ///     parser.resolve_link("notes/todo.md", "index.md", &docs),
-    ///     Some("notes/todo.md".to_string())
-    /// );
-    ///
-    /// // Title match
-    /// assert_eq!(
-    ///     parser.resolve_link("Todo List", "index.md", &docs),
-    ///     Some("notes/todo.md".to_string())
-    /// );
-    ///
-    /// // Fuzzy match
-    /// assert_eq!(
-    ///     parser.resolve_link("todo", "index.md", &docs),
-    ///     Some("notes/todo.md".to_string())
-    /// );
-    /// ```
     pub fn resolve_link(
         &self,
         target: &str,
@@ -288,28 +199,6 @@ impl LinkParser {
     /// 1. First H1 heading (# Title)
     /// 2. YAML frontmatter (title: ...)
     /// 3. First line if it looks like a title
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - Document content
-    ///
-    /// # Returns
-    ///
-    /// Extracted title or None
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use lattice::infrastructure::extraction::LinkParser;
-    ///
-    /// let parser = LinkParser::new();
-    ///
-    /// let content = "# My Note\n\nContent here...";
-    /// assert_eq!(parser.extract_title(content), Some("My Note".to_string()));
-    ///
-    /// let content = "---\ntitle: My Note\n---\n\nContent...";
-    /// assert_eq!(parser.extract_title(content), Some("My Note".to_string()));
-    /// ```
     pub fn extract_title(&self, content: &str) -> Option<String> {
         let lines: Vec<&str> = content.lines().collect();
 

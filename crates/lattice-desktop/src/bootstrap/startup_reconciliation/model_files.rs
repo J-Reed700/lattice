@@ -12,14 +12,6 @@ use tracing::{error, info, warn};
 /// Deletes orphaned files to free up disk space.
 ///
 /// Only files without a database record are deleted.
-///
-/// # Arguments
-///
-/// * `model_repo` - Repository to check if files have corresponding models
-/// * `models_dir` - Path to the models directory (e.g., ~/.cache/lattice/models)
-///
-/// # Returns
-/// Number of orphaned files cleaned
 pub async fn reconcile_orphaned_files(
     model_repo: Arc<DownloadedModelRepository>,
     models_dir: &Path,

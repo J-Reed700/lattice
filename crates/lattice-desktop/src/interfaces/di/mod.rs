@@ -11,23 +11,6 @@
 //! **Container** supports optional AI models and uses degraded mocks when
 //! models aren't installed.
 //!
-//! ## Usage in Tauri Commands
-//! ```rust
-//! use crate::interfaces::di::Container;
-//!
-//! #[tauri::command]
-//! async fn search_documents(
-//!     container: tauri::State<'_, Container>,
-//!     query: String,
-//! ) -> Result<Vec<SearchResult>, AppError> {
-//!     // Use DDD use cases
-//!     let use_case = container.semantic_search_use_case();
-//!     let results = use_case.execute(query, 10).await?;
-//!
-//!     Ok(results)
-//! }
-//! ```
-//!
 //! ## Testing Usage
 //! ```rust
 //! use crate::di::MockAppContainer;
@@ -88,27 +71,6 @@ use lattice_core::application::ports::{
 ///
 /// Contains in-memory mock implementations. No database or ML models required.
 /// Use this in unit tests for fast, isolated testing.
-///
-/// # Example
-/// ```rust
-/// #[tokio::test]
-/// async fn test_document_workflow() {
-///     let container = MockAppContainer::new();
-///
-///     // Create a document using mock repository
-///     let doc = container.documents()
-///         .create("/test.txt", "test.txt", "text/plain", 100, "2024-01-01", "abc")
-///         .await
-///         .unwrap();
-///
-///     // Verify it was stored
-///     let found = container.documents()
-///         .find_by_id(&doc.id())
-///         .await
-///         .unwrap();
-///     assert!(found.is_some());
-/// }
-/// ```
 #[cfg(test)]
 pub struct MockAppContainer {
     document_repo: Arc<MockDocumentRepository>,
@@ -126,11 +88,6 @@ impl MockAppContainer {
     /// Create a new mock container
     ///
     /// All dependencies are in-memory mocks. No external resources needed.
-    ///
-    /// # Example
-    /// ```rust
-    /// let container = MockAppContainer::new();
-    /// ```
     pub fn new() -> Self {
         Self {
             document_repo: Arc::new(MockDocumentRepository::new()),
@@ -146,9 +103,6 @@ impl MockAppContainer {
     }
 
     /// Create a new mock container with custom embedding dimension
-    ///
-    /// # Arguments
-    /// * `embedding_dim` - Dimension of mock embeddings (e.g., DEFAULT_EMBEDDING_DIM)
     pub fn with_dimension(embedding_dim: usize) -> Self {
         Self {
             document_repo: Arc::new(MockDocumentRepository::new()),

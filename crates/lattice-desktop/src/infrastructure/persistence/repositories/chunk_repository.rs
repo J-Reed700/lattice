@@ -62,23 +62,11 @@ pub struct ChunkRepository {
 
 impl ChunkRepository {
     /// Create a new chunk repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Find chunks by document ID.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    ///
-    /// Vector of chunk entities ordered by chunk_index ascending.
     ///
     /// # Errors
     ///
@@ -126,10 +114,6 @@ impl ChunkRepository {
 
     /// Delete all chunks for a document.
     ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
     /// # Errors
     ///
     /// - `AppError::Database` if deletion fails
@@ -143,14 +127,6 @@ impl ChunkRepository {
     }
 
     /// Count chunks for a document.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - Document ID
-    ///
-    /// # Returns
-    ///
-    /// Total count of chunks for the document.
     ///
     /// # Errors
     ///

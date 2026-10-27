@@ -35,15 +35,6 @@ impl StartupFailure {
 
 /// Loads application configuration from the specified path.
 /// Creates a default configuration if the file doesn't exist or is invalid.
-///
-/// # Arguments
-/// Initializes the database layer with the specified database path.
-///
-/// # Arguments
-/// * `db_path` - Path to the SQLite database file
-///
-/// # Returns
-/// * `Result<DatabaseConnection, AppError>` - Database connection or error
 async fn initialize_database_layer(
     db_path: PathBuf,
 ) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, AppError> {
@@ -61,9 +52,6 @@ async fn initialize_database_layer(
 }
 
 /// Initializes the security context layer.
-///
-/// # Returns
-/// * `Arc<SecurityContext>` - Initialized security context (never fails)
 fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
     tracing::info!("Initializing security context...");
     let context = Arc::new(crate::security::SecurityContext::new());
@@ -75,15 +63,6 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 ///
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
-///
-/// # Arguments
-/// * `pool` - SQLite connection pool
-/// * `security_context` - Security context
-/// * `data_dir` - Application data directory
-/// * `config` - Application configuration
-///
-/// # Returns
-/// * `Result<Container, AppError>` - Container (always succeeds, AI features optional)
 async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,

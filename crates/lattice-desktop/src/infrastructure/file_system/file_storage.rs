@@ -16,32 +16,6 @@
 //! - Directory traversal (`../` attacks)
 //! - Symlink attacks
 //! - Access outside allowed directories
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use lattice::infrastructure::file_system::SecureFileStorage;
-//! use lattice_core::application::ports::FileStoragePort;
-//! use std::path::Path;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let storage = SecureFileStorage::new();
-//!
-//!     // Write file
-//!     storage.write_file(Path::new("test.txt"), "Hello world").await?;
-//!
-//!     // Read file
-//!     let content = storage.read_file(Path::new("test.txt")).await?;
-//!     assert_eq!(content, "Hello world");
-//!
-//!     // Compute hash
-//!     let hash = storage.compute_hash(Path::new("test.txt")).await?;
-//!     println!("SHA-256: {}", hash);
-//!
-//!     Ok(())
-//! }
-//! ```
 
 use async_trait::async_trait;
 use lattice_core::application::ports::{FileMetadata, FileStoragePort};
@@ -60,28 +34,12 @@ use tokio::fs;
 /// # Thread Safety
 ///
 /// All operations are async and use Tokio's thread-safe file I/O.
-///
-/// # Performance
-///
-/// - Read: ~50-500 MB/s depending on disk
-/// - Write: ~50-500 MB/s with atomic guarantees
-/// - Hash: ~100-500 MB/s using SHA-256
 pub struct SecureFileStorage {
     // Future: Add allowed_paths for path validation
 }
 
 impl SecureFileStorage {
     /// Create a new secure file storage instance.
-    ///
-    /// # Returns
-    ///
-    /// A new `SecureFileStorage` instance.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let storage = SecureFileStorage::new();
-    /// ```
     pub fn new() -> Self {
         Self {}
     }

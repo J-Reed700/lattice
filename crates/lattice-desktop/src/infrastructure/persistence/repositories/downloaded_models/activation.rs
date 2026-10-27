@@ -12,10 +12,6 @@ use super::DownloadedModelRepository;
 impl DownloadedModelRepository {
     /// Get the currently active chat model
     ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if an active chat model exists, None otherwise
-    ///
     /// # Business Logic
     ///
     /// - Database trigger ensures only one model has is_active_for_chat=1
@@ -51,10 +47,6 @@ impl DownloadedModelRepository {
 
     /// Get the currently active embedding model
     ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if an active embedding model exists, None otherwise
-    ///
     /// # Business Logic
     ///
     /// - Database trigger ensures only one model has is_active_for_embedding=1
@@ -89,10 +81,6 @@ impl DownloadedModelRepository {
     }
 
     /// Set a model as the active chat model
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model_id to set as active
     ///
     /// # Business Logic
     ///
@@ -271,12 +259,6 @@ impl DownloadedModelRepository {
     }
 
     /// Get the currently active utility model
-    ///
-    /// # Returns
-    ///
-    /// Some(DownloadedModel) if an active utility model exists, None otherwise.
-    /// For Ollama-backed rows the local-file `is_downloaded` check is skipped
-    /// because the model lives on a remote server.
     pub async fn get_active_utility_model(&self) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.is_active_for_utility = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
