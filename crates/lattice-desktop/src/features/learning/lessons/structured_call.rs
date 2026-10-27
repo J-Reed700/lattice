@@ -338,7 +338,7 @@ pub(in crate::features::learning) async fn complete_checked_request<T>(
     lesson_progress::stage(format!(
         "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
     ));
-    let (value, output) = answer(
+    let (value, output) = match answer(
         llm,
         answer_step,
         output_tokens,
@@ -346,7 +346,24 @@ pub(in crate::features::learning) async fn complete_checked_request<T>(
         Step::Answer,
         &accept,
     )
-    .await?;
+    .await
+    {
+        Ok(answered) => answered,
+        Err(error) => {
+            // The answer step is deterministic, so a retry on this draft fails the same way.
+            if matches!(
+                error,
+                AppError::ModelAnswerUnusable(_)
+                    | AppError::InvalidInput(_)
+                    | AppError::InvalidData(_)
+                    | AppError::ValidationFailed(_)
+                    | AppError::Json { .. }
+            ) {
+                lesson_drafts::record_checkpoint(&key, Value::Null).await?;
+            }
+            return Err(error);
+        }
+    };
     tracing::info!(
         subject,
         draft_reused,
