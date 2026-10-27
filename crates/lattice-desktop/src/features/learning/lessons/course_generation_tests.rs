@@ -266,11 +266,12 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         outputs: std::sync::Mutex::new(vec![shortened.clone(), shortened].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    assert!(
-        crate::features::learning::practice_generation::grade(&still_invalid, &attempted)
-            .await
-            .is_err()
-    );
+    // Feedback that fails validation twice is the verdict a person reviews;
+    // only it is told apart from a failed request.
+    assert!(matches!(
+        crate::features::learning::practice_generation::grade(&still_invalid, &attempted).await,
+        Err(AppError::ModelAnswerUnusable(_))
+    ));
 
     let recall = Model(json!({"cards":[
         {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","sourceIds":[prepared.sources[0].id],"quote":"A randomized comparison isolates the intervention."},
