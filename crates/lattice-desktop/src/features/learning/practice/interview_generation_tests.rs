@@ -85,6 +85,36 @@ fn interview_plan_validates_round_coverage_identity_and_real_content() -> Result
     Ok(())
 }
 
+#[test]
+fn a_question_that_fails_its_checks_is_left_out_while_the_rest_make_a_plan() -> Result<()> {
+    let single = LearningInterviewTargetDto {
+        round_kind: Some(LearningInterviewRoundKind::Behavioral),
+        ..Default::default()
+    };
+    let mut plan = plan_json(LearningInterviewRoundKind::Behavioral);
+    let mut extra = plan["questions"][0].clone();
+    extra["question"] = json!("Practice question 3?");
+    plan["questions"].as_array_mut().unwrap().push(extra);
+    plan["questions"][1]["question"] = json!("Describe the time you");
+    let checked = checked_interview_plan(&plan.to_string(), &single, &[])?;
+    assert_eq!(
+        checked
+            .questions
+            .iter()
+            .map(|question| question.question.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Practice question 0?",
+            "Practice question 2?",
+            "Practice question 3?"
+        ]
+    );
+    plan["questions"][2]["question"] = json!("Walk me through");
+    let error = checked_interview_plan(&plan.to_string(), &single, &[]).unwrap_err();
+    assert!(error.to_string().contains("mid-sentence"), "{error}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn unfinished_interview_question_gets_corrected_before_guides_are_authored() -> Result<()> {
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
@@ -181,6 +211,8 @@ struct InterviewLlm {
     invalid_plan: bool,
     public_files: bool,
     invalid_citation_once: AtomicBool,
+    /// The window, when not the default 131,072 tokens.
+    window: Option<usize>,
 }
 
 #[async_trait::async_trait]
@@ -245,7 +277,7 @@ impl LLMPort for InterviewLlm {
         "interview-test"
     }
     fn max_context_tokens(&self) -> usize {
-        131_072
+        self.window.unwrap_or(131_072)
     }
     fn count_tokens(&self, text: &str) -> usize {
         text.split_whitespace().count()
@@ -763,12 +795,68 @@ async fn long_interviews_can_continue_and_still_receive_final_feedback() -> Resu
     assert!(
         generate_simulation_turn(&llm, &context, &session, &[], false)
             .await
-            .is_err()
+            .is_ok()
     );
     assert!(
         generate_simulation_turn(&llm, &context, &session, &[], true)
             .await
             .is_ok()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_transcript_longer_than_the_window_keeps_its_newest_turns() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::features::learning::practical_dto::*;
+    let llm = InterviewLlm {
+        window: Some(8_192),
+        ..Default::default()
+    };
+    let turns = (0..1_200)
+        .map(|ordinal| LearningSimulationTurnDto {
+            id: uuid::Uuid::new_v4().to_string(),
+            ordinal,
+            speaker: if ordinal % 2 == 0 {
+                LearningSimulationSpeaker::Learner
+            } else {
+                LearningSimulationSpeaker::Counterpart
+            },
+            content: format!(
+                "Turn {ordinal} weighs one more tradeoff of the design in a few words."
+            ),
+            citations: vec![],
+            model_name: None,
+            created_at: 0,
+        })
+        .collect();
+    let session = LearningSimulationSessionDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        program_id: uuid::Uuid::new_v4().to_string(),
+        activity_id: uuid::Uuid::new_v4().to_string(),
+        activity_revision: 0,
+        practice_session_id: None,
+        learner_role: "Candidate".into(),
+        counterpart_role: "Interviewer".into(),
+        status: LearningSimulationStatus::Active,
+        revision: 1_200,
+        turns,
+        created_at: 0,
+        updated_at: 0,
+        submitted_at: None,
+    };
+    let context = SimulationActivityContext {
+        title: "Interview".into(),
+        brief: "Practice reasoning".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    generate_simulation_turn(&llm, &context, &session, &[], false).await?;
+    let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
+    let sent = requests.last().cloned().unwrap_or_default();
+    assert!(sent.contains("Turn 1199 weighs"), "the newest turn is shown");
+    assert!(!sent.contains("Turn 0 weighs"), "the oldest is not");
+    assert!(sent.contains("earlier turns not shown"));
     Ok(())
 }

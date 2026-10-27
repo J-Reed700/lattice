@@ -85,8 +85,12 @@ fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
         {"claimIndex":1,"question":"What is true of the second claim?","distractors":["False A","False B","False C","False D"],"explanation":"The cited passage supports the second claim.","topic":"Second"},
         {"claimIndex":0,"question":"What is true of the first claim?","distractors":["Wrong A","Wrong B","Wrong C","Wrong D"],"explanation":"The cited passage supports the first claim.","topic":"First"}
     ]});
-    let cards =
-        parse_conversation_cards(&response.to_string(), &[first, second], "deck", 10).unwrap();
+    let cards: Vec<_> =
+        parse_conversation_cards(&response.to_string(), &[first, second], "deck", 10)
+            .unwrap()
+            .into_iter()
+            .map(|(_, card)| card)
+            .collect();
     assert_eq!(cards.len(), 2);
     assert_eq!(cards[0].answer, "The first verified claim remains exact.");
     assert_eq!(
@@ -94,7 +98,35 @@ fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
         "The second verified claim also remains exact."
     );
     assert_eq!(cards[1].citations[0].file_name, "second.pdf");
-    assert!(cards.iter().all(|card| card.options.len() == 5));
+    assert!(cards
+        .iter()
+        .all(|card| card.options.len() == 5 && card.options[card.correct_index] == card.answer));
+}
+
+#[test]
+fn a_deck_keeps_its_usable_cards_when_one_is_invalid() {
+    let mut reply = generated();
+    let mut invalid = reply["cards"][0].clone();
+    invalid["question"] = json!("What is not in the passage?");
+    invalid["quote"] = json!("An invented rule not supported by the document passage.");
+    reply["cards"].as_array_mut().unwrap().push(invalid);
+    let cards = parse_cards(&reply.to_string(), &[source()], "deck", 6, 0).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].answer, "The stated conditions");
+}
+
+#[test]
+fn a_conversation_card_out_of_shape_is_left_out_and_the_others_kept() {
+    let claims: Vec<_> = (0..2).map(|i| reaction_claim(i, 1)).collect();
+    let reply = json!({"cards":[
+        {"claimIndex":0,"question":"When is equilibrium reached?","distractors":["A","B","C"],"explanation":"Cited.","topic":"Equilibrium"},
+        {"claimIndex":1,"question":"When is equilibrium reached?","distractors":["A","B","C","D"],"explanation":"Cited.","topic":"Equilibrium"}
+    ]});
+    let cards = parse_conversation_cards(&reply.to_string(), &claims, "deck", 10).unwrap();
+    assert_eq!(
+        cards.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [1]
+    );
 }
 #[test]
 fn study_rejects_unknown_persisted_card_formats() {
@@ -533,6 +565,8 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
 struct Notation {
     calls: std::sync::Mutex<Vec<serde_json::Value>>,
     refusals: std::sync::atomic::AtomicUsize,
+    /// Whether the next flashcard request's first card is out of shape.
+    spoiled: std::sync::atomic::AtomicBool,
 }
 
 const NOTATION_WINDOW: usize = 8_192;
@@ -541,6 +575,7 @@ fn notation() -> Notation {
     Notation {
         calls: std::sync::Mutex::new(Vec::new()),
         refusals: std::sync::atomic::AtomicUsize::new(0),
+        spoiled: std::sync::atomic::AtomicBool::new(false),
     }
 }
 
@@ -579,13 +614,22 @@ impl lattice_core::application::ports::LLMPort for Notation {
         let (_, user) = crate::features::learning::lessons::structured_call::task_messages(request);
         let prompt: serde_json::Value = serde_json::from_str(user)?;
         let reply = match prompt["claims"].as_array() {
-            Some(claims) => json!({"cards": (0..claims.len()).map(|i| json!({
-                "claimIndex": i,
-                "question": format!("Which condition does claim {i} state for equilibrium?"),
-                "distractors": ["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes", "Fe dissolves"],
-                "explanation": "The citation states the condition.",
-                "topic": "Equilibrium"
-            })).collect::<Vec<_>>()}),
+            Some(claims) => {
+                let spoiled = self
+                    .spoiled
+                    .swap(false, std::sync::atomic::Ordering::SeqCst);
+                json!({"cards": (0..claims.len()).map(|i| json!({
+                    "claimIndex": i,
+                    "question": format!("Which condition does claim {i} state for equilibrium?"),
+                    "distractors": if spoiled && i == 0 {
+                        json!(["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes"])
+                    } else {
+                        json!(["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes", "Fe dissolves"])
+                    },
+                    "explanation": "The citation states the condition.",
+                    "topic": "Equilibrium"
+                })).collect::<Vec<_>>()})
+            }
             None => {
                 let text = prompt["passages"][0]["text"].as_str().unwrap_or_default();
                 let quote = text.split_inclusive("zero.").next().unwrap_or_default();
@@ -664,6 +708,28 @@ async fn claims_twice_as_dense_as_estimated_are_split_until_each_request_fits() 
         "the eight claims needed more than one request"
     );
     assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_claim_whose_card_came_back_out_of_shape_is_asked_for_again() {
+    let claims: Vec<_> = (0..3).map(|i| reaction_claim(i, 1)).collect();
+    let llm = notation();
+    llm.spoiled.store(true, std::sync::atomic::Ordering::SeqCst);
+    let cards = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
+        .await
+        .unwrap();
+    let mut answers: Vec<_> = cards.iter().map(|card| card.answer.clone()).collect();
+    answers.sort();
+    assert_eq!(
+        answers,
+        claims
+            .iter()
+            .map(|claim| claim.answer.clone())
+            .collect::<Vec<_>>()
+    );
+    let calls = llm.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1]["claims"].as_array().map(Vec::len), Some(1));
 }
 
 #[tokio::test]

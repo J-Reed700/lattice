@@ -294,3 +294,88 @@ fn a_disputed_item_may_keep_its_own_question_when_repaired() {
         "the bank's list is unchanged"
     );
 }
+
+/// Every reply cut off at the output limit.
+struct CutOff;
+
+#[async_trait::async_trait]
+impl LLMPort for CutOff {
+    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            finish_reason: "length".into(),
+            ..CompletionResponse::from_text("{\"items\":[{\"prompt\":")
+        })
+    }
+    fn model_name(&self) -> &str {
+        "cut-off"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -> Result<()> {
+    let need = need("Explain iron oxide reduction.".into(), 2);
+    let documents = documents(&need);
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let batch = |count| Batch {
+        need: &need,
+        count,
+        notes: vec![],
+        repair: None,
+    };
+    assert!(batch(2).author(&CutOff, &collection).await?.is_none());
+    let single = batch(1).author(&CutOff, &collection).await?.unwrap();
+    assert!(matches!(single.as_slice(), [Err(reason)] if reason.contains("cut off")));
+    Ok(())
+}
+
+/// Records the schema of each request and grades nothing.
+struct SchemaRecorder(Mutex<Vec<Value>>);
+
+#[async_trait::async_trait]
+impl LLMPort for SchemaRecorder {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.lock().unwrap().extend(request.json_schema.clone());
+        Ok(CompletionResponse::from_text("{\"items\":[]}"))
+    }
+    fn model_name(&self) -> &str {
+        "schema-recorder"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_grader_may_name_only_the_rubric_criteria() {
+    let criterion = |id: &str| LearningRubricCriterion {
+        id: id.into(),
+        title: id.into(),
+        description: "Explains it.".into(),
+        max_points: 2,
+    };
+    let answer = WrittenAnswer {
+        item_id: "q1".into(),
+        prompt: "Why does the ore reduce?".into(),
+        rubric: vec![criterion("mechanism"), criterion("evidence")],
+        answer: "Carbon monoxide takes the oxygen.".into(),
+        reference: "CO reduces Fe2O3.".into(),
+        learner_note: None,
+    };
+    let llm = SchemaRecorder(Mutex::new(Vec::new()));
+    grade_written(&llm, &[answer]).await.unwrap();
+    let schemas = llm.0.lock().unwrap();
+    assert_eq!(
+        schemas[0]["properties"]["items"]["items"]["properties"]["criteria"]["items"]["properties"]
+            ["criterionId"]["enum"],
+        serde_json::json!(["evidence", "mechanism"])
+    );
+}

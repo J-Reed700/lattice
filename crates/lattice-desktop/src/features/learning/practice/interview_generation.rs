@@ -129,76 +129,33 @@ fn checked_interview_plan(
         .round_kind
         .unwrap_or(LearningInterviewRoundKind::FullLoop);
     let full_loop = round == LearningInterviewRoundKind::FullLoop;
-    if parsed.round_kind != round
-        || !(if full_loop { 4..=6 } else { 3..=6 }).contains(&parsed.questions.len())
-    {
+    let count = if full_loop { 4..=6 } else { 3..=6 };
+    if parsed.round_kind != round || parsed.questions.len() > *count.end() {
         return Err(invalid("The interview plan must match the requested round and contain 3–6 distinct questions (4–6 for a full loop)."));
     }
+    // A question that fails its checks is left out; the plan stands while
+    // the rest still make one.
     let mut seen = HashSet::new();
-    let mut rounds = HashSet::new();
     let mut questions = Vec::new();
+    let mut left_out = None;
     for (index, question) in parsed.questions.into_iter().enumerate() {
-        // A grammar maxLength closes strings mid-task; let the model finish
-        // the question, then enforce the bound without publishing a fragment.
-        let q_len = question.question.trim().chars().count();
-        if !(1..=2_000).contains(&q_len) {
-            return Err(invalid(format!("Interview question must contain 1–2000 characters (questions[{index}].question has {q_len} characters; shorten its code sample and prose to under 1400 characters).")));
-        }
-        let prose = interview_prose(&question.question)?;
-        if !prose
-            .trim_end()
-            .ends_with(['.', '?', '!', '。', '？', '！'])
-        {
-            return Err(invalid("An interview question ends mid-sentence. Return a complete concise task, including any closed code sample and the final question, within 2000 characters."));
-        }
-        bounded(&question.company_rationale, "Company rationale", 1_000)?;
-        if question.round == LearningInterviewRoundKind::FullLoop
-            || (!full_loop && question.round != round)
-        {
-            return Err(invalid(
-                "Every interview question must belong to a concrete requested round.",
-            ));
-        }
-        let key = question
-            .question
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase();
-        if !seen.insert(key) {
-            return Err(invalid("Interview questions must be distinct."));
-        }
-        rounds.insert(question.round);
-        for (items, label) in [
-            (&question.follow_up_probes, "Follow-up probes"),
-            (&question.evaluation_signals, "Evaluation signals"),
-        ] {
-            if !(2..=4).contains(&items.len()) {
-                return Err(invalid(format!("{label} must contain 2–4 entries.")));
-            }
-            for item in items {
-                bounded(item, label, 500)?;
+        match checked_question(index, question, round, &mut seen) {
+            Ok(question) => questions.push(question),
+            Err(error) => {
+                left_out.get_or_insert(error);
             }
         }
-        questions.push(LearningInterviewQuestionDto {
-            id: uuid::Uuid::new_v4().to_string(),
-            round: question.round,
-            question: question.question.trim().into(),
-            company_rationale: question.company_rationale.trim().into(),
-            follow_up_probes: question
-                .follow_up_probes
-                .into_iter()
-                .map(|value| value.trim().into())
-                .collect(),
-            evaluation_signals: question
-                .evaluation_signals
-                .into_iter()
-                .map(|value| value.trim().into())
-                .collect(),
-        });
     }
-    if full_loop && rounds.len() != 4 {
-        return Err(invalid("A full interview loop must cover technical, system design, behavioral, and debugging rounds."));
+    let rounds: HashSet<_> = questions.iter().map(|question| question.round).collect();
+    let shortfall = if !count.contains(&questions.len()) {
+        Some("The interview plan must match the requested round and contain 3–6 distinct questions (4–6 for a full loop).")
+    } else if full_loop && rounds.len() != 4 {
+        Some("A full interview loop must cover technical, system design, behavioral, and debugging rounds.")
+    } else {
+        None
+    };
+    if let Some(shortfall) = shortfall {
+        return Err(left_out.unwrap_or_else(|| invalid(shortfall)));
     }
     Ok(LearningInterviewPlanDto {
         company_name: target
@@ -216,6 +173,73 @@ fn checked_interview_plan(
         counterpart_role: "Interviewer".into(),
         researched_source_version_ids: researched_source_version_ids.to_vec(),
         questions,
+    })
+}
+
+/// One question of a plan for `round`, checked; `seen` holds the questions
+/// already kept, so a repeat is refused.
+fn checked_question(
+    index: usize,
+    question: InterviewQuestionJson,
+    round: LearningInterviewRoundKind,
+    seen: &mut HashSet<String>,
+) -> Result<LearningInterviewQuestionDto> {
+    // A grammar maxLength closes strings mid-task; let the model finish
+    // the question, then enforce the bound without publishing a fragment.
+    let q_len = question.question.trim().chars().count();
+    if !(1..=2_000).contains(&q_len) {
+        return Err(invalid(format!("Interview question must contain 1–2000 characters (questions[{index}].question has {q_len} characters; shorten its code sample and prose to under 1400 characters).")));
+    }
+    let prose = interview_prose(&question.question)?;
+    if !prose
+        .trim_end()
+        .ends_with(['.', '?', '!', '。', '？', '！'])
+    {
+        return Err(invalid("An interview question ends mid-sentence. Return a complete concise task, including any closed code sample and the final question, within 2000 characters."));
+    }
+    bounded(&question.company_rationale, "Company rationale", 1_000)?;
+    if question.round == LearningInterviewRoundKind::FullLoop
+        || (round != LearningInterviewRoundKind::FullLoop && question.round != round)
+    {
+        return Err(invalid(
+            "Every interview question must belong to a concrete requested round.",
+        ));
+    }
+    let key = question
+        .question
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if !seen.insert(key) {
+        return Err(invalid("Interview questions must be distinct."));
+    }
+    for (items, label) in [
+        (&question.follow_up_probes, "Follow-up probes"),
+        (&question.evaluation_signals, "Evaluation signals"),
+    ] {
+        if !(2..=4).contains(&items.len()) {
+            return Err(invalid(format!("{label} must contain 2–4 entries.")));
+        }
+        for item in items {
+            bounded(item, label, 500)?;
+        }
+    }
+    Ok(LearningInterviewQuestionDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        round: question.round,
+        question: question.question.trim().into(),
+        company_rationale: question.company_rationale.trim().into(),
+        follow_up_probes: question
+            .follow_up_probes
+            .into_iter()
+            .map(|value| value.trim().into())
+            .collect(),
+        evaluation_signals: question
+            .evaluation_signals
+            .into_iter()
+            .map(|value| value.trim().into())
+            .collect(),
     })
 }
 
