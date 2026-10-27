@@ -73,6 +73,21 @@ Seconds are this machine's, the A/B sharing it with a Rust build for part of the
 Groups of four (`PASSAGES_PER_GROUP`): the most facts noted, the fewest readings missing one and the lowest
 median time of every size tried (1, 2, 4, 6, 8).
 
+## On a larger model with a larger window
+
+The same 60 readings on Qwen3.8-27B Q5_K_S (a remote llama.cpp server, 196,608-token window, one slot):
+
+| Arm | Facts noted | Readings missing a fact | Requests | Median s/reading |
+|---|---|---|---|---|
+| SHIPPED | 192/300 | 24 | 110 | 14.9 |
+| **G4** | **298/300** | **2** | 448 | 18.3 |
+
+The larger model is no cure: as shipped it noted fewer facts than the 9B (192 against 281), missing five or six
+fact passages in a row on 22 of the 48 long readings. The window is part of why: the close read packs every
+marked passage that fits into one request, and in a 196k window that is all of them at once, the overload it was
+built to undo. Read in groups of four it noted 298 of 300; both misses are the one short item every arm misses.
+Records: `results/chat/qwen3.8-27b/2026-10-26-grouped-reading-ab.jsonl.gz`.
+
 ## The answers
 
 `scripts/replay_answer_ab.py` writes the answers on 30 of the same prompts (the 2026-10-23 runs: 24 long
