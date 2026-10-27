@@ -200,11 +200,15 @@ def reading_metrics(lines, noted, fl):
 
 # ---------- server (no timeouts; dry mode stubs /props and /tokenize and never calls the model) ----------
 URL, DRY, N_CTX, DRY_SENT = None, False, None, []
+# A server behind an auth header (a remote llama.cpp): the header's name and value from the environment, never
+# from the command line, so the value is in no shell history or process list.
+HEADERS = ({os.environ["LLAMA_AUTH_HEADER_NAME"]: os.environ["LLAMA_AUTH_HEADER_VALUE"]}
+           if os.environ.get("LLAMA_AUTH_HEADER_NAME") else {})
 
 
 def http_json(path, body=None):
-    req = URL + path if body is None else urllib.request.Request(
-        URL + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    req = urllib.request.Request(URL + path, headers=HEADERS) if body is None else urllib.request.Request(
+        URL + path, json.dumps(body).encode(), {"Content-Type": "application/json", **HEADERS})
     return json.load(urllib.request.urlopen(req))
 
 
@@ -239,7 +243,7 @@ def call(req, kind, **extra):
         return None
     t = time.time()
     resp = json.load(urllib.request.urlopen(urllib.request.Request(
-        URL + "/v1/chat/completions", json.dumps(r).encode(), {"Content-Type": "application/json"})))
+        URL + "/v1/chat/completions", json.dumps(r).encode(), {"Content-Type": "application/json", **HEADERS})))
     ch = resp["choices"][0]
     msg = ch["message"]
     return {"content": msg.get("content") or "", "tool_calls": msg.get("tool_calls") or [], "finish": ch.get("finish_reason"),

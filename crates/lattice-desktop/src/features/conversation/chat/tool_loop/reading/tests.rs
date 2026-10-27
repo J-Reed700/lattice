@@ -1,5 +1,5 @@
-use super::close_read::CLOSE_READ_INSTRUCTION;
-use super::notes::locate;
+use super::groups::{GROUP_INSTRUCTION, LABELS_INSTRUCTION};
+use super::notes::{locate, parse_notes};
 use super::*;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::ports::ToolDefinition;
@@ -367,7 +367,7 @@ fn every_way_of_citing_a_passage_uses_it() {
 }
 
 #[tokio::test]
-async fn the_reading_round_is_the_planned_request_with_calls_forbidden_and_no_sampling() {
+async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
     let model = Model::new([reply(
         &format!("[1] {KITCHEN}\n[2] {MILL}\n[3] {MÜHLE}\n[4] {MOLINO}"),
         "stop",
@@ -375,13 +375,22 @@ async fn the_reading_round_is_the_planned_request_with_calls_forbidden_and_no_sa
     let request = planned(&[1, 2, 3, 4]);
     let notes = read(&model, &request).await.unwrap();
     let sent = model.requests();
-    assert_eq!(
-        sent.len(),
-        1,
-        "every label accounted for with notes: no sweep or close read"
-    );
+    assert_eq!(sent.len(), 1, "one group, every label accounted for");
     let reading = &sent[0];
-    assert_eq!(json(&reading.input), json(&request.input));
+    assert_eq!(json(&reading.input[0]), json(&request.input[0]));
+    let shown = format!("[1] {KITCHEN}\n\n[2] {MILL}\n\n[3] {MÜHLE}\n\n[4] {MOLINO}");
+    let planned_message = request.input[1].text();
+    let (passages_and_question, _) = planned_message
+        .split_once(READING_INSTRUCTION)
+        .expect("the planned message closes with the reading instruction");
+    assert_eq!(
+        reading.input[1].text(),
+        format!(
+            "{passages_and_question}{}",
+            GROUP_INSTRUCTION.replace("{passages}", &shown)
+        ),
+        "the message to its question, then the group shown again in place of the reading instruction"
+    );
     assert_eq!(json(&reading.tools), json(&request.tools));
     assert_eq!(reading.tool_choice, Some(ToolChoice::None));
     assert_eq!(
@@ -406,7 +415,7 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
     ]);
     let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
     let sent = model.requests();
-    assert_eq!(sent.len(), 4, "three sweeps and one close read");
+    assert_eq!(sent.len(), 3, "the group's reading and two sweeps");
     assert_eq!(
         sent[1].input.last().unwrap().text(),
         "You did not account for [2], [3], [4]. Write one line for each of them, in the same form."
@@ -420,9 +429,6 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
         sent[2].input.last().unwrap().text(),
         "You did not account for [4]. Write one line for each of them, in the same form."
     );
-    let (before, after) = CLOSE_READ_INSTRUCTION.split_once("{passages}").unwrap();
-    let close_read = sent[3].input.last().unwrap().text();
-    assert!(close_read.starts_with(before) && close_read.ends_with(after));
     assert_eq!(
         notes.lines.get(&1),
         Some(&None),
@@ -451,8 +457,8 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
     let sent = model.requests();
     assert_eq!(
         sent.len(),
-        3,
-        "the reservation is spent: [3] and [4] are not asked for, and [1] is read again"
+        2,
+        "the reservation is spent: [3] and [4] are not asked for"
     );
     let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens).collect();
     let after_first = reserved - counter.count_tokens(first);
@@ -461,9 +467,7 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
         vec![
             Some(u32::try_from(reserved).unwrap()),
             Some(u32::try_from(after_first).unwrap()),
-            Some(u32::try_from(reserved).unwrap()),
-        ],
-        "the close read is sent with the reading's reservation"
+        ]
     );
     assert_eq!(read.text, notes, "complete lines only");
     assert_eq!(read.tokens, reserved, "no more than the answer may");
@@ -555,7 +559,8 @@ async fn a_note_written_under_the_wrong_label_is_replayed_under_its_own_too() {
     assert_eq!(notes.noted, [3].into());
     assert_eq!(
         notes.text,
-        format!("[1] {mühle}\n[2] -\n[3] {mühle}\n[4] -")
+        format!("[1] -\n[2] -\n[3] {mühle}\n[4] -"),
+        "a line is replayed only under the passage it copies"
     );
     assert_eq!(notes.tokens, model.count_tokens(&notes.text));
 }
@@ -577,11 +582,12 @@ async fn what_a_reading_writes_after_its_lines_is_not_replayed() {
 }
 
 #[tokio::test]
-async fn a_reading_of_notes_alone_is_replayed_as_written() {
-    let written = "1. [1] -\n[2]: 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n\n［3］ —\n4. -";
-    let model = Model::new([reply(written, "stop")]);
+async fn notes_are_replayed_one_line_per_label_however_they_were_written() {
+    let mill = "1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
+    let written = format!("1. [1] -\n[2]: {mill}\n\n［3］ —\n4. -");
+    let model = Model::new([reply(&written, "stop")]);
     let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.text, written, "byte for byte");
+    assert_eq!(notes.text, format!("[1] -\n[2] {mill}\n[3] -\n[4] -"));
     assert_eq!(notes.noted, [2].into());
 }
 
@@ -596,7 +602,7 @@ async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
     ]);
     read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
     let sent = model.requests();
-    assert_eq!(sent.len(), 3, "a reading, one sweep and one close read");
+    assert_eq!(sent.len(), 2, "a reading and one sweep");
     for request in &sent {
         assert_eq!(request.stop, ["[5]", "\n5."]);
     }
@@ -656,4 +662,4 @@ fn json(value: &impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
 }
 
-mod close_reading;
+mod groups;
