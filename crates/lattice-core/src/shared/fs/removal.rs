@@ -8,7 +8,7 @@
 //! refusal that outlasts the waits, as it is.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Tries before a refusal is reported. With the doubling wait from
@@ -16,19 +16,34 @@ use std::time::Duration;
 const ATTEMPTS: u32 = 8;
 const FIRST_WAIT: Duration = Duration::from_millis(10);
 
+/// Tries for a directory of files just written, which a scan of new files can
+/// hold for seconds: the waits add up to about ten seconds.
+const WRITTEN_ATTEMPTS: u32 = 11;
+
 /// [`std::fs::remove_file`], tried again while Windows holds the file.
 pub fn remove_file(path: &Path) -> io::Result<()> {
-    patiently(|| std::fs::remove_file(path))
+    patiently(ATTEMPTS, || std::fs::remove_file(path))
 }
 
 /// [`std::fs::remove_dir_all`], tried again while Windows holds a file in it.
 pub fn remove_dir_all(dir: &Path) -> io::Result<()> {
-    patiently(|| std::fs::remove_dir_all(dir))
+    patiently(ATTEMPTS, || std::fs::remove_dir_all(dir))
 }
 
-fn patiently(mut remove: impl FnMut() -> io::Result<()>) -> io::Result<()> {
+/// [`remove_dir_all`] for a directory whose files were just written and
+/// closed, as an index's are: tried for longer, on a blocking thread so the
+/// waits hold up no other work.
+pub async fn remove_written_dir(dir: PathBuf) -> io::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        patiently(WRITTEN_ATTEMPTS, || std::fs::remove_dir_all(&dir))
+    })
+    .await
+    .unwrap_or_else(|error| Err(io::Error::other(error)))
+}
+
+fn patiently(attempts: u32, mut remove: impl FnMut() -> io::Result<()>) -> io::Result<()> {
     let mut wait = FIRST_WAIT;
-    for _ in 1..ATTEMPTS {
+    for _ in 1..attempts {
         match remove() {
             Err(error) if held(&error) => {
                 std::thread::sleep(wait);
@@ -72,7 +87,7 @@ mod tests {
     #[test]
     fn only_a_held_file_is_tried_again() {
         let mut tries = 0;
-        let error = patiently(|| {
+        let error = patiently(ATTEMPTS, || {
             tries += 1;
             Err(io::Error::from(io::ErrorKind::NotFound))
         })
@@ -81,7 +96,7 @@ mod tests {
         assert_eq!(tries, 1);
 
         let mut tries = 0;
-        let outcome = patiently(|| {
+        let outcome = patiently(ATTEMPTS, || {
             tries += 1;
             if tries < 3 {
                 Err(io::Error::from_raw_os_error(32))

@@ -267,7 +267,15 @@ async fn deleting_a_course_removes_its_index_and_the_sweep_removes_orphans() -> 
     assert!(courses.dir_of(&deleted)?.exists());
 
     courses.delete(&deleted).await;
-    assert!(!courses.dir_of(&deleted)?.exists());
+    let dir = courses.dir_of(&deleted)?;
+    assert!(
+        !dir.exists(),
+        "left behind: {:?}",
+        std::fs::read_dir(&dir).map(|entries| entries
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>())
+    );
 
     // A course deleted while the app was not running.
     let orphan = courses.dir_of(&uuid::Uuid::new_v4().to_string())?;

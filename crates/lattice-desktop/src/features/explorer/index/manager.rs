@@ -142,8 +142,8 @@ pub(super) fn root_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-pub(super) fn remove_dir(dir: &Path) {
-    match lattice_core::shared::fs::removal::remove_dir_all(dir) {
+pub(super) async fn remove_dir(dir: &Path) {
+    match lattice_core::shared::fs::removal::remove_written_dir(dir.to_path_buf()).await {
         Ok(()) => info!(dir = %dir.display(), "Removed a folder index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!(dir = %dir.display(), %error, "Could not remove a folder index"),
@@ -396,7 +396,7 @@ impl FolderIndexManager {
                 warn!(%error, job_id = %job.id, "Could not forget a folder build");
             }
         }
-        remove_dir(dir);
+        remove_dir(dir).await;
         Ok(())
     }
 

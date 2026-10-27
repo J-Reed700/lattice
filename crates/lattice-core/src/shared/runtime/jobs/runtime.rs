@@ -9,15 +9,16 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     future::Future,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak,
     },
+    task::Poll,
     time::Duration,
 };
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{watch, Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 const POLL: Duration = Duration::from_secs(30);
@@ -182,6 +183,65 @@ struct Kind {
     slots: Arc<Semaphore>,
 }
 
+/// Workers by the order they were dispatched in, until each queues for its
+/// slot or waits for its subject: a worker queues for a slot only after every
+/// worker dispatched before it, so a job queued again goes behind the work
+/// already waiting, however long that work takes to read its job.
+#[derive(Default)]
+struct Arrivals {
+    next: AtomicU64,
+    arriving: Mutex<BTreeSet<u64>>,
+    left: watch::Sender<u64>,
+}
+
+impl Arrivals {
+    fn arrive(self: &Arc<Self>) -> Arrival {
+        let ticket = self.next.fetch_add(1, Ordering::Relaxed);
+        lock(&self.arriving).insert(ticket);
+        Arrival {
+            arrivals: Arc::clone(self),
+            ticket,
+        }
+    }
+}
+
+/// A worker's place in [`Arrivals`]; dropping it lets later workers queue.
+struct Arrival {
+    arrivals: Arc<Arrivals>,
+    ticket: u64,
+}
+
+impl Arrival {
+    /// Waits until every worker dispatched before this one has queued for its
+    /// slot or is waiting for its subject.
+    async fn turn(&self) {
+        let mut left = self.arrivals.left.subscribe();
+        while lock(&self.arrivals.arriving)
+            .range(..self.ticket)
+            .next()
+            .is_some()
+        {
+            if left.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+impl Drop for Arrival {
+    fn drop(&mut self) {
+        lock(&self.arrivals.arriving).remove(&self.ticket);
+        self.arrivals
+            .left
+            .send_modify(|count| *count = count.wrapping_add(1));
+    }
+}
+
+/// `work` polled once, without waiting for it.
+async fn poll_once<F: Future>(mut work: std::pin::Pin<&mut F>) -> Poll<F::Output> {
+    std::future::poll_fn(|cx| Poll::Ready(work.as_mut().poll(cx))).await
+}
+
 /// Removes a job from the in-flight set when its worker ends.
 struct Registration {
     active: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -242,6 +302,7 @@ pub struct JobRuntime {
     /// Jobs whose worker was stopped to give up its turn; each queues again
     /// once that worker has ended.
     requeued: Mutex<HashSet<String>>,
+    arrivals: Arc<Arrivals>,
     subjects: Subjects,
     wake: Arc<Notify>,
     poll: Duration,
@@ -269,6 +330,7 @@ impl JobRuntime {
             kinds: RwLock::default(),
             active: Arc::default(),
             requeued: Mutex::default(),
+            arrivals: Arc::default(),
             subjects: Arc::default(),
             wake: Arc::new(Notify::new()),
             poll,
@@ -399,12 +461,13 @@ impl JobRuntime {
             active: self.active.clone(),
             id: id.to_string(),
         };
+        let arrival = self.arrivals.arrive();
         let runtime = Arc::clone(self);
         let id = id.to_string();
         // Rejected admission at shutdown drops the registration; the job is
         // still pending and resumes at the next start.
         let _ = self.tasks.spawn(async move {
-            runtime.work(&id, cancel).await;
+            runtime.work(&id, cancel, arrival).await;
             drop(registration);
             if lock(&runtime.requeued).remove(&id) {
                 runtime.dispatch(&id);
@@ -422,7 +485,7 @@ impl JobRuntime {
         }
     }
 
-    async fn work(&self, id: &str, cancel: CancellationToken) {
+    async fn work(&self, id: &str, cancel: CancellationToken, arrival: Arrival) {
         let job = match self.store().get(id).await {
             Ok(job) => job,
             Err(error) => {
@@ -440,15 +503,40 @@ impl JobRuntime {
             (Some(subject), true) => Some(self.subject_lease(&job.kind, subject)),
             _ => None,
         };
+        let mut arrival = Some(arrival);
         let _subject = match &lease {
-            Some(lease) => match until_cancelled(&cancel, lease.lock.clone().lock_owned()).await {
-                Some(guard) => Some(guard),
-                None => return,
-            },
+            Some(lease) => {
+                let mut locked =
+                    std::pin::pin!(until_cancelled(&cancel, lease.lock.clone().lock_owned()));
+                let guard = match poll_once(locked.as_mut()).await {
+                    Poll::Ready(guard) => guard,
+                    Poll::Pending => {
+                        // Waiting for its subject, it lets later workers queue.
+                        arrival = None;
+                        locked.await
+                    }
+                };
+                match guard {
+                    Some(guard) => Some(guard),
+                    None => return,
+                }
+            }
             None => None,
         };
-        let Some(Ok(_slot)) = until_cancelled(&cancel, kind.slots.clone().acquire_owned()).await
-        else {
+        if let Some(arrival) = &arrival {
+            if until_cancelled(&cancel, arrival.turn()).await.is_none() {
+                return;
+            }
+        }
+        let mut slot = std::pin::pin!(until_cancelled(&cancel, kind.slots.clone().acquire_owned()));
+        let first = poll_once(slot.as_mut()).await;
+        // Holding the slot or queued for it: later workers queue behind it.
+        drop(arrival);
+        let slot = match first {
+            Poll::Ready(slot) => slot,
+            Poll::Pending => slot.await,
+        };
+        let Some(Ok(_slot)) = slot else {
             return;
         };
         let job = match self.store().claim(id).await {
@@ -707,5 +795,26 @@ impl JobRuntime {
         while lock(&self.active).contains_key(id) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod arrival_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_worker_queues_only_after_every_worker_dispatched_before_it() {
+        let arrivals = Arc::new(Arrivals::default());
+        let first = arrivals.arrive();
+        let second = arrivals.arrive();
+        let third = arrivals.arrive();
+        drop(third);
+        let waiting = tokio::spawn(async move { second.turn().await });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!waiting.is_finished(), "the second waits for the first");
+        drop(first);
+        waiting.await.unwrap();
     }
 }
