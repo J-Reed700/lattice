@@ -172,6 +172,9 @@ pub(super) async fn run_agentic_tool_loop(
     // The stop button as a token: every round's request carries it, so Stop
     // dequeues or aborts a request at once rather than at the next poll.
     let turn_cancel = container.turn_cancellation().turn_token(request_id);
+    // Background work waits for the turn rather than evicting its prompt
+    // between rounds and reading groups.
+    let _held = llm.hold_cache(conv_id);
     let mut native_request = CompletionRequest {
         // Someone is watching this turn; it goes ahead of background work and
         // may take the slot kept free for interactive requests.

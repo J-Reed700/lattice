@@ -288,6 +288,28 @@ pub trait LLMPort: Send + Sync {
     fn requests(&self) -> Option<RequestLoad> {
         None
     }
+
+    /// Keeps the cached prompt of requests sent under `key` for the caller
+    /// until the hold drops, where the backend keeps prompts per slot: work
+    /// nobody waits on runs elsewhere or after. Every request the holder sends
+    /// meanwhile must be interactive. `None` where there is nothing to keep.
+    /// A port that wraps another forwards it.
+    fn hold_cache(&self, _key: &str) -> Option<CacheHold> {
+        None
+    }
+}
+
+/// A hold from [`LLMPort::hold_cache`]; dropping it lets the hold go.
+pub struct CacheHold {
+    _hold: Box<dyn std::any::Any + Send + Sync>,
+}
+
+impl CacheHold {
+    pub fn new(hold: impl std::any::Any + Send + Sync) -> Self {
+        Self {
+            _hold: Box::new(hold),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

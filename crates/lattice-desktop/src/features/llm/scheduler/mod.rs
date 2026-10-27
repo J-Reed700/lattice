@@ -9,7 +9,8 @@
 //! strictly in order, so a large interactive prompt is never starved, and a
 //! cancelled queued request leaves with an error. On llama-server a keyed
 //! request is pinned back to the slot that last served its key, so the server
-//! reuses the cached prefix.
+//! reuses the cached prefix, and a held key's slot is kept for interactive
+//! work while the hold lasts ([`InferenceScheduler::hold`]).
 
 mod estimator;
 mod registry;
@@ -102,6 +103,8 @@ struct State {
     slots: Vec<Slot>,
     /// Tokens reserved by everything in flight.
     reserved: usize,
+    /// Cache keys held, by how many holds each.
+    held: HashMap<String, usize>,
 }
 
 #[derive(Default)]
@@ -153,6 +156,28 @@ impl Drop for Permit {
     }
 }
 
+/// A key's hold on the slot that serves it; see [`InferenceScheduler::hold`].
+/// Dropping it gives the slot back to whatever waits.
+pub(crate) struct SlotHold {
+    scheduler: Arc<InferenceScheduler>,
+    key: String,
+}
+
+impl Drop for SlotHold {
+    fn drop(&mut self) {
+        let mut state = self.scheduler.state.lock();
+        if let Some(count) = state.held.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                state.held.remove(&self.key);
+            }
+        }
+        self.scheduler.dispatch(&mut state);
+        drop(state);
+        self.scheduler.moved();
+    }
+}
+
 /// The error a cancelled request ends with, queued or in flight.
 pub(crate) fn cancelled_error() -> AppError {
     AppError::InvalidState("The model request was cancelled.".into())
@@ -173,6 +198,7 @@ impl InferenceScheduler {
                 granted: HashMap::new(),
                 slots,
                 reserved: 0,
+                held: HashMap::new(),
             }),
             changes: None,
         }
@@ -292,6 +318,18 @@ impl InferenceScheduler {
         }
     }
 
+    /// Keeps the slot holding `key`'s prompt for interactive work until the
+    /// hold drops, so a turn's prefix survives between its requests: other
+    /// work waits for it or runs on another slot. Every request the holder
+    /// sends while holding must be interactive, or it waits for its own hold.
+    pub fn hold(self: &Arc<Self>, key: &str) -> SlotHold {
+        *self.state.lock().held.entry(key.to_owned()).or_default() += 1;
+        SlotHold {
+            scheduler: Arc::clone(self),
+            key: key.to_owned(),
+        }
+    }
+
     /// Admit from the head of the queue for as long as the head can run.
     fn dispatch(&self, state: &mut State) {
         loop {
@@ -308,10 +346,23 @@ impl InferenceScheduler {
             if free.is_empty() {
                 return;
             }
-            if head.priority != InferencePriority::Interactive
-                && state.slots.len() > 1
-                && free.len() < 2
-            {
+            let interactive = head.priority == InferencePriority::Interactive;
+            if !interactive && state.slots.len() > 1 && free.len() < 2 {
+                return;
+            }
+            let open: Vec<usize> = free
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    interactive
+                        || !state.slots.get(index).is_some_and(|slot| {
+                            slot.last_key
+                                .as_ref()
+                                .is_some_and(|key| state.held.contains_key(key))
+                        })
+                })
+                .collect();
+            if open.is_empty() {
                 return;
             }
             let in_flight = state.slots.len() - free.len();
@@ -320,7 +371,7 @@ impl InferenceScheduler {
                     return;
                 }
             }
-            let slot = choose_slot(&state.slots, &free, head.cache_key.as_deref());
+            let slot = choose_slot(&state.slots, &open, head.cache_key.as_deref());
             let Some(waiter) = state.queue.remove(&key) else {
                 return;
             };
