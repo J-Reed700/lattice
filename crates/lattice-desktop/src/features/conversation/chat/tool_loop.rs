@@ -55,10 +55,8 @@ pub struct ToolLoopTimingMetrics {
 pub struct ToolLoopOutcome {
     pub response: String,
     pub timings: ToolLoopTimingMetrics,
-    /// Prompt and completion tokens as the provider reported them for the round
-    /// that produced the answer. `None` when it reported none — absent is not
-    /// zero, and a local model that says nothing about its usage has not used
-    /// no tokens.
+    /// Prompt and completion tokens as the provider reported them for the answering
+    /// round; `None` when it reported none (absent is not zero).
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
 }
@@ -171,9 +169,8 @@ pub(super) async fn run_agentic_tool_loop(
     // UI generating forever.
     let mut emitter = StreamEmitter::new(sink, conv_id, request_id);
 
-    // The stop button as a token. Every round's request carries it, so a stop
-    // press takes a request out of the backend's queue, or aborts it while it
-    // generates, at once rather than at the next poll.
+    // The stop button as a token: every round's request carries it, so Stop
+    // dequeues or aborts a request at once rather than at the next poll.
     let turn_cancel = container.turn_cancellation().turn_token(request_id);
     let mut native_request = CompletionRequest {
         // Someone is watching this turn; it goes ahead of background work and
@@ -187,9 +184,8 @@ pub(super) async fn run_agentic_tool_loop(
         // The turn record can reveal provider-supplied reasoning on demand.
         // Providers that expose none simply leave the disclosure absent.
         include_reasoning: true,
-        // Reserving output room and then not enforcing it is only bookkeeping:
-        // the model could generate past what the budget set aside and overrun
-        // the window the prompt was measured against.
+        // Enforce the reserved output room, or the model could overrun the window the
+        // prompt was measured against.
         max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX))
             .filter(|budget| *budget > 0),
         ..Default::default()
@@ -228,9 +224,8 @@ pub(super) async fn run_agentic_tool_loop(
             llm,
             question,
         },
-        // Pages are remembered for the whole turn — and the turn started
-        // before this loop did: retrieval has usually opened the top results
-        // already.
+        // Pages are remembered for the whole turn, which started before this loop:
+        // retrieval has usually opened the top results already.
         pages_already_read,
         queries,
         fetched,
@@ -306,9 +301,8 @@ pub(super) async fn run_agentic_tool_loop(
                 forced = Some(LastRound::WindowFull);
             }
         }
-        // Before the window can be judged full: results that have outgrown
-        // their share are condensed into notes and the research goes on. The
-        // full-window ending below is the last resort.
+        // Before judging the window full, condense results that outgrew their share
+        // into notes; the full-window ending below is the last resort.
         if iteration > 0
             && !out_of_rounds
             && forced.is_none()
@@ -364,10 +358,8 @@ pub(super) async fn run_agentic_tool_loop(
         let last_round = forced
             .or(out_of_rounds.then_some(LastRound::OutOfRounds))
             .or(window_full.then_some(LastRound::WindowFull));
-        // The last round is for answering. A model still calling tools here
-        // would otherwise end the turn with an error and lose every page and
-        // passage it had gathered, so it may call none and is told to answer
-        // from what it has.
+        // The last round is for answering: a model still calling tools would end the
+        // turn with an error and lose what it gathered, so it may call none.
         let answer_only = last_round.filter(|_| tools_ref.is_some_and(|tools| !tools.is_empty()));
         if let Some(last_round) = answer_only {
             info!(
@@ -452,10 +444,9 @@ pub(super) async fn run_agentic_tool_loop(
         if let Some(last_round) =
             answer_only.filter(|_| final_round::wrote_only_calls(&round.response))
         {
-            // Forbidding calls does not stop a model writing them, and with
-            // thinking on Qwen 3.5 writes them into its text. Once, with no
-            // tools in the prompt at all: this request re-reads the prompt,
-            // but the turn ends with an answer rather than nothing.
+            // Forbidding calls does not stop a model writing them into its text (Qwen 3.5
+            // with thinking does). Retry once with no tools in the prompt, so the turn
+            // still ends with an answer.
             warn!(
                 iteration,
                 "Model answered the last round with tool calls; asking again without tools"
@@ -688,11 +679,9 @@ pub(super) async fn run_agentic_tool_loop(
     ))
 }
 
-/// Model rounds a turn may spend on tool calls, the last of which is kept for
-/// the answer. Deep research has a two-hour budget and branches across many
-/// sources; five rounds would end it long before that budget does. An
-/// Explorer turn reads a folder file by file, two or three a round, so five
-/// rounds ended a walk through a codebase before it reached the answer.
+/// Model rounds a turn may spend on tool calls, the last kept for the answer.
+/// Deep research and Explorer walks read many sources or files a few per round,
+/// so they get more.
 pub(super) fn max_tool_rounds(deep_research: bool, explorer: bool) -> usize {
     if deep_research {
         12
@@ -737,12 +726,9 @@ fn elapsed_ms(start: Instant) -> u64 {
 pub(in crate::features::conversation::chat) const CUT_SHORT_NOTE: &str =
     "\n\n_(The answer was cut short: the model reached its output limit.)_";
 
-/// Whether a round's answer stopped at the output limit, or an error when
-/// the round has nothing worth keeping.
-///
-/// A cut-short answer is still an answer: failing the turn threw away
-/// everything the user had watched stream in. A cut-short tool round has
-/// nothing to keep — its calls are truncated — so it still fails.
+/// Whether a round's answer stopped at the output limit, or an error when the
+/// round has nothing worth keeping: a cut-short answer is kept, but a cut-short
+/// tool round's calls are truncated.
 fn answer_was_cut_short(finish_reason: &str, text: &str, has_tool_calls: bool) -> Result<bool> {
     let cut_short = matches!(finish_reason, "incomplete" | "max_tokens" | "length");
     if finish_reason == "failed" || (cut_short && (text.trim().is_empty() || has_tool_calls)) {
@@ -753,11 +739,8 @@ fn answer_was_cut_short(finish_reason: &str, text: &str, has_tool_calls: bool) -
     Ok(cut_short)
 }
 
-/// What one generation round came to.
-///
-/// A round that only asked for tools wrote no answer, and saying "0 words"
-/// would read as a failure rather than as the model deciding to go and look
-/// something up.
+/// What one generation round came to. A round that only called tools reads as
+/// looking something up, not as "0 words".
 fn round_result_line(response_text: &str, tool_calls: usize) -> String {
     let words = response_text.split_whitespace().count();
     match (words, tool_calls) {

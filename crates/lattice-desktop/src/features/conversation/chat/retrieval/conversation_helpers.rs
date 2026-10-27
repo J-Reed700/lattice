@@ -68,15 +68,10 @@ pub(super) async fn build_hyde_context_window_for_conversation(
     })
 }
 
-/// The query planner's view of the conversation, within `room` tokens.
-///
-/// This is a query-planning view, not the answering model's memory: the
-/// planner gets a share of its own window, so a small utility model is never
-/// handed the whole transcript (which caused rewrite timeouts), and a large
-/// one sees more. The newest turns come first, whole, in up to half the room;
-/// older turns that share the question's terms, best match first, fill the
-/// rest; a line counts what is left out. A newest turn too long for the room
-/// on its own is the one thing cut, centred on the question's terms.
+/// The query planner's view of the conversation, within `room` tokens: a share
+/// of the planner's own window, not the answering model's memory. The newest
+/// turns come whole in up to half the room, then older turns sharing the
+/// question's terms; a line counts what is left out.
 fn query_planning_context(
     messages: &[lattice_core::domain::conversation::ConversationMessage],
     question: &str,

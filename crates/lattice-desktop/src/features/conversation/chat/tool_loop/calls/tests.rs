@@ -83,8 +83,7 @@ fn reads_share_a_batch_and_a_tool_that_may_write_stands_alone() {
     assert_eq!(batch_end(&calls, 3), 4);
 }
 
-/// Two reads of one page in one round: the second is answered from the
-/// first, as it was when calls ran one at a time.
+/// Two reads of one page in one round: the second is answered from the first.
 #[test]
 fn a_second_read_of_a_page_waits_for_the_first() {
     let calls = [

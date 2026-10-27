@@ -24,14 +24,8 @@ pub struct ConversationDi {
     pub conversation_context:
         Arc<dyn lattice_core::application::ports::conversation_context::ConversationContextPort>,
     pub create_conversation_use_case: Arc<CreateConversationUseCase>,
-    /// Process-wide single-flight slots for compaction.
-    ///
-    /// Held here rather than inside a long-lived job because the job also needs
-    /// the utility model and the continuation model's token budget, and both of
-    /// those change when the user switches models. A job is built per request
-    /// around these shared slots, so a model switch cannot leave compaction
-    /// pinned to a stale budget while still guaranteeing that one conversation
-    /// never compacts twice at once.
+    /// Process-wide single-flight slots for compaction. A job is built per request
+    /// around them, because its models change when the user switches.
     pub compaction_slots: Arc<CompactionSlots>,
     /// The memory ledger port, shared so every caller sees one snapshot read.
     pub conversation_memory:

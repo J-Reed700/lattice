@@ -1,10 +1,6 @@
-//! Grounding verification after the answer is on screen.
-//!
-//! The check reads every cited page and may ask the utility model about dozens
-//! of claims; run inline it held the finished answer back until every claim
-//! was judged. So the turn persists the answer with a pending marker and returns,
-//! and this task fills the verdicts in: it patches the message's metadata and
-//! tells the window, which swaps the badge from "checking" to the result.
+//! Grounding verification after the answer is on screen. The turn persists the
+//! answer with a pending marker and returns; this task fills the verdicts in,
+//! patches the message's metadata and tells the window.
 
 #[cfg(test)]
 use futures::future::BoxFuture;

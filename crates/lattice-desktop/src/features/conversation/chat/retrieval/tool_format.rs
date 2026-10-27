@@ -12,18 +12,13 @@ use lattice_core::shared::text::safe_truncate;
 const OMISSION_NOTE_CHARS: usize = 240;
 
 /// The least a result is given, however full the window: room for the note
-/// saying what was left out and where it is. Without it a full window turned a
-/// result into an empty string that told the model nothing.
+/// saying what was left out and where it is.
 const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
 
-/// A tool's result as the model reads it, in at most `allowance` characters.
-///
-/// `allowance` is the result's share of what is left of the model's window
-/// (see the tool loop's `tool_result_allowance`); there is no configured
-/// ceiling on top of it. Everything the tool returned is shown when it fits.
-/// When it does not, the result says what was left out and how to reach it,
-/// so a long result is read in parts rather than silently cut. `page_offset`
-/// is where a fetched page's text starts, for a model reading a page on.
+/// A tool's result as the model reads it, in at most `allowance` characters
+/// (its share of the window; see `tool_result_allowance`). When it does not
+/// fit, it says what was left out and how to reach it. `page_offset` is where
+/// a fetched page's text starts.
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &FunctionResult,
@@ -373,16 +368,9 @@ pub(in crate::features::conversation::chat) fn document_page_room(allowance: usi
     allowance.saturating_sub(DOCUMENT_PAGE_FRAMING_CHARS)
 }
 
-/// A fetched page as prose, from character `offset` on, as much as a result
-/// of `max_chars` holds.
-///
-/// It used to reach the model through the generic fallback: the whole output
-/// struct as one line of JSON, every quotation mark and line break in the
-/// article escaped, with the fetch timing and content type along for the ride.
-/// That spends tokens on backslashes and makes an article harder to read than
-/// it was on the page. A page longer than the result's room is shown in part,
-/// with the offset the next part starts at, so the rest is a further call
-/// rather than lost.
+/// A fetched page as prose rather than escaped JSON, from character `offset`
+/// on, as much as a result of `max_chars` holds. A longer page names the
+/// offset the next part starts at.
 fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: usize) -> String {
     let content = page.content.trim();
     let room = fetched_page_text_room(max_chars);
@@ -476,8 +464,7 @@ mod fetched_page_tests {
         assert!(rendered.contains("complete"), "{rendered}");
     }
 
-    /// The old configured ceiling cut every result at 50,000 characters even
-    /// when the window-derived allowance was larger. The allowance alone binds.
+    /// The window-derived allowance alone binds; there is no configured ceiling.
     #[test]
     fn a_page_far_past_the_old_ceiling_is_whole_when_the_allowance_holds_it() {
         let article = format!("{}the last line", "word ".repeat(40_000));
@@ -560,8 +547,7 @@ mod fetched_page_tests {
         )
     }
 
-    /// A search held at 50 results a page had no way past the 50th. A page
-    /// that may have more says the offset the next starts at.
+    /// A search page that may have more says the offset the next starts at.
     #[test]
     fn a_full_search_page_names_the_offset_of_the_next() {
         let mut result = search_output(2, 1, "text");
@@ -578,8 +564,7 @@ mod fetched_page_tests {
         );
     }
 
-    /// Search results used to show at most three matches a document, each cut
-    /// to an excerpt length. With room, every match is shown whole.
+    /// With room, every match is shown whole.
     #[test]
     fn every_search_match_is_shown_whole_when_the_allowance_holds_them() {
         let excerpt = "a long passage ".repeat(400);
@@ -607,9 +592,8 @@ mod fetched_page_tests {
         assert!(rendered.contains("[1] file-0.pdf"), "{rendered}");
     }
 
-    /// A full window used to turn a result into an empty string: the model
-    /// was told nothing, not even that there was more. Every kind of result
-    /// now keeps the line saying what was left out and how to reach it.
+    /// Every kind of result keeps the line saying what was left out and how to
+    /// reach it, however full the window.
     #[test]
     fn a_result_in_a_full_window_still_says_what_was_left_out() {
         let page_note = render(&page(&"word ".repeat(5_000)), "fetch_url_content", 0, 120);
@@ -639,8 +623,7 @@ mod fetched_page_tests {
         assert!(fallback_note.contains("[Cut to fit"), "{fallback_note}");
     }
 
-    /// A part larger than the result's room names the offset the rest starts
-    /// at; it used to name only a page size and no page.
+    /// A part larger than the result's room names the offset the rest starts at.
     #[test]
     fn an_oversized_document_part_names_the_offset_to_read_on_from() {
         let document = FunctionResult::success(serde_json::json!({

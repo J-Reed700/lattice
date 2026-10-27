@@ -1,11 +1,7 @@
 //! A round cut short by one of the turn's limits, and the round that answers
-//! in its place.
-//!
-//! Every error used to end the turn and mark the question failed, sources and
-//! results with it: two hours of deep research came to nothing but an error
-//! when the deadline passed during its last page read. A round that fails at
-//! the deadline, or with a prompt the window cannot hold, is asked again as
-//! the answering round instead, from what the turn has gathered.
+//! in its place: a round that fails at the deadline, or with a prompt the
+//! window cannot hold, is asked again as the answering round from what the
+//! turn has gathered.
 
 use super::calls::ToolCalls;
 use super::clock::TurnClock;
@@ -22,15 +18,10 @@ pub(super) fn ran_out(clock: &TurnClock, cancel: &CancellationToken) -> bool {
     clock.expired() && !cancel.is_cancelled()
 }
 
-/// What a round that failed with `error` is asked again as, once the prompt
-/// is made to fit if it did not; `error` back when no round would fare
-/// better.
-///
-/// Past the deadline, the round answers with no deadline of its own. A prompt
-/// too long for the window sheds its newest results and answers; a round
-/// already past the deadline stays that round. Shedding frees something or
-/// fails, so a round asked again for its size is asked a bounded number of
-/// times.
+/// What a round that failed with `error` is asked again as, once the prompt is
+/// made to fit; `error` back when no round would fare better. Shedding frees
+/// something or fails, so a round is asked again for its size a bounded number
+/// of times.
 pub(super) fn recover(
     error: AppError,
     last_round: Option<LastRound>,

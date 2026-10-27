@@ -1,13 +1,9 @@
-//! The planner's user turn, sized in tokens.
-//!
-//! The window is the limit: a request past it is refused by the server, so a
-//! prompt that cannot fit is never sent. The prompt target is the room the
-//! window leaves after the plan's reservation, held lower only when a server
-//! refused a prompt as larger than its real window (see `health`). No clock
-//! sizes it. Rows are chosen on the port's calibrated estimate and the finished prompt is then counted with the
-//! server's own tokenizer where there is one. An estimate is never trusted
-//! with the whole window: the 2026-10-13 baseline sized a catalog on chars/4
-//! and 12 of 16 requests came back as larger than the window.
+//! The planner's user turn, sized in tokens. The window is the limit: the
+//! prompt target is the room it leaves after the plan's reservation, held
+//! lower only when a server refused a prompt as larger than its real window
+//! (see `health`). Rows are chosen on the port's estimate and the finished
+//! prompt is then counted with the server's own tokenizer, since an estimate
+//! is never trusted with the whole window.
 
 use std::collections::{HashMap, HashSet};
 
@@ -71,12 +67,9 @@ fn sendable(llm: &dyn LLMPort, exact: bool) -> usize {
     }
 }
 
-/// One catalog row as the planner sees it.
-///
-/// The document and its book are named by short handles ("d3", "g1") instead
-/// of their UUIDs. On Qwen's tokenizer, which splits digits one by one, a UUID
-/// is about 30 tokens: on a row and again on every opening the plan names,
-/// where four of them were eight seconds of writing at 14 tokens a second.
+/// One catalog row as the planner sees it. The document and its book are named
+/// by short handles ("d3", "g1") rather than UUIDs, which are long on
+/// tokenizers that split digits one by one.
 #[derive(Serialize)]
 struct CatalogRow<'a> {
     id: String,

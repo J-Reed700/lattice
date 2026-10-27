@@ -1,10 +1,6 @@
-//! One compaction run, from snapshot to commit.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §7.
-//!
-//! Split out of the module façade because the run is the long part: boundary
-//! selection, the batch loop, the candidate ledger a run builds before it is
-//! allowed to write anything, and the single commit that publishes it.
+//! One compaction run, from snapshot to commit (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §7): boundary selection,
+//! the batch loop, the candidate ledger and the single commit.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -91,15 +87,10 @@ impl Drop for PhaseTiming {
     }
 }
 
-/// The per-conversation single-flight slots.
-///
-/// Held separately from the job, and shared, because the two things have
-/// different lifetimes. The slots must be process-wide or the mutual exclusion
-/// means nothing; the utility model and the continuation model's token counter
-/// are per-turn values that change when the user switches models, so a job
-/// pinned to one of them at startup would be pinned to a stale budget.
-///
-/// Build [`CompactionSlots`] once, in DI, and hand the same `Arc` to every job.
+/// The per-conversation single-flight slots. Process-wide, so the exclusion
+/// holds, and kept apart from the job because its models and token counter
+/// are per-turn values. Build once, in DI, and hand the same `Arc` to every
+/// job.
 #[derive(Default)]
 pub struct CompactionSlots {
     /// One async mutex per conversation. Different conversations never wait on
@@ -108,11 +99,8 @@ pub struct CompactionSlots {
 }
 
 impl CompactionJob {
-    /// A job with its own private slots.
-    ///
-    /// For tests and one-off use. Production goes through
-    /// [`Self::with_slots`]: two instances with separate slots do not exclude
-    /// each other, which is the whole point of holding one.
+    /// A job with its own private slots, for tests and one-off use; production
+    /// goes through [`Self::with_slots`].
     pub fn new(
         memory: Arc<dyn ConversationMemoryPort>,
         utility_llm: Arc<dyn LLMPort>,
@@ -243,17 +231,9 @@ impl CompactionJob {
         drop(slot);
     }
 
-    /// [`Self::run_with_retry`], again for each further page of a fold over
-    /// source below the watermark, while a run with a deadline has room for
-    /// one.
-    ///
-    /// Only consolidation keeps going: it runs after an answer with no one
-    /// waiting, while a `/compact` or the compaction a turn waits on takes one
-    /// page as before. Each page commits on its own, so stopping early loses
-    /// nothing and the next run resumes from the summary's boundary. A page
-    /// needs room for twice what the last one took; one the deadline or a
-    /// cancellation cuts short anyway commits nothing, and the run reports
-    /// the pages before it rather than a failure.
+    /// [`Self::run_with_retry`], again for each further page of a fold below the
+    /// watermark while a run with a deadline has room. Only consolidation keeps
+    /// going; each page commits on its own, so stopping early loses nothing.
     async fn run_pages(
         &self,
         conversation_id: &str,
@@ -335,29 +315,18 @@ impl CompactionJob {
 // ---------------------------------------------------------------------------
 
 /// Where the working summary's coverage ends, never past the watermark.
-///
-/// Usually behind the watermark: extraction runs after every answer, and the
-/// summary moves only when a run folds it ([`FoldTarget`]). A delete also drops
-/// a summary whose boundary is at or after the deleted message (by trigger, or
-/// by its `up_to_message_id` cascade), and a user correction clears it, while
-/// the ledger stays usable and the watermark stays put. With no summary every
-/// eligible message at or below the watermark is covered by extraction and by
-/// no summary, so the next fold starts from the beginning. A summary whose
-/// boundary cannot be placed is trusted to reach the watermark, as it always
-/// was.
+/// Usually behind it, since the summary moves only when a run folds it
+/// ([`FoldTarget`]); with no summary the next fold starts from the beginning.
+/// A summary whose boundary cannot be placed is trusted to reach the
+/// watermark.
 fn summary_resume_point(snapshot: &MemorySnapshot, start_after: i64) -> i64 {
     snapshot.summary_covers_through().min(start_after)
 }
 
-/// What a run does with the working summary.
-///
-/// The prompt opens its verbatim window where the summary ends, so a summary
-/// that moved after every answer would change the head of every request.
-/// Consolidation after an answer therefore refolds only when that turn's
-/// prompt asked: its window had to drop turns the summary does not cover. A
-/// request a refold since then already satisfied is not repeated. `/compact`
-/// and the compaction a turn waits on fold everything they extract, as they
-/// always have.
+/// What a run does with the working summary. The prompt opens its verbatim
+/// window where the summary ends, so consolidation refolds only when the
+/// turn's prompt asked; `/compact` and the compaction a turn waits on fold
+/// everything they extract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FoldTarget {
     /// Leave the summary as it is; extraction moves on without it.

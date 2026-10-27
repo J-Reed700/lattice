@@ -1,11 +1,7 @@
-//! Repository behaviour for the bounded memory ledger.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §16.4.
-//!
-//! These run against real temporary SQLite databases built from the production
-//! migration, because most of what is being tested here *is* the schema:
-//! triggers, foreign keys, unique constraints, and transaction boundaries. A
-//! mock repository would assert that the code calls itself.
+//! Repository behaviour for the bounded memory ledger (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §16.4). These run on real
+//! temporary SQLite databases from the production migration, since most of
+//! what is tested is the schema: triggers, keys, constraints and transactions.
 
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
@@ -408,9 +404,7 @@ async fn recompacting_updates_the_one_summary_row_in_place() {
     let repo = ConversationRepository::new(pool.clone());
 
     // The memory commit is the only writer of `conversation_summaries`, so this
-    // is where the one-row-per-conversation invariant has to hold. It used to be
-    // covered against a separate `upsert_summary` helper, which was a second way
-    // to write the same row and could disagree with the ledger's revision.
+    // is where the one-row-per-conversation invariant has to hold.
     for (round, text) in [(0, "first summary"), (1, "second summary")] {
         let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
         repo.commit_memory(

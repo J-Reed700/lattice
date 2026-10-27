@@ -1,29 +1,6 @@
-//! # Conversation feature
-//!
-//! Persistent chat conversations: CRUD on conversations and messages,
-//! the conversation service (infra), and the full chat-with-RAG controller pipeline
-//! (`chat.rs` + `chat/`).
-//!
-//! ## Public surface
-//!
-//! - `crate::features::conversation::dto` — ConversationDto
-//! - `crate::features::conversation::message_bookmark_dto`
-//! - `crate::features::conversation::space_dto`
-//! - `crate::features::conversation::mapper` — application mapper
-//! - `crate::features::conversation::use_cases` — CRUD use cases
-//! - `crate::features::conversation::commands` — basic CRUD commands
-//! - `crate::features::conversation::plugin_impl` — plugin implementation
-//! - `crate::features::conversation::chat` + `chat/` — chat controller
-//!   pipeline (with submodule `retrieval/` — 15-file RAG pipeline)
-//! - `crate::features::conversation::plugin::init()` — Tauri plugin
-//! - `crate::features::conversation::ConversationServiceTrait` — service trait
-//!
-//! - `crate::features::conversation::repository` — SQLite persistence
-//! - `crate::features::conversation::persistence_mapper`
-//! - `crate::features::conversation::service` — ConversationService
-//!
-//! Domain types (Conversation, ConversationMessage, MessageRole, ...) live in
-//! `lattice_core::domain::conversation` because the application layer depends on them.
+//! Persistent chat conversations: CRUD on conversations and messages, the
+//! conversation service and repository, and the chat-with-RAG pipeline
+//! (`chat`). Domain types live in `lattice_core::domain::conversation`.
 
 pub mod activity;
 mod branching;

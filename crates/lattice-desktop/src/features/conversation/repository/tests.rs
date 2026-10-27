@@ -18,13 +18,8 @@ async fn create_test_pool() -> SqlitePool {
     SqlitePoolOptions::new().connect(":memory:").await.unwrap()
 }
 
-/// Apply the real migration, not a hand-maintained copy of it.
-///
-/// These tests used to build their own abbreviated schema. That drifts: adding
-/// `conversations.next_message_sequence` broke every one of them while
-/// production was fine, and the reverse — a test passing against a schema
-/// production does not have — is the failure that actually costs something.
-/// The migration is small and the run is a few milliseconds.
+/// Applies the real migration, not a hand-maintained copy of it, so the tests
+/// cannot pass against a schema production does not have.
 async fn setup_schema(pool: &SqlitePool) {
     sqlx::migrate!("./migrations").run(pool).await.unwrap();
     // The memory-invalidation triggers depend on FK cascade behaviour, and the
@@ -35,13 +30,8 @@ async fn setup_schema(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// Insert the `documents` rows a fixture is about to reference.
-///
-/// `conversation_documents.document_id` really does have a foreign key to
-/// `documents`, and these tests now run with enforcement on, so a linked
-/// document has to exist. Seeding it is also more honest than the old
-/// unenforced schema: a reference to a document that was never indexed is not
-/// a state the application can reach.
+/// Inserts the `documents` rows a fixture is about to reference:
+/// `conversation_documents.document_id` has an enforced foreign key.
 async fn seed_documents(pool: &SqlitePool, ids: &[&str]) {
     for id in ids {
         sqlx::query(

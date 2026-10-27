@@ -109,11 +109,8 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
-    /// The files attached to this message.
-    ///
-    /// They outrank every other section: the reader put them there, and a turn
-    /// that answers "no file came through" while one sits in the library is the
-    /// worst failure this prompt can produce.
+    /// The files attached to this message. They outrank every other section: the
+    /// reader put them there.
     pub(super) fn with_attachment_context(mut self, attachment_context: Option<String>) -> Self {
         self.attachment_context = attachment_context;
         self
@@ -165,14 +162,8 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
-    /// Carry the sufficiency verdict into the prompt.
-    ///
-    /// The verdict already decides whether to search the web and what to write
-    /// in the trace, but it never reached the model. So a turn whose passages
-    /// the app had judged too weak to answer from was handed to the model under
-    /// the same heading, and with the same instruction to prefer them, as a
-    /// turn with strong evidence — which is how a confident answer gets written
-    /// off text that does not support it.
+    /// Carries the sufficiency verdict into the prompt, so passages judged too
+    /// weak are not presented like strong evidence.
     pub(super) fn with_kb_sufficiency(
         mut self,
         verdict: Option<&super::retrieval::SufficiencyVerdict>,
@@ -333,16 +324,9 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
         )
     }
 
-    /// One sentence saying what happened to the user's documents this turn.
-    ///
-    /// Three outcomes, and they are not interchangeable. "Nothing relevant was
-    /// found" describes a search that ran and came back empty; saying it about
-    /// a vault with nothing in it tells the reader their documents were read
-    /// and rejected, which is a claim about their documents that nobody made.
-    /// The reason for an unreachable vault is already computed during
-    /// retrieval — it just never reached the prompt on this path. Evidence
-    /// that was found and then cut for room is a fourth outcome, and the
-    /// same care applies: it is not a search that found nothing.
+    /// One sentence saying what happened to the user's documents this turn. A
+    /// search that found nothing, a vault with nothing in it, an unreachable vault
+    /// and evidence cut for room are different outcomes and must not be conflated.
     fn retrieval_note(&self) -> String {
         if self.evidence_cut {
             return "Evidence was found for this turn, but the model's context window had no room \
@@ -363,11 +347,9 @@ rather than describing this as a search that found nothing."
     }
 }
 
-/// The standing instruction that opens every evidence-carrying message.
-///
-/// It names the latest message as the one to answer. "The ongoing question"
-/// read, to a small model, as the earlier one: asked about something new, it
-/// answered the old question again from the evidence retained for it.
+/// The standing instruction that opens every evidence-carrying message. It
+/// names the latest message as the one to answer; "the ongoing question" makes
+/// small models answer the earlier one again.
 const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the user's latest message, the question \
      this prompt asks. When it continues an earlier topic, use the user's established facts, \
      conversation memory, and relevant original evidence from earlier turns together with new sources; \
@@ -426,14 +408,9 @@ fn evidence_template(prompt_settings: &LLMPromptSettingsDto, explorer: bool) -> 
     }
 }
 
-/// The template an Explorer turn's context travels in.
-///
-/// The document-answer template asks for the answer from the context alone
-/// and a citation on every statement. An Explorer turn is about the folder on
-/// screen, and explaining that code draws on what no passage holds; under that
-/// template the model put bracket numbers on the folder, on standing notes
-/// and on its own explanations. The folder block's rules say how to point at
-/// lines.
+/// The template an Explorer turn's context travels in. Unlike the
+/// document-answer template it does not ask for a citation on every
+/// statement: explaining the folder draws on what no passage holds.
 const EXPLORER_TEMPLATE: &str = "Answer the user's question about the folder open beside this chat: \
      what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
      from what you know; teaching how the code works, or a concept it uses, needs no source and no \
@@ -442,14 +419,9 @@ const EXPLORER_TEMPLATE: &str = "Answer the user's question about the folder ope
      one after a claim such a passage supports, and never on the folder, on these instructions or on \
      your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
-/// What a deep-research turn is asked to do with the rounds it has left. The
-/// first round searched wide before the model ran; this sends the model after
-/// what that round missed, instead of answering from it or reopening one of
-/// its links.
-///
-/// Every search the round ran is listed whole: one left off the list is one
-/// the model may run again. They are short queries the round itself chose,
-/// so the list is as long as that round was.
+/// What a deep-research turn is asked to do with the rounds it has left: go
+/// after what the first, wide round missed. Every search that round ran is
+/// listed whole, so the model does not run one again.
 fn deep_research_instruction(searches: &[String]) -> String {
     let mut seen = std::collections::HashSet::new();
     let listed: Vec<String> = searches
@@ -474,12 +446,9 @@ is still uncertain."
     )
 }
 
-/// Turn sufficiency reason codes into one sentence the model can act on.
-///
-/// Only the reasons that actually decide the verdict are described. A missing
-/// reranker or a flat spread says something about how the judgement was made,
-/// not about whether the passages answer the question, and telling the model
-/// its evidence is weak on that basis would be wrong.
+/// Turns sufficiency reason codes into one sentence the model can act on. Only
+/// the reasons that decide the verdict are described; a missing reranker or a
+/// flat spread says nothing about whether the passages answer the question.
 fn describe_thin_evidence(reasons: &[&'static str]) -> String {
     use super::retrieval::sufficiency_reason as reason;
 
@@ -573,11 +542,8 @@ pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
     )
 }
 
-/// The name every passage shows its document under: the title, and the file
-/// name only when there is no title. A passage read in order used to show the
-/// document's full path on disk while the search hits beside it showed the
-/// file name, so one document appeared under two names, and the path spent
-/// tokens and showed where the reader keeps their files.
+/// The name every passage shows its document under: the title, or the file
+/// name when there is none, never the path on disk.
 fn document_name(result: &SearchResultDto) -> &str {
     if !result.title.trim().is_empty() {
         return &result.title;

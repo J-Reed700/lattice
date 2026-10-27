@@ -1,11 +1,7 @@
-//! The judge gate against the labelled claim pairs in `evals/grounding/`.
-//!
-//! On the 2026-10-12 claim-checker bake-off, 23 of 101 pairs never reached
-//! the judge, and 17 of those were false claims certified on word overlap
-//! alone. Each test below takes the dataset's own claim and passage for one
-//! way those 17 went wrong and checks that the claim now goes to the judge.
-//! The last ones check that a copy of the passage still does not, unless the
-//! sentence it copies says something the copy left out.
+//! The judge gate against the labelled claim pairs in `evals/grounding/`. Each
+//! test takes one pair whose false claim word overlap alone would certify and
+//! checks it goes to the judge; the last ones check that a faithful copy of
+//! the passage still does not.
 
 use std::collections::HashMap;
 use std::path::Path;

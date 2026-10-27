@@ -27,12 +27,10 @@ pub(super) struct Generation<'r> {
     pub(super) step: StepGuard<'r>,
 }
 
-/// Run one generation. `written_calls` says what becomes of a tool call the
-/// model writes into its text instead of making it: never shown either way,
-/// it is cut on a round that may not call and run on one that may.
-///
-/// `clock` bounds it by the turn's deadline. Without one it is the answering
-/// round after the deadline, bounded by Stop and its output limit alone.
+/// Runs one generation. `written_calls` says whether a tool call the model
+/// writes into its text is cut or run; it is never shown. Without a `clock`
+/// this is the answering round after the deadline, bounded by Stop and its
+/// output limit alone.
 pub(super) async fn generate<'r>(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -81,10 +79,7 @@ pub(super) async fn generate<'r>(
             }
             Ok(())
         };
-        // A provider-level retry is its own step. It used to overwrite the
-        // answer bubble's text, so a turn that recovered ended up showing
-        // "Model response failed. Retrying..." in place of the answer it went
-        // on to write.
+        // A provider-level retry is its own step, so the answer bubble keeps its text.
         let on_retry = |attempt: usize| {
             if let Ok(mut progress) = reasoning_progress.lock() {
                 progress.reset();
@@ -152,10 +147,8 @@ pub(super) async fn generate<'r>(
     Ok(Generation { response, step })
 }
 
-/// What to show while the model is producing no text.
-///
-/// The first round is plain thinking; later rounds follow tool results, and
-/// saying so is the difference between "stuck" and "on its third source".
+/// What to show while the model is producing no text. Later rounds follow tool
+/// results, so they say so.
 pub(super) fn thinking_label(iteration: usize) -> &'static str {
     if iteration == 0 {
         "Thinking"

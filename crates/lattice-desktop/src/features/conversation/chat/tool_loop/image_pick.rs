@@ -1,15 +1,9 @@
 //! `find_image`'s pick: when the turn's model can see, the stored candidates
 //! are shown to it in a side request and only those that clearly show the
-//! subject are kept.
-//!
-//! A side request, not the tool result or a made-up user message: llama.cpp
-//! documents pictures in user messages only, and a picture placed in the
-//! conversation would sit in its prefix for the rest of the turn. The side
-//! request leaves the conversation's transcript as it is, gets a structured
-//! verdict, works the same on every provider, and is bounded by the turn's
-//! clock and Stop like any other call. Each candidate is fitted so the whole
-//! pick costs about what one picture in an answer would. The pick never fails
-//! the tool: whatever goes wrong, every candidate is kept.
+//! subject are kept. A side request rather than the transcript, because
+//! llama.cpp takes pictures in user messages only and one placed in the
+//! conversation would sit in its prefix for the rest of the turn. The pick
+//! never fails the tool: on any error every candidate is kept.
 //! Design: docs/design/2026-10-17-chat-vision.md §9.
 
 use std::collections::HashSet;

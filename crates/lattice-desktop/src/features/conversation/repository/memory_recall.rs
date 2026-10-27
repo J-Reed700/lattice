@@ -1,25 +1,10 @@
-//! Recall over one conversation's original transcript.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §9.
-//!
-//! Reuses the existing `conversation_search_fts` index rather than borrowing
-//! document-search permissions or treating the current space as equivalent to
-//! this conversation. Three rules shape everything here:
-//!
-//! * **Ownership is in the `WHERE`, always.** Every query joins back to
-//!   `conversation_messages` filtered by `conversation_id`. Another thread can
-//!   contain a byte-identical quotation and it will never be returned.
-//! * **`source = 'message'` only.** The same index holds conversation titles and
-//!   bookmark notes. Those are not things the user said in this transcript, and
-//!   returning one as message evidence would attribute a note to the user.
-//! * **OR, not AND.** The explorer's all-terms helper is right for finding a
-//!   conversation and wrong for finding a passage inside one: a recalled
-//!   question rarely repeats every word of the message that answers it.
-//!
-//! What this is not: semantic retrieval. `conversation_search_fts` is tokenized
-//! `unicode61 remove_diacritics 2`, so it matches words, not meanings, and it
-//! does not segment CJK. Paraphrase recall is reported as a measured number by
-//! the evaluation suite, never claimed here.
+//! Recall over one conversation's original transcript (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §9), on the existing
+//! `conversation_search_fts` index. Every query filters by `conversation_id`;
+//! only `source = 'message'` rows count, since titles and bookmark notes are not
+//! things the user said; and terms are ORed, since a recalled question rarely
+//! repeats every word of its answer. Lexical only: the `unicode61` tokenizer
+//! matches words, not meanings, and does not segment CJK.
 
 use super::ConversationRepository;
 use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};

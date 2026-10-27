@@ -48,17 +48,9 @@ const MAX_STARTERS: usize = 3;
 /// Cache rows kept after a write.
 const CACHE_KEEP_ROWS: i64 = 8;
 
-/// Repository-backed cache for corpus-derived chat starters.
-///
-/// One row per corpus fingerprint. A changed fingerprint means the corpus
-/// changed shape, so the questions are regenerated; an unchanged one means
-/// zero LLM calls and a stable empty state.
-///
-/// It also owns the aggregate reads the starter prompt needs (type mix, recent
-/// titles and the newest `indexed_at`), because no document port exposes a
-/// `GROUP BY file_type`. Keeping them here keeps SQL out of the command
-/// implementation. Each of them is scoped to a caller-supplied set of document
-/// ids: the prompt may only ever see the documents the chat's space can see.
+/// Repository-backed cache for corpus-derived chat starters, one row per
+/// corpus fingerprint, plus the aggregate reads the starter prompt needs. Every
+/// read is scoped to the document ids the chat's space can see.
 pub struct ChatStarterCacheRepository {
     pool: SqlitePool,
 }
@@ -280,15 +272,9 @@ fn sorted_ids(allowed_ids: &HashSet<String>) -> Vec<&String> {
     ids
 }
 
-/// Hash of (space, document count, latest `indexed_at`, sorted type mix).
-///
-/// The space is part of the key because two spaces can hold the same *shape* of
-/// corpus while holding entirely different documents: without it one cached row
-/// was shown in every space, so a Movies chat opened with questions drawn from
-/// a patent library filed elsewhere.
-///
-/// Order-independent in the type mix: the caller may hand it any ordering and
-/// get the same hash, so a `GROUP BY` reshuffle never costs an LLM call.
+/// Hash of (space, document count, latest `indexed_at`, sorted type mix). The
+/// space is part of the key because two spaces can share a corpus shape; the
+/// type mix is order-independent.
 pub fn corpus_fingerprint(
     space_id: &str,
     document_count: i64,
@@ -422,12 +408,9 @@ Rules:\n\
     )
 }
 
-/// Build the starter payload, using the cache when the corpus has not changed shape.
-///
-/// `space_id` is the space of the chat the questions are for; a blank one means
-/// General. Everything the prompt and the fingerprint see is drawn from that
-/// space's documents. Reading the whole vault instead was the bug: a chat in a
-/// Movies space suggested questions about documents it is not allowed to read.
+/// Builds the starter payload, using the cache when the corpus has not changed
+/// shape. Everything the prompt and fingerprint see is drawn from `space_id`'s
+/// documents (blank means General).
 pub async fn generate_chat_starters_impl(
     runtime: &dyn ChatRuntime,
     space_id: Option<String>,
@@ -591,9 +574,7 @@ mod tests {
         assert_ne!(a, changed_indexed_at);
     }
 
-    /// The reported bug: one cached row was shown in every space, so a Movies
-    /// chat opened with questions about a patent library. Identical shape is
-    /// exactly the case where that happened.
+    /// Two spaces with an identical corpus shape get different fingerprints.
     #[test]
     fn test_two_spaces_of_the_same_shape_never_share_a_cache_row() {
         let mix = [("pdf".to_string(), 412), ("md".to_string(), 88)];

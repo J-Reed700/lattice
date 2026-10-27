@@ -1,12 +1,8 @@
-//! The one place a compaction job is built, plus the automatic trigger.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §7.1, §7.3, §12.
-//!
-//! Both entry points construct the job here: the user's `/compact` and the
-//! automatic trigger that fires when context assembly would otherwise drop
-//! unprocessed source. Two construction sites would mean two summary budgets and
-//! — worse — two `CompactionSlots` maps, and those slots are the only thing
-//! stopping one conversation from compacting twice at once.
+//! The one place a compaction job is built, plus the automatic trigger
+//! (design: `docs/design/2026-09-19-conversation-memory.md` §7.1, §7.3, §12).
+//! Both `/compact` and the trigger build the job here, so there is one summary
+//! budget and one `CompactionSlots` map, which stops a conversation compacting
+//! twice at once.
 
 use std::sync::Arc;
 
@@ -73,18 +69,10 @@ pub async fn build_job(
     )))
 }
 
-/// The summary pool for a model, from the shared budget rules.
-///
-/// Uses the same allocation the context assembler applies when it charges the
-/// prompt, so a summary this job accepts is one the next turn can actually
-/// carry. That allocation is taken after the turn's fixed costs, so they are
-/// charged here too: sized against an empty prompt, the pool was 10% of the
-/// whole input budget while the turn's was 10% of what the system prompt,
-/// tool schemas and question left, and on a small window an accepted summary
-/// no longer fit the next turn. A model too small to plan for falls back to a
-/// small floor rather than failing compaction outright: the job rejects an
-/// oversized summary anyway, so the floor costs a rejected candidate, not a
-/// wrong commit.
+/// The summary pool for a model, from the same allocation the context
+/// assembler charges, taken after a typical turn's fixed costs, so an accepted
+/// summary is one the next turn can carry. A model too small to plan for gets
+/// a small floor; the job rejects an oversized summary anyway.
 pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
     let fixed = llm
         .count_tokens(
@@ -164,21 +152,11 @@ pub async fn compact_for_turn(
 }
 
 /// Consolidation follows a committed answer and cannot change its success.
-///
-/// Its model calls go out at maintenance priority, so the backend's scheduler
-/// keeps them behind the user's next turn and out of the slot it holds for
-/// interactive work. The conversation's compaction slot coalesces queued
-/// requests through the durable watermark: a consolidation waiting behind
-/// another of the same conversation finds nothing left to do.
-///
-/// `summary_refold` is the turn's plan asking for the working summary to
-/// move, because its window had to drop turns the summary does not cover.
-/// Without it consolidation extracts and leaves the summary alone, so the
-/// next request still opens the same way.
-///
-/// The chat's model is resolved again rather than taken from the turn: the
-/// chat may have chosen another model by now, and the summary is sized for
-/// the turn that comes next.
+/// Its calls go out at maintenance priority, behind the user's next turn, and
+/// the compaction slot coalesces queued requests. `summary_refold` asks for
+/// the working summary to move; without it the summary is left alone. The
+/// chat's model is resolved again, since the summary is sized for the next
+/// turn.
 pub fn consolidate_after_turn(
     runtime: Arc<dyn ChatRuntime>,
     conversation_id: String,
@@ -258,9 +236,8 @@ mod tests {
         assert!(pool < empty_prompt_pool, "{pool} vs {empty_prompt_pool}");
     }
 
-    /// The one-at-a-time maintenance semaphore kept consolidation from crowding
-    /// out the next turn. The scheduler does that now, so consolidation must
-    /// queue as upkeep — while compaction the user is waiting on must not.
+    /// Consolidation queues as upkeep, while compaction the user is waiting on
+    /// does not.
     #[test]
     fn consolidation_queues_as_upkeep_and_a_waited_on_compaction_does_not() {
         use lattice_core::application::ports::llm_port::InferencePriority;

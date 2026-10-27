@@ -20,9 +20,8 @@ fn prompt(reason: Option<&str>, kb_attempted: bool) -> String {
         .build()
 }
 
-/// The turn this was written for: a space holding nothing, an answer that
-/// told the reader their documents had been searched and had nothing to
-/// offer, and a sources panel listing thirty-seven pages beneath it.
+/// A space holding nothing is not reported as documents searched that had
+/// nothing to offer.
 #[test]
 fn an_empty_space_is_not_reported_as_a_search_that_found_nothing() {
     let prompt = prompt(

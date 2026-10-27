@@ -1,26 +1,10 @@
-//! Condensing what a turn has read, so it can keep reading.
-//!
-//! Tool results pile up round after round until the window has no room for
-//! another, and the loop used to end there: it answered from whatever it had,
-//! however much the question still needed. LiteResearcher (COLM 2026)
-//! condenses earlier tool steps when its context fills, and with that memory a
-//! 64K window beat 128K without it on BrowseComp. Here the model rewrites the
-//! results it already has into one notes message that keeps every fact,
-//! figure, address and citation number, and the turn goes on with the room
-//! that frees.
-//!
-//! Everything the loop has added is condensed, the latest round included.
-//! Measured on Qwen3.5-9B (a hybrid model, which can only roll its cache back
-//! to a checkpoint): condensing the rounds before the latest diverged from the
-//! cached prompt mid-way and re-read 1,350 of 2,930 tokens, then the next
-//! round re-read the kept round as well; condensing everything re-read 646,
-//! and the next round only the 150 tokens of notes. The notes kept every fact
-//! and both citation numbers.
-//!
-//! Nothing the turn records is in the rewritten span: the sources and their
-//! citation numbers, the step cards and their links, the pages read all live
-//! outside the transcript, so an answer written after condensing cites as one
-//! written before. It is done at most twice a turn.
+//! Condensing what a turn has read, so it can keep reading. When tool results
+//! fill the window, the model rewrites everything the loop has added into one
+//! notes message that keeps every fact, figure, address and citation number.
+//! The latest round is condensed too, so a hybrid model's cache is not cut
+//! mid-way. Sources, citation numbers and step cards live outside the
+//! transcript, so an answer written after condensing cites as one written
+//! before. Done at most twice a turn.
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
@@ -37,10 +21,8 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-/// Share of the window the loop's own results may fill before they are
-/// condensed. Past this a round of page reads no longer fits beside them.
-/// LiteResearcher condenses only at the limit; condensing a little before it
-/// leaves the next round room for whole pages rather than scraps.
+/// Share of the window the loop's results may fill before they are condensed.
+/// Condensing before the limit leaves the next round room for whole pages.
 pub(super) const CONDENSE_AT_WINDOW_SHARE: f64 = 0.6;
 
 /// Each condensing makes the next round re-read the transcript after the
@@ -117,11 +99,9 @@ fn condensable_span(input: &[CompletionInput], loop_start: usize) -> Option<Rang
         .then_some(span)
 }
 
-/// Rewrite the loop's results so far into one notes message.
-///
-/// `Ok(None)` when it could not — no usable notes, or notes no shorter than
-/// what they would replace — and the transcript is left as it was. Only Stop
-/// and the turn's deadline are errors.
+/// Rewrites the loop's results so far into one notes message. `Ok(None)` when
+/// the notes are unusable or no shorter than what they replace; only Stop and
+/// the turn's deadline are errors.
 pub(super) async fn condense(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,

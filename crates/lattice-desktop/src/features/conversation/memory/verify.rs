@@ -1,19 +1,9 @@
-//! Semantic review of a validated patch (§6.3).
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §6.3.
-//!
-//! Deterministic validation proves a quote is real. It cannot tell a user's
-//! instruction from the user pasting someone else's instruction, and it cannot
-//! tell whether "use Rust instead" is about the same project as the earlier
-//! "use Python". So every new mandatory item and every proposed transition gets
-//! a second, structured look at the original passages.
-//!
-//! The direction of failure is fixed: when this step cannot be run, or answers
-//! something unparseable, the result is [`SemanticVerdict::Ambiguous`], never
-//! `Supported`. `Ambiguous` keeps a new mandatory requirement with its raw
-//! passages and keeps an old requirement in force while recording the conflict.
-//! The job refuses to commit an ambiguous optional addition, so an outage cannot
-//! turn praise, pasted text, or an assistant-derived detail into memory.
+//! Semantic review of a validated patch (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §6.3). Validation proves a
+//! quote is real, not whose instruction it is or what it is about, so every
+//! new item and proposed transition gets a structured look at the original
+//! passages. When review cannot run or answers unparseably, the verdict is
+//! [`SemanticVerdict::Ambiguous`], never `Supported`.
 
 use std::collections::HashMap;
 

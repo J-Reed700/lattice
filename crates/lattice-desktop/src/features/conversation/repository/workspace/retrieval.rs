@@ -92,14 +92,9 @@ impl ConversationRepository {
         Ok(catalog)
     }
 
-    /// The mean length, in characters, of the indexed passages of
-    /// `allowed_ids`: what one retrieved passage costs a prompt, measured on
-    /// this library rather than assumed. `None` when the scope has none.
-    ///
-    /// Read from the per-document totals the chunk triggers keep, so a turn
-    /// costs one row per document in scope rather than a pass over every
-    /// passage, and the scope is one bound value however many documents it
-    /// holds.
+    /// The mean length, in characters, of the indexed passages of `allowed_ids`,
+    /// from the per-document totals the chunk triggers keep; `None` when the scope
+    /// has none.
     pub async fn retrieval_mean_chunk_chars(
         &self,
         allowed_ids: &HashSet<String>,
@@ -302,16 +297,10 @@ impl ConversationRepository {
             .collect())
     }
 
-    /// Resolve one consistent search scope. Every space, General included,
-    /// searches only the documents assigned to it: a document filed into a named
-    /// space must never surface in a chat belonging to another one. General also
-    /// picks up documents that were never filed anywhere, so an unassigned import
-    /// stays findable instead of silently disappearing from every search.
-    ///
-    /// General used to mean "the whole vault", which let a document the user had
-    /// deliberately filed into one space leak into unrelated chats. This is the
-    /// single chokepoint every retrieval path derives its allow-list from, so the
-    /// rule is enforced here rather than trusted to each caller.
+    /// Resolves one consistent search scope: every space, General included,
+    /// searches only the documents assigned to it, and General also picks up
+    /// documents never filed anywhere. Every retrieval path derives its allow-list
+    /// from here.
     pub async fn retrieval_document_scope(
         &self,
         conversation_id: &str,
@@ -342,17 +331,9 @@ impl ConversationRepository {
         Ok(Some((space_id, ids)))
     }
 
-    /// The same rule, asked by space instead of by conversation.
-    ///
-    /// A file attached to a chat belongs to no space and is excluded here, in
-    /// the one statement every space-scoped path reads. `retrieval_document_scope`
-    /// adds back the asking conversation's own attachments.
-    ///
-    /// The chat starters need a space's documents before any conversation is
-    /// involved — they used to read the whole vault, so a Movies chat opened
-    /// with questions about a patent library filed somewhere else. Rather than
-    /// let that caller write its own membership SQL and drift, the rule stays
-    /// in this one statement and `retrieval_document_scope` reads it too.
+    /// The same rule, asked by space instead of by conversation. A chat's
+    /// attachment belongs to no space and is excluded here;
+    /// `retrieval_document_scope` adds back the asking conversation's own.
     pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>, AppError> {
         let ids = sqlx::query_scalar::<_, String>(
             "SELECT d.id FROM documents d
@@ -376,20 +357,10 @@ impl ConversationRepository {
         Ok(ids.into_iter().collect())
     }
 
-    /// The documents a chat may name, newest first.
-    ///
-    /// Derived from the chat's retrieval scope and then narrowed — never
-    /// widened — by a case-insensitive substring match on the file name. The
-    /// composer's `@` picker is the one place the user is told "these are the
-    /// documents this chat can use", so it has to be exactly the set retrieval
-    /// would search. A blank or unknown space means General, matching the
-    /// conversation default.
-    ///
-    /// With a `conversation_id` the answer comes from
-    /// [`Self::retrieval_document_scope`], so a chat can name the files
-    /// attached to it as well as the ones filed in its space. Without one it
-    /// falls back to the space alone, and attachments — which belong to no
-    /// space — are not on offer.
+    /// The documents a chat may name, newest first: its retrieval scope narrowed
+    /// by a case-insensitive file-name match, so the `@` picker offers exactly what
+    /// retrieval would search. A blank or unknown space means General; without a
+    /// `conversation_id`, attachments are not on offer.
     pub async fn space_documents(
         &self,
         space_id: Option<&str>,

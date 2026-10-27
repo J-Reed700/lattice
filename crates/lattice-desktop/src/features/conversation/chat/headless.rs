@@ -1,17 +1,8 @@
-//! A chat turn with no window attached, for the shipped-path evaluation.
-//!
-//! `examples/shipped_path_eval` has to measure the orchestrator the desktop
-//! runs — intent, routing, the corpus planner, the corrective retry, the tool
-//! loop, the grounding check and memory — not a reimplementation of it. The
-//! desktop reaches that orchestrator through a Tauri window, which a headless
-//! process does not have, so this is the one door it uses instead: the same
-//! [`run_turn`] the window command calls, with the stream delivered to a sink
-//! the caller owns.
-//!
-//! It takes the turn's dependencies as the feature's own [`ChatRuntime`] port,
-//! not the DI container: the caller builds the container (the example does, in
-//! `app::open`) and passes it in, so this module stays on the feature side of
-//! the layer boundary.
+//! A chat turn with no window attached, for the shipped-path evaluation: the
+//! same [`run_turn`] the window command calls, with the stream delivered to a
+//! sink the caller owns. It takes the feature's [`ChatRuntime`] port rather
+//! than the DI container, so this module stays on the feature side of the
+//! layer boundary.
 use super::ports::ChatRuntime;
 use super::turn::run_turn;
 use super::{ChatEventSink, ChatResponse, ToolPreferences};

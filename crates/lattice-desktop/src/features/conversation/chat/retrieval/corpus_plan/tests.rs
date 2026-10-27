@@ -170,9 +170,8 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     );
 }
 
-/// A chat's attachment belongs to no space, so it has no membership row. The
-/// keyword branch used to add a membership check on top of the allow-list and
-/// so never found an attachment in a named space; only vector search could.
+/// A chat's attachment belongs to no space, so it has no membership row; the
+/// keyword branch still finds it in a named space.
 #[tokio::test]
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
@@ -357,8 +356,7 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
             .unwrap(),
         None
     );
-    // A scope past SQLite's 32,766 bound variables used to fail outright;
-    // it is one bound value now.
+    // A scope past SQLite's 32,766 bound variables is one bound value.
     let mut wide: HashSet<String> = (0..40_000).map(|n| format!("doc-{n}")).collect();
     wide.insert("a".to_string());
     assert_eq!(
@@ -1075,15 +1073,10 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
     assert_eq!(stub.calls(), 1);
 }
 
-/// A planner stub that budgets the way the sidecar adapter does and then bills
-/// the way llama-server really does.
-///
-/// `count_tokens` is the adapter's estimate, four characters per token. The
-/// server's own tokenizer is less generous on a catalog full of punctuation and
-/// opaque UUIDs — closer to three and a half — and that gap is what produced
-/// `request (8610 tokens) exceeds the available context size (8192 tokens)` in
-/// a real session. Modelling both rates is what makes an overflow visible here
-/// as a failed assertion instead of a 400 at runtime.
+/// A planner stub that budgets as the sidecar adapter does (four characters a
+/// token) and bills as llama-server does (closer to three and a half on
+/// catalog JSON), so an overflow fails an assertion here instead of a 400 at
+/// runtime.
 fn server_tokens(text: &str) -> usize {
     (text.len() * 2).div_ceil(7)
 }
@@ -1168,11 +1161,8 @@ fn wide_catalog(count: usize) -> Vec<CorpusDocument> {
         .collect()
 }
 
-/// The reported failure: llama-server rejected the planning call with
-/// `request (8610 tokens) exceeds the available context size (8192 tokens)`, so
-/// corpus planning and the corrective retry both fell back silently. The
-/// catalog was sized against the question alone, leaving the system prompt and
-/// the conversation excerpt to overflow the window after the fact.
+/// The catalog is sized with the system prompt and the conversation excerpt
+/// counted, so the planning call stays inside an 8192-token window.
 #[tokio::test]
 async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
     let window = 8192;
@@ -1235,9 +1225,8 @@ async fn a_correction_block_is_charged_against_the_same_window() {
     );
 }
 
-/// The corrective planner was shown the first pass's top five titles and no
-/// word of the rest. It is shown as many, best first, as its share of the
-/// prompt holds, and the rest are counted.
+/// The corrective planner is shown as many of the first pass's titles, best
+/// first, as its share of the prompt holds, and the rest are counted.
 #[test]
 fn a_correction_shows_the_titles_its_room_holds_and_counts_the_rest() {
     let stub = NarrowWindowStub::new(8192);

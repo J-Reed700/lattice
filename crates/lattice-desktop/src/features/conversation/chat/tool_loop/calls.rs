@@ -1,12 +1,7 @@
-//! The calls one round asked for.
-//!
-//! A round that asked for three pages used to read them one after another, and
-//! a page read is mostly waiting on someone else's server: the turn sat idle
-//! for the sum of every fetch while a single-slot local model had nothing to
-//! do. Calls that only read now run together, a few at a time; anything else
-//! runs alone, in the order the model wrote it. Results go back in call order
-//! whatever order they finish in, so the transcript the next round replays —
-//! and the cached prefix it reuses — never depends on timing.
+//! The calls one round asked for. Calls that only read run together, a few at
+//! a time; anything else runs alone, in the order the model wrote it. Results
+//! go back in call order whatever order they finish in, so the replayed
+//! transcript and its cached prefix never depend on timing.
 
 use super::call_labels::{
     available_tool_names, canonical_tool_name, is_tool_allowed, recalled_page_notice,
@@ -59,17 +54,9 @@ use tracing::{info, warn};
 pub(super) const MAX_CONCURRENT_CALLS: usize = 4;
 
 /// Whether a tool only reads, so it may run alongside the other calls of its
-/// round.
-///
-/// Named one by one rather than assumed: a tool added later runs alone until
-/// someone decides otherwise, because a write run beside the reads it should
-/// have followed is a bug no test of the write itself would catch. The
-/// conversation-history tools stay sequential although they only read: they
-/// share one memo per turn whose answers depend on what was already read, so
-/// together their results would depend on which finished first. A custom
-/// query tool is the user's own endpoint and could do anything. `find_image`
-/// writes: it stores pictures and numbers their refs after the ones the turn
-/// already holds, so two at once could hand out the same `img-N`.
+/// round. Named one by one so a new tool runs alone until decided otherwise.
+/// History tools share one per-turn memo, a custom query tool could do
+/// anything, and `find_image` numbers `img-N` refs, so those stay sequential.
 pub(super) fn runs_alongside_others(tool: &str) -> bool {
     matches!(
         tool,
@@ -86,14 +73,8 @@ pub(super) fn runs_alongside_others(tool: &str) -> bool {
     ) || is_explorer_tool(tool)
 }
 
-/// The page a call reads, when the call is a page read.
-///
-/// Only `fetch_url_content` asks for a page's text, so only it is answered
-/// from the turn's page memory, kept apart from a second read of the same page
-/// and recorded as a failure when it fails. `follow_links` also names a page,
-/// one the model has usually read already, but it asks for the page's links:
-/// memory of the text cannot answer it, and its failure says nothing about
-/// whether the text can be read.
+/// The page a call reads, when the call is a `fetch_url_content`. `follow_links`
+/// names a page too, but asks for its links, which page memory cannot answer.
 fn page_read_target<'v>(tool: &str, arguments: &'v serde_json::Value) -> Option<&'v str> {
     if tool == "fetch_url_content" {
         fetch_memory::fetch_target(arguments)
@@ -133,16 +114,14 @@ pub(super) struct CallScope<'a> {
 /// The turn's tool calls, and what they have learned so far.
 pub(super) struct ToolCalls<'a> {
     scope: CallScope<'a>,
-    /// Pages are remembered for the whole turn, starting from what retrieval
-    /// already opened, so a round is not spent asking for pages the prompt
-    /// already carries.
+    /// Pages remembered for the whole turn, starting from what retrieval already
+    /// opened.
     pub(super) fetch_memory: FetchMemory,
     pub(super) queries: Vec<String>,
     pub(super) fetched: Vec<String>,
-    /// One memo for the whole turn: a repeated read of a range already
-    /// exhausted answers with a reference instead of the same text twice.
-    /// Locked only so a round's calls can share `self`; history calls never
-    /// run together.
+    /// One memo for the whole turn, so a repeated read of an exhausted range answers
+    /// with a reference. Locked only so a round's calls can share `self`; history
+    /// calls never run together.
     history_memo: tokio::sync::Mutex<HistoryToolMemo>,
     document_evidence: DocumentEvidence,
     document_progress: DocumentProgress,
@@ -206,12 +185,9 @@ pub(super) async fn run_tool_bounded<T>(
     }
 }
 
-/// Where the batch of calls that starts at `start` ends.
-///
-/// A call that may not run alongside others is a batch of its own, so it
-/// starts after everything before it has finished and before anything after
-/// it begins. A second read of the same page waits for the first, so it is
-/// answered from memory exactly as it would have been one call at a time.
+/// Where the batch of calls that starts at `start` ends. A call that may not run
+/// alongside others is a batch of its own; a second read of the same page waits
+/// for the first, so memory answers it as it would one call at a time.
 fn batch_end(calls: &[RequestedCall], start: usize) -> usize {
     match calls.get(start) {
         Some(first) if runs_alongside_others(canonical_tool_name(&first.name)) => {}
@@ -336,10 +312,8 @@ impl<'a> ToolCalls<'a> {
         timings: &mut ToolLoopTimingMetrics,
     ) -> Planned<'a> {
         timings.tool_call_count = timings.tool_call_count.saturating_add(1);
-        // What is left of the window, shared between the calls this round
-        // still has to answer. A fixed cap let one round of page fetches
-        // outgrow a small model's entire context, and cut every result on a
-        // large one; the window alone decides now.
+        // What is left of the window, shared between the calls this round still has
+        // to answer.
         let allowance = tool_result_allowance(
             self.scope.window_chars,
             chars_in_flight(input) + self.scope.tool_schema_chars + reserved,
@@ -384,9 +358,8 @@ impl<'a> ToolCalls<'a> {
         }
         let mut reread_from = None;
         if let Some(url) = page_read_target(tool, &call.arguments) {
-            // A URL this turn already failed on costs a request to learn
-            // nothing. Answer it from memory so the round can still spend its
-            // time somewhere useful.
+            // A URL this turn already failed on is answered from memory rather than
+            // requested again.
             if let Some(reason) = self.fetch_memory.previous_failure(url) {
                 warn!(
                     requested_function = call.name.as_str(),
@@ -774,9 +747,8 @@ impl<'a> ToolCalls<'a> {
 }
 
 /// A `get_document` call whose part is sized to this call's allowance, so the
-/// part the tool returns is shown whole. Parts are addressed by character
-/// offset and each result names where the next starts, so parts of different
-/// sizes neither overlap nor skip text. A model asking for less gets less.
+/// part is shown whole. Parts are addressed by character offset, so parts of
+/// different sizes neither overlap nor skip text.
 fn document_part_sized_to(arguments: &serde_json::Value, allowance: usize) -> serde_json::Value {
     let mut arguments = arguments.clone();
     let room = document_page_room(allowance).max(1);

@@ -1,25 +1,10 @@
-//! The files a reader attaches to a message.
-//!
-//! Attaching a file imports it into the library, which is not the same thing
-//! as the turn reading it. Those two were confused until this module existed:
-//! the file was imported and indexed, its name was stamped on the message, and
-//! whether the model ever saw a word of it came down to whether ordinary
-//! retrieval happened to rank it. On a turn with web search forced on, the
-//! vault is not searched at all — so "here it is, are you not receiving it?"
-//! was answered with "nothing came through", with the file sitting indexed in
-//! the library the whole time.
-//!
-//! So attachments do not go through retrieval. The documents this turn names
-//! are loaded, carried into the prompt whole as far as the window allows, and
-//! cited like any other source. Retrieval still runs alongside for whatever
-//! else the question needs; these are simply always there.
+//! The files a reader attaches to a message. Attachments do not go through
+//! retrieval: the documents this turn names are loaded, carried into the
+//! prompt whole as far as the window allows, and cited like any other source.
 //!
 //! Unlike the composer's `@` focus, these ids are not intersected with the
-//! conversation's space scope. Focus names documents from a picker that can
-//! show more than this chat may read, so it has to fail closed; an attachment
-//! is a file the reader is importing into this chat as they send, and the
-//! import puts it in this chat's space before the message goes out. Failing
-//! closed here would only bring back the bug above in a quieter form.
+//! space scope: the import puts an attachment in this chat's space before the
+//! message goes out, so failing closed would only drop a file the reader sent.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -69,11 +54,8 @@ pub(super) struct TurnAttachments {
 }
 
 impl TurnAttachments {
-    /// Files that reached the message but not the library in time — an import
-    /// still running when the message was sent, or one that failed.
-    ///
-    /// They are named in the prompt all the same. A file the reader can see on
-    /// their own message must never be answered as a file that never arrived.
+    /// Files that reached the message but not the library in time (an import still
+    /// running, or one that failed). They are named in the prompt all the same.
     pub(super) fn still_importing(names: &[String]) -> Self {
         Self {
             documents: Vec::new(),
@@ -85,9 +67,8 @@ impl TurnAttachments {
         self.documents.is_empty() && self.unreadable.is_empty()
     }
 
-    /// The ids carried whole. Retrieval passages from these documents are
-    /// dropped: the whole text is already in the prompt, and a second copy of
-    /// three paragraphs of it buys nothing but tokens and a duplicate footnote.
+    /// The ids carried whole. Retrieval passages from these documents are dropped:
+    /// the whole text is already in the prompt.
     pub(super) fn carried_document_ids(&self) -> HashSet<String> {
         self.documents
             .iter()
@@ -120,13 +101,8 @@ impl TurnAttachments {
     }
 
     /// A short digest of what the attachments are about, for the utility model
-    /// that rewrites this turn into a web query.
-    ///
-    /// "Please reference this previous chat that I have attached, to do
-    /// research" says nothing about the subject — the subject is in the file.
-    /// Rewriting from the message alone turned a question about growing food
-    /// indoors in Chicago into seven searches about reviewing chat logs,
-    /// eDiscovery and Microsoft Teams. The rewriter needs to see what arrived.
+    /// that rewrites this turn into a web query: the subject is often in the file,
+    /// not the message.
     pub(super) fn subject_digest(&self, max_chars: usize) -> Option<String> {
         if self.documents.is_empty() {
             return None;
@@ -151,12 +127,9 @@ impl TurnAttachments {
             .sum()
     }
 
-    /// The prompt section, numbered with the citation ids the sources ended up
-    /// with. Call after `assign_citation_ids`: an attachment the model is told
-    /// to cite as `[2]` has to be the source the reader's `[2]` opens.
-    ///
-    /// `sources` is the turn's final list rather than this struct's copy,
-    /// because numbering happens over that list.
+    /// The prompt section, numbered with the citation ids the turn's final
+    /// `sources` ended up with. Call after `assign_citation_ids`, so the model's
+    /// `[2]` is the source the reader's `[2]` opens.
     pub(super) fn render(&self, sources: &[SourceDto]) -> Option<String> {
         if self.is_empty() {
             return None;
@@ -204,12 +177,9 @@ arrived and could not be read — do not claim no file was attached.\n",
     }
 }
 
-/// Load this turn's attachments and carry them as far as `token_budget` allows.
-///
-/// Documents are read in the order the reader attached them, each taking an
-/// even share of what is left, so the first attachment cannot starve the last.
-/// Unused budget rolls forward: two short files and one long one leave the long
-/// one nearly everything.
+/// Loads this turn's attachments and carries them as far as `token_budget`
+/// allows, in attach order, each taking an even share of what is left so the
+/// first cannot starve the last.
 pub(super) async fn build_turn_attachments(
     container: &dyn ChatStorage,
     conv_service: &Arc<dyn ConversationServiceTrait>,
@@ -485,8 +455,7 @@ mod tests {
         );
     }
 
-    /// The failure this whole module exists for: a file that arrived must
-    /// never be reported as a file that did not.
+    /// A file that arrived must never be reported as one that did not.
     #[test]
     fn an_unreadable_attachment_is_still_named() {
         let rendered = attachments(Vec::new(), vec!["scan.pdf".to_string()])

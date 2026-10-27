@@ -7,13 +7,10 @@ use lattice_core::application::ports::llm_port::{
 };
 use std::collections::HashSet;
 
-/// The characters the prompt may fill this turn: the plan's input budget, at
-/// a rate of characters per token this turn's own prompts correct.
-///
-/// The rate starts as the backend's calibrated average, which lags behind
-/// the content and is floored at two characters a token. Chinese or Japanese
-/// pages run nearer one, so a window judged by the average was overrun before
-/// condensing began. Every count of this turn's prompt replaces the rate.
+/// The characters the prompt may fill this turn: the plan's input budget at a
+/// characters-per-token rate that starts at the backend's calibrated average
+/// and is replaced by every count of this turn's prompt, since dense scripts
+/// such as Chinese run nearer one character a token than the average.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Window {
     input_budget: usize,
@@ -97,17 +94,10 @@ pub(super) fn chars_in_flight(input: &[CompletionInput]) -> usize {
         .sum()
 }
 
-/// How many characters one tool result may take, given the model's window,
-/// what is already in it, and how many results this round has still to fit.
-///
-/// The window alone decides: there is no configured ceiling on top of it, so a
-/// large window carries a long result whole. A result longer than its share is
-/// shown in part and says how to read on (see `format_tool_result`).
-///
-/// One share of what is left is always kept back for the round after this
-/// one. A lone page read that took the whole window left the next round
-/// nothing to read with: it had to condense or stop, so one long page ended
-/// the research. The rest of a long page is a further call by offset.
+/// How many characters one tool result may take, given the window, what is
+/// already in it, and how many results this round still has to fit. The window
+/// alone decides; a longer result is shown in part (see `format_tool_result`).
+/// One share is always kept back so the next round has room to read with.
 pub(super) fn tool_result_allowance(
     window_chars: usize,
     chars_in_flight: usize,
@@ -127,14 +117,10 @@ pub(super) fn tool_result_allowance(
 /// Said in place of a result taken out of a prompt that no longer fit.
 pub(super) const SHED_RESULT: &str = "This result was taken out: with it, the prompt no longer fit in the context window. Answer from the results that are still here, and say so if the answer needed this one.";
 
-/// Take the newest tool results after `loop_start` out of `input`, newest
-/// first, until about `excess` characters are freed, leaving [`SHED_RESULT`]
-/// in each one's place so every call still has its answer.
-///
-/// The ids of the results shed, empty when nothing could be. Each call frees
-/// what it can or nothing, so a caller that sheds until the prompt fits stops:
-/// once every result is shed, the prompt is the planned request, which was
-/// planned to fit.
+/// Takes the newest tool results after `loop_start` out of `input` until about
+/// `excess` characters are freed, leaving [`SHED_RESULT`] in each one's place
+/// so every call keeps an answer. Returns the shed ids; once every result is
+/// shed the prompt is the planned request, which fits.
 pub(super) fn shed_newest_results(
     input: &mut [CompletionInput],
     loop_start: usize,

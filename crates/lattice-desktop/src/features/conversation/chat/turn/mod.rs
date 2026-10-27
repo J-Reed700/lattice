@@ -71,10 +71,7 @@ pub(super) struct TurnRequest {
     pub(super) model: Option<ModelRef>,
 }
 
-/// Run one chat turn.
-///
-/// Maintains persistent conversation history with token-aware context window
-/// management, and creates the conversation when none is named. A deep
+/// Runs one chat turn, creating the conversation when none is named. A deep
 /// research turn runs as a job and this waits for its answer.
 ///
 /// # Errors
@@ -83,10 +80,6 @@ pub(super) struct TurnRequest {
 /// * `AppError::InvalidInput` - Empty or invalid message, or a message the
 ///   model's window cannot hold
 /// * `AppError::Database` - Database operation failed
-///
-/// # Security
-///
-/// - **Input Validation**: Message length and content validation
 pub(super) async fn run_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,

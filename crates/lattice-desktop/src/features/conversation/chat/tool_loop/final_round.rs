@@ -1,24 +1,10 @@
-//! The round that has to answer.
-//!
-//! The last round used to withdraw the tools. llama.cpp renders the tool
-//! schemas into the system message, so a request without them differs from
-//! the first token on and the server read the whole prompt again: on a hybrid
-//! model at the end of a long research turn, minutes of prefill to write one
-//! answer. The tools now stay exactly as they were and calls are forbidden
-//! instead.
-//!
-//! Where the instruction goes matters as much. Qwen 3.5's template renders an
-//! empty thinking block on every assistant turn after the last user message,
-//! so a new user message strips it from the turns before and the prompt
-//! changes from the first tool call on. Measured on Qwen3.5-9B with a
-//! 3,800-token prompt: a user-message instruction reused 363 cached tokens, the
-//! same words at the end of the last tool result reused 3,263. So the
-//! instruction is said there, and only becomes a message of its own when the
-//! prompt does not end with a result.
-//!
-//! A model can still call anyway, or write the call into its text (Qwen 3.5
-//! does, with thinking on). Then it is asked once more with no tools at all:
-//! that request pays the prefill, but the turn gets its answer.
+//! The round that has to answer. The tools stay in the prompt with calls
+//! forbidden, because llama.cpp renders tool schemas into the system message
+//! and withdrawing them would invalidate the cached prompt. The instruction is
+//! said at the end of the last tool result rather than as a new user message:
+//! Qwen 3.5's template then strips earlier turns' empty thinking blocks, which
+//! also changes the cached prefix. A model that calls anyway is asked once more
+//! with no tools at all.
 
 use super::written_calls::WrittenCalls;
 use lattice_core::application::ports::llm_port::{
@@ -84,10 +70,9 @@ pub(super) fn ask_for_answer(request: &mut CompletionRequest, last_round: LastRo
     say_last(&mut request.input, last_round.instruction());
 }
 
-/// The answering round when the answer may think: the same instruction, and
-/// no tools in the prompt at all. Measured on Qwen3.5-9B, thinking with the
-/// tools kept and calls forbidden wrote the call as text and answered
-/// nothing, so a thinking answer pays the prefill instead.
+/// The answering round when the answer may think: the same instruction and no
+/// tools in the prompt, since a thinking model with calls forbidden writes the
+/// call as text instead.
 pub(super) fn ask_for_answer_without_tools(request: &mut CompletionRequest, last_round: LastRound) {
     say_last(&mut request.input, last_round.instruction());
     request.tools.clear();
@@ -112,14 +97,10 @@ pub(super) fn insist_on_answer(request: &mut CompletionRequest, last_round: Last
 /// Sets an instruction off from the result it is appended to.
 const INSTRUCTION_SEPARATOR: &str = "\n\n---\nFrom me, not part of the result above: ";
 
-/// Say `instruction` as the last thing the model reads, changing nothing
-/// before it: at the end of the last tool result, or, when the prompt does
-/// not end with one, as a user message.
-///
-/// Never as a system message: llama.cpp chat templates take one, so a late one
-/// is merged into the top of the prompt, tens of thousands of tokens before
-/// the model reads its last tool result. From there it was not seen, and the
-/// model went on writing calls as text.
+/// Says `instruction` as the last thing the model reads, changing nothing
+/// before it: at the end of the last tool result, or as a user message when
+/// the prompt does not end with one. Never as a system message: llama.cpp
+/// templates merge a late one into the top of the prompt.
 pub(super) fn say_last(input: &mut Vec<CompletionInput>, instruction: &str) {
     match input.last_mut() {
         Some(CompletionInput::ToolResult { output, .. }) => {
@@ -259,14 +240,10 @@ fn names_a_call(value: &Value) -> bool {
     named && has_arguments
 }
 
-/// Streams a round's text up to the first tool call written into it, and
-/// keeps the call back: the last round cuts it, and a round that may call
-/// runs it or shows it after all. A chunk can end partway through a marker,
-/// so a tail that could still become one is held until the next chunk
-/// settles it. In the last round a reply that opens like JSON is held whole,
-/// because a call written as JSON can only be told from an answer once it is
-/// complete. A round that may call streams one: it runs no JSON-only reply,
-/// and an answer that opens with a code fence would otherwise not stream.
+/// Streams a round's text up to the first tool call written into it and holds
+/// the call back. A tail that could still become a marker waits for the next
+/// chunk. In the last round only, a reply that opens like JSON is held whole,
+/// since a JSON call can only be told from an answer once it is complete.
 pub(super) struct LeakedCallFilter {
     active: bool,
     held: String,

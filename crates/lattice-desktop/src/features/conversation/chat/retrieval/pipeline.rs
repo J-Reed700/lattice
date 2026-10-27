@@ -12,14 +12,10 @@ use lattice_core::domain::qa::hyde::HyDEInterpretation;
 mod external_lookup;
 mod web_pages;
 
-/// Retrieval for one turn.
-///
-/// Cancellation is checked at the phase boundaries rather than by racing the
-/// phases themselves: an external search or a corrective retry dropped
-/// mid-await would abandon work the pipeline cannot clean up. A cancelled turn
-/// returns whatever the outcome holds so far, and the caller — which re-checks
-/// the flag the moment this returns — turns that into the cancellation error
-/// without ever reading it.
+/// Retrieval for one turn. Cancellation is checked at phase boundaries rather
+/// than by racing the phases, since a search dropped mid-await would abandon
+/// work the pipeline cannot clean up; the caller turns a cancelled outcome
+/// into the cancellation error.
 pub(super) async fn run_retrieval_pipeline(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
@@ -143,9 +139,8 @@ pub(super) async fn run_retrieval_pipeline(
         )
         .await;
     }
-    // What the follow-up document takes is not there for the passages and
-    // pages sized below. Left uncharged, the document filled the budget they
-    // were sized from, and the cut that followed took every one of them.
+    // The follow-up document is charged before the passages and pages are sized
+    // from what is left.
     let mut evidence = evidence;
     if let Some((document, _)) = &outcome.followup_context {
         evidence.charge(llm.count_tokens(&document.render_for_count()));
@@ -257,10 +252,8 @@ pub(super) async fn run_retrieval_pipeline(
         }
     }
 
-    // Only when the turn really did answer without the vault. Keyword search
-    // can still return passages with the embedder down, and telling the reader
-    // "answered without your documents" while citing three of them is worse
-    // than saying nothing.
+    // Only when the turn really answered without the vault: keyword search can
+    // still return passages with the embedder down.
     if let Some(reason) = embedding_unavailable_reason {
         if outcome.sources.is_empty() {
             outcome.kb_unavailable_reason.get_or_insert(reason);
@@ -397,11 +390,8 @@ pub(super) async fn run_retrieval_pipeline(
     outcome
 }
 
-/// Borrowed inputs of the wiki/web phase, shared so the phase can run beside
-/// KB retrieval without copying turn state.
-/// Below this many characters of extracted text, a page is not carrying an
-/// article — it is a cookie wall, a paywall stub or pure navigation — and the
-/// search snippet says as much in less space.
+/// Below this many characters of extracted text a page is not an article (a
+/// cookie wall, a paywall stub or navigation), and the snippet says as much.
 const MIN_USEFUL_PAGE_CHARS: usize = 400;
 
 /// One web result's page, as much of it as the prompt had room for.
@@ -502,10 +492,7 @@ pub(super) struct ExternalSearchResult {
     pub(super) queries: Vec<String>,
 }
 
-/// How many results a search came back with, in the register of the step's
-/// label. Zero is said outright: a search that found nothing is not the same as
-/// a search that did not run.
-/// Merge wiki results first: citations are appended, and the wiki context is
+/// Merges wiki results first: citations are appended, and the wiki context is
 /// used only while no web context exists.
 pub(super) fn attach_wiki_results(
     outcome: &mut RetrievalPipelineOutcome,
@@ -527,13 +514,9 @@ pub(super) fn attach_wiki_results(
     }
 }
 
-/// Merge web results after any wiki results: citations are appended, and the
-/// web context follows whatever context is already there.
-/// What the prompt says about one web result's page.
-///
-/// Says outright whether the text is the whole page. Left unsaid, a model that
-/// wants detail assumes there is more and spends a generation round fetching a
-/// page it already has; told a page failed, it does not try that page again.
+/// What the prompt says about one web result's page. It says outright whether
+/// the text is the whole page, so the model neither fetches a page it has nor
+/// retries one that failed.
 fn render_page_body(page: Option<&PageOutcome>) -> String {
     match page {
         Some(PageOutcome::Read(page)) => match page.clipped_at {

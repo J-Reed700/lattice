@@ -1,11 +1,8 @@
-//! Capturing cited pages after the answer is on screen.
-//!
-//! A cited search snippet whose page the turn never read is captured by
-//! reading the page, and one slow site held the finished answer back until it
-//! answered. So the turn persists the answer with a pending marker and
-//! returns, and this task reads the pages: it archives each one, patches the
-//! message's sources with the snapshots, and tells the window. The grounding
-//! check reads the archived pages, so it starts once the capture is done.
+//! Capturing cited pages after the answer is on screen. A cited search
+//! snippet whose page the turn never read is captured by reading the page, so
+//! the turn persists the answer with a pending marker and returns; this task
+//! archives each page, patches the message's sources, tells the window, then
+//! starts the grounding check.
 
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
@@ -78,12 +75,9 @@ impl CitationCapture {
     }
 
     async fn run(mut self, cancel: tokio_util::sync::CancellationToken) {
-        // Concurrent reads keep capture latency close to one read rather than
-        // one per citation. Every distinct cited URL gets an attempt, while at
-        // most four requests are active at once. `read_page` validates URLs and
-        // applies the web client's own network policy: its redirect rules, the
-        // per-site queue wait, the request and body timeouts and the browser
-        // fallback's limit. No second clock is wrapped around it.
+        // Read concurrently, at most four at once. `read_page` validates URLs and
+        // applies the web client's own network policy and timeouts, so no second
+        // clock is wrapped around it.
         let reads = std::mem::take(&mut self.pages).into_iter().map(|page| {
             let reader = self.runtime.page_reader();
             async move {

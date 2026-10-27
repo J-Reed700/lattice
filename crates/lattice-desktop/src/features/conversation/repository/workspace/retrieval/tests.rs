@@ -33,9 +33,7 @@ async fn scope_of(repo: &ConversationRepository, conversation: &str) -> HashSet<
         .1
 }
 
-/// The reported bug: documents filed into a named space were reachable from
-/// a General chat, so a question about one subject was answered with another
-/// subject's library.
+/// Documents filed into a named space are not reachable from a General chat.
 #[tokio::test]
 async fn a_document_filed_into_a_named_space_never_reaches_a_general_chat() {
     let repo = scope_fixture().await;
@@ -74,9 +72,8 @@ async fn a_named_space_sees_only_its_own_members() {
         repo.space_document_scope("patent").await.unwrap(),
         ["filed_patent".to_string(), "filed_both".to_string()].into()
     );
-    // A chat in that space reaches the same documents plus the files
-    // attached to it — which are in no space, and are why the two answers
-    // are no longer identical.
+    // A chat in that space reaches the same documents plus the files attached
+    // to it, which are in no space.
     assert_eq!(
         scope_of(&repo, "patent").await,
         [
@@ -97,15 +94,10 @@ async fn a_document_without_searchable_text_is_in_no_scope() {
     assert!(!scope_of(&repo, "patent").await.contains("unindexed"));
 }
 
-/// The chat starters ask by space, with no conversation to ask through.
-/// Both doors must open on the same room — on the filed documents, which
-/// are the only ones a space has.
-///
-/// The one deliberate difference: a conversation additionally reaches the
-/// files attached to it. Those belong to no space, so the space door cannot
-/// show them and must not. Take them out and the two answers have to agree
-/// exactly, which is what keeps the starters from drifting away from what a
-/// chat in that space can actually read.
+/// The space scope and a chat's scope agree on the filed documents, so the
+/// starters never drift from what a chat in that space can read. The one
+/// deliberate difference is a chat's own attachments, which belong to no
+/// space.
 #[tokio::test]
 async fn asking_by_space_gives_the_same_scope_as_asking_through_a_conversation() {
     let repo = scope_fixture().await;
@@ -190,9 +182,7 @@ async fn picker_fixture() -> ConversationRepository {
     ConversationRepository::new(pool)
 }
 
-/// The picker says "these are the documents this chat can use". It has to
-/// be the same set retrieval would search, or the user pins a chat to a
-/// file it then cannot answer from.
+/// The picker offers exactly the set retrieval would search.
 #[tokio::test]
 async fn the_picker_offers_only_what_the_space_can_search() {
     let repo = picker_fixture().await;
@@ -213,8 +203,7 @@ async fn the_picker_offers_only_what_the_space_can_search() {
 }
 
 /// Asked on a chat's behalf, the picker offers that chat's own attachments
-/// too — otherwise a file you attached on turn one cannot be named on turn
-/// three, though retrieval can still read it.
+/// too.
 #[tokio::test]
 async fn the_picker_offers_the_asking_chat_its_own_attachments() {
     let repo = picker_fixture().await;

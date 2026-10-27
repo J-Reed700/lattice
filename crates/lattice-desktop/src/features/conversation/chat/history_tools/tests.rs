@@ -1,12 +1,7 @@
-//! What the history recovery path guarantees.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §9, §16.5.
-//!
-//! These run against real temporary SQLite databases built from the production
-//! migration, because the parts most worth testing live in the schema: the
-//! shared FTS index that also holds titles and bookmark notes, the ownership
-//! column that keeps two conversations apart, and the trigger that fills the
-//! index at all. A fake port would assert that this module calls itself.
+//! What the history recovery path guarantees (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §9, §16.5). These run on
+//! real temporary SQLite databases from the production migration, since the
+//! shared FTS index, the ownership column and the trigger most need testing.
 
 use super::recall::{build_recall_query, exact_identifiers};
 use super::*;
@@ -1266,8 +1261,8 @@ async fn retrieval_diagnostics_report_ids_and_counts_only() {
     );
 }
 
-/// Groups used to stop at six whatever the budget. They now fill it: every
-/// match fits 64 KiB here, so every one is carried.
+/// Groups fill the budget: every match fits 64 KiB here, so every one is
+/// carried.
 #[tokio::test]
 async fn passage_groups_fill_the_budget_rather_than_a_fixed_count() {
     let pool = migrated_pool().await;
@@ -1510,8 +1505,8 @@ async fn a_message_longer_than_the_recall_budget_is_cut_and_marked() {
         .contains("more bytes of this message are not shown"));
 }
 
-/// A search used to stop at its page and say only that more may exist. Each
-/// page now names where the next starts, and the last says there is none.
+/// Each page of a search names where the next starts, and the last says there
+/// is none.
 #[tokio::test]
 async fn a_search_pages_through_every_match_by_offset() {
     let pool = migrated_pool().await;

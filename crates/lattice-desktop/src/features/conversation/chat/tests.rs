@@ -179,9 +179,8 @@ fn a_corrective_pass_is_reported_with_its_reasons() {
     );
 }
 
-/// Byte-slicing a string at a fixed offset panics when that offset falls
-/// inside a multi-byte character. Any first chat message over 50 bytes
-/// containing non-ASCII text used to bring down the command handler.
+/// Byte-slicing a string at a fixed offset panics inside a multi-byte
+/// character, so titles are cut by characters.
 #[test]
 fn generate_title_does_not_panic_on_multibyte_input() {
     let cases = [
@@ -270,9 +269,8 @@ fn test_search_flags_respect_followup_turn_mode() {
     assert!(flags.force_followup_mode);
 }
 
-/// The reported bug: a journal synthesis asked for `knowledge_base: false`
-/// and was still handed another space's documents, because that flag only
-/// declines to force a search. Closed has to beat every other preference.
+/// `knowledge_base: false` only declines to force a search; closed book has to
+/// beat every other preference.
 #[test]
 fn a_closed_book_turn_cannot_be_reopened_by_any_other_preference() {
     let prefs = ToolPreferences {
@@ -618,9 +616,7 @@ fn a_web_search_the_user_asked_for_stays_forced() {
 }
 
 /// Each turn's flags start from its own preferences, which never carry a
-/// fallback, and the merge reads only this turn's intent. A follow-up the
-/// intent step does not send to the web does not go there because an
-/// earlier turn did.
+/// fallback, so a follow-up does not reach the web because an earlier turn did.
 #[test]
 fn a_follow_up_inherits_no_web_fallback_from_an_earlier_turn() {
     for prefs in [

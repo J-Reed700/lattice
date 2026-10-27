@@ -4,17 +4,9 @@ use super::super::{ChatEventSink, ChatStreamEventDto};
 use lattice_core::shared::error::Result;
 use tracing::warn;
 
-/// Emits `llm-stream` events tagged with the turn they belong to.
-///
-/// `llm-stream` is a single global Tauri channel with more than one producer
-/// (this tool loop and the QA service), and the payloads previously carried no
-/// identity at all. Any consumer therefore had to accept every event on the
-/// channel, so a second concurrent generation — a query rewrite running during
-/// a chat turn, or a resend whose predecessor's listener was still attached —
-/// interleaved its tokens into the wrong bubble.
-///
-/// Tagging every emit with `conversation_id` and a per-turn `request_id` lets
-/// each consumer keep only what is addressed to it.
+/// Emits `llm-stream` events tagged with their conversation and turn.
+/// `llm-stream` is one global channel with several producers (this loop and
+/// the QA service), so each consumer keeps only the events addressed to it.
 pub(super) struct StreamEmitter<'a> {
     sink: &'a ChatEventSink,
     conversation_id: String,

@@ -1,48 +1,16 @@
-//! Extraction and compaction orchestration for bounded conversation memory.
+//! Extraction and compaction orchestration for bounded conversation memory
+//! (design: `docs/design/2026-09-19-conversation-memory.md` §6.3, §7, §8, §12,
+//! §15): the prompts, paging and segmentation, the extract and review calls,
+//! the working-summary fold and the single commit. Validation lives in
+//! [`lattice_core::domain::conversation::memory`] and the atomic write behind
+//! [`ConversationMemoryPort`]; this module never re-decides them.
 //!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §6.3, §7, §8, §12, §15.
-//!
-//! ## What this module owns
-//!
-//! The model-facing half of memory maintenance: the prompts, the paging and
-//! segmentation of source messages, the two model calls (extract, review), the
-//! working-summary fold, the deadlines, and the single commit at the end.
-//!
-//! ## What it deliberately does not own
-//!
-//! Validation. Every rule about whether a quote is real, whether a source
-//! belongs to this conversation, and what a transition may do lives in
-//! [`lattice_core::domain::conversation::memory`], and the atomic write lives behind
-//! [`ConversationMemoryPort`]. This module calls them; it never re-decides them.
-//!
-//! ## The shape of a run
-//!
-//! One snapshot in, one commit out. Between those, everything is a candidate
-//! held in memory: a cancelled, timed-out, or rejected run leaves the previously
-//! committed state exactly as it was, and leaves the watermark where it was, so
-//! the same source is offered again next time (§12).
-//!
-//! A run has no wall clock of its own: it ends when it is done, cancelled (the
-//! turn's Stop, app shutdown), or out of the time a caller that has a
-//! deadline lends it. A hand-picked clock counted time spent queued behind
-//! other work, and a slow model on a long chat ran out of it every time,
-//! committing nothing. The work cap of 256 messages or 1 MiB of source per
-//! attempt stays: hitting it returns [`CompactionStatus::Partial`] with the
-//! sequence to resume from. It never skips the remainder (§7.5).
-//!
-//! Extraction and the working summary move separately. Extraction advances the
-//! watermark on every run; the summary is refolded only when a run is asked to,
-//! because the prompt opens its window where the summary ends and a summary
-//! that changed after every answer would change the head of every request.
-//! Consolidation after an answer folds only when that turn's prompt asked
-//! ([`CompactionRequest::summary_refold`]); `/compact` and the compaction a
-//! turn waits on fold everything they extract.
-//!
-//! A fold reads the source between the summary's boundary and its end back
-//! from the transcript — summary only, never re-extracted — a bounded slice at
-//! a time, resuming from wherever the last summary ended. That also covers a
-//! summary a delete or a user correction dropped while the ledger and its
-//! watermark stood: the next fold starts from the beginning.
+//! One snapshot in, one commit out: a cancelled or rejected run leaves the
+//! committed state and the watermark as they were. A run has no clock of its
+//! own; the per-attempt work cap returns [`CompactionStatus::Partial`] with a
+//! resume point. Extraction advances the watermark on every run, but the
+//! summary is refolded only when asked ([`CompactionRequest::summary_refold`]),
+//! because the prompt opens its window where the summary ends.
 
 pub mod extract;
 pub mod prompts;
@@ -354,11 +322,8 @@ async fn complete_json_within(
             },
         ],
         json_schema: schema,
-        // Greedy decoding. Without an override the sidecar samples at
-        // the user's chat temperature, and a small extractor then
-        // returns six items from a batch on one run and nothing from
-        // the same batch on the next. Memory must not depend on the
-        // dice; the same passages should yield the same patch.
+        // Greedy decoding, so the same passages always yield the
+        // same patch rather than depending on the chat temperature.
         sampling: Some(SamplingOverride::deterministic()),
         // The deterministic parser applies the tighter byte and
         // operation bounds after generation. This provider-side cap

@@ -258,8 +258,8 @@ async fn a_synthesis_still_running_cannot_be_marked_applied() {
     jobs.drain().await;
 }
 
-/// Notes too many for one brief used to go into one prompt regardless. They
-/// are merged level by level until one prompt holds them, every note read.
+/// Notes too many for one brief are merged level by level until one prompt
+/// holds them, every note read.
 #[tokio::test]
 async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
     let pool = pool().await;

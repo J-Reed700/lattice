@@ -367,10 +367,8 @@ pub async fn continue_in_new_conversation_impl(
     };
 
     // Straight to the model, as compaction does: no conversation, retrieval,
-    // tools or streaming. Running it as a chat turn created visible scratch
-    // chats and let the turn reach for tools. The summary is written by the
-    // source chat's own model, pinned until the handoff is done; the new chat
-    // inherits the source chat's choice.
+    // tools or streaming. The summary is written by the source chat's own model,
+    // pinned until the handoff is done.
     let pin = runtime
         .chat_llm_for(&source_id, None, ModelRequirements::default())
         .await

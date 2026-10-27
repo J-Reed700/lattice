@@ -36,24 +36,11 @@ pub(super) fn build_optional_tool_allowlist(
         })
 }
 
-/// Whether a tool stays offered once retrieval has grounded the turn.
-///
-/// Initial retrieval is a candidate set, not proof that it can answer the
-/// question. Scoped document reads, attachment listing, and searches stay for
-/// recovery, and — when the turn carries web pages — the ability to open one of
-/// them: retrieval reads the top pages itself but cites more than it reads, and
-/// without this the model can see a link that plainly holds the answer and have
-/// no way to follow it.
-///
-/// `find_image` stays too: it illustrates the answer rather than looking for
-/// evidence, so grounding does not make it redundant, and it reaches this
-/// filter only when the turn's web gate let it through.
-///
-/// Deep research also keeps the searches the turn allows. Its first round is
-/// where it starts, and the prompt asks the model to search again for what
-/// that round left uncovered; without them a later round could only reopen
-/// links the first one found. Each is still offered only when the turn's
-/// allowlist has it.
+/// Whether a tool stays offered once retrieval has grounded the turn. Initial
+/// retrieval is a candidate set, not proof, so scoped document reads,
+/// attachment listing, searches and (when the turn carries web pages) opening
+/// a page stay for recovery. `find_image` stays because it illustrates rather
+/// than searches; deep research also keeps the searches the turn allows.
 pub(super) fn kept_with_grounded_context(
     tool_name: &str,
     can_open_pages: bool,
@@ -88,18 +75,10 @@ pub(super) fn deep_research_searches_again(
 }
 
 /// Whether an optional built-in tool may be offered this turn.
-///
-/// `fetch_url_content` gets one exception to the explicit-allowlist rule:
-/// opening a page the turn already knows about — cited by an earlier turn and
-/// carried as conversation context, or returned by this turn's own search — is
-/// not a web search. The prompt names it as the way to re-read such a page, so
-/// withholding the tool behind the web-search toggle hands the model an
-/// instruction it cannot follow and it either errors on the call or searches
-/// the web again for a page it already had.
-///
-/// `find_image` rides the web-search toggle instead of a name of its own: it
-/// reaches the web the same way, so a turn with the web off never sees it and
-/// one with the web on always does, keeping the tool list stable turn to turn.
+/// `fetch_url_content` is allowed without the web-search toggle when the turn
+/// already knows the page (cited earlier, or returned by its own search): the
+/// prompt names it as the way to re-read one. `find_image` follows the
+/// web-search toggle, which keeps the tool list stable turn to turn.
 pub(super) fn optional_builtin_tool_allowed(
     tool_name: &str,
     allowlist: Option<&HashSet<String>>,

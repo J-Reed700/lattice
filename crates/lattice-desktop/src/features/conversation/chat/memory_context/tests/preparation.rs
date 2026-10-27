@@ -362,9 +362,8 @@ impl LLMPort for LargeWindow {
     }
 }
 
-/// Candidates used to stop at the newest 64 messages, so a long chat of
-/// short turns asked for compaction even when the window held all of it.
-/// How far back they reach is now the recent-history pool's call.
+/// How far back candidates reach is the recent-history pool's call, so a long
+/// chat of short turns needs no compaction while the window holds it.
 #[tokio::test]
 async fn a_long_chat_of_short_turns_rides_verbatim_in_a_large_window() {
     let pool = database().await;

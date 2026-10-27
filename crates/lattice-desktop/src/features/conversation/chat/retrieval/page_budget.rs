@@ -1,15 +1,6 @@
-//! How much of each fetched web page the prompt can carry.
-//!
-//! The pipeline used to clip every page to one fixed size. A long recap lost
-//! most of its text, the prompt labelled it truncated, and the model — quite
-//! reasonably — spent its first round asking for the page again through a tool
-//! whose allowance was eight times larger. That round is a full generation; on a
-//! remote model it was over two minutes to re-read pages already in hand.
-//!
-//! The room a page gets is a property of the model's context window, not a
-//! constant: a 131k-token model can hold several whole articles, an 8k one
-//! cannot hold what the old constant handed it. So the total is the web pages'
-//! share of the turn's evidence budget, divided between the pages.
+//! How much of each fetched web page the prompt can carry: the web pages'
+//! share of the turn's evidence budget, divided between the pages, so the room
+//! follows the model's context window rather than a constant.
 
 use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
@@ -22,14 +13,10 @@ pub(super) fn page_budget_chars(evidence: &EvidenceBudget) -> usize {
     )
 }
 
-/// Split `total` characters between pages of the given lengths.
-///
-/// Every page is offered an equal share. A page shorter than its share keeps
-/// only what it needs and the remainder is offered round again to the pages
-/// still wanting more, so a short page never strands budget a long one could
-/// use and one long page can never starve the others. No page is given more
-/// than its own length; there is no per-page ceiling, so a budget with room
-/// carries a long page whole.
+/// Splits `total` characters between pages of the given lengths: an equal
+/// share each, with what a short page does not need offered round again to the
+/// pages still wanting more. No page gets more than its length, and there is
+/// no per-page ceiling.
 pub(in crate::features::conversation::chat) fn allocate(
     lengths: &[usize],
     total: usize,
@@ -60,16 +47,9 @@ pub(in crate::features::conversation::chat) fn allocate(
     given
 }
 
-/// Split `total` characters between pages in rank order, best first, as a
-/// chat answer reads them: each page in turn gets its whole text when it fits
-/// what is left, otherwise what is left when that is at least `useful`,
-/// otherwise nothing, and the next page is considered.
-///
-/// Shared out equally, every result was opened and the best page got the
-/// same quarter as the tenth (about 4,000 characters of a 13,000-character
-/// article). By rank, the best pages are read whole before a lower one is
-/// opened, and a page cut short is cut at a useful length and read on by
-/// offset.
+/// Splits `total` characters between pages in rank order, best first: each
+/// page gets its whole text when it fits what is left, otherwise what is left
+/// when that is at least `useful`, otherwise nothing.
 pub(in crate::features::conversation::chat) fn by_rank(
     lengths: &[usize],
     total: usize,
@@ -113,8 +93,8 @@ mod tests {
         assert_eq!(by_rank(&[50_000], 6_000, 6_000), vec![6_000]);
     }
 
-    /// The measured failure: a 3,521-word page and a 1,394-word page on a
-    /// 131k-token model were each clipped to 6,000 characters. Both fit whole.
+    /// A 3,521-word page and a 1,394-word page both fit whole on a 131k-token
+    /// model.
     #[test]
     fn a_large_context_carries_long_pages_whole() {
         let budget = page_budget_chars(&EvidenceBudget::new(98_000));
@@ -122,8 +102,7 @@ mod tests {
         assert_eq!(given, vec![21_000, 8_400]);
     }
 
-    /// The old fixed allowance was 18,000 characters whatever the model. An
-    /// 8k-token model has nowhere near that much room.
+    /// An 8k-token model's pages get only the room its window has.
     #[test]
     fn a_small_context_is_given_less_than_the_old_fixed_allowance() {
         let budget = page_budget_chars(&EvidenceBudget::new(5_900));
@@ -144,8 +123,7 @@ mod tests {
         assert_eq!(given, vec![10_000, 5_000, 5_000]);
     }
 
-    /// There used to be a 50,000-character ceiling on any one page on top of
-    /// the budget. A budget with room now carries a long page whole.
+    /// A budget with room carries a long page whole; there is no per-page ceiling.
     #[test]
     fn a_page_past_the_old_ceiling_is_carried_whole_when_the_budget_has_room() {
         let given = allocate(&[180_000, 4_000], 200_000);

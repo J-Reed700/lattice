@@ -1,12 +1,9 @@
 //! Serializable conversation workspace projections and synthesis contracts.
 use serde::{Deserialize, Serialize};
 
-/// One document a chat in this space is allowed to read.
-///
-/// This is what `@` offers in the composer, so it is derived from
-/// `space_document_scope` and nothing else: the picker must never name a
-/// document retrieval could not reach, or the user pins a chat to a file it
-/// then cannot answer from.
+/// One document a chat in this space is allowed to read, as the composer's `@`
+/// offers it. Derived from `space_document_scope` alone, so the picker never
+/// names a document retrieval could not reach.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SpaceDocumentDto {

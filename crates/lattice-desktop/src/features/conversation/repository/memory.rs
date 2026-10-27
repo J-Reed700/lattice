@@ -1,23 +1,11 @@
-//! SQL for the bounded conversation-memory ledger.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §5.4, §11.
-//!
-//! Two things here are load-bearing and easy to lose in a refactor:
-//!
-//! 1. **One read.** [`ConversationRepository::load_memory_snapshot`] reads state,
-//!    items, evidence and summary inside a single transaction. Several
-//!    independent reads can interleave with a commit and return the summary from
-//!    revision N beside the ledger from N+1 — a pairing that was never true.
-//!
-//! 2. **One write, with preconditions.** [`ConversationRepository::commit_memory`]
-//!    checks both revisions, re-resolves every evidence span against live
-//!    content, and applies items, evidence, summary, watermark, revision and the
-//!    event row together. No model call happens inside it: a SQLite write lock
-//!    is never held across inference.
-//!
-//! Invalidation on a source rewrite is *not* here. It lives in SQL triggers
-//! (`trg_conversation_memory_invalidate_*`), so it participates in whatever
-//! transaction did the rewrite and no new call site can forget it.
+//! SQL for the bounded conversation-memory ledger (design:
+//! `docs/design/2026-09-19-conversation-memory.md` §5.4, §11).
+//! [`ConversationRepository::load_memory_snapshot`] reads everything in one
+//! transaction, so the summary and ledger always come from one revision.
+//! [`ConversationRepository::commit_memory`] checks both revisions,
+//! re-resolves every span and writes everything together, with no model call
+//! inside the write lock. Invalidation on a source rewrite lives in SQL
+//! triggers (`trg_conversation_memory_invalidate_*`).
 
 use super::ConversationRepository;
 use chrono::{DateTime, Utc};
@@ -46,15 +34,9 @@ struct SourceMessageRow {
 }
 
 impl SourceMessageRow {
-    /// Convert to the domain value.
-    ///
-    /// An empty `content_digest` means the row was written by a path that
-    /// predates memory — a repository test fixture, or the conversation-export
-    /// scratch database. Those rows get their digest computed here rather than
-    /// being treated as corrupt, so a fixture-built conversation is still a
-    /// usable source. A *non-empty* digest is left exactly as stored: if it no
-    /// longer matches the content, that is a real mismatch and the memory layer
-    /// must see it.
+    /// Converts to the domain value. An empty `content_digest` (rows from test
+    /// fixtures or the export scratch database) is computed here; a non-empty one
+    /// is kept as stored, so a real mismatch reaches the memory layer.
     fn into_domain(self) -> Result<SourceMessage> {
         let digest = if self.content_digest.is_empty() {
             compute_digest(&self.content)

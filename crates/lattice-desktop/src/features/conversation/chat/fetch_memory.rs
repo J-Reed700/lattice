@@ -1,18 +1,7 @@
-//! What one turn has already learned about the pages it asked for.
-//!
-//! A tool round costs one full model generation. On a slow or remote model that
-//! is minutes, so a round spent re-fetching a page the turn already has — or one
-//! that already failed — is the most expensive kind of nothing. The model has no
-//! memory between rounds beyond the transcript we build for it, and a bare
-//! "Tool failed: HTTP 403" buried among other results is easy for it to read
-//! past — in practice it asks for the same blocked page again a round later.
-//!
-//! Pages are read in two places: the retrieval pipeline opens the top search
-//! results before the model runs at all, and the tool loop fetches whatever the
-//! model asks for after that. This is the one record both share, so the second
-//! never pays the network — or a generation — for what the first already did.
-//! It answers a repeat from memory and states the dead list each round so the
-//! model can route around it.
+//! What one turn has already learned about the pages it asked for. Pages are
+//! read both by the retrieval pipeline and by the tool loop; this is the one
+//! record both share, so a repeat request, or one for a page that already
+//! failed, is answered from memory, and the dead list is stated each round.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -177,15 +166,10 @@ impl FetchMemory {
         page.deliver(delivery);
     }
 
-    /// Answer a repeat request for `url` from memory, if this turn read it.
-    ///
-    /// A request that names an `offset` is always given the part starting
-    /// there, as much as `room` holds: the model may have lost an earlier part
-    /// to condensing, and only it knows what it needs. Without an offset the
-    /// request gets the first part the model has not been given, wherever that
-    /// is, and a page given whole in any order of parts is never sent again.
-    /// Every part says where the next begins and what is still unread, so
-    /// nothing in the middle of a page becomes unreachable.
+    /// Answers a repeat request for `url` from memory, if this turn read it. A
+    /// request with an `offset` gets the part starting there; without one, the
+    /// first part the model has not been given. Every part says where the next
+    /// begins and what is still unread, so no stretch becomes unreachable.
     pub(in crate::features::conversation::chat) fn recall(
         &mut self,
         url: &str,
@@ -387,8 +371,7 @@ mod tests {
         );
     }
 
-    /// The case that cost a whole generation round: the pipeline had already
-    /// read the page in full, and the model asked for it again anyway.
+    /// The pipeline already read the page in full and the model asked for it again.
     #[test]
     fn a_page_already_given_whole_has_nothing_more_to_send() {
         let mut memory = FetchMemory::default();
@@ -470,10 +453,8 @@ mod tests {
         );
     }
 
-    /// Reading a late part first used to mark the whole page read, so the
-    /// middle could never be asked for. Only every character delivered, in
-    /// whatever order, makes a page whole; until then a request without an
-    /// offset gets the first stretch still unread.
+    /// Only every character delivered, in whatever order, makes a page whole;
+    /// until then a request without an offset gets the first stretch still unread.
     #[test]
     fn a_late_part_read_first_leaves_the_middle_reachable() {
         let text: String = ('a'..='z').collect();
@@ -607,8 +588,7 @@ mod tests {
         );
     }
 
-    /// An offset at or past the end used to come back as an empty part with
-    /// no word of why; it says how long the page is, and what is unread.
+    /// An offset at or past the end says how long the page is, and what is unread.
     #[test]
     fn an_offset_past_the_end_says_how_long_the_page_is() {
         let mut memory = FetchMemory::default();

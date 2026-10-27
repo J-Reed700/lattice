@@ -1,14 +1,8 @@
-//! Which catalog documents the planner is shown.
-//!
-//! The planner used to be shown the whole catalog in filename order, cut off
-//! wherever the window ran out. On a 379-document vault that was the first
-//! eighty-odd files alphabetically, whatever the question, at 15k tokens that
-//! a 9B could not prefill in time. It is now shown the documents a local search
+//! Which catalog documents the planner is shown: the documents a local search
 //! ranks for the request, each with its reading-order neighbours, and for a
-//! request to learn or start at the beginning, the front matter of the books
-//! those documents belong to. The plan is still validated against the whole
-//! catalog, so reading order is worked out from every document in the book,
-//! not just the ones the planner saw.
+//! request to start at the beginning, the front matter of their books. The
+//! plan is still validated against the whole catalog, so reading order is
+//! worked out from every document in a book.
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,14 +24,10 @@ use super::{
 /// Informative terms carried from the conversation into the follow-up search.
 const CONVERSATION_TERMS: usize = 12;
 
-/// Documents a local search ranks for this request, best first: up to
-/// `rows` a query, the catalog rows the planner's prompt holds.
-///
-/// The request alone, and, when there is conversation, the request with the
-/// conversation's informative terms: "is there any way round it?" names
-/// nothing a search can find, and the turn before it does. The two rankings
-/// are interleaved so neither crowds the other out. A failed search leaves an
-/// empty ranking, and the planner then sees the catalog in its own order.
+/// Documents a local search ranks for this request, best first, up to `rows`
+/// a query. The request is searched alone and, when there is conversation,
+/// with the conversation's informative terms, the two rankings interleaved; a
+/// failed search leaves an empty ranking.
 pub(in super::super) async fn candidate_documents(
     hybrid: &dyn HybridSearchTrait,
     question: &str,
@@ -163,17 +153,10 @@ fn front_matter<'a>(members: &[&'a CorpusDocument]) -> Vec<&'a CorpusDocument> {
 }
 
 /// Catalog documents in the order the planner should be offered them, best
-/// first. The prompt takes rows from the front until its token budget runs
-/// out; the budget is what the planner's window holds (see `health`), so a
-/// planner with a larger window is shown more of the catalog.
-///
-/// Each search hit brings its reading-order neighbours, the documents either
-/// side of it in its book or series, since a passage often continues into the
-/// next file. A request to learn or start at the beginning also brings the
-/// front matter of each book a hit belongs to. The rest of the catalog follows
-/// in its own order, so any document the budget has room for can be opened.
-/// With no ranking at all the catalog keeps its own order, which is how the
-/// planner always saw it.
+/// first; the prompt takes rows from the front until its budget runs out. Each
+/// hit brings its reading-order neighbours, and a request to start at the
+/// beginning the front matter of each hit's book; the rest of the catalog
+/// follows in its own order.
 pub(super) fn shortlist<'a>(
     catalog: &'a [CorpusDocument],
     candidates: &[String],

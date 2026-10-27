@@ -305,16 +305,10 @@ pub(super) fn whole_document_intent(question: &str) -> bool {
         .any(|phrase| lower.contains(phrase))
 }
 
-/// Let the summary tier choose which documents the turn opens with.
-///
-/// Applied only when the request is about documents as wholes and the tier
-/// actually returned something, so a focused question — and any vault without
-/// summaries — keeps the planner's own selection untouched. Returns whether
-/// the plan was changed, for logging.
-///
-/// Similarity picks *which* documents; an explicit reading order still decides
-/// what order they are read in, because a book's chapter 3 does not become its
-/// first lesson by scoring well.
+/// Lets the summary tier choose which documents the turn opens with, only when
+/// the request is about documents as wholes and the tier returned something.
+/// Similarity picks which documents; an explicit reading order still decides
+/// their order. Returns whether the plan changed.
 pub(super) fn apply_summary_openings(
     plan: &mut CorpusSearchPlan,
     question: &str,
@@ -362,12 +356,7 @@ pub(super) fn is_short_followup_message(question: &str) -> bool {
 }
 
 /// The anchors a short message shares with the previous turn, when there are
-/// enough of them to call it a continuation.
-///
-/// `previous_anchor_terms` comes from `load_followup_turn_anchor_terms`: the
-/// long words the last user message and the last assistant reply both used.
-/// A message that is short *and* still on that topic has nothing left for a
-/// planner to decide, so the LLM call can be skipped.
+/// enough to call it a continuation; then the planner LLM call can be skipped.
 pub(super) fn planner_skip_anchors(
     question: &str,
     previous_anchor_terms: &HashSet<String>,

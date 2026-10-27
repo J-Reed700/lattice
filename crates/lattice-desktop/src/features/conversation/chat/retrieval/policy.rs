@@ -46,16 +46,11 @@ pub(super) fn should_use_external_as_fallback(
 }
 
 /// Whether KB retrieval may run side by side with the wiki/web phase, decided
-/// from the flags before KB runs.
-///
-/// KB results can cancel the external phase only when external search is a
-/// KB fallback. That gate reads the query type of KB's interpretation, and KB
-/// retrieval never marks a turn as a follow-up on its own: only
-/// `force_followup_mode` does, and the gate reads that flag directly. So a
-/// plain question stands in for KB's interpretation here. The pipeline still
-/// re-evaluates the gate with KB's real interpretation once both finish. A
-/// web search the intent step guessed at is always a fallback, so it never
-/// runs beside the vault.
+/// from the flags before KB runs. KB results can cancel the external phase
+/// only when it is a KB fallback, and only `force_followup_mode` marks a
+/// follow-up, so a plain question stands in for KB's interpretation; the
+/// pipeline re-checks the gate once both finish. A web search the intent step
+/// guessed at never runs alongside the vault.
 pub(super) fn kb_can_run_alongside_external(search_flags: SearchFlags) -> bool {
     let external_planned = search_flags.web_planned() || search_flags.force_wiki_search;
     let kb_interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
@@ -90,13 +85,9 @@ impl WebSearchReason {
 }
 
 /// Whether a web search the intent step guessed at may run, decided once the
-/// vault has answered, and why. `None` keeps the question on the machine.
-///
-/// The vault must have been searched: a web query is never sent for a
-/// question the user's own files were not asked first. Then the web runs only
-/// when the vault found nothing or its evidence was judged insufficient. A
-/// vault with passages and no verdict counts as sufficient, because only a
-/// verdict can say it fell short.
+/// vault has answered, and why; `None` keeps the question on the machine. It
+/// runs only when the vault was searched and found nothing or was judged
+/// insufficient.
 pub(super) fn intent_web_fallback(
     kb_attempted: bool,
     kb_has_results: bool,

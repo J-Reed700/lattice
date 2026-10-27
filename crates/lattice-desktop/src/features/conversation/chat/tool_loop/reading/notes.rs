@@ -64,9 +64,8 @@ fn narrow(c: char) -> char {
     }
 }
 
-/// The passages a note is copied from: each that holds every one of its
-/// sentences, with whitespace runs read as one space and any quotation marks
-/// around it dropped, as written. Empty for a note with nothing in it to
+/// The passages that hold every sentence of `note`, matching whitespace runs as
+/// one space and dropping surrounding quotes. Empty for a note with nothing to
 /// copy.
 pub(super) fn locate(note: &str, passages: &Passages) -> Vec<u32> {
     let sentences: Vec<String> = sentences(note)
@@ -93,26 +92,20 @@ pub(super) fn locate(note: &str, passages: &Passages) -> Vec<u32> {
         .collect()
 }
 
-/// A note split into its sentences where Unicode puts their boundaries
-/// (UAX #29: after `.`, `!` or `?` and a space, after `。`, `！`, `？` and
-/// every other script's terminators), so the sentences it copied need not
-/// have stood side by side in the passage.
+/// A note split into sentences at Unicode (UAX #29) boundaries, so the
+/// sentences it copied need not have stood side by side in the passage.
 fn sentences(note: &str) -> Vec<&str> {
     note.split_sentence_bounds().collect()
 }
 
-/// Put each note under the passage it was copied from. Returns the labels
-/// whose note is now a copy of their own passage, and each note moved, as
+/// Puts each note under the passage it was copied from. Returns the labels
+/// whose note now copies their own passage, and each move as
 /// `(label written, label copied from)`.
 ///
-/// A note copied from its own passage stays. One copied from exactly one
-/// other passage is that passage's note: it takes the place of what was
-/// written there — a hyphen, a mistaken note or nothing — unless that
-/// passage holds a copy of its own, and the label written keeps its line as
-/// a mistaken note. A note found in no passage, or in several (documents
-/// repeat their boilerplate), stays where it was written, mistaken: nothing
-/// is guessed. Notes move in label order, so the first copy to reach a
-/// passage is the one it keeps.
+/// A note copied from exactly one other passage replaces what was written
+/// there, unless that passage holds its own copy. A note found in no passage or
+/// in several (documents repeat boilerplate) stays where it was written. Notes
+/// move in label order, so the first copy to reach a passage is kept.
 pub(super) fn attribute(
     lines: &mut BTreeMap<u32, Option<String>>,
     passages: &Passages,

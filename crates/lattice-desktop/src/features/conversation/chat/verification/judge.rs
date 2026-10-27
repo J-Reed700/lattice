@@ -1,20 +1,9 @@
-//! LLM claim judge.
-//!
-//! The lexical pre-filter can only see shared vocabulary. This asks a model
-//! whether the cited passages actually entail the claim, which is the only way
-//! to catch a sentence that borrows a source's wording and inverts its meaning.
-//!
-//! One claim per request. The evidence goes first and the claim last, so
-//! llama-server's prompt cache reuses a page's prefix across the claims that
-//! cite it. The answer starts with a single label whose probability is read
-//! from the first token's log-probabilities, followed by a bounded explanation
-//! and an exact source quote. Failed or unreadable judgments return no
-//! verdict; the verifier decides what an unsettled claim reads as.
-//!
-//! No clock bounds the judging. Every cited claim is judged, however slow the
-//! model: the adapter's stall detection ends a call whose server went quiet,
-//! the answer's output reservation ends a runaway one, and app shutdown
-//! cancels the background check.
+//! LLM claim judge: asks a model whether the cited passages entail a claim,
+//! which the lexical pre-filter cannot see. One claim per request, evidence
+//! first and the claim last so llama-server's prompt cache reuses a page's
+//! prefix. The verdict label's probability is read from the first token's
+//! log-probabilities. No clock bounds the judging: stall detection, the output
+//! reservation and app shutdown end a call instead.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -83,11 +72,8 @@ impl ClaimJudge {
     pub(super) fn new(llm: Arc<dyn LLMPort>) -> Self {
         Self {
             llm,
-            // Deterministic by default, so a judge built anywhere in the code
-            // cannot quietly inherit a creative model's sampling: measured on
-            // the bundled 9B at the chat default of 0.7, one claim against one
-            // passage came back supported, unsupported and contradicted across
-            // twenty-one runs of the same request.
+            // Deterministic by default, so a judge built anywhere cannot inherit a
+            // creative model's sampling and flip its verdict between runs.
             sampling: SamplingOverride::deterministic(),
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         }
@@ -130,15 +116,10 @@ impl ClaimJudge {
         )
     }
 
-    /// Judge each `(claim index, claim text, evidence)`, keyed back by index.
-    ///
-    /// Every request gets an entry, and every part of a claim still open is
-    /// judged. Parts go round by round: every claim's best part first, then
-    /// the second part of each claim still open, and so on, so a claim citing
-    /// a long page does not hold back the first call of the claims after it.
-    /// Within a round every call is submitted at once and the backend's
-    /// scheduler decides how many run side by side, at verification priority,
-    /// behind the user's next turn.
+    /// Judges each `(claim index, claim text, evidence)`, keyed back by index.
+    /// Parts go round by round (every claim's best part, then each open claim's
+    /// second), so a claim citing a long page does not hold back the others; a
+    /// round's calls are submitted at once at verification priority.
     pub(super) async fn judge_claims(
         &self,
         requests: &[(usize, &str, Vec<ClaimEvidence>)],
@@ -192,15 +173,10 @@ impl ClaimJudge {
     }
 }
 
-/// What the parts of one claim judged so far add up to.
-///
-/// The first part that supports the claim confidently settles it: one cited
-/// source supporting a claim is enough. A claim no part supports takes the
-/// strongest finding among them. A part that could not be judged (a
-/// transport failure, a refused prompt, or a reply with no verdict) settles
-/// the claim as unchecked and its later parts are not
-/// asked: the part left over might have held the support, so it is never
-/// called unsupported, and a failing backend is not asked again and again.
+/// What the parts of one claim judged so far add up to. The first part that
+/// confidently supports the claim settles it; otherwise the strongest finding
+/// wins. A part that could not be judged settles the claim as unchecked and
+/// its later parts are not asked.
 #[derive(Default)]
 struct Tally {
     strongest: Option<JudgeOutcome>,
@@ -270,18 +246,10 @@ fn source_label(citation_id: u32) -> String {
 const BLOCK_SEPARATOR: &str = "\n\n";
 
 /// The evidence one claim is judged against, in parts that each fit `room`
-/// characters of a judge call.
-///
-/// Every cited source is read. When their whole texts fit one call, that call
-/// gets them whole. Otherwise each source is cut into its overlapping windows,
-/// those sharing the claim's vocabulary are ranked, and they are taken best of
-/// every source before second-best of any, filling one call and then the next
-/// until every such window has a place: support far into a long page is
-/// judged in a later call instead of being left out.
-///
-/// Only the passages the claim cites. A sentence that cites nothing has no
-/// evidence; offering it whichever sources ranked first would make the judge
-/// rule on text the sentence never made a statement about.
+/// characters. Whole texts when they fit one call; otherwise each source's
+/// overlapping windows ranked against the claim, best of every source first,
+/// until every window has a place. Only the passages the claim cites: a
+/// sentence that cites nothing has no evidence.
 pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: usize) -> Evidence {
     if claim.citation_ids.is_empty() || claim.citation_ids.len() != claim.cited_source_indices.len()
     {
@@ -404,11 +372,9 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
     )
 }
 
-/// What adding `window` to the windows `taken` from its source in one part
-/// adds to the rendered part. Windows overlap their neighbours, and joined
-/// neighbours show the shared text once, so a window next to one already
-/// taken costs only what it adds; costing every window whole split a page
-/// into about half as many parts again as it needed.
+/// What adding `window` to the windows `taken` from its source adds to the
+/// rendered part: overlapping neighbours show their shared text once, so a
+/// window next to one already taken costs only what it adds.
 fn rendered_cost(taken: &[&ScoredWindow], window: &ScoredWindow, citation_id: u32) -> usize {
     let length = window.text.chars().count();
     if taken.is_empty() {

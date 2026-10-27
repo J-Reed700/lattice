@@ -1,18 +1,9 @@
-//! Versioned prompt contracts for memory extraction, review and summarisation.
-//!
-//! Design: `docs/design/2026-09-19-conversation-memory.md` §15.
-//!
-//! Every constant here is paired with a `*_VERSION` string that is recorded on
-//! the committed memory state. Without that, a change in wording is invisible
-//! afterwards: an evaluation run and the rows it produced could not be matched
-//! to the prompt that produced them.
-//!
-//! Each payload is rendered as JSON rather than prose. Transcript text arrives
-//! inside a JSON string, so a passage containing "ignore previous instructions"
-//! is unambiguously a value the model was asked to read, not a line in the
-//! instructions around it. That is a legibility measure, not a security
-//! boundary — the boundary is deterministic validation in
-//! `domain::conversation::memory`.
+//! Versioned prompt contracts for memory extraction, review and summarisation
+//! (design: `docs/design/2026-09-19-conversation-memory.md` §15). Every
+//! constant has a `*_VERSION` recorded on the committed state, so rows can be
+//! matched to the prompt that produced them. Payloads are JSON so transcript
+//! text is plainly a value to read; the security boundary is the deterministic
+//! validation in `domain::conversation::memory`.
 
 use lattice_core::domain::conversation::memory::{
     MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE,
@@ -22,12 +13,8 @@ use lattice_core::domain::conversation::memory::{
 use super::segment::SourceSegment;
 
 /// The largest `maxLength` / `maxItems` a schema handed to llama.cpp may carry.
-///
-/// llama.cpp turns a JSON schema into a GBNF grammar, and its parser throws
-/// on any repetition bound above `MAX_REPETITION_THRESHOLD` (2000 in
-/// `llama-grammar.cpp`). The server logs the throw and then samples with no
-/// grammar at all, so one over-large bound silently discards
-/// `additionalProperties: false` and every enum in the schema.
+/// Its GBNF conversion throws on any repetition bound above 2000, and the
+/// server then samples with no grammar at all, dropping every constraint.
 pub const GRAMMAR_REPETITION_LIMIT: usize = 2000;
 
 /// The largest `maxLength`, `maxItems`, `minLength` or `minItems` anywhere in
@@ -105,12 +92,9 @@ pub fn patch_schema() -> serde_json::Value {
                 "additionalProperties": false,
                 "properties": {
                     "message_id": { "type": "string" },
-                    // No `maxLength` here: llama.cpp compiles the schema to a
-                    // grammar and refuses any repetition bound above
-                    // `GRAMMAR_REPETITION_LIMIT`, dropping the whole grammar
-                    // silently, so a bound of `MAX_QUOTE_BYTES` (2048) cost
-                    // every other constraint too. The byte cap is enforced by
-                    // the parser after the round trip.
+                    // No `maxLength`: a bound over `GRAMMAR_REPETITION_LIMIT`
+                    // makes llama.cpp drop the whole grammar. The parser
+                    // enforces the byte cap after the round trip.
                     "quote": { "type": "string" },
                     "occurrence": { "type": ["integer", "null"], "minimum": 0 },
                     "purpose": { "type": "string", "enum": purposes }
@@ -457,27 +441,16 @@ fn passages(items: &[ReviewPassage<'_>]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Serialise a payload, falling back to an empty object.
-///
-/// The fallback cannot lose data in practice — every value here is built from
-/// owned strings and numbers — and it keeps prompt rendering off the error path,
-/// where a serialisation failure would abort a compaction that has nothing wrong
-/// with it.
+/// Serialises a payload, falling back to an empty object so prompt rendering
+/// stays off the error path; every value here is owned strings and numbers.
 fn to_payload(value: &serde_json::Value) -> String {
     serde_json::to_string(&sorted_keys(value)).unwrap_or_else(|_| String::from("{}"))
 }
 
-/// `value` with every object's keys in byte order, at every depth.
-///
-/// The workspace's `preserve_order` makes JSON keep the order a literal is
-/// written in. Memory's payloads and grammars were measured with sorted keys,
-/// and that order is part of the contract: the passages to extract (`segments`)
-/// come last, just before the answer; the extractor writes an item's `evidence`
-/// before its `kind` and `label`; the reviewer writes its `reason` before its
-/// `verdict`. Without this, `preserve_order` moved the passages ahead of the
-/// rules and put every decision before its grounds, and the 2026-10-21 release
-/// baseline then saw extraction batches holding explicit user constraints come
-/// back with nothing added.
+/// `value` with every object's keys in byte order, at every depth. The key
+/// order is part of the prompt contract despite the workspace's
+/// `preserve_order`: the passages (`segments`) come last before the answer,
+/// and every decision's grounds (`evidence`, `reason`) come before it.
 fn sorted_keys(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {

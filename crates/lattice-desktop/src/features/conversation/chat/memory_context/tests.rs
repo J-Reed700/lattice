@@ -219,11 +219,8 @@ async fn a_conversation_without_memory_is_checked_and_keeps_its_raw_history() {
 #[tokio::test]
 async fn a_long_conversation_that_was_never_compacted_still_asks_for_compaction() {
     let pool = database().await;
-    // More messages than the candidate window, and no ledger at all. Before the
-    // out-of-reach check this returned `None`: the assembler was never consulted,
-    // so nothing ever reported that the oldest messages had silently stopped
-    // reaching the model, and the automatic trigger could not fire on the one
-    // shape of conversation that most needs it.
+    // More messages than the candidate window and no ledger: the assembler is
+    // still consulted, so the oldest messages falling out of reach is reported.
     let id = seed(&pool, LONG_CONVERSATION).await;
     let repository = ConversationRepository::new(pool.clone());
 

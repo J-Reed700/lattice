@@ -1,22 +1,9 @@
-//! Response grounding verification.
-//!
-//! Two passes. The lexical pre-filter ([`lexical`]) scores every claim sentence
-//! against the passages it cites — cheap, deterministic, and run on every turn.
-//! The claim judge ([`judge`]) then asks a model about every cited sentence
-//! except a near-verbatim copy of its passage that leaves nothing out. Matching
-//! vocabulary and opposite meaning look identical to a token counter, so
-//! overlap alone settles nothing.
-//!
-//! The judge is an improvement on the lexical verdict, never a precondition
-//! for one. Every escalated claim is judged; no clock cuts the check short.
-//! One the judge could not settle — the call failed, or its reply held no
-//! verdict — keeps its lexical verdict, except one carrying a number,
-//! date or negation, or copying a passage sentence that carries one it left
-//! out: overlap cannot settle those, so it reads as unverified
-//! rather than borrowing a positive verdict from shared vocabulary. Unverified
-//! is its own state and never counts as unsupported: "not checked" and "not
-//! found in the source" are different findings. With no judge configured,
-//! reports remain explicitly lexical.
+//! Response grounding verification, in two passes: the lexical pre-filter
+//! ([`lexical`]) scores every claim sentence against the passages it cites,
+//! and the claim judge ([`judge`]) is asked about every cited sentence except
+//! a near-verbatim copy. A claim the judge could not settle keeps its lexical
+//! verdict unless overlap cannot settle it (a number, date or negation); then
+//! it reads as unverified, which never counts as unsupported.
 
 use std::sync::Arc;
 
@@ -342,12 +329,9 @@ impl GroundingVerifier {
         }
     }
 
-    /// Opt out explicitly. Logs, because a silently lexical-only verdict is
-    /// indistinguishable from a judged one in the persisted metadata.
-    ///
-    /// No production caller turns the judge off today — `new(None)` covers the
-    /// "no handle" case — but the knob is the one place to route a future
-    /// setting through, and tests use it to pin the lexical-only behaviour.
+    /// Opts out of the judge explicitly, logging it, since a lexical-only verdict
+    /// looks like a judged one in the metadata. Tests use it to pin lexical-only
+    /// behaviour.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn with_judge_enabled(self, enabled: bool) -> Self {
         if enabled {
@@ -375,11 +359,8 @@ impl GroundingVerifier {
         self
     }
 
-    /// Apply the user's verification settings to the judge, if there is one.
-    ///
-    /// Without this the judge decodes greedily, which is the right default; the
-    /// settings exist so someone can trade that determinism away deliberately
-    /// rather than inheriting it from whatever the chat model is tuned to.
+    /// Applies the user's verification settings to the judge, if there is one;
+    /// without them it decodes greedily.
     pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
         self.judge = self.judge.map(|judge| judge.with_tuning(tuning));
         self

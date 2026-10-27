@@ -27,31 +27,13 @@ pub(super) struct TurnBudget {
 }
 
 impl TurnBudget {
-    /// Plan against the message, the system prompt, the tools and the history.
-    ///
-    /// `message` is what the evidence will travel in: the question inside the
-    /// turn's template, with no evidence in it. `tool_schema_tokens` is what
-    /// the tools a grounded turn is offered cost. Both are paid before any
-    /// evidence is, since evidence that leaves no room for them is evidence
-    /// the request cannot carry.
-    ///
-    /// With bounded memory on, the fixed parts are priced exactly as the
-    /// context assembler prices them, memory rules and date line included, and
-    /// the memory plan carries the history and spends at most its own pools on
-    /// it, so evidence is charged only what the history actually needs up to
-    /// those pools. With it off, the string history is sent whole and charged
-    /// whole.
-    ///
-    /// `picture_tokens` is what the reader's attached pictures cost at the
-    /// size the model's geometry takes them: their own material, paid with
-    /// the message before evidence, and never more than the room left for
-    /// them, since pictures over it are shrunk or dropped before the request
-    /// is built.
-    ///
-    /// A question the window cannot hold is not refused here: the request is
-    /// checked whole when it is assembled, after the user's message is saved,
-    /// so the refusal leaves a retryable message. Until then the turn simply
-    /// has no room for evidence.
+    /// Plans against the message (the question in the turn's template, without
+    /// evidence), the system prompt, the tools and the history, all paid before
+    /// any evidence. With bounded memory on, the fixed parts are priced as the
+    /// context assembler prices them and the history costs at most its own pools;
+    /// with it off, the string history is charged whole. `picture_tokens` is paid
+    /// with the message. A question the window cannot hold is refused later, when
+    /// the request is assembled after the message is saved, so it stays retryable.
     pub(super) fn plan(
         llm: &Arc<dyn LLMPort>,
         system_prompt: &str,
@@ -245,9 +227,8 @@ mod tests {
         assert!(budget.input_budget < llm.max_context_tokens());
     }
 
-    /// The 2026-10-13 shipped-path run at `--ctx-size 8192`: the tools and the
-    /// policy came to about 2,100 tokens, the evidence pool was sized as if
-    /// they cost nothing, and 31 of 34 turns were refused before generation.
+    /// The tools and the policy are charged before the evidence pool is sized, so
+    /// an 8k window does not refuse its turns.
     #[test]
     fn at_8k_the_evidence_pool_leaves_room_for_the_tools_and_the_policy() {
         let llm: Arc<dyn LLMPort> = Arc::new(Window(8_192));

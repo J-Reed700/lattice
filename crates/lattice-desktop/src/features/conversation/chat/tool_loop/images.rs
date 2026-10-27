@@ -1,16 +1,9 @@
 //! `find_image`: pictures for the answer, found and stored through the core
-//! port, so the conversation feature never reaches into the web feature.
-//!
-//! The stored pictures go to the window on the stream at once, so the answer's
-//! `![caption](img-N)` lines resolve while it is still being written. They are
-//! leased to the turn's request until the answer is saved, which attaches the
-//! ones it shows and releases the rest (`persistence.rs`).
-//!
-//! When the turn's model can see, the candidates are first shown to it and
-//! only those that clearly show the subject are kept ([`super::image_pick`]);
-//! the rest stay leased and are released with the turn's other unused rows.
-//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.1, §7.8;
-//! docs/design/2026-10-17-chat-vision.md §9.
+//! port. Stored pictures go to the window at once so the answer's
+//! `![caption](img-N)` lines resolve while it streams, and stay leased to the
+//! turn until the answer is saved (`persistence.rs`). When the model can see,
+//! only the candidates it picks are kept ([`super::image_pick`]).
+//! Design: docs/design/2026-10-17-chat-images-and-diagrams.md §7.1, §7.8.
 
 use super::calls::CallScope;
 use crate::features::conversation::chat::ChatStreamEventDto;

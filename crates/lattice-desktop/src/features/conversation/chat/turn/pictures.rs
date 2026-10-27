@@ -1,17 +1,8 @@
-//! The pictures the reader attached, in the one turn they were sent in.
-//!
-//! A model declared able to see gets each picture fitted to its geometry
-//! (chat-vision §7), images first and the question last in the final user
-//! message, and the tool loop carries that message unchanged through every
-//! round. A model that cannot see is told, one line per picture, that the
-//! reader attached it (§10.6). Later turns, memory and handoff read caption
-//! lines only (§11).
-//!
-//! What the pictures cost is paid with the message, before evidence. When
-//! the request has no room for all of them, the last attached is shrunk
-//! first, down to the geometry's smallest rendering; then pictures are
-//! dropped, last attached first, each becoming its caption line (§8). A
-//! geometry that cannot shrink (`Fixed`) drops instead.
+//! The pictures the reader attached, in the one turn they were sent in. A
+//! seeing model gets each fitted to its geometry (chat-vision §7), images
+//! before the question; a model that cannot see is told one line per picture
+//! (§10.6). When the request has no room, the last attached is shrunk first,
+//! then pictures are dropped to their caption lines (§8).
 use super::prepare::PreparedTurn;
 use super::*;
 use lattice_core::application::contracts::images::ChatImageDto;

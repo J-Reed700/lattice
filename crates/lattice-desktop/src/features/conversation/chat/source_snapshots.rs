@@ -83,11 +83,9 @@ pub(super) async fn archive_page_for_url(
     citation_url: &str,
     page: &FetchUrlContentOutput,
 ) {
-    // The whole page. The archive is a prompt ingredient: later reads of the
-    // URL, recalled prior evidence and the grounding check all take their text
-    // from it, and each fits what it takes to its own budget. Cutting here
-    // would lose the tail for every one of them. The fetch's 5 MiB body bound
-    // is what keeps a pathological page from becoming a blob dump.
+    // The whole page: later reads, recalled evidence and the grounding check all
+    // take their text from it and fit it to their own budgets. The fetch's 5 MiB
+    // body bound keeps it bounded.
     let Some(content) = snapshot_text(&page.content) else {
         return;
     };
@@ -117,14 +115,10 @@ pub(super) async fn archive_page_for_url(
     }
 }
 
-/// The turn's sources as the answering model read them.
-///
-/// A web citation carries the search engine's snippet — a sentence or two —
-/// while the prompt carried the whole page. Checking the answer against the
-/// snippet marked nearly every well-cited sentence unsupported, which reads to
-/// the user as invented citations. Each web source whose page this
-/// conversation archived is given that page's text for verification; the
-/// sources persisted with the message are left as they were.
+/// The turn's sources as the answering model read them: each web source whose
+/// page this conversation archived gets that page's text for verification,
+/// since its citation carries only the search snippet. The persisted sources
+/// are left as they were.
 pub(super) async fn with_archived_page_text(
     repository: &dyn ChatRecords,
     conversation_id: &str,

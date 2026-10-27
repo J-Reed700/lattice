@@ -13,28 +13,13 @@ use super::prompts::ContextPassage;
 use super::segment::{clip_chars, SourceSegment};
 use super::MIN_RETAINED_TURNS;
 
-/// How many messages of `window` belong in the compacted prefix.
-///
-/// Returns `None` when everything read is inside the retained tail, which is the
-/// normal answer for a short conversation: the ledger stays empty until a
-/// compaction is actually needed (§7.1).
-///
-/// The rules, all from §7.2:
-///
-/// * The cut lands on a turn boundary, so a user request is never separated from
-///   the answer to it.
-/// * At least [`MIN_RETAINED_TURNS`] complete turns stay raw, plus the current
-///   user message when it has no answer yet — that message is never summarised
-///   during its own turn.
-/// * `keep_recent` is a minimum, not a target: the cut moves earlier to reach a
-///   turn boundary, never later.
-///
-/// When the work cap stopped the window short of the transcript, the retention
-/// rule is tried first anyway — the cap may have stopped only a message or two
-/// from the end, and the tail it protects is about the prompt, not about this
-/// window. Only if that leaves nothing to do does the cut fall back to the last
-/// turn boundary in the window. Without that fallback a work cap smaller than
-/// the retained tail would never advance the watermark at all.
+/// How many messages of `window` belong in the compacted prefix; `None` when
+/// everything read is inside the retained tail. The cut lands on a turn
+/// boundary, keeps at least [`MIN_RETAINED_TURNS`] complete turns and any
+/// unanswered user message raw, and only ever moves earlier than `keep_recent`
+/// (§7.2). When the work cap stopped the window short and retention leaves
+/// nothing to do, it falls back to the last turn boundary in the window, so
+/// the watermark still advances.
 pub(super) fn select_boundary(
     window: &[SourceMessage],
     reached_end: bool,

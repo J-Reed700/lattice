@@ -25,9 +25,8 @@ fn prompt(web: Option<&str>, searches: Option<Vec<String>>) -> String {
     .build()
 }
 
-/// The turn this was written for: a wide first round, then one page read
-/// and an answer, because nothing asked the model to look further and it
-/// had no search left to look with.
+/// After a wide first round, the model is asked to look further and keeps
+/// the searches to do it with.
 #[test]
 fn deep_research_sends_the_model_after_what_the_first_round_missed() {
     let searches = vec![
@@ -56,8 +55,7 @@ fn no_instruction_without_a_first_round_or_a_way_to_search() {
     assert!(!prompt(None, Some(vec!["q".to_string()])).contains("Deep research:"));
 }
 
-/// The list used to stop at twelve searches of 120 characters, so the model
-/// could run the thirteenth again. Every search is listed whole, once.
+/// Every search is listed whole, once.
 #[test]
 fn every_search_already_run_is_listed_whole_once() {
     let mut many: Vec<String> = (0..40)

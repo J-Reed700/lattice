@@ -8,13 +8,10 @@ use lattice_core::application::contracts::tools::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
-/// Tools that can reach the user's own documents, and therefore may only run
-/// through this module's scope check. Anything else — web and wiki lookups —
-/// touches nothing in the vault and goes straight to the executor.
-///
-/// A tool added to the registry without being listed here would read documents
-/// with no space scope at all, which is exactly the leak this module exists to
-/// prevent. `every_vault_tool_is_scoped` fails when that happens.
+/// Tools that can reach the user's own documents, so they may only run through
+/// this module's scope check; web and wiki lookups go straight to the
+/// executor. A tool missing from this list would read documents with no space
+/// scope, which `every_vault_tool_is_scoped` catches.
 pub(super) fn reads_the_vault(name: &str) -> bool {
     matches!(
         name,
@@ -57,10 +54,8 @@ pub(super) async fn execute(
         return list_attachments(container, conversation_id, &allowed).await;
     }
     if call.name == "list_documents" {
-        // Browsing is a read of the vault like any other. Left unscoped it
-        // handed the model every filename, path and tag in the library, so a
-        // chat in one space could enumerate another space's documents even
-        // though `get_document` would then refuse to open them.
+        // Browsing is a vault read like any other: unscoped, a chat in one space could
+        // list another space's documents.
         let listing = container.tools().execute(call).await?;
         return Ok(confine_listing(listing, &allowed));
     }
@@ -183,12 +178,9 @@ pub(super) async fn execute(
     Ok(FunctionResult::success(serde_json::to_value(output)?))
 }
 
-/// The files attached to this conversation, oldest first.
-///
-/// Named by id so the model can hand one to `get_document` and read it whole.
-/// Confined by `allowed` like every other vault read: a chat pinned to
-/// particular documents does not get to enumerate its way out of the pin, and a
-/// document whose text never extracted is not offered as something to read.
+/// The files attached to this conversation, oldest first, by id so the model
+/// can read one whole with `get_document`. Confined by `allowed` like every
+/// vault read; a document whose text never extracted is not offered.
 async fn list_attachments(
     container: &dyn ChatRuntime,
     conversation_id: &str,
@@ -237,14 +229,10 @@ async fn list_attachments(
     Ok(FunctionResult::success(serde_json::to_value(output)?))
 }
 
-/// Drop documents outside the conversation's scope from a `list_documents`
-/// result, and restate the counts so the model is not told about rows it
-/// cannot see.
-///
-/// The underlying tool paginates before this runs, so a page may come back
-/// partly empty; `total` is therefore reported as what the caller can actually
-/// reach on this page. Under-reporting is the safe direction — the alternative
-/// leaks the size of a library the chat has no access to.
+/// Drops documents outside the conversation's scope from a `list_documents`
+/// result and restates the counts. The tool paginates first, so `total` is what
+/// the caller can reach on this page: under-reporting is safe, the alternative
+/// leaks the size of a library the chat cannot see.
 fn confine_listing(
     mut listing: FunctionResult,
     allowed: &std::collections::HashSet<String>,

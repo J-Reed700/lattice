@@ -1,10 +1,6 @@
-//! How a web step is recorded, for both places a turn reaches the web.
-//!
-//! The retrieval pipeline searches before the model runs and the tool loop
-//! searches whenever the model asks to. They are the same act to a reader, and
-//! when each recorded it its own way the first search named its pages and the
-//! second, third and fourth — the ones a long research turn is mostly made of —
-//! were a bare "Searching the web" with nothing under it.
+//! How a web step is recorded, for both places a turn reaches the web (the
+//! retrieval pipeline and the tool loop), so every search names its pages the
+//! same way.
 
 use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::web::{
@@ -51,13 +47,9 @@ pub(super) fn outcome_line(outcomes: &[FinderOutcomeDto]) -> Option<String> {
     Some(parts.join(" · "))
 }
 
-/// Finish a search with where it led, then account for the searches inside it.
-///
-/// A deep search runs follow-up queries of its own before it returns. They are
-/// over by the time anything can be said about them, so each is noted rather
-/// than timed — but each is said, because the results belong to those queries
-/// as much as to the one that was asked. A provider that failed or was
-/// skipped is said too, so a shorter list is never a silent one.
+/// Finishes a search with where it led, then notes each follow-up query a deep
+/// search ran inside it, and any provider that failed or was skipped, so a
+/// shorter list is never a silent one.
 pub(super) fn finish_search(
     step: StepGuard<'_>,
     recorder: &TurnRecorder,
@@ -172,8 +164,7 @@ pub(super) fn links_for_call(tool: &str, arguments: &serde_json::Value) -> Vec<T
     }
 }
 
-/// Finish a successful tool call's step. A web tool says where it went; every
-/// other tool finishes as it always did.
+/// Finishes a successful tool call's step; a web tool also says where it went.
 pub(super) fn finish_tool_step(
     step: StepGuard<'_>,
     recorder: &TurnRecorder,

@@ -42,13 +42,9 @@ pub(crate) fn intent_schema() -> serde_json::Value {
 pub const DEFAULT_INTENT_CONFIDENCE_THRESHOLD: f32 = 0.5;
 
 /// The utility model's guess at what a turn needs. It can add to the user-set
-/// flags and never takes anything away. `needs_knowledge_base` and
-/// `is_followup` are ORed in, so a wrong `true` costs one unneeded vault search.
-/// `needs_web` is weaker: it never forces the web. It lets the turn fall back
-/// to the web after the vault has been searched, and only when the vault came
-/// back empty or its evidence was judged insufficient. A wrong `true` then
-/// costs nothing when the user's files answer the question, and a wrong
-/// `false` costs the web lookup an outside question needed.
+/// flags and never takes anything away: `needs_knowledge_base` and
+/// `is_followup` are ORed in, and `needs_web` only allows a web fallback after
+/// the vault came back empty or insufficient.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnIntent {
@@ -339,9 +335,7 @@ mod tests {
         assert!(prompt.contains("User: hello"));
     }
 
-    /// The v1 eval read "which HTTP failures may be retried?" as a public
-    /// question on 25 of 38 company-handbook items. The definition now says
-    /// what the web is for and what it is not.
+    /// A question the company's own documents answer is not read as a public one.
     #[test]
     fn needs_web_is_for_what_the_users_files_cannot_hold() {
         let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &input());
@@ -516,10 +510,8 @@ mod tests {
         assert!(intent.needs_knowledge_base);
     }
 
-    /// The history is what the classifier's window gives it, newest turns
-    /// whole and the rest counted. A small window keeps the newest stretch of
-    /// a long chat; a large one carries it whole. No reading-speed estimate
-    /// shrinks either.
+    /// The history is what the classifier's window gives it: newest turns whole
+    /// and the rest counted.
     #[test]
     fn history_is_sized_from_the_classifiers_window() {
         use lattice_core::application::services::history_share::auxiliary_history_room;
@@ -586,9 +578,7 @@ mod tests {
         }
     }
 
-    /// The classifier used to give up after 15 s and fall back to the user's
-    /// flags. A model that answers after 20 s is slow, not dead: its answer
-    /// is used.
+    /// A model that answers after 20 s is slow, not dead: its answer is used.
     #[tokio::test(start_paused = true)]
     async fn a_slow_classifier_is_waited_for() {
         let classifier = IntentClassifier::new(Arc::new(SlowLLM {
@@ -602,8 +592,8 @@ mod tests {
         assert!((intent.confidence - 0.9).abs() < f32::EPSILON);
     }
 
-    /// A newest turn longer than the whole room used to leave no history at
-    /// all. Its start goes in, marked as continuing, and nothing older.
+    /// A newest turn longer than the whole room goes in by its start, marked as
+    /// continuing, and nothing older.
     #[test]
     fn a_newest_turn_too_long_for_the_room_goes_in_partially_and_marked() {
         use lattice_core::application::services::history_share::auxiliary_history_room;

@@ -21,10 +21,8 @@ fn builder<'a>(settings: &'a LLMPromptSettingsDto) -> PromptMessageBuilder<'a> {
     )
 }
 
-/// The turn this was written for. Deep research had the vault switched
-/// off, so the attached file reached the model only if something carried
-/// it — and nothing did. The answer was "no file came through", with the
-/// file indexed in the library.
+/// An attached file reaches the model even when deep research has the vault
+/// switched off.
 #[test]
 fn an_attachment_reaches_a_forced_web_turn() {
     let settings = LLMPromptSettingsDto::default();

@@ -149,11 +149,9 @@ impl TurnCancellationRegistry {
                 state.token.cancel();
                 return true;
             }
-            // The turn has not registered yet — it is still validating input,
-            // loading the model, or opening the conversation. Arm the
-            // cancellation so `begin_turn_within` honours it, instead of
-            // reporting an idle conversation and leaving the user's stop press
-            // with no effect at all.
+            // The turn has not registered yet (still validating, loading the model or
+            // opening the conversation): arm the cancellation so `begin_turn_within`
+            // honours it.
             Self::prune_pending(&mut registry.pending);
             registry.pending.insert(
                 request_id.to_string(),

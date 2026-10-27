@@ -94,16 +94,8 @@ async fn a_read_page_is_archived_beside_its_citation_permanently() {
         .is_none());
 }
 
-/// The loop this closes, in one test.
-///
-/// Web research used to end with the turn that did it. The citations survived
-/// in the answer's metadata and the sources panel counted them, but the next
-/// turn assembled its context from `conversation_web_sources`, which nothing
-/// wrote — so a chat could list thirty-seven sources in its sidebar and still
-/// start the next turn with no grounded context at all.
-///
-/// Writer and reader are both the real ones: the repository call that turn
-/// finalization makes, and the port the context builder reads through.
+/// The pages a turn cited are written where the next turn's context builder
+/// reads them, through the real repository call and the real port.
 #[tokio::test]
 async fn a_turns_citations_are_there_for_the_next_turn() {
     let pool = create_test_pool().await;
@@ -184,8 +176,8 @@ async fn citing_a_page_again_refreshes_it_rather_than_duplicating_it() {
     );
 }
 
-/// Sources belong to the conversation that cited them. A second chat reading
-/// the first one's pages would be the space leak this app already fixed once.
+/// Sources belong to the conversation that cited them; another chat cannot
+/// read them.
 #[tokio::test]
 async fn another_conversation_does_not_inherit_them() {
     let pool = create_test_pool().await;

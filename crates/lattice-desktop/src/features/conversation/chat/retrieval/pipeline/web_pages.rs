@@ -57,9 +57,7 @@ impl ExternalLookup<'_> {
         url: String,
     ) -> std::result::Result<lattice_core::application::contracts::web::FetchUrlContentOutput, String>
     {
-        // Named by host, because "Reading thereviewgeek.com" is the difference
-        // between visible progress and a spinner, and a blocked site is then
-        // obvious rather than mysterious.
+        // Named by host so progress and a blocked site are visible.
         let step = self.recorder.begin_guarded_with_links(
             TurnStepKind::ReadPage,
             format!("Reading {}", host_of(&url)),
@@ -134,20 +132,12 @@ impl ExternalLookup<'_> {
         Ok(output)
     }
 
-    /// Open the top web results and read them.
-    ///
-    /// A search provider returns a headline and about a sentence of context.
-    /// Answering "what does this page say" from that is not possible, so the
-    /// highest-ranked results are fetched and their article text is what the
-    /// prompt carries. Each wave's fetches run side by side, and every one is
-    /// individually fallible: a block, a timeout or a page with no extractable
-    /// article is replaced by the next result down in a following wave, so one
-    /// site refusing the request does not leave the turn a page short.
-    ///
-    /// The pages share the turn's page budget rather than each being cut to a
-    /// fixed size — see [`super::super::page_budget`]. Everything tried is recorded in
-    /// the returned memory, which the tool loop starts from. The returned vector
-    /// is index-aligned with `results`; `None` is a result that was never tried.
+    /// Opens the top web results and reads them, in waves of side-by-side
+    /// fetches: a page that fails or has no article is replaced by the next
+    /// result down in the following wave. The pages share the turn's page budget
+    /// (see [`super::super::page_budget`]), and everything tried is recorded in
+    /// the returned memory. The vector is index-aligned with `results`; `None`
+    /// was never tried.
     async fn fetch_page_texts(
         &self,
         results: &[lattice_core::application::contracts::web::WebSearchResult],
@@ -323,12 +313,9 @@ impl ExternalLookup<'_> {
         } else {
             tuning.web_search_max_results
         };
-        // No engine is named, so the source finder routes the search to every
-        // engine the user has on, keyed ones included. Deep research wants
-        // Wikipedia too, but the wiki branch runs beside this one whenever it
-        // is planned and reaches wikipedia.org through its own client, which
-        // this service's pacer never sees. Asking for it here too would hit
-        // the same host twice at the same moment.
+        // No engine is named, so the finder routes to every engine the user has on.
+        // Wikipedia is left to the wiki branch whenever it is planned: it reaches
+        // wikipedia.org through its own client, so asking here too would hit it twice.
         let include_wikipedia = deep_research_enabled && !self.wiki_planned;
 
         let executor = self.container.tools();
@@ -359,10 +346,8 @@ impl ExternalLookup<'_> {
                                 result_count = output.result_count,
                                 "Forced web search completed"
                             );
-                            // Said now, before the pages are read: reading is
-                            // the slow part, and a list of addresses that only
-                            // appears once every one of them has been fetched
-                            // tells a waiting reader nothing.
+                            // Said now, before the slow page reads, so a waiting reader sees the
+                            // addresses.
                             if let Some(step) = step.take() {
                                 web_steps::finish_search(step, self.recorder, &output);
                             }
@@ -438,10 +423,8 @@ impl ExternalLookup<'_> {
                                             })
                                             .unwrap_or_default();
                                         let snippet = result.snippet.trim();
-                                        // A page that was read in full replaces the
-                                        // search engine's one-line blurb. The snippet
-                                        // stays for the rest, so a fetch that failed
-                                        // degrades to what the old behaviour gave.
+                                        // A page read in full replaces the search engine's
+                                        // blurb; the snippet stays for the rest.
                                         let body =
                                             render_page_body(pages.get(i).and_then(Option::as_ref));
                                         WebContextItem {

@@ -1,11 +1,7 @@
 //! How much prompt the corpus planner may be sent: what its model's window
 //! holds beside the plan, less anything a server has shown about a window
-//! smaller than the one its port reports.
-//!
-//! No clock sizes the prompt. The planner used to be held to a 20-second
-//! timeout and its catalog to what the model was measured to read inside it,
-//! which encoded one machine and one model; a slow model now gets its whole
-//! window and the user's Stop ends a call they no longer want.
+//! smaller than the one its port reports. No clock sizes the prompt; the
+//! user's Stop ends a call they no longer want.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

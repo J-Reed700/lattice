@@ -288,12 +288,8 @@ pub(super) async fn finalize_successful_turn(
     })
 }
 
-/// Commit the answer and settle the question in one step, or mark the question
-/// failed.
-///
-/// A commit that fails (a busy database, or a turn truncated or deleted while
-/// it generated) would otherwise leave the question `pending` for good, and a
-/// pending question renders as still in flight.
+/// Commits the answer and settles the question in one step, or marks the
+/// question failed so it never stays `pending`.
 async fn commit_turn(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
@@ -333,12 +329,9 @@ fn message_dto(
     }
 }
 
-/// The conversation as it stands after the commit.
-///
-/// The answer is saved by the time this is read, so a failed read is not a
-/// failed turn: reporting it as one would show an error for an answer the
-/// user will find on reload, and would skip the grounding check. What the turn
-/// itself wrote is known without the read, so that is returned instead.
+/// The conversation as it stands after the commit. The answer is already
+/// saved, so a failed read returns what the turn itself wrote rather than
+/// failing the turn.
 fn turn_transcript(
     read: Result<lattice_core::domain::conversation::ConversationAggregate>,
     user_message_id: &str,
@@ -365,17 +358,9 @@ fn turn_transcript(
     }
 }
 
-/// Keep the pages a turn cited as context for the turns that follow.
-///
-/// Without this, web research ends with the turn that did it: the citations
-/// survive in the answer's own metadata and in the sources panel, but the next
-/// turn assembles its context from `conversation_web_sources`, which nothing
-/// was writing. So a chat could show thirty-seven sources in its sidebar and
-/// still enter the next turn with no grounded context at all, and say — truth-
-/// fully, from where it stood — that it had nothing to go on.
-///
-/// Failure here is logged and dropped. The turn is already finished and
-/// answered; losing tomorrow's context must not retract today's answer.
+/// Keeps the pages a turn cited as context for the turns that follow, which
+/// assemble their context from `conversation_web_sources`. Failure is logged
+/// and dropped: losing later context must not retract this answer.
 async fn record_cited_web_sources(
     container: &dyn ChatRuntime,
     conversation_id: &str,
@@ -453,10 +438,8 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
             title: Some(source.file_name.trim())
                 .filter(|value| !value.is_empty() && *value != url)
                 .map(ToOwned::to_owned),
-            // The pointer the sources panel shows, not the page: a page the
-            // turn read is archived whole beside this row (`content`), and
-            // storing it again here doubled it on disk and had every later
-            // turn load it to list a link. A search result's pointer is its
+            // The pointer the sources panel shows, not the page, which is archived
+            // whole beside this row (`content`). A search result's pointer is its
             // snippet.
             excerpt: source
                 .excerpt
@@ -471,12 +454,9 @@ fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
     keepable
 }
 
-/// Attach the pictures the saved answer shows to its message, release the
-/// rest of what the turn stored, and write the attached ones to
-/// `metadata.images` — here and on `message`, so the transcript the turn
-/// returns carries them too. The content keeps its `![caption](img-N)` lines
-/// as the model wrote them. A failure is logged, not returned: the answer is
-/// saved, its pictures show as unavailable, and the startup sweep removes
+/// Attaches the pictures the saved answer shows, releases the rest of what the
+/// turn stored, and writes the attached ones to `metadata.images` here and on
+/// `message`. A failure is logged, not returned; the startup sweep removes
 /// what stayed leased.
 async fn attach_turn_images(
     container: &dyn ChatRuntime,
