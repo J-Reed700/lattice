@@ -17,10 +17,6 @@ pub struct DeleteModelUseCase {
 
 impl DeleteModelUseCase {
     /// Create a new DeleteModelUseCase with both filesystem and database deletion
-    ///
-    /// # Arguments
-    /// * `storage` - Filesystem storage port for deleting model files
-    /// * `repository` - Database repository for deleting model records
     pub fn new(
         storage: Arc<dyn ModelStoragePort>,
         repository: Arc<dyn DownloadedModelRepository>,

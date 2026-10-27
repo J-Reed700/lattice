@@ -15,10 +15,6 @@ pub struct GetUrlPreviewUseCase {
 
 impl GetUrlPreviewUseCase {
     /// Create a new get URL preview use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `web_capture_service` - Service for URL preview and metadata extraction
     pub fn new(web_capture_service: Arc<dyn WebCaptureServiceTrait>) -> Self {
         Self {
             web_capture_service,

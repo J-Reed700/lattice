@@ -14,10 +14,6 @@ pub struct IngestWebUrlUseCase {
 
 impl IngestWebUrlUseCase {
     /// Create a new ingest web URL use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `web_ingestion_service` - Service for web content ingestion
     pub fn new(web_ingestion_service: Arc<dyn WebIngestionServiceTrait>) -> Self {
         Self {
             web_ingestion_service,
