@@ -22,10 +22,12 @@ use crate::features::llm::engine::system::backend_devices::parse_list_devices;
 const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Starts embedding servers from one llama-server binary, as child processes
-/// of this one.
+/// of this one: one server per launch, shared while it runs.
 pub struct StandaloneEmbeddingStarter {
     binary: PathBuf,
     children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<Child>>>>,
+    /// Running servers by launch flags.
+    running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningEmbeddingServer>>>,
 }
 
 impl StandaloneEmbeddingStarter {
@@ -33,6 +35,7 @@ impl StandaloneEmbeddingStarter {
         Self {
             binary: binary.into(),
             children: parking_lot::Mutex::new(Vec::new()),
+            running: tokio::sync::Mutex::default(),
         }
     }
 
@@ -89,6 +92,20 @@ impl EmbeddingServerStarter for StandaloneEmbeddingStarter {
     }
 
     async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
+        let launched = build_server_args(&sidecar_config(launch), 0).join(" ");
+        let mut running = self.running.lock().await;
+        if let Some(server) = running.get(&launched).filter(|server| server.alive()) {
+            return Ok(Arc::clone(server));
+        }
+        let server = self.spawn(launch).await?;
+        running.insert(launched, Arc::clone(&server));
+        Ok(server)
+    }
+}
+
+impl StandaloneEmbeddingStarter {
+    /// A new server for `launch`, once its `/health` answers.
+    async fn spawn(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
             .map_err(|e| AppError::ModelLoadFailed(format!("No free local port: {e}")))?
