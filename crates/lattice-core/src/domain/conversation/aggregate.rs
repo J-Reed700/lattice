@@ -270,9 +270,8 @@ impl ConversationAggregate {
     /// stops one caller from carrying the summary and another the raw history.
     pub fn context_preamble(&self) -> Option<String> {
         self.compaction.as_ref().map(|record| {
-            // Shared framing, not a local format string: this used to say only
-            // "summarized", which let the QA and context-window paths present a
-            // model's paraphrase as though it were the transcript.
+            // The shared framing, so every path says the summary is a model's
+            // paraphrase, not the transcript.
             crate::domain::conversation::memory::frame_generated_summary(&record.summary_text)
         })
     }

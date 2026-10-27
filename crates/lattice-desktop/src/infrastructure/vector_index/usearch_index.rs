@@ -43,14 +43,9 @@ mod search;
 /// (or a unit test) doesn't pay for 10k slots it will never use.
 const INITIAL_INDEX_CAPACITY: usize = 1_024;
 
-/// HNSW graph parameters. Recorded in the manifest, so retuning any of them
-/// rebuilds rather than reusing a graph built to a different shape.
-///
-/// Measured on the v3 retrieval fixture (1,145 Qwen3 vectors, 194 queries)
-/// against exact cosine: 16/128/64 lost the true nearest chunk on 13 queries
-/// (recall@10 0.953), because a templated corpus packs into tight clusters and
-/// a narrow walk never leaves the one it lands in. 32/256/256 lost none
-/// (recall@10 0.999) for about 0.3 ms more per query.
+/// HNSW graph parameters, recorded in the manifest so retuning rebuilds
+/// rather than reusing a differently shaped graph. Wide on purpose: a
+/// templated corpus packs into tight clusters a narrow walk never leaves.
 const HNSW_CONNECTIVITY: usize = 32;
 const HNSW_EXPANSION_ADD: usize = 256;
 const HNSW_EXPANSION_SEARCH: usize = 256;

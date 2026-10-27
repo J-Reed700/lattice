@@ -83,7 +83,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // an `Err` returned from this hook would abort the app instead.
             bootstrap::initialize_app(app);
 
-            // The container is now available to each domain plugin.
+            // The container is available to each domain plugin.
             for plugin in lattice::plugins::init_plugins() {
                 app.handle().plugin(plugin)?;
             }

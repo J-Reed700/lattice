@@ -452,9 +452,8 @@ mod tests_basic {
 
         let _search_service = container.search_service_concrete();
 
-        // This test demonstrates the limitation: MockSearchService wrapped in Arc
-        // can't be mutated easily. In practice, you'd populate the index differently.
-        // For now, test that search returns empty results
+        // MockSearchService behind an Arc cannot be populated here, so this checks
+        // that search returns empty results.
         let query = vec![0.1; 768];
         let results = container
             .search_service()

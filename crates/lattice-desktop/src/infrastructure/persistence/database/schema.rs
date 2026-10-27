@@ -6,8 +6,7 @@ use sqlx::SqlitePool;
 
 pub const SCHEMA_VERSION: i32 = 18;
 
-/// Initialize database schema
-/// Note: This now runs migrations instead of creating tables directly
+/// Initializes the database schema by running migrations.
 pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations")
         .run(pool)

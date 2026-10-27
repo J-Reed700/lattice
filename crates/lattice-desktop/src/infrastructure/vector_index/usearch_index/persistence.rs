@@ -8,12 +8,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
-/// Serializable key map for persistence alongside the USearch index file.
-///
-/// Deliberately still JSON. Once the chunk text is gone an entry is a handful
-/// of short strings, so parsing it is no longer what startup waits on — the
-/// content hydration query is — and a format anyone can open in a text editor
-/// is worth more than the milliseconds a binary encoding would save.
+/// Serializable key map for persistence beside the USearch index file. Kept
+/// as JSON: an entry is a handful of short strings, and a readable format is
+/// worth more than a binary one's milliseconds.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyMapData {
     id_to_key: HashMap<String, u64>,
@@ -77,9 +74,8 @@ impl USearchVectorIndex {
                 "USearch index loaded from disk"
             );
         } else {
-            // Capacity is not reserved up front — `ensure_capacity` grows the
-            // index on demand from the first insert. Reserving a fixed block
-            // here is what produced the old "crashes past N vectors" cliff.
+            // Capacity is not reserved up front: `ensure_capacity` grows the
+            // index on demand from the first insert.
             tracing::info!(
                 path = %index_path.display(),
                 "Created new USearch index"

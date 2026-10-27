@@ -21,12 +21,3 @@ mod document;
 
 pub use chunk::MockChunkRepository;
 pub use document::MockDocumentRepository;
-
-// MockTagRepository REMOVED - migrated to DDD
-// The old MockTagRepository using crate::models::tag::Tag has been removed.
-// Use the DDD version instead:
-// - Location: src/shared/traits.rs
-// - Uses: lattice_core::domain::entities::tag::Tag (domain entity)
-// - Trait: lattice_core::shared::traits::TagRepositoryTrait
-// Migration note: This mock was obsolete and using the old Tag model.
-// The canonical mock is in shared/traits.rs with proper DDD structure.

@@ -53,21 +53,13 @@ impl ModelPaths {
         &self.model_id
     }
 
-    /// Get the full path for a model file.
-    ///
-    /// Constructs the complete file path by appending the filename
-    /// to the unified model directory path.
+    /// The full path of a model file in the model directory.
     ///
     /// # Errors
     ///
-    /// Returns `AppError::Security` if `filename` is not a bare file name.
-    ///
-    /// This is fallible on purpose. `filename` reaches here as the
-    /// base64url-decoded second segment of a frontend-supplied download id,
-    /// and `Path::join` **discards the base when the joined component is
-    /// absolute** — so `paths.file_path("/Users/example/.zshenv")` used to
-    /// return exactly that path, dropping the models root entirely and
-    /// letting a download write anywhere the user can write.
+    /// Returns `AppError::Security` if `filename` is not a bare file name: it
+    /// comes from a frontend-supplied download id, and `Path::join` discards the
+    /// base for an absolute component.
     pub fn file_path(&self, filename: &str) -> Result<PathBuf, AppError> {
         lattice_core::shared::fs::confinement::validate_bare_filename(filename)?;
 
@@ -170,10 +162,8 @@ impl ModelPaths {
 mod tests {
     use super::*;
 
-    /// `Path::join` silently drops the base when given an absolute component,
-    /// so an absolute "filename" used to escape the models root completely.
-    /// The filename arrives base64url-decoded from a frontend-supplied
-    /// download id, so it is fully attacker-controlled.
+    /// An absolute "filename", attacker-controlled through a download id, must not
+    /// escape the models root through `Path::join`.
     #[test]
     fn file_path_rejects_absolute_filename() {
         let paths = ModelPaths::new("phi-3-mini").expect("valid model id");

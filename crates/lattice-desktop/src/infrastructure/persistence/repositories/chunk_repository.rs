@@ -1,17 +1,5 @@
-//! Chunk Repository Implementation
-//!
-//! Infrastructure implementation for text chunk persistence using SQLite.
-//!
-//! # Architecture
-//!
-//! This repository implements the `RepositoryPort<ChunkEntity>` trait,
-//! providing CRUD operations for chunks using SQLite. All database
-//! operations go through the ChunkMapper layer to maintain clean
-//! separation between domain entities and database models.
-//!
-//! # Migration Notes
-//!
-//! - DB models are now internal and NOT exported
+//! SQLite chunk persistence implementing `RepositoryPort<ChunkEntity>`,
+//! through the `ChunkMapper` layer; DB models stay internal.
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use async_trait::async_trait;

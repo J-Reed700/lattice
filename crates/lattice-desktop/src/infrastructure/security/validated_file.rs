@@ -291,14 +291,9 @@ mod tests {
 
     #[test]
     fn test_blocks_absolute_path_escape() {
-        // The property under test: an absolute path that contains no `..` and
-        // exists on disk is still refused when it lies outside every allowed
-        // root. `/etc/passwd` used to stand in for that, but it only proves it
-        // on Unix — on Windows the string has a root and no drive prefix, so it
-        // resolves against the current drive to `C:\etc\passwd`, which does not
-        // exist, and the failure becomes CanonicalizationFailed instead of the
-        // scope rejection we mean to assert. A second temp directory is outside
-        // the root and really exists on every platform.
+        // An absolute path with no `..` that exists on disk is still refused
+        // outside every allowed root. A second temp directory exists on every
+        // platform, unlike `/etc/passwd`, which does not resolve on Windows.
         let temp_dir = TempDir::new().unwrap();
         let outside_dir = TempDir::new().unwrap();
         let allowed = vec![temp_dir.path().to_path_buf()];

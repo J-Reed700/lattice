@@ -1,17 +1,8 @@
-//! Absolute filesystem paths for tests, spelled the way the host OS spells them.
-//!
-//! A great many tests here used to hard-code POSIX roots — `/lattice`,
-//! `/Users/example/Documents`, `/etc/passwd`. That reads as "any absolute
-//! path", but on Windows it is not one: `Path::new("/lattice").is_absolute()`
-//! is `false` there, because Windows requires a prefix (`C:`) as well as a
-//! root. Every validator, confinement check and canonicalisation in this crate
-//! therefore behaved differently under such a path, and 22 unit tests failed
-//! the first time the suite ever ran on Windows.
-//!
-//! The fix is to stop writing a separator-and-prefix convention into test data
-//! by hand. `abs("lattice/docs")` yields `/lattice/docs` on Unix and
-//! `C:\lattice\docs` on Windows, so a test asserts on *absoluteness* and
-//! *containment* rather than on one platform's spelling of them.
+//! Absolute filesystem paths for tests, spelled the way the host OS spells
+//! them: `abs("lattice/docs")` is `/lattice/docs` on Unix and
+//! `C:\lattice\docs` on Windows, where a POSIX root without a drive prefix is
+//! not absolute. Tests then assert on absoluteness and containment rather than
+//! one platform's spelling.
 
 use std::path::{Path, PathBuf};
 

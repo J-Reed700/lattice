@@ -79,10 +79,8 @@ fn compaction_replaces_the_folded_prefix_in_the_llm_context() {
         .context_preamble()
         .expect("a compaction has a preamble");
     assert!(preamble.contains("distilled past"));
-    // And it must say who wrote it. This preamble used to read only
-    // "[Earlier conversation, summarized]", which let the QA and
-    // context-window paths hand a model's paraphrase to another model as
-    // though it were the transcript.
+    // And it must say a model wrote it, so no path hands a paraphrase on as
+    // the transcript.
     assert!(
         preamble.contains("written by a model"),
         "a summary presented without that caveat reads as something the user said"

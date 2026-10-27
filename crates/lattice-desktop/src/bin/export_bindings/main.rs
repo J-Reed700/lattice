@@ -33,14 +33,10 @@ fn normalize_generated_bindings(generated: &str) -> Result<String, String> {
     Ok(format!("{normalized}\n"))
 }
 
-/// Where `generated` and `committed` first differ, as a 1-based line number and
-/// the two lines; `None` when they are the same text.
-///
-/// Compared line by line, so the line-ending convention is not part of the
-/// comparison. It used to be byte for byte, and on Windows git checks the
-/// committed file out with CRLF endings while the generator writes LF — so the
-/// check reported up-to-date bindings as stale there, and only there. A missing
-/// line is reported against an empty one.
+/// Where `generated` and `committed` first differ, as a 1-based line number
+/// and the two lines; `None` when they are the same text. Compared line by
+/// line, so a CRLF checkout on Windows matches LF output; a missing line is
+/// reported against an empty one.
 fn first_difference(generated: &str, committed: &str) -> Option<(usize, String, String)> {
     let mut generated_lines = generated.lines();
     let mut committed_lines = committed.lines();

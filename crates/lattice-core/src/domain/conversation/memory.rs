@@ -410,19 +410,11 @@ impl std::str::FromStr for SourceRole {
     }
 }
 
-/// The one framing for a generated summary anywhere in a prompt.
-///
-/// Three code paths put a working summary in front of a model — the chat
-/// assembler, the QA context manager and the context-window builder — and they
-/// used to word it two different ways, one of which never said the text was
-/// written by a model. A summary presented without that caveat reads as
-/// transcript, and the model then treats a paraphrase as something the user
-/// actually said. That is the failure this single definition prevents.
-///
-/// The `[generated summary` opening is load-bearing as well as informative: the
-/// assembler finds the summary by that prefix when it has to evict something.
-/// Reword inside the bracket freely; changing how it starts changes what can be
-/// evicted under pressure.
+/// The one framing for a generated summary anywhere in a prompt, so every
+/// path says the text was written by a model rather than presenting a
+/// paraphrase as transcript. The `[generated summary` opening is
+/// load-bearing: the assembler finds the summary by that prefix when it has
+/// to evict something, so reword only inside the bracket.
 pub fn frame_generated_summary(summary: &str) -> String {
     format!(
         "[generated summary of earlier conversation \u{2014} written by a model, may be \
