@@ -114,6 +114,12 @@ struct RawJudgeItem {
 
 /// Send `values` in as many requests as the window needs, each holding as
 /// many items as fit, and collect each request's parsed `items`.
+///
+/// A reply cut off at its output limit, or one that is not JSON, used to fail
+/// the whole grading: every answer of the quiz stayed ungraded for one item's
+/// overlong rationale. Its items now go again in halves, and the rest of the
+/// quiz with them at the smaller size; an item whose reply fails alone stays
+/// pending, as an item the grader leaves out does.
 async fn batched(
     llm: &dyn LLMPort,
     system: &str,
@@ -123,6 +129,8 @@ async fn batched(
 ) -> Result<Vec<Value>> {
     let mut out = Vec::new();
     let mut start = 0;
+    // The most items a request may take: every item, until a reply fails.
+    let mut most = values.len();
     while start < values.len() {
         let request_for = |size: usize| {
             let slice: Vec<&(String, Value)> = values.iter().skip(start).take(size).collect();
@@ -137,7 +145,7 @@ async fn batched(
                 "low",
             )
         };
-        let mut size = values.len() - start;
+        let mut size = (values.len() - start).min(most);
         while size > 1 && !model_call::fits(llm, &request_for(size)).await {
             size = size.div_ceil(2);
         }
@@ -148,15 +156,27 @@ async fn batched(
             model_call::TooLarge::Window("one answer with its rubric"),
         )
         .await?;
-        if ["length", "max_tokens", "incomplete", "content_filter"]
+        let cut_off = ["length", "max_tokens", "incomplete", "content_filter"]
             .iter()
-            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
-        {
-            return Err(AppError::InvalidInput(
-                "The grader's answer was cut off.".into(),
-            ));
-        }
-        let parsed = crate::features::learning::generation::parse_json::<Value>(&response.text)?;
+            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s));
+        let parsed = (!cut_off)
+            .then(|| {
+                crate::features::learning::generation::parse_json::<Value>(&response.text).ok()
+            })
+            .flatten();
+        let Some(parsed) = parsed else {
+            if size > 1 {
+                most = size / 2;
+            } else {
+                tracing::warn!(
+                    item = values.get(start).map(|(id, _)| id.as_str()),
+                    cut_off,
+                    "The grader's answer for one item was unusable; it stays pending"
+                );
+                start += 1;
+            }
+            continue;
+        };
         out.extend(
             parsed
                 .get("items")
