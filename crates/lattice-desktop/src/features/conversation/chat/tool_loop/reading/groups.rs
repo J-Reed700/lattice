@@ -2,8 +2,9 @@
 //! group of its passages shown again, and the model writes their lines.
 //!
 //! Each group's request is the turn's prompt up to its closing instruction, so
-//! a server or provider that caches the prompt reads only the group, and the
-//! groups go one after another so each reuses the cache the one before left. A
+//! a server or provider that caches the prompt reads only the group. A
+//! llama-server reads that prompt alone first: a hybrid model resumes only
+//! from a checkpoint near the end of a prompt it has read. A
 //! group the window cannot hold is split; a passage it cannot hold is read by
 //! its label. See evals/retrieval/2026-10-26-GROUPED-READING.md.
 
@@ -98,7 +99,11 @@ pub(super) async fn read_in_groups(
     let reserved = request.max_output_tokens;
     let mut lines = BTreeMap::new();
     let mut written = 0usize;
-    for group in planned(llm, request, passages).await {
+    let readings = planned(llm, request, passages).await;
+    if llm.keeps_read_prompts() {
+        read_ahead(llm, request, cancel, clock).await?;
+    }
+    for group in readings {
         let left = reserved.map(|reserved| reserved.saturating_sub(as_u32(written)));
         if left == Some(0) {
             break;
@@ -107,6 +112,34 @@ pub(super) async fn read_in_groups(
         written = tokens(llm, &super::notes::as_kept(&lines)).await;
     }
     Ok(lines)
+}
+
+/// Has the backend read the turn's prompt up to its reading instruction, so
+/// every group and the answer after them resume from there. A failure costs
+/// only the time; Stop and the turn's deadline are errors.
+async fn read_ahead(
+    llm: &dyn LLMPort,
+    request: &CompletionRequest,
+    cancel: &CancellationToken,
+    clock: &TurnClock,
+) -> Result<()> {
+    let mut input = request.input.clone();
+    replace_reading(&mut input, "");
+    let remaining = clock.remaining()?;
+    let ahead = reading_request(request, input, Some(1), &[], Some(remaining));
+    let response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(cancelled_error()),
+        result = timeout(remaining, llm.complete(&ahead)) => result.map_err(|_| clock.exhausted())?,
+    };
+    match response {
+        Err(_) if cancel.is_cancelled() => Err(cancelled_error()),
+        Err(error) => {
+            warn!(%error, "The model could not read the passages ahead of their groups");
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+    }
 }
 
 /// Reads one group, then sweeps for the labels its lines left out while each

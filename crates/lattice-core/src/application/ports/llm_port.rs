@@ -297,6 +297,15 @@ pub trait LLMPort: Send + Sync {
     fn hold_cache(&self, _key: &str) -> Option<CacheHold> {
         None
     }
+
+    /// Whether the backend keeps a prompt it has read, free, for later
+    /// requests that begin with it: a llama-server's slot. A hybrid model's
+    /// server resumes only from a checkpoint near the end of a prompt it has
+    /// read, so requests that share a head read it alone first. A port that
+    /// wraps another forwards it.
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
 }
 
 /// A hold from [`LLMPort::hold_cache`]; dropping it lets the hold go.

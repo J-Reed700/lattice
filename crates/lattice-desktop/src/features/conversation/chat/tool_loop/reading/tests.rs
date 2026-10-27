@@ -100,6 +100,7 @@ struct Model {
     context_tokens: Option<usize>,
     /// Fails every request past the script, as a provider that went down.
     down_after_script: bool,
+    keeps_read_prompts: bool,
 }
 
 impl Model {
@@ -109,6 +110,14 @@ impl Model {
             requests: Mutex::default(),
             context_tokens: None,
             down_after_script: false,
+            keeps_read_prompts: false,
+        }
+    }
+
+    fn keeping_read_prompts(script: impl IntoIterator<Item = CompletionResponse>) -> Self {
+        Self {
+            keeps_read_prompts: true,
+            ..Self::new(script)
         }
     }
 
@@ -124,10 +133,8 @@ impl Model {
         script: impl IntoIterator<Item = CompletionResponse>,
     ) -> Self {
         Self {
-            script: Mutex::new(script.into_iter().collect()),
-            requests: Mutex::default(),
             context_tokens: Some(context_tokens),
-            down_after_script: false,
+            ..Self::new(script)
         }
     }
 
@@ -154,6 +161,9 @@ impl LLMPort for Model {
     }
     fn max_context_tokens(&self) -> usize {
         self.context_tokens.unwrap_or(32_768)
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        self.keeps_read_prompts
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)

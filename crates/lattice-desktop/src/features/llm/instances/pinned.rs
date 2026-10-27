@@ -99,6 +99,10 @@ impl LLMPort for PinnedLlm {
         self.inner().hold_cache(key)
     }
 
+    fn keeps_read_prompts(&self) -> bool {
+        self.inner().keeps_read_prompts()
+    }
+
     fn count_tokens(&self, text: &str) -> usize {
         self.inner().count_tokens(text)
     }

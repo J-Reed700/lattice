@@ -324,6 +324,10 @@ impl LLMPort for ScheduledLlm {
             .then(|| CacheHold::new(self.scheduler.hold(key)))
     }
 
+    fn keeps_read_prompts(&self) -> bool {
+        self.inner.keeps_read_prompts()
+    }
+
     async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
         let Some(tokenizer) = &self.tokenizer else {
             return Ok(self.count_tokens(text));
