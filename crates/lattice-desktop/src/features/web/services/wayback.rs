@@ -43,7 +43,7 @@ use super::finders::{retry_after, Fetched, FinderHttp};
 use super::identity;
 use super::page_cache::refusal_is_settled;
 use super::sourcing::HealthBook;
-use super::web::{read_text_bounded, MAX_PAGE_BODY_BYTES, MIN_SITE_REQUEST_INTERVAL};
+use super::web::{read_bytes_bounded, MAX_PAGE_BODY_BYTES, MIN_SITE_REQUEST_INTERVAL};
 
 /// The availability API, documented at `archive.org/help/wayback_api.php`.
 const AVAILABILITY_API: &str = "https://archive.org/wayback/available";
@@ -185,7 +185,9 @@ pub(crate) enum Lookup {
 /// A capture's bytes, as replayed.
 #[derive(Debug)]
 pub(crate) struct Replayed {
-    pub html: String,
+    /// The capture as the archive stores it: a page's markup, or a PDF's or
+    /// text file's own bytes, read the way a live read reads them.
+    pub body: Vec<u8>,
     pub content_type: Option<String>,
     /// The capture actually served: the replay may redirect to a neighbour.
     pub captured_at: DateTime<Utc>,
@@ -311,7 +313,7 @@ impl Wayback {
         );
         let call = self.call(&REPLAY, || self.fetch_replay(&raw)).await;
         match call.value {
-            Some((final_url, content_type, html)) => {
+            Some((final_url, content_type, body)) => {
                 // A replay redirects to the nearest capture it can serve; the
                 // label names that one.
                 let captured_at = Url::parse(&final_url)
@@ -321,7 +323,7 @@ impl Wayback {
                     .unwrap_or(capture.captured_at);
                 let served = captured_at.format(CAPTURE_TIMESTAMP);
                 Ok(Replayed {
-                    html,
+                    body,
                     content_type,
                     captured_at,
                     snapshot_url: format!("{}{served}/{url}", self.endpoints.replay),
@@ -429,7 +431,7 @@ impl Wayback {
     async fn fetch_replay(
         &self,
         request: &str,
-    ) -> Result<Option<(String, Option<String>, String)>, FailureCause> {
+    ) -> Result<Option<(String, Option<String>, Vec<u8>)>, FailureCause> {
         let config = self.config();
         let _site_slot = config.http.pacer.acquire(request).await;
         let headers =
@@ -451,10 +453,11 @@ impl Wayback {
         }
         let final_url = response.url().to_string();
         let content_type = content_type(response.headers());
-        let html = read_text_bounded(response, MAX_PAGE_BODY_BYTES)
+        // Bytes, not text: an archived PDF decoded as text is no longer one.
+        let body = read_bytes_bounded(response, MAX_PAGE_BODY_BYTES)
             .await
             .map_err(FailureCause::Transport)?;
-        Ok((!html.trim().is_empty()).then_some((final_url, content_type, html)))
+        Ok((!body.iter().all(u8::is_ascii_whitespace)).then_some((final_url, content_type, body)))
     }
 }
 

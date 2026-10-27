@@ -15,7 +15,9 @@ use super::super::address_guard::check_url_host;
 use super::super::{PageRead, ReadPage, WebService};
 use super::{cached_page, served_from_cache, text_len, LiveFailure, PageText};
 use crate::features::web::services::page_cache::{ArchiveAnswer, CachedLookup};
-use crate::features::web::services::provenance::{PageProvenance, PageReading};
+use crate::features::web::services::provenance::{
+    PageMetadata, PageProvenance, PageReading, TextForm,
+};
 use crate::features::web::services::wayback::{Lookup, ReplayMiss};
 
 /// The archive gave no copy: its answer, for the refusal rule, and a note
@@ -217,12 +219,20 @@ impl WebService {
         let snapshot_url = Url::parse(&replayed.snapshot_url).map_err(|error| {
             ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
         })?;
-        let (title, content, metadata, text_form) = self
-            .extract(replayed.html, snapshot_url, read)
-            .await
-            .map_err(|error| {
-                ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
-            })?;
+        // An archived PDF or text file is read as a live one is: parsed as a
+        // page, a PDF's raw bytes were saved as the source's text.
+        let kind = super::body::body_kind(replayed.content_type.as_deref(), &replayed.body);
+        let read_copy = if kind == super::body::BodyKind::Html {
+            let html = super::decode_response_text(replayed.body, replayed.content_type.as_deref());
+            self.extract(html, snapshot_url, read).await
+        } else {
+            super::body::body_text(kind, replayed.body, replayed.content_type.as_deref())
+                .await
+                .map(|text| (None, text, PageMetadata::default(), TextForm::Plain))
+        };
+        let (title, content, metadata, text_form) = read_copy.map_err(|error| {
+            ArchiveMiss::unanswered(format!("The archived copy could not be read: {error}"))
+        })?;
         if content.trim().is_empty() {
             return Err(ArchiveMiss::nothing(
                 "The archived copy has no readable text",
