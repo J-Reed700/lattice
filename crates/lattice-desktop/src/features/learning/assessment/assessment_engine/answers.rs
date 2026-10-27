@@ -145,10 +145,18 @@ pub fn text_matches(answer: &str, key: &LearningTextKey) -> Option<bool> {
         if let Some(n) = &key.numeric {
             return Some((given - n.value).abs() <= n.tolerance + 1e-9 * n.value.abs().max(1.0));
         }
-        return Some(key.variants.iter().any(|v| {
+        if key.variants.iter().any(|v| {
             parse_number(v, &[]).is_some_and(|expected| (expected - given).abs() <= 1e-9)
                 || normalize_answer(v) == normalize_answer(answer)
-        }));
+        }) {
+            return Some(true);
+        }
+        // A number against a key only in words ("0.5" for "half") is the judge's call.
+        return key
+            .variants
+            .iter()
+            .any(|v| parse_number(v, &[]).is_some())
+            .then_some(false);
     }
     let normalized = normalize_answer(answer);
     if key
