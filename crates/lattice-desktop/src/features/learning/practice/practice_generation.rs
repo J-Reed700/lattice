@@ -295,11 +295,15 @@ pub async fn grade(
             Err(error) if attempt == 0 => {
                 prompt = serde_json::json!({"task":task,"rejectedFeedback":raw,"validationIssue":error.to_string(),"instruction":"Correct the rejected feedback against the original artifact and rubric. Copy each evidence_quote as one exact contiguous substring, with no ellipses or reformatted whitespace. Keep valid judgments and correct every criterion. No feedback has been saved yet."}).to_string();
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Err(AppError::ModelAnswerUnusable(format!(
+                    "The grader could not produce validated feedback: {error}"
+                )))
+            }
         }
     }
-    Err(invalid(
-        "The grader could not produce validated feedback. Your draft is still saved.",
+    Err(AppError::ModelAnswerUnusable(
+        "The grader could not produce validated feedback.".into(),
     ))
 }
 

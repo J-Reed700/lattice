@@ -342,7 +342,7 @@ pub(in crate::features::learning) async fn review_bank_items(
             );
         }
         if !indices.iter().all(|i| solved.contains_key(i)) {
-            return Err(AppError::ServiceNotAvailable(
+            return Err(AppError::ModelAnswerUnusable(
                 "The model could not complete the quiz key review.".into(),
             ));
         }
