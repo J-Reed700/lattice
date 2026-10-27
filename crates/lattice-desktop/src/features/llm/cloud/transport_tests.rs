@@ -278,6 +278,38 @@ async fn any_other_bad_request_is_not_resent() {
     assert!(!error.to_string().contains("sensitive-provider-reason"));
 }
 
+/// An account out of credit answers every request with a 400. It is a
+/// setting to fix, so no job waits it out and no request is resent or
+/// reworded, with or without a schema.
+#[tokio::test]
+async fn an_account_out_of_credit_is_a_setting_to_fix() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for request in [CompletionRequest::default(), structured()] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                    "type":"invalid_request_error",
+                    "message":"Your credit balance is too low to access the Anthropic API. \
+                               Please go to Plans & Billing to upgrade or purchase credits."
+                }})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let error = anthropic_client(&server)
+            .await
+            .complete(&request)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+        assert!(!JobFailure::is_transient(&error));
+        assert!(error.to_string().contains("credit balance"), "{error}");
+        assert!(!error.to_string().contains("Plans & Billing"), "{error}");
+    }
+}
+
 #[tokio::test]
 async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     let server = MockServer::start().await;
