@@ -278,3 +278,19 @@ async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_gra
     ids.sort_unstable();
     assert_eq!(ids, ["a", "c"], "[b] stays pending");
 }
+
+#[test]
+fn a_disputed_item_may_keep_its_own_question_when_repaired() {
+    let mut authored = need("Reduce iron oxide.".into(), 1);
+    authored.existing_prompts = vec![
+        "Which gas reduces the ore?".into(),
+        "Why is coke added?".into(),
+    ];
+    let repair = repair_need(&authored, "Which gas reduces the ore?");
+    assert_eq!(repair.existing_prompts, ["Why is coke added?"]);
+    assert_eq!(
+        authored.existing_prompts.len(),
+        2,
+        "the bank's list is unchanged"
+    );
+}
