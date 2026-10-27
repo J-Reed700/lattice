@@ -38,25 +38,12 @@ pub(super) fn asks_for_format(body: &Value) -> bool {
     body.pointer("/output_config/format").is_some()
 }
 
-/// `error`, or the schema refusal when that is what the 400 says. The reason
-/// is read only to tell the two apart; it is never logged or shown, since a
-/// provider's error can quote what was sent.
-pub(super) async fn refusal_or(response: reqwest::Response, error: AppError) -> AppError {
-    let Ok(reply) = response.json::<Value>().await else {
-        return error;
-    };
-    let reason = reply
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if reason.contains("output_config.format")
+/// The schema refusal, when that is what a 400's `reason` says.
+pub(super) fn refusal(reason: &str) -> Option<AppError> {
+    (reason.contains("output_config.format")
         || reason.contains("grammar")
-        || reason.contains("Schemas contains")
-    {
-        AppError::ModelRejected(REFUSAL.into())
-    } else {
-        error
-    }
+        || reason.contains("Schemas contains"))
+    .then(|| AppError::ModelRejected(REFUSAL.into()))
 }
 
 /// `body` with its response schema asked for in the system prompt instead of

@@ -454,8 +454,14 @@ impl CloudLlm {
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             let error = status_error(&self.provider, self.provider_name(), status);
-            if status == reqwest::StatusCode::BAD_REQUEST && schema::asks_for_format(body) {
-                return Err(schema::refusal_or(response, error).await);
+            if status == reqwest::StatusCode::BAD_REQUEST {
+                let reason = rejection_reason(response).await;
+                return Err(bad_request_error(
+                    shown_name(&self.provider, self.provider_name()),
+                    &reason,
+                    schema::asks_for_format(body),
+                    error,
+                ));
             }
             if attempt == 2 || !(status.as_u16() == 429 || status.is_server_error()) {
                 return Err(error);
@@ -636,13 +642,55 @@ mod tests;
 /// would wait it out forever behind "Connection interrupted". A rate limit or
 /// a server error is an outage and stays one; any other refusal would be
 /// refused again.
-fn status_error(provider: &LLMProvider, name: &str, status: reqwest::StatusCode) -> AppError {
-    let shown = match provider {
+fn shown_name<'a>(provider: &LLMProvider, name: &'a str) -> &'a str {
+    match provider {
         LLMProvider::Openai => "OpenAI",
         LLMProvider::Anthropic => "Anthropic",
         LLMProvider::Google => "Google",
         _ => name,
-    };
+    }
+}
+
+/// A 400's own reason. It is read only to tell its causes apart and is never
+/// logged or shown, since a provider's error can quote what was sent.
+async fn rejection_reason(response: reqwest::Response) -> String {
+    response
+        .json::<Value>()
+        .await
+        .ok()
+        .and_then(|reply| {
+            reply
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// What a 400 is, by its reason. An account out of credit is a setting to
+/// fix, not a request to change: reported as a rejected request, every call
+/// failed as if what it sent were at fault. A schema Claude cannot compile is
+/// retried in words.
+fn bad_request_error(
+    shown: &str,
+    reason: &str,
+    asked_for_format: bool,
+    error: AppError,
+) -> AppError {
+    if reason.to_ascii_lowercase().contains("credit balance") {
+        return AppError::InvalidConfig(format!(
+            "{shown} refused the request because the account's credit balance is too low \
+             (HTTP 400): add credits to the account, or choose another model in Settings → AI"
+        ));
+    }
+    asked_for_format
+        .then(|| schema::refusal(reason))
+        .flatten()
+        .unwrap_or(error)
+}
+
+fn status_error(provider: &LLMProvider, name: &str, status: reqwest::StatusCode) -> AppError {
+    let shown = shown_name(provider, name);
     match status.as_u16() {
         401 => AppError::InvalidConfig(format!(
             "{shown} rejected the saved API key (HTTP {status}): replace it in Settings → AI"
