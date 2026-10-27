@@ -76,3 +76,18 @@ fn shown_options_follow_the_stored_order() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn a_number_against_a_key_only_in_words_goes_to_the_judge() {
+    let words = LearningTextKey {
+        variants: vec!["half".into(), "one half".into()],
+        numeric: None,
+    };
+    assert_eq!(text_matches("0.5", &words), None);
+    let numbers = LearningTextKey {
+        variants: vec!["3".into()],
+        numeric: None,
+    };
+    assert_eq!(text_matches("3.0", &numbers), Some(true));
+    assert_eq!(text_matches("4", &numbers), Some(false));
+}
