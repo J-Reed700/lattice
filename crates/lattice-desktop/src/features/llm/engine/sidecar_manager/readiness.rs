@@ -1,12 +1,7 @@
 use super::*;
 
-/// Ports handed out and not yet released.
-///
-/// Binding `127.0.0.1:0` reports a port and immediately gives it back, so two
-/// spawns racing — chat and utility prewarm start together — were handed the
-/// same number, and the loser died with a bind error that used to be read as
-/// a GPU fault and "fixed" by dropping the whole session to CPU-only.
-///
+/// Ports handed out and not yet released: binding `127.0.0.1:0` gives the
+/// port back at once, so two racing spawns could be handed the same number.
 /// The app's [`SidecarRegistry`] holds the set every spawn reserves from.
 #[derive(Default)]
 pub(super) struct ReservedPorts {
@@ -59,12 +54,9 @@ pub(super) fn reserve_free_port(ports: &Arc<ReservedPorts>) -> std::io::Result<P
 /// change upstream cannot quietly change how far a slot can roll back.
 const CTX_CHECKPOINTS: u32 = 32;
 
-/// Tokens between two checkpoints. A hybrid model (Qwen 3.5's Gated DeltaNet
-/// layers) cannot trim its recurrent state, so a prompt that differs from the
-/// cached one rolls back to the last checkpoint before the difference; at the
-/// server's 8192 default, a change anywhere in the first 8k tokens threw the
-/// whole prefix away. Pure-attention models trim the KV cache directly and
-/// never consult these checkpoints, so the flag costs them nothing.
+/// Tokens between two checkpoints. A hybrid model cannot trim its recurrent
+/// state, so a changed prompt rolls back to the last checkpoint before the
+/// difference; pure-attention models never consult these checkpoints.
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
 pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
@@ -212,45 +204,12 @@ pub(crate) fn new_api_token() -> String {
     })
 }
 
-/// Spawn a long-lived event-drain task for a sidecar. Returns once the
-/// readiness needle appears on stderr (or hits a timeout/crash) and
-/// keeps draining for the rest of the sidecar's lifetime.
-///
-/// # Why not just `wait_for_ready` and drop the receiver
-///
-/// Consuming and dropping the `Receiver` after startup loses later output.
-/// Tauri-plugin-shell's stderr/stdout pipes are bounded mpsc channels
-/// — once nobody's reading the receiver, the channel fills up and
-/// the spawn-side task that produces events stops. Losing that side
-/// channel meant runtime errors, slow-token warnings, GGUF metadata,
-/// and crash logs from llama-server all silently disappeared from
-/// our `tracing` pipeline.
-///
-/// The drain task:
-/// - Reads every `CommandEvent` for the lifetime of the sidecar.
-/// - Pipes each stderr/stdout line into `tracing` with
-///   `target = "llama_server"` so user diagnostic exports include
-///   them.
-/// - Until readiness, also appends each line to `tail`, which the
-///   caller turns into the startup error if readiness never comes.
-/// - Detects `Terminated` mid-flight and clears the child slot in
-///   `child_arc` so `SidecarRegistry::kill_all` doesn't try to kill
-///   a dead PID at shutdown.
-///
-/// # Readiness handshake
-///
-/// Returns a `oneshot::Receiver<Result<(), StartupEnd>>` so the caller
-/// can `await` readiness while the drain task owns the
-/// `CommandEvent` stream. The oneshot fires exactly once:
-///
-/// - `Ok(())` when stderr emits the readiness needle, or
-/// - `Err(...)` saying how the sidecar ended before readiness.
-///
-/// tauri-plugin-shell only sends `Terminated` after both pipe readers
-/// have finished, so the tail is complete when an exit is reported.
-///
-/// After that signal, the drain keeps running for stderr capture
-/// even though the caller has moved on.
+/// Spawns the long-lived event-drain task for a sidecar. It reads every
+/// `CommandEvent` for the sidecar's life (tauri-plugin-shell's pipes are
+/// bounded, so an unread receiver would stop the output), logs each line
+/// under `target = "llama_server"`, keeps the startup `tail`, clears the child
+/// slot on `Terminated`, and fires the returned oneshot once: `Ok(())` at the
+/// readiness needle, or how the sidecar ended before it.
 pub(super) fn spawn_event_drain(
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
     rx: Receiver<CommandEvent>,
@@ -400,17 +359,10 @@ pub(super) async fn probe_health(
     }
 }
 
-/// Wait until the sidecar can serve: `/health` answering 200, or the readiness
-/// line on its output. The drain task is unaffected by this wait — it keeps
-/// running regardless.
-///
-/// What is bounded is *silence*, not duration. A flat per-attempt timeout was
-/// simultaneously too short (a 20 GB model needs minutes just to be read off a
-/// cold page cache, and was killed and blamed on the model file) and, times
-/// the fallback ladder, far too long (three attempts of spinner before any
-/// error). So: the idle bound resets on every output line and every 503, an
-/// absolute cap bounds one attempt, and `deadline` bounds the whole start
-/// across every fallback attempt.
+/// Waits until the sidecar can serve: `/health` answering 200, or the
+/// readiness line on its output. Silence is bounded, not duration: the idle
+/// bound resets on every output line and every 503, an absolute cap bounds
+/// one attempt, and `deadline` bounds the whole start across fallbacks.
 pub(super) async fn await_ready(
     ready_rx: tokio::sync::oneshot::Receiver<Result<(), StartupEnd>>,
     endpoint: &str,

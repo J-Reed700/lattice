@@ -74,12 +74,9 @@ pub async fn detect_gpu() -> Option<GPUInfo> {
     detect_apple_silicon().or_else(detect_gpu_sysinfo)
 }
 
-/// The authoritative form: ask the sidecar that will do the offloading.
-///
-/// Prefer this wherever an `AppHandle` is in reach. It reports a device only if
-/// ggml can actually use it — right driver, right runtime — which is the
-/// question every caller is really asking, and it needs no per-platform code.
-/// The heuristics below remain only for when the probe cannot run.
+/// The authoritative form: asks the sidecar that will do the offloading,
+/// which reports only devices ggml can use. Prefer it wherever an
+/// `AppHandle` is in reach; the heuristics below are for when it cannot run.
 pub async fn detect_gpu_with_sidecar(
     app: &tauri::AppHandle,
     devices: &super::backend_devices::BackendDevices,
@@ -107,15 +104,9 @@ fn gpu_from_devices(devices: &[super::backend_devices::BackendDevice]) -> Option
     })
 }
 
-/// Every Apple Silicon Mac has a Metal GPU. This is a property of the target,
-/// not of the running machine, so it is known at compile time and needs no
-/// probing.
-///
-/// Probing was the bug: `sysinfo` names macOS thermal sensors `PMU tdieN` —
-/// nothing that reads as a GPU — and returns an empty CPU brand string, so both
-/// heuristics below miss and an M3 Max reported no accelerator. Every local
-/// model then started with `n_gpu_layers = 0` and a 4K context, turning a
-/// two-second query rewrite into a thirty-second timeout.
+/// Every Apple Silicon Mac has a Metal GPU, known at compile time. Probing
+/// fails there: `sysinfo` names the sensors `PMU tdieN` and returns an empty
+/// CPU brand string, which the heuristics below cannot read.
 fn detect_apple_silicon() -> Option<GPUInfo> {
     if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return None;
@@ -282,7 +273,7 @@ mod tests {
         assert!(detect_apple_silicon().is_some());
     }
 
-    /// A vendorless "GPU" sensor label used to abort detection outright.
+    /// A vendorless "GPU" sensor label does not abort detection.
     #[test]
     fn a_vendorless_gpu_label_is_still_a_gpu_label() {
         assert!(is_gpu_label("GPU 1"));

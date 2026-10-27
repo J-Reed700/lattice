@@ -43,18 +43,11 @@ impl LlamaCppLlm {
         text_tokens(input).saturating_add(input.iter().map(CompletionInput::image_tokens).sum())
     }
 
-    /// [`Self::plain_prompt_tokens`] with a margin, for sizing the answer's
-    /// reservation only. Four characters a token reads low on dense text:
-    /// code, JSON and most languages other than English tokenize at three
-    /// characters a token or fewer. A reservation sized from a low count
-    /// overruns the window (see [`Self::output_room_for`]); one sized from a
-    /// high count only lowers the answer's ceiling. Scaling by 3/2 reads the
-    /// prompt at 2⅔ characters a token, which covers that dense text without
-    /// halving the answer's room on plain prose. Pictures are added at their
-    /// declared cost, unscaled: the geometry already charges what the encoder
-    /// produces. It never refuses a request on its own:
-    /// [`Self::measured_body`] counts exactly, or falls back to the plain
-    /// estimate, before it refuses.
+    /// [`Self::plain_prompt_tokens`] scaled by 3/2, for sizing the answer's
+    /// reservation only: four characters a token reads low on code, JSON and
+    /// most non-English text, and a low count overruns the window. Pictures are
+    /// added at their declared cost. It never refuses a request on its own (see
+    /// [`Self::measured_body`]).
     fn estimated_prompt_tokens(input: &[CompletionInput]) -> usize {
         /// The margin: estimated prompt tokens are scaled by this fraction.
         const ESTIMATE_SAFETY: usize = 3;
@@ -63,15 +56,9 @@ impl LlamaCppLlm {
         (text_tokens(input) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR).saturating_add(images)
     }
 
-    /// What the server can still be asked to generate once this prompt is in
-    /// its context, by the estimate.
-    ///
-    /// `max_tokens` is a *reservation*: llama.cpp holds prompt + n_predict in
-    /// one slot, so asking for the whole window on every turn works only while
-    /// prompts stay small. A turn carrying an attachment and six web pages ran
-    /// 75k prompt tokens into a 163k slot, asked for 131k more on top, and the
-    /// server failed the batch — a 500 forty-eight seconds in, after it had
-    /// already done the work.
+    /// What the server can still be asked to generate once this prompt is in its
+    /// context, by the estimate: llama.cpp holds prompt and `n_predict` in one
+    /// slot, so `max_tokens` is a reservation that must leave the prompt room.
     pub(super) fn output_room_for(&self, input: &[CompletionInput], requested: u32) -> u32 {
         self.output_room_after(Self::estimated_prompt_tokens(input), requested)
     }
@@ -95,22 +82,12 @@ impl LlamaCppLlm {
         allowed
     }
 
-    /// [`Self::body`] with an output reservation the configured window holds,
-    /// and the request's size; or the refusal of a request whose prompt alone
-    /// fills the window, which is never sent.
-    ///
-    /// The answer's size (`max_output_tokens`) is a ceiling, never a demand:
-    /// the answer takes what was asked or the room the prompt leaves,
-    /// whichever is less. A caller that sized its answer to the room its own
-    /// count left, and counts the prompt a few tokens lower than this does,
-    /// gets a few tokens less answer, not a refusal.
-    ///
-    /// The estimate settles a request that fits as asked, with no extra call.
-    /// One that does not is counted exactly with the server's tokenizer before
-    /// the answer is cut or anything refused: the rough estimate reads high on
-    /// a large prompt a caller measured exactly. When the server cannot count,
-    /// the plain estimate, without the reservation's margin, decides: a server
-    /// with no tokenizer is not cut or refused on a margin.
+    /// [`Self::body`] with an output reservation the configured window holds, and
+    /// the request's size; or the refusal of a request whose prompt alone fills
+    /// the window. `max_output_tokens` is a ceiling, never a demand. A request
+    /// that does not fit by the estimate is counted with the server's tokenizer
+    /// before anything is cut or refused; a server that cannot count is judged by
+    /// the plain estimate.
     pub(super) async fn measured_body(
         &self,
         request: &CompletionRequest,

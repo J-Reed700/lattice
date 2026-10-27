@@ -9,10 +9,9 @@ use crate::features::llm::scheduler::rejection;
 
 const MAX_ATTEMPTS: usize = 5;
 
-/// Floor on how long a bundled server may take to send its first frame. It
-/// may be loading the model into VRAM or prefilling the prompt; on a 7B
-/// Q4_K_M GGUF that is sub-second on Apple Silicon but can be 10s+ on cold
-/// Windows Vulkan. [`prefill_allowance`] adds time for the prompt on top.
+/// Floor on how long a bundled server may take to send its first frame while
+/// it loads the model or prefills; cold Windows Vulkan can take 10s and more.
+/// [`prefill_allowance`] adds time for the prompt on top.
 pub(super) const FIRST_FRAME_FLOOR: Duration = Duration::from_secs(60);
 
 /// llama-server's default logical batch. With `return_progress` it reports
@@ -20,9 +19,8 @@ pub(super) const FIRST_FRAME_FLOOR: Duration = Duration::from_secs(60);
 /// pass between two frames however long the prompt is.
 pub(super) const PREFILL_BATCH_TOKENS: usize = 2048;
 
-/// Slowest prefill rate the allowance plans for: a CPU-only box runs a
-/// near-full RAG prompt at roughly 30-60 tok/s, so a batch there takes over a
-/// minute and a flat 60 s failed the turn before its first token.
+/// Slowest prefill rate the allowance plans for, below what a CPU-only box
+/// manages on a near-full RAG prompt.
 pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 
 /// How long a bundled server may stay silent before it starts generating:

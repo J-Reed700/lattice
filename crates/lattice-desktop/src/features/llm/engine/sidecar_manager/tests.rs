@@ -602,7 +602,7 @@ fn fallback_policy_with_cpu_build_bundled() {
 fn fallback_policy_without_cpu_build() {
     use AttemptFailure::*;
     let table = [
-        // The incident: no same-binary retry for a binary that cannot run.
+        // No same-binary retry for a binary that cannot run.
         (GPU, BROKEN, None),
         (GPU, GpuInit, Some(PRIMARY_CPU)),
         (GPU, Startup, Some(PRIMARY_CPU)),
@@ -1138,8 +1138,8 @@ async fn drain_reports_an_exit_before_readiness_and_keeps_the_bind_signal() {
             signal: None
         })
     );
-    // A port collision retries the same configuration; reading it as a GPU
-    // fault is what used to pin the session to CPU-only at half context.
+    // A port collision retries the same configuration rather than degrading to
+    // CPU-only.
     let err = startup_failure(
         SidecarBinary::Primary,
         &end.expect_err("exited"),
@@ -1166,9 +1166,8 @@ async fn drain_reports_an_error_event_before_readiness() {
     );
 }
 
-/// A sticky signal survives the tail rolling over, which is the whole
-/// point: a big model prints dozens of `load_tensors:` lines after the
-/// loader banner, and classification used to read the tail.
+/// A sticky signal survives the tail rolling over: a big model prints dozens
+/// of `load_tensors:` lines after the loader banner.
 #[tokio::test]
 async fn drain_keeps_startup_signals_after_the_tail_rolls_over() {
     let harness = drain_harness();
@@ -1467,8 +1466,8 @@ fn metal_room(held: u64) -> MemoryRoom {
     }
 }
 
-/// The owner's saved 60,416 tokens for Ornith-1.5-9B, beside the embedding
-/// model's 1.19 GB on the same M3 Max.
+/// 60,416 tokens saved for Ornith-1.5-9B, beside the embedding model's
+/// 1.19 GB on an M3 Max.
 #[test]
 fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
     let info = ornith_9b();

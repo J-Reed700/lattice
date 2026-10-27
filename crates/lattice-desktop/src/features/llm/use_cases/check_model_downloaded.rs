@@ -1,26 +1,4 @@
-//! Check Model Downloaded Use Case
-//!
-//! Verifies if a model exists locally and is valid.
-//!
-//! # Purpose
-//!
-//! Checks if a model has been downloaded to the local filesystem
-//! and validates its integrity. Returns download status and path.
-//!
-//! # Dependencies
-//! - `ModelStoragePort` - Access local model storage
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = CheckModelDownloadedUseCase::new(model_storage);
-//! let request = CheckModelDownloadedRequestDto {
-//!     model_id: "phi-3-mini".to_string(),
-//! };
-//! let response = use_case.execute(request).await?;
-//! if response.is_downloaded {
-//!     println!("Model found at: {:?}", response.local_path);
-//! }
-//! ```
+//! Whether a model has been downloaded and is valid, with its path.
 
 use crate::features::llm::dto::{CheckModelDownloadedRequestDto, CheckModelDownloadedResponseDto};
 use lattice_core::application::ports::model_storage::ModelStoragePort;

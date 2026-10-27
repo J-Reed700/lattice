@@ -22,13 +22,9 @@ pub struct SidecarHandle {
     /// owner takes the child exactly once.
     pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
 
-    /// The `--ctx-size` this server was actually launched with: the window
-    /// the user saved for the model, else the one it was trained for.
-    ///
-    /// Callers that budget a prompt must use this value. Reporting a fixed
-    /// 8192 upstream once meant every budget overshot the real window on
-    /// smaller machines, so llama-server silently truncated the prompt
-    /// server-side and the system prompt and oldest history simply vanished.
+    /// The `--ctx-size` this server was launched with: the window saved for the
+    /// model, else the one it was trained for. Prompt budgets must use this
+    /// value, or llama-server truncates the prompt server-side.
     pub(super) context_size: u32,
 
     /// The build that actually started, after any fallback.
@@ -155,15 +151,9 @@ impl Liveness for SidecarHandle {
 
 impl Drop for SidecarHandle {
     fn drop(&mut self) {
-        // Best-effort synchronous kill. The registry is the primary cleanup
-        // mechanism (driven off
-        // `RunEvent::ExitRequested`, synchronous, runs before the
-        // tokio runtime stops). This Drop remains as a safety net for
-        // handles dropped outside app shutdown — e.g. when the user
-        // swaps active models and the old `LlamaCppLlm` goes out
-        // of scope mid-session. No holder awaits while holding the child
-        // mutex, so a plain lock cannot stall here; `try_lock` used to
-        // drop the kill silently whenever it lost the race.
+        // Best-effort synchronous kill, a safety net for handles dropped outside
+        // app shutdown (the registry is the primary cleanup). No holder awaits
+        // while holding the child mutex, so a plain lock cannot stall here.
         self.stop();
         tracing::debug!(
             "SidecarHandle dropped; sidecar at {} stopped",
@@ -172,17 +162,10 @@ impl Drop for SidecarHandle {
     }
 }
 
-/// A spawned sidecar that kills itself if it is dropped before it becomes a
-/// [`SidecarHandle`].
-///
-/// Cancellation is why this type exists. Between `spawn()` and the handle, the
-/// only owner of a multi-gigabyte llama-server is the future doing the
-/// readiness wait, and `CommandChild::Drop` does not kill the OS process. A
-/// future aborted while parked in `await_ready` — a cancelled model switch, a
-/// superseded load, a runtime teardown that bypasses the shutdown sweep —
-/// therefore left a full-weight server holding its RAM, its VRAM and its port
-/// with no owner and nothing in the log. Arming a guard at spawn makes
-/// cancellation safety a property of the type instead of of every error path.
+/// A spawned sidecar that kills itself if dropped before it becomes a
+/// [`SidecarHandle`]. `CommandChild::Drop` does not kill the OS process, so a
+/// future cancelled during the readiness wait would otherwise leave a
+/// full-weight server holding its memory and port with no owner.
 pub(in crate::features::llm::engine) struct SpawnedChild {
     pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
     pub(super) registration: Option<Registration>,

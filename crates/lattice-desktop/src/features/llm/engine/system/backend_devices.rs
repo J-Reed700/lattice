@@ -1,29 +1,7 @@
-//! The one place Lattice asks what compute devices exist.
-//!
-//! Every other approach in this codebase guessed. One detector pattern-matched
-//! thermal-sensor labels and the CPU brand string, which on an M3 Max yields
-//! `PMU tdie8` and an empty string — so it reported no accelerator and every
-//! local model quietly ran on CPU. Another shelled out to `system_profiler`,
-//! `lspci` and `nvidia-smi`, which between them cannot see an AMD or Intel card
-//! on Windows at all.
-//!
-//! Guessing is the wrong shape for this question. The component that performs
-//! the offload — ggml, inside the pinned llama-server — already enumerates its
-//! own backends and prints them, with real free VRAM:
-//!
-//! ```text
-//! Available devices:
-//!   CUDA0: NVIDIA GeForce RTX 4090 (24210 MiB, 23486 MiB free)
-//!   MTL0: Apple M3 Max (28753 MiB, 28753 MiB free)
-//!   BLAS: Accelerate (0 MiB, 0 MiB free)
-//! ```
-//!
-//! Asking it is authoritative rather than approximate: the answer covers CUDA,
-//! ROCm, Vulkan, SYCL and Metal without a line of per-platform code, it can
-//! never disagree with what the sidecar will actually do, and it reports a
-//! device only if that device is genuinely usable for inference — driver,
-//! runtime and all. A machine whose GPU runtime is missing reports no GPU,
-//! which is the correct answer and one no PCI-ID table can give.
+//! The one place Lattice asks what compute devices exist: the bundled
+//! llama-server's own `--list-devices`, which enumerates ggml's backends
+//! (CUDA, ROCm, Vulkan, SYCL, Metal) with free VRAM and lists a device only
+//! when it is usable for inference.
 
 use std::time::Duration;
 

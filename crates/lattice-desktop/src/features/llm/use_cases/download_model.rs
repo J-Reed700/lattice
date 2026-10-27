@@ -1,28 +1,4 @@
-//! Download Model Use Case
-//!
 //! Downloads a model with validation and progress tracking.
-//!
-//! # Purpose
-//!
-//! Downloads an LLM model from the catalog to local storage,
-//! with validation, disk space checks, and directory creation.
-//!
-//! # Dependencies
-//! - `ModelCatalogPort` - Verify model exists
-//! - `ModelStoragePort` - Check existing, manage files
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DownloadModelUseCase::new(
-//!     catalog, storage, download_manager, file_system, credentials,
-//!     checksum_service, file_system_access, uow_factory,
-//! );
-//! let request = DownloadModelRequestDto {
-//!     model_id: "phi-3-mini".to_string(),
-//! };
-//! let response = use_case.execute(request).await?;
-//! println!("Downloaded to: {}", response.path);
-//! ```
 
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;

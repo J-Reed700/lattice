@@ -1,22 +1,4 @@
-//! Get Best Model Use Case
-//!
 //! Selects the single best model for the current system.
-//!
-//! # Purpose
-//!
-//! Simplifies model selection by automatically choosing the best model
-//! based on system capabilities. This delegates to GetRecommendedModelsUseCase
-//! and returns the top recommendation.
-//!
-//! # Dependencies
-//! - `GetRecommendedModelsUseCase` - Get recommendations
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetBestModelUseCase::new(get_recommended_models_use_case);
-//! let best = use_case.execute().await?;
-//! println!("Best model: {} - {}", best.model.name, best.reason);
-//! ```
 
 use crate::features::llm::dto::{BestModelDto, GetRecommendationsRequestDto};
 use crate::features::llm::use_cases::GetRecommendedModelsUseCase;

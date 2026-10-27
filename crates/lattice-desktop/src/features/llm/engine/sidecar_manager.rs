@@ -1,46 +1,13 @@
-//! Sidecar process manager for the bundled `llama-server` binary.
+//! Sidecar process manager for the bundled `llama-server` binary: port
+//! allocation, spawn, readiness and kill-on-drop, so the rest of the app sees
+//! only an endpoint. `LlamaCppLlm` is its HTTP client.
 //!
-//! Owns the lifecycle of the local-LLM inference engine: port allocation,
-//! spawn, readiness detection, kill-on-drop. Built behind a clean
-//! HTTP boundary so the rest of the app sees only an `endpoint: String`
-//! and never deals with process internals.
-//!
-//! # Why a sidecar
-//!
-//! Lattice uses the bundled `llama-server` binary rather than an in-process
-//! inference runtime. The
-//! binary speaks an OpenAI-compatible HTTP/SSE API on `127.0.0.1:<port>`.
-//! This module spawns it; `LlamaCppLlm` is its HTTP client.
-//!
-//! # Lifecycle
-//!
-//! 1. `SidecarManager::start_with_fallback(app, config)`
-//!    - Preflights the bundled binary once per process (`--version`), so
-//!      an executable that cannot run fails in milliseconds with a
-//!      `LLMError::SidecarBinaryUnusable` instead of after a readiness wait.
-//!    - Picks a free ephemeral port via `TcpListener::bind("127.0.0.1:0")`.
-//!    - Spawns `llama-server` via `tauri-plugin-shell` (the bundled
-//!      sidecar binary, not a system-installed one).
-//!    - Waits for readiness: `GET /health` answering 200 is the
-//!      authoritative signal, with the `"server is listening on"` log
-//!      line as a fast path. The wait bounds silence, not duration, so a
-//!      large model on a cold page cache is not killed for being slow.
-//!      A bounded tail of the output is kept for the error report.
-//!    - On failure, walks the fallback policy (`next_attempt`): GPU off,
-//!      then the CPU-only build on Windows/Linux.
-//!    - Returns a handle whose `endpoint()` is ready to receive requests.
-//!
-//! 2. `SidecarManager::stop()` (or `Drop`)
-//!    - Sends `kill()` to the child process. Tauri-plugin-shell's
-//!      `CommandChild` uses `shared_child::SharedChild` which calls
-//!      the OS kill primitive (TerminateProcess on Windows, SIGKILL
-//!      on Unix), with Windows Job Objects providing process-tree cleanup.
-//!
-//! # What this module does NOT do
-//!
-//! - It does not talk to the server; `LlamaCppLlm` does.
-//! - It does not download model files — that's the existing model
-//!   storage layer, untouched by this migration.
+//! Starting preflights the binary once per process (`--version`), picks a
+//! free port, spawns it through `tauri-plugin-shell`, and waits for `/health`
+//! (the "listening on" log line is a fast path); the wait bounds silence, not
+//! duration. On failure it walks the fallback policy (`next_attempt`): GPU
+//! off, then the CPU-only build on Windows/Linux. Stopping kills the child,
+//! with Windows Job Objects cleaning up the process tree.
 
 use crate::features::llm::engine::sidecar_pool::{Liveness, Origin, SharedProcesses};
 use crate::features::llm::engine::system::SystemCapabilities;
@@ -77,13 +44,9 @@ pub const SIDECAR_BIN: &str = "llama-server";
 /// loader (`vulkan-1.dll` / `libvulkan.so.1`). macOS ships one build per
 /// architecture. Always reached through [`SidecarBinary::Cpu`].
 pub const SIDECAR_CPU_BIN: &str = "llama-server-cpu";
-/// Shared part of both the b-series `server is listening on` log and the
-/// semver releases' `llama_server: listening on` log. The pre-b4000
-/// string was `HTTP server listening`, which appears nowhere in the shipped
-/// binaries — the wait never matched and every model load timed out. It is a
-/// fast path only: `/health` decides, so the next upstream rewording costs a
-/// second of startup rather than the whole feature. `ready_needle_is_present`
-/// pins it to the bundled binaries.
+/// Shared part of the b-series `server is listening on` and semver
+/// `llama_server: listening on` logs. A fast path only: `/health` decides
+/// readiness. `ready_needle_is_present` pins it to the bundled binaries.
 const READY_NEEDLE: &str = "listening on";
 
 /// How long the sidecar may go completely silent — no output line, no

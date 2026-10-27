@@ -1,11 +1,7 @@
-//! A token estimate that learns the backend's tokenizer from its own reports.
-//!
-//! A fixed four characters a token reads low on code, numbers and most
-//! non-English text, so budgets built on it overran the window exactly where
-//! the content was densest. Every backend reports how many prompt tokens a
-//! request really took; this keeps a moving average of characters per token
-//! against those reports. The same reports, where a backend times its work,
-//! give its pace: how fast it reads a prompt and how fast it writes.
+//! A token estimate that learns the backend's tokenizer from its own reports:
+//! a moving average of characters per token against the prompt tokens each
+//! request really took, since four characters a token reads low on dense
+//! text. The same reports, where timed, give the backend's pace.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

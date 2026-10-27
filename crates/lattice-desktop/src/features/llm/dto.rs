@@ -1,33 +1,10 @@
-//! # LLM DTOs
-//!
-//! Data Transfer Objects for LLM model management and system capabilities.
-//!
-//! ## Purpose
-//!
-//! - **System Capabilities**: Hardware detection for model recommendation
-//! - **Model Catalog**: Available models with metadata
-//! - **Downloaded Models**: Local model inventory
-//!
-//! ## DTOs
-//!
-//! - `SystemCapabilitiesDto` - System hardware capabilities
-//! - `GpuInfoDto` - GPU information (Metal, CUDA, ROCm, or none)
-//! - `AvailableModelsDto` - List of models in catalog
-//! - `ModelInfoDto` - Model metadata and requirements
-//! - `DownloadedModelsDto` - List of locally downloaded models
-//! - `DownloadedModelDto` - Downloaded model information
-//! - `DownloadModelRequestDto` - Request to download a model
-//! - `DownloadModelResponseDto` - Response after model download
-//! - `DeleteModelRequestDto` - Request to delete a model
-//! - `DeleteModelResponseDto` - Response after model deletion
+//! DTOs for LLM model management and system capabilities: hardware detection,
+//! the model catalog, and the local model inventory.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// System hardware capabilities for model recommendation.
-///
-/// Contains information about RAM, CPU, and GPU to help
-/// determine which models can run on the current system.
+/// System hardware capabilities (RAM, CPU, GPU) for model recommendation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemCapabilitiesDto {
     /// Total system RAM in gigabytes
@@ -40,10 +17,7 @@ pub struct SystemCapabilitiesDto {
     pub gpu_info: Option<GpuInfoDto>,
 }
 
-/// GPU information for hardware acceleration.
-///
-/// Provides details about the GPU for determining
-/// compute capabilities and VRAM availability.
+/// GPU details: compute capabilities and VRAM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfoDto {
     /// GPU name/model
@@ -54,18 +28,14 @@ pub struct GpuInfoDto {
     pub compute_type: String,
 }
 
-/// List of available models in the catalog.
-///
-/// Contains all models that can be downloaded and used.
+/// The models in the catalog that can be downloaded and used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailableModelsDto {
     /// List of available models
     pub models: Vec<ModelInfoDto>,
 }
 
-/// Model metadata and requirements.
-///
-/// Describes a model's capabilities, size, and system requirements.
+/// A model's capabilities, size and system requirements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfoDto {
     /// Unique model identifier (e.g., "phi-3-mini")
@@ -82,18 +52,14 @@ pub struct ModelInfoDto {
     pub minimum_ram_gb: f64,
 }
 
-/// List of locally downloaded models.
-///
-/// Contains all models currently available on the local filesystem.
+/// The models currently on the local filesystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadedModelsDto {
     /// List of downloaded models
     pub models: Vec<DownloadedModelDto>,
 }
 
-/// Information about a downloaded model.
-///
-/// Describes a model that has been downloaded to the local filesystem.
+/// A model downloaded to the local filesystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadedModelDto {
     /// Model identifier
@@ -106,9 +72,7 @@ pub struct DownloadedModelDto {
     pub downloaded_at: DateTime<Utc>,
 }
 
-/// Performance tier for model recommendations.
-///
-/// Categorizes systems by available RAM to recommend appropriate models.
+/// Performance tier, by available RAM, for model recommendations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PerformanceTier {
     /// Low-end systems (<8GB RAM)

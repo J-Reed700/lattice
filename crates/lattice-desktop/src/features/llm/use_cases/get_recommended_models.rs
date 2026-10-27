@@ -1,26 +1,4 @@
-//! Get Recommended Models Use Case
-//!
-//! Recommends LLM models based on system capabilities.
-//!
-//! # Purpose
-//!
-//! Analyzes system hardware (RAM, GPU) and recommends the top 3 models
-//! that will run well on the current system. Uses performance tiers
-//! (Low/Medium/High) based on available RAM.
-//!
-//! # Dependencies
-//! - `GetSystemCapabilitiesUseCase` - Detect hardware
-//! - `ModelCatalogPort` - Access model catalog
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetRecommendedModelsUseCase::new(
-//!     system_capabilities_use_case,
-//!     model_catalog,
-//! );
-//! let request = GetRecommendationsRequestDto { tier: None }; // Auto-detect
-//! let recommendations = use_case.execute(request).await?;
-//! ```
+//! Recommends models based on system capabilities.
 
 use crate::features::llm::dto::{
     GetRecommendationsRequestDto, ModelInfoDto, PerformanceTier, RecommendedModelDto,

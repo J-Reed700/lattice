@@ -1,26 +1,4 @@
-//! Get Model Path Use Case
-//!
-//! Retrieves the filesystem path for a downloaded model.
-//!
-//! # Purpose
-//!
-//! Gets the canonical filesystem path for a model, ensuring it exists
-//! and is downloaded. Returns an error with helpful message if model
-//! is not downloaded.
-//!
-//! # Dependencies
-//! - `CheckModelDownloadedUseCase` - Verify model exists
-//! - `ModelStoragePort` - Access model paths
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetModelPathUseCase::new(check_downloaded_use_case, model_storage);
-//! let request = GetModelPathRequestDto {
-//!     model_id: "phi-3-mini".to_string(),
-//! };
-//! let response = use_case.execute(request).await?;
-//! println!("Model path: {}", response.path);
-//! ```
+//! The filesystem path of a downloaded model.
 
 use crate::features::llm::dto::{
     CheckModelDownloadedRequestDto, GetModelPathRequestDto, GetModelPathResponseDto,

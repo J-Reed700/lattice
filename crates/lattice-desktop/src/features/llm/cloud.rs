@@ -123,11 +123,9 @@ impl CloudLlm {
         self
     }
 
-    /// The output ceiling to send: the request's, or the configured one, cut
-    /// to the room the prompt leaves in the model's context window. A provider
-    /// refuses a request whose prompt and output ceiling together exceed the
-    /// window rather than writing less, as llama.cpp does
-    /// (`LlamaCppLlm::output_room_for`). A ceiling that fits is kept.
+    /// The output ceiling to send: the request's or the configured one, cut to
+    /// the room the prompt leaves in the window, since a provider refuses a prompt
+    /// and ceiling that together exceed it. A ceiling that fits is kept.
     fn output_room(&self, request: &CompletionRequest) -> u32 {
         self.room_for(
             request.effective_max_output_tokens(self.max_tokens),
@@ -135,10 +133,8 @@ impl CloudLlm {
         )
     }
 
-    /// The output ceiling for a request Claude thinks through: the configured
-    /// one, not the request's. Thinking counts toward `max_tokens` though its
-    /// text is not returned, so a ceiling sized for the reply was spent
-    /// thinking, and a lesson's draft came back with no text at all.
+    /// The output ceiling for a request Claude thinks through: the configured one,
+    /// not the request's, since thinking counts toward `max_tokens`.
     fn thinking_room(&self, request: &CompletionRequest) -> u32 {
         self.room_for(self.max_tokens, request)
     }
@@ -313,16 +309,11 @@ impl CloudLlm {
             Ok(body)
         } else {
             let (system, messages) = messages::anthropic_messages(&request.input)?;
-            // No sampling knobs are sent. Current Claude models reject
-            // `temperature`, `top_p` and `top_k` with a 400 (some outright, some
-            // for any non-default value, all of them while thinking), and the
-            // overrides callers pass were tuned for local models anyway. A
-            // determinism override is not worth a failed call.
-            // Claude thinks unasked from the 5 family on (Opus 5.5 cannot be
-            // told not to), and otherwise when a thinking request or a real
-            // effort level asks; "none" is expressed by leaving the block
-            // out, since requesting adaptive thinking turned "do not think"
-            // into its opposite.
+            // No sampling knobs are sent: current Claude models reject `temperature`,
+            // `top_p` and `top_k` with a 400 (some for any non-default value, all
+            // while thinking). Claude thinks unasked from the 5 family on, and "none"
+            // is expressed by leaving the thinking block out, since asking for
+            // adaptive thinking means think.
             let effort = request.reasoning_effort.as_deref();
             let thinks = claude_thinks_unasked(&self.model)
                 || request.thinking == ThinkingMode::On
@@ -336,11 +327,9 @@ impl CloudLlm {
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
-            // Requests that share a cache key share a prompt prefix: a chat's
-            // tool rounds, a course's lessons. Claude caches the longest such
-            // prefix when asked, and a cached read costs a twentieth of a
-            // fresh input token. A cache write costs a quarter more than one,
-            // so a one-off request is not asked.
+            // Requests that share a cache key share a prompt prefix, so Claude is
+            // asked to cache it; a one-off request is not, since a cache write costs
+            // more than a plain input token.
             if request.cache_key.is_some() {
                 set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
             }
@@ -367,10 +356,9 @@ impl CloudLlm {
             }
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
-                // A forced call is never sent. Every model refuses one while
-                // extended thinking is on, and the newest refuse it outright
-                // (Opus 5.5 answers `"any"` with a 400), so a request that
-                // requires a call leaves the choice to the model.
+                // A forced call is never sent: models refuse one while extended thinking
+                // is on, and the newest refuse it outright with a 400, so the choice is
+                // left to the model.
                 let choice = match request.tool_choice {
                     Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
                     Some(ToolChoice::None) => Some("none"),
@@ -610,18 +598,10 @@ fn is_openai_reasoning_model(model: &str) -> bool {
     model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
 }
 
-/// What, if anything, belongs in the Responses API's `reasoning` block.
-///
-/// The field is not universally accepted: a model without reasoning controls
-/// rejects the whole request with a 400, and the retrieval callers swallow that
-/// with `.ok()`, so every turn would quietly lose its query rewrites and plans
-/// with nothing in the log to say why. Only models that have the control are
-/// sent one.
-///
-/// There is also no "off" switch: the floor is `minimal` on the gpt-5 family and
-/// `low` on the o-series, so a request for no reasoning is clamped to whichever
-/// the target model understands. A non-reasoning model needs no clamp — it never
-/// thinks in the first place.
+/// What, if anything, belongs in the Responses API's `reasoning` block. Only
+/// models with reasoning controls get one: others reject the whole request
+/// with a 400. There is no "off": a request for none is clamped to `minimal`
+/// (gpt-5) or `low` (o-series).
 fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
     let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
@@ -637,11 +617,7 @@ fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&
 #[cfg(test)]
 mod tests;
 
-/// A provider's refusal, typed by what waiting can change. A rejected key or
-/// an unknown model is a setting to fix: as a network error the job runtime
-/// would wait it out forever behind "Connection interrupted". A rate limit or
-/// a server error is an outage and stays one; any other refusal would be
-/// refused again.
+/// The provider's name as the user knows it.
 fn shown_name<'a>(provider: &LLMProvider, name: &'a str) -> &'a str {
     match provider {
         LLMProvider::Openai => "OpenAI",
@@ -667,10 +643,8 @@ async fn rejection_reason(response: reqwest::Response) -> String {
         .unwrap_or_default()
 }
 
-/// What a 400 is, by its reason. An account out of credit is a setting to
-/// fix, not a request to change: reported as a rejected request, every call
-/// failed as if what it sent were at fault. A schema Claude cannot compile is
-/// retried in words.
+/// What a 400 is, by its reason: an account out of credit is a setting to
+/// fix, and a schema Claude cannot compile is retried in words.
 fn bad_request_error(
     shown: &str,
     reason: &str,
@@ -689,6 +663,9 @@ fn bad_request_error(
         .unwrap_or(error)
 }
 
+/// A provider's refusal, typed by what waiting can change: a rejected key or
+/// an unknown model is a setting to fix, a rate limit or server error is an
+/// outage, and any other refusal would be refused again.
 fn status_error(provider: &LLMProvider, name: &str, status: reqwest::StatusCode) -> AppError {
     let shown = shown_name(provider, name);
     match status.as_u16() {

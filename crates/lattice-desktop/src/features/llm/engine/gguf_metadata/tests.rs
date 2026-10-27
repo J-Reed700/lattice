@@ -455,9 +455,8 @@ fn the_mixture_of_experts_hybrid_counts_one_layer_in_four() {
 }
 
 /// A multi-token-prediction block sits past the trunk and attends to the
-/// whole window when the server drafts with it. The 9B MTP build (33
-/// blocks) is charged 8 + 1 layers; Qwen 3.8 27B (65 blocks, header read
-/// from the file on this machine) 16 + 1.
+/// whole window when the server drafts with it. The 9B MTP build (33 blocks)
+/// is charged 8 + 1 layers; Qwen 3.8 27B (65 blocks) 16 + 1.
 #[test]
 fn multi_token_prediction_blocks_are_charged_as_full_attention() {
     let mtp_9b = GgufModelInfo {
@@ -482,9 +481,8 @@ fn multi_token_prediction_blocks_are_charged_as_full_attention() {
     assert_eq!(qwen38_27b.kv_cache_bytes(1), Some(17 * 4 * 512 * 2));
 }
 
-/// The reader used to give up at Gemma 4's per-layer KV-head list and
-/// lose every key after it, the key widths and the sliding window among
-/// them.
+/// The reader keeps going past Gemma 4's per-layer KV-head list, so the key
+/// widths and sliding window after it are read.
 #[test]
 fn a_per_layer_list_is_read_and_the_keys_after_it_still_count() {
     let info = gemma4_12b_header().read();
@@ -715,9 +713,8 @@ fn vocabulary(tokens: usize) -> Vec<u8> {
     bytes
 }
 
-/// Seeking past each string threw the buffer away, a read per token: a
-/// million system calls for a Qwen 3.5 header, and seconds every time
-/// Settings listed a model. Reading through takes a buffer at a time.
+/// Strings are read through a buffer rather than seeked past one by one, so
+/// a large header takes a handful of system calls.
 #[test]
 fn a_vocabulary_is_skipped_a_buffer_at_a_time_not_a_read_per_token() {
     let mut bytes = vocabulary(100_000);

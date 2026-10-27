@@ -5,10 +5,3 @@
 // in their respective test modules.
 
 // TODO: Add integration tests with mock Container
-// Example test structure:
-// #[tokio::test]
-// async fn test_get_system_capabilities_delegates_to_use_case() {
-//     let container = create_test_container();
-//     let result = get_system_capabilities(State::from(&container)).await;
-//     assert!(result.is_ok());
-// }

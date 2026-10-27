@@ -1,18 +1,4 @@
-//! # LLM Use Cases
-//!
 //! Use cases for LLM model management and system capabilities.
-//!
-//! ## Use Cases
-//!
-//! - `GetSystemCapabilitiesUseCase` - Detect hardware capabilities
-//! - `GetAvailableModelsUseCase` - List models in catalog
-//! - `ListDownloadedModelsUseCase` - List locally downloaded models
-//! - `DownloadModelUseCase` - Download a model from catalog
-//! - `DeleteModelUseCase` - Delete a downloaded model
-//! - `GetRecommendedModelsUseCase` - Recommend models based on system
-//! - `GetBestModelUseCase` - Get single best model for system
-//! - `CheckModelDownloadedUseCase` - Check if model exists locally
-//! - `GetModelPathUseCase` - Get filesystem path for model
 
 pub mod check_model_downloaded;
 pub mod delete_model;

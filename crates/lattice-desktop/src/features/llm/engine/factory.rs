@@ -1,20 +1,5 @@
 //! LLM factory: a local GGUF behind the bundled llama-server, or an Ollama
 //! endpoint, each behind its backend's scheduler.
-//!
-//! # Example
-//!
-//! ```rust
-//! use crate::features::llm::engine::factory::{LLMConfig, create_llm};
-//! use std::path::PathBuf;
-//!
-//! let config = LLMConfig::Local {
-//!     model_path: PathBuf::from("models/mistral-7b.gguf"),
-//!     n_gpu_layers: 0,  // CPU only (safe default)
-//!     generation_config: crate::features::llm::engine::GenerationConfig::default(),
-//! };
-//!
-//! let llm = create_llm(config, &schedulers, &devices).await?.llm;
-//! ```
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -135,41 +120,14 @@ impl LocalServerOptions {
     }
 }
 
-/// Create an LLM client from configuration.
-///
-/// This factory function attempts to create the requested LLM client,
-/// returning an error if the backend is unavailable.
-///
-/// # Arguments
-///
-/// * `config` - LLM configuration specifying backend and parameters
-/// * `schedulers` - The app's per-backend schedulers the client queues behind
-/// * `devices` - The app's probe of the devices a local server can offload to
-///
-/// # Returns
-///
-/// The client, with the bundled server it runs on for a local model, or `Err`
+/// Creates the LLM client `config` describes, behind the app's `schedulers`,
+/// with the bundled server it runs on for a local model.
 ///
 /// # Errors
 ///
 /// - `LLMError::ModelNotFound` if local model file doesn't exist
 /// - `LLMError::ClientUnavailable` if Ollama service is unreachable
 /// - `LLMError::LoadFailed` if model fails to load
-///
-/// # Example
-///
-/// ```rust
-/// let config = LLMConfig::Local {
-///     model_path: PathBuf::from("models/mistral-7b.gguf"),
-///     n_gpu_layers: 0,  // CPU only
-///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
-/// };
-///
-/// match create_llm(config, &schedulers, &devices).await {
-///     Ok(created) => println!("LLM ready: {}", created.llm.model_name()),
-///     Err(e) => eprintln!("Failed to create LLM: {}", e),
-/// }
-/// ```
 pub(crate) async fn create_llm(
     config: LLMConfig,
     schedulers: &SchedulerRegistry,
@@ -246,18 +204,11 @@ pub(crate) struct ServerFacts {
     pub(crate) degraded: Option<String>,
 }
 
-/// Create a local-LLM client backed by the bundled `llama-server`
-/// sidecar. Starts the child process (Metal on macOS, Vulkan on
-/// Windows/Linux, CPU on hardware that can't accelerate), waits for
-/// HTTP readiness, and puts a `LlamaCppLlm` that owns the resulting
-/// `SidecarHandle` behind the server's scheduler.
-///
-/// Every local role — chat, router, utility — arrives here, so a role whose
-/// model resolves to one already running gets a client over that server
-/// rather than a second copy of the weights. See
-/// [`SidecarManager::start_shared`](crate::features::llm::engine::sidecar_manager::SidecarManager::start_shared).
-///
-/// The sidecar is the canonical local-inference path on all platforms.
+/// Creates a local-LLM client on the bundled `llama-server` sidecar: starts
+/// the child process (Metal on macOS, Vulkan on Windows/Linux, else CPU),
+/// waits for readiness, and puts a `LlamaCppLlm` that owns the handle behind
+/// the server's scheduler. A role whose model is already running gets a
+/// client over that server (see `SidecarManager::start_shared`).
 async fn create_local_llm_sidecar(
     app: &tauri::AppHandle,
     model_path: &Path,
@@ -623,21 +574,9 @@ fn infer_model_info(path: &Path) -> ModelInfo {
     }
 }
 
-/// Decide whether a model path on disk is GGUF or safetensors.
-///
-/// Rules:
-/// - File ending in `.gguf` (case-insensitive) → `Gguf`
-/// - Directory containing `config.json` AND at least one `*.safetensors`
-///   shard → `Safetensors`
-/// - Anything else → `Gguf` (the conservative default; downstream
-///   loader will surface a clean error if it's neither)
-///
-/// Public so call sites that have a `DownloadedModel` (which doesn't
-/// yet carry an explicit `format` field — schema migration follow-up)
-/// can resolve the format right before handing the path to
-/// `InferenceEngine::from_path`. Once `DownloadedModel.format` lands,
-/// most callers will read the field directly and this helper falls
-/// back to detecting at the catalog/import boundary only.
+/// Whether a model path on disk is GGUF or safetensors: a `.gguf` file is
+/// GGUF, a directory with `config.json` and a `*.safetensors` shard is
+/// safetensors, and anything else is GGUF, for the loader to reject cleanly.
 pub fn detect_model_format(path: &Path) -> ModelFormat {
     if path.is_file() {
         let lower = path
@@ -727,13 +666,7 @@ mod mock;
 
 pub use mock::MockLLMPort;
 
-/// Find a local model in common locations.
-///
-/// Searches for GGUF model files in standard directories.
-///
-/// # Returns
-///
-/// Path to first found model, or None if no models found
+/// The first GGUF model file found in the standard directories.
 pub fn find_local_model() -> Option<PathBuf> {
     let mut search_paths = vec![PathBuf::from("models"), PathBuf::from("../models")];
 

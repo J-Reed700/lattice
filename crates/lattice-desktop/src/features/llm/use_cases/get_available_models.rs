@@ -1,23 +1,4 @@
-//! Get Available Models Use Case
-//!
 //! Lists all models in the catalog.
-//!
-//! # Purpose
-//!
-//! Retrieves all available LLM models from the catalog with their
-//! metadata, sorted by size (smallest first) for easy selection.
-//!
-//! # Dependencies
-//! - `ModelCatalogPort` - Model catalog access
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetAvailableModelsUseCase::new(catalog_port);
-//! let available = use_case.execute().await?;
-//! for model in available.models {
-//!     println!("{}: {} GB", model.name, model.size_gb);
-//! }
-//! ```
 
 use crate::features::llm::dto::{AvailableModelsDto, ModelInfoDto};
 use lattice_core::application::ports::model_catalog::ModelCatalogPort;
