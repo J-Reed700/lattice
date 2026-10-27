@@ -327,12 +327,8 @@ pub async fn submit_learning_practice_attempt(
     let (grade_status, criteria) =
         match crate::features::learning::practice_generation::grade(llm.as_ref(), &session).await {
             Ok(value) => value,
-            // A grader that could not produce valid evidence twice is the one
-            // case for a person's review. Anything else is not a verdict on
-            // the work: a rate limit, a dropped connection, a restarted model,
-            // a reply cut off at its limit or a window too small for the
-            // artifact. Recorded as one, the attempt was ungradable for good,
-            // so the submission is not saved and the learner can send it again.
+            // Only invalid feedback goes to a person; any other error leaves
+            // the attempt unsaved so the learner can send it again.
             Err(error) if !matches!(error, AppError::ModelAnswerUnusable(_)) => {
                 return Err(ApiError::from(error))
             }

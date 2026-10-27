@@ -341,10 +341,6 @@ pub(in crate::features::learning) async fn review_bank_items(
                 "Quiz key review answer was incomplete; asking again"
             );
         }
-        // An answer still incomplete after it was asked again is a verdict on
-        // the answer, not an outage: as one, the bank job waited, wrote every
-        // item of the requirement again and reviewed them the same way. The
-        // author drops the items whose keys could not be checked.
         if !indices.iter().all(|i| solved.contains_key(i)) {
             return Err(AppError::ModelAnswerUnusable(
                 "The model could not complete the quiz key review.".into(),

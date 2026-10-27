@@ -266,8 +266,6 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         outputs: std::sync::Mutex::new(vec![shortened.clone(), shortened].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    // Feedback that fails validation twice is the verdict a person reviews;
-    // only it is told apart from a failed request.
     assert!(matches!(
         crate::features::learning::practice_generation::grade(&still_invalid, &attempted).await,
         Err(AppError::ModelAnswerUnusable(_))
