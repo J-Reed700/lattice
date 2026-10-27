@@ -108,6 +108,28 @@ fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["answer"],"properties":{"answer":{"type":"string"}}})
 }
 
+/// As [`call`], with the answer checked as JSON by the call itself.
+async fn parsed(llm: &Recorder) -> Result<String> {
+    complete_checked(
+        llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        Some(ReasonFirst {
+            kind: CallKind::Authoring,
+            subject: "the explanation",
+            brief: BRIEF,
+        }),
+        |text| {
+            crate::features::learning::generation::parse_json::<Value>(text)
+                .map(|_| text.to_owned())
+        },
+    )
+    .await
+}
+
 async fn call(llm: &Recorder, kind: CallKind) -> Result<String> {
     complete_reasoned_json(
         llm,
@@ -325,8 +347,12 @@ async fn an_empty_draft_falls_back_to_the_one_step_request() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft() -> Result<()> {
+/// A claimed lesson preparation job: its repository, id and lesson.
+async fn lesson_job() -> Result<(
+    crate::features::learning::curriculum_repository::LearningCurriculumRepository,
+    String,
+    String,
+)> {
     use crate::features::learning::{
         curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
         dto::AcceptLearningProgramRequestDto, plan_dto::StartLearningGenerationJobRequestDto,
@@ -363,12 +389,17 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
         })
         .await?;
     JobStore::new(pool.clone()).claim(&job.id).await?;
+    Ok((jobs, job.id, lesson))
+}
 
+#[tokio::test]
+async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft() -> Result<()> {
+    let (jobs, job_id, lesson) = lesson_job().await?;
     let mut interrupted = Recorder::new(32_000);
     interrupted.answer = None;
     let first = lesson_drafts::run(
         &jobs,
-        &job.id,
+        &job_id,
         &lesson,
         call(&interrupted, CallKind::Authoring),
     )
@@ -378,12 +409,31 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
 
     let resumed = Recorder::new(32_000);
     let answer =
-        lesson_drafts::run(&jobs, &job.id, &lesson, call(&resumed, CallKind::Authoring)).await?;
+        lesson_drafts::run(&jobs, &job_id, &lesson, call(&resumed, CallKind::Authoring)).await?;
     assert_eq!(answer, ANSWER);
     let sent = resumed.sent();
     assert_eq!(sent.len(), 1, "the saved draft is not written again");
     assert_eq!(sent[0].json_schema, Some(schema()));
     assert!(messages(&sent[0]).contains(&("assistant", DRAFT)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_draft_whose_answer_cannot_be_read_is_written_again_on_retry() -> Result<()> {
+    let (jobs, job_id, lesson) = lesson_job().await?;
+    let mut unreadable = Recorder::new(32_000);
+    unreadable.answer = Some("not an answer");
+    let first = lesson_drafts::run(&jobs, &job_id, &lesson, parsed(&unreadable)).await;
+    assert!(first.is_err());
+
+    let retried = Recorder::new(32_000);
+    let answer = lesson_drafts::run(&jobs, &job_id, &lesson, parsed(&retried)).await?;
+    assert_eq!(answer, ANSWER);
+    assert_eq!(
+        retried.sent().len(),
+        2,
+        "the draft is written again, then answered"
+    );
     Ok(())
 }
 
