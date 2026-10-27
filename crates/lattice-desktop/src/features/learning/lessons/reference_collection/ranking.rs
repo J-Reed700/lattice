@@ -1,15 +1,7 @@
-//! Ranking a collection's passages: the course index's hybrid search, or a
-//! store's full text, then each hit widened to paragraph edges.
-//!
-//! A course whose passages are embedded is ranked by the one hybrid search
-//! (`HybridSearchTrait`): each query's dense and full-text branches, all of
-//! them fused once, at the library's weights. A
-//! course without an embedding model, and a collection built in memory, are
-//! ranked by FTS5's `bm25` over all the queries' words at once, which needs
-//! no fusion: one list. Either way a query's words match whole, as the
-//! library's text search matches them, so a source never enters a claim's
-//! evidence because one of its words merely begins with one of the claim's. Either way a hit is a stored passage, a byte span of
-//! a source's text, so it maps onto the source with no relocation.
+//! Ranking a collection's passages: the course index's hybrid search when its
+//! passages are embedded, otherwise FTS5 `bm25` over all the queries' words,
+//! then each hit widened to paragraph edges. Words match whole either way, so
+//! a source never enters a claim's evidence on a shared prefix.
 
 use super::*;
 use crate::features::learning::references::course_index::write_version;

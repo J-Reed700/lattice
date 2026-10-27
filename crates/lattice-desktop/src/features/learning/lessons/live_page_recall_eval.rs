@@ -1,49 +1,18 @@
 //! Page recall on the course index (course evidence index §7.1–§7.2): for
 //! every claim a stored lesson check approved, whether pass A would have
-//! settled it, and otherwise where the passage its judge cited lies in pass
-//! B's fused list, on which page, and what reading up to it costs.
+//! settled it, and otherwise where its cited passage lies in pass B's fused
+//! list and what reading up to it costs. It reads a stored run read-only,
+//! builds scratch course indexes from its source versions, and walks each
+//! claim's pages with no model call.
 //!
-//! It reads a stored run, the way `scripts/lesson_claim_pairs.py extract`
-//! does: `learning_lesson_verifications.report_json` for the findings and
-//! the program's saved source versions, the database opened read-only. It
-//! builds a temporary course index in a scratch directory from those
-//! versions, with the configured embedding model when it is given one
-//! (`LATTICE_PAGE_RECALL_EMBEDDING`) and by words alone otherwise. Given
-//! `LATTICE_PAGE_RECALL_INDEXES`, it keeps the indexes there instead: a copy
-//! of the app's `course-index` directory, built by the same model, is
-//! brought current rather than embedded again. It
-//! walks each claim's pass B pages to the end of its lists under each order
-//! of §5.2. No model is asked: the judge is assumed to read each page whole
-//! and settle nothing until the cited passage is on it.
-//!
-//! Given `LATTICE_PAGE_RECALL_RESEARCH_SECONDS`, what researching one claim
-//! on the web costs, it reads every claim pass A left unsupported under each
-//! depth rule of D5 (first page, break-even, list end) by the app's own rule
-//! (`Depth::reads_next`, `page_seconds`): how many the course supports, how
-//! many go to web research, and the minutes that takes.
-//!
-//! Given `LATTICE_PAGE_RECALL_TARGETS`, a recall set (JSONL), it reads that
-//! set instead of the stored reports: each claim names the passages that
-//! should support it and what its section cites, and the same walk reports
-//! where the first of them lies (`recall_set`).
-//!
-//! The `standing` order (claim sources design §7, §14.2) walks the claim's
-//! standing scope instead: the course's versions a stored judgement says
-//! stand on its subject, built from the trust store with no model
-//! (`Judgements::standing_scope`). It reads a recall set only, and the
-//! trust store through the app's own queries, on a migrated scratch copy of
-//! the database. Each row says what the scope held (`scope`), or `null`
-//! when the claim has no stored profile or its subject no stored ownership
-//! judgement. `LATTICE_PAGE_RECALL_TRUST_MODEL` names the model whose
-//! judgements are read; by default the one that made most of the course's
-//! ownership judgements.
-//!
-//! A section's citations are what the stored report marks `cited`: a
-//! finding's own unit's for pass A, and across the lesson the sources they
-//! come from for the lesson-sources orders. The stored quote is the whole
-//! widened passage the judge cited, and the index may draw that passage's
-//! edges a little differently, so a passage of the same source that
-//! contains it, or covers its middle byte, holds it.
+//! Environment: `LATTICE_PAGE_RECALL_EMBEDDING` (an embedding model, else
+//! words alone), `LATTICE_PAGE_RECALL_INDEXES` (reuse a copy of the app's
+//! `course-index`), `LATTICE_PAGE_RECALL_RESEARCH_SECONDS` (compare the D5
+//! depth rules), `LATTICE_PAGE_RECALL_TARGETS` (a JSONL recall set instead of
+//! the stored reports; required for the `standing` order) and
+//! `LATTICE_PAGE_RECALL_TRUST_MODEL` (whose judgements the standing scope
+//! reads). A passage of the same source that contains the cited one, or
+//! covers its middle byte, holds it.
 use crate::features::learning::content_verification::{
     page_budget, page_seconds, walk_pages, Depth, Reach, WalkedPage, ORDERS,
 };

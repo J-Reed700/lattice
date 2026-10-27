@@ -1,12 +1,7 @@
 //! Pass B's first page for a claim, kept stable as research grows (course
-//! evidence index §5.6). New sources still participate in retrieval, but a
-//! ranking change among unchanged sources does not replace the passages
-//! already selected and checked: the page is saved before its check and
-//! restored on every later pass while the course's sources are the same.
-//! A claim research was asked for is the exception: what research found
-//! leads its page, searched in the versions it added, so the claim is
-//! checked again against it, and its walk reads nothing else of the course.
-//! Pass A needs none of this: its page is what the section cites.
+//! evidence index §5.6): saved before its check and restored while the
+//! course's sources are unchanged. For a research target, what research found
+//! leads its page and its walk reads nothing else.
 use super::*;
 use crate::features::learning::reference_collection::Scope;
 
@@ -266,14 +261,10 @@ impl Selection {
     }
 }
 
-/// Pass B's first page for `claim` (as written, as checked, in section
-/// `unit`): restored when saved under this ranking and every source it
-/// names is unchanged, read from the walk's first reach otherwise, and led
-/// by what research added when the claim was a research target. Never a
-/// passage overlapping `attribution`, what pass A shows. Saved before any
-/// model work, so an interrupted check compares exactly this page again.
-/// A page that must be read now waits while `sizing` is unmeasured: `None`,
-/// and nothing is saved, until the job's first answers size it.
+/// Pass B's first page for `claim`: restored when saved under this ranking
+/// with every source unchanged, otherwise read from the walk's first reach,
+/// and never overlapping `attribution`. Saved before any model work; `None`,
+/// saving nothing, while `sizing` is unmeasured.
 pub(super) async fn select(
     llm: &dyn LLMPort,
     (claim, checked, unit): (&Claim, &str, usize),

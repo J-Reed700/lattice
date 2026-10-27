@@ -41,11 +41,9 @@ pub(super) enum AskError {
 }
 
 impl From<AppError> for AskError {
-    /// The backend refusing a prompt its window cannot hold says what the
-    /// planner says, by an exact count where the planner's is an estimate:
-    /// the batch is halved, not the job failed. Dense batches (JSON, ids,
-    /// quotations) measured under the window by the estimate and were
-    /// refused at twice that.
+    /// The backend refusing a prompt its window cannot hold halves the batch
+    /// rather than failing the job: dense batches can be refused though the
+    /// estimate fit them.
     fn from(error: AppError) -> Self {
         match error {
             AppError::PromptExceedsWindow { .. } => Self::TooLarge,

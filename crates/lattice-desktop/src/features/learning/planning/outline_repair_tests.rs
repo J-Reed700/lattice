@@ -480,13 +480,10 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         irrelevant.queries.lock().unwrap().as_slice(),
         ["random assignment confounding primary source"]
     );
-    // Repair: attempts start afresh, the planner is told what was searched,
-    // the new page supports the claim and the finding closes with evidence.
-    // The page gathered in the first run offers new candidates, so linking
-    // runs again first; the module receipts still hold because references
-    // are not part of them, so the review stays incremental. Evidence closes
-    // the finding in code, the module text is unchanged, so the receipt
-    // still matches and no further review call is made.
+    // Repair: attempts start afresh, the planner is told what was searched, and
+    // the new page's evidence closes the finding in code. Linking runs again on
+    // the new candidates, but the module text is unchanged, so its receipt still
+    // matches and no further review call is made.
     let relevant = ResearchWeb::with_pages(vec![Page {
         url: "https://example.org/primary-source".into(),
         text: format!("{claim} This holds because treatment and control differ only by chance."),
@@ -596,8 +593,8 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
     Ok(())
 }
 
-/// The 2026-10-22 baseline's three stuck outlines: the first rewrite kept the
-/// module, and the plan finding still blocked the course.
+/// A first rewrite that keeps the module does not leave the plan finding
+/// blocking the course.
 #[tokio::test]
 async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advisory_and_passes(
 ) -> Result<()> {

@@ -88,8 +88,7 @@ fn refused() -> Result<CompletionResponse> {
 }
 
 /// A batch the estimate sized under the window can measure over it by the
-/// backend's exact count. The refusal halves the batch, as the planner's
-/// does; it used to fail the whole lesson job.
+/// backend's exact count; the refusal halves the batch.
 #[tokio::test]
 async fn a_batch_the_backend_refuses_for_its_size_is_sent_again_in_halves() {
     for with_web in [false, true] {

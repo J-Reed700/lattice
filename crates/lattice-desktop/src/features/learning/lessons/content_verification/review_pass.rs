@@ -1,10 +1,7 @@
 //! The review pass (§6.2): what the user did while the lesson waited, carried
-//! into the draft at the loop's sync points. An edit replaces its sentence and
-//! a removal takes it out; re-extraction then names an edited claim's
-//! successors, which are checked like any new claim. A hint is researched
-//! once. Settled claims are left alone, and claims still waiting stay waiting:
-//! the loop's decision after the pass hands the lesson back when anything is
-//! still open.
+//! into the draft at the loop's sync points. Edits and removals change their
+//! sentences, an edited claim's successors are checked like new ones, and a
+//! hint is researched once.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §5.1, §6.2, §9.
 
 use super::claim_ledger::ClaimLedger;

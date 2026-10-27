@@ -537,15 +537,10 @@ fn settle(draft: &mut OutlineDraft, sources: &[LearningSourceDto], references_mi
     };
 }
 
-/// Review and repair a saved draft. `gather_if_empty` is set by Repair: a
-/// draft that still has no references is gathered for first. Generation has
-/// already gathered once and passes false, so a failed gathering is reported
-/// as the References finding rather than retried in the same operation.
-///
-/// The loop terminates by construction: each pass either resolves findings or
-/// spends attempts (at most `ATTEMPT_LIMIT` per finding) and module rewrites
-/// (at most `MODULE_REWRITE_BUDGET` per module), and new findings can only
-/// arise at paths the last pass changed.
+/// Reviews and repairs a saved draft. `gather_if_empty` (set by Repair)
+/// gathers references for a draft that has none. The loop terminates: each
+/// pass resolves findings or spends bounded attempts and module rewrites, and
+/// new findings arise only where the last pass changed something.
 pub(in crate::features::learning) async fn finish(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
@@ -627,8 +622,8 @@ pub(in crate::features::learning) async fn finish(
             progress.stage(OutlineStage::Repairing);
             let outcome = crate::features::learning::outline_repair::repair(repo, llm, &mut program, &mut draft, &mut sources, web, &mut budgets, progress).await?;
             if !outcome.changed && !outcome.evidence_added {
-                // Plan findings an unchanged last attempt exhausted no longer
-                // block; only a blocking finding left uncorrected stops here.
+                // Plan findings an unchanged last attempt exhausted do not block; only a
+                // blocking finding left uncorrected stops here.
                 if draft.review.issues.iter().any(LearningOutlineIssueDto::blocks_acceptance) {
                     // Say what was wrong with any correction that could not
                     // be used, so the user can fix it by hand or press Repair.

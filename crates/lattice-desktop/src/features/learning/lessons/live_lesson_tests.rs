@@ -242,12 +242,9 @@ impl ObservedModel {
     }
 
     /// `settings`' llama.cpp model as the app's factory builds it: behind its
-    /// server's scheduler, which measures the backend's pace and calibrates
-    /// the token estimate from its answers, with the server's tokenizer for
-    /// exact counts. The bare engine has none of these: a course eval run on
-    /// it had no pace, so every claim page filled the window, and sized
-    /// every check by the uncalibrated estimate. Calls are numbered from
-    /// `first_call`.
+    /// server's scheduler, which measures the backend's pace and calibrates the
+    /// token estimate, with the server's tokenizer for exact counts. Calls are
+    /// numbered from `first_call`.
     async fn new(
         settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
         directory: std::path::PathBuf,
@@ -382,10 +379,8 @@ impl LLMPort for TimedBackend {
     }
 }
 
-/// The course eval of 2026-10-21 observed the bare engine, which measures no
-/// pace, so every claim page was bounded by the 32,768-token window alone.
-/// Observed as the app reaches it, the model measures its pace from its
-/// first answer, and the page that pace sizes is a small part of the window.
+/// The model measures its pace from its first answer, and the page that pace
+/// sizes is a small part of the window.
 #[tokio::test]
 async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
     use crate::features::learning::content_verification::page_budget;

@@ -1,12 +1,8 @@
-//! The trust commands' work that reaches the claim ledger (source
-//! provenance §18.7, §19, decision 4): the trust view with what each
-//! override scope would re-decide, and setting or clearing an override,
-//! which re-decides the claims it touches with no model call.
-//!
-//! The trust reads and the override store are `references::trust`'s. Which
-//! claims a change re-decides is this ledger's rule (`trust_changed`), so
-//! the count the menu shows before the user commits and the claims then
-//! re-decided are the same claims.
+//! The trust commands' work that reaches the claim ledger (source provenance
+//! §18.7, §19): the trust view with what each override scope would re-decide,
+//! and setting or clearing an override. Which claims a change re-decides is
+//! `trust_changed`'s rule, so the count the menu shows is the claims
+//! re-decided.
 
 use std::collections::BTreeSet;
 

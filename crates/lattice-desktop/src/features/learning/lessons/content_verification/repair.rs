@@ -1,12 +1,7 @@
-//! Rewrite only affected sections. Each completed patch is durable; a large
-//! evidence collection must not become one enormous, fragile rewrite request,
-//! so a section whose failed claims and evidence do not fit the model is
-//! repaired in several requests, in sequence.
-//!
-//! A claim pass B found support for elsewhere in the course is not a failed
-//! claim: its citation is (course evidence index §5.1). That repair needs no
-//! model: `citation::cite_where_supported` rewrites the section's citation
-//! to the passage found.
+//! Rewrites only affected sections, each in as many requests as its failed
+//! claims and evidence need to fit the model, every patch durable. A claim
+//! pass B found supported elsewhere needs only its citation rewritten
+//! (`citation::cite_where_supported`), with no model call.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{
     claim_ids, context_claims, drop_group, escalated, ledger_targets, rejected, section_examples,
@@ -410,13 +405,10 @@ pub(in crate::features::learning) async fn candidate(
     .await
 }
 
-/// Repair every affected section in turn, each in as many requests as its
-/// failed claims and their evidence need to fit the model, each request on
-/// the section as the previous one left it. Every patch is saved with the
-/// work that remains. Before each request the ledger is read again: a claim
-/// the user resolved meanwhile is not sent and not charged (§9). A request
-/// whose answer cannot be used costs its claims an attempt; the section
-/// stays as it was.
+/// Repairs every affected section in turn, in as many requests as fit, each
+/// on the section as the previous left it, saving every patch. A claim the
+/// user resolved meanwhile is not sent (§9); an unusable answer costs its
+/// claims an attempt and leaves the section as it was.
 async fn repair_sections(
     llm: &dyn LLMPort,
     prompt: &str,

@@ -486,9 +486,7 @@ mod window_tests {
             sent + 1400 <= Words.max_context_tokens(),
             "{sent} tokens sent"
         );
-        // A 131K window leaves room for the 40,000-word source; the
-        // reading-speed budget used to hold the prompt near 7,200 tokens,
-        // under a quarter of the window.
+        // A 131K window leaves room for the 40,000-word source.
         assert!(room > 40_000);
         assert!(sent > Words.max_context_tokens() / 4, "{sent} tokens sent");
     }

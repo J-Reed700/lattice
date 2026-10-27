@@ -492,10 +492,9 @@ mod repository_tests {
     };
     use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
-    /// The old one-job-at-a-time semaphore did two things: it limited model
-    /// use, which is now the inference scheduler's, and it kept two
-    /// preparations of one course off the same sources and snapshot, which the
-    /// runtime's per-subject lock still does — for that course only.
+    /// Model use is the inference scheduler's to limit; the runtime's per-subject
+    /// lock keeps two preparations of one course off the same sources and
+    /// snapshot.
     #[test]
     fn lesson_jobs_run_one_per_course_and_resume_after_a_restart() {
         let config = lesson_job_config();

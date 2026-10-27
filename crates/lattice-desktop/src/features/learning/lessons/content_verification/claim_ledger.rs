@@ -1,15 +1,8 @@
 //! The claim ledger as the verify-and-repair loop keeps it: which claim each
-//! finding is, what the machine did about it, and what happens next.
-//!
-//! Every pass is observed claim by claim. A check is recorded only when the
-//! claim is new or something new about it is known (§3 `new_information`);
-//! research runs once per claim and evidence; a repair targets only claims
-//! the rules still allow, two per piece of evidence. Once nothing is left for
-//! the machine, the lesson publishes if every claim is resolved and otherwise
-//! waits for the user's review, with every open claim kept (§4, §6.1).
-//! Inside a preparation job the ledger is written through
-//! `ClaimReviewRepository`; elsewhere (tests, fixtures) it lives in memory.
-//! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §4, §6, §9.
+//! finding is, what the machine did about it, and what happens next. A check
+//! is recorded only when something about the claim is new, research runs once
+//! per claim and evidence, and a repair targets only claims the rules still
+//! allow (§3, §4, §6.1). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 mod audit;
 mod located;
@@ -400,14 +393,10 @@ impl ClaimLedger {
         self.save_pending().await
     }
 
-    /// The targets a repair may rewrite; the rest wait for the user without
-    /// a model call (claim sources design §18.5). A target is editable when
-    /// at least one sentence of its stored quote neither contains nor lies
-    /// inside a sentence another live claim of its unit and field stands on;
-    /// a sentence that also carries a verified, confirmed, accepted or
-    /// waiting claim is not the machine's to rewrite. Each target withheld
-    /// is recorded as a repair not attempted: queued at once, no attempt
-    /// charged.
+    /// The targets a repair may rewrite (claim sources design §18.5): editable
+    /// when some sentence of its quote is not one another live, settled or
+    /// waiting claim stands on. The rest wait for the user, recorded as a repair
+    /// not attempted.
     pub(super) async fn withhold_shared(&mut self, targets: &[ClaimId]) -> Result<Vec<ClaimId>> {
         let protected = Protected::of_ledger(self, targets);
         let mut editable = Vec::new();

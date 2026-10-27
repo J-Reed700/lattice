@@ -55,23 +55,15 @@ async fn renumber(
     Ok(())
 }
 
-/// Verify, research and repair until nothing is left for the machine (§4).
-/// Each pass is observed by the claim ledger, which records a check only when
-/// something about the claim is new, researches a claim once per evidence,
-/// and lets a repair target only claims with attempts left: one correction
-/// and one escalated rewrite (`repeatedDefect`, remove the assertion whole)
-/// per piece of evidence. When no claim can be repaired, the lesson publishes
-/// if every claim is resolved, and otherwise waits for the user's review with
-/// every open claim kept: the draft is saved, the review row says so, and
-/// [`claim_ledger::needs_review`] unwinds the preparation (§6.1). Sync points
-/// before each pass and each repair group pick up what the user did (§9).
-/// Operational extraction/audit errors propagate rather than asking the author
-/// to rewrite valid content because a checker is unavailable.
+/// Verifies, researches and repairs until nothing is left for the machine
+/// (§4), then publishes if every claim is resolved and otherwise saves the
+/// draft for the user's review (§6.1). Sync points before each pass and repair
+/// group pick up what the user did (§9). Operational checker errors propagate
+/// rather than asking the author to rewrite valid content.
 ///
 /// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
-/// name: the writer's, and any this verification adds to cite a claim's
-/// support (`repair::cite_where_supported`). The lesson is parsed against
-/// it, and `writer_schema`'s source indices are widened to it.
+/// name; the lesson is parsed against it and `writer_schema`'s indices are
+/// widened to it.
 pub(in crate::features::learning) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
@@ -476,15 +468,10 @@ impl PendingRepair {
     }
 }
 
-/// References overlap heavily across related claims. Send each exact passage
-/// once instead of multiplying an entire retrieval result by every finding.
-/// This changes representation only: no conflicting or unsupported evidence is
-/// discarded, and the full candidate still undergoes independent verification.
-/// Each passage carries its source's title, and a failed claim names a
-/// "Source N" by title too, so a source index is not read as evidence N.
-/// Only `targets` are sent, each with its claim id and, on its last attempt,
-/// `repeatedDefect` (remove the assertion whole); failed examples go with
-/// their section when their claim is a target.
+/// The repair context, with each exact passage sent once rather than per
+/// finding; nothing is discarded. Passages carry their source titles so a
+/// source index is not read as evidence N. Only `targets` are sent, each with
+/// its claim id and, on its last attempt, `repeatedDefect`.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,

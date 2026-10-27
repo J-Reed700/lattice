@@ -1,17 +1,7 @@
-//! What a claim is about, read against the collection's own vocabulary.
-//!
-//! A claim's corroboration list ends at its last passage that mentions what
-//! the claim is about: one of the claim's distinctive content terms, those no
-//! more common across the collection's passages than the median of the
-//! claim's own content terms. Words the whole subject shares (in a .NET
-//! collection, "net" or "core") do not count, so a list ends once only the
-//! subject's common vocabulary is left. Vector neighbours alone never count;
-//! they are read when they rank before the end.
-//!
-//! Each term's passage count comes from the store's full-text vocabulary, so
-//! the claim's terms are looked up as the store's tokenizer keeps words
-//! (lower case, Latin diacritics removed), and a passage's text is read the
-//! same way.
+//! What a claim is about, read against the collection's own vocabulary: its
+//! distinctive content terms, those no more common across the passages than
+//! the median of its own terms, so words the whole subject shares do not
+//! count. Terms are looked up as the store's tokenizer keeps words.
 
 use super::*;
 use crate::infrastructure::passage_index::indexed_term;

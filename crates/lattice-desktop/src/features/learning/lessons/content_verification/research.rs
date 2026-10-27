@@ -107,13 +107,10 @@ pub(in crate::features::learning) fn selection_cost<'a>(
 /// most.
 const SELECTION_ID_PLACEHOLDER: usize = 9999;
 
-/// Discovery rankings are not evidence of topical relevance or authority.
-/// Select credible candidates before fetching; factual checks still use only
-/// the complete capture, never these titles, snippets or selection reasons.
-/// Each candidate carries the kind of source its search asked for and the
-/// subject owner the source finder resolved for that search. The selector
-/// reads the candidates, in order, that its window holds; a search sized by
-/// [`selection_room`] brings no more than that.
+/// Selects credible candidates before fetching: discovery rankings are not
+/// evidence of relevance or authority, and factual checks use only the
+/// complete capture. The selector reads the candidates, in order, that its
+/// window holds.
 pub(in crate::features::learning) async fn select_references(
     llm: &dyn LLMPort,
     topic: &str,

@@ -1,14 +1,7 @@
 //! The standing reach (claim sources design §7): before a claim is left
 //! unsupported, insufficient or contradicted, it reads the course's own
-//! highest-standing sources on its subject, and is weighed again against the
-//! strongest the course has there (the ceiling, §6.1).
-//!
-//! The claims are those the gate left (§7.2); each one's scope is read from
-//! stored facts (`Judgements::standing_scope`, §7.3), its walk pages that
-//! scope as pass B pages the course (`Walk::standing`, `deepen`), every
-//! version on a page it read is levelled for its subject, and what it found
-//! joins its finding (`outcome::with_standing`). A claim settled before any
-//! model check, or decided outside a preparation job, is not read on.
+//! highest-standing sources on its subject (its scope, §7.3) and is weighed
+//! again against the strongest the course has there (§6.1).
 use super::outcome::with_standing;
 use super::run::research_seconds;
 use super::*;

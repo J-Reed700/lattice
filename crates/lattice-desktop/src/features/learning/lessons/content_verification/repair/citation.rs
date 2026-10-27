@@ -78,19 +78,12 @@ pub(in crate::features::learning::lessons::content_verification) fn number_sourc
     }
 }
 
-/// Rewrites the citation of each section one of whose claims pass B
-/// supported elsewhere to the passage it found (`supported_by`): the
-/// section's `quote` becomes the run of that passage's sentences that best
-/// matches the claim ([`quotation`]), and its `sourceIndex` the passage's
-/// source in `numbered`, the sources the lesson numbers. A source not
-/// numbered yet is added, so a supported claim never keeps a citation to the
-/// wrong source; the next pass reads the new citation as the section's own
-/// (pass A). A section is rewritten only when it carries a citation and
-/// the claim's support is not in doubt (the provenance gate asked for no
-/// scrutiny); a section's first such claim decides. `tried` holds the citations written before in this job,
-/// never written again, so two passages a judge weighs differently on
-/// successive passes cannot trade places. Returns, per rewritten section,
-/// the finding's position and the ledger event that records the repair.
+/// Rewrites the citation of each section one of whose claims pass B supported
+/// elsewhere to the passage found: `quote` becomes the best-matching run of
+/// its sentences ([`quotation`]) and `sourceIndex` its source, numbered if
+/// new. Only sections with a citation and undoubted support; `tried`
+/// citations are never written again, so two passages cannot trade places.
+/// Returns the finding's position and ledger event per rewritten section.
 pub(in crate::features::learning::lessons::content_verification) fn cite_where_supported(
     candidate: &mut Value,
     findings: &[Finding],

@@ -307,16 +307,11 @@ pub(super) async fn group(
     Ok((results, answers))
 }
 
-/// The model requests for `pending` (§5.6): claims of one section at a time,
-/// in section and claim order, a claim's comparisons (pass A, then pass B's
-/// page) together, a request taking claims while the batch estimate says
-/// the window holds them all with their answers. A section's claims share
-/// its cited passages, which the bank holds once. The first claim that does
-/// not fit starts the next request; comparisons that do not fit a request
-/// alone are checked in halves, down to one alone, where its least needed
-/// passages give way. No count caps a request: the section bounds it. The
-/// same pages always pack the same way, so a restart rebuilds the same
-/// requests and finds their split checkpoints.
+/// The model requests for `pending` (§5.6): one section's claims at a time, a
+/// claim's comparisons together, while the batch estimate says the window
+/// holds them with their answers. A comparison too big alone is checked in
+/// halves. The same pages always pack the same way, so a restart finds its
+/// split checkpoints.
 pub(super) fn pack(
     llm: &dyn LLMPort,
     mut pending: Vec<PendingClaim>,

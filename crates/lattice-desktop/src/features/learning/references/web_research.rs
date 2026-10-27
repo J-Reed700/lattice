@@ -97,22 +97,10 @@ impl PlannedNeed {
         }
     }
 
-    /// The searches this planned need stands for, each trimmed with empty
-    /// fields dropped.
-    ///
-    /// `site` is the one place a search's scope is kept. A query that names
-    /// sites with `site:` operators wrote its scope in the wrong place: it is
-    /// one search per site named, the operators lifted into `site` and out of
-    /// the query and its rewordings (which reword terms, never the scope). A
-    /// `site` the need sets itself is its scope, and operators beside it are
-    /// dropped.
-    ///
-    /// `None` when it breaks the schema [`need_schema`] states, which not
-    /// every model provider enforces: a query or rewording outside
-    /// [`QUERY_CHARS`] once its operators are lifted, a site that is not an
-    /// address, a kind no search asks for, a registry that does not exist, a
-    /// date that is not `YYYY-MM-DD`, or a dated read that does not name its
-    /// page's address or also asks for newer material.
+    /// The searches this planned need stands for, trimmed. `site` is the one
+    /// place a search's scope is kept: `site:` operators in a query become one
+    /// search per site named. `None` when the need breaks [`need_schema`], which
+    /// not every model provider enforces.
     pub(in crate::features::learning) fn searches(self) -> Option<Vec<Self>> {
         let (query, named) = lift_sites(&self.query);
         let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {

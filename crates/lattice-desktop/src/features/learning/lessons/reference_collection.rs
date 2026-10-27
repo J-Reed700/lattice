@@ -1,22 +1,9 @@
-//! Retrieval over a program's immutable source snapshots.
-//!
-//! A course's collection reads the course's index
-//! (`references::course_index`): every active version of every source, web
-//! pages and library documents alike, cut into the same byte spans and
-//! ranked by the one hybrid search the library and Explorer use, dense and
-//! full-text fused. Without an embedding model, or while some passages are
-//! not embedded yet, the index is searched by its words, and
-//! [`ReferenceCollection::mode`] says so; so does the lesson's stage text and
-//! its verification report.
-//!
-//! A collection of sources a caller holds without a course index (outline
-//! planning, assessments, a course whose index cannot be brought up to date,
-//! tests) is ranked by an in-memory full-text store built from those sources
-//! on first use: FTS5's `bm25`, the same as a course's text branch,
-//! deterministic and needing no model.
-//!
-//! Every hit is mapped onto the snapshot's own bytes and widened to paragraph
-//! edges, so evidence is always an exact substring of what was captured.
+//! Retrieval over a program's immutable source snapshots. A course's
+//! collection reads its course index (`references::course_index`), ranked by
+//! the library's hybrid search, or by words alone without an embedding model
+//! ([`ReferenceCollection::mode`] says which). A collection without an index
+//! is ranked by an in-memory FTS5 store. Every hit is widened to paragraph
+//! edges of the snapshot's own bytes, so evidence is always an exact substring.
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::references::course_index::{
     CourseProgress, CourseSearch, IndexMode, IndexView, CHUNK_CHARS,
@@ -214,12 +201,9 @@ impl<'a> ReferenceCollection<'a> {
     }
 
     /// The course's collection as it can be searched at once, for a user's
-    /// command: new versions are chunked in and retired ones dropped, but
-    /// nothing is embedded, so a command never waits for a course to embed.
-    /// What is embedded already is searched by meaning; the rest by words,
-    /// which the mode says (`partial`, or `lexical` without a model), while a
-    /// background build embeds it. Without an index, or when the rows cannot
-    /// be brought up to date, the sources are searched by words from memory.
+    /// command: new versions are chunked in but nothing is embedded, so what is
+    /// not embedded yet is searched by words (the mode says so) while a background
+    /// build embeds it.
     pub(in crate::features::learning) async fn searchable_now(
         course: Option<&'a CourseSearch>,
         sources: &[LearningSourceDto],

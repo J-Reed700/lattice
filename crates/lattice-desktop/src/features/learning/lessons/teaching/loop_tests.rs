@@ -1,5 +1,5 @@
 //! A lesson's teaching review publishes with what the repairs could not
-//! settle waiting for the user; the cases that used to fail the job.
+//! settle waiting for the user.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
@@ -192,8 +192,7 @@ async fn a_repair_whose_answer_cannot_be_used_leaves_the_lesson_unchanged_and_wa
 }
 
 /// The scripted review, with every teaching repair request longer than the
-/// model's window, as a repair carrying the requirements, the whole lesson
-/// and its findings was on a 131k-token Qwen window.
+/// model's window.
 struct RepairTooLong(ScriptedModel);
 
 #[async_trait::async_trait]

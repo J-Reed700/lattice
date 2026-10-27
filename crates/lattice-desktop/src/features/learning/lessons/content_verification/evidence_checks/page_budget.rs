@@ -42,18 +42,9 @@ impl AnswerSize {
 }
 
 /// Tokens a deeper claim page should hold: the reading that costs as long as
-/// one more answer would.
-///
-/// A claim that needs one more page costs one more answer, written at the
-/// backend's output speed; reading a page costs its tokens at the backend's
-/// prompt speed. Pages smaller than this pay for answers faster than they
-/// read evidence; larger ones read past support a smaller page would have
-/// found. So
-///
-/// tokens per page = answer tokens per claim × (prompt tokens/s ÷ output tokens/s)
-///
-/// Both speeds are the backend's measured pace (`LLMPort::pace`) and the
-/// answer size is this job's measured mean. `None` while either is unknown.
+/// one more answer would, answer tokens per claim × (prompt tokens/s ÷ output
+/// tokens/s), from the backend's measured pace and this job's mean answer.
+/// `None` while either is unknown.
 pub(in crate::features::learning) fn page_budget(
     pace: Option<Pace>,
     answer_tokens_per_claim: Option<f64>,
@@ -64,13 +55,9 @@ pub(in crate::features::learning) fn page_budget(
     (tokens.is_finite() && tokens > 0.0).then(|| tokens.round() as usize)
 }
 
-/// Seconds one more pass B page of `page_tokens` costs a claim: reading it
-/// at the backend's prompt speed and one more answer at its output speed.
-///
-/// seconds = page tokens ÷ prompt tokens/s + answer tokens per claim ÷ output tokens/s
-///
-/// The measurements [`page_budget`] sizes the page by. `None` while either
-/// is unknown.
+/// Seconds one more pass B page of `page_tokens` costs a claim: page tokens ÷
+/// prompt tokens/s + answer tokens per claim ÷ output tokens/s. `None` while
+/// either is unknown.
 pub(in crate::features::learning) fn page_seconds(
     pace: Option<Pace>,
     page_tokens: usize,
@@ -86,8 +73,8 @@ pub(in crate::features::learning) fn page_seconds(
 mod tests {
     use super::*;
 
-    /// The owner's logged run: about 850 prompt tokens a second, 11.3 output
-    /// tokens a second and 130 answer tokens a claim.
+    /// About 850 prompt and 11.3 output tokens a second, and 130 answer tokens a
+    /// claim.
     #[test]
     fn a_page_reads_in_the_time_one_more_answer_takes() {
         let pace = Pace {

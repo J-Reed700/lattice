@@ -1,22 +1,10 @@
-//! Learning's structured model calls.
-//!
-//! Every generator — lessons, outlines, assessments, practice, practical
-//! activities and study decks — sends its strict-JSON
+//! Learning's structured model calls. Every generator sends its strict-JSON
 //! request through the grounded-generation service, which divides the model's
-//! window and refuses a request that does not fit. A generator states what it
-//! needs (the answer's reservation, its priority and schema); it never does
-//! window arithmetic of its own.
-//!
-//! Material is fitted, not refused: a site that packs material builds its
-//! request at a room, [`fit_room`] measures it exactly where the backend can
-//! count and shrinks the room until it fits, and [`send_fitted`] also shrinks
-//! on a size refusal the measurement could not foresee. Only instructions
-//! that do not fit without any material are a window too small.
-//!
-//! No learning call has a wall-clock limit. A slow model is not a failed
-//! one: the adapter's stall detection ends a call whose server has gone
-//! quiet, the answer's output reservation ends a runaway one, and dropping
-//! the future (a cancelled job, a closed window) ends one nobody wants.
+//! window; a generator states only its answer reservation, priority and
+//! schema. Material is fitted, not refused: [`fit_room`] measures a request
+//! and shrinks its room until it fits, and [`send_fitted`] also shrinks on a
+//! size refusal. No learning call has a wall-clock limit; stall detection, the
+//! output reservation and cancellation end calls instead.
 
 use std::future::Future;
 
@@ -27,12 +15,10 @@ use lattice_core::application::services::grounded_generation::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
-/// Whether authoring calls — outline and lesson drafts and the reviews that
-/// judge them — work through the task in prose before the schema-constrained
-/// answer. Asking for the format in the same call that does the reasoning
-/// costs small open models most of their structured-output accuracy, while
-/// the grammar itself is neutral at 4B and above, so these calls reason in
-/// one request and are held to the schema in a second.
+/// Whether authoring calls (outline and lesson drafts and their reviews) work
+/// through the task in prose before the schema-constrained answer: asking for
+/// the format while reasoning costs small models their structured-output
+/// accuracy.
 pub(in crate::features::learning) const REASON_FIRST_AUTHORING: bool = true;
 
 /// The same for short checks that choose among fixed verdicts. Their answer
@@ -150,14 +136,10 @@ impl Fit {
     }
 }
 
-/// Build the request at `room`, measure it once, and while it is over the
-/// window shrink the room in proportion and build again. One count when it
-/// fits; two or three on material denser than the estimate. A backend that
-/// cannot count is measured by the estimate, which `room` already fits.
-///
-/// `room` is in the planner's estimate tokens, as [`source_room`] gives it,
-/// and `build` packs material up to that many; `build(0)` is the request
-/// with no material, the skeleton.
+/// Builds the request at `room`, measures it, and while it is over the window
+/// shrinks the room in proportion and builds again. `room` is in the planner's
+/// estimate tokens (see [`source_room`]); `build(0)` is the skeleton, with no
+/// material.
 pub(in crate::features::learning) async fn fit_room(
     llm: &dyn LLMPort,
     room: usize,
@@ -253,13 +235,10 @@ fn log_fit(first: usize, fit: &Fit, counts: usize) {
     );
 }
 
-/// [`fit_room`], then `call` with the request built; a size refusal from any
-/// gate or server shrinks the room and calls again. A refusal that counted
-/// the prompt exactly is the measurement for the next room; one that
-/// estimated it says only "too big", so the room is halved.
-///
-/// `Ok(None)` when no material fits: the skeleton alone does not, or the
-/// room shrank to nothing. The site then degrades; it never fails for size.
+/// [`fit_room`], then `call` with the request built; a size refusal shrinks
+/// the room and calls again (by the refusal's exact count, or by half).
+/// `Ok(None)` when no material fits: the site then degrades, never failing for
+/// size.
 ///
 /// # Errors
 ///

@@ -1,21 +1,11 @@
 //! The Verifier audit (lesson claim review §14): a final grounded audit of a
-//! lesson's claims before it publishes, opt-in per course.
-//!
-//! It runs once every claim is resolved (verified, confirmed, accepted as
-//! general knowledge, or removed) and before the lesson publishes. Each
-//! claim that lacks a current audit receipt — a Verifier check of the same
-//! statement, the same passages, under the same policy and model — is sent,
-//! with its lesson section and the exact passages the local checker
-//! compared, to the Verifier in batches the Verifier's window holds. Every
-//! answer becomes a `Checked { checker: Verifier }` event in the claim's
-//! ledger; the ledger's rules turn a disagreement into a dispute that blocks
-//! publishing. The audit never edits the lesson.
-//!
-//! Between batches the course's opt-in and consent are read again, so
-//! switching the audit off (or changing the Verifier's provider) stops it at
-//! the next batch boundary. Each batch's record and token usage is written
-//! before the next is sent; a stopped or interrupted audit resumes with the
-//! claims that still lack a receipt.
+//! lesson's claims before it publishes, opt-in per course. Each claim lacking
+//! a current audit receipt is sent, with its section and the passages the
+//! local checker compared, in batches the Verifier's window holds; every
+//! answer is a `Checked { checker: Verifier }` ledger event, and a
+//! disagreement blocks publishing. The audit never edits the lesson. Opt-in
+//! and consent are re-read between batches, and a stopped audit resumes with
+//! the claims still lacking a receipt.
 
 pub(crate) mod batches;
 mod calls;

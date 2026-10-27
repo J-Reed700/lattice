@@ -469,9 +469,9 @@ pub async fn prepare_lesson_with_references<'a>(
                 .unwrap_or_else(|| source.clone())
         })
         .collect();
-    // The lesson's own rules no longer stop it here. The teaching review
-    // repaired what it could; what is left, and any citation that does not
-    // match its source, waits for the user while the lesson publishes.
+    // The lesson's own rules do not stop it here: what the teaching review could
+    // not repair, and any citation that does not match its source, waits for the
+    // user while the lesson publishes.
     let mut findings = crate::features::learning::teaching::structural_findings(
         &lesson_schema(sources.len()),
         &raw,

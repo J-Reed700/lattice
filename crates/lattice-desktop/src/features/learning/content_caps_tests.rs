@@ -51,7 +51,7 @@ fn scripted(outputs: Vec<String>) -> ScriptedModel {
     }
 }
 
-/// A long text whose only mention of `needle` sits far past the old prefixes.
+/// A long text whose only mention of `needle` sits far into it.
 fn deep(needle: &str) -> String {
     format!(
         "{}{needle}",

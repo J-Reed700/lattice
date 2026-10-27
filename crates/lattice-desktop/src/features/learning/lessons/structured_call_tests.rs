@@ -431,12 +431,9 @@ fn the_fixture_view_of_an_answer_step_is_the_one_step_task() {
     assert_eq!(task_messages(&direct), (SYSTEM, PROMPT));
 }
 
-/// llama.cpp drops a request's whole grammar when any repetition bound in its
-/// schema exceeds `GRAMMAR_REPETITION_LIMIT`, and a learning prompt no longer
-/// asks for the format in words, so a grammar silently dropped would leave
-/// nothing holding the shape. Bounds computed at run time are checked on
-/// every request the learning fixtures answer; this catches the literal ones,
-/// including schemas whose calls have no fixture.
+/// llama.cpp drops a request's whole grammar when any repetition bound
+/// exceeds `GRAMMAR_REPETITION_LIMIT`, and nothing else holds the shape. This
+/// checks the literal bounds, including schemas whose calls have no fixture.
 #[test]
 fn no_learning_schema_literal_exceeds_the_grammar_repetition_limit() -> Result<()> {
     use crate::features::conversation::memory::prompts::GRAMMAR_REPETITION_LIMIT;

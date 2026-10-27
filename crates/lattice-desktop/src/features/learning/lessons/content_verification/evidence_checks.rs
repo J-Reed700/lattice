@@ -1,38 +1,11 @@
-//! Claim checks in two passes (course evidence index §5). Retrieve and
-//! restore individual comparisons, then batch only unfinished ones; every
-//! decision keeps its own evidence binding and durable receipt.
-//!
-//! Pass A, attribution: a claim against the passages its own section cites
-//! (and the section's passed example runs), nothing else. Its key names the
-//! claim and those passages only, so it stays the same across runs for as
-//! long as the citation does, whatever the course's ranking. A section that
-//! cites nothing has no pass A.
-//!
-//! Pass B, corroboration: the claim against the course by relevance (see
-//! `walk`), never showing what pass A shows. Its first page is checked for
-//! every claim (D1), so a contradiction anywhere in the course is caught and
-//! a weak citation repaired; it is restored across runs while the course's
-//! sources are unchanged (`evidence_selection`). A page is sized by what
-//! the job's answers cost, so a job's first request carries pass A only and
-//! measures it; every later request packs a claim's pass A and pass B
-//! comparisons together (see [`check_with_paging`]). A claim neither page
-//! supports reads on through pass B, page by page, until a page decides it
-//! or its lists run out, and then goes to web research. What the two passes
-//! decide together is `outcome`'s.
-//!
-//! Requests hold the claims of one section, a claim's comparisons together,
-//! while the batch estimate says the window holds them all with their
-//! answers; no count caps a request. A comparison too long for its claim
-//! checked alone loses its least needed passages, and a request the backend
-//! counts past the window is checked in halves on the same evidence. A pass
-//! B page is read with its most relevant passages at the edges; its
-//! canonical order still keys the comparison.
-//!
-//! Every check reports what its answer cost in output tokens; the job's
-//! mean, with the backend's measured pace, sizes pass B's pages
-//! (`page_budget`). Progress counts each claim once: a deeper page's check
-//! adds no check, and moves its claim out of the unresolved count when it
-//! supports it.
+//! Claim checks in two passes (course evidence index §5), each decision
+//! keeping its own evidence binding and durable receipt. Pass A (attribution)
+//! checks a claim against the passages its own section cites; pass B
+//! (corroboration) against the course by relevance (see `walk`), page by page
+//! until a page decides it, then web research. Requests hold one section's
+//! claims while the window holds them with their answers, and pass B pages
+//! are sized by what the job's answers cost (`page_budget`). What the two
+//! passes decide together is `outcome`'s.
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
@@ -166,15 +139,9 @@ pub(super) async fn check_with_citations(
     .await
 }
 
-/// [`check_with_citations`] with pass B paged by `paging`.
-///
-/// Pass B's pages are sized by the job's measured answers (§5.3), so until
-/// one is measured the job's first request carries pass A comparisons only,
-/// packed by section as usual; every first page left is then read and sized
-/// by what those answers cost, and every later request packs pass A and
-/// pass B together. A job with no pass A to measure by asks its first claim
-/// waiting for a first page alone, that page bounded by the window, and
-/// sizes the rest by its answer.
+/// [`check_with_citations`] with pass B paged by `paging`. Pages are sized by
+/// the job's measured answers (§5.3), so the first request carries pass A
+/// only and every later one packs pass A and pass B together.
 pub(super) async fn check_with_paging(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
