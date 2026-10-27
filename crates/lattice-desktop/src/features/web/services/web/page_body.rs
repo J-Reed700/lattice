@@ -1,9 +1,5 @@
-//! What a fetched body is, and its text when it is not HTML.
-//!
-//! Every body used to be decoded and parsed as HTML. A PDF, a plain-text RFC,
-//! a raw file on GitHub or a JSON answer then came back as no text at all, and
-//! was kept as a page of nothing: the open-access PDFs the paper finders lead
-//! to could not be read.
+//! What a fetched body is, and its text when it is not HTML: PDFs, plain
+//! text, raw files and JSON are read rather than parsed as empty HTML.
 
 use lattice_core::shared::error::{AppError, Result};
 

@@ -1,11 +1,5 @@
-//! Web ingestion service implementation
-//!
-//! Orchestrates the complete workflow for importing web articles:
-//! 1. Extract article content from URL
-//! 2. Archive article as markdown file in ~/.lattice/web-archive
-//! 3. Chunk text content
-//! 4. Generate embeddings
-//! 5. Store document + chunks + embeddings
+//! Web ingestion: extract an article from a URL, archive it as markdown, then
+//! chunk, embed and store it.
 
 mod config;
 mod extract;

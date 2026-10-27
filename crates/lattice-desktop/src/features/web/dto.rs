@@ -1,57 +1,15 @@
-//! # Web Ingestion DTOs
-//!
-//! Data Transfer Objects for web content ingestion operations.
-//!
-//! These DTOs define the contracts for:
-//! - URL ingestion (fetch + index)
-//! - URL preview (metadata extraction without indexing)
-//! - Article content cleaning
-//!
-//! ## Design
-//!
-//! - **Minimal**: Only essential fields for web operations
-//! - **Clear**: Descriptive names following REST conventions
-//! - **Stable**: Versioned for API compatibility
-//! - **Validated**: Strong typing with serde
+//! DTOs for web content ingestion.
 
 use serde::{Deserialize, Serialize};
 
-/// Request to ingest content from a web URL.
-///
-/// Fetches the URL, extracts article content, and indexes it into the lattice.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::web_dto::IngestWebUrlRequestDto;
-///
-/// let request = IngestWebUrlRequestDto {
-///     url: "https://example.com/article".to_string(),
-/// };
-/// ```
+/// Request to fetch, extract and index a web URL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestWebUrlRequestDto {
     /// The URL to fetch and index (must be HTTP or HTTPS)
     pub url: String,
 }
 
-/// Response from ingesting a web URL.
-///
-/// Contains metadata about the indexed document.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::web_dto::IngestWebUrlResponseDto;
-/// let response = IngestWebUrlResponseDto {
-///     document_id: "doc-123".to_string(),
-///     url: "https://example.com/article".to_string(),
-///     title: "Article Title".to_string(),
-///     word_count: 1500,
-///     chunks_created: 3,
-///     site_name: Some("Example Site".to_string()),
-///     author: Some("John Doe".to_string()),
-///     reading_time_minutes: Some(7),
-/// };
-/// ```
+/// Metadata about the document indexed from a web URL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestWebUrlResponseDto {
     /// Unique document ID assigned to the indexed content
@@ -82,40 +40,14 @@ pub struct IngestWebUrlResponseDto {
     pub reading_time_minutes: Option<i64>,
 }
 
-/// Request to get URL metadata without indexing.
-///
-/// Fetches metadata (title, description, image) without actually
-/// ingesting the content into the lattice.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::web_dto::GetUrlPreviewRequestDto;
-///
-/// let request = GetUrlPreviewRequestDto {
-///     url: "https://example.com/article".to_string(),
-/// };
-/// ```
+/// Request for a URL's metadata, without indexing it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetUrlPreviewRequestDto {
     /// The URL to preview (must be HTTP or HTTPS)
     pub url: String,
 }
 
-/// URL metadata preview.
-///
-/// Contains Open Graph / Twitter Card metadata extracted from the URL.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::web_dto::UrlPreviewDto;
-/// let preview = UrlPreviewDto {
-///     url: "https://example.com/article".to_string(),
-///     title: "Article Title".to_string(),
-///     description: Some("Article description...".to_string()),
-///     image: Some("https://example.com/image.jpg".to_string()),
-///     site_name: Some("Example Site".to_string()),
-/// };
-/// ```
+/// Open Graph / Twitter Card metadata extracted from a URL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UrlPreviewDto {
     /// Final URL (after redirects)
@@ -137,39 +69,14 @@ pub struct UrlPreviewDto {
     pub site_name: Option<String>,
 }
 
-/// Request to clean HTML article content.
-///
-/// Applies readability algorithm to extract clean article content
-/// from raw HTML (removes ads, navigation, boilerplate).
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::web_dto::CleanArticleRequestDto;
-///
-/// let request = CleanArticleRequestDto {
-///     html: "<html><body><article>...</article></body></html>".to_string(),
-/// };
-/// ```
+/// Request to extract clean article content from raw HTML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanArticleRequestDto {
     /// Raw HTML content to clean
     pub html: String,
 }
 
-/// Cleaned article content.
-///
-/// Contains the extracted article with boilerplate removed.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::web_dto::CleanArticleResponseDto;
-/// let cleaned = CleanArticleResponseDto {
-///     content: "<p>Clean article content...</p>".to_string(),
-///     title: Some("Article Title".to_string()),
-///     author: Some("John Doe".to_string()),
-///     word_count: 1500,
-/// };
-/// ```
+/// Article content with its boilerplate removed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanArticleResponseDto {
     /// Clean HTML content (ads, navigation removed)

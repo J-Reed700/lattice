@@ -115,9 +115,8 @@ async fn web_search_returns_every_finders_outcome() {
     );
 }
 
-/// The audit's wasted depth: page 2 of a 12-result search used to re-fetch
-/// every provider's page 1 and usually came back with 0-1 results. When the
-/// pool already holds page 2, no provider is asked anything.
+/// When the pool already holds page 2 of a search, no provider is asked
+/// anything.
 #[tokio::test]
 async fn page_two_of_a_twelve_result_search_makes_no_provider_request_when_the_pool_holds_it() {
     let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 15));

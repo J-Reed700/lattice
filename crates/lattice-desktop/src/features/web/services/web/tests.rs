@@ -352,9 +352,8 @@ fn test_site_key_aliases_mirrors_without_collapsing_public_suffixes() {
     assert_eq!(SitePacer::site_key("not a url"), None);
 }
 
-/// A page read for a conversation used to be cut at 50,000 characters, and a
-/// later "fetch it again for the rest" returned the same prefix. The whole
-/// page is kept and cached; the prompt fits what it shows to its own budget.
+/// The whole page is kept and cached; the prompt fits what it shows to its
+/// own budget.
 #[tokio::test]
 async fn a_chat_read_keeps_a_long_page_whole_and_caches_all_of_it() {
     let directory = tempfile::tempdir().unwrap();
@@ -422,8 +421,7 @@ async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
     assert!(service.page_cache.get(url).await.is_none());
 }
 
-/// A page fetch used to sleep 0.5–2s before every request. Two different
-/// hosts have nothing to wait on each other for.
+/// Two different hosts have nothing to wait on each other for.
 #[tokio::test]
 async fn first_contact_with_a_host_is_not_delayed() {
     let pacer = SitePacer::with_interval(Duration::from_secs(30));

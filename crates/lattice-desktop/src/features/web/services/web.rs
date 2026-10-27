@@ -1,18 +1,9 @@
-//! Web service: search and URL fetching for the chat tools, the reader and
-//! the learning research loop.
-//!
-//! Search delegates to source finding (`super::sourcing`): the router plans
-//! waves of finders, the runner calls them under their breakers and a shared
-//! page cache, and the result carries every finder's outcome, so a provider
-//! that failed or was skipped is named rather than silently missing.
-//!
-//! # Security
-//!
-//! - **SSRF Prevention (CWE-918)**: Blocks private IPs, localhost, metadata endpoints
-//! - **Request Timeout**: 10-second default timeout
-//! - **Content Length Limiting**: Prevents memory exhaustion
-//! - **Identity**: browser-like headers for pages and HTML engines, a declared
-//!   `Lattice/<version>` agent for APIs (`super::identity`)
+//! Web service: search and URL fetching for the chat tools, the reader and the
+//! learning research loop. Search delegates to source finding
+//! (`super::sourcing`), whose result names every finder's outcome. Fetches are
+//! guarded against private addresses (CWE-918) and bounded in size, with
+//! browser-like headers for pages and a declared `Lattice/<version>` agent for
+//! APIs (`super::identity`).
 
 use crate::features::web::services::browser_reader::BrowserReader;
 use crate::features::web::services::finders::{self, FinderHttp};

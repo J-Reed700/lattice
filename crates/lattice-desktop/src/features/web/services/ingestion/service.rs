@@ -14,51 +14,9 @@ use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
-/// Web ingestion service
-///
-/// Production implementation that orchestrates the complete URL import workflow:
-/// 1. Extracts article from URL (via ArticleExtractorService)
-/// 2. Archives article as markdown file (via WebArchiveService)
-/// 3. Chunks text content using the loaded embedding model input policy
-/// 4. Generates embeddings (via EmbeddingService)
-/// 5. Stores document with chunks and embeddings (via IndexStorage)
-///
-/// # Dependencies
-///
-/// - `ArticleExtractorServiceTrait`: Extracts clean article content from URLs
-/// - `WebArchiveServiceTrait`: Saves articles as markdown files in ~/.lattice/web-archive
-/// - `EmbeddingPort`: Generates vector embeddings for text chunks
-/// - `IngestedDocumentStorePort`: Stores documents with chunks and embeddings
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use lattice::features::web::services::{
-///     article_extractor::ArticleExtractorService, ingestion::WebIngestionService,
-/// };
-/// use lattice::features::indexing::engine::storage::IndexStorage;
-/// use std::sync::Arc;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let article_extractor = Arc::new(ArticleExtractorService::new(/* ... */));
-/// let web_archive = Arc::new(WebArchiveService::new()?);
-/// let embedding_service = Arc::new(OnnxEmbeddingService::new(/* ... */).await?);
-/// let index_storage = Arc::new(IndexStorage::new(/* ... */));
-/// let tokenizer = Arc::new(Tokenizer::from_pretrained("bert-base-uncased", None)?);
-///
-/// let service = WebIngestionService::new(
-///     article_extractor,
-///     web_archive,
-///     embedding_service,
-///     index_storage,
-///     tokenizer,
-/// );
-///
-/// let result = service.ingest_url("https://example.com/article").await?;
-/// println!("Ingested: {} ({})", result.title, result.document_id);
-/// # Ok(())
-/// # }
-/// ```
+/// Web ingestion: extracts an article from a URL, archives it as markdown,
+/// chunks it by the embedding model's input policy, embeds the chunks and
+/// stores them.
 pub struct WebIngestionService {
     pub(super) article_extractor: Arc<dyn ArticleExtractorServiceTrait>,
     pub(super) web_archive: Arc<dyn WebArchiveServiceTrait>,
@@ -76,15 +34,7 @@ pub struct WebIngestionService {
 }
 
 impl WebIngestionService {
-    /// Create a new web ingestion service
-    ///
-    /// # Arguments
-    ///
-    /// * `article_extractor` - Service for extracting article content
-    /// * `web_archive` - Service for archiving articles as markdown files
-    /// * `embedding_service` - Service for generating embeddings
-    /// * `index_storage` - Storage for documents and embeddings
-    /// * `tokenizer` - Tokenizer for text chunking
+    /// Creates a web ingestion service.
     pub fn new(
         article_extractor: Arc<dyn ArticleExtractorServiceTrait>,
         web_archive: Arc<dyn WebArchiveServiceTrait>,

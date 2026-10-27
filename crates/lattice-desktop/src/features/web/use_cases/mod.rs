@@ -1,10 +1,5 @@
-//! # Web Ingestion Use Cases
-//!
-//! - **Ingest Web URL**: fetch + index web content
-//! - **Get URL Preview**: fetch metadata only
-//!
-//! `clean_article_content` was removed — `web/commands.rs` calls the
-//! article-extractor service directly.
+//! Web ingestion use cases: ingest a web URL (fetch and index) and get a URL
+//! preview (metadata only).
 
 pub mod get_url_preview;
 pub mod ingest_web_url;

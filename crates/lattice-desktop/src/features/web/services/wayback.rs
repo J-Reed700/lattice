@@ -1,25 +1,12 @@
 //! The Internet Archive's Wayback Machine: the page reader's last resort when
 //! a page is gone or refuses every reader, and its dated reads (design §3.8).
-//!
 //! Three endpoints, each with its own breaker in a [`HealthBook`] (§3.6):
-//!
-//! - availability (`archive.org/wayback/available`): the one capture closest
-//!   to a timestamp, or `{"archived_snapshots":{}}`;
-//! - CDX (`web.archive.org/cdx/search/cdx`): asked only when availability has
-//!   no capture that answered 200, for the 200 capture nearest the timestamp
-//!   (`closest=` + `sort=closest`);
-//! - replay (`web.archive.org/web/<timestamp>id_/<url>`): the capture's own
-//!   bytes, without the Wayback toolbar.
-//!
-//! Every call carries the declared `Lattice/<version>` agent (§3.9) and goes
-//! through the shared per-host pacer. Lattice never asks the archive to save
-//! a page: Save Page Now publishes the URL.
-//!
-//! Neither index documents a rate (Appendix B, read 2026-10-18), and CDX
-//! answered a first request with 429 and no `Retry-After`. So each endpoint
-//! keeps the pacer's spacing, opens its breaker on the first refusal, and the
-//! core breaker derives how long it stays open; a `Retry-After`, when the
-//! archive sends one, is honoured in full.
+//! availability (the capture closest to a timestamp), CDX (asked only when
+//! availability has no 200 capture) and replay (the capture's own bytes,
+//! without the toolbar). Calls carry the declared agent and the per-host
+//! pacer; Lattice never asks the archive to save a page, since Save Page Now
+//! publishes the URL. Neither index documents a rate, so each endpoint opens
+//! its breaker on the first refusal.
 
 use std::collections::BTreeSet;
 use std::future::Future;

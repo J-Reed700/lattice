@@ -1,33 +1,6 @@
-//! Web capture service for URL preview and metadata extraction
-//!
-//! Provides comprehensive web page metadata extraction including:
-//! - OpenGraph tags (og:title, og:description, og:image, etc.)
-//! - Schema.org JSON-LD structured data
-//! - HTML meta tags (description, author, keywords)
-//! - Article extraction (clean content, reading time)
-//!
-//! # Security
-//!
-//! - **SSRF Prevention (CWE-918)**: Validates URLs and blocks private IPs
-//! - **Request Timeout**: 10-second default timeout
-//! - **Content Length Limiting**: Prevents memory exhaustion
-//! - **User Agent**: Identifies requests as coming from Lattice
-//!
-//! # Example
-//! ```rust,no_run
-//! use lattice::infrastructure::services::web_capture::WebCaptureService;
-//! use lattice::infrastructure::services::traits::WebCaptureServiceTrait;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let service = WebCaptureService::new()?;
-//!
-//! // Fetch URL preview with metadata
-//! let preview = service.fetch_url_preview("https://example.com/article").await?;
-//! println!("Title: {}", preview.title);
-//! println!("Author: {:?}", preview.author);
-//! # Ok(())
-//! # }
-//! ```
+//! Web capture service: URL previews with OpenGraph, Schema.org JSON-LD and
+//! HTML meta metadata and the clean article, fetched with SSRF validation and
+//! a bounded body.
 
 use crate::features::web::services::identity;
 use crate::features::web::WebCaptureServiceTrait;

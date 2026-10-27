@@ -217,13 +217,9 @@ where
     .map_err(|_| AppError::Network("HTML parsing exceeded its time budget".into()))?
 }
 
-/// Parse `url` and accept only what this service is willing to request.
-///
-/// Split out of [`WebService::validate_url`] because a page the cache already
-/// holds still has to clear this bar — a `file://` URL must not become
-/// readable just because something once wrote it into the cache — while the
-/// DNS resolution behind it would be pointless work for a request that is
-/// never sent.
+/// Parses `url` and accepts only what this service will request. Split from
+/// [`WebService::validate_url`] because a cached page must still clear this
+/// bar (no `file://` read through the cache) without a pointless DNS lookup.
 pub(super) fn parse_fetchable_url(url: &str) -> Result<Url> {
     let parsed =
         Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;

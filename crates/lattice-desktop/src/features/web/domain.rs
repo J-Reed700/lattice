@@ -1,44 +1,6 @@
-//! # Web Archive Domain Models
-//!
-//! Domain models for web article ingestion and storage following DDD principles.
-//!
-//! ## Value Objects
-//!
-//! - [`WebArchivePath`]: Sanitized file path for web articles
-//!
-//! ## Aggregates
-//!
-//! - [`WebArticleAggregate`]: Web article with metadata and content
-//!
-//! ## Invariants
-//!
-//! - Archive paths must be unique and sanitized
-//! - Article content must not be empty
-//! - URLs must have a valid host
-//! - Titles must not be empty
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use lattice_core::domain::web_archive::*;
-//! use url::Url;
-//!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let url = Url::parse("https://example.com/article")?;
-//! let content = IngestedContent {
-//!     html: "<html>...</html>".to_string(),
-//!     text: "Article text".to_string(),
-//!     title: Some("Example Article".to_string()),
-//!     author: Some("Jane Doe".to_string()),
-//!     published_date: None,
-//! };
-//!
-//! let article = WebArticleAggregate::from_ingestion(url, content)?;
-//! let path = article.archive_path()?;
-//! let markdown = article.to_markdown();
-//! # Ok(())
-//! # }
-//! ```
+//! Web archive domain models: [`WebArchivePath`], a sanitized unique file
+//! path, and [`WebArticleAggregate`], an ingested article with its metadata
+//! and content.
 
 use chrono::{DateTime, Utc};
 use lattice_core::shared::error::{AppError, Result};
@@ -47,13 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
 
-/// Validate that a domain is safe for use as a directory name.
-///
-/// Security checks:
-/// - Rejects empty domains
-/// - Rejects path traversal attempts (.. and .)
-/// - Rejects filesystem special characters
-/// - Rejects overly long domains (>255 chars)
+/// Validates that a domain is safe as a directory name.
 ///
 /// # Errors
 ///
@@ -61,15 +17,6 @@ use url::Url;
 /// - Path traversal sequences (.., .)
 /// - Filesystem special characters (/, \, :, etc.)
 /// - Empty or overly long strings
-///
-/// # Example
-///
-/// ```
-/// # use lattice_core::domain::web_archive::validate_domain;
-/// assert!(validate_domain("example.com").is_ok());
-/// assert!(validate_domain("..").is_err());
-/// assert!(validate_domain("evil/path").is_err());
-/// ```
 pub fn validate_domain(domain: &str) -> Result<()> {
     // Trim whitespace and check for empty
     let domain = domain.trim();
@@ -126,21 +73,8 @@ pub fn validate_domain(domain: &str) -> Result<()> {
     Ok(())
 }
 
-/// Sanitize a title for use in a filename.
-///
-/// Rules:
-/// - Lowercase
-/// - Alphanumeric + hyphens only
-/// - Max 50 characters
-/// - Remove consecutive hyphens
-///
-/// # Example
-///
-/// ```
-/// # use lattice_core::domain::web_archive::sanitize_title;
-/// let sanitized = sanitize_title("Hello, World! 2024");
-/// assert_eq!(sanitized, "hello-world-2024");
-/// ```
+/// Sanitizes a title for a filename: lowercase alphanumerics and single
+/// hyphens, at most 50 characters.
 pub fn sanitize_title(title: &str) -> String {
     let sanitized = title
         .to_lowercase()
@@ -168,33 +102,8 @@ pub fn sanitize_title(title: &str) -> String {
     result.chars().take(50).collect()
 }
 
-/// Value Object: Web archive file path
-///
-/// Represents a sanitized, unique file path for storing web articles.
-/// Format: `{domain}/{sanitized-title}-{short-uuid}.md`
-///
-/// # Invariants
-///
-/// - Path is relative to archive base directory
-/// - Filename is sanitized and unique
-/// - Extension is always `.md`
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use lattice_core::domain::web_archive::WebArchivePath;
-/// # use lattice_core::shared::types::DocumentId;
-/// # use url::Url;
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let url = Url::parse("https://github.com/rust-lang/rust")?;
-/// let title = "The Rust Programming Language Guide";
-/// let doc_id = DocumentId::new();
-///
-/// let path = WebArchivePath::new(&url, title, &doc_id)?;
-/// // Result: "github.com/the-rust-programming-language-guide-a1b2c3d4.md"
-/// # Ok(())
-/// # }
-/// ```
+/// A sanitized, unique file path for a web article:
+/// `{domain}/{sanitized-title}-{short-uuid}.md`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebArchivePath {
     relative_path: PathBuf,
@@ -238,10 +147,8 @@ impl WebArchivePath {
         Ok(Self { relative_path })
     }
 
-    /// Convert to absolute path given a base directory.
-    ///
-    /// Performs component-based validation and path traversal prevention (CWE-22 mitigation).
-    /// SECURITY: Validates BEFORE creating any directories to prevent TOCTOU vulnerabilities.
+    /// Converts to an absolute path under `base_dir`, validating every component
+    /// before creating any directory (CWE-22, TOCTOU).
     ///
     /// # Errors
     ///
@@ -250,25 +157,6 @@ impl WebArchivePath {
     /// - Path contains traversal attempts (..)
     /// - Path escapes the base directory (directory traversal attempt)
     /// - Parent directory cannot be created
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::domain::web_archive::WebArchivePath;
-    /// # use lattice_core::shared::types::DocumentId;
-    /// # use url::Url;
-    /// # use std::path::PathBuf;
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let url = Url::parse("https://example.com/article")?;
-    /// let doc_id = DocumentId::new();
-    /// let path = WebArchivePath::new(&url, "Example", &doc_id)?;
-    ///
-    /// let base_dir = PathBuf::from("/data/archives");
-    /// let absolute = path.to_absolute(&base_dir)?;
-    /// // Result: "/data/archives/example.com/example-a1b2c3d4.md"
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn to_absolute(&self, base_dir: &Path) -> Result<PathBuf> {
         use std::path::Component;
 
@@ -406,37 +294,7 @@ pub struct IngestedContent {
     pub published_date: Option<DateTime<Utc>>,
 }
 
-/// Aggregate: Web Article Document
-///
-/// Represents a web article that has been ingested and is ready for storage.
-/// Encapsulates all information needed to archive the article as a markdown file.
-///
-/// # Invariants
-///
-/// - Content must not be empty
-/// - Source URL must be valid
-/// - Title must not be empty
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use lattice_core::domain::web_archive::*;
-/// # use url::Url;
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let url = Url::parse("https://blog.rust-lang.org/2024/article")?;
-/// let content = IngestedContent {
-///     html: "<html>...</html>".to_string(),
-///     text: "Article content here".to_string(),
-///     title: Some("Rust 1.75 Released".to_string()),
-///     author: Some("Rust Team".to_string()),
-///     published_date: None,
-/// };
-///
-/// let article = WebArticleAggregate::from_ingestion(url, content)?;
-/// let markdown = article.to_markdown();
-/// # Ok(())
-/// # }
-/// ```
+/// An ingested web article, ready to be archived as a markdown file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebArticleAggregate {
     doc_id: DocumentId,
@@ -496,23 +354,7 @@ impl WebArticleAggregate {
         WebArchivePath::new(&self.source_url, &self.title, &self.doc_id)
     }
 
-    /// Serialize to markdown with YAML frontmatter.
-    ///
-    /// Format:
-    /// ```markdown
-    /// ---
-    /// source_url: https://example.com/article
-    /// title: Example Article
-    /// author: Jane Doe
-    /// imported_date: 2024-12-05T10:30:00Z
-    /// domain: example.com
-    /// ---
-    ///
-    /// Article content here...
-    ///
-    /// ---
-    /// Source: https://example.com/article
-    /// ```
+    /// Serializes to markdown with YAML frontmatter.
     pub fn to_markdown(&self) -> String {
         let mut output = String::new();
 
