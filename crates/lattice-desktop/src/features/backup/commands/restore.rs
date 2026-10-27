@@ -13,15 +13,6 @@ use std::path::PathBuf;
 /// and should only be used for disaster recovery or intentional rollback. The backup
 /// file must be in version 1.0 format.
 ///
-/// # Arguments
-///
-/// * `backup_path` - Path to the `.lattice-backup` file to restore
-///
-/// # Returns
-///
-/// * `Ok(())` - Backup successfully restored
-/// * `Err(AppError)` - If path validation fails, file not found, or restore fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid backup path (directory traversal detected)
@@ -37,31 +28,10 @@ use std::path::PathBuf;
 /// - User settings will be replaced with backup values
 /// - **This action cannot be undone** (create a backup first!)
 ///
-/// # Best Practices
-///
-/// **Before Restoring**:
-/// 1. Create a backup of current state using `create_backup()`
-/// 2. Close any active indexing operations
-/// 3. Ensure no other processes are accessing the database
-/// 4. Verify backup file integrity and version
-///
-/// **After Restoring**:
-/// 1. Verify restored data completeness
-/// 2. Restart application if recommended
-/// 3. Re-index any changed source files if needed
-///
 /// # Security
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 /// - **No Rate Limiting**: Critical recovery operation (not rate limited)
-///
-/// # Use Cases
-///
-/// - **Disaster Recovery**: Recover from data corruption or loss
-/// - **Rollback**: Undo problematic changes or upgrades
-/// - **Data Migration**: Transfer data from backup to new installation
-/// - **Testing**: Restore test data snapshots
-/// - **Version Testing**: Test with specific data states
 ///
 /// # Backup Validation
 ///
@@ -71,29 +41,12 @@ use std::path::PathBuf;
 /// - SQLite database format is valid
 /// - Version 1.0 format compatibility
 ///
-/// # Performance
-///
-/// - Restore time scales with backup size
-/// - Typical speed: ~100-500 MB/second
-/// - Application should be restarted after restore
-/// - Async operation prevents UI blocking
-///
 /// # Architecture
 ///
 /// Command flow:
 /// 1. Path validation via ValidatedFilePath (CWE-22)
 /// 2. File existence check via tokio::fs
 /// 3. Database restore operation
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Check backup file exists asynchronously
-/// 3. Validate backup file format
-/// 4. Replace current database with backup
-/// 5. Return success
-///
-/// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn restore_backup_impl(
     backup_path: String,
     container: &Container,

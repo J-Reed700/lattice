@@ -13,18 +13,6 @@
 //! This operation only updates the database record. It does NOT rename
 //! the actual file on disk. The file_name field is metadata for display
 //! purposes, while file_path remains the source of truth for the actual file.
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
-//!
-//! # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = use_case.execute("doc-123".to_string(), "New Name.txt".to_string()).await?;
-//! println!("Document renamed: {}", response.message);
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -89,24 +77,11 @@ pub struct RenameDocumentUseCase {
 
 impl RenameDocumentUseCase {
     /// Create a new rename document use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_repo` - Repository for document persistence
     pub fn new(document_repo: Arc<dyn DocumentRepositoryPort>) -> Self {
         Self { document_repo }
     }
 
     /// Execute document rename.
-    ///
-    /// # Arguments
-    ///
-    /// * `document_id` - ID of document to rename
-    /// * `new_name` - New display name for the document
-    ///
-    /// # Returns
-    ///
-    /// Response with rename status and confirmation message
     ///
     /// # Errors
     ///
@@ -114,20 +89,6 @@ impl RenameDocumentUseCase {
     /// - Document not found (AppError::NotFound)
     /// - New name is invalid (AppError::InvalidInput)
     /// - Document update fails (AppError::Database)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
-    /// # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// // Rename a document
-    /// match use_case.execute("doc-123".to_string(), "Updated Name.txt".to_string()).await {
-    ///     Ok(response) => println!("Success: {}", response.message),
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(
         &self,
         document_id: String,
@@ -175,14 +136,6 @@ impl RenameDocumentUseCase {
     }
 
     /// Validate the new document name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The proposed new name
-    ///
-    /// # Returns
-    ///
-    /// Trimmed, validated name
     ///
     /// # Errors
     ///

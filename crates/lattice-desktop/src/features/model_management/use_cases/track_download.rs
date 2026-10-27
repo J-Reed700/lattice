@@ -21,18 +21,6 @@ impl TrackDownloadUseCase {
     }
 
     /// Execute the use case to track a download
-    ///
-    /// # Arguments
-    ///
-    /// * `model_name` - Human-readable name
-    /// * `model_id` - Unique model identifier
-    /// * `file_path` - Path to downloaded file
-    /// * `file_size_bytes` - Size of file in bytes
-    /// * `metadata` - Optional JSON metadata
-    ///
-    /// # Returns
-    ///
-    /// The ID of the created record
     pub async fn execute(
         &self,
         model_name: String,

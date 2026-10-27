@@ -4,17 +4,6 @@
 //!
 //! # Dependencies
 //! - Uses `LinkParser` from infrastructure layer
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ParseWikilinksUseCase::new();
-//! let request = ParseWikilinksRequestDto {
-//!     text: "See [[note]] and [[doc#section|display]]".into(),
-//!     source_path: Some("index.md".into()),
-//! };
-//! let result = use_case.execute(request).await?;
-//! println!("Found {} links", result.links.len());
-//! ```
 
 use crate::features::extraction::dto::{
     ParseWikilinksRequestDto, ParseWikilinksResponseDto, WikiLinkDto,

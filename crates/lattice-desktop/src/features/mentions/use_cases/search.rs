@@ -9,12 +9,6 @@
 //! # Security
 //! - Rate limited (100 requests/min)
 //! - Query length validated to prevent DoS
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = SearchMentionsUseCase::new(mention_repo, mapper);
-//! let mentions = use_case.execute("important".into()).await?;
-//! ```
 
 use crate::features::mentions::dto::SearchMentionsResultDto;
 use crate::features::mentions::mapper::MentionMapper;

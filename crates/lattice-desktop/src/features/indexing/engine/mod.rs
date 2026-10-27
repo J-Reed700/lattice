@@ -44,37 +44,6 @@
 //! - **Encoding Detection**: Automatic charset detection
 //! - **Error Handling**: Graceful degradation for corrupted files
 //!
-//! ## Usage Examples
-//!
-//! ### Extract and Chunk a File
-//!
-//! ```rust,no_run
-//! # use lattice::features::indexing::engine::{ContentExtractor, SemanticChunker};
-//! # async fn example(
-//! #     extractor: &ContentExtractor,
-//! #     chunker: &SemanticChunker,
-//! # ) -> lattice::features::indexing::engine::Result<()> {
-//! let extracted = extractor
-//!     .extract_from_file(std::path::Path::new("/path/to/document.pdf"))
-//!     .await?;
-//! let chunks = chunker.chunk_text(&extracted.text)?;
-//! println!("{} chunks", chunks.len());
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ### Monitor Progress
-//!
-//! ```rust,no_run
-//! # use lattice::features::indexing::engine::IndexingState;
-//! # async fn example(state: &IndexingState) {
-//! let mut updates = state.subscribe();
-//! while let Ok(progress) = updates.recv().await {
-//!     println!("{}/{}", progress.processed, progress.total_files);
-//! }
-//! # }
-//! ```
-//!
 //! ## Chunking Strategy
 //!
 //! The semantic chunker uses a context-aware approach:
@@ -95,16 +64,6 @@
 //! Chunk 2: [CONTEXT] Understanding Rust Memory Management
 //!          The borrow checker ensures memory safety...
 //! ```
-//!
-//! ## Performance Characteristics
-//!
-//! | File Type | Extraction Speed | Embedding Speed | Total   |
-//! |-----------|-----------------|-----------------|---------|
-//! | TXT       | ~1 MB/s         | ~500 chunks/s   | ~2 s/MB |
-//! | PDF       | ~500 KB/s       | ~500 chunks/s   | ~5 s/MB |
-//! | DOCX      | ~700 KB/s       | ~500 chunks/s   | ~4 s/MB |
-//!
-//! Bottleneck: Embedding generation (ONNX inference)
 //!
 //! ## Configuration
 //!

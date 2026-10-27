@@ -32,16 +32,6 @@ pub struct ModelInfo {
 
 /// Embeds one text as a document passage with the loaded model.
 ///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const embedding = await invoke<number[]>('generate_embedding', {
-///   text: 'This is a sample document about machine learning'
-/// });
-/// ```
-///
 /// # Errors
 ///
 /// * `AppError::ModelLoadFailed` - no embedding model is loaded
@@ -61,16 +51,6 @@ pub async fn generate_embedding(
 }
 
 /// Embeds several texts as document passages in one batch, in input order.
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const embeddings = await invoke<number[][]>('generate_embeddings_batch', {
-///   texts: ['First document about AI', 'Second document about machine learning']
-/// });
-/// ```
 ///
 /// # Errors
 ///
@@ -92,16 +72,6 @@ pub async fn generate_embeddings_batch(
 
 /// Reports the loaded embedding model: its vector-space identity, its
 /// dimension, and whether one is loaded at all. **Read-only**.
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const info = await invoke<{ model_name: string; dimensions: number; is_loaded: boolean }>(
-///   'get_embedding_model_info'
-/// );
-/// ```
 pub(crate) async fn get_embedding_model_info_impl(
     state: &EmbeddingState,
 ) -> Result<ModelInfo, AppError> {

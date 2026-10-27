@@ -83,67 +83,20 @@ pub(super) async fn search_fast_impl(
 /// This is the DDD-aligned version that delegates to a dedicated use case for business
 /// logic encapsulation and testability.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with semantic search use case
-/// * `request` - Search request DTO with query and options
-///
-/// # Returns
-///
-/// * `Ok(SearchResponseDto)` - Semantic search results with enriched metadata
-/// * `Err(AppError)` - If validation fails or execution fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Query validation failed
 /// * `AppError::Other` - Use case execution failed
 ///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface SearchRequestDto {
-///   query: string;
-///   limit?: number;
-///   filters?: Record<string, string>;
-/// }
-///
-/// // DDD-aligned semantic search
-/// const response = await invoke('semantic_search', {
-///   request: {
-///     query: 'quantum computing fundamentals',
-///     limit: 15
-///   }
-/// });
-///
-/// console.log(`Found ${response.results.length} semantically similar documents`);
-/// ```
-///
 /// # Security
 ///
 /// - **Input Validation**: Sanitizes query
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// - Applies cross-cutting concerns (validation)
-/// - Delegates to `SemanticSearchUseCase` for business logic
-/// - Handles error translation
 ///
 /// # Comparison with Other Search Commands
 ///
 /// - **vs search_documents**: DDD-aligned, no caching, pure semantic
 /// - **vs search_fast**: Returns enriched results (not just IDs)
 /// - **vs hybrid_search**: Pure vector similarity (no BM25)
-///
-/// # Command Flow
-///
-/// 1. Input validation
-/// 2. Delegate to SemanticSearchUseCase
-/// 3. Use case handles embedding, search, enrichment
-/// 4. Return enriched results
-/// Implementation: Pure semantic search using vector similarity.
 #[tracing::instrument(skip(container), fields(query = %request.query))]
 pub async fn semantic_search_impl(
     container: &Container,
@@ -177,42 +130,10 @@ pub async fn semantic_search_impl(
 /// traditional BM25 keyword matching using Reciprocal Rank Fusion (RRF) for ranking.
 /// Supports fallback to pure semantic or pure keyword modes.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with hybrid search service
-/// * `query` - Search query string
-/// * `limit` - Maximum number of results to return
-/// * `search_mode` - Search mode: "semantic", "keyword", or "hybrid"
-///
-/// # Returns
-///
-/// * `Ok(Vec<SearchResultDto>)` - Hybrid search results with dual ranking scores
-/// * `Err(AppError)` - If validation fails or execution fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Query validation failed
 /// * `AppError::Other` - Embedding or search execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Hybrid search with dual ranking
-/// const results = await invoke('hybrid_search', {
-///   query: 'transformer architecture attention mechanism',
-///   limit: 20,
-///   searchMode: 'hybrid'
-/// });
-///
-/// results.forEach(result => {
-///   console.log(`${result.title}`);
-///   console.log(`  Vector score: ${result.vectorScore}`);
-///   console.log(`  BM25 score: ${result.bm25Score}`);
-///   console.log(`  Final score: ${result.score}`);
-/// });
-/// ```
 ///
 /// # Security
 ///
@@ -232,22 +153,6 @@ pub async fn semantic_search_impl(
 /// - Score = vector_weight/(k + vector_rank) + keyword_weight/(k + bm25_rank)
 /// - k = 10, with 0.7 vector / 0.3 keyword weights
 /// - Normalizes final scores to [0, 1]
-///
-/// # Performance
-///
-/// - **Hybrid**: ~2x slower than pure semantic (runs both searches)
-/// - **Semantic**: Single vector search
-/// - **Keyword**: Single BM25 search
-///
-/// # Command Flow
-///
-/// 1. Input validation
-/// 2. Parse search mode string
-/// 3. Run the library search orchestrator (vector + BM25 + RRF)
-/// 4. Enrich results with metadata
-/// 5. Return ranked results
-///
-/// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
 pub async fn hybrid_search_impl(
     container: &Container,
     query: String,

@@ -14,12 +14,6 @@
 //! `features/web/services/web.rs`, which resolves DNS and rejects
 //! loopback/link-local/private targets. This comment previously claimed
 //! validation happened here; it did not.
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = SetCustomEndpointUseCase::new(credentials_port);
-//! use_case.execute("ollama".into(), "http://localhost:11434".into()).await?;
-//! ```
 
 use crate::features::credentials::dto::CredentialOperationResultDto;
 use lattice_core::application::ports::CredentialsPort;

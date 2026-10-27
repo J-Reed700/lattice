@@ -37,23 +37,6 @@ pub struct StartBatchFileImportResponseDto {
 /// Request to start a batch URL import job.
 ///
 /// Creates a batch job that processes multiple URLs concurrently.
-///
-/// # Example
-/// ```rust,no_run
-/// use lattice_core::application::dtos::batch_dto::{
-///     StartBatchUrlImportRequestDto, BatchImportOptionsDto
-/// };
-///
-/// let request = StartBatchUrlImportRequestDto {
-///     urls: vec![
-///         "https://example.com/article1".to_string(),
-///         "https://example.com/article2".to_string(),
-///     ],
-///     options: Some(BatchImportOptionsDto {
-///         extract_article: Some(true),
-///     }),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartBatchUrlImportRequestDto {
@@ -66,15 +49,6 @@ pub struct StartBatchUrlImportRequestDto {
 }
 
 /// Options for batch import operations.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::batch_dto::BatchImportOptionsDto;
-///
-/// let options = BatchImportOptionsDto {
-///     extract_article: Some(true),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchImportOptionsDto {

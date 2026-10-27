@@ -8,24 +8,6 @@
 //! 3. **Fuzzy filename match**: `[[file]]` → 0.8 confidence
 //! 4. **Title match**: Search document titles → 0.6 confidence
 //! 5. **No match**: None → 0.0 confidence
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ResolveWikilinkUseCase::new();
-//! let request = ResolveWikilinkRequestDto {
-//!     link_target: "todo".into(),
-//!     source_document_id: Some("doc-1".into()),
-//!     available_documents: vec![
-//!         DocumentRefDto {
-//!             document_id: "doc-2".into(),
-//!             file_path: "notes/todo.md".into(),
-//!             title: Some("Todo List".into()),
-//!         },
-//!     ],
-//! };
-//! let result = use_case.execute(request).await?;
-//! assert_eq!(result.confidence, 0.8);
-//! ```
 
 use crate::features::extraction::dto::{
     DocumentRefDto, ResolveWikilinkRequestDto, ResolveWikilinkResponseDto,

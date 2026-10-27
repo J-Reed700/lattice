@@ -9,16 +9,6 @@
 //! read-only snapshots; crash reports are written to local disk only).
 //! When you add an upstream pipeline, gate it with these helpers so
 //! the user's stated preference is honored.
-//!
-//! ## Usage
-//!
-//! ```rust,ignore
-//! use crate::features::settings::privacy_gate;
-//!
-//! if privacy_gate::should_send_telemetry(&settings_repo).await {
-//!     send_telemetry_payload(&payload).await?;
-//! }
-//! ```
 
 use lattice_core::application::ports::SettingsRepositoryPort;
 use std::sync::Arc;

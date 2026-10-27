@@ -4,12 +4,6 @@
 //! Uses LLM to rewrite questions into retrieval-oriented intent expansions
 //! that semantically match what relevant documents would contain.
 //!
-//! ## Purpose
-//!
-//! - For greetings: Fast-path with no LLM call
-//! - For questions: Generate hypothetical document via LLM
-//! - For commands: Generate expanded command interpretation
-//!
 //! ## Architecture
 //!
 //! ```text

@@ -42,14 +42,6 @@ impl ReadFileBytesUseCase {
 
     /// Execute the use case.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path
-    ///
-    /// # Returns
-    ///
-    /// File content as raw bytes.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if file does not exist

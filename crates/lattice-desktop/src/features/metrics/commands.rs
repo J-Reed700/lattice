@@ -38,82 +38,9 @@ use tauri::State;
 /// Returns a complete snapshot of application metrics including performance counters,
 /// usage statistics, health indicators, and resource utilization.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with use cases and security context
-///
-/// # Returns
-///
-/// * `Ok(MetricsSnapshotDto)` - Complete metrics snapshot with all telemetry data
-/// * `Err(AppError)` - Metrics collection failed
-///
 /// # Errors
 ///
 /// * `AppError::Other` - Metrics collection or aggregation failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface MetricsSnapshot {
-///   // Performance Metrics
-///   searchQueryTimeMs: number;        // Avg search query time
-///   embeddingGenerationTimeMs: number; // Avg embedding generation time
-///   cacheHitRate: number;             // Cache effectiveness (0.0-1.0)
-///
-///   // Usage Metrics
-///   totalSearches: number;            // Total searches since startup
-///   totalIndexingOps: number;         // Total indexing operations
-///   totalDocuments: number;           // Total indexed documents
-///   totalChunks: number;              // Total document chunks
-///
-///   // Health Metrics
-///   errorRate: number;                // Error rate (0.0-1.0)
-///   uptime: number;                   // Application uptime (seconds)
-///
-///   // Resource Metrics
-///   memoryUsageBytes: number;         // Current memory usage
-///   cpuUsagePercent: number;          // Current CPU usage
-///   databaseSizeBytes: number;        // Database file size
-///
-///   timestamp: string;                // ISO 8601 timestamp
-/// }
-///
-/// // Get metrics snapshot
-/// const metrics = await invoke<MetricsSnapshot>('get_metrics');
-///
-/// console.log('Performance:', {
-///   searchTime: `${metrics.searchQueryTimeMs}ms`,
-///   cacheHitRate: `${(metrics.cacheHitRate * 100).toFixed(1)}%`
-/// });
-///
-/// console.log('Usage:', {
-///   searches: metrics.totalSearches,
-///   documents: metrics.totalDocuments,
-///   uptime: `${(metrics.uptime / 3600).toFixed(1)}h`
-/// });
-///
-/// console.log('Resources:', {
-///   memory: `${(metrics.memoryUsageBytes / 1024 / 1024).toFixed(0)}MB`,
-///   cpu: `${metrics.cpuUsagePercent.toFixed(1)}%`,
-///   dbSize: `${(metrics.databaseSizeBytes / 1024 / 1024).toFixed(0)}MB`
-/// });
-///
-/// // Periodic metrics collection for monitoring
-/// setInterval(async () => {
-///   const metrics = await invoke<MetricsSnapshot>('get_metrics');
-///   sendToMonitoringService(metrics);
-/// }, 60000); // Every minute
-///
-/// // Display metrics dashboard
-/// const updateDashboard = async () => {
-///   const metrics = await invoke<MetricsSnapshot>('get_metrics');
-///   updatePerformanceChart(metrics);
-///   updateUsageStats(metrics);
-///   updateResourceGauges(metrics);
-/// };
-/// ```
 ///
 /// # Metrics Categories
 ///
@@ -140,20 +67,6 @@ use tauri::State;
 /// - CPU utilization
 /// - Database size
 /// - Cache size
-///
-/// # Use Cases
-///
-/// - **Monitoring Dashboard**: Display real-time application metrics
-/// - **Performance Analysis**: Identify bottlenecks and optimization opportunities
-/// - **Capacity Planning**: Track resource usage trends
-/// - **Alerting**: Trigger alerts based on metric thresholds
-/// - **Debugging**: Diagnose issues with telemetry data
-///
-/// # Performance
-///
-/// - **Collection Time**: ~10-50ms (depends on metric count)
-/// - **Aggregation**: Combines data from multiple sources
-/// - **Non-Intrusive**: Metric collection has minimal overhead
 ///
 /// # Architecture
 ///

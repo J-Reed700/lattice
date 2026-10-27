@@ -17,15 +17,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Request to generate an embedding for a single text.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
-///
-/// let request = GenerateSingleEmbeddingRequestDto {
-///     text: "This is the text to embed".to_string(),
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateSingleEmbeddingRequestDto {
     /// The text to generate an embedding for (max 10,000 characters)
@@ -33,16 +24,6 @@ pub struct GenerateSingleEmbeddingRequestDto {
 }
 
 /// Response containing the generated embedding.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingResponseDto;
-/// use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
-/// let response = GenerateSingleEmbeddingResponseDto {
-///     embedding: vec![0.1, 0.2, 0.3], // DEFAULT_EMBEDDING_DIM values
-///     dimension: DEFAULT_EMBEDDING_DIM,
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateSingleEmbeddingResponseDto {
     /// The generated embedding vector
@@ -56,19 +37,6 @@ pub struct GenerateSingleEmbeddingResponseDto {
 ///
 /// Batch processing is more efficient than calling single embedding
 /// generation multiple times, especially for GPU-based models.
-///
-/// # Example
-/// ```rust
-/// use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
-///
-/// let request = GenerateBatchEmbeddingsRequestDto {
-///     texts: vec![
-///         "First text to embed".to_string(),
-///         "Second text to embed".to_string(),
-///         "Third text to embed".to_string(),
-///     ],
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateBatchEmbeddingsRequestDto {
     /// The texts to generate embeddings for (1-100 items, each max 10,000 chars)
@@ -78,18 +46,6 @@ pub struct GenerateBatchEmbeddingsRequestDto {
 /// Response containing the generated embeddings.
 ///
 /// Embeddings are returned in the same order as the input texts.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::embedding_dto::GenerateBatchEmbeddingsResponseDto;
-/// let response = GenerateBatchEmbeddingsResponseDto {
-///     embeddings: vec![
-///         vec![0.1, 0.2, 0.3], // First text embedding
-///         vec![0.4, 0.5, 0.6], // Second text embedding
-///         vec![0.7, 0.8, 0.9], // Third text embedding
-///     ],
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateBatchEmbeddingsResponseDto {
     /// The generated embeddings (same order as input texts)
@@ -99,19 +55,6 @@ pub struct GenerateBatchEmbeddingsResponseDto {
 /// Embedding model metadata.
 ///
 /// Provides information about the currently loaded embedding model.
-///
-/// # Example
-/// ```rust
-/// # use lattice_core::application::dtos::embedding_dto::EmbeddingModelInfoDto;
-/// use lattice_core::domain::models::embedding_defaults::{
-///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
-/// };
-/// let info = EmbeddingModelInfoDto {
-///     model_name: DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-///     dimension: DEFAULT_EMBEDDING_DIM,
-///     max_tokens: 512,
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingModelInfoDto {
     /// Model name/identifier

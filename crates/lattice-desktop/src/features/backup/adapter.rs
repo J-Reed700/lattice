@@ -41,14 +41,6 @@ impl Drop for TemporarySnapshot {
 /// - Literal `..` sequences
 /// - URL-encoded patterns like `%2e%2e`, `%2f`
 /// - Absolute paths (starts with `/` or `\`)
-///
-/// # Arguments
-///
-/// * `filename` - The filename to validate
-///
-/// # Returns
-///
-/// `Ok(())` if filename is safe, `Err(AppError::Security)` if dangerous patterns detected
 fn validate_safe_filename(filename: &str) -> Result<()> {
     if filename.contains("..") {
         return Err(AppError::Security(
@@ -95,24 +87,6 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
 /// - SQL keywords (DROP, DELETE, INSERT, etc.)
 /// - Comment sequences (-- and /* */)
 /// - Null bytes
-///
-/// # Arguments
-///
-/// * `path` - The file path to validate
-///
-/// # Returns
-///
-/// `Ok(())` if path is safe, `Err(AppError::Security)` if dangerous patterns detected
-///
-/// # Example
-///
-/// ```
-/// let safe_path = "/backup/file.db";
-/// validate_sql_safe_path(safe_path)?; // OK
-///
-/// let unsafe_path = "/backup'; DROP TABLE users; --";
-/// validate_sql_safe_path(unsafe_path)?; // Error
-/// ```
 fn validate_sql_safe_path(path: &str) -> Result<()> {
     // SQL keywords are valid in paths and are not rejected here.
     // that would block legitimate paths like "Dropbox", "update_v2", etc.

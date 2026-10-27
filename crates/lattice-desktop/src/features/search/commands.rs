@@ -44,47 +44,10 @@ pub use searches::{
 /// query result caching. Supports multiple search modes and returns enriched results with
 /// metadata, snippets, and ranking information. Cache hits dramatically improve response times.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with search services, cache, and security context
-/// * `options` - Search configuration including query, mode, filters, and limit
-///
-/// # Returns
-///
-/// * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
-/// * `Err(ApiError)` - If validation fails or search execution fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Query validation failed (empty, too long, malicious content)
 /// * `AppError::Other` - Embedding generation or search execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface SearchOptions {
-///   query: string;
-///   searchMode?: 'semantic' | 'keyword' | 'hybrid';
-///   limit?: number;
-///   filter?: Record<string, string>;
-/// }
-///
-/// // Semantic search with caching
-/// const response = await invoke('search_documents', {
-///   options: {
-///     query: 'machine learning algorithms',
-///     searchMode: 'semantic',
-///     limit: 20
-///   }
-/// });
-///
-/// console.log(`Found ${response.results.length} results`);
-/// console.log(`From cache: ${response.fromCache}`);
-/// console.log(`Execution time: ${response.executionTimeMs}ms`);
-/// console.log(`Cache hit rate: ${response.cacheStats.hitRate}%`);
-/// ```
 ///
 /// # Security
 ///
@@ -103,17 +66,6 @@ pub use searches::{
 /// - **Cache Hit**: Returns cached results, bypasses expensive embedding/search
 /// - **Cache Miss**: Executes search, stores result with timestamp and execution time
 /// - **TTL**: Cached results automatically expire based on LRU eviction
-///
-/// # Command Flow
-///
-/// 1. Input validation (sanitize query)
-/// 2. Generate cache key from query + options
-/// 3. **Cache lookup** - if hit, return cached results immediately
-/// 4. Embed query using embedding service
-/// 5. Execute search based on mode (vector/keyword/hybrid)
-/// 6. Enrich results with document metadata and snippets
-/// 7. Store results in cache for future requests
-/// 8. Track document access asynchronously
 #[tauri::command]
 #[specta::specta]
 pub async fn search_documents(
@@ -131,50 +83,9 @@ pub async fn search_documents(
 /// metadata enrichment. Ideal for autocomplete, quick lookups, or when only IDs are needed.
 /// Does not use caching (results too lightweight to justify cache overhead).
 ///
-/// # Arguments
-///
-/// * `container` - Service container with search service and security context
-/// * `query` - Search query string
-/// * `limit` - Maximum number of results to return
-///
-/// # Returns
-///
-/// * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
-/// * `Err(ApiError)` - If validation fails or search fails
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Fast search without metadata; a failure rejects with an ApiError
-/// const hits = await invoke<[string, number][]>('search_fast', {
-///   query: 'neural networks',
-///   limit: 10
-/// });
-///
-/// hits.forEach(([chunkId, score]) => {
-///   console.log(`${chunkId}: ${score}`);
-/// });
-/// ```
-///
 /// # Security
 ///
 /// - **Input Validation**: Sanitizes query
-///
-/// # Performance
-///
-/// - **No Caching**: Results are lightweight, cache overhead not justified
-/// - **No Enrichment**: Skips expensive metadata/snippet lookup
-/// - **Pure Vector Search**: Always uses semantic similarity (no hybrid)
-/// - **Typical Response**: < 100ms for most queries
-///
-/// # Use Cases
-///
-/// - Autocomplete suggestions
-/// - Quick ID lookups for subsequent operations
-/// - Pre-filtering before enriched search
-/// - Real-time search-as-you-type
 #[tauri::command]
 #[specta::specta]
 pub async fn search_fast(
@@ -223,38 +134,10 @@ pub async fn hybrid_search(
 /// content as the search query. Automatically filters out the source chunk from results
 /// to avoid self-matches. Useful for "more like this" features.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with search and enrichment services
-/// * `chunk_id` - ID of the chunk to find similar documents for
-/// * `limit` - Maximum number of similar documents to return (default: 10)
-///
-/// # Returns
-///
-/// * `Ok(Vec<SearchResultDto>)` - Similar documents ranked by semantic similarity
-/// * `Err(AppError)` - If chunk not found or search fails
-///
 /// # Errors
 ///
 /// * `AppError::NotFound` - Chunk ID not found in database
 /// * `AppError::Other` - Embedding or search execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Find similar documents to a chunk
-/// const similar = await invoke('find_similar', {
-///   chunkId: 'chunk_abc123',
-///   limit: 10
-/// });
-///
-/// console.log(`Found ${similar.length} similar documents`);
-/// similar.forEach(doc => {
-///   console.log(`${doc.title}: ${doc.score}`);
-/// });
-/// ```
 ///
 /// # Algorithm
 ///
@@ -264,24 +147,6 @@ pub async fn hybrid_search(
 /// 4. Filter out source chunk from results (prevent self-match)
 /// 5. Take top N results after filtering
 /// 6. Enrich with metadata
-///
-/// # Use Cases
-///
-/// - "More like this" document recommendations
-/// - Related content suggestions
-/// - Document clustering visualization
-/// - Duplicate detection
-///
-/// # Command Flow
-///
-/// 1. Fetch chunk content using enrichment service
-/// 2. Error if chunk not found
-/// 3. Embed chunk content
-/// 4. Vector similarity search (limit + 1 to account for self-match)
-/// 5. Filter out source chunk
-/// 6. Take top `limit` results
-/// 7. Enrich with metadata
-/// 8. Return similar documents
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(chunk_id = %chunk_id))]
@@ -328,48 +193,10 @@ pub async fn find_similar(
 /// similarity with temporal decay to surface fresh content while maintaining relevance.
 /// Configurable recency weight and maximum age filter.
 ///
-/// # Arguments
-///
-/// * `container` - Service container with hybrid search service
-/// * `options` - Search options including query, recency weight, and age filter
-///
-/// # Returns
-///
-/// * `Ok(Vec<SearchResultDto>)` - Search results ranked with recency boost
-/// * `Err(AppError)` - If validation fails or execution fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Query validation failed, invalid recency weight, or negative max_age_days
 /// * `AppError::Other` - Embedding or search execution failed
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface RecencySearchOptions {
-///   query: string;
-///   limit?: number;
-///   recencyWeight?: number;  // 0.0 to 1.0
-///   maxAgeDays?: number;     // positive integer
-/// }
-///
-/// // Search with recency boost (favor recent documents)
-/// const results = await invoke('search_with_recency', {
-///   options: {
-///     query: 'project status',
-///     limit: 15,
-///     recencyWeight: 0.3,  // 30% weight to recency
-///     maxAgeDays: 90       // Only last 3 months
-///   }
-/// });
-///
-/// console.log('Recent relevant documents:');
-/// results.forEach(doc => {
-///   console.log(`${doc.title} (score: ${doc.score})`);
-/// });
-/// ```
 ///
 /// # Security
 ///
@@ -393,24 +220,6 @@ pub async fn find_similar(
 /// - `recency_weight` must be in range [0.0, 1.0]
 /// - `max_age_days` must be positive (> 0)
 /// - Empty validation errors return `AppError::InvalidInput`
-///
-/// # Use Cases
-///
-/// - Finding recent project updates
-/// - News/blog search favoring fresh content
-/// - Status report queries
-/// - Time-sensitive document retrieval
-///
-/// # Command Flow
-///
-/// 1. Input validation (query, recency_weight, max_age_days)
-/// 2. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
-/// 3. Validate recency_weight ∈ [0, 1]
-/// 4. Validate max_age_days > 0
-/// 5. Run the library search orchestrator
-/// 6. Enrich results with metadata
-/// 7. Boost recently updated documents
-/// 8. Return time-boosted results
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(query = %options.query))]
@@ -512,33 +321,9 @@ pub async fn find_similar_documents(
 /// Processes multiple search queries efficiently in a single operation,
 /// returning results for each query in the same order as provided.
 ///
-/// ## Arguments
-///
-/// * `container` - DI container with services
-/// * `queries` - List of search queries to process
-/// * `limit` - Maximum results per query (default: 10)
-/// * `search_mode` - Search algorithm to use (Vector, Keyword, Hybrid)
-///
-/// ## Returns
-///
-/// Vector of result vectors, one for each query in input order.
-///
 /// ## Security
 ///
 /// - Each query validated individually
-///
-/// ## Example
-///
-/// ```javascript
-/// const results = await VaultAPI.batchSearch(
-///   ['query1', 'query2', 'query3'],
-///   10,
-///   'hybrid'
-/// );
-/// // results[0] = results for 'query1'
-/// // results[1] = results for 'query2'
-/// // results[2] = results for 'query3'
-/// ```
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip(container), fields(query_count = queries.len()))]

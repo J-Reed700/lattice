@@ -2,11 +2,6 @@
 //!
 //! Executes an LLM function call by routing to the appropriate handler.
 //!
-//! # Purpose
-//!
-//! Central orchestration point for function execution. Validates the function call,
-//! routes to the appropriate implementation, and returns a standardized result.
-//!
 //! # Business Logic
 //!
 //! 1. Validate function name exists in registry
@@ -14,23 +9,6 @@
 //! 3. Route to appropriate handler based on function name
 //! 4. Execute the function
 //! 5. Return standardized result (success or error)
-//!
-//! # Example
-//!
-//! ```rust
-//! let request = ExecuteFunctionRequestDto {
-//!     function_call: FunctionCallDto {
-//!         id: "call_123".into(),
-//!         name: "semantic_search".into(),
-//!         arguments: json!({"query": "machine learning", "limit": 5}),
-//!     },
-//! };
-//!
-//! let use_case = ExecuteFunctionUseCase::new(registry, executor);
-//! let response = use_case.execute(request).await?;
-//!
-//! assert!(response.result.success);
-//! ```
 
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
@@ -115,11 +93,6 @@ pub struct ExecuteFunctionUseCase {
 
 impl ExecuteFunctionUseCase {
     /// Create a new instance of the use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `function_registry` - Function registry for validation
-    /// * `function_executor` - Function executor for execution
     pub fn new(
         function_registry: Arc<dyn FunctionRegistryTrait>,
         function_executor: Arc<dyn FunctionExecutorTrait>,
@@ -131,14 +104,6 @@ impl ExecuteFunctionUseCase {
     }
 
     /// Execute a function call.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Function call request with name and arguments
-    ///
-    /// # Returns
-    ///
-    /// Function execution result (always returns Ok, errors are in the result DTO)
     ///
     /// # Errors
     ///

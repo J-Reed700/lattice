@@ -8,12 +8,6 @@
 //! # Security
 //! - Stores credentials in OS keyring (Keychain on macOS, Credential Manager on Windows)
 //! - Never logs or exposes API keys in plain text
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = SetApiKeyUseCase::new(credentials_port);
-//! use_case.execute("anthropic".into(), "sk-ant-...".into()).await?;
-//! ```
 
 use crate::features::credentials::dto::CredentialOperationResultDto;
 use lattice_core::application::ports::CredentialsPort;

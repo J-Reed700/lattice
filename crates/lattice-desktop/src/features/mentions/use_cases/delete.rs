@@ -9,13 +9,6 @@
 //! - Validates mention ID exists
 //! - Rate limited to prevent abuse
 //! - Cascades deletion to document_mentions (handled by repository)
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = DeleteMentionUseCase::new(mention_repo);
-//! use_case.execute("mention-123".into()).await?;
-//! println!("Mention deleted successfully");
-//! ```
 
 use lattice_core::application::ports::MentionRepositoryPort;
 use lattice_core::shared::error::AppError;
@@ -31,14 +24,6 @@ impl DeleteMentionUseCase {
     }
 
     /// Delete a mention and all its document associations.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - ID of the mention to delete
-    ///
-    /// # Returns
-    ///
-    /// Unit result indicating successful deletion.
     ///
     /// # Errors
     ///

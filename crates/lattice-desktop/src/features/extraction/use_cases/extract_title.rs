@@ -6,17 +6,6 @@
 //! 1. H1 header (`# Title`)
 //! 2. YAML frontmatter (`title: ...`)
 //! 3. First non-empty line
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ExtractDocumentTitleUseCase::new();
-//! let request = ExtractTitleRequestDto {
-//!     content: "# My Document\n\nContent here...".into(),
-//! };
-//! let result = use_case.execute(request).await?;
-//! assert_eq!(result.title, Some("My Document".into()));
-//! assert_eq!(result.strategy, TitleExtractionStrategy::H1Header);
-//! ```
 
 use crate::features::extraction::dto::{
     ExtractTitleRequestDto, ExtractTitleResponseDto, TitleExtractionStrategy,

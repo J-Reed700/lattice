@@ -35,14 +35,6 @@ impl GetFileMetadataUseCase {
 
     /// Execute the use case.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path
-    ///
-    /// # Returns
-    ///
-    /// File metadata DTO.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if file does not exist

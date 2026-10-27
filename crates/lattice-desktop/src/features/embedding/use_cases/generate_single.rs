@@ -7,24 +7,6 @@
 //! 2. Text normalization
 //! 3. Embedding generation by the loaded model
 //! 4. Dimension validation
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice_core::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-//! use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
-//!
-//! # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = GenerateSingleEmbeddingRequestDto {
-//!     text: "This is the text to embed".to_string(),
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Embedding dimension: {}", response.dimension);
-//! println!("Embedding vector length: {}", response.embedding.len());
-//! # Ok(())
-//! # }
-//! ```
 
 use std::sync::Arc;
 
@@ -53,23 +35,11 @@ pub struct GenerateSingleEmbeddingUseCase {
 
 impl GenerateSingleEmbeddingUseCase {
     /// Create a new generate single embedding use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `embedding_service` - Service for embedding generation
     pub fn new(embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self { embedding_service }
     }
 
     /// Execute single embedding generation.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the text to embed
-    ///
-    /// # Returns
-    ///
-    /// Response with embedding vector and dimension
     ///
     /// # Errors
     ///
@@ -77,29 +47,6 @@ impl GenerateSingleEmbeddingUseCase {
     /// - Text is empty
     /// - Text exceeds max length (10,000 characters)
     /// - Embedding generation fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_core::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-    /// # use lattice_core::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
-    /// # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = GenerateSingleEmbeddingRequestDto {
-    ///     text: "Sample document for embedding generation".to_string(),
-    /// };
-    ///
-    /// match use_case.execute(request).await {
-    ///     Ok(response) => {
-    ///         println!("Success!");
-    ///         println!("  Dimension: {}", response.dimension);
-    ///         println!("  Vector length: {}", response.embedding.len());
-    ///         println!("  First value: {}", response.embedding[0]);
-    ///     }
-    ///     Err(e) => eprintln!("Failed: {}", e),
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn execute(
         &self,
         request: GenerateSingleEmbeddingRequestDto,

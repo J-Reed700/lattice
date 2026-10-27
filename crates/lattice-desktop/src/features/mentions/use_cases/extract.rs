@@ -9,13 +9,6 @@
 //! # Security
 //! - Rate limited to prevent DoS via large document parsing
 //! - Validates mention patterns to prevent injection attacks
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ExtractMentionsUseCase::new(mention_repo, mapper);
-//! let result = use_case.execute("doc123".into(), "See [[other-doc]] for details".into()).await?;
-//! println!("Found {} mentions", result.mentions.len());
-//! ```
 
 use crate::features::mentions::dto::{ExtractMentionsResultDto, MentionWithContextDto};
 use crate::features::mentions::mapper::MentionMapper;

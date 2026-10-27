@@ -47,14 +47,6 @@ impl ShowInFolderUseCase {
 
     /// Execute the use case.
     ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing the file path to reveal
-    ///
-    /// # Returns
-    ///
-    /// Success DTO if file was revealed successfully.
-    ///
     /// # Errors
     ///
     /// - `AppError::NotFound` if file does not exist

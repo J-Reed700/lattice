@@ -34,14 +34,6 @@ pub struct TagMapper;
 
 impl TagMapper {
     /// Convert domain entity to database model.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Domain tag entity
-    ///
-    /// # Returns
-    ///
-    /// Database model ready for persistence.
     pub fn to_model(entity: &DomainTag) -> TagModel {
         TagModel {
             id: entity.id().as_str().to_string(),
@@ -53,14 +45,6 @@ impl TagMapper {
     }
 
     /// Convert database model to domain entity.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Database model from SQLx
-    ///
-    /// # Returns
-    ///
-    /// Domain entity with business logic.
     ///
     /// # Errors
     ///
@@ -94,14 +78,6 @@ impl TagMapper {
     /// Convert a batch of database models to domain entities.
     ///
     /// Continues processing on errors, collecting all successful conversions.
-    ///
-    /// # Arguments
-    ///
-    /// * `models` - Vector of database models
-    ///
-    /// # Returns
-    ///
-    /// Vector of domain entities (may be shorter than input if some conversions failed).
     pub fn to_entities(models: &[TagModel]) -> Vec<DomainTag> {
         models
             .iter()
@@ -110,14 +86,6 @@ impl TagMapper {
     }
 
     /// Convert a batch of domain entities to database models.
-    ///
-    /// # Arguments
-    ///
-    /// * `entities` - Vector of domain entities
-    ///
-    /// # Returns
-    ///
-    /// Vector of database models ready for persistence.
     pub fn to_models(entities: &[DomainTag]) -> Vec<TagModel> {
         entities.iter().map(Self::to_model).collect()
     }

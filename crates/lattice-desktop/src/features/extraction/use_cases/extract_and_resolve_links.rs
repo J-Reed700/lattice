@@ -13,21 +13,6 @@
 //! 2. Get all available documents from repository
 //! 3. For each parsed link, resolve to document ID
 //! 4. Return combined results with resolution metadata
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = ExtractAndResolveLinksUseCase::new(
-//!     parse_use_case,
-//!     resolve_use_case,
-//!     document_repository,
-//! );
-//! let request = ExtractAndResolveRequestDto {
-//!     document_id: "doc-123".into(),
-//!     content: "See [[todo]] and [[projects/ml|ML Project]]".into(),
-//! };
-//! let result = use_case.execute(request).await?;
-//! assert_eq!(result.links.len(), 2);
-//! ```
 
 use crate::features::extraction::dto::{
     DocumentRefDto, ExtractAndResolveRequestDto, ExtractAndResolveResponseDto,

@@ -17,47 +17,16 @@ pub struct ValidateSettingsUseCase {
 
 impl ValidateSettingsUseCase {
     /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `repository` - Settings repository port implementation
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
         Self { repository }
     }
 
     /// Execute the use case to validate settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `settings` - Settings to validate
-    ///
-    /// # Returns
-    ///
-    /// Validation result with errors and warnings
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = ValidateSettingsUseCase::new(repository);
-    /// let settings = SettingsDto::default();
-    /// let result = use_case.execute(&settings);
-    ///
-    /// if !result.valid {
-    ///     println!("Validation errors: {:?}", result.errors);
-    /// }
-    /// if result.has_warnings() {
-    ///     println!("Warnings: {:?}", result.warnings);
-    /// }
-    /// ```
     pub fn execute(&self, settings: &SettingsDto) -> ValidationResult {
         self.repository.validate(settings)
     }
 
     /// Validate current settings from repository.
-    ///
-    /// # Returns
-    ///
-    /// Validation result for the current settings
     ///
     /// # Errors
     ///
@@ -68,23 +37,6 @@ impl ValidateSettingsUseCase {
     }
 
     /// Validate a folder path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to validate
-    ///
-    /// # Returns
-    ///
-    /// `true` if path exists and is a readable directory
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = ValidateSettingsUseCase::new(repository);
-    /// if use_case.validate_folder_path("/home/user/documents") {
-    ///     println!("Path is valid");
-    /// }
-    /// ```
     pub fn validate_folder_path(&self, path: &str) -> bool {
         self.repository.validate_folder_path(path)
     }

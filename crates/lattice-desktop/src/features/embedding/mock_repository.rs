@@ -39,12 +39,6 @@ impl MockEmbeddingRepository {
     ///
     /// This should be called before creating embeddings for the chunk to enable
     /// find_by_document() to work correctly.
-    ///
-    /// # Example
-    /// ```rust
-    /// embedding_repo.register_chunk_document(&chunk.id, &document.id);
-    /// embedding_repo.create(&chunk.id, &embedding_vec, "model").await?;
-    /// ```
     pub fn register_chunk_document(&self, chunk_id: &str, document_id: &str) {
         self.chunk_to_document
             .write()

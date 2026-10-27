@@ -17,24 +17,6 @@
 //! - Base URL: `https://huggingface.co/api/models`
 //! - Query params: `search`, `limit`, `filter` (e.g., task:text-generation)
 //! - No authentication required for public models
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use lattice_core::application::ports::ModelCatalogPort;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let adapter = HuggingFaceAdapter::new();
-//!     let models = adapter.search_models("llama", 10).await?;
-//!
-//!     for model in models {
-//!         println!("{}: {}", model.id, model.name);
-//!     }
-//!     Ok(())
-//! }
-//! ```
 
 use async_trait::async_trait;
 use reqwest::Client;

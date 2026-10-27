@@ -58,16 +58,6 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// output directory, suitable for use in Markdown editors, static site generators,
 /// or knowledge management tools like Obsidian.
 ///
-/// # Arguments
-///
-/// * `output_dir` - Directory path for exported Markdown files (will be created if needed)
-/// * `container` - Service container with security context
-///
-/// # Returns
-///
-/// * `Ok(usize)` - Number of Markdown files successfully exported
-/// * `Err(AppError)` - If path validation fails or export fails
-///
 /// # Errors
 ///
 /// * `AppError::InvalidInput` - Invalid output directory path (directory traversal detected)
@@ -98,41 +88,17 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
-/// # Use Cases
-///
-/// - **Backup**: Create Markdown backups for external storage
-/// - **Migration**: Export to Obsidian, Notion, or other Markdown tools
-/// - **Publishing**: Generate content for static site generators (Hugo, Jekyll)
-/// - **Sharing**: Create portable, human-readable document exports
-/// - **Editing**: Edit documents in preferred Markdown editors
-///
 /// # Directory Creation
 ///
 /// - If output directory doesn't exist, it's created automatically
 /// - If path exists but is not a directory, returns error
 /// - Creates parent directories recursively if needed
 ///
-/// # Performance
-///
-/// - Export time scales linearly with document count
-/// - Large documents may take longer to convert
-/// - Async operations prevent UI blocking
-/// - Typical speed: ~100-500 documents/second
-///
 /// # Architecture
 ///
 /// Command flow:
 /// 1. Path validation via ValidatedFilePath (CWE-22)
 /// 2. Async directory creation via tokio::fs
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Check/create output directory asynchronously
-/// 3. Export documents to Markdown files
-/// 4. Return export count
-///
-/// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_markdown_impl(
     output_dir: Option<String>,
     container: &Container,
@@ -151,17 +117,6 @@ pub async fn export_markdown_impl(
 /// Serializes all indexed documents into a single JSON file with complete metadata,
 /// content, tags, and timestamps. Supports both compact and pretty-printed formats.
 /// Ideal for programmatic access, data analysis, API integration, or structured backups.
-///
-/// # Arguments
-///
-/// * `output_path` - File path for JSON export (e.g., `/exports/lattice-data.json`)
-/// * `pretty` - If `true`, format JSON with indentation for readability
-/// * `container` - Service container with security context
-///
-/// # Returns
-///
-/// * `Ok(())` - Export completed successfully
-/// * `Err(AppError)` - If path validation fails or export fails
 ///
 /// # Errors
 ///
@@ -205,15 +160,6 @@ pub async fn export_markdown_impl(
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
 ///
-/// # Use Cases
-///
-/// - **Data Analysis**: Import into pandas, Excel, or analytics tools
-/// - **API Integration**: Feed data into external systems
-/// - **Backup**: Structured backup with complete metadata
-/// - **Migration**: Export for import into other systems
-/// - **Programmatic Access**: Parse and process document data
-/// - **Testing**: Generate test data fixtures
-///
 /// # Pretty vs Compact
 ///
 /// **Pretty Format** (`pretty: true`):
@@ -232,28 +178,11 @@ pub async fn export_markdown_impl(
 /// - Existing file at output path will be overwritten
 /// - Atomic write operation (temp file → rename) for safety
 ///
-/// # Performance
-///
-/// - Export time scales linearly with document count
-/// - Pretty formatting adds ~10-20% overhead
-/// - Memory efficient (streaming serialization)
-/// - Typical speed: ~1000-5000 documents/second
-///
 /// # Architecture
 ///
 /// Command flow:
 /// 1. Path validation via ValidatedFilePath (CWE-22)
 /// 2. Async parent directory creation via tokio::fs
-///
-/// # Command Flow
-///
-/// 1. Path validation (prevent directory traversal)
-/// 2. Create parent directories asynchronously
-/// 3. Serialize documents to JSON (pretty or compact)
-/// 4. Write JSON to file atomically
-/// 5. Return success
-///
-/// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_json_impl(
     output_path: Option<String>,
     pretty: bool,

@@ -8,13 +8,6 @@
 //! # Security
 //! - Retrieves credentials from OS keyring
 //! - Returns error if credential not found
-//!
-//! # Example
-//! ```rust,no_run
-//! let use_case = GetApiKeyUseCase::new(credentials_port);
-//! let key = use_case.execute("anthropic".into()).await?;
-//! // Use key for API calls
-//! ```
 
 use lattice_core::application::ports::CredentialsPort;
 use lattice_core::shared::error::AppError;
