@@ -1,4 +1,5 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
+use super::arrivals::{poll_once, Arrival, Arrivals};
 use super::{
     Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
     RecoveryPolicy,
@@ -9,16 +10,16 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     future::Future,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak,
     },
     task::Poll,
     time::Duration,
 };
-use tokio::sync::{watch, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 const POLL: Duration = Duration::from_secs(30);
@@ -181,65 +182,6 @@ struct Kind {
     handler: Arc<dyn JobHandler>,
     config: JobKindConfig,
     slots: Arc<Semaphore>,
-}
-
-/// Workers by the order they were dispatched in, until each queues for its
-/// slot or waits for its subject: a worker queues for a slot only after every
-/// worker dispatched before it, so a job queued again goes behind the work
-/// already waiting, however long that work takes to read its job.
-#[derive(Default)]
-struct Arrivals {
-    next: AtomicU64,
-    arriving: Mutex<BTreeSet<u64>>,
-    left: watch::Sender<u64>,
-}
-
-impl Arrivals {
-    fn arrive(self: &Arc<Self>) -> Arrival {
-        let ticket = self.next.fetch_add(1, Ordering::Relaxed);
-        lock(&self.arriving).insert(ticket);
-        Arrival {
-            arrivals: Arc::clone(self),
-            ticket,
-        }
-    }
-}
-
-/// A worker's place in [`Arrivals`]; dropping it lets later workers queue.
-struct Arrival {
-    arrivals: Arc<Arrivals>,
-    ticket: u64,
-}
-
-impl Arrival {
-    /// Waits until every worker dispatched before this one has queued for its
-    /// slot or is waiting for its subject.
-    async fn turn(&self) {
-        let mut left = self.arrivals.left.subscribe();
-        while lock(&self.arrivals.arriving)
-            .range(..self.ticket)
-            .next()
-            .is_some()
-        {
-            if left.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-}
-
-impl Drop for Arrival {
-    fn drop(&mut self) {
-        lock(&self.arrivals.arriving).remove(&self.ticket);
-        self.arrivals
-            .left
-            .send_modify(|count| *count = count.wrapping_add(1));
-    }
-}
-
-/// `work` polled once, without waiting for it.
-async fn poll_once<F: Future>(mut work: std::pin::Pin<&mut F>) -> Poll<F::Output> {
-    std::future::poll_fn(|cx| Poll::Ready(work.as_mut().poll(cx))).await
 }
 
 /// Removes a job from the in-flight set when its worker ends.
@@ -795,26 +737,5 @@ impl JobRuntime {
         while lock(&self.active).contains_key(id) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod arrival_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn a_worker_queues_only_after_every_worker_dispatched_before_it() {
-        let arrivals = Arc::new(Arrivals::default());
-        let first = arrivals.arrive();
-        let second = arrivals.arrive();
-        let third = arrivals.arrive();
-        drop(third);
-        let waiting = tokio::spawn(async move { second.turn().await });
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-        assert!(!waiting.is_finished(), "the second waits for the first");
-        drop(first);
-        waiting.await.unwrap();
     }
 }
