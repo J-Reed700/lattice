@@ -340,6 +340,14 @@ pub struct Authored {
 /// fails, solve each keyed item blind, repair a disputed key once and drop it
 /// if the second solve still disagrees. A model that cannot produce a valid
 /// item leaves a smaller bank, never a broken item.
+/// `need` for repairing the item asked as `prompt`: its own prompt is not a
+/// question the repair may not repeat.
+fn repair_need(need: &AuthoringNeed, prompt: &str) -> AuthoringNeed {
+    let mut own = need.clone();
+    own.existing_prompts.retain(|existing| existing != prompt);
+    own
+}
+
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
@@ -431,8 +439,9 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
         match verdict {
             KeyVerdict::Agreed => kept.push(item),
             KeyVerdict::Disputed(reason) => {
+                let own = repair_need(&need, &item.candidate.prompt);
                 let repair = Batch {
-                    need: &need,
+                    need: &own,
                     count: 1,
                     notes: vec![],
                     repair: Some(json!({
