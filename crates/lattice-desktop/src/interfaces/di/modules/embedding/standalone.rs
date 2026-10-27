@@ -22,16 +22,11 @@ use crate::features::llm::engine::system::backend_devices::parse_list_devices;
 const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Starts embedding servers from one llama-server binary, as child processes
-/// of this one: one server per launch, shared by everyone who asks for it
-/// while it runs, as the app's sidecars are. The shipped-path eval asked for
-/// the same model twice (the index's backfill and the queries), started two
-/// servers, and with the chat model beside them on an 8 GB card the driver
-/// moved video memory to system memory: the 9B wrote 2 tokens a second.
+/// of this one: one server per launch, shared while it runs.
 pub struct StandaloneEmbeddingStarter {
     binary: PathBuf,
     children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<Child>>>>,
-    /// Each running server by its launch flags; held while one starts, so a
-    /// second request for it waits and is given the same server.
+    /// Running servers by launch flags.
     running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningEmbeddingServer>>>,
 }
 
