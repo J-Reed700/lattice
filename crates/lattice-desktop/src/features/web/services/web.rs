@@ -333,6 +333,15 @@ pub(crate) async fn read_text_bounded(
     Ok(page::decode_response_text(body, content_type.as_deref()))
 }
 
+/// A response body's bytes, read under `max_bytes` and this service's body
+/// deadline: for a body that may not be text, such as an archived PDF.
+pub(crate) async fn read_bytes_bounded(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> std::result::Result<Vec<u8>, String> {
+    page::read_bounded_body(response, max_bytes).await
+}
+
 /// Run a blocking HTML parse under the shared parser admission and its time
 /// budget. For the finders that parse result pages.
 pub(crate) async fn parse_html<T, F>(parsers: Arc<Semaphore>, operation: F) -> Result<T>

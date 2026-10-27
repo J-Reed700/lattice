@@ -303,7 +303,7 @@ async fn a_replay_reads_the_raw_capture() {
     };
 
     let replayed = wayback(&server).replay(&example(), &capture).await.unwrap();
-    assert!(replayed.html.contains("Archived words."));
+    assert!(String::from_utf8_lossy(&replayed.body).contains("Archived words."));
     assert_eq!(replayed.captured_at, capture.captured_at);
     assert_eq!(
         replayed.snapshot_url,

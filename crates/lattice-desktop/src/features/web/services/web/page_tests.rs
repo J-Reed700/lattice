@@ -51,10 +51,10 @@ fn service(dir: &TempDir, server: &MockServer, settings: SourcingSettingsDto) ->
 
 async fn replay_serves(server: &MockServer, timestamp: &str) {
     Mock::given(path_regex(format!(r"^/web/{timestamp}id_/")))
+        // `set_body_string` would label the copy `text/plain`, whatever header
+        // came before it, and an archived copy is read by its type.
         .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/html; charset=utf-8")
-                .set_body_string(ARCHIVED_HTML),
+            ResponseTemplate::new(200).set_body_raw(ARCHIVED_HTML, "text/html; charset=utf-8"),
         )
         .mount(server)
         .await;
@@ -323,4 +323,94 @@ async fn a_dated_search_answers_with_the_archived_copy_of_the_named_page() {
         service.search_web(&dated(None)).await,
         Err(AppError::InvalidInput(_))
     ));
+}
+
+/// A one-page PDF holding `lines`, built as the indexing PDF tests build theirs.
+fn one_page_pdf(lines: &[&str]) -> Vec<u8> {
+    use lopdf::content::{Content, Operation};
+    use lopdf::{dictionary, Document, Object, Stream};
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+    let resources_id = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+    let operations: Vec<Operation> = lines
+        .iter()
+        .enumerate()
+        .flat_map(|(index, text)| {
+            vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 11.into()]),
+                Operation::new("Td", vec![72.into(), (720 - 16 * index as i64).into()]),
+                Operation::new("Tj", vec![Object::string_literal(*text)]),
+                Operation::new("ET", vec![]),
+            ]
+        })
+        .collect();
+    let content_id = doc.add_object(Stream::new(
+        dictionary! {},
+        Content { operations }.encode().expect("content encodes"),
+    ));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id,
+        "Resources" => resources_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("fixture saves");
+    bytes
+}
+
+/// An archived PDF is read as a PDF. Parsed as a page, its raw bytes were
+/// saved as a course source's text (`%PDF-1.5 … FlateDecode …`), and a
+/// refresh read them back the same way: the live read had failed, and the
+/// rescue read the archive's copy as markup.
+#[tokio::test]
+async fn an_archived_pdf_is_read_as_a_pdf_not_as_its_bytes() {
+    let dir = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(path("/wayback/available"))
+        .and(query_param("url", GONE))
+        .respond_with(ResponseTemplate::new(200).set_body_string(AVAILABILITY_HIT))
+        .mount(&server)
+        .await;
+    Mock::given(path_regex(r"^/web/20150102000131id_/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/pdf")
+                .set_body_bytes(one_page_pdf(&[
+                    "The archived report says the bridge opened in 2014.",
+                    "It carried two lanes of traffic in each direction.",
+                ])),
+        )
+        .mount(&server)
+        .await;
+    let service = service(&dir, &server, SourcingSettingsDto::default());
+
+    let page = after_live_404(&service, GONE).await.unwrap();
+
+    let content = &page.output.content;
+    assert!(content.contains("bridge opened in 2014"), "{content}");
+    assert!(
+        !content.contains("%PDF"),
+        "the raw bytes were kept: {content}"
+    );
 }
