@@ -25,7 +25,6 @@ export function TuningTab() {
     presencePenalty: 1.5,
     maxTokens: 131072,
     contextWindow: 131072,
-    localContextWindow: null as number | null,
     timeoutSeconds: 30,
   });
   const [routerDraft, setRouterDraft] = useState<ApiLLMSettings['router'] | null>(null);
@@ -41,7 +40,6 @@ export function TuningTab() {
       presencePenalty: llmSettings.presencePenalty,
       maxTokens: llmSettings.maxTokens,
       contextWindow: llmSettings.contextWindow,
-      localContextWindow: llmSettings.localContextWindow,
       timeoutSeconds: llmSettings.timeoutSeconds,
     });
     setRouterDraft(llmSettings.router);

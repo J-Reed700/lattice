@@ -102,7 +102,7 @@ Start with the notice Lattice shows in the chat:
 
 **The answer stops partway.** In **Settings > AI > Tuning**, **Stall timeout** is how many seconds a reply may go silent before Lattice treats it as dead. It doesn't cap total answer time. Raise it on slow hardware or with a slow remote server.
 
-**The model runs out of memory, or falls back to the CPU.** Leave **Local model context window** in **Settings > AI > Tuning** on automatic. A window too large for your graphics memory pushes the model onto the CPU. Otherwise, choose a smaller model.
+**The model runs out of memory, or falls back to the CPU.** A downloaded model loads with the largest window it was trained for unless you set a smaller one. Set one in the model's **Configure model** menu in **Settings > AI > Downloaded**, or set **Default context window** on that page for every model. Otherwise, choose a smaller model.
 
 ---
 
