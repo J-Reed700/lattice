@@ -1,4 +1,5 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
+use super::arrivals::{poll_once, Arrival, Arrivals};
 use super::{
     Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
     RecoveryPolicy,
@@ -15,6 +16,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak,
     },
+    task::Poll,
     time::Duration,
 };
 use tokio::sync::{Notify, Semaphore};
@@ -242,6 +244,7 @@ pub struct JobRuntime {
     /// Jobs whose worker was stopped to give up its turn; each queues again
     /// once that worker has ended.
     requeued: Mutex<HashSet<String>>,
+    arrivals: Arc<Arrivals>,
     subjects: Subjects,
     wake: Arc<Notify>,
     poll: Duration,
@@ -269,6 +272,7 @@ impl JobRuntime {
             kinds: RwLock::default(),
             active: Arc::default(),
             requeued: Mutex::default(),
+            arrivals: Arc::default(),
             subjects: Arc::default(),
             wake: Arc::new(Notify::new()),
             poll,
@@ -399,12 +403,13 @@ impl JobRuntime {
             active: self.active.clone(),
             id: id.to_string(),
         };
+        let arrival = self.arrivals.arrive();
         let runtime = Arc::clone(self);
         let id = id.to_string();
         // Rejected admission at shutdown drops the registration; the job is
         // still pending and resumes at the next start.
         let _ = self.tasks.spawn(async move {
-            runtime.work(&id, cancel).await;
+            runtime.work(&id, cancel, arrival).await;
             drop(registration);
             if lock(&runtime.requeued).remove(&id) {
                 runtime.dispatch(&id);
@@ -422,7 +427,7 @@ impl JobRuntime {
         }
     }
 
-    async fn work(&self, id: &str, cancel: CancellationToken) {
+    async fn work(&self, id: &str, cancel: CancellationToken, arrival: Arrival) {
         let job = match self.store().get(id).await {
             Ok(job) => job,
             Err(error) => {
@@ -440,15 +445,40 @@ impl JobRuntime {
             (Some(subject), true) => Some(self.subject_lease(&job.kind, subject)),
             _ => None,
         };
+        let mut arrival = Some(arrival);
         let _subject = match &lease {
-            Some(lease) => match until_cancelled(&cancel, lease.lock.clone().lock_owned()).await {
-                Some(guard) => Some(guard),
-                None => return,
-            },
+            Some(lease) => {
+                let mut locked =
+                    std::pin::pin!(until_cancelled(&cancel, lease.lock.clone().lock_owned()));
+                let guard = match poll_once(locked.as_mut()).await {
+                    Poll::Ready(guard) => guard,
+                    Poll::Pending => {
+                        // Waiting for its subject, it lets later workers queue.
+                        arrival = None;
+                        locked.await
+                    }
+                };
+                match guard {
+                    Some(guard) => Some(guard),
+                    None => return,
+                }
+            }
             None => None,
         };
-        let Some(Ok(_slot)) = until_cancelled(&cancel, kind.slots.clone().acquire_owned()).await
-        else {
+        if let Some(arrival) = &arrival {
+            if until_cancelled(&cancel, arrival.turn()).await.is_none() {
+                return;
+            }
+        }
+        let mut slot = std::pin::pin!(until_cancelled(&cancel, kind.slots.clone().acquire_owned()));
+        let first = poll_once(slot.as_mut()).await;
+        // Holding the slot or queued for it: later workers queue behind it.
+        drop(arrival);
+        let slot = match first {
+            Poll::Ready(slot) => slot,
+            Poll::Pending => slot.await,
+        };
+        let Some(Ok(_slot)) = slot else {
             return;
         };
         let job = match self.store().claim(id).await {

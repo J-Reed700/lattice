@@ -383,14 +383,14 @@ impl CourseIndexes {
             }
             Err(error) => warn!(%error, program, "Could not list a course's index builds"),
         }
-        remove_dir(&dir);
+        remove_dir(&dir).await;
     }
 
     /// Removes `program`'s index directory and nothing else: for a build that
     /// finds its course gone, which must not wait for itself to stop.
-    pub(super) fn remove_index(&self, program: &str) {
+    pub(super) async fn remove_index(&self, program: &str) {
         if let Ok(dir) = self.dir_of(program) {
-            remove_dir(&dir);
+            remove_dir(&dir).await;
         }
     }
 
@@ -412,7 +412,7 @@ impl CourseIndexes {
             let is_index = entry.file_type().is_ok_and(|kind| kind.is_dir())
                 && uuid::Uuid::parse_str(&name).is_ok();
             if is_index && !programs.contains(&name) {
-                remove_dir(&entry.path());
+                remove_dir(&entry.path()).await;
             }
         }
         Ok(())
@@ -468,8 +468,8 @@ async fn locked<'a>(
 }
 
 /// Removes an index directory; one already gone is fine.
-fn remove_dir(dir: &Path) {
-    match lattice_core::shared::fs::removal::remove_dir_all(dir) {
+async fn remove_dir(dir: &Path) {
+    match lattice_core::shared::fs::removal::remove_written_dir(dir.to_path_buf()).await {
         Ok(()) => info!(dir = %dir.display(), "Removed a course index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!(dir = %dir.display(), %error, "Could not remove a course index"),

@@ -144,7 +144,7 @@ impl JobHandler for CourseIndexJob {
             });
         };
         if !courses.exists(&program).await? {
-            courses.remove_index(&program);
+            courses.remove_index(&program).await;
             return Ok(JobOutcome::Completed {
                 result_ref: program,
                 message: "The course no longer exists".into(),
