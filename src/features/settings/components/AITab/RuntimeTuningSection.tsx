@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 import { SettingsRow, SettingsSection, Switch } from '@/components/ui';
@@ -11,12 +10,6 @@ import { SWITCH_CLASS, NUMBER_FIELD_CLASS, toFinite, clamp } from './shared';
 const STALL_TIMEOUT_MIN = 15;
 const STALL_TIMEOUT_MAX = 180;
 
-// Bounds for an explicit local context window. The floor is a window that can
-// still hold a turn; the ceiling is the largest any current model is trained
-// for, so a typo cannot ask for something no model supports.
-const LOCAL_CONTEXT_WINDOW_MIN = 512;
-const LOCAL_CONTEXT_WINDOW_MAX = 262144;
-
 /** The model-runtime values a field may hold while it is being edited. */
 export type RuntimeDraft = {
   temperature: number;
@@ -26,11 +19,10 @@ export type RuntimeDraft = {
   presencePenalty: number;
   maxTokens: number;
   contextWindow: number;
-  localContextWindow: number | null;
   timeoutSeconds: number;
 };
 
-/** Sampling, context and timeout settings for the chat model. */
+/** Sampling, answer length and timeout settings for the chat model. */
 export function RuntimeTuningSection({
   llmSettings,
   runtimeDraft,
@@ -42,29 +34,7 @@ export function RuntimeTuningSection({
   setRuntimeDraft: Dispatch<SetStateAction<RuntimeDraft>>;
   saveLlmUpdates: (updates: Partial<ApiLLMSettings>) => Promise<boolean>;
 }) {
-  // What the user is typing into the local window field, from when they
-  // untick "Model's max" until they leave it. It starts empty: the window is
-  // theirs to type, and leaving it empty keeps every model at its maximum.
-  const [localWindowEntry, setLocalWindowEntry] = useState<string | null>(null);
-  const usesModelMax = runtimeDraft.localContextWindow === null && localWindowEntry === null;
-
-  const commitLocalWindow = () => {
-    if (localWindowEntry === null) return;
-    setLocalWindowEntry(null);
-    const typed = localWindowEntry.trim();
-    const value = typed === '' ? null : Number(typed);
-    if (value !== null && !Number.isFinite(value)) return;
-    const next =
-      value === null
-        ? null
-        : Math.round(clamp(value, LOCAL_CONTEXT_WINDOW_MIN, LOCAL_CONTEXT_WINDOW_MAX));
-    if (next === runtimeDraft.localContextWindow) return;
-    setRuntimeDraft((previous) => ({ ...previous, localContextWindow: next }));
-    void saveLlmUpdates({ localContextWindow: next });
-  };
-
   return (
-
     <SettingsSection title="Model runtime">
       <SettingsRow label="Temperature" htmlFor="tuning-temperature">
         <input
@@ -173,7 +143,11 @@ export function RuntimeTuningSection({
         />
       </SettingsRow>
 
-      <SettingsRow label="Max tokens" htmlFor="tuning-max-tokens">
+      <SettingsRow
+        label="Max tokens"
+        hint="At most the chat provider's context window, set in Settings → Chat."
+        htmlFor="tuning-max-tokens"
+      >
         <input
           id="tuning-max-tokens"
           type="number"
@@ -196,70 +170,6 @@ export function RuntimeTuningSection({
           }
           className={NUMBER_FIELD_CLASS}
         />
-      </SettingsRow>
-
-      <SettingsRow label="Context window" htmlFor="tuning-context-window">
-        <input
-          id="tuning-context-window"
-          type="number"
-          min={512}
-          max={262144}
-          step={1}
-          value={runtimeDraft.contextWindow}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              contextWindow: Math.round(toFinite(event.target.value, previous.contextWindow)),
-            }))
-          }
-          onBlur={() =>
-            void saveLlmUpdates({
-              contextWindow: Math.round(clamp(runtimeDraft.contextWindow, 512, 262144)),
-              maxTokens: Math.round(
-                clamp(runtimeDraft.maxTokens, 128, runtimeDraft.contextWindow)
-              ),
-            })
-          }
-          className={NUMBER_FIELD_CLASS}
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        label="Local model context window"
-        hint="Each local model loads with its own maximum, the window it was trained for, unless you set one here or for the model in Settings → Models. A larger window needs more memory; one too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
-        htmlFor="tuning-local-context-window"
-      >
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
-            <input
-              type="checkbox"
-              checked={usesModelMax}
-              onChange={(event) => {
-                if (!event.target.checked) {
-                  setLocalWindowEntry('');
-                  return;
-                }
-                setLocalWindowEntry(null);
-                setRuntimeDraft((previous) => ({ ...previous, localContextWindow: null }));
-                void saveLlmUpdates({ localContextWindow: null });
-              }}
-            />
-            Model&apos;s max
-          </label>
-          <input
-            id="tuning-local-context-window"
-            type="number"
-            min={LOCAL_CONTEXT_WINDOW_MIN}
-            max={LOCAL_CONTEXT_WINDOW_MAX}
-            step={1}
-            disabled={usesModelMax}
-            placeholder={usesModelMax ? undefined : 'Tokens'}
-            value={localWindowEntry ?? runtimeDraft.localContextWindow ?? ''}
-            onChange={(event) => setLocalWindowEntry(event.target.value)}
-            onBlur={commitLocalWindow}
-            className={NUMBER_FIELD_CLASS}
-          />
-        </div>
       </SettingsRow>
 
       <SettingsRow

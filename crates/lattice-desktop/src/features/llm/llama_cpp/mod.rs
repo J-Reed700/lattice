@@ -217,7 +217,9 @@ impl LlamaCppLlm {
     /// from `/props` slots over the `--ctx-size` it was launched with. A
     /// remote one is keyed by URL in `schedulers` and sized from `/props`
     /// alone; one that does not answer it gets one slot and no pinning.
-    pub(crate) async fn schedule(self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
+    /// Requests are sized to the window the scheduler was, so a remote
+    /// server's own window replaces the configured one.
+    pub(crate) async fn schedule(mut self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
             llama_server_capacity, BackendCapacity, ScheduledLlm, ServerTokenizer,
         };
@@ -252,6 +254,17 @@ impl LlamaCppLlm {
                     .await
             }
         };
+        if let Some(window) = scheduler.capacity().shared_window {
+            if window != self.config.context_window {
+                tracing::info!(
+                    server = self.server_root(),
+                    configured = self.config.context_window,
+                    window,
+                    "Sizing requests to the window the server reports"
+                );
+                self.config.context_window = window;
+            }
+        }
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
         let output_limit = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);

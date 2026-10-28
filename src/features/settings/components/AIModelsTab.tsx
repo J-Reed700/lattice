@@ -29,6 +29,7 @@ import { CloudMetaRow } from './modelRoles/CloudMetaRow';
 import { LearningModelBanner } from './modelRoles/LearningModelBanner';
 import { LeftoverEmbeddingFilesRow } from './modelRoles/LeftoverEmbeddingFilesRow';
 import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
+import { LocalContextWindowRow } from './modelRoles/LocalContextWindowRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';
 import { ModelRolesProvider, useModelRoles } from './modelRoles/ModelRolesContext';
@@ -90,6 +91,7 @@ function AIModelsTabContent() {
       </div>
       <LearningModelBanner />
       <SettingsSection title="On this computer" actions={<HardDrive className="h-4 w-4 text-text-muted" aria-hidden="true" />}>
+      {localModels.length > 0 ? <LocalContextWindowRow /> : null}
       {localModels.length > 0 ? (
         <div className="border-b border-border-subtle py-3">
           <SidebarSearch
