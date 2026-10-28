@@ -243,9 +243,6 @@ impl LearningPracticalRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
-        if ordinal >= 160 {
-            return Err(invalid("This simulation has reached its turn limit."));
-        }
         let timestamp = now();
         let learner_turn_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,'learner',?,'[]',NULL,?)")

@@ -464,6 +464,52 @@ pub(in crate::features::learning) async fn generate_activity_with_plan(
     })
 }
 
+/// `prompt` with the newest whole turns of `transcript`, in order, while they
+/// fit the room the window leaves under `system` (half of it when source
+/// snapshots share it), and a line saying how many earlier turns are not
+/// shown.
+fn with_transcript(
+    llm: &dyn LLMPort,
+    system: &str,
+    mut prompt: serde_json::Value,
+    transcript: Vec<serde_json::Value>,
+    output_tokens: usize,
+    shared: bool,
+) -> serde_json::Value {
+    let room = crate::features::learning::reference_collection::snapshot_room(
+        llm,
+        system,
+        &prompt,
+        output_tokens,
+    );
+    let room = if shared { room / 2 } else { room };
+    let mut used = 0;
+    let kept = transcript
+        .iter()
+        .rev()
+        .take_while(|turn| {
+            used += llm.count_tokens(&turn.to_string()) + 1;
+            used <= room
+        })
+        .count();
+    let earlier = transcript.len() - kept;
+    if let Some(fields) = prompt.as_object_mut() {
+        fields.insert(
+            "transcript".into(),
+            serde_json::Value::Array(transcript.into_iter().skip(earlier).collect()),
+        );
+        fields.insert(
+            "earlierTurns".into(),
+            serde_json::json!(if earlier == 0 {
+                String::new()
+            } else {
+                format!("{earlier} earlier turns not shown")
+            }),
+        );
+    }
+    prompt
+}
+
 pub async fn generate_simulation_turn(
     llm: &dyn LLMPort,
     activity: &SimulationActivityContext,
@@ -471,9 +517,6 @@ pub async fn generate_simulation_turn(
     sources: &[LearningSourceVersionDto],
     final_feedback: bool,
 ) -> Result<GeneratedSimulationTurn> {
-    if !final_feedback && session.turns.len() > 160 {
-        return Err(invalid("This simulation has reached its turn limit."));
-    }
     let reviewed_interview = final_feedback && activity.interview_answers.is_some();
     let transcript = session
         .turns
@@ -496,7 +539,8 @@ pub async fn generate_simulation_turn(
         "rubric":activity.rubric.iter().map(|criterion| serde_json::json!({
             "title":criterion.title,"description":criterion.description,"maxPoints":criterion.max_points,
         })).collect::<Vec<_>>(),
-        "transcript":transcript,
+        "transcript":[],
+        "earlierTurns":"",
         "sourceSnapshots":[],
         "finalFeedback":final_feedback,
     });
@@ -592,6 +636,14 @@ pub async fn generate_simulation_turn(
     // Reviewed closing feedback already has its frozen guide evidence. Keep raw
     // source/question identifiers out of that model request altogether.
     let prompt_sources = if reviewed_interview { &[][..] } else { sources };
+    let prompt = with_transcript(
+        llm,
+        &system,
+        prompt,
+        transcript,
+        output_tokens,
+        !prompt_sources.is_empty(),
+    );
     let prompt =
         with_snapshots(llm, &system, prompt, prompt_sources, &query, output_tokens).await?;
     crate::features::learning::generation::complete_checked(

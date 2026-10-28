@@ -12,6 +12,7 @@ use crate::features::learning::assessment_engine::{
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::grade_rationale::{GraderCriterion, GraderItem, GraderVerdict};
 use crate::features::learning::key_review::{self, KeyVerdict};
+use crate::features::learning::lessons::structured_call::cut_off;
 use crate::features::learning::model_call;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use lattice_core::application::services::grounded_generation::{GroundedOutput, GroundedRequest};
@@ -274,8 +275,9 @@ impl Batch<'_> {
     }
 
     /// The items the model wrote, each validated or refused with a reason;
-    /// `None` when the window holds no request for them (see [`Batch::send`]),
-    /// and the caller then asks for fewer items.
+    /// `None` when these many cannot come from one request: the window holds
+    /// no request for them (see [`Batch::send`]), or the batch failed as a
+    /// whole. The caller then asks for fewer items.
     async fn author(
         &self,
         llm: &dyn LLMPort,
@@ -285,11 +287,13 @@ impl Batch<'_> {
             return Ok(None);
         };
         let schema = self.schema(chosen.len());
-        // A teaching issue that survived its repair, a reviewer answer out of
-        // shape, or a reviewed batch that is not JSON is this batch's problem.
-        // Its items are refused with the reason and the round asks for others,
-        // so the bank comes out smaller rather than the job failing (§5.2).
-        let refused = |reason: String| Ok(Some(vec![Err(reason); self.count]));
+        // One item's problem sinks the batch it came in, so a batch asks again
+        // in halves; a single item is refused with the reason, and the bank
+        // comes out smaller rather than the job failing (§5.2).
+        let refused = |reason: String| Ok((self.count == 1).then(|| vec![Err(reason)]));
+        if cut_off(&response.finish_reason) {
+            return refused("The answer was cut off at the model's output limit.".into());
+        }
         let raw = match crate::features::learning::teaching::review_and_repair(
             llm,
             SYSTEM,
@@ -336,10 +340,6 @@ pub struct Authored {
     pub dropped: Vec<String>,
 }
 
-/// Write up to `need.count` items: validate each in code, re-request what
-/// fails, solve each keyed item blind, repair a disputed key once and drop it
-/// if the second solve still disagrees. A model that cannot produce a valid
-/// item leaves a smaller bank, never a broken item.
 /// `need` for repairing the item asked as `prompt`: its own prompt is not a
 /// question the repair may not repeat.
 fn repair_need(need: &AuthoringNeed, prompt: &str) -> AuthoringNeed {
@@ -348,6 +348,10 @@ fn repair_need(need: &AuthoringNeed, prompt: &str) -> AuthoringNeed {
     own
 }
 
+/// Write up to `need.count` items: validate each in code, re-request what
+/// fails, solve each keyed item blind, repair a disputed key once and drop it
+/// if the second solve still disagrees. A model that cannot produce a valid
+/// item leaves a smaller bank, never a broken item.
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
