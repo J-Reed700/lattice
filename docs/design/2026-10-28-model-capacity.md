@@ -45,7 +45,7 @@ tasks do (HELMET). Batch accuracy falls with batch size and depends on position 
 ## 4. Where a model's sizes come from
 
 1. **Measured, shipped.** The app embeds a table of profiles for the models we calibrated: the 9B (both catalog
-   files), the 27B and Haiku; Sonnet if its measurement cost is approved. A job starts at the measured size and
+   files), the 27B and Haiku. A job starts at the measured size and
    never grows past it; a probe miss still shrinks it for that job.
 2. **Learned, on the job.** Any other model starts at the **starting size** and climbs on its own evidence (§6).
    The size it reaches is remembered for that model identity, and its next job starts there.
@@ -354,10 +354,10 @@ In order of work; each row gets a bench or eval with a dataset and a decision ru
 Fanning user work out to cloud models; speed in any sizing decision; background re-checks of a model while it
 sits idle; scheduled or per-release runs; Opus calibration.
 
-## 11. Open for sign-off
+## 11. Decided at sign-off
 
 1. Condensing's starting size: 16k tokens.
-2. Sonnet in the shipped table, once its cost is estimated.
+2. The shipped table holds the 9B, the 27B and Haiku. Sonnet is not measured now.
 
 ## 12. Order of work
 
