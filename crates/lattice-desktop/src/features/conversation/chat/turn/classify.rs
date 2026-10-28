@@ -11,7 +11,11 @@ pub(super) async fn classify_turn(
     turn: &PreparedTurn,
     tool_preferences: Option<&ToolPreferences>,
 ) -> SearchFlags {
-    if turn.explorer.is_some() {
+    if turn
+        .source
+        .as_ref()
+        .is_some_and(|source| !source.policy().infers_intent)
+    {
         return turn.requested_flags;
     }
     infer_turn_intent_flags(
@@ -44,7 +48,7 @@ pub(super) async fn route_turn(
         &turn.document_context,
         &turn.message,
         flags,
-        turn.explorer.is_some(),
+        turn.source.as_ref().map(|source| source.policy()),
         &turn.settings.llm.router,
         &turn.recorder,
         turn.cancel_token(),

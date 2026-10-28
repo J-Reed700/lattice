@@ -57,9 +57,9 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     pub message_id: String,
     pub response: String,
     pub sources: Vec<SourceDto>,
-    /// The answer is an Explorer turn's: only its cited sentences are claims
-    /// about the sources (`GroundingVerifier::cited_only`).
-    pub explorer: bool,
+    /// Only the answer's cited sentences are claims about the sources, as in
+    /// an Explorer turn (`GroundingVerifier::cited_only`).
+    pub verifies_cited_only: bool,
     pub tuning: LLMVerificationSettingsDto,
     /// Stands in as the judge when no utility model is configured.
     pub chat_llm: Arc<dyn LLMPort>,
@@ -127,7 +127,7 @@ impl BackgroundVerification {
         };
         let verifier = GroundingVerifier::new(judge_llm)
             .with_tuning(&self.tuning)
-            .cited_only(self.explorer);
+            .cited_only(self.verifies_cited_only);
         let response = self.response.clone();
         let report = tokio::select! {
             biased;
@@ -287,7 +287,7 @@ mod tests {
             message_id: "message-1".to_string(),
             response: "A completed answer.".to_string(),
             sources: vec![],
-            explorer: false,
+            verifies_cited_only: false,
             tuning: LLMVerificationSettingsDto::default(),
             chat_llm: Arc::new(MockLLMPort::new()),
             turn: Some(turn),

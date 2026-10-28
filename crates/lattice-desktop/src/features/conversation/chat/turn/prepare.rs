@@ -23,7 +23,7 @@ pub(super) struct PreparedTurn {
     pub(super) requested_flags: SearchFlags,
     pub(super) recorder: TurnRecorder,
     pub(super) focus: FocusScope,
-    pub(super) explorer: Option<ExplorerTurn>,
+    pub(super) source: Option<TurnSource>,
     pub(super) conv_service: Arc<dyn ConversationServiceTrait>,
     pub(super) settings: SettingsDto,
     pub(super) prompt_settings: LLMPromptSettingsDto,
@@ -207,8 +207,8 @@ pub(super) async fn prepare_turn(
     // An Explorer conversation reads a folder beside the chat. The stored root
     // is the boundary for every folder tool, and the open file the request
     // names is checked against it here, once.
-    let explorer = container
-        .explorer_turn(
+    let source = container
+        .turn_source(
             &conv_id,
             tool_preferences.and_then(|preferences| preferences.explorer_focus.as_ref()),
         )
@@ -252,7 +252,7 @@ pub(super) async fn prepare_turn(
         container,
         &llm,
         &settings.llm.custom_tools,
-        explorer.as_ref(),
+        source.as_ref(),
         search_flags,
         tool_preferences,
     );
@@ -265,7 +265,7 @@ pub(super) async fn prepare_turn(
         &crate::features::conversation::chat::prompting::evidence_frame(
             &prompt_settings,
             &validated_message,
-            explorer.is_some(),
+            source.as_ref().map(|source| source.policy()),
         ),
         &context,
         settings.llm.bounded_conversation_memory,
@@ -284,7 +284,7 @@ pub(super) async fn prepare_turn(
         requested_flags: search_flags,
         recorder,
         focus,
-        explorer,
+        source,
         conv_service,
         settings,
         prompt_settings,
@@ -373,8 +373,8 @@ pub(super) async fn resume_turn(
         flags.closed_book,
     )
     .await;
-    let explorer = container
-        .explorer_turn(
+    let source = container
+        .turn_source(
             &conv_id,
             preferences.and_then(|preferences| preferences.explorer_focus.as_ref()),
         )
@@ -405,7 +405,7 @@ pub(super) async fn resume_turn(
         requested_flags: flags,
         recorder,
         focus,
-        explorer,
+        source,
         conv_service: container.conversation_service(),
         settings,
         prompt_settings,
@@ -502,7 +502,7 @@ impl PreparedTurn {
             requested_flags: SearchFlags::from_preferences(None),
             recorder: TurnRecorder::silent(conv_id, turn_id),
             focus: FocusScope::default(),
-            explorer: None,
+            source: None,
             conv_service,
             prompt_settings: normalize_prompt_settings(settings.llm.prompts.clone()),
             settings,

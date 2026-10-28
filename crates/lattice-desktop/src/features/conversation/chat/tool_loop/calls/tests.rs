@@ -48,17 +48,55 @@ fn every_registered_tool_is_classified() {
         .all(|name| runs_alongside_others(name) == (name != "find_image")));
 }
 
-#[test]
-fn folder_reads_run_together_and_everything_else_runs_alone() {
-    for tool in [
-        "read_file",
-        "list_directory",
-        "search_files",
-        "find_files",
-        "search_folder",
-    ] {
-        assert!(runs_alongside_others(tool), "{tool}");
+/// A source with one tool that reads and one that writes.
+#[derive(Debug)]
+struct Notebook;
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::turn_source::TurnSourcePort for Notebook {
+    fn policy(&self) -> lattice_core::application::ports::turn_source::TurnSourcePolicy {
+        unreachable!("not asked")
     }
+    fn owns_tool(&self, tool: &str) -> bool {
+        matches!(tool, "read_page" | "write_page")
+    }
+    fn reads_only(&self, tool: &str) -> bool {
+        tool == "read_page"
+    }
+    fn activity_label(&self, tool: &str, _arguments: &serde_json::Value) -> String {
+        tool.into()
+    }
+    fn add_tools(&self, _tools: &mut Vec<lattice_core::application::ports::ToolDefinition>) {}
+    async fn context_block(&self, _: usize, _: bool, _: Option<&str>) -> String {
+        String::new()
+    }
+    async fn execute_tool(
+        &self,
+        _call: lattice_core::application::contracts::tools::FunctionCall,
+        _max_chars: usize,
+    ) -> lattice_core::shared::Result<lattice_core::application::contracts::tools::FunctionResult>
+    {
+        unreachable!("not run")
+    }
+}
+
+#[test]
+fn a_source_s_reads_run_together_and_its_writes_run_alone() {
+    let notebook: TurnSource = std::sync::Arc::new(Notebook);
+    let calls = [
+        call("1", "read_page", serde_json::json!({})),
+        call("2", "web_search", serde_json::json!({"query": "x"})),
+        call("3", "write_page", serde_json::json!({})),
+        call("4", "read_page", serde_json::json!({})),
+    ];
+    assert_eq!(batch_end(&calls, 0, Some(&notebook)), 2);
+    assert_eq!(batch_end(&calls, 2, Some(&notebook)), 3);
+    // Without the source its tools are not known to only read.
+    assert_eq!(batch_end(&calls, 0, None), 1);
+}
+
+#[test]
+fn everything_else_runs_alone() {
     for tool in [
         history_tools::TOOL_SEARCH_CONVERSATION_HISTORY,
         history_tools::TOOL_READ_CONVERSATION_HISTORY,
@@ -78,9 +116,9 @@ fn reads_share_a_batch_and_a_tool_that_may_write_stands_alone() {
         call("3", "capture_into_journal", serde_json::json!({})),
         fetch("4", "https://b.example/"),
     ];
-    assert_eq!(batch_end(&calls, 0), 2);
-    assert_eq!(batch_end(&calls, 2), 3);
-    assert_eq!(batch_end(&calls, 3), 4);
+    assert_eq!(batch_end(&calls, 0, None), 2);
+    assert_eq!(batch_end(&calls, 2, None), 3);
+    assert_eq!(batch_end(&calls, 3, None), 4);
 }
 
 /// Two reads of one page in one round: the second is answered from the first.
@@ -91,8 +129,8 @@ fn a_second_read_of_a_page_waits_for_the_first() {
         fetch("2", "https://b.example/"),
         fetch("3", "https://A.example/story#top"),
     ];
-    assert_eq!(batch_end(&calls, 0), 2);
-    assert_eq!(batch_end(&calls, 2), 3);
+    assert_eq!(batch_end(&calls, 0, None), 2);
+    assert_eq!(batch_end(&calls, 2, None), 3);
 }
 
 /// Stop is honoured while a tool is still running, not after it returns.

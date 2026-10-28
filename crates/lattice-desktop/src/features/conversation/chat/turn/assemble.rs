@@ -112,7 +112,7 @@ pub(super) fn render_prompt(
     let CarriedMaterial {
         attachments,
         pictures,
-        explorer_context,
+        source_context,
         attachment_names,
         attachment_ids,
     } = carried;
@@ -290,7 +290,7 @@ pub(super) fn render_prompt(
         prompt_settings: turn.prompt_settings.clone(),
         question: turn.message.clone(),
         is_greeting: retrieval.interpretation.query_type == QueryType::Greeting,
-        explorer: turn.explorer.is_some(),
+        source: turn.source.as_ref().map(|source| source.policy()),
         flags,
         deep_research_searches: searches_again.then(|| retrieval.web_queries.clone()),
         web_search_error: retrieval.web_search_error.clone(),
@@ -299,7 +299,7 @@ pub(super) fn render_prompt(
         sufficiency: retrieval.sufficiency.clone(),
     })
     .with_attachments(attachment_context, attachment_citations)
-    .with_folder(explorer_context)
+    .with_source(source_context)
     .with_prior_evidence(prior_evidence_context, prior_citations)
     .with_followup(followup_context_text, followup_citations)
     .with_library(library)
@@ -568,7 +568,7 @@ pub(super) fn grounded_tool_tokens(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
-    explorer: Option<&ExplorerTurn>,
+    source: Option<&TurnSource>,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
 ) -> usize {
@@ -576,7 +576,7 @@ pub(super) fn grounded_tool_tokens(
         container,
         llm,
         custom_tools,
-        explorer,
+        source,
         flags,
         tool_preferences,
         Grounding {
@@ -639,7 +639,7 @@ fn select_tools(
         container,
         &turn.llm,
         &turn.settings.llm.custom_tools,
-        turn.explorer.as_ref(),
+        turn.source.as_ref(),
         flags,
         tool_preferences,
         grounding,
@@ -673,7 +673,7 @@ pub(super) fn offered_tools(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
-    explorer: Option<&ExplorerTurn>,
+    source: Option<&TurnSource>,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
     grounding: Grounding,
@@ -710,15 +710,15 @@ pub(super) fn offered_tools(
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
     // An Explorer turn searches the library only when the user turns it on
     // (`classify_turn`); reading a document the message names stays open.
-    if explorer.is_some() && !flags.force_kb_search {
+    if source.is_some_and(|source| !source.policy().offers_library_tools) && !flags.force_kb_search {
         turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));
     }
     // The folder tools ride on top of whichever branch was chosen above, the
     // way history access does: a turn grounded in library passages may still
     // need to open the file the question is about. A closed-book turn reads
     // nothing outside its message, the folder included.
-    if let Some(explorer) = explorer.filter(|_| supports_tools && !flags.closed_book) {
-        explorer.add_tools(&mut turn_tools);
+    if let Some(source) = source.filter(|_| supports_tools && !flags.closed_book) {
+        source.add_tools(&mut turn_tools);
     }
     turn_tools
 }

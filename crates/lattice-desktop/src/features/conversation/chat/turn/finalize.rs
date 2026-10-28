@@ -174,7 +174,10 @@ fn background_verification_for(
         message_id,
         response,
         sources,
-        explorer: turn.explorer.is_some(),
+        verifies_cited_only: turn
+            .source
+            .as_ref()
+            .is_some_and(|source| source.policy().verifies_cited_only),
         tuning: turn.settings.llm.verification.clone(),
         chat_llm: Arc::clone(&turn.llm),
         turn: Some(record),

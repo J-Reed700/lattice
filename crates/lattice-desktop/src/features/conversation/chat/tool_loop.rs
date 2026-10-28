@@ -100,7 +100,7 @@ pub(super) async fn run_agentic_tool_loop(
     pages_already_read: FetchMemory,
     // The folder of an Explorer conversation; `None` for every other turn. The
     // folder tools are only in `request.tools` when this is set.
-    explorer: Option<&super::ExplorerTurn>,
+    source: Option<&super::TurnSource>,
 ) -> Result<ToolLoopOutcome> {
     use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
 
@@ -215,7 +215,7 @@ pub(super) async fn run_agentic_tool_loop(
             highlight_terms,
             tool_output_settings,
             focus,
-            explorer,
+            source,
             recorder,
             history: container
                 .chat_records()
@@ -685,13 +685,11 @@ pub(super) async fn run_agentic_tool_loop(
 /// Model rounds a turn may spend on tool calls, the last kept for the answer.
 /// Deep research and Explorer walks read many sources or files a few per round,
 /// so they get more.
-pub(super) fn max_tool_rounds(deep_research: bool, explorer: bool) -> usize {
+pub(super) fn max_tool_rounds(deep_research: bool, source_rounds: Option<usize>) -> usize {
     if deep_research {
         12
-    } else if explorer {
-        10
     } else {
-        5
+        source_rounds.unwrap_or(5)
     }
 }
 

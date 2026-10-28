@@ -8,12 +8,13 @@
 use super::*;
 use crate::features::conversation::chat::prompt_settings::LLMPromptSettingsDto;
 use crate::features::conversation::chat::retrieval::SufficiencyVerdict;
+use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 /// Where an item of evidence sits in the message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Attachments,
-    Folder,
+    Source,
     PriorEvidence,
     Followup,
     Library,
@@ -35,8 +36,8 @@ pub(super) struct MessageFrame {
     pub(super) prompt_settings: LLMPromptSettingsDto,
     pub(super) question: String,
     pub(super) is_greeting: bool,
-    /// The turn belongs to an Explorer conversation.
-    pub(super) explorer: bool,
+    /// How the turn treats the source its conversation reads beside the chat.
+    pub(super) source: Option<TurnSourcePolicy>,
     pub(super) flags: SearchFlags,
     pub(super) deep_research_searches: Option<Vec<String>>,
     pub(super) web_search_error: Option<String>,
@@ -71,8 +72,8 @@ impl TurnMessage {
         self.with_block(Section::Attachments, text, citations)
     }
 
-    pub(super) fn with_folder(self, text: Option<String>) -> Self {
-        self.with_block(Section::Folder, text, Vec::new())
+    pub(super) fn with_source(self, text: Option<String>) -> Self {
+        self.with_block(Section::Source, text, Vec::new())
     }
 
     pub(super) fn with_prior_evidence(self, text: Option<String>, citations: Vec<u32>) -> Self {
@@ -142,8 +143,8 @@ impl TurnMessage {
             frame.is_greeting,
             frame.flags,
         )
-        .in_explorer(frame.explorer)
-        .with_explorer_context(section(Section::Folder))
+        .for_source(frame.source)
+        .with_source_context(section(Section::Source))
         .with_deep_research_searches(frame.deep_research_searches.clone())
         .with_prior_evidence_context(section(Section::PriorEvidence))
         .with_attachment_context(section(Section::Attachments))
@@ -198,7 +199,7 @@ mod tests {
             prompt_settings: normalize_prompt_settings(LLMPromptSettingsDto::default()),
             question: "When does the contract renew?".into(),
             is_greeting: false,
-            explorer: false,
+            source: None,
             flags: SearchFlags::from_preferences(None),
             deep_research_searches: None,
             web_search_error: None,
@@ -283,7 +284,7 @@ mod tests {
         assert!(message.render(6).ends_with(READING_INSTRUCTION));
         assert!(message.render(1).ends_with(READING_INSTRUCTION));
         assert!(!message.render(0).contains(READING_INSTRUCTION));
-        let folder_only = TurnMessage::new(frame()).with_folder(Some("src/main.rs".into()));
+        let folder_only = TurnMessage::new(frame()).with_source(Some("src/main.rs".into()));
         assert!(!folder_only.render(1).contains(READING_INSTRUCTION));
     }
 

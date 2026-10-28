@@ -1,5 +1,6 @@
 use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
+use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 use super::tool_loop::READING_INSTRUCTION;
 use super::SearchFlags;
@@ -10,12 +11,13 @@ pub(super) struct PromptMessageBuilder<'a> {
     is_greeting: bool,
     force_kb_search: bool,
     force_web_search: bool,
-    /// The turn belongs to an Explorer conversation, so its context travels
-    /// in `EXPLORER_TEMPLATE` rather than the saved document-answer template.
-    explorer: bool,
-    /// The folder an Explorer conversation reads: its top level, the open
-    /// file and selection, and the rule for pointing at lines.
-    explorer_context: Option<String>,
+    /// How the turn treats the source its conversation reads beside the chat;
+    /// with a template of its own, the context travels in it rather than the
+    /// saved document-answer template.
+    source: Option<TurnSourcePolicy>,
+    /// What the source shows for the turn, such as an Explorer folder's top
+    /// level, open file and selection, and the rule for pointing at lines.
+    source_context: Option<String>,
     /// The files the reader attached to this message, already carried whole.
     attachment_context: Option<String>,
     followup_context: Option<String>,
@@ -55,8 +57,8 @@ impl<'a> PromptMessageBuilder<'a> {
             is_greeting,
             force_kb_search: search_flags.force_kb_search,
             force_web_search: search_flags.force_web_search,
-            explorer: false,
-            explorer_context: None,
+            source: None,
+            source_context: None,
             attachment_context: None,
             followup_context: None,
             prior_evidence_context: None,
@@ -95,17 +97,17 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
-    /// The Explorer folder block. It leads the context: the folder is what the
-    /// user is looking at, and the library and the web are outside knowledge.
-    pub(super) fn with_explorer_context(mut self, explorer_context: Option<String>) -> Self {
-        self.explorer_context = explorer_context;
+    /// The source's block. It leads the context: the source is what the user
+    /// is looking at, and the library and the web are outside knowledge.
+    pub(super) fn with_source_context(mut self, source_context: Option<String>) -> Self {
+        self.source_context = source_context;
         self
     }
 
-    /// A turn in an Explorer conversation, whether or not its folder block
-    /// survived the cut for room.
-    pub(super) fn in_explorer(mut self, explorer: bool) -> Self {
-        self.explorer = explorer;
+    /// A turn whose conversation reads a source beside the chat, whether or
+    /// not the source's block survived the cut for room.
+    pub(super) fn for_source(mut self, source: Option<TurnSourcePolicy>) -> Self {
+        self.source = source;
         self
     }
 
@@ -194,8 +196,8 @@ impl<'a> PromptMessageBuilder<'a> {
         // attachment leads and the earlier document is one section among
         // several, because "here it is" means the new file, not the old one.
         if self.attachment_context.is_none()
-            && !self.explorer
-            && self.explorer_context.is_none()
+            && self.source.is_none()
+            && self.source_context.is_none()
             && self.prior_evidence_context.is_none()
             && self.web_context.is_none()
             && self.linked_web_sources_context.is_none()
@@ -216,7 +218,7 @@ impl<'a> PromptMessageBuilder<'a> {
         // already say there was nothing to go on.
         let thin_kb_reason = self.thin_kb_reason.as_deref().filter(|_| has_kb_context);
         let mut context_sections: Vec<String> = vec![CONTINUITY_NOTE.to_string()];
-        if let Some(context) = self.explorer_context.as_ref() {
+        if let Some(context) = self.source_context.as_ref() {
             context_sections.push(context.clone());
         }
         if let Some(context) = self.prior_evidence_context.as_ref() {
@@ -271,7 +273,7 @@ from general knowledge as though it came from the user's documents."
 
         if context_sections.len() > 1 {
             return render_prompt_template(
-                evidence_template(self.prompt_settings, self.explorer),
+                evidence_template(self.prompt_settings, self.source),
                 &context_sections.join("\n\n"),
                 self.question,
             );
@@ -388,36 +390,26 @@ broader one.";
 pub(super) fn evidence_frame(
     prompt_settings: &LLMPromptSettingsDto,
     question: &str,
-    explorer: bool,
+    source: Option<TurnSourcePolicy>,
 ) -> String {
     let frame = render_prompt_template(
-        evidence_template(prompt_settings, explorer),
+        evidence_template(prompt_settings, source),
         CONTINUITY_NOTE,
         question,
     );
     format!("{frame}\n\n{READING_INSTRUCTION}")
 }
 
-/// The template an evidence-carrying message renders in: the saved
-/// document-answer template, or in an Explorer conversation the folder's own.
-fn evidence_template(prompt_settings: &LLMPromptSettingsDto, explorer: bool) -> &str {
-    if explorer {
-        EXPLORER_TEMPLATE
-    } else {
-        &prompt_settings.rag_prompt_template
-    }
+/// The template an evidence-carrying message renders in: the source's own,
+/// such as an Explorer folder's, or else the saved document-answer template.
+fn evidence_template(
+    prompt_settings: &LLMPromptSettingsDto,
+    source: Option<TurnSourcePolicy>,
+) -> &str {
+    source
+        .and_then(|source| source.evidence_template)
+        .unwrap_or(&prompt_settings.rag_prompt_template)
 }
-
-/// The template an Explorer turn's context travels in. Unlike the
-/// document-answer template it does not ask for a citation on every
-/// statement: explaining the folder draws on what no passage holds.
-const EXPLORER_TEMPLATE: &str = "Answer the user's question about the folder open beside this chat: \
-     what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
-     from what you know; teaching how the code works, or a concept it uses, needs no source and no \
-     citation. Point at the folder's code with line references, as the folder's rules below describe. \
-     Bracket numbers like [1] belong only to the numbered library or web passages in this message: put \
-     one after a claim such a passage supports, and never on the folder, on these instructions or on \
-     your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
 /// What a deep-research turn is asked to do with the rounds it has left: go
 /// after what the first, wide round missed. Every search that round ran is
@@ -591,4 +583,4 @@ mod deep_research_prompt_tests;
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-mod explorer_prompt_tests;
+mod source_prompt_tests;
