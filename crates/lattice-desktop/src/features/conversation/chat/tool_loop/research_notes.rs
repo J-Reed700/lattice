@@ -11,7 +11,8 @@ use super::final_round::{say_last, written_call_start};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, SamplingOverride, ThinkingMode, ToolChoice,
+    CompletionInput, CompletionRequest, CompletionResponse, SamplingOverride, ThinkingMode,
+    ToolChoice,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
@@ -120,7 +121,6 @@ pub(super) async fn condense(
         "Condensing what it has read",
         Some(format!("{chars_before} characters of results")),
     );
-    let remaining = clock.remaining()?;
     // The prompt the server has cached, and the instruction after it without
     // a message of its own (see `final_round` for what a new user message
     // costs on Qwen 3.5).
@@ -142,29 +142,33 @@ pub(super) async fn condense(
         priority: request.priority,
         cancel: request.cancel.clone(),
         cache_key: request.cache_key.clone(),
-        time_budget: Some(remaining),
         // A transcription: thinking would only spend the round's time.
         thinking: ThinkingMode::Off,
         ..Default::default()
     };
-    let completion = timeout(remaining, llm.complete(&notes_request));
-    let response = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => return Err(cancelled_error()),
-        result = completion => result.map_err(|_| clock.exhausted())?,
+    let Some(response) = ask(llm, &notes_request, cancel, clock).await? else {
+        step.failed(Some("The model could not write notes".into()));
+        return Ok(None);
     };
-    let response = match response {
-        Ok(response) => response,
-        Err(_) if cancel.is_cancelled() => return Err(cancelled_error()),
-        Err(error) => {
-            warn!(%error, "Could not condense the turn's tool results; carrying on without");
-            step.failed(Some("The model could not write notes".into()));
-            return Ok(None);
+    let mut notes = usable_notes(&response.text, &response.finish_reason);
+    let mut finish_reason = response.finish_reason;
+    // Read as more of the last result, the instruction can get a call back
+    // instead of notes; as a message of its own it does not.
+    if notes.is_none() && written_call_start(response.text.trim()).is_some() {
+        let mut again = notes_request;
+        again.input = request.input.clone();
+        again.input.push(CompletionInput::Message {
+            role: "user".into(),
+            content: CONDENSE_INSTRUCTION.into(),
+        });
+        if let Some(response) = ask(llm, &again, cancel, clock).await? {
+            notes = usable_notes(&response.text, &response.finish_reason);
+            finish_reason = response.finish_reason;
         }
-    };
-    let Some(notes) = usable_notes(&response.text, &response.finish_reason) else {
+    }
+    let Some(notes) = notes else {
         warn!(
-            finish_reason = %response.finish_reason,
+            %finish_reason,
             "The model's notes were not usable; carrying on without condensing"
         );
         step.failed(Some("No usable notes".into()));
@@ -207,6 +211,34 @@ pub(super) async fn condense(
         chars_before,
         chars_after,
     }))
+}
+
+/// The model's reply to `request` within the turn's time; `None` when the
+/// provider fails it. Only Stop and the turn's deadline are errors.
+async fn ask(
+    llm: &dyn LLMPort,
+    request: &CompletionRequest,
+    cancel: &CancellationToken,
+    clock: &TurnClock,
+) -> Result<Option<CompletionResponse>> {
+    let remaining = clock.remaining()?;
+    let request = CompletionRequest {
+        time_budget: Some(remaining),
+        ..request.clone()
+    };
+    let response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(cancelled_error()),
+        result = timeout(remaining, llm.complete(&request)) => result.map_err(|_| clock.exhausted())?,
+    };
+    match response {
+        Ok(response) => Ok(Some(response)),
+        Err(_) if cancel.is_cancelled() => Err(cancelled_error()),
+        Err(error) => {
+            warn!(%error, "Could not condense the turn's tool results; carrying on without");
+            Ok(None)
+        }
+    }
 }
 
 /// The notes, if they can stand in for the results: something written, not
@@ -306,6 +338,105 @@ mod tests {
     fn nothing_to_condense_without_results() {
         let input = transcript(&[]);
         assert_eq!(condensable_span(&input, 2), None);
+    }
+
+    /// Answers from a script, keeping every request it was sent.
+    struct Script {
+        replies: std::sync::Mutex<std::collections::VecDeque<CompletionResponse>>,
+        requests: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    impl Script {
+        fn new(replies: impl IntoIterator<Item = (&'static str, &'static str)>) -> Self {
+            Self {
+                replies: std::sync::Mutex::new(
+                    replies
+                        .into_iter()
+                        .map(|(text, finish_reason)| CompletionResponse {
+                            finish_reason: finish_reason.into(),
+                            ..CompletionResponse::from_text(text)
+                        })
+                        .collect(),
+                ),
+                requests: std::sync::Mutex::default(),
+            }
+        }
+
+        fn requests(&self) -> Vec<CompletionRequest> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for Script {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            self.requests.lock().unwrap().push(request.clone());
+            let reply = self.replies.lock().unwrap().pop_front();
+            Ok(reply.unwrap_or_else(|| CompletionResponse::from_text("")))
+        }
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    async fn condensed(model: &Script) -> Option<Condensed> {
+        let mut request = CompletionRequest {
+            input: transcript(&[&[3_000]]),
+            ..Default::default()
+        };
+        condense(
+            model,
+            &mut request,
+            2,
+            &TurnRecorder::silent("conversation", "request"),
+            &CancellationToken::new(),
+            &TurnClock::new(
+                std::time::Duration::from_secs(60),
+                std::time::Duration::ZERO,
+            ),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn notes_written_as_a_call_are_asked_for_again_in_a_message_of_their_own() {
+        let model = Script::new([
+            ("<tool_call>\n<function=web_search>", "stop"),
+            ("- fact [1]", "stop"),
+        ]);
+        let condensed = condensed(&model).await.expect("the second answer is notes");
+        assert_eq!(condensed.chars_before, 3_000);
+        let sent = model.requests();
+        assert_eq!(sent.len(), 2);
+        assert!(matches!(
+            sent[0].input.last(),
+            Some(CompletionInput::ToolResult { output, .. }) if output.ends_with(CONDENSE_INSTRUCTION)
+        ));
+        let results_end = transcript(&[&[3_000]]).len();
+        assert_eq!(sent[1].input.len(), results_end + 1);
+        assert!(matches!(
+            &sent[1].input[results_end - 1],
+            CompletionInput::ToolResult { output, .. } if output.len() == 3_000
+        ));
+        assert!(matches!(
+            sent[1].input.last(),
+            Some(CompletionInput::Message { role, content })
+                if role == "user" && content == CONDENSE_INSTRUCTION
+        ));
+    }
+
+    #[tokio::test]
+    async fn notes_cut_off_are_not_asked_for_again() {
+        let model = Script::new([("- fact [1]", "length")]);
+        assert!(condensed(&model).await.is_none());
+        assert_eq!(model.requests().len(), 1);
     }
 
     #[test]
