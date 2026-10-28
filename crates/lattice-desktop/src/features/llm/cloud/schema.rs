@@ -69,6 +69,16 @@ pub(super) fn in_words(mut body: Value) -> Value {
         "Reply with only a JSON value that matches this JSON Schema, and no other text:\n{}",
         format.get("schema").unwrap_or(&Value::Null)
     );
+    // A cached system prompt is a block, and keeps its breakpoint.
+    let block = body
+        .get_mut("system")
+        .and_then(Value::as_array_mut)
+        .and_then(|blocks| blocks.last_mut())
+        .and_then(|block| block.get_mut("text"));
+    if let Some(Value::String(text)) = block {
+        *text = format!("{text}\n\n{ask}");
+        return body;
+    }
     let system = match body.get("system").and_then(Value::as_str) {
         Some(system) if !system.is_empty() => format!("{system}\n\n{ask}"),
         _ => ask,

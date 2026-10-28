@@ -173,31 +173,108 @@ fn anthropic_omits_the_thinking_block_when_no_reasoning_is_asked_for() {
     assert_eq!(body["output_config"]["effort"], "low");
 }
 
-/// Requests that share a prompt prefix (a cache key) ask Claude to cache it;
-/// a one-off request does not pay for a cache write it will never read.
+/// A request that shares a prefix (a cache key) caches its system prompt, and
+/// its whole prompt only when it continues an exchange; a one-off request pays
+/// for no cache write.
 #[test]
-fn anthropic_caches_only_requests_that_share_a_prefix() {
+fn anthropic_caches_the_system_prompt_and_a_continued_exchange_whole() {
     let settings = LLMSettingsDto {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
     let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
-    let body = |cache_key: Option<&str>| {
+    let message = |role: &str, content: &str| CompletionInput::Message {
+        role: role.into(),
+        content: content.into(),
+    };
+    let body = |cache_key: Option<&str>, input: Vec<CompletionInput>| {
         anthropic
             .body(
                 &CompletionRequest {
                     cache_key: cache_key.map(str::to_owned),
+                    input,
                     ..Default::default()
                 },
                 false,
             )
             .unwrap()
     };
-    assert_eq!(
-        body(Some("conversation-1"))["cache_control"]["type"],
-        "ephemeral"
-    );
-    assert!(body(None).get("cache_control").is_none());
+    let one_step = vec![
+        message("system", "Check one claim."),
+        message("user", "The claim and its passages."),
+    ];
+    let keyed = body(Some("course-1"), one_step.clone());
+    assert_eq!(keyed["system"][0]["text"], "Check one claim.");
+    assert_eq!(keyed["system"][0]["cache_control"]["type"], "ephemeral");
+    assert!(keyed.get("cache_control").is_none(), "{keyed}");
+
+    let mut continued = one_step.clone();
+    continued.extend([
+        message("assistant", "The draft."),
+        message("user", "Now structure it."),
+    ]);
+    let continued = body(Some("course-1"), continued);
+    assert_eq!(continued["cache_control"]["type"], "ephemeral");
+    assert_eq!(continued["system"][0]["cache_control"]["type"], "ephemeral");
+
+    let one_off = body(None, one_step);
+    assert_eq!(one_off["system"], "Check one claim.");
+    assert!(one_off.get("cache_control").is_none());
+}
+
+/// The breakpoint goes on the system prompt as sent, after a schema too large
+/// to compile was added to it in words.
+#[test]
+fn anthropic_caches_a_system_prompt_that_carries_a_schema_in_words() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let properties: serde_json::Map<String, Value> = (0..30)
+        .map(|i| (format!("field{i}"), json!({"type":"string"})))
+        .collect();
+    let body = anthropic
+        .body(
+            &CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: "Check one claim.".into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: "The claim.".into(),
+                    },
+                ],
+                json_schema: Some(json!({"type":"object","properties":properties})),
+                cache_key: Some("course-1".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    let system = body["system"][0]["text"].as_str().unwrap();
+    assert!(system.starts_with("Check one claim."), "{system}");
+    assert!(system.contains("field29"), "{system}");
+    assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+}
+
+/// Asked again in words after Claude refuses its schema, a cached request
+/// keeps its system prompt and the breakpoint on it.
+#[test]
+fn a_schema_asked_for_again_in_words_keeps_the_cached_system_prompt() {
+    let body = json!({
+        "system": [{"type": "text", "text": "Check one claim.", "cache_control": {"type": "ephemeral"}}],
+        "output_config": {"format": {"type": "json_schema", "schema": {"type": "object"}}},
+        "messages": [],
+    });
+    let body = schema::in_words(body);
+    let system = body["system"][0]["text"].as_str().unwrap();
+    assert!(system.starts_with("Check one claim.\n\n"), "{system}");
+    assert!(system.contains("JSON Schema"), "{system}");
+    assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+    assert!(body.get("output_config").is_none());
 }
 
 /// Current Claude models 400 on any sampling knob, so a caller's determinism
