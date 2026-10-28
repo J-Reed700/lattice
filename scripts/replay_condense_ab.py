@@ -24,11 +24,13 @@ passage's label is on the same line or the last one cited before it.
 
   python -I -u scripts/replay_condense_ab.py --out OUT --llama http://127.0.0.1:8089 --rubric R ... \\
     --calls A.calls.jsonl ... [--arms ONE,EACH,NAMED,ONE-USER,ONE-BARE]
+  python -I -u scripts/replay_condense_ab.py --out OUT --claude claude-haiku-5-5 --budget 3 ...
   python -I scripts/replay_condense_ab.py --out OUT --summary
 """
 import argparse, json, os, re, statistics, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replay_claude as claude  # noqa: E402
 import replay_close_read_ab as base  # noqa: E402
 import replay_cut_evidence_ab as cut  # noqa: E402
 import replay_grouped_reading_ab as grouped  # noqa: E402
@@ -195,7 +197,7 @@ def record(ctx, name, replies, results):
             "kept": sum(k for k, _ in facts.values()), "cited": sum(c for _, c in facts.values()),
             "lost": [f for f, (k, _) in facts.items() if not k],
             "unknown_citations": sorted(base.cited(written) - set(ctx["texts"])),
-            "usable": sum(1 for n in notes if n), "calls_written": sum(1 for r in replies if any(m in r["content"] for m in CALL_MARKERS)),
+            "usable": sum(1 for n in notes if n), "calls_written": sum(1 for r in replies if r.get("tool_calls") or any(m in r["content"] for m in CALL_MARKERS)),
             "cut_off": sum(1 for r in replies if r["finish"] == "length"), "requests": len(replies),
             "prompt_new": s("prompt_n"), "output_tokens": s("predicted_n"),
             "secs": round(sum(r["secs"] for r in replies), 1),
@@ -252,6 +254,7 @@ def summary(args):
     for a in arms:
         lost = [f"{r['key']} {r['lost']}" for r in recs if r["arm"] == a and r["key"] in keys and r["lost"]]
         print(f"\n{a} lost: {lost or 'none'}")
+    claude.print_spend(os.path.join(args.out, "claude-spend.jsonl"))
 
 
 def main():
@@ -266,6 +269,8 @@ def main():
     ap.add_argument("--results-chars", type=int, default=RESULTS_CHARS)
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
+    ap.add_argument("--claude", help="a Claude model to run on instead, sent as the app sends it")
+    ap.add_argument("--budget", type=float, help="the dollars a Claude run stops at")
     args = ap.parse_args()
     RESULT_SIZE, RESULTS_CHARS = args.result_size, args.results_chars
     args.arms = [a for a in args.arms.split(",") if a]
@@ -275,7 +280,11 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     if args.summary:
         return summary(args)
-    base.URL = args.llama
+    if args.claude:
+        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget)
+        base.CLAUDE = claude
+    else:
+        base.URL = args.llama
     for p in args.rubric:
         base.items.update({i["id"]: i for i in json.load(open(p, encoding="utf-8"))["items"]})
     run(args)

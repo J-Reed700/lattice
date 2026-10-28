@@ -305,6 +305,7 @@ jobs:
       - run: python3 scripts/check-sql-contracts.py
       - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
       - run: python3 -m unittest scripts/test_tauri_command_inventory.py
+      - run: python3 -m unittest scripts/test_replay_claude.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
   dependency-audit:

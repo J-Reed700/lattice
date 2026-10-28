@@ -20,11 +20,16 @@ fact scoring are scripts/replay_close_read_ab.py's own, imported, so every arm i
 
   python -I -u scripts/replay_grouped_reading_ab.py --out OUT --llama http://127.0.0.1:8089 \\
     --rubric R1 --rubric R2 ... --calls A.calls.jsonl --calls B.calls.jsonl ... [--arms SHIPPED,G1,G2,G4]
+  python -I -u scripts/replay_grouped_reading_ab.py --out OUT --claude claude-haiku-5-5 --budget 10 ...
   python -I scripts/replay_grouped_reading_ab.py --out OUT --summary
+
+On Claude (scripts/replay_claude.py) the message every group shares is cached, so a group pays for its own
+passages and instruction only; nothing else about the request differs.
 """
 import argparse, collections, json, os, re, statistics, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replay_claude as claude  # noqa: E402
 import replay_close_read_ab as base  # noqa: E402
 
 # main's READING_INSTRUCTION, SWEEP_INSTRUCTION and CLOSE_READ_INSTRUCTION (reading.rs, close_read.rs).
@@ -114,7 +119,8 @@ def grouped(ctx, k):
     for i in range(0, len(labels), k):
         group = labels[i:i + k]
         block = "\n\n".join(f"[{l}] {texts[l][1]}" for l in group)
-        messages = with_message(read_req, f"{ctx['bare']}\n\n{GROUP.format(passages=block)}")
+        rest = f"\n\n{GROUP.format(passages=block)}"
+        messages = with_message(read_req, claude.cached(ctx["bare"], rest) if base.CLAUDE else ctx["bare"] + rest)
         stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = ask(read_req, f"G{k}", reserved, stop=stop, messages=messages)
         reqs.append(base.req_record(group, r, reserved))
@@ -211,6 +217,7 @@ def summary(args):
             misses[r["arm"]].append(f"{r['key']} {r['missed']}")
     for arm in arms:
         print(f"\n{arm} missed: {misses[arm] or 'none'}")
+    claude.print_spend(os.path.join(args.out, "claude-spend.jsonl"))
 
 
 def main():
@@ -221,6 +228,8 @@ def main():
     ap.add_argument("--arms", default="SHIPPED,G1,G2,G4")
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
+    ap.add_argument("--claude", help="a Claude model to run on instead, sent as the app sends it")
+    ap.add_argument("--budget", type=float, help="the dollars a Claude run stops at")
     args = ap.parse_args()
     args.arms = [a for a in args.arms.split(",") if a]
     bad = [a for a in args.arms if a != "SHIPPED" and not re.fullmatch(r"G\d+", a)]
@@ -229,7 +238,11 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     if args.summary:
         return summary(args)
-    base.URL = args.llama
+    if args.claude:
+        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget)
+        base.CLAUDE = claude
+    else:
+        base.URL = args.llama
     for p in args.rubric:
         base.items.update({i["id"]: i for i in json.load(open(p, encoding="utf-8"))["items"]})
     run(args)

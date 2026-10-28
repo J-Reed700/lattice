@@ -200,6 +200,7 @@ def reading_metrics(lines, noted, fl):
 
 # ---------- server (no timeouts; dry mode stubs /props and /tokenize and never calls the model) ----------
 URL, DRY, N_CTX, DRY_SENT = None, False, None, []
+CLAUDE = None  # scripts/replay_claude.py when the replay runs on Claude
 # A server behind an auth header (a remote llama.cpp): the header's name and value from the environment, never
 # from the command line, so the value is in no shell history or process list.
 HEADERS = ({os.environ["LLAMA_AUTH_HEADER_NAME"]: os.environ["LLAMA_AUTH_HEADER_VALUE"]}
@@ -215,11 +216,15 @@ def http_json(path, body=None):
 def tokens(text):
     if DRY:
         return len(text) // 4  # DRY STUB, not a measurement
+    if CLAUDE:
+        return CLAUDE.tokens(text)
     return len(http_json("/tokenize", {"content": text})["tokens"])
 
 
 def n_ctx():
     global N_CTX
+    if CLAUDE:
+        return CLAUDE.WINDOW
     if N_CTX is None:
         N_CTX = http_json("/props")["default_generation_settings"]["n_ctx"]
     return N_CTX
@@ -241,6 +246,8 @@ def call(req, kind, **extra):
     if DRY:
         DRY_SENT.append((kind, r))
         return None
+    if CLAUDE:
+        return CLAUDE.call(r, kind)
     t = time.time()
     resp = json.load(urllib.request.urlopen(urllib.request.Request(
         URL + "/v1/chat/completions", json.dumps(r).encode(), {"Content-Type": "application/json", **HEADERS})))
