@@ -45,6 +45,49 @@ fn topic(name: &str) -> Topic {
     }
 }
 
+/// Every reply cut off at the output limit.
+struct CutOff;
+
+#[async_trait::async_trait]
+impl LLMPort for CutOff {
+    async fn complete(
+        &self,
+        _: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        Ok(
+            lattice_core::application::ports::llm_port::CompletionResponse {
+                finish_reason: "length".into(),
+                ..lattice_core::application::ports::llm_port::CompletionResponse::from_text(
+                    "{\"topics\":[{\"topic\":",
+                )
+            },
+        )
+    }
+    fn model_name(&self) -> &str {
+        "cut-off"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_plan_cut_off_falls_back_to_one_topic_and_coverage_to_none() -> Result<()> {
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let references = ReferenceCollection::lexical(&program.sources)?;
+    let topics = plan(&CutOff, &program, lesson, &references).await?;
+    assert_eq!(topics.len(), 1);
+    assert_eq!(topics[0].topic, lesson.title);
+    let store = vec![passage("s1", 0, "Aggregate roots enforce invariants.")];
+    let covering = judge(&CutOff, &topics, &store, &[vec![0]], &references).await?;
+    assert_eq!(covering, vec![Vec::<usize>::new()]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_unusable_plan_falls_back_to_one_topic_from_the_lesson() -> Result<()> {
     let program = crate::features::learning::tests::fixture();

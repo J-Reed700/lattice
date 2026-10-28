@@ -212,9 +212,12 @@ async fn review_sections(
     let mut accepted = BTreeMap::<usize, BlockCheck>::new();
     let mut issues: Vec<ReviewFinding> = Vec::new();
     let mut problems = Vec::new();
-    for attempt in 0..2 {
+    // The first correction is always asked for; later ones while each answer
+    // validates another section.
+    for attempt in 0usize.. {
         // After the correction, lengths no longer fail a lesson's review.
-        let settle = lengths == LengthRule::DropShortKeepLong && attempt == 1;
+        let settle = lengths == LengthRule::DropShortKeepLong && attempt > 0;
+        let checked = accepted.len();
         let indices: Vec<_> = (0..passages.len())
             .filter(|i| !accepted.contains_key(i))
             .collect();
@@ -333,6 +336,9 @@ async fn review_sections(
             return Ok(issues);
         }
         tracing::warn!(attempt = attempt + 1, accepted_sections = accepted.len(), total_sections = passages.len(), problems = ?problems, "Teaching reviewer response failed validation");
+        if attempt > 0 && accepted.len() == checked {
+            break;
+        }
     }
     let recovery = if crate::features::learning::lesson_drafts::active() {
         "The lesson draft is saved. Retry will reuse it and run the checks again."
@@ -466,6 +472,23 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("not the lesson"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_review_is_corrected_while_each_answer_checks_another_section() -> Result<()> {
+        let only = |index| json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(index)])});
+        let model = model(vec![only(0), only(1), only(2)]);
+        review(
+            &model,
+            "Review instructional quality.",
+            json!({}),
+            &candidate(),
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+        assert_eq!(model.prompts.lock().unwrap().len(), 3);
         Ok(())
     }
 

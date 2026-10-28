@@ -52,38 +52,57 @@ struct Edit {
 }
 
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
-    let fail = || {
-        AppError::InvalidInput("The repair did not identify unambiguous, non-overlapping edits in the saved draft. The draft was preserved.".into())
+    let fail = |reason: String| {
+        AppError::InvalidInput(format!(
+            "The repair's edits could not be applied: {reason} The draft was preserved."
+        ))
     };
     let patch: Patch = crate::features::learning::generation::parse_json(patch)?;
     if patch.edits.is_empty() {
-        return Err(fail());
+        return Err(fail("it gave no edits.".into()));
     }
     let mut allowed = Vec::new();
     paths(candidate, "", &mut allowed);
-    let mut fields = std::collections::BTreeMap::<String, Vec<Edit>>::new();
-    for edit in patch.edits {
-        if !allowed.contains(&edit.path) || edit.before == edit.after {
-            return Err(fail());
+    let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
+    for (index, edit) in patch.edits.into_iter().enumerate() {
+        if !allowed.contains(&edit.path) {
+            return Err(fail(format!(
+                "edit {index} names {}, which is not an editable field.",
+                edit.path
+            )));
         }
-        fields.entry(edit.path.clone()).or_default().push(edit);
+        if edit.before == edit.after {
+            return Err(fail(format!("edit {index} changes nothing.")));
+        }
+        fields
+            .entry(edit.path.clone())
+            .or_default()
+            .push((index, edit));
     }
     let mut result = candidate.clone();
     for (path, edits) in fields {
-        let original = candidate.pointer(&path).ok_or_else(fail)?;
+        let original = candidate
+            .pointer(&path)
+            .ok_or_else(|| fail(format!("{path} is not in the draft.")))?;
         let value = if let Some(text) = original.as_str() {
             let mut ranges = Vec::new();
-            for edit in &edits {
-                let before = edit
-                    .before
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(fail)?;
-                let after = edit.after.as_str().ok_or_else(fail)?;
+            for (index, edit) in &edits {
+                let (Some(before), Some(after)) = (
+                    edit.before.as_str().filter(|s| !s.is_empty()),
+                    edit.after.as_str(),
+                ) else {
+                    return Err(fail(format!(
+                        "edit {index} to {path} must replace nonempty text with text."
+                    )));
+                };
                 let mut matches = text.match_indices(before);
-                let start = matches.next().map(|(offset, _)| offset).ok_or_else(fail)?;
+                let Some((start, _)) = matches.next() else {
+                    return Err(fail(format!(
+                        "the before text of edit {index} does not occur in {path}."
+                    )));
+                };
                 if matches.next().is_some() {
-                    return Err(fail());
+                    return Err(fail(format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
                 }
                 ranges.push((start, start + before.len(), after));
             }
@@ -92,7 +111,7 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
                 .windows(2)
                 .any(|pair| matches!(pair, [left, right] if left.1 > right.0))
             {
-                return Err(fail());
+                return Err(fail(format!("two edits to {path} overlap.")));
             }
             let mut updated = text.to_string();
             for (start, end, after) in ranges.into_iter().rev() {
@@ -100,19 +119,19 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
             }
             json!(updated)
         } else {
-            if edits.len() != 1 {
-                return Err(fail());
-            }
-            let edit = edits.into_iter().next().ok_or_else(fail)?;
+            let [(index, edit)] = <[_; 1]>::try_from(edits)
+                .map_err(|_| fail(format!("{path} holds one value; give one edit for it.")))?;
             if &edit.before != original
                 || !(original.is_number() && edit.after.is_number()
                     || original.is_boolean() && edit.after.is_boolean())
             {
-                return Err(fail());
+                return Err(fail(format!("edit {index} to {path} must give its current value as before and a value of the same type as after.")));
             }
             edit.after
         };
-        *result.pointer_mut(&path).ok_or_else(fail)? = value;
+        *result
+            .pointer_mut(&path)
+            .ok_or_else(|| fail(format!("{path} is not in the draft.")))? = value;
     }
     Ok(result)
 }
@@ -142,5 +161,29 @@ mod tests {
             "Full rewrites are not edit responses"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_refused_patch_says_which_edit_failed_and_why() {
+        let original = json!({"blocks":[{"kind":"explanation","body":"Keep this. Wrong fact. Keep this too."}]});
+        let refused = |edits: Value| {
+            apply(&original, &json!({ "edits": edits }).to_string())
+                .unwrap_err()
+                .to_string()
+        };
+        let repeated = refused(json!([
+            {"path":"/blocks/0/body","before":"Wrong fact.","after":"Right fact."},
+            {"path":"/blocks/0/body","before":"Keep this","after":"Hold this"}
+        ]));
+        assert!(
+            repeated.contains("edit 1") && repeated.contains("more than once"),
+            "{repeated}"
+        );
+        let missing =
+            refused(json!([{"path":"/blocks/0/body","before":"Absent.","after":"Present."}]));
+        assert!(
+            missing.contains("does not occur in /blocks/0/body"),
+            "{missing}"
+        );
     }
 }
