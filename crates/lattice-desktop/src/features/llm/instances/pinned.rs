@@ -92,6 +92,17 @@ impl LLMPort for PinnedLlm {
         self.inner().requests()
     }
 
+    fn hold_cache(
+        &self,
+        key: &str,
+    ) -> Option<lattice_core::application::ports::llm_port::CacheHold> {
+        self.inner().hold_cache(key)
+    }
+
+    fn keeps_read_prompts(&self) -> bool {
+        self.inner().keeps_read_prompts()
+    }
+
     fn count_tokens(&self, text: &str) -> usize {
         self.inner().count_tokens(text)
     }

@@ -78,6 +78,26 @@ async fn every_group_is_read_in_label_order_with_only_its_own_passages_shown_aga
 }
 
 #[tokio::test]
+async fn a_backend_that_keeps_read_prompts_reads_the_message_alone_before_the_groups() {
+    let model = Model::keeping_read_prompts([
+        reply("", "length"),
+        reply(&format!("[1] {KITCHEN}\n[2] -\n[3] -\n[4] -"), "stop"),
+        reply(&format!("[5] {SLUICE}\n[6] -\n[7] -\n[8] -"), "stop"),
+    ]);
+    let notes = read_eight(&model).await.unwrap().expect("notes");
+    let sent = model.requests();
+    assert_eq!(sent.len(), 3, "the message, then one request per group");
+    assert_eq!(sent[0].max_output_tokens, Some(1));
+    let ahead = sent[0].input[1].text();
+    assert_eq!(ahead.matches("[5] ").count(), 1, "no passage shown again");
+    for group in &sent[1..] {
+        let message = group.input[1].text();
+        assert!(message.len() > ahead.len() && message.starts_with(&*ahead));
+    }
+    assert_eq!(notes.noted, [1, 5].into());
+}
+
+#[tokio::test]
 async fn a_group_writes_only_its_own_labels() {
     let model = Model::new([
         // The first group runs on into a label of the second.

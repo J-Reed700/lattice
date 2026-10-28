@@ -377,6 +377,9 @@ impl LLMPort for LlamaCppLlm {
     fn supports_tool_calling(&self) -> bool {
         self.config.supports_tools
     }
+    fn keeps_read_prompts(&self) -> bool {
+        true
+    }
     fn vision(&self) -> Option<VisionGeometry> {
         self.config.vision
     }

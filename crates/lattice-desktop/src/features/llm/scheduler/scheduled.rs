@@ -21,7 +21,8 @@ use super::{
     TokenEstimator,
 };
 use lattice_core::application::ports::llm_port::{
-    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse, Pace, RequestLoad,
+    tokens_for_chars, CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace,
+    RequestLoad,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -314,6 +315,17 @@ impl LLMPort for ScheduledLlm {
 
     fn requests(&self) -> Option<RequestLoad> {
         Some(self.scheduler.load())
+    }
+
+    fn hold_cache(&self, key: &str) -> Option<CacheHold> {
+        self.scheduler
+            .capacity()
+            .pins_slots
+            .then(|| CacheHold::new(self.scheduler.hold(key)))
+    }
+
+    fn keeps_read_prompts(&self) -> bool {
+        self.inner.keeps_read_prompts()
     }
 
     async fn count_tokens_exact(&self, text: &str) -> Result<usize> {

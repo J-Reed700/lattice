@@ -272,6 +272,54 @@ async fn a_dropped_waiter_gives_back_its_place() {
 }
 
 #[tokio::test]
+async fn background_work_waits_for_a_held_conversation_on_its_one_slot() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(1, 100_000),
+    ));
+    drop(scheduler.admit(keyed("turn"), None).await.unwrap());
+    let hold = scheduler.hold("turn");
+    let waiting = {
+        let scheduler = Arc::clone(&scheduler);
+        tokio::spawn(async move {
+            scheduler
+                .admit(ask(InferencePriority::Verification, 10), None)
+                .await
+                .map(drop)
+        })
+    };
+    settle().await;
+    assert_eq!(
+        scheduler.queued(),
+        1,
+        "the check waits while the turn holds"
+    );
+    drop(scheduler.admit(keyed("turn"), None).await.unwrap());
+    assert_eq!(scheduler.queued(), 1, "the turn's own requests run");
+    drop(hold);
+    waiting.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn background_work_takes_another_slot_than_a_held_conversation() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(3, 100_000),
+    ));
+    let first = scheduler.admit(keyed("turn"), None).await.unwrap();
+    let held_slot = first.slot().unwrap();
+    drop(first);
+    let _hold = scheduler.hold("turn");
+    for _ in 0..3 {
+        let check = scheduler
+            .admit(ask(InferencePriority::Verification, 10), None)
+            .await
+            .unwrap();
+        assert_ne!(check.slot(), Some(held_slot));
+    }
+}
+
+#[tokio::test]
 async fn a_conversation_returns_to_the_slot_that_holds_its_prefix() {
     let scheduler = Arc::new(InferenceScheduler::new(
         "test",
