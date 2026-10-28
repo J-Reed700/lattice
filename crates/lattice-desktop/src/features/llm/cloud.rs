@@ -327,12 +327,6 @@ impl CloudLlm {
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
-            // Requests that share a cache key share a prompt prefix, so Claude is
-            // asked to cache it; a one-off request is not, since a cache write costs
-            // more than a plain input token.
-            if request.cache_key.is_some() {
-                set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
-            }
             if !request.stop.is_empty() {
                 set_field(&mut body, "stop_sequences", json!(request.stop))?;
             }
@@ -384,6 +378,12 @@ impl CloudLlm {
                 if !compiles {
                     body = schema::in_words(body);
                 }
+            }
+            // Requests that share a cache key share a prompt prefix, so Claude is
+            // asked to cache it; a one-off request is not, since a cache write costs
+            // more than a plain input token.
+            if request.cache_key.is_some() {
+                body = with_cache_breakpoints(body, continues_an_exchange(&request.input))?;
             }
             Ok(body)
         }
@@ -570,6 +570,40 @@ impl LLMPort for CloudLlm {
 
 fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&Value::Null)
+}
+
+/// The system prompt is what every call of one step shares, so it is cached on
+/// its own. The whole prompt is cached only when the request continues an
+/// exchange, since the next request repeats it and adds to it; a single
+/// exchange ends in its own task, and a write of that would never be read.
+fn with_cache_breakpoints(mut body: Value, continues: bool) -> Result<Value> {
+    if let Some(system) = body
+        .get("system")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        set_field(
+            &mut body,
+            "system",
+            json!([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]),
+        )?;
+    }
+    if continues {
+        set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
+    }
+    Ok(body)
+}
+
+fn continues_an_exchange(input: &[CompletionInput]) -> bool {
+    input.iter().any(|item| match item {
+        CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
+            role == "assistant"
+        }
+        CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => true,
+        CompletionInput::Native { value } => {
+            value.get("role").and_then(Value::as_str) == Some("assistant")
+        }
+    })
 }
 
 fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
