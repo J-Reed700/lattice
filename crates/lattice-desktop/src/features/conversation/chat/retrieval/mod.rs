@@ -629,7 +629,14 @@ pub(super) fn format_tool_result(
     page_offset: usize,
     source_text: bool,
 ) -> String {
-    format_tool_result_impl(tool_name, result, settings, allowance, page_offset, source_text)
+    format_tool_result_impl(
+        tool_name,
+        result,
+        settings,
+        allowance,
+        page_offset,
+        source_text,
+    )
 }
 
 #[cfg(test)]

@@ -63,7 +63,9 @@ pub(super) async fn generate_answer(
                 time_budget: generation_time_budget(flags),
                 max_tool_rounds: tool_loop::max_tool_rounds(
                     flags.deep_research_mode,
-                    turn.source.as_ref().map(|source| source.policy().tool_rounds),
+                    turn.source
+                        .as_ref()
+                        .map(|source| source.policy().tool_rounds),
                 ),
                 research,
             },

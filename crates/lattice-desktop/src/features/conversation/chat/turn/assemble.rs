@@ -710,7 +710,8 @@ pub(super) fn offered_tools(
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
     // An Explorer turn searches the library only when the user turns it on
     // (`classify_turn`); reading a document the message names stays open.
-    if source.is_some_and(|source| !source.policy().offers_library_tools) && !flags.force_kb_search {
+    if source.is_some_and(|source| !source.policy().offers_library_tools) && !flags.force_kb_search
+    {
         turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));
     }
     // The folder tools ride on top of whichever branch was chosen above, the

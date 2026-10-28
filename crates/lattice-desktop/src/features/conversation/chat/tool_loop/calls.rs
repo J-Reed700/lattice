@@ -677,7 +677,10 @@ impl<'a> ToolCalls<'a> {
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
-        let source_text = self.scope.source.is_some_and(|source| source.owns_tool(tool));
+        let source_text = self
+            .scope
+            .source
+            .is_some_and(|source| source.owns_tool(tool));
         let result_text = render_with_citations(&citable, allowance, |room| {
             format_tool_result(tool, &result, settings, room, page_offset, source_text)
         });

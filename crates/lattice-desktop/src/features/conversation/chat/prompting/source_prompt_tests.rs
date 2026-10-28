@@ -105,8 +105,10 @@ fn a_source_without_a_template_keeps_the_document_answer_template() {
 #[test]
 fn the_evidence_frame_is_the_template_the_turn_sends() {
     let settings = settings();
-    assert!(evidence_frame(&settings, QUESTION, Some(policy(Some(TEMPLATE))))
-        .starts_with(opening(TEMPLATE)));
+    assert!(
+        evidence_frame(&settings, QUESTION, Some(policy(Some(TEMPLATE))))
+            .starts_with(opening(TEMPLATE))
+    );
     let document_opening = opening(&settings.rag_prompt_template);
     assert!(evidence_frame(&settings, QUESTION, Some(policy(None))).starts_with(document_opening));
     assert!(evidence_frame(&settings, QUESTION, None).starts_with(document_opening));
