@@ -46,7 +46,7 @@ fn message() -> String {
         .map(|(label, content)| format!("[{label}] Document: d{label}.md\nContent: {content}"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{passages}\n\nQuestion: Tell me about the bridge.\n\nAnswer:\n\n{READING_INSTRUCTION}")
+    format!("{passages}\n\nQuestion: Tell me about the bridge.\n\n{READING_INSTRUCTION}")
 }
 
 async fn grounded(model: &Arc<Model>) -> Run {

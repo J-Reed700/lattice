@@ -182,7 +182,7 @@ impl<'a> PromptMessageBuilder<'a> {
         let reads_passages = self.reads_passages;
         let message = self.message();
         if reads_passages {
-            format!("{message}\n\n{READING_INSTRUCTION}")
+            with_reading(&message)
         } else {
             message
         }
@@ -395,7 +395,19 @@ pub(super) fn evidence_frame(
         CONTINUITY_NOTE,
         question,
     );
-    format!("{frame}\n\n{READING_INSTRUCTION}")
+    with_reading(&frame)
+}
+
+/// `message` closed by the reading instruction. The reading comes before the
+/// answer, so a template's closing answer cue is taken off first: left in
+/// front of the reading, it has models answer in place of their lines or
+/// after them.
+fn with_reading(message: &str) -> String {
+    let message = message.trim_end();
+    let message = message
+        .strip_suffix("Answer:")
+        .map_or(message, str::trim_end);
+    format!("{message}\n\n{READING_INSTRUCTION}")
 }
 
 /// The template an evidence-carrying message renders in: the saved

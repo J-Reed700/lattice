@@ -490,6 +490,8 @@ fn reading_request(
         cache_key: request.cache_key.clone(),
         time_budget,
         thinking: ThinkingMode::Off,
+        // Thinking did not help Claude copy lines and took two to three times as long.
+        reasoning_effort: Some("none".into()),
         ..Default::default()
     }
 }
