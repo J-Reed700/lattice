@@ -304,6 +304,8 @@
     "vault:allow-rescan-vault",
     "transcription:allow-transcribe-file",
     "transcription:allow-get-transcription-status",
+    "speech:allow-get-speech-status",
+    "speech:allow-synthesize-speech",
     "references:allow-create-passage-reference",
     "references:allow-list-passage-references",
     "references:allow-update-passage-reference",

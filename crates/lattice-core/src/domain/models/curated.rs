@@ -5,6 +5,7 @@
 //! - Embedding models: Semantic search optimized
 //! - OCR models: Vision-language models for text extraction
 //! - Transcription models: Whisper for on-device speech-to-text
+//! - Speech models: Kokoro for reading aloud
 //!
 //! ## Design
 //!
@@ -20,6 +21,7 @@ use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 mod chat;
 mod embedding;
 mod ocr;
+mod speech;
 mod transcription;
 
 pub use chat::{
@@ -32,18 +34,24 @@ pub use embedding::{embedding_model_supports_matryoshka, get_curated_embedding_m
 pub use ocr::{
     get_curated_ocr_models, CuratedOcrModel, CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE,
 };
+pub use speech::{
+    get_curated_speech_models, speech_voice_file, CuratedVoice, DEFAULT_SPEECH_VOICE,
+    SPEECH_CONFIG_FILE, SPEECH_G2P_CONFIG_FILE, SPEECH_G2P_WEIGHTS_FILE, SPEECH_LEXICON_GOLD_FILE,
+    SPEECH_LEXICON_SILVER_FILE, SPEECH_MODEL_ID, SPEECH_VOICES, SPEECH_WEIGHTS_FILE,
+};
 pub use transcription::get_curated_transcription_models;
 
 /// Get all curated models across all categories.
 ///
-/// Returns combined list of LLMs, embedding models, OCR models and
-/// transcription models.
+/// Returns combined list of LLMs, embedding models, OCR models,
+/// transcription models and speech models.
 pub fn get_all_curated_models() -> Vec<ModelMetadata> {
     let mut models = Vec::new();
     models.extend(get_curated_llm_models());
     models.extend(get_curated_embedding_models());
     models.extend(get_curated_ocr_models());
     models.extend(get_curated_transcription_models());
+    models.extend(get_curated_speech_models());
     models
 }
 
@@ -54,6 +62,7 @@ pub fn get_curated_models_by_category(category: ModelCategory) -> Vec<ModelMetad
         ModelCategory::Embedding => get_curated_embedding_models(),
         ModelCategory::OCR => get_curated_ocr_models(),
         ModelCategory::Transcription => get_curated_transcription_models(),
+        ModelCategory::Speech => get_curated_speech_models(),
     }
 }
 
@@ -87,6 +96,12 @@ pub fn get_model_category_by_id(model_id: &str) -> Option<ModelCategory> {
 
     // Search transcription models
     for model in get_curated_transcription_models() {
+        if model.id.to_lowercase() == normalized_id {
+            return Some(model.category);
+        }
+    }
+
+    for model in get_curated_speech_models() {
         if model.id.to_lowercase() == normalized_id {
             return Some(model.category);
         }

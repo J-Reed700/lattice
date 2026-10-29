@@ -21,6 +21,7 @@ import { qaApi } from '@/features/qa/api/client';
 import { referencesApi } from '@/features/references/api/client';
 import { searchApi } from '@/features/search/api/client';
 import { settingsApi } from '@/features/settings/api/client';
+import { speechApi } from '@/features/speech/api/client';
 import { studyApi } from '@/features/study/api/client';
 import { tagsApi } from '@/features/tags/api/client';
 import { transcriptionApi } from '@/features/transcription/api/client';
@@ -60,6 +61,7 @@ export const vaultClients = {
   ...modelApi,
   ...vaultApi,
   ...transcriptionApi,
+  ...speechApi,
 } satisfies Record<string, (...args: never[]) => Promise<unknown>>;
 
 export type VaultClients = typeof vaultClients;

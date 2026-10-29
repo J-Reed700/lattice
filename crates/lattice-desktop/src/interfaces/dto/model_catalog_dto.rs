@@ -16,6 +16,8 @@ pub enum ModelCategoryDto {
     OCR,
     /// On-device speech-to-text model
     Transcription,
+    /// On-device text-to-speech model
+    Speech,
 }
 
 impl From<crate::features::model_management::domain::ModelCategory> for ModelCategoryDto {
@@ -27,6 +29,7 @@ impl From<crate::features::model_management::domain::ModelCategory> for ModelCat
             crate::features::model_management::domain::ModelCategory::Transcription => {
                 Self::Transcription
             }
+            crate::features::model_management::domain::ModelCategory::Speech => Self::Speech,
         }
     }
 }

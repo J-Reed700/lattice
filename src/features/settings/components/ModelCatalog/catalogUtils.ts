@@ -23,6 +23,7 @@ export const CATEGORY_LABELS: Record<ModelCategory, string> = {
   Embedding: 'Embedding',
   OCR: 'OCR',
   Transcription: 'Transcription',
+  Speech: 'Read aloud',
 };
 
 export function hasActiveFilters(filters: SearchFilters): boolean {
@@ -93,7 +94,7 @@ export function modelMetaLine(
 }
 
 /** The reason an embedding model can't be loaded here, or null if it can. */
-export function embeddingBlockReason(metadata: ModelMetadata): string | null {
+export function embeddingBlockReason(metadata: Pick<ModelMetadata, 'category' | 'embedding_compatibility'>): string | null {
   if (metadata.category !== 'Embedding') return null;
   const compatibility = metadata.embedding_compatibility;
   if (!compatibility || compatibility.kind === 'compatible') return null;

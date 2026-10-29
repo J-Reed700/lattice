@@ -3908,6 +3908,22 @@ async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getSpeechStatus() : Promise<Result<SpeechStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:speech|get_speech_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async synthesizeSpeech(text: string, voice: string, speed: number) : Promise<Result<SpeechClipDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:speech|synthesize_speech", { text, voice, speed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -8216,7 +8232,11 @@ export type ModelCategoryDto =
 /**
  * On-device speech-to-text model
  */
-"Transcription"
+"Transcription" |
+/**
+ * On-device text-to-speech model
+ */
+"Speech"
 /**
  * Model file metadata DTO for frontend.
  */
@@ -9472,6 +9492,38 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  * that carry one can use it; the server then runs a single slot.
  */
 { mode: "mtpDraft"; nMax: number }
+/**
+ * Speech for one piece of text.
+ */
+export type SpeechClipDto = { sampleRate: number;
+/**
+ * Mono 16-bit little-endian PCM, base64.
+ */
+pcm: string; durationMs: number }
+/**
+ * Whether read-aloud can speak now, and what downloading it involves.
+ */
+export type SpeechStatusDto = {
+/**
+ * True when the voice model is downloaded and complete.
+ */
+modelReady: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number; license: string; voices: SpeechVoiceDto[]; defaultVoice: string }
+/**
+ * One of the voices the downloaded model speaks in.
+ */
+export type SpeechVoiceDto = {
+/**
+ * Kokoro's voice id, e.g. `bf_emma`.
+ */
+id: string; name: string }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for

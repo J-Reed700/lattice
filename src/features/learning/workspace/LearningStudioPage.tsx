@@ -27,6 +27,7 @@ import {
   usePrepareLearningLesson,
 } from '@/features/learning/workspace/useLearningStudio';
 import { useStudioNavigationGuard } from '@/features/learning/workspace/useStudioNavigationGuard';
+import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
@@ -91,6 +92,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const client = useQueryClient();
   const [screen, setScreen] = useState<Screen>('programs');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useStopSpeechOnChange(`${screen}:${selectedId}`);
   const navigation = useStudioNavigationGuard(selectedId !== null);
   const programs = useLearningPrograms();
   const detail = useLearningProgram(selectedId);

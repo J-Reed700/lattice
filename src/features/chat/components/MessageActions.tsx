@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { AnswerActionsMenu } from '@/features/chat/components/actions/AnswerActionsMenu';
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
 import { TangentReplyAction, type TangentReplySource } from '@/features/chat/components/tangents/TangentReplyAction';
+import { ListenButton } from '@/features/speech/components/ListenButton';
 import type { ChatModelChoice } from '@/lib/bindings';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
@@ -55,6 +56,8 @@ interface MessageActionsProps {
   onEdit?: () => void;
   onBranch?: () => Promise<void> | void;
   tangentSource?: TangentReplySource;
+  /** A finished answer to read aloud, as markdown. */
+  listen?: { sourceId: string; markdown: string };
 }
 
 // CHAT-POLISH-COMPONENTS §5: low contrast and full opacity always. Hiding the
@@ -68,12 +71,12 @@ const ACTION_CLASS =
 const MENU_ITEM_CLASS =
   'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
-type VerbId = 'copy' | 'edit' | 'reference' | 'tangent' | 'answer' | 'regenerate' | 'tryWith' | 'branch' | 'delete';
+type VerbId = 'copy' | 'listen' | 'edit' | 'reference' | 'tangent' | 'answer' | 'regenerate' | 'tryWith' | 'branch' | 'delete';
 
 /**
  * When the row would wrap, verbs fold into a visible "More" menu in this
- * order — and only then. Copy, Tangent and "Use this answer" never fold: they
- * are the verbs that carry an answer into the rest of the work.
+ * order — and only then. Copy, Listen, Tangent and "Use this answer" never
+ * fold: they are the verbs that carry an answer into the rest of the work.
  */
 const FOLD_ORDER: readonly VerbId[] = ['branch', 'tryWith', 'regenerate', 'delete', 'reference', 'edit'];
 
@@ -169,6 +172,7 @@ export function MessageActions({
   onEdit,
   onBranch,
   tangentSource,
+  listen,
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -198,6 +202,7 @@ export function MessageActions({
     !isUser && Boolean(answerSources?.length) && typeof answerMarkdown === 'string';
 
   const present: VerbId[] = ['copy'];
+  if (listen && !isUser) present.push('listen');
   if (showEdit) present.push('edit');
   if (showReference) present.push('reference');
   if (showTangent) present.push('tangent');
@@ -310,6 +315,12 @@ export function MessageActions({
           )}
         </button>
       </span>
+
+      {inline('listen') && listen && (
+        <span data-verb="listen" className="inline-flex shrink-0">
+          <ListenButton sourceId={listen.sourceId} markdown={listen.markdown} subject="this answer" className={ACTION_CLASS} />
+        </span>
+      )}
 
       {inline('edit') && (
         <span data-verb="edit" className="inline-flex shrink-0">

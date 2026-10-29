@@ -410,8 +410,9 @@ fn parse_model_category(category: &str) -> Result<ModelCategory> {
         "EMBEDDING" => Ok(ModelCategory::Embedding),
         "OCR" => Ok(ModelCategory::OCR),
         "TRANSCRIPTION" => Ok(ModelCategory::Transcription),
+        "SPEECH" => Ok(ModelCategory::Speech),
         _ => Err(AppError::InvalidInput(format!(
-            "Invalid model category: {}. Must be LLM, Embedding, OCR, or Transcription",
+            "Invalid model category: {}. Must be LLM, Embedding, OCR, Transcription or Speech",
             category
         ))),
     }

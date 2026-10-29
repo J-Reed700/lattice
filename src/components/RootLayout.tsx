@@ -11,6 +11,7 @@ import { useJournalSyntheses } from '../features/journal/synthesis/api';
 import { useSynthesisPanel } from '../features/journal/synthesis/synthesisPanel';
 import { CommandPalette } from '../features/palette/components/CommandPalette';
 import { useRegisterPaletteCommands } from '../features/palette/hooks/useRegisterPaletteCommands';
+import { useStopSpeechOnChange } from '../features/speech/hooks/useSpeech';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { NEW_ITEM_EVENT } from '../shared/newItemEvent';
 import { readClipboardText } from '../utils/clipboard';
@@ -29,6 +30,7 @@ const SynthesisProgress = lazy(async () => ({
 export function RootLayout() {
   const navigate = useAppNavigate();
   const location = useLocation();
+  useStopSpeechOnChange(location.pathname);
   // Syntheses are jobs: one that finished while the app was closed shows too.
   const syntheses = useJournalSyntheses();
   const savedSynthesis = useSynthesisPanel(state => state.saved !== null);
