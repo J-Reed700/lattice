@@ -27,7 +27,9 @@ impl ClaimChecker<'_> {
                 "",
             );
         }
-        if reasoned {
+        if reasoned && self.answers_in_fields(located) {
+            base = base.replace(fields::LINES_FORMAT, fields::FIELDS_FORMAT);
+        } else if reasoned {
             base = base.replace(
                 "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:",
                 "Compare the evidence before classifying. Write two short labeled lines first:",
@@ -35,7 +37,9 @@ impl ClaimChecker<'_> {
             base.push_str(" End with a third line: Verdict: supported, contradicted, or unsupported. Choose this final label from the completed factual comparison, never before it. If the comparison identifies a missing fact or incompatible fact, the final label cannot be supported.");
         }
         let system = if self.policy.strict() {
-            let citation = if located {
+            let citation = if self.answers_in_fields(located) {
+                "Select one supplied passage-N identifier in sourcePassage; the application attaches its exact original text. A supported or contradicted verdict requires a valid identifier and an explicit difference. Do not quote the passage yourself."
+            } else if located {
                 "Select one supplied passage-N identifier after Source passage:; the application attaches its exact original text. A supported or contradicted verdict requires a valid identifier and explicit reason. Do not quote the passage yourself."
             } else {
                 "A valid quotation and an explicit reason are required for any factual finding. Preserve whitespace inside code and data exactly."
@@ -63,7 +67,12 @@ impl ClaimChecker<'_> {
 
     /// The model's reply to `prompt`. A strict check's reply that did not
     /// finish on its own comes back empty, its output tokens still counted.
-    pub(super) async fn request(&self, prompt: &str, located: bool) -> Result<Reply> {
+    pub(super) async fn request(
+        &self,
+        prompt: &str,
+        located: bool,
+        passages: usize,
+    ) -> Result<Reply> {
         let reasoned = located && self.policy.strict();
         let system = self.system_prompt(located, reasoned);
         self.llm
@@ -96,6 +105,9 @@ impl ClaimChecker<'_> {
                     self.max_output_tokens
                 }),
                 want_logprobs: !reasoned,
+                json_schema: self
+                    .answers_in_fields(located)
+                    .then(|| fields::single_schema(passages)),
                 // A slow model is not a failed one: stall detection and the
                 // caller's cancellation end a call that will not finish.
                 no_time_limit: true,

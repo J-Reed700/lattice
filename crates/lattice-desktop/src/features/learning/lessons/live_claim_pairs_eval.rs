@@ -13,15 +13,40 @@ use super::*;
 async fn live_claim_pairs_eval() -> Result<()> {
     use lattice_core::application::ports::llm_port::SamplingOverride;
     use lattice_core::application::services::claim_verification::{
-        CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, LocatedClaim,
+        CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, LocatedClaim, VerdictForm,
     };
     use std::io::Write as _;
 
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
-    let model = LlamaCppLlm::new(&config)?;
+    let mut config: lattice_core::application::contracts::settings::LLMSettingsDto =
+        serde_json::from_value(settings["settings"]["llm"].clone())?;
+    // `LATTICE_CLAIM_MODEL=anthropic/claude-haiku-5-5` judges on that cloud
+    // model, as a lesson whose Learning model it is does.
+    let model: std::sync::Arc<dyn LLMPort> = match std::env::var("LATTICE_CLAIM_MODEL") {
+        Ok(spec) => {
+            use lattice_core::application::contracts::settings::LLMProvider;
+            let (name, model) = spec.split_once('/').ok_or_else(|| {
+                AppError::InvalidConfig(format!("LATTICE_CLAIM_MODEL {spec} is not provider/model"))
+            })?;
+            config.provider = match name {
+                "anthropic" => LLMProvider::Anthropic,
+                "openai" => LLMProvider::Openai,
+                "google" => LLMProvider::Google,
+                other => {
+                    return Err(AppError::InvalidConfig(format!("no cloud provider {other}")))
+                }
+            };
+            config.model = model.into();
+            let key = crate::infrastructure::security::keyring_storage::SecureStorage::new()
+                .cloud_api_key(name)?
+                .ok_or_else(|| AppError::InvalidConfig(format!("No {name} API key saved")))?;
+            crate::features::llm::cloud::CloudLlm::new(&config, key)?
+                .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
+        }
+        Err(_) => std::sync::Arc::new(LlamaCppLlm::new(&config)?),
+    };
     let checker_name =
         std::env::var("LATTICE_CLAIM_CHECKER").unwrap_or_else(|_| "lesson-judge".into());
     let batch_size: usize = std::env::var("LATTICE_CLAIM_BATCH")
@@ -52,12 +77,19 @@ async fn live_claim_pairs_eval() -> Result<()> {
         pairs.len(),
         finished.len()
     );
+    // `LATTICE_CLAIM_FORM=fields` asks for the comparison as fields before the
+    // verdict instead of the three labelled lines.
+    let form = match std::env::var("LATTICE_CLAIM_FORM").as_deref() {
+        Ok("fields") => VerdictForm::Fields,
+        _ => VerdictForm::Lines,
+    };
     let checker = ClaimChecker::new(
-        &model,
+        &*model,
         SamplingOverride::deterministic(),
         512,
         CheckPolicy::Strict,
-    );
+    )
+    .with_verdict_form(form);
     // A pair holds one `passage`, or a page of `passages`, each `{label,
     // text}`: a labelled passage reaches the judge as the lesson check shows
     // it, its label line above its text (`requests::labelled`).
