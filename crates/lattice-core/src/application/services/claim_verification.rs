@@ -458,18 +458,19 @@ const FIELD_LABELS: [&str; 7] = [
 fn without_field_emphasis(text: &str) -> String {
     text.lines()
         .map(|line| {
-            let bare = line.trim_start().trim_start_matches(['*', '_']);
+            let emphasis = |c: char| c == '*' || c == '_' || c.is_whitespace();
+            let bare = line.trim_start_matches(emphasis);
             let Some((label, value)) = bare.split_once(':') else {
                 return line.to_owned();
             };
-            let label = label.trim_end_matches(['*', '_']).trim();
+            let label = label.trim_end_matches(emphasis);
             if !FIELD_LABELS
                 .iter()
                 .any(|field| label.eq_ignore_ascii_case(field))
             {
                 return line.to_owned();
             }
-            format!("{label}: {}", value.trim().trim_matches(['*', '_']).trim())
+            format!("{label}: {}", value.trim_matches(emphasis))
         })
         .collect::<Vec<_>>()
         .join("\n")
