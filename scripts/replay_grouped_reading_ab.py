@@ -36,11 +36,13 @@ import replay_close_read_ab as base  # noqa: E402
 READING = base.READ_OLD
 SWEEP = "You did not account for {labels}. Write one line for each of them, in the same form."
 CLOSE = base.CLOSE_C1
-# The close read's measured criterion and placement (after the passages), said of passages not yet read.
-GROUP = ("Before answering, read these passages from above again, each on its own.\n\n{passages}\n\n"
-         "Write one line for each of these passages: its label, then the sentences of that passage that bear on my "
-         "question, copied exactly as written and in the passage's own language — or its label and a single hyphen "
-         "when it says nothing bearing on my question, however near its subject. Write only these lines.")
+# groups.rs GROUP_INSTRUCTION, as shipped; --group-instruction runs another wording.
+GROUP = ("Do not answer my question yet. First read these passages from above again, each on its own.\n\n"
+         "{passages}\n\nWrite one line for each of these passages, starting with its label in square brackets as "
+         "shown above: the label, then the sentences of that passage that bear on my question, copied exactly as "
+         "written and in the passage's own language — or the label and a single hyphen when it says nothing "
+         "bearing on my question, however near its subject. Write only these lines: your reply ends with the line "
+         "for [{last}].")
 INSTRUCTIONS = (base.READ_OLD, base.READ_NEW)
 
 
@@ -119,7 +121,7 @@ def grouped(ctx, k):
     for i in range(0, len(labels), k):
         group = labels[i:i + k]
         block = "\n\n".join(f"[{l}] {texts[l][1]}" for l in group)
-        rest = f"\n\n{GROUP.format(passages=block)}"
+        rest = f"\n\n{GROUP.format(passages=block, last=group[-1])}"
         messages = with_message(read_req, claude.cached(ctx["bare"], rest) if base.CLAUDE else ctx["bare"] + rest)
         stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = ask(read_req, f"G{k}", reserved, stop=stop, messages=messages)
@@ -164,6 +166,8 @@ def contexts(args):
             if not ctx["fl"]:
                 continue  # no passage holds a fact: nothing to measure
             ctx["bare"] = bare_message(ctx["read_user"])
+            if not getattr(args, "keep_answer_cue", False) and ctx["bare"].endswith("Answer:"):
+                ctx["bare"] = ctx["bare"][: -len("Answer:")].rstrip()
             ctxs.append(ctx)
     return ctxs
 
@@ -221,15 +225,19 @@ def summary(args):
 
 
 def main():
+    global GROUP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
     ap.add_argument("--rubric", action="append", default=[])
     ap.add_argument("--calls", action="append", default=[])
     ap.add_argument("--arms", default="SHIPPED,G1,G2,G4")
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--group-instruction",
+                    help="a file holding another group instruction, with {passages} and optionally {last}")
+    ap.add_argument("--keep-answer-cue", action="store_true",
+                    help="leave the answer template's closing \"Answer:\" before the reading, as it was before")
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
-    ap.add_argument("--claude", help="a Claude model to run on instead, sent as the app sends it")
-    ap.add_argument("--budget", type=float, help="the dollars a Claude run stops at")
+    claude.add_arguments(ap)
     args = ap.parse_args()
     args.arms = [a for a in args.arms.split(",") if a]
     bad = [a for a in args.arms if a != "SHIPPED" and not re.fullmatch(r"G\d+", a)]
@@ -238,8 +246,10 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     if args.summary:
         return summary(args)
+    if args.group_instruction:
+        GROUP = open(args.group_instruction, encoding="utf-8").read().strip()
     if args.claude:
-        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget)
+        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget, thinking=args.thinking)
         base.CLAUDE = claude
     else:
         base.URL = args.llama

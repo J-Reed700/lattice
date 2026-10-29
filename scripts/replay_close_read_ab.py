@@ -263,7 +263,8 @@ def req_record(shown, r, max_tokens=None, measured=None):
     if r is not None:
         u, t = r.get("usage") or {}, r.get("timings") or {}
         out.update(finish=r["finish"], prompt_tokens=u.get("prompt_tokens"), prompt_new=t.get("prompt_n"),
-                   cache_n=t.get("cache_n"), output_tokens=u.get("completion_tokens"), secs=r["secs"])
+                   cache_n=t.get("cache_n"), output_tokens=u.get("completion_tokens"), secs=r["secs"],
+                   reply=r["content"])
     return out
 
 

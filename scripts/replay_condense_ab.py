@@ -269,8 +269,7 @@ def main():
     ap.add_argument("--results-chars", type=int, default=RESULTS_CHARS)
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
-    ap.add_argument("--claude", help="a Claude model to run on instead, sent as the app sends it")
-    ap.add_argument("--budget", type=float, help="the dollars a Claude run stops at")
+    claude.add_arguments(ap)
     args = ap.parse_args()
     RESULT_SIZE, RESULTS_CHARS = args.result_size, args.results_chars
     args.arms = [a for a in args.arms.split(",") if a]
@@ -281,7 +280,7 @@ def main():
     if args.summary:
         return summary(args)
     if args.claude:
-        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget)
+        claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget, thinking=args.thinking)
         base.CLAUDE = claude
     else:
         base.URL = args.llama

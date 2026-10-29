@@ -43,11 +43,23 @@ def api_key():
     return text.strip()
 
 
-def use(model, ledger, budget=None, window=WINDOW, max_tokens=MAX_TOKENS):
-    global MODEL, LEDGER, BUDGET, WINDOW, MAX_TOKENS
+def use(model, ledger, budget=None, window=WINDOW, max_tokens=MAX_TOKENS, thinking="adaptive"):
+    global MODEL, LEDGER, BUDGET, WINDOW, MAX_TOKENS, THINKING
     if model not in PRICES:
         sys.exit(f"no price for {model}")
-    MODEL, LEDGER, BUDGET, WINDOW, MAX_TOKENS = model, ledger, budget, window, max_tokens
+    MODEL, LEDGER, BUDGET, WINDOW, MAX_TOKENS, THINKING = model, ledger, budget, window, max_tokens, thinking
+
+
+THINKING = "adaptive"
+# How each model is asked not to think: Sonnet 5.5 refuses `disabled`.
+THINKING_OFF = {"claude-sonnet-5-5": {"type": "between_tools"}}
+
+
+def add_arguments(ap):
+    ap.add_argument("--claude", help="a Claude model to run on instead, sent as the app sends it")
+    ap.add_argument("--budget", type=float, help="the dollars a Claude run stops at")
+    ap.add_argument("--thinking", choices=("adaptive", "off"), default="adaptive",
+                    help="adaptive, as the app sends every 5-family model, or off, as the request asks")
 
 
 def tokens(text):
@@ -101,8 +113,12 @@ def body_of(req):
     tools = req.get("tools") or []
     prompt = tokens("\n".join(f"{m['role']}\n{text_of(m['content'])}" for m in req["messages"])
                     + (json.dumps(tools) if tools else ""))
-    body = {"model": MODEL, "messages": messages, "max_tokens": max(1, min(MAX_TOKENS, WINDOW - prompt)),
-            "thinking": {"type": "adaptive"}}
+    room = max(1, WINDOW - prompt)
+    if THINKING == "adaptive":
+        body = {"model": MODEL, "messages": messages, "max_tokens": min(MAX_TOKENS, room), "thinking": {"type": "adaptive"}}
+    else:
+        body = {"model": MODEL, "messages": messages, "max_tokens": min(req.get("max_tokens") or MAX_TOKENS, room),
+                "thinking": THINKING_OFF.get(MODEL, {"type": "disabled"})}
     if system:
         body["system"] = [{"type": "text", "text": "\n\n".join(system), "cache_control": {"type": "ephemeral"}}]
     if req.get("stop"):
@@ -146,9 +162,19 @@ def call(req, kind):
         _client = anthropic.Anthropic(api_key=api_key(), max_retries=10, timeout=900)
     body = body_of(req)
     extra = {k: body.pop(k) for k in ("cache_control",) if k in body}
-    t = time.time()
-    with _client.messages.stream(**body, extra_body=extra or None) as stream:
-        msg = stream.get_final_message()
+    import anthropic, httpx
+    for attempt in range(5):
+        t = time.time()
+        try:
+            with _client.messages.stream(**body, extra_body=extra or None) as stream:
+                msg = stream.get_final_message()
+            break
+        except (anthropic.APIConnectionError, httpx.TransportError) as error:
+            # The client retries a request that fails to start, not a stream cut off part way.
+            if attempt == 4:
+                raise
+            print(f"{kind}: {type(error).__name__}, asking again", file=sys.stderr, flush=True)
+            time.sleep(5 * (attempt + 1))
     secs = round(time.time() - t, 1)
     u = msg.usage
     usd = price(u)
