@@ -241,7 +241,7 @@ pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
 }
 
 /// Take the reading instruction back out of the turn's message when no notes
-/// came of it, so the answer is asked for exactly as before reading existed.
+/// came of it, so the answer is asked for on its passages and question alone.
 pub(super) fn withdraw(input: &mut [CompletionInput]) {
     replace_reading(input, "");
 }

@@ -382,7 +382,7 @@ fn only_the_labels_the_message_shows_are_read() {
         "a message without the instruction asks for no reading"
     );
     assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1].text().ends_with("Answer:"));
+    assert!(planned.input[1].text().ends_with("Question: What happened?"));
 }
 
 #[test]
@@ -420,7 +420,9 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
         reading.input[1].text(),
         format!(
             "{passages_and_question}{}",
-            GROUP_INSTRUCTION.replace("{passages}", &shown)
+            GROUP_INSTRUCTION
+                .replace("{passages}", &shown)
+                .replace("{last}", "4")
         ),
         "the message to its question, then the group shown again in place of the reading instruction"
     );
