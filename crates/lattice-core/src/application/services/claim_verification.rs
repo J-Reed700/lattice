@@ -13,12 +13,14 @@ mod batch;
 mod fields;
 mod prompt;
 mod rooms;
+mod variant;
 
 #[cfg(test)]
 mod field_emphasis_tests;
 
 pub use batch::{render_batch_evidence, LocatedClaim};
 pub use fields::VerdictForm;
+pub use variant::PromptVariant;
 
 /// Judgments and the output tokens the model spent writing them, across
 /// every request the check sent: what answering costs the caller's job.
@@ -167,6 +169,7 @@ pub struct ClaimChecker<'a> {
     max_output_tokens: u32,
     policy: CheckPolicy,
     form: VerdictForm,
+    variant: PromptVariant,
 }
 impl<'a> ClaimChecker<'a> {
     pub fn new(
@@ -181,6 +184,7 @@ impl<'a> ClaimChecker<'a> {
             max_output_tokens,
             policy,
             form: VerdictForm::default(),
+            variant: PromptVariant::default(),
         }
     }
 
@@ -190,9 +194,15 @@ impl<'a> ClaimChecker<'a> {
         self
     }
 
+    /// A strict check asked in `variant`.
+    pub fn with_prompt_variant(mut self, variant: PromptVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
     /// Whether a strict located check answers in fields.
     fn answers_in_fields(&self, located: bool) -> bool {
-        located && self.policy.strict() && self.form == VerdictForm::Fields
+        located && self.policy.strict() && self.form != VerdictForm::Lines
     }
     /// Tokens of source text one [`Self::check`] of `claim` can carry: the window
     /// less both prompts and the answer's room. More is judged in a further call.

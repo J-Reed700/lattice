@@ -13,6 +13,19 @@ pub(super) struct Reply {
 
 impl ClaimChecker<'_> {
     pub(super) fn system_prompt(&self, located: bool, reasoned: bool) -> String {
+        let system = if self.variant.brief && reasoned && matches!(self.policy, CheckPolicy::Strict) {
+            variant::brief_system(self.form)
+        } else {
+            self.shipped_system_prompt(located, reasoned)
+        };
+        if self.variant.closed_book {
+            format!("{system} {}", variant::CLOSED_BOOK)
+        } else {
+            system
+        }
+    }
+
+    fn shipped_system_prompt(&self, located: bool, reasoned: bool) -> String {
         let mut base = if located {
             CLAIM_CHECK_SYSTEM.replace("Source quote: an exact contiguous quote from a passage that supports that comparison, or none.", "Source passage: the application-assigned passage-N identifier that supports that comparison, or none.")
                 .replace("do not invent a quote", "do not invent a passage identifier")
@@ -28,7 +41,7 @@ impl ClaimChecker<'_> {
             );
         }
         if reasoned && self.answers_in_fields(located) {
-            base = base.replace(fields::LINES_FORMAT, fields::FIELDS_FORMAT);
+            base = base.replace(fields::LINES_FORMAT, fields::format(self.form));
         } else if reasoned {
             base = base.replace(
                 "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:",
@@ -89,7 +102,8 @@ impl ClaimChecker<'_> {
                 ],
                 // Keep the model's reasoning enabled. Durable publication
                 // checks ask for deliberation; chat uses the model default.
-                reasoning_effort: self.policy.strict().then(|| "low".into()),
+                reasoning_effort: self.policy.strict().then(|| self.variant.effort().into()),
+                thinking: self.variant.thinking_mode(),
                 sampling: Some(self.sampling),
                 // A durable lesson check must not fail merely because a
                 // reasoning provider needs more than the chat-sized reply
@@ -107,7 +121,7 @@ impl ClaimChecker<'_> {
                 want_logprobs: !reasoned,
                 json_schema: self
                     .answers_in_fields(located)
-                    .then(|| fields::single_schema(passages)),
+                    .then(|| fields::single_schema(self.form, passages)),
                 // A slow model is not a failed one: stall detection and the
                 // caller's cancellation end a call that will not finish.
                 no_time_limit: true,

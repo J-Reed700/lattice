@@ -13,7 +13,8 @@ use super::*;
 async fn live_claim_pairs_eval() -> Result<()> {
     use lattice_core::application::ports::llm_port::SamplingOverride;
     use lattice_core::application::services::claim_verification::{
-        CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, LocatedClaim, VerdictForm,
+        CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, LocatedClaim, PromptVariant,
+        VerdictForm,
     };
     use std::io::Write as _;
 
@@ -78,10 +79,24 @@ async fn live_claim_pairs_eval() -> Result<()> {
         finished.len()
     );
     // `LATTICE_CLAIM_FORM=fields` asks for the comparison as fields before the
-    // verdict instead of the three labelled lines.
+    // verdict instead of the three labelled lines, `parts` for the claim split
+    // into parts. `LATTICE_CLAIM_VARIANT` turns on `closed-book` and `brief`
+    // (comma-separated), and `LATTICE_CLAIM_THINKING=on|off` overrides what
+    // the judge is asked about thinking.
     let form = match std::env::var("LATTICE_CLAIM_FORM").as_deref() {
         Ok("fields") => VerdictForm::Fields,
+        Ok("parts") => VerdictForm::Parts,
         _ => VerdictForm::Lines,
+    };
+    let named = std::env::var("LATTICE_CLAIM_VARIANT").unwrap_or_default();
+    let variant = PromptVariant {
+        closed_book: named.split(',').any(|name| name == "closed-book"),
+        brief: named.split(',').any(|name| name == "brief"),
+        thinking: match std::env::var("LATTICE_CLAIM_THINKING").as_deref() {
+            Ok("on") => Some(true),
+            Ok("off") => Some(false),
+            _ => None,
+        },
     };
     let checker = ClaimChecker::new(
         &*model,
@@ -89,7 +104,8 @@ async fn live_claim_pairs_eval() -> Result<()> {
         512,
         CheckPolicy::Strict,
     )
-    .with_verdict_form(form);
+    .with_verdict_form(form)
+    .with_prompt_variant(variant);
     // A pair holds one `passage`, or a page of `passages`, each `{label,
     // text}`: a labelled passage reaches the judge as the lesson check shows
     // it, its label line above its text (`requests::labelled`).
@@ -127,6 +143,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
             continue;
         }
         let started = std::time::Instant::now();
+        let mut output_tokens = 0;
         let mut judgments = if group.len() == 1 {
             vec![
                 checker
@@ -134,10 +151,11 @@ async fn live_claim_pairs_eval() -> Result<()> {
                     .await,
             ]
         } else {
-            checker
+            let answered = checker
                 .check_batch_without_deadline(&targets, &|_| Ok(()), &|_| Ok(()))
-                .await?
-                .judgments
+                .await?;
+            output_tokens = answered.output_tokens;
+            answered.judgments
         };
         let mut calls = 1;
         for (judgment, located) in judgments.iter_mut().zip(&targets) {
@@ -171,6 +189,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
                     "difficulty": pair["difficulty"], "kind": pair["kind"],
                     "verdict": verdict, "reason": reason,
                     "latency_ms": latency_ms, "batch": group.len(), "calls": calls,
+                    "batch_output_tokens": output_tokens,
                 })
             )?;
         }
