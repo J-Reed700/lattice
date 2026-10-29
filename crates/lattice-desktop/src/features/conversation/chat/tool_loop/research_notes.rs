@@ -7,7 +7,7 @@
 //! before. Done at most twice a turn.
 
 use super::clock::TurnClock;
-use super::final_round::{say_last, written_call_start};
+use super::final_round::written_call_start;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use lattice_core::application::ports::llm_port::{
@@ -121,11 +121,13 @@ pub(super) async fn condense(
         "Condensing what it has read",
         Some(format!("{chars_before} characters of results")),
     );
-    // The prompt the server has cached, and the instruction after it without
-    // a message of its own (see `final_round` for what a new user message
-    // costs on Qwen 3.5).
+    // In a message of its own: read as more of the last result, the
+    // instruction got calls back from Qwen and dropped facts from Claude.
     let mut input = request.input.clone();
-    say_last(&mut input, CONDENSE_INSTRUCTION);
+    input.push(CompletionInput::Message {
+        role: "user".into(),
+        content: CONDENSE_INSTRUCTION.into(),
+    });
     let notes_request = CompletionRequest {
         input,
         // The same tools, forbidden. Without them the prompt would differ from
@@ -150,25 +152,9 @@ pub(super) async fn condense(
         step.failed(Some("The model could not write notes".into()));
         return Ok(None);
     };
-    let mut notes = usable_notes(&response.text, &response.finish_reason);
-    let mut finish_reason = response.finish_reason;
-    // Read as more of the last result, the instruction can get a call back
-    // instead of notes; as a message of its own it does not.
-    if notes.is_none() && written_call_start(response.text.trim()).is_some() {
-        let mut again = notes_request;
-        again.input = request.input.clone();
-        again.input.push(CompletionInput::Message {
-            role: "user".into(),
-            content: CONDENSE_INSTRUCTION.into(),
-        });
-        if let Some(response) = ask(llm, &again, cancel, clock).await? {
-            notes = usable_notes(&response.text, &response.finish_reason);
-            finish_reason = response.finish_reason;
-        }
-    }
-    let Some(notes) = notes else {
+    let Some(notes) = usable_notes(&response.text, &response.finish_reason) else {
         warn!(
-            %finish_reason,
+            finish_reason = %response.finish_reason,
             "The model's notes were not usable; carrying on without condensing"
         );
         step.failed(Some("No usable notes".into()));
@@ -406,30 +392,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn notes_written_as_a_call_are_asked_for_again_in_a_message_of_their_own() {
-        let model = Script::new([
-            ("<tool_call>\n<function=web_search>", "stop"),
-            ("- fact [1]", "stop"),
-        ]);
-        let condensed = condensed(&model).await.expect("the second answer is notes");
+    async fn the_notes_are_asked_for_in_a_message_of_their_own() {
+        let model = Script::new([("- fact [1]", "stop")]);
+        let condensed = condensed(&model).await.expect("notes");
         assert_eq!(condensed.chars_before, 3_000);
         let sent = model.requests();
-        assert_eq!(sent.len(), 2);
-        assert!(matches!(
-            sent[0].input.last(),
-            Some(CompletionInput::ToolResult { output, .. }) if output.ends_with(CONDENSE_INSTRUCTION)
-        ));
+        assert_eq!(sent.len(), 1);
         let results_end = transcript(&[&[3_000]]).len();
-        assert_eq!(sent[1].input.len(), results_end + 1);
+        assert_eq!(sent[0].input.len(), results_end + 1);
         assert!(matches!(
-            &sent[1].input[results_end - 1],
+            &sent[0].input[results_end - 1],
             CompletionInput::ToolResult { output, .. } if output.len() == 3_000
         ));
         assert!(matches!(
-            sent[1].input.last(),
+            sent[0].input.last(),
             Some(CompletionInput::Message { role, content })
                 if role == "user" && content == CONDENSE_INSTRUCTION
         ));
+    }
+
+    #[tokio::test]
+    async fn notes_written_as_a_call_are_not_asked_for_again() {
+        let model = Script::new([("<tool_call>\n<function=web_search>", "stop")]);
+        assert!(condensed(&model).await.is_none());
+        assert_eq!(model.requests().len(), 1);
     }
 
     #[tokio::test]
