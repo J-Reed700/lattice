@@ -9,10 +9,10 @@ use lattice_core::application::contracts::settings::RetrievalTuningSettingsDto;
 /// Rerank the shortlist through the search orchestrator's cross-encoder
 /// stage, reporting whether cross-encoder scores were actually applied.
 ///
-/// The caller needs that second value, not just the reordered list: a blended
-/// score can be thresholded, but the RRF weights left behind when the reranker
-/// is unavailable or fails are ranks, and thresholding ranks would invent
-/// confidence the pipeline does not have.
+/// The caller needs that second value, not just the reordered list: a
+/// cross-encoder relevance can be thresholded, but the RRF weights left behind
+/// when the reranker is unavailable or fails are ranks, and thresholding ranks
+/// would invent confidence the pipeline does not have.
 pub(super) async fn apply_rerank_stage(
     container: &dyn ChatRetrieval,
     validated_message: &str,

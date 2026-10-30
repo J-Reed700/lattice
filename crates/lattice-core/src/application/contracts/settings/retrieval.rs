@@ -192,9 +192,9 @@ fn default_deep_research_branch_queries() -> u32 {
     3
 }
 
-/// `blend_rerank_scores` mixes `0.35 * normalized_first_stage + 0.65 * rerank`,
-/// so the first-stage winner is worth 0.35 on its own. A top blended score
-/// below that floor means no passage earned any cross-encoder relevance.
+/// A reranked passage's score is the cross-encoder's relevance, 0 to 1. A best
+/// passage below this floor means the cross-encoder found nothing much more
+/// likely relevant than not.
 fn default_sufficiency_min_top_score() -> f32 {
     0.35
 }
@@ -297,7 +297,7 @@ impl Default for RetrievalTuningSettingsDto {
             external_search_max_wiki_terms: 8,
             external_search_max_web_terms: 10,
             external_search_query_max_chars: 1200,
-            rerank_max_candidates: 48,
+            rerank_max_candidates: 64,
             rerank_query_max_chars: 6000,
             sufficiency_min_top_score: default_sufficiency_min_top_score(),
             sufficiency_min_term_coverage: default_sufficiency_min_term_coverage(),

@@ -42,7 +42,7 @@
 mod production;
 
 use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
-use lattice::features::search::engine::reranker::{blend_rerank_scores, load_reranker, Reranker};
+use lattice::features::search::engine::reranker::{fuse_rerank_order, load_reranker, Reranker};
 use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
 use lattice::interfaces::di::modules::embedding::standalone::open_gguf;
 use lattice_core::application::ports::EmbeddingPort;
@@ -482,20 +482,18 @@ async fn run_embedding(
                     .ok_or("reranker candidate index was out of range")?;
                 candidate_texts.push(passage.1.clone());
             }
-            let candidate_scores: Vec<f32> =
-                passage_scores.iter().map(|(_, score)| *score).collect();
             let reranked = reranker
-                .rerank(&query.text, candidate_texts, candidate_scores.len())
+                .rerank(&query.text, candidate_texts, passage_scores.len())
                 .await?;
-            let blended = blend_rerank_scores(&candidate_scores, &reranked)?;
-            let mut reranked_passages: Vec<(usize, f32)> = passage_scores
-                .iter()
-                .zip(blended)
-                .map(|((passage_index, _), score)| (*passage_index, score))
-                .collect();
-            reranked_passages.sort_by(|(a_idx, a_score), (b_idx, b_score)| {
-                b_score.total_cmp(a_score).then(a_idx.cmp(b_idx))
-            });
+            let reranked_passages: Vec<(usize, f32)> =
+                fuse_rerank_order(passage_scores.len(), &reranked)?
+                    .into_iter()
+                    .filter_map(|candidate| {
+                        passage_scores
+                            .get(candidate.index)
+                            .map(|(passage_index, _)| (*passage_index, candidate.relevance))
+                    })
+                    .collect();
 
             let mut seen = HashSet::new();
             ranked.clear();

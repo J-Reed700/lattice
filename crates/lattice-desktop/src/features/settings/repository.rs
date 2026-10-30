@@ -40,7 +40,8 @@ const TEMP_SUFFIX: &str = ".tmp";
 /// Settings file version for migration support.
 ///
 /// 2: full-precision vectors became the default (see `file_store::migrate_settings`).
-const SETTINGS_VERSION: u32 = 2;
+/// 3: the cross-encoder judges 64 candidates by default, not 48.
+const SETTINGS_VERSION: u32 = 3;
 
 /// Settings file structure with version.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

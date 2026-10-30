@@ -68,7 +68,8 @@ impl RerankOptions {
 /// A list after the rerank stage, and whether cross-encoder scores were
 /// actually applied to it.
 ///
-/// Callers need the flag, not just the order: a blended score can be
+/// Callers need the flag, not just the order: when it is set, each judged
+/// result's score is the cross-encoder's relevance, from 0 to 1, and can be
 /// thresholded, but the fused weights left behind when the reranker is
 /// unavailable or fails are ranks, and thresholding ranks would invent
 /// confidence the search does not have.

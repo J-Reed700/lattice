@@ -88,6 +88,6 @@ pub use profiler::{PerformanceMetrics, Profiler};
 pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};
 pub use reranker::{
-    blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
-    Reranker, RerankerService,
+    fuse_rerank_order, load_reranker, FusedCandidate, LazyReranker, MiniLmRerankerService,
+    RerankResult, Reranker, RerankerService,
 };

@@ -652,9 +652,11 @@ fn reranking_with(reranker: Arc<ScriptedReranker>) -> HybridSearchUseCase {
     use_case(Vec::new(), Vec::new()).with_reranker(reranker)
 }
 
+/// The order is the fusion of the fused and cross-encoder ranks, and each
+/// result's score is its cross-encoder relevance.
 #[tokio::test]
-async fn reranking_reorders_the_list_by_blended_score_and_says_so() {
-    let reranker = ScriptedReranker::scoring(vec![0.0, 0.0, 1.0]);
+async fn reranking_reorders_the_list_by_rank_fusion_and_says_so() {
+    let reranker = ScriptedReranker::scoring(vec![0.0, 1.0, 0.5]);
     let search = reranking_with(reranker.clone());
 
     let reranked = search.rerank(fused_list(), &rerank_options(48)).await;
@@ -662,8 +664,10 @@ async fn reranking_reorders_the_list_by_blended_score_and_says_so() {
     assert!(reranked.applied);
     assert_eq!(
         ids(&reranked.response.results),
-        ["third", "first", "second"]
+        ["second", "first", "third"]
     );
+    let scores: Vec<f32> = reranked.response.results.iter().map(|r| r.score).collect();
+    assert_eq!(scores, [1.0, 0.0, 0.5]);
     let calls = reranker.calls();
     assert_eq!(calls.len(), 1);
     // Each passage is judged with its title in front of it.
@@ -712,7 +716,7 @@ async fn a_failed_rerank_keeps_the_fused_order_and_scores() {
     assert_eq!(reranked.response.results[0].score, 0.09);
 }
 
-/// One score for three candidates cannot be blended; nothing is half-applied.
+/// One score for three candidates cannot be fused; nothing is half-applied.
 #[tokio::test]
 async fn a_malformed_rerank_keeps_the_fused_order() {
     let search = reranking_with(ScriptedReranker::scoring(vec![1.0]));
@@ -746,7 +750,13 @@ async fn reranking_scores_only_the_candidate_cap() {
         third.score, 0.07,
         "a result past the cap keeps its fused score"
     );
-    assert_eq!(reranked.response.results[0].id, "second");
+    // First by one order and second by the other is a tie, which keeps the
+    // fused order.
+    assert_eq!(
+        ids(&reranked.response.results),
+        ["first", "second", "third"]
+    );
+    assert_eq!(reranked.response.results[1].score, 1.0);
 }
 
 #[tokio::test]
@@ -793,8 +803,8 @@ fn a_reranked_pool_is_never_narrower_than_the_cut() {
 
 /// A deep cut (1,500 passages on a 1M-token window) is not all sent through
 /// the cross-encoder: it judges its candidates, and the passages past them
-/// follow in fused order instead of being sorted in among blended scores on
-/// another scale.
+/// follow in fused order instead of being sorted in among relevance scores
+/// on another scale.
 #[tokio::test]
 async fn only_the_candidates_are_judged_and_the_rest_follow_in_fused_order() {
     let reranker = ScriptedReranker::scoring(vec![0.0, 0.0]);

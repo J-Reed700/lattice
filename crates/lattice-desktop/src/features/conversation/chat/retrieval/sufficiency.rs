@@ -1,7 +1,7 @@
 //! Post-rerank sufficiency signal for corrective retrieval: a cheap, local
 //! second opinion, consulted once after reranking, on whether one replanned
-//! retry is worth its latency. Three weak signals: the top blended score (only
-//! when the cross-encoder ran; RRF ranks are never thresholded), the spread
+//! retry is worth its latency. Three weak signals: the top cross-encoder
+//! relevance (only when it ran; RRF ranks are never thresholded), the spread
 //! between the first and fifth results, and how many of the plan's query
 //! terms appear in the passages that will reach the answer.
 
@@ -62,8 +62,8 @@ pub(in crate::features::conversation::chat) mod reason {
 pub(in crate::features::conversation::chat) struct SufficiencyVerdict {
     /// False only when a corrective retry could plausibly do better.
     pub sufficient: bool,
-    /// Blended score of the best passage. Comparable across turns only when
-    /// `reranked` was true for both.
+    /// The best passage's cross-encoder relevance, 0 to 1. Comparable across
+    /// turns only when `reranked` was true for both.
     pub top_score: f32,
     /// `top_score` minus the score at rank `COVERAGE_TOP_N`, or minus the last
     /// result's score when fewer came back.
