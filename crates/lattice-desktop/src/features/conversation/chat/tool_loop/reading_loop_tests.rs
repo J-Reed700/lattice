@@ -331,7 +331,11 @@ async fn a_reading_with_no_notes_is_taken_back_and_the_answer_asked_for_as_befor
     let run = grounded(&model).await;
     assert_eq!(run.outcome.expect("an answer").response, ANSWER);
     let requests = model.requests();
-    assert_eq!(requests.len(), 3, "the reading, shown back once, then the answer");
+    assert_eq!(
+        requests.len(),
+        3,
+        "the reading, shown back once, then the answer"
+    );
     let answering = &requests[2];
     assert_eq!(answering.input.len(), 2);
     assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));

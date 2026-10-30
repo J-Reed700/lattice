@@ -382,7 +382,9 @@ fn only_the_labels_the_message_shows_are_read() {
         "a message without the instruction asks for no reading"
     );
     assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1].text().ends_with("Question: What happened?"));
+    assert!(planned.input[1]
+        .text()
+        .ends_with("Question: What happened?"));
 }
 
 #[test]
