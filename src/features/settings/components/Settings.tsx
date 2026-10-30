@@ -71,7 +71,6 @@ const tabGroups: TabGroup[] = [
       { id: 'vault', label: 'Vault', icon: FolderOpen, component: VaultTab },
       { id: 'spaces', label: 'Spaces', icon: Layers3, component: SpacesTab },
       { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
-      { id: 'read-aloud', label: 'Read aloud', icon: Volume2, component: ReadAloudTab },
       { id: 'privacy', label: 'Privacy', icon: ShieldCheck, component: PrivacyTab },
       { id: 'logs', label: 'Logs', icon: FileText, component: LogsTab },
     ],
@@ -87,6 +86,7 @@ const tabGroups: TabGroup[] = [
       { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
       { id: 'sources', label: 'Sources', icon: Globe, component: SourcesTab },
       { id: 'source-trust', label: 'Source trust', icon: Scale, component: SourceTrustSettings },
+      { id: 'read-aloud', label: 'Read aloud', icon: Volume2, component: ReadAloudTab },
     ],
   },
 ];
