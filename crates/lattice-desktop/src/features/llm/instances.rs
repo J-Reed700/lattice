@@ -372,6 +372,29 @@ impl LlmInstances {
         starting(outcome, turn)
     }
 
+    /// Admit a server outside the pool that may only take GPU memory the
+    /// others leave free: nothing is unloaded for it. Says whether it fits,
+    /// with the admission turn to hold until it has started when it is new
+    /// and fits; one that does not fit is to start on the CPU instead.
+    pub(crate) async fn admit_without_eviction(
+        &self,
+        name: &str,
+        config: &SidecarConfig,
+        budget: &dyn GpuBudget,
+    ) -> (bool, Option<tokio::sync::MutexGuard<'_, ()>>) {
+        let turn = self.admission.lock().await;
+        let outcome = budget.server_admission(config).await;
+        let fits = matches!(outcome, Admission::Fits { .. } | Admission::Shared);
+        tracing::info!(
+            model = name,
+            ?outcome,
+            offloaded = fits,
+            "model.admission.spare_room"
+        );
+        let turn = if fits { starting(outcome, turn) } else { None };
+        (fits, turn)
+    }
+
     /// Read before the settings a request is built from.
     pub(crate) fn epoch(&self) -> u64 {
         self.pool.epoch()

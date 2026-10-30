@@ -14,6 +14,7 @@
 
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use async_trait::async_trait;
+use lattice_core::domain::models::curated::CURATED_RERANKER;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -36,17 +37,14 @@ pub struct RerankerSetup {
     pub toggle: Arc<dyn RerankingToggle>,
 }
 
-/// What the reranker download costs: the pinned revision's weights, tokenizer
-/// and config added up.
-///
-/// Reported so the UI can name a size before starting rather than opening an
-/// indeterminate progress bar.
-pub const RERANKER_DOWNLOAD_BYTES: u64 = 1_191_588_280 + 11_422_654 + 727;
+/// What the reranker download costs, so the UI can name a size before
+/// starting rather than opening an indeterminate progress bar.
+pub const RERANKER_DOWNLOAD_BYTES: u64 = CURATED_RERANKER.bytes;
 
 /// The reranker Lattice downloads. ms-marco-MiniLM-L-6-v2 moved nothing on the
 /// v3 fixture; this one lifted nDCG@5 (see
 /// `evals/retrieval/2026-10-12-RERANKER-FTS-HEADER-FUSION.md`).
-pub const RERANKER_MODEL_NAME: &str = "Qwen/Qwen3-Reranker-0.6B";
+pub const RERANKER_MODEL_NAME: &str = CURATED_RERANKER.name;
 
 /// Whether reranking is switched on, and whether it could run if it were.
 ///
@@ -148,8 +146,8 @@ mod tests {
     fn the_status_names_the_model_and_what_it_costs() {
         let status = RerankerStatusDto::new(false, false);
         assert_eq!(status.model_name, "Qwen/Qwen3-Reranker-0.6B");
-        assert!(
-            status.download_bytes > 1_150_000_000 && status.download_bytes < 1_250_000_000,
+        assert_eq!(
+            status.download_bytes, 639_153_184,
             "a size the UI can show before starting, not a placeholder"
         );
     }

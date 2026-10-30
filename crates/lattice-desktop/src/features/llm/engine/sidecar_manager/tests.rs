@@ -1772,7 +1772,10 @@ fn an_embedding_server_gets_exactly_its_own_flags() {
         n_gpu_layers: 99,
         context_size: 8192,
         parallel_slots: Some(4),
-        embedding: Some(EmbeddingServing { ubatch: 2048 }),
+        pooling: Some(PoolingServing {
+            ubatch: 2048,
+            task: PoolingTask::Embedding,
+        }),
         ..SidecarConfig::for_model(PathBuf::from("/models/Qwen3-Embedding-0.6B-f16.gguf"))
     };
     let expected: Vec<String> = [
@@ -1817,6 +1820,46 @@ fn an_embedding_server_gets_exactly_its_own_flags() {
     }
 }
 
+/// A reranking server is an embedding server's flags with `--reranking`;
+/// on the CPU it uses no device at all, so its scratch takes no GPU memory.
+#[test]
+fn a_reranking_server_gets_its_flags_and_no_device_on_the_cpu() {
+    let config = SidecarConfig {
+        n_gpu_layers: 99,
+        context_size: 4096,
+        parallel_slots: Some(1),
+        pooling: Some(PoolingServing {
+            ubatch: 4096,
+            task: PoolingTask::Reranking,
+        }),
+        ..SidecarConfig::for_model(PathBuf::from("/models/qwen3-reranker-0.6b-q8_0.gguf"))
+    };
+    let on_gpu = build_server_args(&config, 12345);
+    assert!(on_gpu.iter().any(|arg| arg == "--reranking"));
+    assert!(!on_gpu.iter().any(|arg| arg == "--embedding"));
+    assert_eq!(flag_value(&on_gpu, "-ub"), Some("4096"));
+    assert_eq!(flag_value(&on_gpu, "-np"), Some("1"));
+    assert!(!on_gpu.iter().any(|arg| arg == "--device"));
+
+    let on_cpu = build_server_args(&config.without_gpu_offload(), 12345);
+    assert_eq!(flag_value(&on_cpu, "-ngl"), Some("0"));
+    assert_eq!(flag_value(&on_cpu, "--device"), Some("none"));
+
+    let embedding = SidecarConfig {
+        pooling: Some(PoolingServing {
+            ubatch: 2048,
+            task: PoolingTask::Embedding,
+        }),
+        ..config.without_gpu_offload()
+    };
+    assert!(
+        !build_server_args(&embedding, 12345)
+            .iter()
+            .any(|arg| arg == "--device"),
+        "an embedding server on the CPU is launched as before"
+    );
+}
+
 /// The embedding field is part of a server's identity, so the pool never
 /// hands a chat role an embedding server of the same file or the reverse.
 #[test]
@@ -1825,7 +1868,10 @@ fn an_embedding_server_is_keyed_apart_from_a_chat_server_of_one_file() {
 
     let chat = SidecarConfig::for_model(PathBuf::from("/models/model.gguf"));
     let embedding = SidecarConfig {
-        embedding: Some(EmbeddingServing { ubatch: 2048 }),
+        pooling: Some(PoolingServing {
+            ubatch: 2048,
+            task: PoolingTask::Embedding,
+        }),
         ..chat.clone()
     };
     let hasher = RandomState::new();

@@ -5,9 +5,9 @@ use lattice_core::application::ports::ContentExtractionPort;
 #[tokio::test]
 #[ignore = "requires LATTICE_EMBED_GGUF, a runnable llama-server and LATTICE_STRUCTURE_PDF (read-only)"]
 async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> {
-    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
-        std::path::Path::new(&std::env::var("LATTICE_EMBED_GGUF")?),
-    )
+    let model = crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(
+        &std::env::var("LATTICE_EMBED_GGUF")?,
+    ))
     .await?;
     let path = std::path::PathBuf::from(std::env::var("LATTICE_STRUCTURE_PDF")?);
     let extracted = ContentExtractionAdapter::new()

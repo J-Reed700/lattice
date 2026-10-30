@@ -57,7 +57,8 @@ pub const DEFAULT_RRF_K: f32 = 10.0;
 pub const DEFAULT_VECTOR_FUSION_WEIGHT: f32 = 0.7;
 pub const DEFAULT_KEYWORD_FUSION_WEIGHT: f32 = 0.3;
 
-/// Directory under the models folder that holds the reranker checkpoint.
+/// Directory under the models folder that holds the reranker: the GGUF the
+/// app serves, and the safetensors checkpoint earlier versions ran in Candle.
 ///
 /// Named after the checkpoint rather than the role, so a different reranker
 /// gets a different folder: a stale `reranker/` from the MiniLM era is never

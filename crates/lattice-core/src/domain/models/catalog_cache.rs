@@ -98,6 +98,13 @@ impl ModelCatalogCache {
         catalog.insert("siglip-so400m-patch14-384".to_string(), ModelType::Vision);
 
         // Reranker Models
+        // The one search serves, by its catalog directory and its GGUF.
+        for name in [
+            crate::shared::constants::RERANKER_MODEL_DIR,
+            crate::domain::models::curated::CURATED_RERANKER.file,
+        ] {
+            catalog.insert(name.to_lowercase(), ModelType::Reranker);
+        }
         catalog.insert("bge-reranker-base".to_string(), ModelType::Reranker);
         catalog.insert("bge-reranker-large".to_string(), ModelType::Reranker);
         catalog.insert("bge-reranker-v2-m3".to_string(), ModelType::Reranker);
@@ -179,6 +186,10 @@ mod tests {
         );
         assert_eq!(
             cache.lookup("bge-reranker-large"),
+            Some(ModelType::Reranker)
+        );
+        assert_eq!(
+            cache.lookup("qwen3-reranker-0.6b-q8_0.gguf"),
             Some(ModelType::Reranker)
         );
     }

@@ -3,7 +3,7 @@
 //! [`LlamaEmbeddingService`] is the app's `EmbeddingPort`: it splits text with
 //! the model's own tokenizer, prefixes it as the model's family was trained,
 //! and sends each batch as one `/v1/embeddings` request. It knows the server
-//! only as a [`RunningEmbeddingServer`]; starting one is the composition
+//! only as a [`RunningLlamaServer`]; starting one is the composition
 //! root's job, through an [`EmbeddingServerStarter`].
 
 mod client;
@@ -25,10 +25,11 @@ use lru::LruCache;
 
 use crate::features::embedding::input_policy::InputPolicy;
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
+use crate::infrastructure::llama_server::RunningLlamaServer;
 
 pub use facts::{EmbeddingHeader, EmbeddingModelFacts, Pooling};
 pub(crate) use identity::{resolve_prefixes, space_identity};
-pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, RunningEmbeddingServer, SERVER_SLOTS};
+pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, SERVER_SLOTS};
 
 use client::Failure;
 
@@ -47,7 +48,7 @@ struct Restart {
 
 /// An embedding model on a llama-server.
 pub struct LlamaEmbeddingService {
-    server: parking_lot::Mutex<Arc<RunningEmbeddingServer>>,
+    server: parking_lot::Mutex<Arc<RunningLlamaServer>>,
     restart: Option<Restart>,
     http: reqwest::Client,
     facts: EmbeddingModelFacts,
@@ -62,7 +63,7 @@ impl LlamaEmbeddingService {
     /// A service over `server`, which something else started and keeps
     /// running. Knows nothing of processes: a dead server is an error.
     pub fn connect(
-        server: Arc<RunningEmbeddingServer>,
+        server: Arc<RunningLlamaServer>,
         facts: EmbeddingModelFacts,
         policy: InputPolicy,
         prefixes: &'static EmbeddingPrefixes,
@@ -164,7 +165,7 @@ impl LlamaEmbeddingService {
         self.current().gpu_bytes()
     }
 
-    fn current(&self) -> Arc<RunningEmbeddingServer> {
+    fn current(&self) -> Arc<RunningLlamaServer> {
         Arc::clone(&self.server.lock())
     }
 
@@ -215,8 +216,8 @@ impl LlamaEmbeddingService {
     async fn restarted(
         &self,
         restart: &Restart,
-        dead: &Arc<RunningEmbeddingServer>,
-    ) -> Result<Arc<RunningEmbeddingServer>> {
+        dead: &Arc<RunningLlamaServer>,
+    ) -> Result<Arc<RunningLlamaServer>> {
         let _gate = restart.gate.lock().await;
         let current = self.current();
         if !Arc::ptr_eq(&current, dead) && current.alive() {
@@ -290,7 +291,7 @@ fn refuse_empty(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn transport_error(server: &RunningEmbeddingServer, error: &reqwest::Error) -> AppError {
+fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppError {
     AppError::EmbeddingFailed {
         reason: format!(
             "The embedding server at {} did not answer: {error}",

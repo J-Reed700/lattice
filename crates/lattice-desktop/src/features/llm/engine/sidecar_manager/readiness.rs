@@ -60,8 +60,8 @@ const CTX_CHECKPOINTS: u32 = 32;
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
 pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
-    if let Some(serving) = config.embedding {
-        return embedding_server_args(config, serving, port);
+    if let Some(serving) = config.pooling {
+        return pooling_server_args(config, serving, port);
     }
     let mut args = vec![
         "-m".to_string(),
@@ -129,20 +129,23 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
     args
 }
 
-/// An embedding server's flags, and nothing else: no chat template, prompt
-/// cache, speculative decoding, projector or quantized cache. The GGUF names
-/// its pooling, so `--pooling` is not passed, and `--embd-normalize` stays at
-/// its default (Euclidean), which is the L2 normalisation stored vectors have.
-/// `-fa auto` is the build's default, named so a change upstream shows here.
-fn embedding_server_args(
-    config: &SidecarConfig,
-    serving: EmbeddingServing,
-    port: u16,
-) -> Vec<String> {
+/// An embedding or reranking server's flags, and nothing else: no chat
+/// template, prompt cache, speculative decoding, projector or quantized cache.
+/// The GGUF names its pooling, so `--pooling` is not passed, and
+/// `--embd-normalize` stays at its default (Euclidean), which is the L2
+/// normalisation stored vectors have. `-fa auto` is the build's default, named
+/// so a change upstream shows here. A reranking server with no layers
+/// offloaded uses no device at all (`--device none`), so not even its
+/// scratch takes GPU memory a chat model may need.
+fn pooling_server_args(config: &SidecarConfig, serving: PoolingServing, port: u16) -> Vec<String> {
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
-        "--embedding".to_string(),
+        match serving.task {
+            PoolingTask::Embedding => "--embedding",
+            PoolingTask::Reranking => "--reranking",
+        }
+        .to_string(),
         "-c".to_string(),
         config.context_size.to_string(),
     ];
@@ -156,6 +159,11 @@ fn embedding_server_args(
         serving.ubatch.to_string(),
         "-ngl".to_string(),
         config.n_gpu_layers.to_string(),
+    ]);
+    if serving.task == PoolingTask::Reranking && config.n_gpu_layers == 0 {
+        args.extend(["--device".to_string(), "none".to_string()]);
+    }
+    args.extend([
         "-fa".to_string(),
         "auto".to_string(),
         "--host".to_string(),

@@ -44,7 +44,7 @@ mod production;
 use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
 use lattice::features::search::engine::reranker::{fuse_rerank_order, load_reranker, Reranker};
 use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
-use lattice::interfaces::di::modules::embedding::standalone::open_gguf;
+use lattice::interfaces::di::modules::standalone::open_gguf;
 use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{

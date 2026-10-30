@@ -322,6 +322,39 @@ async fn room_is_made_for_a_decided_server_and_its_turn_is_handed_back() {
     );
 }
 
+/// The reranking server only takes room that is free: when it does not fit,
+/// nothing idle is stopped for it and it is told to run on the CPU.
+#[tokio::test]
+async fn a_server_admitted_without_eviction_never_stops_anything() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+    let config = SidecarConfig::for_model(std::path::PathBuf::from("/models/reranker.gguf"));
+
+    let (offloaded, turn) = instances
+        .admit_without_eviction("reranker", &config, &FakeBudget::always(short()))
+        .await;
+    assert!(!offloaded);
+    assert!(turn.is_none(), "a server on the CPU holds no turn");
+    assert!(
+        !stopped.load(Ordering::SeqCst),
+        "nothing was stopped for it"
+    );
+
+    let (offloaded, turn) = instances
+        .admit_without_eviction("reranker", &config, &FakeBudget::always(fits()))
+        .await;
+    assert!(offloaded);
+    assert!(turn.is_some(), "a new server on the GPU keeps the turn");
+    drop(turn);
+
+    for unknown in [Admission::Unmetered, Admission::NoOffload] {
+        let (offloaded, _) = instances
+            .admit_without_eviction("reranker", &config, &FakeBudget::always(unknown))
+            .await;
+        assert!(!offloaded, "{unknown:?} is not room");
+    }
+}
+
 #[tokio::test]
 async fn an_idle_model_is_evicted_to_make_room_and_the_new_one_loads() {
     let dir = tempfile::tempdir().unwrap();

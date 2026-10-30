@@ -80,6 +80,7 @@ pub mod reranker;
 pub mod snippet;
 
 // Directory-backed sub-modules.
+pub mod llama_reranker;
 pub mod text_search;
 pub mod vector_search;
 

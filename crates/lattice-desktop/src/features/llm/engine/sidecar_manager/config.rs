@@ -77,18 +77,29 @@ pub struct SidecarConfig {
     /// model may see and its catalog projector is downloaded.
     pub projector_path: Option<PathBuf>,
 
-    /// `Some` for an embedding server of this GGUF rather than a chat one.
-    /// Part of the key, so a chat and an embedding server of one file would
-    /// be two processes (no GGUF is both).
-    pub embedding: Option<EmbeddingServing>,
+    /// `Some` for a server that embeds or reranks with this GGUF rather than
+    /// chats. Part of the key, so a chat and an embedding server of one file
+    /// would be two processes (no GGUF is both).
+    pub pooling: Option<PoolingServing>,
 }
 
-/// How an embedding server is launched beyond its window and slots.
+/// How a server that pools its inputs is launched beyond its window and slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EmbeddingServing {
-    /// `-b` and `-ub`: the per-slot window, so a non-causal model sees each
-    /// input in one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens`).
+pub struct PoolingServing {
+    /// `-b` and `-ub`: the per-slot window, so the model sees each input in
+    /// one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens` for a pooled
+    /// input).
     pub ubatch: u32,
+    pub task: PoolingTask,
+}
+
+/// What a pooling server answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PoolingTask {
+    /// `/v1/embeddings` (`--embedding`).
+    Embedding,
+    /// `/v1/rerank` (`--reranking`).
+    Reranking,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -432,7 +443,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
-            embedding: None,
+            pooling: None,
         }
     }
 
@@ -479,7 +490,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
-            embedding: None,
+            pooling: None,
         }
     }
 }

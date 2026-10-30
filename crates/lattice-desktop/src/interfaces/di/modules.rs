@@ -21,11 +21,14 @@
 
 mod ai;
 mod core;
+pub(crate) mod current_server;
 pub mod embedding;
 mod file_ops;
 mod indexing;
 mod library;
+pub(crate) mod reranking;
 mod search;
+pub mod standalone;
 mod system;
 
 pub use self::core::CoreModule;

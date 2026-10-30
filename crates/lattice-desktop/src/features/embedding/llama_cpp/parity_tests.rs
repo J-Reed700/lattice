@@ -46,7 +46,7 @@ fn bundled_binary() -> PathBuf {
 /// killed on drop.
 pub(super) struct LiveServer {
     child: Arc<parking_lot::Mutex<Child>>,
-    pub(super) server: Arc<RunningEmbeddingServer>,
+    pub(super) server: Arc<RunningLlamaServer>,
 }
 
 impl LiveServer {
@@ -99,7 +99,7 @@ impl LiveServer {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let watched = Arc::clone(&child);
-        let server = Arc::new(RunningEmbeddingServer::new(
+        let server = Arc::new(RunningLlamaServer::new(
             endpoint,
             key,
             None,

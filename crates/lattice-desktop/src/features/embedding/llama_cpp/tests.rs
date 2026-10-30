@@ -48,8 +48,8 @@ fn facts() -> EmbeddingModelFacts {
         .unwrap()
 }
 
-fn running(uri: &str, alive: bool) -> Arc<RunningEmbeddingServer> {
-    Arc::new(RunningEmbeddingServer::new(
+fn running(uri: &str, alive: bool) -> Arc<RunningLlamaServer> {
+    Arc::new(RunningLlamaServer::new(
         uri,
         KEY,
         Some(1),
@@ -274,12 +274,12 @@ fn refusing_uri() -> String {
 
 /// Hands out `servers` in order, one a start.
 struct FakeStarter {
-    servers: parking_lot::Mutex<Vec<Arc<RunningEmbeddingServer>>>,
+    servers: parking_lot::Mutex<Vec<Arc<RunningLlamaServer>>>,
     starts: AtomicUsize,
 }
 
 impl FakeStarter {
-    fn new(servers: Vec<Arc<RunningEmbeddingServer>>) -> Arc<Self> {
+    fn new(servers: Vec<Arc<RunningLlamaServer>>) -> Arc<Self> {
         Arc::new(Self {
             servers: parking_lot::Mutex::new(servers),
             starts: AtomicUsize::new(0),
@@ -295,7 +295,7 @@ impl EmbeddingServerStarter for FakeStarter {
     async fn accelerated(&self) -> bool {
         false
     }
-    async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
+    async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
         self.starts.fetch_add(1, Ordering::SeqCst);
         let mut servers = self.servers.lock();
         assert!(!servers.is_empty(), "more starts than servers");

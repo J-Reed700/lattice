@@ -20,10 +20,12 @@ for the active GGUF (`features/embedding/llama_cpp/`, started through
 trained window come from its GGUF header; passages are split with the
 `tokenizer.json` beside the GGUF. Tools that run without the app (the evals and
 the ignored live tests) start their own server through
-`interfaces/di/modules/embedding/standalone.rs`.
+`interfaces/di/modules/standalone.rs`.
 
-Candle stays a dependency for the reranker and Whisper only; no embedding runs
-on it.
+The reranker runs the same way, on a `llama-server --reranking`
+(`features/search/engine/llama_reranker/`). Candle stays a dependency for
+Whisper and for the checkpoint rerankers `retrieval_eval` can still load; no
+embedding runs on it.
 
 Fresh installs select their embedding model through `default_embedding_model`
 in `crates/lattice-core/src/domain/models/embedding_defaults.rs`. Catalog

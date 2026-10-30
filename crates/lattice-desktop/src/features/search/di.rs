@@ -8,7 +8,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::features::search::engine::bm25::BM25Search;
-use crate::features::search::engine::reranker::{LazyReranker, Reranker};
+use crate::features::search::engine::llama_reranker::{LlamaReranker, RerankServerStarter};
 use crate::features::search::engine::text_search::SqliteTextSearch;
 use crate::features::search::engine::vector_search::persistence::open_or_rebuild_streaming;
 use crate::features::search::engine::vector_search::IndexPersistence;
@@ -31,6 +31,8 @@ pub struct SearchDi {
     pub runtime_index: Arc<super::engine::vector_search::runtime_index::RuntimeVectorIndex>,
     pub semantic_search_use_case: Arc<SemanticSearchUseCase>,
     pub hybrid_search_use_case: Arc<HybridSearchUseCase>,
+    /// The hybrid search's reranker, which tools may point at another server.
+    pub reranker: Arc<LlamaReranker>,
 
     // Services
     pub search_service: Arc<dyn SearchServiceTrait>,
@@ -77,6 +79,7 @@ pub async fn build_with_compression(
     active_embedding_dimension: Option<usize>,
     compression: VectorIndexCompression,
     vector_space: VectorSpace,
+    rerank_starter: Arc<dyn RerankServerStarter>,
     background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
     let VectorSpace {
@@ -234,11 +237,10 @@ pub async fn build_with_compression(
     let bm25_search = Arc::new(BM25Search::new(db_pool.clone())) as Arc<dyn BM25SearchTrait>;
     let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
         as Arc<dyn SearchEnrichmentServiceTrait>;
-    let reranker = Arc::new(LazyReranker::new(
-        models_path
-            .join(lattice_core::shared::constants::RERANKER_MODEL_DIR)
-            .join("model.safetensors"),
-    )) as Arc<dyn Reranker>;
+    let reranker = Arc::new(LlamaReranker::new(
+        lattice_core::domain::models::curated::CURATED_RERANKER.path_in(&models_path),
+        rerank_starter,
+    ));
 
     let dynamic_embedding = embedding;
     let chunk_repository = Arc::new(
@@ -251,15 +253,15 @@ pub async fn build_with_compression(
     let hybrid_search_use_case = Arc::new(
         HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
             .with_chunk_repository(chunk_repository)
-            // Chat turns it on per turn through its retrieval tuning; direct
-            // search and the tool executor never call the stage.
-            .with_reranker(reranker),
+            // Chat calls the stage; direct search and the tool executor never do.
+            .with_reranker(reranker.clone()),
     );
 
     Ok(SearchDi {
         runtime_index,
         semantic_search_use_case,
         hybrid_search_use_case,
+        reranker,
         search_service,
         bm25_search,
         search_enrichment_service,

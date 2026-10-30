@@ -465,11 +465,9 @@ async fn live_corpus_retrieval_and_answer() {
             .await
             .unwrap();
     let embedding = Arc::new(
-        crate::interfaces::di::modules::embedding::standalone::open_gguf(std::path::Path::new(
-            &model_path,
-        ))
-        .await
-        .unwrap(),
+        crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&model_path))
+            .await
+            .unwrap(),
     );
     let rows: Vec<(String, Vec<u8>, String, String, String)> = sqlx::query_as("SELECT c.id, e.embedding, c.content, c.document_id, COALESCE(NULLIF(c.contextualized_content,''),c.content) FROM text_chunks c JOIN text_embeddings e ON e.chunk_id=c.id WHERE e.model_name=? ORDER BY c.document_id,c.chunk_index")
         .bind(EmbeddingPort::model_identity(embedding.as_ref())).fetch_all(&pool).await.unwrap();

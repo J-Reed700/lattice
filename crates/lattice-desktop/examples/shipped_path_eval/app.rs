@@ -10,7 +10,7 @@ use lattice::features::model_management::commands_extra::{
 };
 use lattice::features::settings::repository::SettingsRepository;
 use lattice::infrastructure::setup::database::setup_database;
-use lattice::interfaces::di::modules::embedding::standalone::StandaloneEmbeddingStarter;
+use lattice::interfaces::di::modules::standalone::StandaloneServers;
 use lattice::Container;
 use lattice_core::application::contracts::settings::SettingsDto;
 use lattice_core::application::ports::SettingsRepositoryPort;
@@ -56,7 +56,7 @@ pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
         Arc::default(),
     )
     .await?
-    .with_embedding_starter(Arc::new(StandaloneEmbeddingStarter::from_env()));
+    .with_embedding_starter(Arc::new(StandaloneServers::from_env()));
     Ok(container)
 }
 
