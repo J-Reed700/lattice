@@ -1085,6 +1085,10 @@ export async function installLearningStudioBackend(page: Page) {
       initialize_database: () => "Database initialized",
       list_downloaded_models: () => [],
       list_loaded_models: () => [],
+      get_speech_status: () => ({
+        modelReady: false, modelId: "kokoro-82m-british", modelName: "Kokoro 82M (British voices)", downloadBytes: 0,
+        license: "Apache-2.0", voices: [{ id: "bf_emma", name: "Emma" }], defaultVoice: "bf_emma",
+      }),
       last_learning_window_shortfall: () => null,
       // Every course in the fixture is indexed, so no evidence action waits.
       course_index_status: () => ({ state: "ready", mode: "hybrid" }),
