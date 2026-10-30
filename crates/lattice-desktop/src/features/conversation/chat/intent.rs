@@ -112,15 +112,23 @@ impl IntentClassifier {
         self
     }
 
-    /// The input for `message` with as much of `context` (oldest first) as
-    /// this classifier's window gives history: the newest turns, whole, and a
+    /// The input for `message` with as much of `context`'s turns (oldest
+    /// first; its system prompt is not one) as this classifier's window gives
+    /// history: the newest turns, whole, and a
     /// line counting any earlier ones left out. A newest turn too long for the room on its
     /// own is not dropped: its start goes in, marked as continuing, since the
     /// turn a follow-up follows is the one thing the classifier must see.
     pub fn input_for(&self, message: &str, context: &[String]) -> IntentInput {
+        use lattice_core::application::services::completion_input::is_system_entry;
         use lattice_core::application::services::history_share::{
             auxiliary_history_room, newest_that_fit, omitted_note,
         };
+        let turns: Vec<String> = context
+            .iter()
+            .filter(|entry| !is_system_entry(entry))
+            .cloned()
+            .collect();
+        let context = turns.as_slice();
         let bare = render_intent_prompt(
             &self.prompt_template,
             &IntentInput {
@@ -546,6 +554,24 @@ mod tests {
             .map(|turn| narrow.llm.count_tokens(turn) + 1)
             .sum();
         assert!(carried <= room, "{carried} of {room}");
+    }
+
+    #[test]
+    fn the_conversations_system_prompt_is_not_shown_as_a_turn() {
+        let context = [
+            "System: You are Lattice, a precise research assistant.".to_string(),
+            "User: When does the agreement renew?".to_string(),
+            "Assistant: On 2025-10-14 [1].".to_string(),
+        ];
+        let input =
+            IntentClassifier::new(MockLLM::wide("{}")).input_for("And the notice?", &context);
+        assert_eq!(input.recent_context, context[1..]);
+        let alone = IntentClassifier::new(MockLLM::wide("{}")).input_for("Hi there", &context[..1]);
+        assert!(
+            alone.recent_context.is_empty(),
+            "{:?}",
+            alone.recent_context
+        );
     }
 
     /// Answers after `delay`, as a slow local model does.
