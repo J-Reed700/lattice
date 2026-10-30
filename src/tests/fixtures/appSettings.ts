@@ -23,7 +23,6 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
     search: {
       maxResults: 10,
       similarityThreshold: 0.7,
-      enableReranking: true,
       hybridSearchAlpha: 0.5,
       retrievalTuning: {
         docShortlistCandidateMin: 16,

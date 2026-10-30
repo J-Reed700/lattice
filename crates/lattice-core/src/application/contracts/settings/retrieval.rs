@@ -42,9 +42,6 @@ pub struct SearchSettingsDto {
     /// Similarity threshold (0.0 - 1.0)
     pub similarity_threshold: f32,
 
-    /// Enable result reranking
-    pub enable_reranking: bool,
-
     /// Hybrid search alpha parameter (0.0 = vector, 1.0 = keyword)
     pub hybrid_search_alpha: f32,
 
@@ -240,9 +237,6 @@ impl Default for SearchSettingsDto {
         Self {
             max_results: 10,
             similarity_threshold: 0.7,
-            // Off: Qwen3-Reranker-0.6B raised nDCG@5 on v3 but not recall@5,
-            // at about 5.6 s per query and 3.8 GB on an M3 Max.
-            enable_reranking: false,
             hybrid_search_alpha: 0.5,
             retrieval_tuning: RetrievalTuningSettingsDto::default(),
             vector_index_compression: VectorIndexCompressionSettingsDto::default(),
