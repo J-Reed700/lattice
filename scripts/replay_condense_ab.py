@@ -1,19 +1,19 @@
 """Offline A/B for condensing a turn's tool results (chat/tool_loop/research_notes.rs): one request that rewrites
-every result into notes, as shipped, against one request per result.
+every result into notes against one request per result, and where its instruction is said.
 
 The saved reading prompts' passages stand in for what a research turn has read: the message keeps its
 instructions and question with the Knowledge Base Results block taken out, and the passages come back as the
 results of the turn's calls (`semantic_search` for the question, then `get_document` for the section a result
 opens with), RESULT_SIZE passages to a result, in label order, while they stay within RESULTS_CHARS: the share
 of a 16k window the loop's results reach before they are condensed, less the room the message and the
-reservation take. Every request is the shipped condensing request: the transcript, CONDENSE_INSTRUCTION said last
-(after the last result, as `say_last` does), the same tools forbidden, deterministic sampling, thinking off, the
-round's reservation.
+reservation take. Every request is the shipped condensing request: the transcript, CONDENSE_INSTRUCTION said last,
+the same tools forbidden, deterministic sampling, thinking off, the round's reservation.
 
-  ONE    as shipped: every result rewritten in one request.
+  ONE    every result rewritten in one request, the instruction after the last result (`say_last`), as
+         shipped until 2026-10-28.
   EACH   one request per result: CONDENSE_EACH names the result's call and shows the result again after it.
   NAMED  one request per result, naming its call only: the transcript's cached prompt and a line more.
-  ONE-USER  ONE with the instruction as a user message of its own after the last result.
+  ONE-USER  ONE with the instruction as a user message of its own after the last result, as shipped.
   ONE-BARE  ONE sent without the tools, so the model has no call to make (the prompt is read again from its head).
 
 Each reply is taken as `usable_notes` takes it: the text before any call written into it, and nothing when it
