@@ -46,7 +46,7 @@ fn message() -> String {
         .map(|(label, content)| format!("[{label}] Document: d{label}.md\nContent: {content}"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{passages}\n\nQuestion: Tell me about the bridge.\n\nAnswer:\n\n{READING_INSTRUCTION}")
+    format!("{passages}\n\nQuestion: Tell me about the bridge.\n\n{READING_INSTRUCTION}")
 }
 
 async fn grounded(model: &Arc<Model>) -> Run {
@@ -205,7 +205,7 @@ async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
     let answering = &requests[1];
     assert_eq!(answering.input.len(), 2, "no notes");
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
-    assert!(last_text(answering).ends_with("Answer:"));
+    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert_eq!(answering.max_output_tokens, Some(512));
 }
 
@@ -323,14 +323,22 @@ async fn a_note_that_is_not_a_copy_never_asks_for_more() {
 
 #[tokio::test]
 async fn a_reading_with_no_notes_is_taken_back_and_the_answer_asked_for_as_before() {
-    let model = Model::new([reply("The bridge opened in 1932."), reply(ANSWER)]);
+    let model = Model::new([
+        reply("The bridge opened in 1932."),
+        reply("The bridge opened in 1932."),
+        reply(ANSWER),
+    ]);
     let run = grounded(&model).await;
     assert_eq!(run.outcome.expect("an answer").response, ANSWER);
     let requests = model.requests();
-    assert_eq!(requests.len(), 2);
-    let answering = &requests[1];
+    assert_eq!(
+        requests.len(),
+        3,
+        "the reading, shown back once, then the answer"
+    );
+    let answering = &requests[2];
     assert_eq!(answering.input.len(), 2);
-    assert!(last_text(answering).ends_with("Answer:"));
+    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
 }
 
@@ -346,7 +354,7 @@ async fn a_reading_that_copies_no_passage_is_taken_back_and_the_answer_asked_for
     assert_eq!(requests.len(), 2, "without notes there is nothing to add");
     let answering = &requests[1];
     assert_eq!(answering.input.len(), 2, "no notes");
-    assert!(last_text(answering).ends_with("Answer:"));
+    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
 }
 

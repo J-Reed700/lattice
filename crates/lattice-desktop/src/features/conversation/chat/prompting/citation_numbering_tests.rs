@@ -166,7 +166,9 @@ fn only_a_message_with_passages_asks_for_a_reading_and_the_frame_prices_it() {
     };
     let read = builder().reading_passages(true).build();
     assert!(
-        read.ends_with(&format!("Answer:\n\n{READING_INSTRUCTION}")),
+        read.ends_with(&format!(
+            "Question: When was the chimney swept?\n\n{READING_INSTRUCTION}"
+        )),
         "{read}"
     );
     assert_eq!(read.matches(READING_INSTRUCTION).count(), 1);

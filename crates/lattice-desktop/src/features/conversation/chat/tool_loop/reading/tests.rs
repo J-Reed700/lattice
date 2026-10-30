@@ -56,7 +56,7 @@ fn message(labels: &[u32]) -> String {
         .map(|label| format!("[{label}] Document: d{label}.md\nContent: …"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{passages}\n\nQuestion: What happened?\n\nAnswer:\n\n{READING_INSTRUCTION}")
+    format!("{passages}\n\nQuestion: What happened?\n\n{READING_INSTRUCTION}")
 }
 
 fn planned(labels: &[u32]) -> CompletionRequest {
@@ -348,6 +348,29 @@ fn a_numbered_list_of_labels_is_read_by_its_labels() {
     );
 }
 
+/// Labels set out as a list or in bold, as some models write them, are still
+/// labels.
+#[test]
+fn a_label_in_a_list_item_or_in_bold_is_read() {
+    assert_eq!(
+        parse_notes(
+            "- [3] The bell was cast in 1702.\n**[4]** -\n**[5]:** The tower fell.\n* [6] -\n__7.__ The mill closed."
+        ),
+        vec![
+            (3, Some("The bell was cast in 1702.".into())),
+            (4, None),
+            (5, Some("The tower fell.".into())),
+            (6, None),
+            (7, Some("The mill closed.".into())),
+        ]
+    );
+    assert_eq!(
+        parse_notes("[8] *The Mill* was sold."),
+        vec![(8, Some("*The Mill* was sold.".into()))],
+        "emphasis inside the note is the note's own"
+    );
+}
+
 #[test]
 fn only_the_labels_the_message_shows_are_read() {
     let mut planned = planned(&[1, 2]);
@@ -359,7 +382,9 @@ fn only_the_labels_the_message_shows_are_read() {
         "a message without the instruction asks for no reading"
     );
     assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1].text().ends_with("Answer:"));
+    assert!(planned.input[1]
+        .text()
+        .ends_with("Question: What happened?"));
 }
 
 #[test]
@@ -397,7 +422,9 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
         reading.input[1].text(),
         format!(
             "{passages_and_question}{}",
-            GROUP_INSTRUCTION.replace("{passages}", &shown)
+            GROUP_INSTRUCTION
+                .replace("{passages}", &shown)
+                .replace("{last}", "4")
         ),
         "the message to its question, then the group shown again in place of the reading instruction"
     );
@@ -540,10 +567,45 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
 }
 
 #[tokio::test]
-async fn a_reading_with_no_label_in_it_gives_no_notes() {
+async fn a_reading_with_no_label_in_it_is_shown_back_once_then_gives_no_notes() {
     let model = Model::new([reply("The mill closed in 1887.", "stop")]);
     assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
-    assert_eq!(model.requests().len(), 1);
+    let sent = model.requests();
+    assert_eq!(sent.len(), 2, "the reading and one more ask");
+    assert_eq!(
+        sent[1].input[sent[1].input.len() - 2].text(),
+        "The mill closed in 1887.",
+        "the reply is shown back as the model's own message"
+    );
+    assert_eq!(
+        sent[1].input.last().unwrap().text(),
+        "You did not account for [1], [2], [3], [4]. Write one line for each of them, in the same form."
+    );
+}
+
+#[tokio::test]
+async fn a_reading_that_answered_instead_gets_its_lines_when_asked_once_more() {
+    let model = Model::new([
+        reply("The last miller retired in 1887.", "stop"),
+        reply(
+            "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -",
+            "stop",
+        ),
+    ]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.noted, [2].into());
+    assert_eq!(model.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn an_answer_written_after_the_lines_does_not_replace_them() {
+    let model = Model::new([reply(
+        "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -\n\nThe record shows:\n1. The mill was rebuilt.\n2. The miller retired.",
+        "stop",
+    )]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.noted, [2].into(), "{:?}", notes.lines);
+    assert_eq!(notes.lines.get(&1), Some(&None));
 }
 
 #[tokio::test]

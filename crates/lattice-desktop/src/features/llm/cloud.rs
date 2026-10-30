@@ -315,9 +315,15 @@ impl CloudLlm {
             // is expressed by leaving the thinking block out, since asking for
             // adaptive thinking means think.
             let effort = request.reasoning_effort.as_deref();
-            let thinks = claude_thinks_unasked(&self.model)
-                || request.thinking == ThinkingMode::On
-                || effort.is_some_and(|effort| effort != "none");
+            // A request for no thinking at all turns it off where the model
+            // allows that; elsewhere it thinks at the lowest effort.
+            let thinking_off = (effort == Some("none") && request.thinking != ThinkingMode::On)
+                .then(|| claude_thinking_off(&self.model))
+                .flatten();
+            let thinks = thinking_off.is_none()
+                && (claude_thinks_unasked(&self.model)
+                    || request.thinking == ThinkingMode::On
+                    || effort.is_some_and(|effort| effort != "none"));
             let max_tokens = if thinks {
                 self.thinking_room(request)
             } else {
@@ -341,6 +347,8 @@ impl CloudLlm {
                     json!({"type":"adaptive"})
                 };
                 set_field(&mut body, "thinking", thinking)?;
+            } else if let Some(off) = thinking_off {
+                set_field(&mut body, "thinking", off)?;
             }
             if let Some(effort) = effort {
                 // Anthropic has no "none" effort of its own, so the answer
@@ -619,6 +627,24 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// thinking (and Opus 5.5 refuses to have it turned off). The family is the
 /// first number in the id, so `claude-opus-4-8` and `claude-3-5-sonnet` do
 /// not and `claude-sonnet-5-5` does.
+/// How a Claude model is asked not to think, where it can be: Sonnet 5.5
+/// takes `between_tools` and refuses `disabled`; Haiku 5.5, Opus 5 and
+/// Sonnet 5 take `disabled`. Opus 5.5 and Fable cannot turn thinking off.
+fn claude_thinking_off(model: &str) -> Option<Value> {
+    let mut parts = model.strip_prefix("claude-")?.split('-');
+    let family = parts.next()?;
+    let version: Vec<&str> = parts
+        .take_while(|part| part.len() <= 2 && part.chars().all(|c| c.is_ascii_digit()))
+        .collect();
+    match (family, version.as_slice()) {
+        ("sonnet", ["5", "5"]) => Some(json!({"type": "between_tools"})),
+        ("haiku", ["5", "5"]) | ("opus", ["5"]) | ("sonnet", ["5"]) => {
+            Some(json!({"type": "disabled"}))
+        }
+        _ => None,
+    }
+}
+
 fn claude_thinks_unasked(model: &str) -> bool {
     model
         .strip_prefix("claude-")

@@ -1,5 +1,9 @@
 use super::prompting::enforce_numeric_citation_format;
 pub(super) use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
+use lattice_core::application::contracts::settings::DEFAULT_RAG_PROMPT_TEMPLATE;
+
+/// The default fresh installs were given before the search-first one.
+const PREVIOUS_DEFAULT_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
@@ -12,8 +16,6 @@ pub(super) fn normalize_prompt_settings(
     const UPDATED_NO_CONTEXT_TEMPLATE: &str =
         "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
-    const UPDATED_RAG_TEMPLATE: &str =
-        "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
     // Soft migration with stable signatures keeps custom templates intact while
     // updating only known legacy defaults.
@@ -29,8 +31,9 @@ pub(super) fn normalize_prompt_settings(
     }
     if stable_prompt_signature(&prompt_settings.rag_prompt_template)
         == LEGACY_RAG_TEMPLATE_SIGNATURE
+        || prompt_settings.rag_prompt_template == PREVIOUS_DEFAULT_RAG_TEMPLATE
     {
-        prompt_settings.rag_prompt_template = UPDATED_RAG_TEMPLATE.to_string();
+        prompt_settings.rag_prompt_template = DEFAULT_RAG_PROMPT_TEMPLATE.to_string();
     }
 
     prompt_settings.system_prompt = enforce_numeric_citation_format(&prompt_settings.system_prompt);
@@ -95,4 +98,40 @@ pub(super) fn stable_prompt_signature(input: &str) -> u64 {
         .fold(OFFSET_BASIS, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_install_answers_in_the_search_first_template() {
+        let settings = normalize_prompt_settings(LLMPromptSettingsDto::default());
+        assert_eq!(settings.rag_prompt_template, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert!(settings
+            .rag_prompt_template
+            .contains("use available document search/read tools before concluding"));
+    }
+
+    #[test]
+    fn a_saved_copy_of_the_previous_default_is_brought_up_to_date() {
+        let saved = LLMPromptSettingsDto {
+            rag_prompt_template: PREVIOUS_DEFAULT_RAG_TEMPLATE.to_string(),
+            ..LLMPromptSettingsDto::default()
+        };
+        assert_eq!(
+            normalize_prompt_settings(saved).rag_prompt_template,
+            DEFAULT_RAG_PROMPT_TEMPLATE
+        );
+    }
+
+    #[test]
+    fn a_template_of_the_user_s_own_is_kept() {
+        let own = "Answer briefly.\n\nContext:\n{context}\n\nQuestion: {question}";
+        let saved = LLMPromptSettingsDto {
+            rag_prompt_template: own.to_string(),
+            ..LLMPromptSettingsDto::default()
+        };
+        assert_eq!(normalize_prompt_settings(saved).rag_prompt_template, own);
+    }
 }
