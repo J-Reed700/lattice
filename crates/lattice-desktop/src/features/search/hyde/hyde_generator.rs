@@ -41,7 +41,7 @@ use prompts::{
     WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE,
 };
 use text::{
-    build_retrieval_fallback, compact_hyde_text, has_placeholder_artifacts,
+    build_retrieval_fallback, compact_hyde_text, has_placeholder_artifacts, is_followup_verdict,
     looks_like_direct_answer, normalize_web_search_query, parse_research_followups,
     MAX_WEB_SEARCH_QUERY_WORDS,
 };
@@ -133,11 +133,7 @@ impl HyDEGenerator {
             AppError::Other(format!("Follow-up classification failed: {}", e))
         })?;
 
-        let decision = output
-            .chars()
-            .find(|ch| *ch == '0' || *ch == '1')
-            .unwrap_or('0');
-        Ok(decision == '1')
+        Ok(is_followup_verdict(&output))
     }
 
     /// Generate a search-bar-ready web query from user input and optional context.
