@@ -14,9 +14,11 @@ use super::scope::Scope;
 use super::tools::{self, number_line, number_width};
 use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
-use lattice_core::application::contracts::tools::explorer::TOOL_SEARCH_FOLDER;
+use lattice_core::application::contracts::tools::explorer::{
+    activity_label, is_explorer_tool, TOOL_SEARCH_FOLDER,
+};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
-use lattice_core::application::ports::explorer_turn::ExplorerTurnPort;
+use lattice_core::application::ports::turn_source::{TurnSourcePolicy, TurnSourcePort};
 use lattice_core::application::ports::ToolDefinition;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -24,6 +26,31 @@ use tracing::warn;
 
 /// Top-level entries named in the block before the rest are counted instead.
 const TOP_LEVEL_ENTRIES: usize = 40;
+
+/// The template an Explorer turn's context travels in. Unlike the
+/// document-answer template it does not ask for a citation on every
+/// statement: explaining the folder draws on what no passage holds.
+pub(crate) const FOLDER_TEMPLATE: &str = "Answer the user's question about the folder open beside this chat: \
+     what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
+     from what you know; teaching how the code works, or a concept it uses, needs no source and no \
+     citation. Point at the folder's code with line references, as the folder's rules below describe. \
+     Bracket numbers like [1] belong only to the numbered library or web passages in this message: put \
+     one after a claim such a passage supports, and never on the folder, on these instructions or on \
+     your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// How a turn treats the folder. The question is about the folder on
+/// screen, so the library is searched only when the user turns it on, and
+/// the web only when they ask; a walk through its files reads a few per
+/// round, so it gets more rounds; and only cited sentences are claims about
+/// sources, since explaining the code draws on what no passage holds.
+pub(crate) const FOLDER_POLICY: TurnSourcePolicy = TurnSourcePolicy {
+    routes_to_library: false,
+    offers_library_tools: false,
+    infers_intent: false,
+    verifies_cited_only: true,
+    tool_rounds: 10,
+    evidence_template: Some(FOLDER_TEMPLATE),
+};
 
 /// What the folder index found for the question before generation.
 #[derive(Debug, Clone, Default)]
@@ -190,9 +217,21 @@ impl ExplorerTurn {
 }
 
 #[async_trait]
-impl ExplorerTurnPort for ExplorerTurn {
-    fn has_folder_index(&self) -> bool {
-        ExplorerTurn::has_folder_index(self)
+impl TurnSourcePort for ExplorerTurn {
+    fn policy(&self) -> TurnSourcePolicy {
+        FOLDER_POLICY
+    }
+
+    fn owns_tool(&self, tool: &str) -> bool {
+        is_explorer_tool(tool)
+    }
+
+    fn reads_only(&self, tool: &str) -> bool {
+        is_explorer_tool(tool)
+    }
+
+    fn activity_label(&self, tool: &str, arguments: &serde_json::Value) -> String {
+        activity_label(tool, arguments)
     }
 
     fn add_tools(&self, turn_tools: &mut Vec<ToolDefinition>) {

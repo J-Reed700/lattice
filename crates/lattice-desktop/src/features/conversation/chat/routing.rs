@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
@@ -201,14 +202,14 @@ pub(super) async fn resolve_router_decision(
     conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,
-    explorer: bool,
+    source: Option<TurnSourcePolicy>,
     router_settings: &RouterSettingsDto,
     recorder: &TurnRecorder,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
     // In an Explorer turn the question is about the folder on screen, so the
     // router's default "search the library" is not enough to start one.
-    let router_may_search = !explorer;
+    let router_may_search = source.is_none_or(|source| source.routes_to_library);
     // A closed-book turn has nothing to route: the pipeline returns before it
     // reads this, and asking the router model would only spend time. Nor does
     // an Explorer turn the user did not point at the library. A turn with the
@@ -216,7 +217,7 @@ pub(super) async fn resolve_router_decision(
     // so the fallback has a verdict on the vault to go by.
     if search_flags.web_planned()
         || search_flags.closed_book
-        || (explorer && !search_flags.force_kb_search)
+        || (!router_may_search && !search_flags.force_kb_search)
     {
         return Ok((
             RouterDecisionOutcome {
