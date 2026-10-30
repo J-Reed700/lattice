@@ -115,7 +115,7 @@ def grouped(ctx, k):
         group = labels[i:i + k]
         block = "\n\n".join(f"[{l}] {texts[l][1]}" for l in group)
         messages = with_message(read_req, f"{ctx['bare']}\n\n{GROUP.format(passages=block)}")
-        stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
+        stop = [f"\n[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = ask(read_req, f"G{k}", reserved, stop=stop, messages=messages)
         reqs.append(base.req_record(group, r, reserved))
         got = parse_into(lines, r, set(group))

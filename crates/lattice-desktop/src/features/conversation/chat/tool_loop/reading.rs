@@ -384,11 +384,12 @@ pub(super) fn left_out(noted: &BTreeSet<u32>, cited: &BTreeSet<u32>) -> BTreeSet
     noted.difference(cited).copied().collect()
 }
 
-/// Where the lines of a reading that ends at `last` end: at the next label,
-/// bracketed or numbering a line. Nothing written after it is one of them.
+/// Where the lines of a reading that ends at `last` end: at a line that starts
+/// with the next label, bracketed or numbered. Nothing written after it is one
+/// of them; a copied sentence that cites that label goes on.
 fn past(last: u32) -> Vec<String> {
     let next = last.saturating_add(1);
-    vec![format!("[{next}]"), format!("\n{next}.")]
+    vec![format!("\n[{next}]"), format!("\n{next}.")]
 }
 
 fn sweep_instruction(labels: &[u32]) -> String {

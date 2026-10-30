@@ -67,7 +67,7 @@ async fn every_group_is_read_in_label_order_with_only_its_own_passages_shown_aga
             );
         }
         let next = labels[3] + 1;
-        assert_eq!(request.stop, [format!("[{next}]"), format!("\n{next}.")]);
+        assert_eq!(request.stop, [format!("\n[{next}]"), format!("\n{next}.")]);
         assert!(request.max_output_tokens.is_some());
     }
     assert_eq!(

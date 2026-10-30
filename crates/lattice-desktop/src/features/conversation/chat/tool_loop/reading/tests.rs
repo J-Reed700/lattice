@@ -602,7 +602,7 @@ async fn notes_are_replayed_one_line_per_label_however_they_were_written() {
 }
 
 #[tokio::test]
-async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
+async fn a_reading_and_its_sweeps_stop_at_a_line_for_the_first_label_not_shown() {
     let model = Model::new([
         reply(
             "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.",
@@ -614,7 +614,7 @@ async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
     let sent = model.requests();
     assert_eq!(sent.len(), 2, "a reading and one sweep");
     for request in &sent {
-        assert_eq!(request.stop, ["[5]", "\n5."]);
+        assert_eq!(request.stop, ["\n[5]", "\n5."]);
     }
 }
 
