@@ -428,6 +428,19 @@ async fn build_hyde_context_window_for_conversation(
 
 use lattice_core::application::services::grounded_generation::retrieval_depth;
 
+/// The most library passages one turn reads, section neighbours included.
+pub(super) const MAX_READ_PASSAGES: usize = 40;
+
+/// How many library passages a turn searches for: as many as its evidence
+/// budget holds, at most [`MAX_READ_PASSAGES`].
+fn reading_depth(
+    evidence_tokens: usize,
+    passage_chars: Option<usize>,
+    chars_per_token: f64,
+) -> usize {
+    retrieval_depth(evidence_tokens, passage_chars, chars_per_token).min(MAX_READ_PASSAGES)
+}
+
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,

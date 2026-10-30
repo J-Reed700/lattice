@@ -135,9 +135,7 @@ pub(super) async fn run_kb_retrieval(
 
     let repository = container.chat_records();
     // How deep to read: as many passages as the evidence budget can carry, at
-    // what a passage of this library actually measures. The prompt's
-    // best-first fill decides what goes in; this only stops the search from
-    // handing it less than the budget could hold.
+    // what a passage of this library actually measures, up to the shortlist.
     let passage_chars = match repository
         .retrieval_mean_chunk_chars(&scope.document_ids)
         .await
@@ -148,7 +146,7 @@ pub(super) async fn run_kb_retrieval(
             None
         }
     };
-    let kb_search_limit = super::retrieval_depth(evidence_tokens, passage_chars, chars_per_token);
+    let kb_search_limit = super::reading_depth(evidence_tokens, passage_chars, chars_per_token);
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
     let plan_step = recorder.begin_guarded(
@@ -413,6 +411,7 @@ pub(super) async fn run_kb_retrieval(
     {
         warn!(%error, "Could not read the hits' section context");
     }
+    search_response.results.truncate(super::MAX_READ_PASSAGES);
     search_response.total = search_response.results.len();
     // RRF scores are ranks, not probabilities. A cosine cutoff must never be
     // applied to them or used to claim the documents are unavailable.
