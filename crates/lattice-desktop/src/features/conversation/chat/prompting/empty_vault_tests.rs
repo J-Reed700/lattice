@@ -20,6 +20,19 @@ fn prompt(reason: Option<&str>, kb_attempted: bool) -> String {
         .build()
 }
 
+#[test]
+fn a_closed_book_turn_is_sent_as_written() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        closed_book: true,
+        ..flags()
+    };
+
+    let prompt = PromptMessageBuilder::new(&settings, "Merge these notes.", false, flags).build();
+
+    assert_eq!(prompt, "Merge these notes.");
+}
+
 /// A space holding nothing is not reported as documents searched that had
 /// nothing to offer.
 #[test]
