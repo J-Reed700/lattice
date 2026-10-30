@@ -26,9 +26,8 @@ use serde_json::json;
 use std::collections::HashSet;
 
 /// What the prose step of a lesson works through. Solving the questions here
-/// is the point: serde_json sends a schema's properties in alphabetical order
-/// and a grammar-constrained decoder writes them in that order, so a one-step
-/// answer writes each `correctIndex` before the prompt and options it keys.
+/// is the point: the schema puts each `correctIndex` before its explanation,
+/// so a one-step answer picks the option before working it out.
 const LESSON_DRAFT_BRIEF: &str = "Write the lesson block by block in teaching order, giving each block's kind and title and then its full body as the learner will read it. Then write each question with its kind, its four options, the correct option and the misconception each other option reflects. Solve every exercise, check and question yourself before settling its answer.";
 
 /// The reason-first call's own step instructions and message framing,

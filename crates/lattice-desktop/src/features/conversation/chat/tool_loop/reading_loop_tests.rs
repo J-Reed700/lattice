@@ -372,7 +372,7 @@ async fn the_writer_is_given_the_notes_as_kept_and_only_the_reading_stops_at_the
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "every passage the notes copy is cited");
     let (reading, writing) = (&requests[0], &requests[1]);
-    assert_eq!(reading.stop, ["[10]", "\n10."]);
+    assert_eq!(reading.stop, ["\n[10]", "\n10."]);
     assert!(
         writing.stop.is_empty(),
         "the answer is not bound by the labels"

@@ -123,7 +123,7 @@ def grouped(ctx, k, groups=None):
         block = "\n\n".join(f"[{l}] {texts[l][1]}" for l in group)
         rest = f"\n\n{GROUP.format(passages=block, last=group[-1])}"
         messages = with_message(read_req, claude.cached(ctx["bare"], rest) if base.CLAUDE else ctx["bare"] + rest)
-        stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
+        stop = [f"\n[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = ask(read_req, f"G{k}", reserved, stop=stop, messages=messages)
         reqs.append(base.req_record(group, r, reserved))
         got = parse_into(lines, r, set(group))
