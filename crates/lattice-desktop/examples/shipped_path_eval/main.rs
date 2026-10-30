@@ -155,7 +155,11 @@ fn git(args: &[&str]) -> Option<String> {
 /// slot count changes the turn budget and the cache behaviour under test.
 async fn probe_server(server: &recipe::Server) -> Res<Value> {
     let url = server.url.trim_end_matches('/');
-    let props: Value = reqwest::get(format!("{url}/props")).await?.json().await?;
+    let mut probe = reqwest::Client::new().get(format!("{url}/props"));
+    if let Some((name, value)) = proxy::server_auth() {
+        probe = probe.header(name, value);
+    }
+    let props: Value = probe.send().await?.error_for_status()?.json().await?;
     let n_ctx = props
         .pointer("/default_generation_settings/n_ctx")
         .or_else(|| props.get("n_ctx"))
@@ -197,14 +201,23 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     // reply was served under is kept per call, in the calls file).
     let (gguf_sha256, server, upstream, base_url_variable) = match recipe.answerer()? {
         recipe::Answerer::Server(server) => {
-            let gguf = recipe::resolve(&server.gguf, &root, real_home);
-            eprintln!("hashing {}", gguf.display());
-            let gguf_sha256 = sha256_file(&gguf)?;
-            if gguf_sha256 != server.gguf_sha256 {
-                return Err(format!("weights hash {gguf_sha256} is not the recipe's").into());
-            }
+            let gguf_sha256 = match (&server.gguf, &server.gguf_sha256) {
+                (Some(gguf), Some(expected)) => {
+                    let gguf = recipe::resolve(gguf, &root, real_home);
+                    eprintln!("hashing {}", gguf.display());
+                    let gguf_sha256 = sha256_file(&gguf)?;
+                    if &gguf_sha256 != expected {
+                        return Err(
+                            format!("weights hash {gguf_sha256} is not the recipe's").into()
+                        );
+                    }
+                    Some(gguf_sha256)
+                }
+                (None, None) => None,
+                _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
+            };
             (
-                Some(gguf_sha256),
+                gguf_sha256,
                 probe_server(server).await?,
                 server.url.clone(),
                 None,
@@ -218,7 +231,16 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     };
 
     let recorder = proxy::Recorder::new();
-    let proxy_url = proxy::start(upstream, recipe.thinking_off()?, Arc::clone(&recorder)).await?;
+    // A cloud provider's key is the desktop's own; only a llama-server's
+    // header is the proxy's to add.
+    let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
+    let proxy_url = proxy::start(
+        upstream,
+        recipe.thinking_off()?,
+        auth,
+        Arc::clone(&recorder),
+    )
+    .await?;
     if let Some(variable) = base_url_variable {
         // Read when the desktop builds its cloud client, so every request of
         // the run crosses the proxy and is recorded.
