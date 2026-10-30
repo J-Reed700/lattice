@@ -113,13 +113,13 @@ def shipped(ctx):
     return after, reqs + close_reqs, {"close_requests": len(close_reqs), **extra}
 
 
-def grouped(ctx, k):
+def grouped(ctx, k, groups=None):
+    """The reading in groups of `k` labels, or in `groups` as given."""
     read_req, texts = ctx["read_req"], ctx["texts"]
     reserved = read_req.get("max_tokens")
     labels = sorted(texts)
     reqs, lines, unaccounted = [], {}, []
-    for i in range(0, len(labels), k):
-        group = labels[i:i + k]
+    for group in groups or [labels[i:i + k] for i in range(0, len(labels), k)]:
         block = "\n\n".join(f"[{l}] {texts[l][1]}" for l in group)
         rest = f"\n\n{GROUP.format(passages=block, last=group[-1])}"
         messages = with_message(read_req, claude.cached(ctx["bare"], rest) if base.CLAUDE else ctx["bare"] + rest)
