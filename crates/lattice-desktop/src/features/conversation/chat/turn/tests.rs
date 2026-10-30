@@ -581,9 +581,25 @@ impl LLMPort for ToolCalling {
 struct Folder;
 
 #[async_trait::async_trait]
-impl lattice_core::application::ports::explorer_turn::ExplorerTurnPort for Folder {
-    fn has_folder_index(&self) -> bool {
-        false
+impl lattice_core::application::ports::turn_source::TurnSourcePort for Folder {
+    fn policy(&self) -> lattice_core::application::ports::turn_source::TurnSourcePolicy {
+        lattice_core::application::ports::turn_source::TurnSourcePolicy {
+            routes_to_library: false,
+            offers_library_tools: false,
+            infers_intent: false,
+            verifies_cited_only: true,
+            tool_rounds: 10,
+            evidence_template: None,
+        }
+    }
+    fn owns_tool(&self, tool: &str) -> bool {
+        tool == "read_file"
+    }
+    fn reads_only(&self, tool: &str) -> bool {
+        self.owns_tool(tool)
+    }
+    fn activity_label(&self, tool: &str, _arguments: &serde_json::Value) -> String {
+        tool.into()
     }
     fn add_tools(&self, tools: &mut Vec<lattice_core::application::ports::ToolDefinition>) {
         tools.push(lattice_core::application::ports::ToolDefinition {
@@ -619,8 +635,8 @@ fn an_explorer_turn_searches_the_library_only_when_the_user_turns_it_on() {
         ..FakeRuntime::default()
     };
     let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
-    let folder: ExplorerTurn = Arc::new(Folder);
-    let offered = |explorer: Option<&ExplorerTurn>, force_kb_search: bool| -> Vec<String> {
+    let folder: TurnSource = Arc::new(Folder);
+    let offered = |source: Option<&TurnSource>, force_kb_search: bool| -> Vec<String> {
         let flags = SearchFlags {
             force_kb_search,
             ..SearchFlags::from_preferences(None)
@@ -629,7 +645,7 @@ fn an_explorer_turn_searches_the_library_only_when_the_user_turns_it_on() {
             &runtime,
             &llm,
             &[],
-            explorer,
+            source,
             flags,
             None,
             super::assemble::Grounding {

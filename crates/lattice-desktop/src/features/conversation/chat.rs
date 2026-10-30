@@ -85,9 +85,8 @@ pub use self::turn_record::{
 };
 pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
-/// The Explorer folder a turn reads beside the chat.
-pub(crate) type ExplorerTurn =
-    Arc<dyn lattice_core::application::ports::explorer_turn::ExplorerTurnPort>;
+/// The source a turn reads beside the chat, such as an Explorer folder.
+pub(crate) type TurnSource = Arc<dyn lattice_core::application::ports::turn_source::TurnSourcePort>;
 
 struct TurnCancellationGuard {
     request_id: String,

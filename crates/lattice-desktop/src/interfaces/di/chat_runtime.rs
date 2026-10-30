@@ -113,11 +113,11 @@ impl ChatStorage for Container {
             ),
         )
     }
-    async fn explorer_turn(
+    async fn turn_source(
         &self,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
-    ) -> Option<ExplorerTurn> {
+    ) -> Option<TurnSource> {
         FolderTurn::resolve(
             self.db_pool(),
             self.folder_index().map(Arc::as_ref),
@@ -125,7 +125,7 @@ impl ChatStorage for Container {
             focus,
         )
         .await
-        .map(|turn| Arc::new(turn) as ExplorerTurn)
+        .map(|turn| Arc::new(turn) as TurnSource)
     }
 }
 

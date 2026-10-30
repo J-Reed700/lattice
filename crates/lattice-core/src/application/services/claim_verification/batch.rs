@@ -68,7 +68,8 @@ fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Ve
         if check.id != format!("claim-{index}") || !seen.insert(index) {
             return None;
         }
-        let response = normalize_reasoned_fields(&check.response).unwrap_or(check.response);
+        let response = without_field_emphasis(&check.response);
+        let response = normalize_reasoned_fields(&response).unwrap_or(response);
         let judgment = (|| {
             let verdict = final_verdict(&response)?;
             let reason = labeled_value(&response, &["Reason", "Explanation"])?;

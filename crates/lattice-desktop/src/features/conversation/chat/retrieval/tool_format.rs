@@ -25,6 +25,7 @@ pub(super) fn format_tool_result(
     settings: &ToolOutputSettingsDto,
     allowance: usize,
     page_offset: usize,
+    source_text: bool,
 ) -> String {
     let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
@@ -39,10 +40,10 @@ pub(super) fn format_tool_result(
         None => return "No data returned.".to_string(),
     };
 
-    // The folder tools already fit their text to this call's allowance, cut at
-    // a line and saying where to read on. Through the JSON fallback below the
-    // numbered lines would arrive as one escaped string.
-    if lattice_core::application::contracts::tools::explorer::is_explorer_tool(tool_name) {
+    // A turn source's tools already fit their text to this call's allowance,
+    // cut at a line and saying where to read on. Through the JSON fallback
+    // below the numbered lines would arrive as one escaped string.
+    if source_text {
         if let Some(text) = data.as_str() {
             return safe_truncate(text, allowance);
         }
@@ -441,6 +442,7 @@ mod fetched_page_tests {
             &ToolOutputSettingsDto::default(),
             allowance,
             offset,
+            false,
         )
     }
 

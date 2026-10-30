@@ -3,7 +3,6 @@
 
 use crate::features::conversation::chat::fetch_memory::{self, Recall};
 use crate::features::conversation::chat::turn_record::TurnStepKind;
-use lattice_core::application::contracts::tools::explorer as explorer_tools;
 use lattice_core::application::ports::ToolDefinition;
 use std::collections::HashSet;
 
@@ -175,9 +174,6 @@ pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> 
         "get_document" => "Opening a document".to_string(),
         "search_conversation_history" | "read_conversation_history" => {
             "Looking back through this conversation".to_string()
-        }
-        other if explorer_tools::is_explorer_tool(other) => {
-            explorer_tools::activity_label(other, arguments)
         }
         other => format!("Running {other}"),
     }

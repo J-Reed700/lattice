@@ -1,5 +1,8 @@
-//! The reading, a few passages at a time: the turn's message closes with a
-//! group of its passages shown again, and the model writes their lines.
+//! The reading: the turn's message closes with its passages shown again, and
+//! the model writes their lines. Every passage is shown in one group, which
+//! measured as accurate as smaller ones on Qwen 3.8 27B, Haiku and Sonnet
+//! once the instruction stopped inviting an answer, at a fraction of the
+//! requests.
 //!
 //! Each group's request is the turn's prompt up to its closing instruction, so
 //! a server or provider that caches the prompt reads only the group. A
@@ -26,16 +29,17 @@ use tracing::warn;
 
 /// Closes the turn's message for one group, in place of the reading
 /// instruction. `{passages}` is each passage as `[label] text`, a blank line
-/// apart. The criterion must follow the passages: said before them, the model
-/// copies whole passages that do not bear on the question.
-pub(super) const GROUP_INSTRUCTION: &str = "Before answering, read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or its label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines.";
+/// apart, and `{last}` the group's last label. The criterion must follow the
+/// passages: said before them, the model copies whole passages that do not
+/// bear on the question. Telling the model not to answer yet, and that its
+/// reply ends with the last label's line, keeps it from answering in place of
+/// the lines or after them.
+pub(super) const GROUP_INSTRUCTION: &str = "Do not answer my question yet. First read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines: your reply ends with the line for [{last}].";
 
 /// Closes the turn's message for a passage the window cannot hold shown
-/// again: it is read where it stands. `{labels}` lists the labels.
-pub(super) const LABELS_INSTRUCTION: &str = "Before answering, write one line for each of the passages {labels} above: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or its label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines.";
-
-/// Passages read together, in label order.
-pub(super) const PASSAGES_PER_GROUP: usize = 4;
+/// again: it is read where it stands. `{labels}` lists the labels and
+/// `{last}` is the last of them.
+pub(super) const LABELS_INSTRUCTION: &str = "Do not answer my question yet. Write one line for each of the passages {labels} above, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines: your reply ends with the line for [{last}].";
 
 /// A group to read, and the prompt it is read on.
 pub(super) struct Reading {
@@ -43,23 +47,21 @@ pub(super) struct Reading {
     pub(super) input: Vec<CompletionInput>,
 }
 
-/// The groups in label order, each with the prompt that shows it again. A group
-/// the window cannot hold is split in two; a passage it cannot hold is read by
-/// its label.
+/// The groups in label order, each with the prompt that shows it again: every
+/// passage in one group, split in two while the window cannot hold it; a
+/// passage it cannot hold is read by its label.
 pub(super) async fn planned(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
     passages: &Passages,
 ) -> Vec<Reading> {
     let labels: Vec<u32> = passages.labels().collect();
-    let mut pending: VecDeque<Vec<u32>> = labels
-        .chunks(PASSAGES_PER_GROUP)
-        .map(<[u32]>::to_vec)
-        .collect();
+    let mut pending: VecDeque<Vec<u32>> =
+        (!labels.is_empty()).then_some(labels).into_iter().collect();
     let mut readings = Vec::new();
     while let Some(group) = pending.pop_front() {
         let again = shown(passages, &group);
-        let input = group_input(request, &again);
+        let input = group_input(request, &again, &group);
         let room = room_left(
             llm,
             &reading_request(request, input.clone(), None, &[], None),
@@ -161,6 +163,7 @@ async fn read_group(
     let mut lines = BTreeMap::new();
     let mut text = String::new();
     let mut written = 0usize;
+    let mut asked_again = false;
     loop {
         let missing: Vec<u32> = group
             .iter()
@@ -205,19 +208,29 @@ async fn read_group(
             }
         };
         let whole = whole_lines(&response.text, &response.finish_reason);
-        // Only the labels asked for: a sweep cannot overwrite a line, and a
-        // line under another group's label is not this group's reading.
+        // Only the labels asked for, each by its first line: a sweep cannot
+        // overwrite a line, a line under another group's label is not this
+        // group's reading, and an answer written after the lines does not
+        // replace them when it numbers its points.
         let mut accounted = false;
         for (label, note) in parse_notes(whole) {
             if missing.contains(&label) {
                 accounted = true;
-                lines.insert(label, note);
+                lines.entry(label).or_insert(note);
             }
         }
-        // A reading that accounts for no label it was asked for has nothing
-        // to add, and the next would read the same way: the sweep ends.
+        // A first reply with no line, such as an answer written in their
+        // place, is shown back once with the labels it left out. A sweep that
+        // accounts for nothing has nothing to add, and the next would read the
+        // same way: the group ends.
         if !accounted {
-            break;
+            if !text.is_empty() || asked_again || whole.trim().is_empty() {
+                if text.is_empty() {
+                    warn!(?group, "The model wrote no line for a group of passages");
+                }
+                break;
+            }
+            asked_again = true;
         }
         if !text.is_empty() {
             text.push('\n');
@@ -238,10 +251,20 @@ pub(super) fn shown(passages: &Passages, group: &[u32]) -> String {
         .join(PARAGRAPH_BREAK)
 }
 
-/// The turn's prompt with `again` shown in place of the reading instruction.
-pub(super) fn group_input(request: &CompletionRequest, again: &str) -> Vec<CompletionInput> {
+/// The turn's prompt with `again`, the passages of `group`, shown in place of
+/// the reading instruction.
+pub(super) fn group_input(
+    request: &CompletionRequest,
+    again: &str,
+    group: &[u32],
+) -> Vec<CompletionInput> {
     let mut input = request.input.clone();
-    replace_reading(&mut input, &GROUP_INSTRUCTION.replace("{passages}", again));
+    replace_reading(
+        &mut input,
+        &GROUP_INSTRUCTION
+            .replace("{passages}", again)
+            .replace("{last}", &last_label(group)),
+    );
     input
 }
 
@@ -251,9 +274,15 @@ fn labels_input(request: &CompletionRequest, group: &[u32]) -> Vec<CompletionInp
     let mut input = request.input.clone();
     replace_reading(
         &mut input,
-        &LABELS_INSTRUCTION.replace("{labels}", &super::label_list(group)),
+        &LABELS_INSTRUCTION
+            .replace("{labels}", &super::label_list(group))
+            .replace("{last}", &last_label(group)),
     );
     input
+}
+
+fn last_label(group: &[u32]) -> String {
+    group.last().map(u32::to_string).unwrap_or_default()
 }
 
 fn as_u32(value: usize) -> u32 {

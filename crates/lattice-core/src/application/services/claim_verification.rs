@@ -12,6 +12,10 @@ use tracing::warn;
 mod batch;
 mod prompt;
 mod rooms;
+
+#[cfg(test)]
+mod field_emphasis_tests;
+
 pub use batch::{render_batch_evidence, LocatedClaim};
 
 /// Judgments and the output tokens the model spent writing them, across
@@ -309,7 +313,7 @@ impl<'a> ClaimChecker<'a> {
         let (text, logprobs) = loop {
             let reply = self.request(&prompt, locations.is_some()).await?;
             *spent = spent.saturating_add(reply.output_tokens);
-            let (text, logprobs) = (reply.text, reply.logprobs);
+            let (text, logprobs) = (without_field_emphasis(&reply.text), reply.logprobs);
             let text = if reasoned {
                 normalize_reasoned_fields(&text).unwrap_or(text)
             } else {
@@ -437,6 +441,41 @@ impl<'a> ClaimChecker<'a> {
     }
 }
 
+/// The labels of the fields a judge writes.
+const FIELD_LABELS: [&str; 7] = [
+    "Reason",
+    "Explanation",
+    "Source passage",
+    "Source quote",
+    "Quote",
+    "Evidence",
+    "Verdict",
+];
+
+/// The reply with markdown emphasis taken off its field lines (`**Reason:** …`,
+/// `**Verdict**: **unsupported**`), which some models add and the field
+/// parsing does not expect. Any other line is left as written.
+fn without_field_emphasis(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let emphasis = |c: char| c == '*' || c == '_' || c.is_whitespace();
+            let bare = line.trim_start_matches(emphasis);
+            let Some((label, value)) = bare.split_once(':') else {
+                return line.to_owned();
+            };
+            let label = label.trim_end_matches(emphasis);
+            if !FIELD_LABELS
+                .iter()
+                .any(|field| label.eq_ignore_ascii_case(field))
+            {
+                return line.to_owned();
+            }
+            format!("{label}: {}", value.trim_matches(emphasis))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Providers sometimes join the three labeled fields onto one line. Recover
 /// only their whitespace layout: each label must occur exactly once, in order,
 /// with a single final verdict. Evidence locations are still checked below.
@@ -505,7 +544,7 @@ fn final_verdict(text: &str) -> Option<ClaimVerdict> {
     if !label.trim().eq_ignore_ascii_case("Verdict") || lines.next().is_some() {
         return None;
     }
-    let value = value.trim().to_ascii_lowercase();
+    let value = value.trim().trim_end_matches('.').to_ascii_lowercase();
     // A canonical three-line response may echo its final decision at the end
     // of the explanation. Accept only the identical value, never conflicting
     // decisions, extra result lines or ambiguous inline field layouts.

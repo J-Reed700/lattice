@@ -11,32 +11,14 @@ only into the request header. Output is capped at a few tokens and thinking is o
 
 usage: [MODE=system] python -I replay_lesson_cache.py CALLS_DIR OUT.jsonl [MODEL]
 """
-import ctypes, ctypes.wintypes as wt, glob, json, os, re, sys, time, urllib.request
+import glob, json, os, re, sys, time, urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from replay_claude import api_key  # noqa: E402
 
 CALLS, OUT = sys.argv[1], sys.argv[2]
 MODEL = sys.argv[3] if len(sys.argv) > 3 else "claude-haiku-5-5"
 MODE = os.environ.get("MODE", "app")
-
-
-class CREDENTIAL(ctypes.Structure):
-    _fields_ = [("Flags", wt.DWORD), ("Type", wt.DWORD), ("TargetName", wt.LPWSTR), ("Comment", wt.LPWSTR),
-                ("LastWritten", wt.FILETIME), ("CredentialBlobSize", wt.DWORD),
-                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)), ("Persist", wt.DWORD),
-                ("AttributeCount", wt.DWORD), ("Attributes", ctypes.c_void_p), ("TargetAlias", wt.LPWSTR),
-                ("UserName", wt.LPWSTR)]
-
-
-def api_key():
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return os.environ["ANTHROPIC_API_KEY"].strip()
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-    cred = ctypes.POINTER(CREDENTIAL)()
-    if not advapi.CredReadW("anthropic.com.lattice.lattice", 1, 0, ctypes.byref(cred)):
-        sys.exit("no saved Anthropic key")
-    blob = bytes(cred.contents.CredentialBlob[i] for i in range(cred.contents.CredentialBlobSize))
-    advapi.CredFree(cred)
-    text = blob.decode("utf-16-le") if len(blob) % 2 == 0 and b"\x00" in blob else blob.decode("utf-8")
-    return text.strip()
 
 
 def request_of(call):

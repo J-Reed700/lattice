@@ -515,11 +515,11 @@ impl ChatStorage for FakeRuntime {
     fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
         unreachable!("{UNUSED}")
     }
-    async fn explorer_turn(
+    async fn turn_source(
         &self,
         _conversation_id: &str,
         _focus: Option<&lattice_core::application::contracts::explorer::ExplorerFocusDto>,
-    ) -> Option<ExplorerTurn> {
+    ) -> Option<TurnSource> {
         None
     }
 }
