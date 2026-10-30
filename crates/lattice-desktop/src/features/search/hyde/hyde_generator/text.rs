@@ -27,6 +27,16 @@ pub(super) fn parse_research_followups(raw: &str, root: &str, count: usize) -> V
         .collect()
 }
 
+/// The verdict in a model's reply to [`FOLLOWUP_CLASSIFIER_TEMPLATE`]: the
+/// first word of its last line, so a model that reasons first is read by its
+/// conclusion and not by a digit in its reasoning.
+pub(super) fn is_followup_verdict(raw: &str) -> bool {
+    raw.lines()
+        .rev()
+        .find_map(|line| line.split_whitespace().next())
+        .is_some_and(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()) == "1")
+}
+
 pub(super) fn compact_hyde_text(raw: &str) -> String {
     const MAX_WORDS: usize = 90;
     let words: Vec<&str> = raw.split_whitespace().collect();

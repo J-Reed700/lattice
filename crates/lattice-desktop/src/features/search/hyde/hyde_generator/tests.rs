@@ -5,6 +5,31 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::domain::qa::hyde::SearchStrategy;
 
+#[test]
+fn a_follow_up_verdict_is_the_last_line_not_the_first_digit() {
+    for reply in [
+        "1",
+        " 1\n",
+        "**1**",
+        "1.",
+        "1 = context-dependent follow-up",
+    ] {
+        assert!(is_followup_verdict(reply), "{reply:?}");
+    }
+    assert!(is_followup_verdict(
+        "The query says \"in 2016\" and refers to turn 0.\n\n1"
+    ));
+    for reply in [
+        "0",
+        "",
+        "\n",
+        "Turn 1 is unrelated.\n0",
+        "It refers to turn 1.",
+    ] {
+        assert!(!is_followup_verdict(reply), "{reply:?}");
+    }
+}
+
 /// A small model numbers its lines, quotes some, repeats the main search
 /// and wanders into prose; only the usable, distinct queries survive.
 #[test]
