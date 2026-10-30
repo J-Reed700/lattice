@@ -8,13 +8,17 @@
 //!     [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] \
 //!     [--rrf-k K] [--weights VECTOR,KEYWORD] \
 //!     [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
-//!     DATASET_JSON [RERANKER_DIR]
+//!     DATASET_JSON [RERANKER]
 //! ```
 //!
 //! The embedding model runs as the app runs it: a llama-server this process
 //! starts for `LATTICE_EMBED_GGUF` (with its `tokenizer.json` beside it), with
 //! the flags the app's sidecar gets. `LATTICE_LLAMA_SERVER` names the binary;
 //! without it, the bundled build in `binaries/` is used.
+//!
+//! `RERANKER` is a reranker GGUF, served the same way as the app serves it
+//! (`llama-server --reranking`), or a Candle checkpoint directory, as earlier
+//! versions of the app ran it.
 //!
 //! `--mode embedding` (the default) keeps the historical behaviour: rank documents by the
 //! maximum passage cosine of the raw embedding model, optionally reranking the top-48 pool.
@@ -42,9 +46,10 @@
 mod production;
 
 use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
+use lattice::features::search::engine::llama_reranker::LlamaReranker;
 use lattice::features::search::engine::reranker::{fuse_rerank_order, load_reranker, Reranker};
 use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
-use lattice::interfaces::di::modules::standalone::open_gguf;
+use lattice::interfaces::di::modules::standalone::{open_gguf, StandaloneServers};
 use lattice_core::application::ports::EmbeddingPort;
 use serde::Deserialize;
 use std::{
@@ -134,7 +139,7 @@ const USAGE: &str = "usage: LATTICE_EMBED_GGUF=MODEL_GGUF retrieval_eval \
                      [--compression none|i8|mrl<DIMS>|mrl<DIMS>-i8] \
                      [--rrf-k K] [--weights VECTOR,KEYWORD] \
                      [--fts-header column|concat] [--fts-header-weight W] [--rerank-depth N] \
-                     DATASET_JSON [RERANKER_DIR]";
+                     DATASET_JSON [RERANKER]";
 
 /// How the production hybrid path fuses its vector and BM25 branches.
 ///
@@ -353,7 +358,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String
         return Err("--fts-header-weight has no effect with --fts-header concat".to_owned());
     }
     if rerank_depth.is_some() && positional.len() < 2 {
-        return Err("--rerank-depth needs a RERANKER_DIR".to_owned());
+        return Err("--rerank-depth needs a RERANKER".to_owned());
     }
     let fts_header = if fts_concat == Some(true) {
         production::FtsHeader::Concat
@@ -421,6 +426,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gguf = Path::new(&gguf);
     let model = Arc::new(open_gguf(gguf).await?);
     let reranker: Option<Arc<dyn Reranker>> = match &args.reranker {
+        Some(path)
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf")) =>
+        {
+            Some(Arc::new(LlamaReranker::new(
+                path,
+                Arc::new(StandaloneServers::from_env()),
+            )))
+        }
         Some(path) => Some(load_reranker(path).await?),
         None => None,
     };
