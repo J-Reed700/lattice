@@ -346,10 +346,11 @@ export function claimWithCitation(
 
 /** How a verdict reads in prose, including which check produced it. */
 export function claimVerdictLine(verdict: ClaimVerdict): string {
-  const how =
-    verdict.method === 'judge'
-      ? 'the model read the passage against it'
-      : 'matched on shared wording, not read for meaning';
+  const how = {
+    judge: 'the model read the passage against it',
+    quote: 'the quoted words were looked for in it',
+    lexical: 'matched on shared wording, not read for meaning',
+  }[verdict.method];
   if (verdict.verdict === 'supported') return `Backed by the source — ${how}.`;
   if (verdict.verdict === 'contradicted') return `The source says otherwise — ${how}.`;
   if (verdict.verdict === 'unverified') {

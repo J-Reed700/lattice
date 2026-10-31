@@ -3,7 +3,8 @@
 //! and the claim judge ([`judge`]) is asked about every cited sentence except
 //! a near-verbatim copy. A claim the judge could not settle keeps its lexical
 //! verdict unless overlap cannot settle it (a number, date or negation); then
-//! it reads as unverified, which never counts as unsupported.
+//! it reads as unverified, which never counts as unsupported. A cited
+//! quotation its passage does not hold ([`quotes`]) needs no judge at all.
 
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ mod background;
 mod gate_tests;
 mod judge;
 mod lexical;
+mod quotes;
 
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
@@ -56,6 +58,8 @@ impl UnverifiedReason {
 pub(super) enum VerificationMethod {
     Lexical,
     Judge,
+    /// The quoted words were looked for in the passage.
+    Quote,
 }
 
 impl VerificationMethod {
@@ -63,6 +67,7 @@ impl VerificationMethod {
         match self {
             Self::Lexical => "lexical",
             Self::Judge => "judge",
+            Self::Quote => "quote",
         }
     }
 }
@@ -102,6 +107,13 @@ impl ClaimAssessment {
             reason: None,
             unverified_reason: None,
         }
+    }
+
+    fn mark_misquoted(&mut self) {
+        self.verdict = ClaimVerdict::Unsupported;
+        self.method = VerificationMethod::Quote;
+        self.reason =
+            Some("The words in quotation marks are not in the passage this cites.".into());
     }
 
     fn mark_unverified(&mut self, reason: UnverifiedReason) {
@@ -377,6 +389,14 @@ impl GroundingVerifier {
 
         let mut assessments: Vec<ClaimAssessment> =
             claims.iter().map(ClaimAssessment::from_lexical).collect();
+        let misquoted = quotes::misquoted_claims(response, sources, &claims);
+        for assessment in assessments
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, assessment)| misquoted.contains(&index).then_some(assessment))
+        {
+            assessment.mark_misquoted();
+        }
 
         let Some(judge) = self.judge.as_ref() else {
             return GroundingReport::from_assessments(assessments, false);
@@ -387,7 +407,7 @@ impl GroundingVerifier {
         // was nothing to find the claim in, so "not found" would be false.
         let mut requests = Vec::new();
         for (index, claim) in claims.iter().enumerate() {
-            if !lexical::needs_judge(claim) {
+            if !lexical::needs_judge(claim) || misquoted.contains(&index) {
                 continue;
             }
             // Room is what the judge's window holds beside the claim and its
