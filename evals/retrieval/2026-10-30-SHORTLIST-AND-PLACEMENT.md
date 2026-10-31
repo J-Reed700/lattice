@@ -22,7 +22,8 @@ answer against the same prompt rebuilt with the first stage's top 40 and the fus
 | First stage, top 40 | 12/13 | 35.5 |
 | Fused, top 40 | 12/13 | 38.5 |
 
-The fact lost by both is Dunlark's 70 hours, a passage at rank 211 that no reordering of the first 64 reaches.
+The fact lost by both is Dunlark's 70 hours, a passage at rank 211 that no reordering of the first 64 reaches. A
+search from the answer does: see [`2026-10-31-SEARCH-AFTER-READING.md`](2026-10-31-SEARCH-AFTER-READING.md).
 
 ## Why fusion and not the reranker alone
 
@@ -107,19 +108,18 @@ above, and the two it never reached.
 | Median seconds a question | 688 | **44** |
 | All questions | 199 minutes | **16 minutes** |
 | Model calls a turn | 18.5 | **7** |
-| Passing the mechanical checks | 10/15 | **11/15** on the same questions, 13/17 in all |
+| Passing the mechanical checks | 14/15 | 14/15 on the same questions, **16/17** in all |
 
-Of the 15 both ran, `dp-buried-handbook-ticket`, `dp-abstain-home-address` and `dp-abstain-order` now pass, and
-`dp-multihop-dunlark-notice` and `dp-abstain-error-code` no longer do.
+These are scored by the check as corrected on 2026-10-31. As first written they read 10/15 and 13/17: the check did
+not know "could not find" or "no record", so right refusals failed, and that correction was made after reading these
+answers. [`2026-10-31-SEARCH-AFTER-READING.md`](2026-10-31-SEARCH-AFTER-READING.md) has what changed.
 
-The checks undercount both runs. `ABSTENTION_RE` does not know "could not find" or "no record", so a right refusal
-can fail: this run's `dp-abstain-error-code`, `dp-abstain-named-clause` and `dp-mt-abstain-followup` all refuse
-correctly and fail. Read by hand, this run has one wrong answer.
+Of the 15 both ran, `dp-buried-handbook-ticket` now passes and `dp-multihop-dunlark-notice` no longer does.
 
-`dp-multihop-dunlark-notice` is that one. The turn names Quorvin Metrology as the supplier, then says no passage
-gives a notice period. The 70 hours sits at rank 211, past the 64 reranked, and the fact the whole window found is
-out of a shortlist's reach. Search tools were on offer in the round that wrote the answer, and the model did not
-call them: the round after a reading tells it to answer. That is the wording
+`dp-multihop-dunlark-notice` is this run's one wrong answer. The turn names Quorvin Metrology as the supplier, then
+says no passage gives a notice period. The 70 hours sits at rank 211, past the 64 reranked, and the fact the whole
+window found is out of the first search's reach. Search tools were on offer in the round that wrote the answer, and
+the model did not call them: the round after a reading tells it to answer. That is the wording
 [`2026-10-30-INTENT-AND-SEARCH-FIRST.md`](2026-10-30-INTENT-AND-SEARCH-FIRST.md) tried to change and could not,
 because a reading of the whole window left no room for a search's results. It has room now.
 
