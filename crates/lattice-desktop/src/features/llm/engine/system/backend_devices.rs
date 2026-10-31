@@ -66,7 +66,14 @@ impl BackendDevice {
         let name = self.name.to_ascii_lowercase();
         let named = |models: &[&str]| models.iter().any(|model| name.contains(model));
         match self.vendor() {
-            GPUVendor::Intel => !named(&["arc(tm) a", "arc a", "arc(tm) b5", "arc b5", "arc pro"]),
+            GPUVendor::Intel => !named(&[
+                "arc(tm) a",
+                "arc a",
+                "arc(tm) b5",
+                "arc b5",
+                "arc(tm) pro",
+                "arc pro",
+            ]),
             GPUVendor::AMD => !named(&[" rx ", "(tm) rx", "radeon pro", "firepro"]),
             _ => false,
         }
@@ -365,6 +372,7 @@ Available devices:
             "NVIDIA GeForce RTX 4070 Laptop GPU",
             "Intel(R) Arc(TM) A770 Graphics",
             "Intel(R) Arc(TM) B580 Graphics",
+            "Intel(R) Arc(TM) Pro A60 Graphics",
             "AMD Radeon RX 7900 XTX",
             "AMD Radeon(TM) RX 6600M",
             "AMD Radeon PRO W7900",

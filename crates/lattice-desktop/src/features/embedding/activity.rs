@@ -118,7 +118,7 @@ fn server_words(in_flight: u32, gpu_bytes: Option<u64>) -> String {
             " · {:.1} GB on the GPU",
             bytes as f64 / 1_000_000_000.0
         )),
-        None => words.push_str(" · on the CPU"),
+        None => words.push_str(" · no GPU memory"),
     }
     words
 }
@@ -170,7 +170,10 @@ mod tests {
             server_words(1, Some(2_100_000_000)),
             "1 request embedding · 2.1 GB on the GPU"
         );
-        assert_eq!(server_words(3, None), "3 requests embedding · on the CPU");
+        assert_eq!(
+            server_words(3, None),
+            "3 requests embedding · no GPU memory"
+        );
     }
 
     #[test]
