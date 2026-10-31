@@ -34,12 +34,12 @@ use tracing::warn;
 /// bear on the question. Telling the model not to answer yet, and that its
 /// reply ends with the last label's line, keeps it from answering in place of
 /// the lines or after them.
-pub(super) const GROUP_INSTRUCTION: &str = "Do not answer my question yet. First read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines: your reply ends with the line for [{last}].";
+pub(super) const GROUP_INSTRUCTION: &str = "Do not answer my question yet. First read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets a hyphen. Write only these lines: your reply ends with the line for [{last}].";
 
 /// Closes the turn's message for a passage the window cannot hold shown
 /// again: it is read where it stands. `{labels}` lists the labels and
 /// `{last}` is the last of them.
-pub(super) const LABELS_INSTRUCTION: &str = "Do not answer my question yet. Write one line for each of the passages {labels} above, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. Write only these lines: your reply ends with the line for [{last}].";
+pub(super) const LABELS_INSTRUCTION: &str = "Do not answer my question yet. Write one line for each of the passages {labels} above, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets a hyphen. Write only these lines: your reply ends with the line for [{last}].";
 
 /// A group to read, and the prompt it is read on.
 pub(super) struct Reading {
