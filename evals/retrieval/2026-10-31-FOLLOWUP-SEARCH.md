@@ -80,12 +80,41 @@ marked edit such as "[must]". **It was written after seeing the answer it catche
 marked edit, which is corrected. Rescored, the four whole runs read 48, 44, 50 and 48. It flags one quote across all
 four, the Voskuil sentence, so the last run now scores what reading it found.
 
+## Haiku, end to end
+
+All fifty questions on Claude Haiku 5.5 through the same path, as a regression check. It cost about $0.51. `maxTokens`
+was set to 128,000 for the run, because the install default of 131,072 is more than Claude accepts: on a short call that
+number survives the cut to the window, and the call is refused. A two-question run found that. The fix is its own change.
+
+| Run | Passing | Wrong by reading | Median seconds | p95 seconds |
+|---|---:|---:|---:|---:|
+| The 27B's last whole run, before this change | 48 | 2 | 31.9 | 57.7 |
+| **Haiku, with this change** | **48** | **0** | **12.5** | **19.8** |
+
+All 67 answers were read by hand, and none states a wrong fact. The two failures are right answers. `dp-mt-encryption-versions`
+names the 45 days in force and lists the 73 days as superseded, which trips a rubric that forbids the phrase, and
+`dp-mt-abstain-followup` refuses in the words "don't contain", which the scorer does not recognise. Its date arithmetic
+is right where the 27B's slipped: 1,073 days between the two renewals. `turns_with_tool_calls` reads 0 only because that
+count does not read Anthropic's replies. The calls file shows 41 tool calls.
+
+What reading found that the score does not:
+
+- **False corrections, on 3 of the 17 follow-ups.** "I also need to correct my previous reply, which cited the wrong
+  passage numbers." Each turn numbers its passages afresh and the last answer keeps its old markers, so a right `[3]`
+  reads as a wrong one. In `dp-mt-shift-and-return` it withdraws a true claim as "unsupported". None appears in the 27B's
+  runs.
+- **Its working shows, on 5 turns.** "The other passage in my notes", and "should have been a hyphen", which is the
+  reading step's own marker. The reader has never seen any notes.
+- **`dp-mt-plant-room-key` answers an English question in German alone**, on the same sentence that did it on the 27B, so
+  this is the wording and not one model.
+- **One wrong citation number.** `dp-abstain-named-clause` quotes the Aldersgate agreement under `[1]`, which is
+  Calderwick's, from a reference list of its own. One other answer ends in a footer with a raw document ID.
+
 ## What this does not show
 
 - **Twelve conversations, not fifty.** The change cannot touch a first turn's search, and no flag moved on the 27B in
   the replay, so the other 38 were not rerun.
-- **Neither the 9B nor Claude has run this end to end.** The 9B was replayed on the intent step only. Haiku and Sonnet
-  were not run at all.
+- **The 9B has not run this end to end.** It was replayed on the intent step only. Sonnet was not run at all.
 - **The planner was not rerun.** With a utility model set, the question joins the planner's queries, which is unmeasured.
 - **`dp-mt-plant-room-key`** answered an English question in German alone on the build before this wording. It answers in
   English here, but the sentence that allows it, "in the passages' own words", is unchanged.
@@ -93,4 +122,4 @@ four, the Voskuil sentence, so the last run now scores what reading it found.
 
 Records: `results/chat/qwen3.8-27b-remote/2026-10-31-shipped-path-followup.jsonl.gz` (answers and scores),
 `2026-10-31-intent-standalone-replay.jsonl.gz` (every arm of the replay), and `2026-10-31-shipped-path-last50.jsonl.gz`
-rescored with the quote check.
+rescored with the quote check, and `results/chat/claude-haiku-5-5/2026-10-31-shipped-path.jsonl.gz`.
