@@ -110,9 +110,10 @@ rubric, counting the questions a reader would mark wrong or incomplete.
 The last build took a median 2.0 s to retrieve, 27.5 s to generate and 8.9 s to verify. It read 40 passages at the
 median and 47 at most, with no cut-off replies, no empty answers and no invalid citations.
 
-**The difference between 50 and 49 is not a difference between builds.** The only change the first round of the last
-two runs could see was one optional field gone from one tool's schema, and that changed the text of 62 of the 67
-answers. It also took the turns that call a tool from 10 to 19. A single question either way is noise.
+**The difference between 50 and 49 is not a difference between builds.** Each run indexes the library afresh, and
+every passage in a prompt carries its document's random id, so no two runs send the same prompt. Between any two of
+these runs only 1 to 4 of the 50 first answers are identical, even where nothing a first turn reads has changed. The
+rise from 10 to 19 turns with a tool call is the same noise. A single question either way proves nothing.
 
 **The last run passes 49 and gets 48 right, and the score misses one of the two.** Both are follow-ups:
 
