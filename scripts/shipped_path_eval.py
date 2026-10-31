@@ -50,11 +50,21 @@ JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
 # Phrases a desktop answer uses to decline that the answer harness's pattern
 # does not list.
 EXTRA_ABSTENTION_RE = re.compile(
-    r"\b(?:no (?:mention|record|reference|document|entry)|isn't (?:mentioned|recorded|in)|"
-    r"is not (?:mentioned|recorded|in the)|couldn't find|could not find|none of the "
-    r"(?:documents|sources|notes)|not (?:mentioned|recorded|listed|included)|"
+    r"\b(?:no (?:mention|record|reference|document|entry|passage)|there (?:is|are) no|found no|"
+    r"no (?:\w+ ){1,6}appears|"
+    r"isn't (?:mentioned|recorded|in)|is not (?:mentioned|recorded|in the)|"
+    r"(?:couldn't|could not|cannot|can't) (?:find|identify|tell|give|supply|confirm)|"
+    r"none of the (?:documents|sources|notes|passages)|"
+    r"not (?:mentioned|recorded|listed|included|stated|given|named)|"
+    r"do(?:es)? not (?:contain|appear|mention|state|give|name|list|cover)|"
     r"cannot be determined)\b",
     re.IGNORECASE,
+)
+
+# Words too common in a question to say what it asks about.
+QUESTION_WORDS = frozenset(
+    "what which when where does with that this have from their there would about much "
+    "whose whom will should could".split()
 )
 
 TURN_FIELDS = {
@@ -168,6 +178,30 @@ def validate_questions(questions, corpus):
     return problems
 
 
+def says_unavailable(text):
+    """Whether any of `text` says something is unavailable."""
+    return ABSTENTION_RE.search(text) or EXTRA_ABSTENTION_RE.search(text)
+
+
+def words_of(text):
+    """The longer words of `text`, lower-cased, hyphenated codes whole."""
+    return {word.lower() for word in re.findall(r"[\w-]{4,}", text)}
+
+
+def declines(answer, question):
+    """Whether some sentence says what the question asks about is unavailable.
+
+    An answer can refuse after first saying what it searched, so no one place
+    will do; the sentence must share a word with the question, so an aside
+    about something else does not pass off a guess as a refusal.
+    """
+    asked = words_of(question or "") - QUESTION_WORDS
+    return any(
+        says_unavailable(sentence) and asked & words_of(sentence)
+        for sentence in re.split(r"(?<=[.!?])\s+", answer or "")
+    )
+
+
 def abstained(answer):
     """Whether the answer's disposition is that the requested fact is unavailable.
 
@@ -180,28 +214,25 @@ def abstained(answer):
     if not text:
         return False
 
-    def unavailable(fragment):
-        return ABSTENTION_RE.search(fragment) or EXTRA_ABSTENTION_RE.search(fragment)
-
-    if not unavailable(text):
+    if not says_unavailable(text):
         return False
 
     first_breaks = [index for mark in ".!?\n" if (index := text.find(mark)) >= 0]
     first_end = min(first_breaks) + 1 if first_breaks else min(len(text), 400)
     lead = text[:first_end]
-    lead_match = unavailable(lead)
+    lead_match = says_unavailable(lead)
     if lead_match:
         # "There is no X; instead use Y [1]" is a correction, not a refusal.
         rest = text[lead_match.end():]
         correction = re.search(r"\b(?:instead|rather|however)\b", rest, re.I)
         if correction:
             corrected = rest[correction.end():]
-            if CITATION_RE.search(corrected) and not unavailable(corrected):
+            if CITATION_RE.search(corrected) and not says_unavailable(corrected):
                 return False
         return True
 
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
-    return bool(unavailable(sentences[-1]))
+    return bool(says_unavailable(sentences[-1]))
 
 
 def mechanical(rubric, turn):
@@ -218,7 +249,12 @@ def mechanical(rubric, turn):
     supplied = {entry.get("document_id") for entry in turn.get("evidence") or []}
     expect_abstain = bool(rubric.get("abstain"))
     did_abstain = abstained(answer)
-    abstention_ok = did_abstain if expect_abstain else not did_abstain
+    # The rubric knows what the phrases cannot: stating every required fact is
+    # an answer whatever caveats follow it.
+    if expect_abstain:
+        abstention_ok = did_abstain or declines(answer, turn.get("question"))
+    else:
+        abstention_ok = not did_abstain or (bool(groups) and not missing)
     expected_cited = [doc for doc in expected if doc in cited_docs]
     passed = (
         turn.get("error") is None
