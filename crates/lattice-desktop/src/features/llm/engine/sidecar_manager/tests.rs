@@ -1340,7 +1340,7 @@ fn api_tokens_are_unguessable_and_never_repeat() {
     assert_ne!(first, second, "a token is minted per spawn");
 }
 
-use super::config::{footprint_from, hint_for, memory_room};
+use super::config::{footprint_from, hint_for, memory_room, FIT_TARGET_BYTES};
 use crate::features::llm::engine::gguf_metadata::{GgufModelInfo, PerLayer};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -1361,7 +1361,6 @@ fn ornith_9b() -> GgufModelInfo {
         value_length: Some(256),
         embedding_length: Some(4096),
         feed_forward_length: Some(12_288),
-        vocab_size: Some(248_320),
         ssm_conv_kernel: Some(4),
         ssm_state_size: Some(128),
         ssm_group_count: Some(16),
@@ -1476,7 +1475,7 @@ fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
         ORNITH_9B_BYTES,
         Some(&info),
         60_416,
-        false,
+        ServerBuffers::chat(false),
         metal_room(1_191_586_416),
     );
 
@@ -1488,17 +1487,141 @@ fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
             // 4 KiB a token each.
             cache: 60_416 * 9 * 4 * 1024,
             state: info.recurrent_state_bytes(),
-            compute: info.compute_buffer_bytes(60_416),
+            compute: info.compute_buffer_bytes(60_416, 512),
             window: 60_416,
         }
     );
-    assert_eq!(hint.needed.total(), 8_726_589_376);
+    assert_eq!(hint.needed.total(), 8_453_959_616);
     assert!(hint.fits());
     assert_eq!(
         hint.fits_window,
         Some(262_144),
         "the whole trained window fits beside it"
     );
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// The sizing keys of Qwen3.5-9B-Q4_K_M.gguf, with what it leaves in RAM.
+fn qwen_9b() -> GgufModelInfo {
+    GgufModelInfo {
+        block_count: Some(32),
+        nextn_predict_layers: None,
+        cpu_weight_bytes: 572_125_184,
+        ..ornith_9b()
+    }
+}
+
+/// The 0.6B Qwen3 embedder and reranker: 28 layers, 8 KV heads.
+fn qwen3_0_6b() -> GgufModelInfo {
+    GgufModelInfo {
+        architecture: Some("qwen3".into()),
+        trained_context_length: Some(32_768),
+        block_count: Some(28),
+        head_count_kv: Some(8.into()),
+        head_count: Some(16.into()),
+        key_length: Some(128),
+        value_length: Some(128),
+        embedding_length: Some(1024),
+        feed_forward_length: Some(3_072),
+        ..Default::default()
+    }
+}
+
+/// What the app's three servers ask of an RTX 4070 Laptop, which reports
+/// 7,180 MiB free, against llama-server's own buffers at the app's flags: the
+/// estimates are within 3% of the 5,694, 1,260 and 2,128 MiB it allocates.
+fn eight_gigabyte_card() -> (
+    MemoryHint,
+    impl Fn(u64) -> MemoryHint,
+    impl Fn(u64) -> MemoryHint,
+) {
+    let room = |held| MemoryRoom {
+        source: MemorySource::GpuFree,
+        reported: 7_180 * MIB - FIT_TARGET_BYTES,
+        held,
+    };
+    let chat = hint_for(
+        5_680_522_464,
+        Some(&qwen_9b()),
+        16_384,
+        ServerBuffers::chat(false),
+        room(0),
+    );
+    let reranker = move |held| {
+        let buffers = ServerBuffers {
+            kv_cache_quantization: false,
+            micro_batch: 4_096,
+        };
+        hint_for(639_153_184, Some(&qwen3_0_6b()), 4_096, buffers, room(held))
+    };
+    let embedder = move |held| {
+        let buffers = ServerBuffers {
+            kv_cache_quantization: false,
+            micro_batch: 2_048,
+        };
+        hint_for(
+            1_197_629_632,
+            Some(&qwen3_0_6b()),
+            8_192,
+            buffers,
+            room(held),
+        )
+    };
+    (chat, reranker, embedder)
+}
+
+#[test]
+fn a_server_is_priced_at_what_llama_cpp_allocates() {
+    let (chat, reranker, embedder) = eight_gigabyte_card();
+    let close = |estimate: Footprint, real_mib: u64| {
+        let real = real_mib * MIB;
+        assert!(
+            estimate.total().abs_diff(real) < real * 3 / 100,
+            "{} MiB against {real_mib} MiB",
+            estimate.total() / MIB
+        );
+    };
+
+    close(chat.needed, 5_694);
+    close(reranker(0).needed, 1_260);
+    close(embedder(0).needed, 2_128);
+    assert_eq!(reranker(0).needed.cache, 448 * MIB);
+    assert_eq!(embedder(0).needed.cache, 896 * MIB);
+    assert_eq!(chat.needed.cache, 512 * MIB);
+    assert_eq!(chat.needed.state, 201 * MIB);
+}
+
+/// All three on this card run chat at a tenth of its speed: they come to about
+/// 9 GB of 8, and Windows pages the difference out.
+#[test]
+fn an_eight_gigabyte_card_seats_a_chat_model_and_the_reranker_and_not_the_embedder() {
+    let (chat, reranker, embedder) = eight_gigabyte_card();
+    let held = chat.needed.total();
+
+    assert!(chat.fits());
+    assert!(!reranker(held).fits());
+    assert!(reranker(held).fits_in_margin());
+    assert!(!embedder(held).fits_in_margin());
+    assert!(!embedder(held + reranker(held).needed.total()).fits_in_margin());
+}
+
+#[test]
+fn the_search_servers_share_a_card_no_chat_model_is_using() {
+    let (_, reranker, embedder) = eight_gigabyte_card();
+
+    assert!(embedder(0).fits());
+    assert!(reranker(embedder(0).needed.total()).fits());
+}
+
+/// Metal's working set holds nothing back, so there is no margin to go into.
+#[test]
+fn a_mac_has_no_margin_to_fit_in() {
+    let needed = M3_MAX_WORKING_SET + 1;
+    let hint = hint_for(needed, None, 0, ServerBuffers::chat(false), metal_room(0));
+
+    assert!(!hint.fits());
+    assert!(!hint.fits_in_margin());
 }
 
 #[test]
@@ -1511,16 +1634,23 @@ fn the_fitting_window_is_the_largest_thousand_that_fits_and_never_past_the_train
         held: 0,
     };
 
-    let hint = hint_for(ORNITH_9B_BYTES, Some(&info), 262_144, false, room);
+    let chat = ServerBuffers::chat(false);
+    let hint = hint_for(ORNITH_9B_BYTES, Some(&info), 262_144, chat, room);
 
     assert!(!hint.fits());
     let fits = hint.fits_window.unwrap();
     assert_eq!(fits % 1024, 0);
-    let total = |window| footprint_from(ORNITH_9B_BYTES, Some(&info), window, false).total();
+    let total = |window| footprint_from(ORNITH_9B_BYTES, Some(&info), window, chat).total();
     assert!(total(fits) <= spare, "the window it names fits");
     assert!(total(fits + 1024) > spare, "and the next thousand does not");
 
-    let quantized = hint_for(ORNITH_9B_BYTES, Some(&info), 262_144, true, room);
+    let quantized = hint_for(
+        ORNITH_9B_BYTES,
+        Some(&info),
+        262_144,
+        ServerBuffers::chat(true),
+        room,
+    );
     assert!(
         quantized.fits_window.unwrap() > fits,
         "a q8_0 cache fits a larger window in the same memory"
@@ -1535,11 +1665,12 @@ fn weights_past_the_room_fit_no_window_and_an_unreadable_header_says_nothing() {
         held: 0,
     };
 
-    let too_large = hint_for(ORNITH_9B_BYTES, Some(&ornith_9b()), 8_192, false, room);
+    let chat = ServerBuffers::chat(false);
+    let too_large = hint_for(ORNITH_9B_BYTES, Some(&ornith_9b()), 8_192, chat, room);
     assert_eq!(too_large.fits_window, Some(0));
     assert!(too_large.describe().contains("Not even its weights fit."));
 
-    let unreadable = hint_for(ORNITH_9B_BYTES, None, 8_192, false, room);
+    let unreadable = hint_for(ORNITH_9B_BYTES, None, 8_192, chat, room);
     assert_eq!(unreadable.fits_window, None);
     assert_eq!(unreadable.needed.weights, ORNITH_9B_BYTES);
     assert_eq!(unreadable.needed.total(), ORNITH_9B_BYTES);
@@ -1551,7 +1682,7 @@ fn a_hint_tells_the_user_the_numbers_and_the_fix() {
         ORNITH_9B_BYTES,
         Some(&ornith_9b()),
         262_144,
-        false,
+        ServerBuffers::chat(false),
         MemoryRoom {
             source: MemorySource::MetalWorkingSet,
             reported: 16 * GIB,
@@ -1614,12 +1745,13 @@ fn gemma_4_sliding_layers_are_charged_their_window_not_the_whole_context() {
         ..gemma4_12b()
     };
 
-    let sliding = hint_for(GEMMA4_12B_BYTES, Some(&gemma4_12b()), 32_768, false, room);
+    let chat = ServerBuffers::chat(false);
+    let sliding = hint_for(GEMMA4_12B_BYTES, Some(&gemma4_12b()), 32_768, chat, room);
     let global = hint_for(
         GEMMA4_12B_BYTES,
         Some(&every_layer_global),
         32_768,
-        false,
+        chat,
         room,
     );
 
@@ -1685,6 +1817,56 @@ fn a_second_window_of_the_same_model_counts_against_the_gpu_but_does_not_size_th
         3 * GIB,
         "a server never counts against itself, and a CPU server holds no GPU memory"
     );
+}
+
+#[test]
+fn a_server_on_the_spare_gpu_or_the_cpu_holds_nothing_of_the_priced_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let embedder = weights_file(&dir, "embedder.gguf", 2 * GIB);
+    let on_the_card = SidecarConfig {
+        n_gpu_layers: 99,
+        pooling: Some(PoolingServing::new(2048, PoolingTask::Embedding)),
+        ..SidecarConfig::for_model(embedder)
+    };
+    let server = |config: SidecarConfig| RunningServer {
+        n_gpu_layers: config.n_gpu_layers,
+        context_size: 0,
+        config,
+    };
+
+    assert_eq!(
+        gpu_bytes_where(&[server(on_the_card.clone())], |_| true),
+        2 * GIB
+    );
+    assert_eq!(
+        gpu_bytes_where(&[server(on_the_card.off_the_gpu(Some("Vulkan0")))], |_| {
+            true
+        }),
+        0
+    );
+    assert_eq!(
+        gpu_bytes_where(&[server(on_the_card.off_the_gpu(None))], |_| true),
+        0
+    );
+}
+
+#[test]
+fn a_server_that_only_fits_in_the_margin_is_tight() {
+    use crate::features::llm::engine::system::GPUVendor;
+    let dir = tempfile::tempdir().unwrap();
+    let resident = weights_file(&dir, "resident.gguf", 5 * GIB);
+    let tight = weights_file(&dir, "tight.gguf", GIB + GIB / 2);
+    let large = weights_file(&dir, "large.gguf", 3 * GIB);
+    let servers = [running(&resident, 8_192, 99)];
+    let gpu = caps_with_gpu(GPUVendor::Nvidia, Some(8.0), Some(7.0));
+
+    let outcome = admission(&servers, &SidecarConfig::for_model(tight), &gpu);
+    assert!(matches!(outcome, Admission::Tight { spare, .. } if spare == GIB));
+    assert_eq!(outcome.shortfall(), Some(GIB / 2));
+
+    let outcome = admission(&servers, &SidecarConfig::for_model(large), &gpu);
+    assert!(matches!(outcome, Admission::Short { .. }));
+    assert_eq!(outcome.shortfall(), Some(2 * GIB));
 }
 
 #[test]
@@ -1772,10 +1954,7 @@ fn an_embedding_server_gets_exactly_its_own_flags() {
         n_gpu_layers: 99,
         context_size: 8192,
         parallel_slots: Some(4),
-        pooling: Some(PoolingServing {
-            ubatch: 2048,
-            task: PoolingTask::Embedding,
-        }),
+        pooling: Some(PoolingServing::new(2048, PoolingTask::Embedding)),
         ..SidecarConfig::for_model(PathBuf::from("/models/Qwen3-Embedding-0.6B-f16.gguf"))
     };
     let expected: Vec<String> = [
@@ -1828,10 +2007,7 @@ fn a_reranking_server_gets_its_flags_and_no_device_on_the_cpu() {
         n_gpu_layers: 99,
         context_size: 4096,
         parallel_slots: Some(1),
-        pooling: Some(PoolingServing {
-            ubatch: 4096,
-            task: PoolingTask::Reranking,
-        }),
+        pooling: Some(PoolingServing::new(4096, PoolingTask::Reranking)),
         ..SidecarConfig::for_model(PathBuf::from("/models/qwen3-reranker-0.6b-q8_0.gguf"))
     };
     let on_gpu = build_server_args(&config, 12345);
@@ -1844,20 +2020,68 @@ fn a_reranking_server_gets_its_flags_and_no_device_on_the_cpu() {
     let on_cpu = build_server_args(&config.without_gpu_offload(), 12345);
     assert_eq!(flag_value(&on_cpu, "-ngl"), Some("0"));
     assert_eq!(flag_value(&on_cpu, "--device"), Some("none"));
-
-    let embedding = SidecarConfig {
-        pooling: Some(PoolingServing {
-            ubatch: 2048,
-            task: PoolingTask::Embedding,
-        }),
-        ..config.without_gpu_offload()
-    };
-    assert!(
-        !build_server_args(&embedding, 12345)
-            .iter()
-            .any(|arg| arg == "--device"),
-        "an embedding server on the CPU is launched as before"
+    assert_eq!(
+        flag_value(&on_cpu, "-t"),
+        None,
+        "a start falling back to the CPU keeps every thread"
     );
+}
+
+/// llama-server's `--device` chooses the integrated GPU, or `none` and four
+/// threads, as an embedder kept off a full card was measured to run best.
+#[test]
+fn a_pooling_server_kept_off_the_gpu_names_where_it_runs() {
+    let config = SidecarConfig {
+        n_gpu_layers: 99,
+        context_size: 8192,
+        parallel_slots: Some(4),
+        pooling: Some(PoolingServing::new(2048, PoolingTask::Embedding)),
+        ..SidecarConfig::for_model(PathBuf::from("/models/embedder.gguf"))
+    };
+    assert!(config.on_offload_gpu());
+
+    let spare = config.off_the_gpu(Some("Vulkan0"));
+    assert!(!spare.on_offload_gpu());
+    let args = build_server_args(&spare, 12345);
+    assert_eq!(flag_value(&args, "--device"), Some("Vulkan0"));
+    assert_eq!(flag_value(&args, "-ngl"), Some("99"));
+    assert_eq!(flag_value(&args, "-t"), None);
+
+    let cpu = config.off_the_gpu(None);
+    assert!(!cpu.on_offload_gpu());
+    let args = build_server_args(&cpu, 12345);
+    assert_eq!(flag_value(&args, "--device"), Some("none"));
+    assert_eq!(flag_value(&args, "-ngl"), Some("0"));
+    assert_eq!(flag_value(&args, "-t"), Some("4"));
+    assert_eq!(flag_value(&args, "-tb"), Some("4"));
+
+    assert_ne!(config, spare, "each placement is a server of its own");
+    assert_ne!(config, cpu);
+    assert_ne!(spare, cpu);
+
+    assert_eq!(
+        flag_value(
+            &build_server_args(&spare.without_gpu_offload(), 12345),
+            "--device"
+        ),
+        Some("none"),
+        "a spare GPU that will not start falls back to no device"
+    );
+}
+
+/// An embedding server on a machine with no accelerator has every core to
+/// itself, so it keeps llama-server's thread count.
+#[test]
+fn a_pooling_server_on_a_machine_without_a_gpu_keeps_every_thread() {
+    let config = SidecarConfig {
+        n_gpu_layers: 0,
+        pooling: Some(PoolingServing::new(2048, PoolingTask::Embedding)),
+        ..SidecarConfig::for_model(PathBuf::from("/models/embedder.gguf"))
+    };
+
+    let args = build_server_args(&config, 12345);
+    assert_eq!(flag_value(&args, "--device"), Some("none"));
+    assert_eq!(flag_value(&args, "-t"), None);
 }
 
 /// The embedding field is part of a server's identity, so the pool never
@@ -1868,10 +2092,7 @@ fn an_embedding_server_is_keyed_apart_from_a_chat_server_of_one_file() {
 
     let chat = SidecarConfig::for_model(PathBuf::from("/models/model.gguf"));
     let embedding = SidecarConfig {
-        pooling: Some(PoolingServing {
-            ubatch: 2048,
-            task: PoolingTask::Embedding,
-        }),
+        pooling: Some(PoolingServing::new(2048, PoolingTask::Embedding)),
         ..chat.clone()
     };
     let hasher = RandomState::new();

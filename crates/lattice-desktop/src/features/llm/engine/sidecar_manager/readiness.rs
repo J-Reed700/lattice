@@ -1,3 +1,4 @@
+use super::config::BESIDE_GPU_THREADS;
 use super::*;
 
 /// Ports handed out and not yet released: binding `127.0.0.1:0` gives the
@@ -60,7 +61,7 @@ const CTX_CHECKPOINTS: u32 = 32;
 const CHECKPOINT_MIN_STEP: u32 = 1024;
 
 pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
-    if let Some(serving) = config.pooling {
+    if let Some(serving) = &config.pooling {
         return pooling_server_args(config, serving, port);
     }
     let mut args = vec![
@@ -134,10 +135,10 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
 /// The GGUF names its pooling, so `--pooling` is not passed, and
 /// `--embd-normalize` stays at its default (Euclidean), which is the L2
 /// normalisation stored vectors have. `-fa auto` is the build's default, named
-/// so a change upstream shows here. A reranking server with no layers
-/// offloaded uses no device at all (`--device none`), so not even its
-/// scratch takes GPU memory a chat model may need.
-fn pooling_server_args(config: &SidecarConfig, serving: PoolingServing, port: u16) -> Vec<String> {
+/// so a change upstream shows here. A server with no layers offloaded uses no
+/// device at all (`--device none`), so not even its scratch takes GPU memory a
+/// chat model may need.
+fn pooling_server_args(config: &SidecarConfig, serving: &PoolingServing, port: u16) -> Vec<String> {
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
@@ -160,8 +161,22 @@ fn pooling_server_args(config: &SidecarConfig, serving: PoolingServing, port: u1
         "-ngl".to_string(),
         config.n_gpu_layers.to_string(),
     ]);
-    if serving.task == PoolingTask::Reranking && config.n_gpu_layers == 0 {
-        args.extend(["--device".to_string(), "none".to_string()]);
+    let device = match &serving.device {
+        _ if config.n_gpu_layers == 0 => Some("none"),
+        PoolingDevice::Spare(device) => Some(device.as_str()),
+        PoolingDevice::Offload | PoolingDevice::Cpu => None,
+    };
+    if let Some(device) = device {
+        args.extend(["--device".to_string(), device.to_string()]);
+    }
+    if serving.device == PoolingDevice::Cpu {
+        let threads = BESIDE_GPU_THREADS.to_string();
+        args.extend([
+            "-t".to_string(),
+            threads.clone(),
+            "-tb".to_string(),
+            threads,
+        ]);
     }
     args.extend([
         "-fa".to_string(),

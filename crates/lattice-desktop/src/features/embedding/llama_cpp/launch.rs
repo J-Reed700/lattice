@@ -16,6 +16,18 @@ use crate::infrastructure::llama_server::RunningLlamaServer;
 /// them (`-c`) can be computed.
 pub const SERVER_SLOTS: u32 = 4;
 
+/// What an embedding server is wanted for, which decides what it may take
+/// for a place on the GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingWork {
+    /// A search's query or a few passages: quick anywhere, with a model that
+    /// should stay loaded waiting behind it.
+    Light,
+    /// A batch of passages, slow enough off the GPU to be worth a chat model's
+    /// reload.
+    Indexing,
+}
+
 /// The embedding server to start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingLaunch {
@@ -30,6 +42,7 @@ pub struct EmbeddingLaunch {
     pub window_tokens: u32,
     /// Sequences the server embeds at once.
     pub slots: u32,
+    pub work: EmbeddingWork,
 }
 
 impl EmbeddingLaunch {
@@ -41,6 +54,15 @@ impl EmbeddingLaunch {
             gpu,
             window_tokens: facts.window_tokens(),
             slots: SERVER_SLOTS,
+            work: EmbeddingWork::Light,
+        }
+    }
+
+    /// The same server, wanted for `work`.
+    pub fn for_work(&self, work: EmbeddingWork) -> Self {
+        Self {
+            work,
+            ..self.clone()
         }
     }
 

@@ -26,16 +26,21 @@ use lru::LruCache;
 use crate::features::embedding::input_policy::InputPolicy;
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
 use crate::infrastructure::llama_server::RunningLlamaServer;
+use crate::infrastructure::passage_index::build::BATCH_SIZE;
 
 pub use facts::{EmbeddingHeader, EmbeddingModelFacts, Pooling};
 pub(crate) use identity::{resolve_prefixes, space_identity};
-pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, SERVER_SLOTS};
+pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, EmbeddingWork, SERVER_SLOTS};
 
 use client::Failure;
 
 /// Queries remembered per service. A query is embedded on every search and
 /// the same few recur; documents are embedded once and never cached.
 const QUERY_CACHE_CAPACITY: usize = 256;
+
+/// Passages a request needs to count as indexing: a full batch of the passage
+/// index, which off the GPU takes about as long as a chat model takes to load.
+const INDEXING_PASSAGES: usize = BATCH_SIZE;
 
 /// How a dead server is brought back: the starter that started it and what
 /// it was started for. Only a service that started its own server has one.
@@ -170,9 +175,9 @@ impl LlamaEmbeddingService {
     }
 
     /// Vectors for `inputs`, already prefixed, in input order. A server whose
-    /// process died is started again once and the batch sent once more; an
-    /// answer from a live server is final.
-    async fn embed_inputs(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>> {
+    /// process died is started again once, for `work`, and the batch sent once
+    /// more; an answer from a live server is final.
+    async fn embed_inputs(&self, inputs: &[String], work: EmbeddingWork) -> Result<Vec<Vec<f32>>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -196,7 +201,7 @@ impl LlamaEmbeddingService {
             %error,
             "embedding.server.died; starting it again"
         );
-        let server = self.restarted(restart, &server).await?;
+        let server = self.restarted(restart, &server, work).await?;
         match client::embed(&self.http, &server, inputs).await {
             Ok(embedded) => self.checked(embedded),
             Err(Failure::Server(error)) => Err(error),
@@ -217,15 +222,42 @@ impl LlamaEmbeddingService {
         &self,
         restart: &Restart,
         dead: &Arc<RunningLlamaServer>,
+        work: EmbeddingWork,
     ) -> Result<Arc<RunningLlamaServer>> {
         let _gate = restart.gate.lock().await;
         let current = self.current();
         if !Arc::ptr_eq(&current, dead) && current.alive() {
             return Ok(current);
         }
-        let server = restart.starter.start(&restart.launch).await?;
+        let server = restart
+            .starter
+            .start(&restart.launch.for_work(work))
+            .await?;
         *self.server.lock() = Arc::clone(&server);
         Ok(server)
+    }
+
+    /// Bring a server that was kept off the GPU onto it for indexing, when the
+    /// GPU has room for it by now. One that stays off keeps serving, as does
+    /// the one running if the start fails; a dead one is `embed_inputs`' to
+    /// bring back.
+    async fn move_to_gpu(&self, restart: &Restart) {
+        let off_the_gpu = || {
+            let server = self.current();
+            server.alive() && server.gpu_bytes().is_none()
+        };
+        if !restart.launch.gpu || !off_the_gpu() {
+            return;
+        }
+        let _gate = restart.gate.lock().await;
+        if !off_the_gpu() {
+            return;
+        }
+        let launch = restart.launch.for_work(EmbeddingWork::Indexing);
+        match restart.starter.start(&launch).await {
+            Ok(server) => *self.server.lock() = server,
+            Err(error) => tracing::warn!(%error, "embedding.server.move_to_gpu_failed"),
+        }
     }
 
     /// The vectors of `embedded`, once each is as wide as the header said.
@@ -304,7 +336,10 @@ fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppEr
 impl EmbeddingPort for LlamaEmbeddingService {
     async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
         let mut vectors = self
-            .embed_inputs(&self.as_documents(&[text.to_owned()])?)
+            .embed_inputs(
+                &self.as_documents(&[text.to_owned()])?,
+                EmbeddingWork::Light,
+            )
             .await?;
         vectors.pop().ok_or_else(|| AppError::EmbeddingFailed {
             reason: "The embedding server returned no vector".into(),
@@ -318,7 +353,7 @@ impl EmbeddingPort for LlamaEmbeddingService {
             return Ok(Vec::clone(&cached));
         }
         let vector = self
-            .embed_inputs(std::slice::from_ref(&query))
+            .embed_inputs(std::slice::from_ref(&query), EmbeddingWork::Light)
             .await?
             .pop()
             .ok_or_else(|| AppError::EmbeddingFailed {
@@ -330,7 +365,14 @@ impl EmbeddingPort for LlamaEmbeddingService {
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_inputs(&self.as_documents(texts)?).await
+        let inputs = self.as_documents(texts)?;
+        if inputs.len() < INDEXING_PASSAGES {
+            return self.embed_inputs(&inputs, EmbeddingWork::Light).await;
+        }
+        if let Some(restart) = &self.restart {
+            self.move_to_gpu(restart).await;
+        }
+        self.embed_inputs(&inputs, EmbeddingWork::Indexing).await
     }
 
     fn split_text(&self, text: &str, prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {

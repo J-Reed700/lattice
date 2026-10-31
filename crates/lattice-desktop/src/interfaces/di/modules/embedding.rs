@@ -2,38 +2,33 @@
 //!
 //! The embedding feature may not name the LLM feature, which owns the sidecar
 //! manager, the GGUF reader, device detection and GPU admission. The
-//! composition root sees both, so the embedding server is started here: as a
-//! bundled llama-server through `SidecarManager::start_shared`, admitted
-//! beside the chat models first, and offered to their admission as a server
-//! it may stop while idle.
+//! composition root sees both, so the embedding server is started here,
+//! through [`PoolingServers`]. A chat model and the reranker come first on the
+//! GPU: a query takes only what they leave, and only indexing, too slow
+//! anywhere else, may unload an idle model.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 
 use super::current_server::CurrentServer;
+use super::pooling_servers::PoolingServers;
 use crate::features::embedding::llama_cpp::{
-    EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter,
+    EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, EmbeddingWork,
 };
 use crate::features::llm::engine::gguf_metadata::read_model_info;
 use crate::features::llm::engine::sidecar_manager::{
-    resident_bytes_of, PoolingServing, PoolingTask, SidecarConfig, SidecarManager,
-    SpeculativeDecoding,
+    PoolingServing, PoolingTask, SidecarConfig, SpeculativeDecoding,
 };
-use crate::features::llm::instances::{LlmInstances, SidecarBudget};
+use crate::features::llm::instances::{GpuClaim, LlmInstances};
 use crate::features::llm::loading::LlmRuntime;
 use crate::infrastructure::llama_server::RunningLlamaServer;
 
 /// Starts embedding servers on the bundled llama-server.
 pub(crate) struct SidecarEmbeddingStarter {
-    /// `None` where no server can start: tests, and tools that build a
-    /// container without the app.
-    app: Option<tauri::AppHandle>,
-    instances: Arc<LlmInstances>,
-    runtime: LlmRuntime,
-    current: Arc<CurrentServer>,
+    servers: PoolingServers,
 }
 
 impl SidecarEmbeddingStarter {
@@ -44,19 +39,8 @@ impl SidecarEmbeddingStarter {
         current: Arc<CurrentServer>,
     ) -> Self {
         Self {
-            app,
-            instances,
-            runtime,
-            current,
+            servers: PoolingServers::new(app, instances, runtime, current),
         }
-    }
-
-    fn app(&self) -> Result<&tauri::AppHandle> {
-        self.app.as_ref().ok_or_else(|| {
-            AppError::ModelLoadFailed(
-                "The embedding server can only start inside the running app".into(),
-            )
-        })
     }
 }
 
@@ -89,10 +73,10 @@ pub(super) fn sidecar_config(launch: &EmbeddingLaunch) -> SidecarConfig {
         seed: None,
         kv_cache_quantization: false,
         projector_path: None,
-        pooling: Some(PoolingServing {
-            ubatch: launch.window_tokens,
-            task: PoolingTask::Embedding,
-        }),
+        pooling: Some(PoolingServing::new(
+            launch.window_tokens,
+            PoolingTask::Embedding,
+        )),
     }
 }
 
@@ -103,49 +87,20 @@ impl EmbeddingServerStarter for SidecarEmbeddingStarter {
     }
 
     async fn accelerated(&self) -> bool {
-        let Some(app) = self.app.as_ref() else {
-            return false;
-        };
-        self.runtime
-            .devices
-            .detect(app)
-            .await
-            .iter()
-            .any(|device| device.is_accelerator())
+        self.servers.accelerated().await
     }
 
     async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
-        let app = self.app()?;
-        let config = sidecar_config(launch);
         let name = launch.gguf.file_name().map_or_else(
             || "embedding server".to_owned(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let budget = SidecarBudget::new(Some(app.clone()), self.runtime.clone());
-        let turn = self.instances.make_room_for(&name, &config, &budget).await;
-        let handle = SidecarManager::start_shared(app, config.clone()).await;
-        drop(turn);
-        let handle = handle.map_err(|e| {
-            AppError::ModelLoadFailed(format!("The embedding server did not start: {e}"))
-        })?;
-        if let Some(reason) = handle.degraded() {
-            tracing::warn!(model = %name, reason, "embedding.server.degraded");
-        }
-        let gpu_bytes = (handle.n_gpu_layers() > 0).then(|| {
-            resident_bytes_of(
-                &config.model_path,
-                handle.context_size(),
-                config.kv_cache_quantization,
-            )
+        let claim = launch.gpu.then_some(match launch.work {
+            EmbeddingWork::Light => GpuClaim::Spare,
+            EmbeddingWork::Indexing => GpuClaim::IdleModels,
         });
-        let watched = Arc::clone(&handle);
-        let server = Arc::new(RunningLlamaServer::new(
-            handle.endpoint(),
-            handle.api_token(),
-            gpu_bytes,
-            Arc::new(move || watched.is_running()),
-        ));
-        self.current.record(name, &server, &handle);
-        Ok(server)
+        self.servers
+            .start(name, sidecar_config(launch), claim)
+            .await
     }
 }

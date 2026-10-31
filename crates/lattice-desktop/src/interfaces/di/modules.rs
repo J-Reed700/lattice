@@ -26,6 +26,7 @@ pub mod embedding;
 mod file_ops;
 mod indexing;
 mod library;
+mod pooling_servers;
 pub(crate) mod reranking;
 mod search;
 pub mod standalone;

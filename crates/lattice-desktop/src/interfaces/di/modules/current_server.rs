@@ -29,6 +29,11 @@ impl CurrentServer {
         }
     }
 
+    /// What it is, for messages.
+    pub(super) fn role(&self) -> &'static str {
+        self.role
+    }
+
     pub(super) fn record(
         &self,
         name: String,

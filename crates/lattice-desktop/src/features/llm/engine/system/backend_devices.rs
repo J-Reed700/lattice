@@ -89,6 +89,18 @@ pub fn offload_device(devices: &[BackendDevice]) -> Option<&BackendDevice> {
         .or_else(|| accelerators().max_by_key(|device| device.total_mib))
 }
 
+/// A GPU for a small server when the offload device has no room for it: the
+/// integrated one beside a dedicated card, which draws on the system's RAM and
+/// leaves the card to its models.
+pub fn spare_device(devices: &[BackendDevice]) -> Option<&BackendDevice> {
+    let offload = offload_device(devices)?;
+    devices
+        .iter()
+        .filter(|device| device.is_accelerator() && device.is_integrated())
+        .filter(|device| device.id != offload.id)
+        .max_by_key(|device| device.total_mib)
+}
+
 /// Parse the `Available devices:` block of `llama-server --list-devices`.
 ///
 /// Everything before the header is backend chatter (Metal capability dumps,
@@ -319,6 +331,21 @@ Available devices:
     #[test]
     fn no_accelerator_means_no_offload_device() {
         assert_eq!(offload_device(&parse_list_devices(CPU_ONLY)), None);
+    }
+
+    #[test]
+    fn the_integrated_gpu_is_spare_beside_a_dedicated_card() {
+        let devices = parse_list_devices(HYBRID_LAPTOP);
+
+        let spare = spare_device(&devices).expect("the Iris Xe beside the RTX");
+        assert_eq!(spare.id, "Vulkan0");
+    }
+
+    #[test]
+    fn nothing_is_spare_without_both_kinds_of_gpu() {
+        assert!(spare_device(&[device("Intel(R) Iris(R) Xe Graphics", 32_581)]).is_none());
+        assert!(spare_device(&[device("NVIDIA GeForce RTX 4070", 7_948)]).is_none());
+        assert!(spare_device(&parse_list_devices(CPU_ONLY)).is_none());
     }
 
     #[test]

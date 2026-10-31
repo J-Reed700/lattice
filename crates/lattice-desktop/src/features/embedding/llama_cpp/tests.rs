@@ -272,18 +272,35 @@ fn refusing_uri() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Hands out `servers` in order, one a start.
+/// Hands out `servers` in order, one a start, and fails once they run out when
+/// `refuses` says to.
 struct FakeStarter {
     servers: parking_lot::Mutex<Vec<Arc<RunningLlamaServer>>>,
     starts: AtomicUsize,
+    /// What each start was wanted for.
+    works: parking_lot::Mutex<Vec<EmbeddingWork>>,
+    accelerated: bool,
+    refuses: bool,
 }
 
 impl FakeStarter {
     fn new(servers: Vec<Arc<RunningLlamaServer>>) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new(Self::with(servers, false, false))
+    }
+
+    /// The same on a machine with a GPU.
+    fn with_gpu(servers: Vec<Arc<RunningLlamaServer>>) -> Arc<Self> {
+        Arc::new(Self::with(servers, true, false))
+    }
+
+    fn with(servers: Vec<Arc<RunningLlamaServer>>, accelerated: bool, refuses: bool) -> Self {
+        Self {
             servers: parking_lot::Mutex::new(servers),
             starts: AtomicUsize::new(0),
-        })
+            works: parking_lot::Mutex::default(),
+            accelerated,
+            refuses,
+        }
     }
 }
 
@@ -293,14 +310,30 @@ impl EmbeddingServerStarter for FakeStarter {
         Some(header_for("qwen3", Some(3)))
     }
     async fn accelerated(&self) -> bool {
-        false
+        self.accelerated
     }
-    async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
+    async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        self.works.lock().push(launch.work);
         let mut servers = self.servers.lock();
+        if servers.is_empty() && self.refuses {
+            return Err(AppError::ModelLoadFailed("refused".into()));
+        }
         assert!(!servers.is_empty(), "more starts than servers");
         Ok(servers.remove(0))
     }
+}
+
+/// A live server holding nothing of the GPU: on the integrated one or the CPU.
+fn off_the_gpu(uri: &str) -> Arc<RunningLlamaServer> {
+    Arc::new(RunningLlamaServer::new(uri, KEY, None, Arc::new(|| true)))
+}
+
+/// A batch big enough to count as indexing.
+fn full_batch() -> Vec<String> {
+    (0..INDEXING_PASSAGES)
+        .map(|passage| format!("passage {passage}"))
+        .collect()
 }
 
 /// A local GGUF row with a `tokenizer.json` beside it.
@@ -387,6 +420,118 @@ async fn a_refused_connection_to_a_live_process_is_returned_without_a_restart() 
         Err(AppError::EmbeddingFailed { .. })
     ));
     assert_eq!(starter.starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_full_batch_brings_a_server_kept_off_the_gpu_onto_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (off, on) = (
+        echo_server(DIMENSION, false).await,
+        echo_server(DIMENSION, false).await,
+    );
+    let starter = FakeStarter::with_gpu(vec![off_the_gpu(&off.uri()), running(&on.uri(), true)]);
+    let service =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity())
+            .await
+            .unwrap();
+
+    service.embed_batch(&full_batch()).await.unwrap();
+    service.embed_batch(&full_batch()).await.unwrap();
+
+    assert_eq!(
+        *starter.works.lock(),
+        [EmbeddingWork::Light, EmbeddingWork::Indexing],
+        "moved once, by the first batch"
+    );
+    assert!(sent(&off).await.is_empty());
+    assert_eq!(sent(&on).await.len(), 2);
+}
+
+/// A search or a few passages are not worth a chat model's reload.
+#[tokio::test]
+async fn a_query_and_a_small_batch_stay_where_the_server_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = echo_server(DIMENSION, false).await;
+    let starter = FakeStarter::with_gpu(vec![off_the_gpu(&server.uri())]);
+    let service =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity())
+            .await
+            .unwrap();
+
+    service.embed_query("query").await.unwrap();
+    service.embed_single("passage").await.unwrap();
+    let mut small = full_batch();
+    small.pop();
+    service.embed_batch(&small).await.unwrap();
+
+    assert_eq!(starter.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(sent(&server).await.len(), 3);
+}
+
+/// Off the GPU is where a machine with none runs by design.
+#[tokio::test]
+async fn a_machine_without_a_gpu_indexes_where_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = echo_server(DIMENSION, false).await;
+    let starter = FakeStarter::new(vec![off_the_gpu(&server.uri())]);
+    let service =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity())
+            .await
+            .unwrap();
+
+    service.embed_batch(&full_batch()).await.unwrap();
+
+    assert_eq!(starter.starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_move_keeps_indexing_where_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = echo_server(DIMENSION, false).await;
+    let starter = Arc::new(FakeStarter::with(
+        vec![off_the_gpu(&server.uri())],
+        true,
+        true,
+    ));
+    let service =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity())
+            .await
+            .unwrap();
+
+    let vectors = service.embed_batch(&full_batch()).await.unwrap();
+
+    assert_eq!(vectors.len(), INDEXING_PASSAGES);
+    assert_eq!(starter.starts.load(Ordering::SeqCst), 2);
+    assert_eq!(sent(&server).await.len(), 1);
+}
+
+/// What brings a dead server back decides what it may take for the GPU: a chat
+/// model unloaded for one query would reload for the next message.
+#[tokio::test]
+async fn a_dead_server_comes_back_for_the_work_that_found_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let live = echo_server(DIMENSION, false).await;
+    let starter = FakeStarter::with_gpu(vec![
+        running(&refusing_uri(), false),
+        running(&refusing_uri(), false),
+        running(&live.uri(), true),
+    ]);
+    let service =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity())
+            .await
+            .unwrap();
+
+    assert!(service.embed_query("query").await.is_err());
+    service.embed_batch(&full_batch()).await.unwrap();
+
+    assert_eq!(
+        *starter.works.lock(),
+        [
+            EmbeddingWork::Light,
+            EmbeddingWork::Light,
+            EmbeddingWork::Indexing
+        ]
+    );
 }
 
 #[test]
