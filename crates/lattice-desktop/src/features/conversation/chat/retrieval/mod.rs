@@ -623,6 +623,10 @@ pub(super) fn build_web_source_citations(
     build_web_source_citations_impl(results, highlight_terms, excerpt_chars)
 }
 
+pub(in crate::features::conversation::chat) use self::source_citations::{
+    build_document_part_citation, build_library_source_citations,
+};
+
 /// Infer human-readable category from file path/extension.
 pub(super) fn infer_category(path: &str) -> String {
     infer_category_impl(path)
@@ -639,6 +643,7 @@ pub(super) fn format_tool_result(
     allowance: usize,
     page_offset: usize,
     source_text: bool,
+    citations: &std::collections::HashMap<String, u32>,
 ) -> String {
     format_tool_result_impl(
         tool_name,
@@ -647,6 +652,7 @@ pub(super) fn format_tool_result(
         allowance,
         page_offset,
         source_text,
+        citations,
     )
 }
 

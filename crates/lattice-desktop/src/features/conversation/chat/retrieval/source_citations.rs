@@ -5,6 +5,7 @@ use tracing::warn;
 use crate::features::conversation::chat::ports::ChatStorage;
 use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::sources::SourceDto;
+use lattice_core::application::contracts::tools::{DocumentResult, GetDocumentOutput};
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::shared::text::build_excerpt;
 
@@ -401,6 +402,78 @@ pub(super) fn build_web_source_citations(
     }
 
     sources
+}
+
+/// The chunk behind a library result, which is how the turn knows a passage it
+/// has already numbered.
+pub(in crate::features::conversation::chat) fn library_chunk_id(hit: &DocumentResult) -> String {
+    hit.chunk_id
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", hit.document_id, hit.chunk_index.unwrap_or(0)))
+}
+
+/// A library search's results as sources, so a fact a later search finds is
+/// cited as one the turn opened with is.
+pub(in crate::features::conversation::chat) fn build_library_source_citations(
+    results: &[DocumentResult],
+    highlight_terms: &[String],
+) -> Vec<SourceDto> {
+    results
+        .iter()
+        .filter(|hit| !hit.snippet.trim().is_empty())
+        .map(|hit| SourceDto {
+            page_number: None,
+            from_ocr: false,
+            document_id: hit.document_id.clone(),
+            chunk_id: library_chunk_id(hit),
+            content: hit.snippet.clone(),
+            score: hit.score,
+            path: (!hit.file_path.is_empty()).then(|| hit.file_path.clone()),
+            position: hit.chunk_index,
+            file_name: hit.filename.clone(),
+            file_path: hit.file_path.clone(),
+            mime_type: hit.mime_type.clone(),
+            category: infer_category(&hit.file_path),
+            file_size_bytes: hit.size_bytes,
+            modified_at: hit.modified_at.to_rfc3339(),
+            excerpt: Some(build_excerpt(&hit.snippet, highlight_terms, 480)),
+            highlights: (!highlight_terms.is_empty()).then(|| highlight_terms.to_vec()),
+            section: None,
+            chunk_index: hit.chunk_index,
+            chunk_excerpts: None,
+            citation_id: None,
+
+            web_snapshot: None,
+        })
+        .collect()
+}
+
+/// The part of a document a `get_document` call read, as a source. Each part is
+/// a source of its own, so one the model read on to is not mistaken for the
+/// first.
+pub(in crate::features::conversation::chat) fn build_document_part_citation(
+    document: &GetDocumentOutput,
+    highlight_terms: &[String],
+) -> Vec<SourceDto> {
+    let Some(metadata) = document.metadata.as_ref() else {
+        return Vec::new();
+    };
+    let part = DocumentResult {
+        document_id: document.document_id.clone(),
+        filename: metadata.filename.clone(),
+        file_path: metadata.file_path.clone(),
+        mime_type: metadata.mime_type.clone(),
+        score: 1.0,
+        snippet: document.content.clone(),
+        chunk_index: None,
+        chunk_id: Some(format!(
+            "document:{}:{}",
+            document.document_id, document.offset
+        )),
+        modified_at: metadata.modified_at,
+        size_bytes: metadata.size_bytes,
+    };
+    build_library_source_citations(std::slice::from_ref(&part), highlight_terms)
 }
 
 pub(super) fn infer_category(path: &str) -> String {

@@ -143,7 +143,7 @@ impl FunctionExecutor {
                 "Get document: content assembled"
             );
 
-            let metadata = if input.include_metadata {
+            let metadata = {
                 debug!(
                     document_id = %input.document_id,
                     "Get document: building metadata"
@@ -205,7 +205,7 @@ impl FunctionExecutor {
                     "Get document: chunk count loaded"
                 );
 
-                Some(DocumentMetadata {
+                DocumentMetadata {
                     filename: doc
                         .file_path()
                         .file_name()
@@ -226,9 +226,7 @@ impl FunctionExecutor {
                     indexed_at: *doc.indexed_at(),
                     tags,
                     chunk_count,
-                })
-            } else {
-                None
+                }
             };
 
             let output = GetDocumentOutput {
@@ -238,7 +236,7 @@ impl FunctionExecutor {
                 offset: start_char,
                 next_offset,
                 total_chars,
-                metadata,
+                metadata: Some(metadata),
             };
 
             info!("Get document completed: id='{}'", output.document_id);
