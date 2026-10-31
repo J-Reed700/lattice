@@ -46,6 +46,7 @@ from rag_eval import validate_dataset
 
 ROW_SCHEMA = "lattice-shipped-path-answers/1"
 JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
+MIN_QUOTE_WORDS = 5
 
 # Phrases a desktop answer uses to decline that the answer harness's pattern
 # does not list.
@@ -235,6 +236,32 @@ def abstained(answer):
     return bool(says_unavailable(sentences[-1]))
 
 
+def letters_and_digits(text):
+    """`text` without what a line break, hyphenation or punctuation changes."""
+    return re.sub(r"\W+", "", normalize(text))
+
+
+def cited_quotes(answer):
+    """What `answer` puts in quotation marks and cites, in whole phrases."""
+    for line in (answer or "").replace("\u201c", '"').replace("\u201d", '"').splitlines():
+        parts = line.split('"')
+        for quoted, after in zip(parts[1::2], parts[2::2]):
+            if re.match(r"[.,;:]?\s*\[\d+\]", after):
+                for span in re.split(r"\.\.\.|\u2026|\[\w{2,}\]", re.sub(r"\[(\w)\]", r"\1", quoted)):
+                    if len(span.split()) >= MIN_QUOTE_WORDS:
+                        yield span.strip()
+
+
+def invented_quotes(answer, evidence):
+    """Cited quotes that no passage the turn read holds, word for word.
+
+    A rubric asks for the facts it names, so a right ticket inside a sentence
+    no document contains passes it. Nothing but the passages decides this.
+    """
+    passages = letters_and_digits(" ".join(entry.get("content") or "" for entry in evidence or []))
+    return [span for span in cited_quotes(answer) if letters_and_digits(span) not in passages]
+
+
 def mechanical(rubric, turn):
     """The rubric's checkable parts, applied to one turn."""
     answer = turn.get("answer") or ""
@@ -256,6 +283,7 @@ def mechanical(rubric, turn):
     else:
         abstention_ok = not did_abstain or (bool(groups) and not missing)
     expected_cited = [doc for doc in expected if doc in cited_docs]
+    invented = invented_quotes(answer, turn.get("evidence"))
     passed = (
         turn.get("error") is None
         and bool(answer.strip())
@@ -263,6 +291,7 @@ def mechanical(rubric, turn):
         and not forbidden
         and abstention_ok
         and not invalid
+        and not invented
         and len(expected_cited) == len(expected)
     )
     return {
@@ -270,6 +299,7 @@ def mechanical(rubric, turn):
         "forbidden_claims": forbidden,
         "cited_ids": cited,
         "invalid_citations": invalid,
+        "invented_quotes": invented,
         "cited_document_ids": cited_docs,
         "expected_cited": expected_cited,
         "expected_in_evidence": [doc for doc in expected if doc in supplied],

@@ -65,6 +65,25 @@ class MechanicalChecks(unittest.TestCase):
         self.assertEqual(checks["forbidden_claims"], ["42 hours"])
         self.assertFalse(checks["passed"])
 
+    def test_a_cited_quote_no_passage_holds_fails(self):
+        passage = [{"content": "Page Marisol Quenby and quote TCK-1836."}]
+        answer = 'It is 14 days: "page Anneke Voskuil and quote TCK-1836." [1]'
+        checks = spe.mechanical(rubric(), turn(answer, evidence=passage))
+        self.assertEqual(checks["invented_quotes"], ["page Anneke Voskuil and quote TCK-1836."])
+        self.assertFalse(checks["passed"])
+
+    def test_a_cited_quote_survives_a_line_break_and_an_elision(self):
+        passage = [{"content": "the central stor-\ne keeps it, and the 14 days run from the date of the notice"}]
+        for answer in ('It is 14 days: "the central store keeps it" [1]',
+                       'It is 14 days: "[t]he central store keeps it ... from the date of the notice" [1]',
+                       'It is 14 days: "and the 14 days [must] run from the date of the notice" [1]'):
+            self.assertEqual(spe.mechanical(rubric(), turn(answer, evidence=passage))["invented_quotes"], [], answer)
+
+    def test_a_quote_is_checked_only_when_it_is_cited_and_a_whole_phrase(self):
+        for answer in ('It is 14 days [1], and "the wait" is the hold.',
+                       'I searched for "ERR-0001 runbook error code owner" and it is 14 days [1].'):
+            self.assertEqual(spe.mechanical(rubric(), turn(answer))["invented_quotes"], [], answer)
+
     def test_invented_citation_number_fails(self):
         checks = spe.mechanical(rubric(), turn("14 days [1][3]."))
         self.assertEqual(checks["invalid_citations"], [3])
