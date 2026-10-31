@@ -286,6 +286,20 @@ async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
 }
 
 #[test]
+fn a_followup_searches_its_own_words_and_the_question_it_stands_for() {
+    let mut plan = CorpusSearchPlan::fallback("And on the edge ring?");
+    plan.also_search("What is the hold on the edge ring?");
+    plan.also_search("And on the edge ring?");
+    assert_eq!(
+        plan.queries,
+        [
+            "And on the edge ring?",
+            "What is the hold on the edge ring?"
+        ]
+    );
+}
+
+#[test]
 fn plan_cannot_invent_documents_or_escape_scope() {
     let catalog = vec![CorpusDocument {
         sections: Vec::new(),

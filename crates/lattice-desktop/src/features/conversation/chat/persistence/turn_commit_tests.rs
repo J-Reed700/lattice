@@ -155,6 +155,7 @@ async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
             conversation_id: &id,
             request_id: "request-pictures",
             message: "question",
+            standalone_question: None,
             llm: &llm,
             highlight_terms: &[],
             focus: &focus,

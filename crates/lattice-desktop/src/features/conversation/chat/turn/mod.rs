@@ -169,7 +169,7 @@ pub(super) async fn run_stages(
 
     let flow_start = Instant::now();
     let preferences = request.tool_preferences.as_ref();
-    let turn = prepare::prepare_turn(
+    let mut turn = prepare::prepare_turn(
         container,
         request.conversation_id.clone(),
         &request.message,
@@ -182,7 +182,9 @@ pub(super) async fn run_stages(
         &mut metrics,
     )
     .await?;
-    let flags = classify::classify_turn(container, &turn, preferences).await;
+    let inferred = classify::classify_turn(container, &turn, preferences).await;
+    let flags = inferred.flags;
+    turn.standalone_question = inferred.standalone_question;
     let mut evidence = turn.budget.evidence;
     let carried = carry::carry_material(
         container,

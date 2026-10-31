@@ -182,7 +182,7 @@ async fn each_turn_decides_its_own_web_fallback() {
         runtime.turn_cancellation.clone(),
     )
     .unwrap();
-    let flags = classify::classify_turn(&runtime, &first, None).await;
+    let flags = classify::classify_turn(&runtime, &first, None).await.flags;
     assert!(flags.web_fallback);
     assert!(!flags.force_web_search);
     drop(first);
@@ -195,13 +195,37 @@ async fn each_turn_decides_its_own_web_fallback() {
         runtime.turn_cancellation.clone(),
     )
     .unwrap();
-    let flags = classify::classify_turn(&runtime, &second, None).await;
+    let flags = classify::classify_turn(&runtime, &second, None).await.flags;
     assert!(!flags.web_fallback);
     assert!(!flags.web_planned());
     assert_eq!(
         llm.requests().len(),
         2,
         "each turn asked the intent step once"
+    );
+}
+
+/// The question the intent step writes for a follow-up comes out beside the
+/// flags, for the search to take.
+#[tokio::test]
+async fn a_followup_comes_with_the_question_it_stands_for() {
+    let llm = Scripted::new([CompletionResponse::from_text(
+        r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"What is the hold on the edge ring?","confidence":0.9}"#,
+    )]);
+    let runtime = FakeRuntime::default();
+    let turn = PreparedTurn::for_test(
+        "intent-followup-conversation",
+        "intent-followup-turn",
+        llm.clone(),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let inferred = classify::classify_turn(&runtime, &turn, None).await;
+    assert!(inferred.flags.force_followup_mode);
+    assert_eq!(
+        inferred.standalone_question.as_deref(),
+        Some("What is the hold on the edge ring?")
     );
 }
 

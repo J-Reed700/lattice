@@ -559,6 +559,7 @@ fn turn_intent_merge_enables_inferred_retrieval() {
         needs_knowledge_base: true,
         needs_web: false,
         is_followup: true,
+        standalone_question: None,
         confidence: 0.9,
     };
 
@@ -582,6 +583,7 @@ fn turn_intent_web_becomes_a_fallback_and_never_forces_the_web() {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,
+        standalone_question: None,
         confidence: 0.9,
     };
 
@@ -606,6 +608,7 @@ fn a_web_search_the_user_asked_for_stays_forced() {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,
+        standalone_question: None,
         confidence: 0.9,
     };
 
@@ -642,6 +645,7 @@ fn a_follow_up_inherits_no_web_fallback_from_an_earlier_turn() {
         needs_knowledge_base: true,
         needs_web: false,
         is_followup: true,
+        standalone_question: None,
         confidence: 0.9,
     };
 
@@ -681,6 +685,7 @@ fn turn_intent_merge_never_clears_a_set_flag() {
         needs_knowledge_base: true,
         needs_web: true,
         is_followup: true,
+        standalone_question: None,
         confidence: 1.0,
     };
     let merged = apply_turn_intent(closed, &eager);

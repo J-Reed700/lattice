@@ -1,4 +1,6 @@
-use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
+use lattice_core::application::ports::llm_port::{
+    CompletionRequest, InferencePriority, SamplingOverride,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::completion_input::from_context;
 use lattice_core::shared::error::{AppError, Result};
@@ -8,10 +10,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation with a \
-personal knowledge-base assistant. Decide three things about the user's latest message:
+personal knowledge-base assistant. Decide four things about the user's latest message:
 - needsKnowledgeBase: true only if answering requires searching the user's own documents, notes, or files.
 - needsWeb: true only if the answer depends on information that cannot be in the user's own files: current events, live data such as prices or weather, or public facts about the outside world that the user did not write about. False for questions about the user's own documents, notes, policies, projects or work, including anything asked about \"our\", \"my\" or \"the company's\" rules, plans or records. When unsure, false.
 - isFollowup: true only if the message just continues the recent conversation and cannot stand alone.
+- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.
 Also give a confidence between 0 and 1.
 
 Recent conversation:
@@ -31,11 +34,18 @@ pub(crate) fn intent_schema() -> serde_json::Value {
             "needsKnowledgeBase": { "type": "boolean" },
             "needsWeb": { "type": "boolean" },
             "isFollowup": { "type": "boolean" },
+            "standaloneQuestion": { "type": "string" },
             // Range left to the clamp in `classify`: not every provider's
             // structured output accepts numeric bounds.
             "confidence": { "type": "number" }
         },
-        "required": ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"]
+        "required": [
+            "needsKnowledgeBase",
+            "needsWeb",
+            "isFollowup",
+            "standaloneQuestion",
+            "confidence"
+        ]
     })
 }
 
@@ -45,12 +55,16 @@ pub const DEFAULT_INTENT_CONFIDENCE_THRESHOLD: f32 = 0.5;
 /// flags and never takes anything away: `needs_knowledge_base` and
 /// `is_followup` are ORed in, and `needs_web` only allows a web fallback after
 /// the vault came back empty or insufficient.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnIntent {
     pub needs_knowledge_base: bool,
     pub needs_web: bool,
     pub is_followup: bool,
+    /// A follow-up as a question that stands alone. The search takes it beside
+    /// the message's own words, which may not name what they are about.
+    #[serde(default)]
+    pub standalone_question: Option<String>,
     pub confidence: f32,
 }
 
@@ -62,6 +76,7 @@ impl TurnIntent {
             needs_knowledge_base: false,
             needs_web: false,
             is_followup: false,
+            standalone_question: None,
             confidence: 0.0,
         }
     }
@@ -199,6 +214,11 @@ impl IntentClassifier {
                     intent.needs_web = false;
                     intent.is_followup = false;
                 }
+                let is_followup = intent.is_followup;
+                intent.standalone_question = intent
+                    .standalone_question
+                    .map(|question| question.trim().to_string())
+                    .filter(|question| is_followup && !question.is_empty());
 
                 info!(
                     needs_knowledge_base = intent.needs_knowledge_base,
@@ -228,6 +248,7 @@ impl IntentClassifier {
             .complete(&CompletionRequest {
                 input: from_context("", &[], &prompt),
                 json_schema: Some(intent_schema()),
+                sampling: Some(SamplingOverride::deterministic()),
                 // Part of the turn the user is waiting on: Stop cancels it.
                 priority: InferencePriority::Interactive,
                 cancel: self.cancel.clone(),
@@ -450,9 +471,16 @@ mod tests {
         for demand in ["JSON", "strict", "Respond with", "no other text", "bool"] {
             assert!(!prompt.contains(demand), "prompt still asks for: {demand}");
         }
-        for field in ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"] {
+        for field in [
+            "needsKnowledgeBase",
+            "needsWeb",
+            "isFollowup",
+            "standaloneQuestion",
+            "confidence",
+        ] {
             assert!(prompt.contains(field), "prompt no longer explains {field}");
         }
+        assert_eq!(request.sampling, Some(SamplingOverride::deterministic()));
     }
 
     #[test]
@@ -471,9 +499,49 @@ mod tests {
         assert!(parsed.needs_knowledge_base);
         assert_eq!(
             required,
-            ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"]
+            [
+                "needsKnowledgeBase",
+                "needsWeb",
+                "isFollowup",
+                "standaloneQuestion",
+                "confidence"
+            ]
         );
         assert_eq!(schema["additionalProperties"], false);
+    }
+
+    async fn standalone_question_of(reply: &str) -> Option<String> {
+        IntentClassifier::new(MockLLM::new(reply))
+            .classify(&IntentInput {
+                message: "And on the edge ring?".into(),
+                recent_context: Vec::new(),
+            })
+            .await
+            .standalone_question
+    }
+
+    #[tokio::test]
+    async fn a_followup_keeps_the_question_it_stands_for() {
+        let question = standalone_question_of(
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"  What is the hold on the edge ring? ","confidence":0.9}"#,
+        )
+        .await;
+        assert_eq!(
+            question.as_deref(),
+            Some("What is the hold on the edge ring?")
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_believed_followup_has_a_standalone_question() {
+        for reply in [
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":false,"standaloneQuestion":"A rewrite","confidence":0.9}"#,
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"A rewrite","confidence":0.2}"#,
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"  ","confidence":0.9}"#,
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"confidence":0.9}"#,
+        ] {
+            assert_eq!(standalone_question_of(reply).await, None, "{reply}");
+        }
     }
 
     #[tokio::test]

@@ -102,6 +102,7 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
         conversation_id: &conversation_id,
         request_id: "request-1",
         message: "question",
+        standalone_question: None,
         llm: &llm,
         highlight_terms: &[],
         focus: &focus,

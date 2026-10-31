@@ -613,6 +613,7 @@ fn an_intent_that_needs_the_web_searches_the_vault_first() {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,
+        standalone_question: None,
         confidence: 0.9,
     };
     let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);

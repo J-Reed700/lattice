@@ -140,6 +140,8 @@ struct ChatTurn<'a> {
     request_id: &'a str,
     /// The user's message, validated.
     message: &'a str,
+    /// The message as a question that stands alone, when it is a follow-up.
+    standalone_question: Option<&'a str>,
     llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
     highlight_terms: &'a [String],
     focus: &'a FocusScope,

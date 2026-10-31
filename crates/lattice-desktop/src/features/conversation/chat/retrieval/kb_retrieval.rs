@@ -33,6 +33,7 @@ pub(super) async fn run_kb_retrieval(
         conv_service,
         conversation_id,
         message: validated_message,
+        standalone_question,
         highlight_terms,
         focus,
         recorder,
@@ -207,6 +208,9 @@ pub(super) async fn run_kb_retrieval(
             )
         }
     };
+    if let Some(question) = standalone_question {
+        plan.also_search(question);
+    }
     summaries.apply(&mut plan, validated_message, &catalog);
     timings.kb_hyde_interpretation_ms = super::elapsed_ms(planning_start);
     // The queries themselves: the one thing a reader can judge a search by.
