@@ -80,6 +80,9 @@ pub enum ModelType {
 
     /// Speech-to-text models (whisper family) used by audio ingest.
     Transcription,
+
+    /// Text-to-speech models (Kokoro) that read answers and lessons aloud.
+    Speech,
 }
 
 impl ModelType {
@@ -106,6 +109,9 @@ impl ModelType {
             // is a bijection. Rename to 'transcription' the next time `models` is
             // rebuilt for another reason.
             Self::Transcription => "custom",
+            // Same constraint: `'unknown'` is allowed and written by nothing
+            // else. Rename to 'speech' when `models` is next rebuilt.
+            Self::Speech => "unknown",
         }
     }
 
@@ -127,6 +133,7 @@ impl ModelType {
             // See `to_db_string`: the CHECK constraint has no `transcription`
             // value, so transcription models round-trip through `custom`.
             "custom" | "transcription" => Ok(Self::Transcription),
+            "unknown" | "speech" => Ok(Self::Speech),
             _ => Err(AppError::InvalidData(format!("Invalid model type: {}", s))),
         }
     }
@@ -313,6 +320,20 @@ mod tests {
         assert_eq!(ModelMetadata::capitalize_first("hello"), "Hello");
         assert_eq!(ModelMetadata::capitalize_first("HELLO"), "HELLO");
         assert_eq!(ModelMetadata::capitalize_first(""), "");
+    }
+
+    #[test]
+    fn speech_and_transcription_round_trip_through_the_models_table() {
+        for model_type in [ModelType::Transcription, ModelType::Speech] {
+            assert_eq!(
+                ModelType::from_db_string(model_type.to_db_string()).ok(),
+                Some(model_type)
+            );
+        }
+        assert_ne!(
+            ModelType::Speech.to_db_string(),
+            ModelType::Transcription.to_db_string()
+        );
     }
 
     #[test]

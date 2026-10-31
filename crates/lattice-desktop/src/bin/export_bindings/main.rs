@@ -510,6 +510,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             // Transcription plugin (2 commands)
             lattice::features::transcription::plugin::transcribe_file,
             lattice::features::transcription::plugin::get_transcription_status,
+            lattice::features::speech::plugin::get_speech_status,
+            lattice::features::speech::plugin::synthesize_speech,
         ])
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()

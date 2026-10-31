@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Globe, Layers3, MessageCircle, Palette, RotateCcw, Scale, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Wrench, type LucideIcon } from 'lucide-react';
+import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Globe, Layers3, MessageCircle, Palette, RotateCcw, Scale, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Volume2, Wrench, type LucideIcon } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { SidebarHeader } from '@/components/ui';
@@ -23,6 +23,7 @@ import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
 import { LogsTab } from './LogsTab';
 import { PrivacyTab } from './PrivacyTab';
+import { ReadAloudTab } from './ReadAloudTab';
 import { SearchTab } from './SearchTab';
 import { SourcesTab } from './SourcesTab';
 import { SourceTrustSettings } from './SourceTrustSettings';
@@ -45,6 +46,7 @@ type SettingsTab =
   | 'source-trust'
   | 'sources'
   | 'display'
+  | 'read-aloud'
   | 'privacy'
   | 'logs';
 
@@ -84,6 +86,7 @@ const tabGroups: TabGroup[] = [
       { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
       { id: 'sources', label: 'Sources', icon: Globe, component: SourcesTab },
       { id: 'source-trust', label: 'Source trust', icon: Scale, component: SourceTrustSettings },
+      { id: 'read-aloud', label: 'Read aloud', icon: Volume2, component: ReadAloudTab },
     ],
   },
 ];

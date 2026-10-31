@@ -54,7 +54,7 @@ belong to their respective adapters, not the sync contracts.
   `bin/*` may reference it. Setup steps with no feature imports
   (directories, database, tracing, tokenizer, the renderer shutdown hook)
   stay in `infrastructure/setup/`.
-- `interfaces/di/container.rs` holds construction and runtime state. 25
+- `interfaces/di/container.rs` holds construction and runtime state. 26
   features expose accessors through an `impl Container` block in their own
   `di.rs` (conversation's is `di/`). batch, cache, compare, corpus_shape,
   daily_notes, download, explorer, huggingface, jobs, learning, qa and

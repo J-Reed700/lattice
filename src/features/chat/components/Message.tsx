@@ -384,6 +384,9 @@ export const Message = memo(({
           answerVerification={verificationSummary ?? null}
           conversationTitle={conversationTitle}
           answerTurn={messageId ? messageTurn.get(messageId) : undefined}
+          listen={!isUser && messageId && !isPending && !isFailed && message.status !== 'processing' && normalizedMarkdownContent.trim()
+            ? { sourceId: `message:${messageId}`, markdown: normalizedMarkdownContent }
+            : undefined}
         />
         </div>
         {showCitations && isAssistantWithSources && (

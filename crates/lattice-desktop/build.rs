@@ -620,6 +620,11 @@ fn main() {
                     .commands(&["transcribe_file", "get_transcription_status"]),
             )
             .plugin(
+                "speech",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["get_speech_status", "synthesize_speech"]),
+            )
+            .plugin(
                 "corpus-shape",
                 tauri_build::InlinedPlugin::new().commands(&["cluster_vault_run", "list_clusters"]),
             ),

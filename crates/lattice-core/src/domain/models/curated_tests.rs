@@ -599,3 +599,55 @@ fn catalog_geometries_send_what_the_pinned_server_keeps() {
     );
     assert_eq!(gemma.min_tokens(), 72);
 }
+
+#[test]
+fn the_speech_entry_pins_every_file_and_the_british_voices() {
+    let models = get_curated_models_by_category(ModelCategory::Speech);
+    assert_eq!(models.len(), 1);
+    let model = models.first().expect("the speech entry");
+    assert_eq!(model.id, SPEECH_MODEL_ID);
+    assert_eq!(
+        get_model_category_by_id(SPEECH_MODEL_ID),
+        Some(ModelCategory::Speech)
+    );
+    assert_eq!(model.license, "Apache-2.0");
+    for file in &model.files {
+        assert!(file.size_bytes > 0, "{} has no size", file.filename);
+        let digest = file.checksum.as_deref().unwrap_or_default();
+        assert_eq!(digest.len(), 64, "{} has no sha256", file.filename);
+        assert!(
+            file.url.starts_with("https://huggingface.co/"),
+            "{}",
+            file.url
+        );
+        assert!(
+            !file.url.contains("/resolve/main/"),
+            "{} is not pinned to a revision",
+            file.url
+        );
+    }
+    let names: Vec<&str> = model.files.iter().map(|f| f.filename.as_str()).collect();
+    for required in [
+        SPEECH_CONFIG_FILE,
+        SPEECH_WEIGHTS_FILE,
+        SPEECH_LEXICON_GOLD_FILE,
+        SPEECH_LEXICON_SILVER_FILE,
+        SPEECH_G2P_CONFIG_FILE,
+        SPEECH_G2P_WEIGHTS_FILE,
+    ] {
+        assert!(names.contains(&required), "missing {required}");
+    }
+    let voices: Vec<&str> = SPEECH_VOICES.iter().map(|v| v.id).collect();
+    assert_eq!(voices, ["bf_emma", "bf_isabella", "bf_alice", "bf_lily"]);
+    for voice in &voices {
+        assert!(
+            names.contains(&speech_voice_file(voice).as_str()),
+            "missing {voice}"
+        );
+    }
+    assert!(voices.contains(&DEFAULT_SPEECH_VOICE));
+    assert_eq!(
+        model.total_size_bytes,
+        model.files.iter().map(|f| f.size_bytes).sum::<u64>()
+    );
+}
