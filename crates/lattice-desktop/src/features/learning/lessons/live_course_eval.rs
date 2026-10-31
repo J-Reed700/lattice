@@ -548,7 +548,7 @@ async fn load_embedder(
     recipe: &CourseRecipe,
 ) -> Result<Arc<dyn lattice_core::application::ports::EmbeddingPort>> {
     let gguf = resolve(recipe.embedding_gguf.as_deref().unwrap_or_default());
-    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(&gguf).await?;
+    let model = crate::interfaces::di::modules::standalone::open_gguf(&gguf).await?;
     Ok(Arc::new(model))
 }
 

@@ -9,12 +9,8 @@ export function formatDownloadSize(bytes: number): string {
 }
 
 /**
- * Say what reranking is actually doing.
- *
- * The switch on its own cannot answer this. Reranking needs a cross-encoder
- * model that is downloaded on demand, and with the model absent the switch
- * changes nothing — search returns the shortlist its first stage produced.
- * That silence is what this line exists to break.
+ * Say what reranking is doing. Search always reranks once the model is on
+ * disk; until it is downloaded, results keep their first-stage order.
  */
 export function describeReranker(
   status: RerankerStatusDto | undefined,
@@ -26,12 +22,7 @@ export function describeReranker(
   if (!status) {
     return undefined;
   }
-  if (!status.installed) {
-    return status.enabled
-      ? 'Switched on, but the reranker model is not downloaded, so results are not being reranked.'
-      : 'Needs a one-time model download before it can run.';
-  }
-  return status.enabled
+  return status.installed
     ? 'A cross-encoder rescores the shortlist before the answer is written.'
-    : 'Model ready. Switch on to rescore the shortlist before answering.';
+    : 'Not downloaded yet, so results are not being reranked. A one-time download turns it on.';
 }

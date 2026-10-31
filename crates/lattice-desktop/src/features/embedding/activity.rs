@@ -2,9 +2,7 @@
 //! everything that embeds waits for it; while it embeds, it holds GPU memory
 //! a chat model may need.
 
-use super::llama_cpp::{
-    EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, RunningEmbeddingServer,
-};
+use super::llama_cpp::{EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter};
 use super::runtime::EmbeddingRuntime;
 use async_trait::async_trait;
 use lattice_core::application::ports::{
@@ -14,9 +12,11 @@ use lattice_core::shared::Result;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::infrastructure::llama_server::RunningLlamaServer;
+
 /// The embedding servers this app has started and still holds, by name.
 pub(crate) struct StartedServers {
-    servers: Mutex<Vec<(Weak<RunningEmbeddingServer>, String)>>,
+    servers: Mutex<Vec<(Weak<RunningLlamaServer>, String)>>,
     changed: tokio::sync::watch::Sender<u64>,
 }
 
@@ -30,7 +30,7 @@ impl Default for StartedServers {
 }
 
 impl StartedServers {
-    fn note(&self, server: &Arc<RunningEmbeddingServer>, name: &str) {
+    fn note(&self, server: &Arc<RunningLlamaServer>, name: &str) {
         {
             let mut servers = self.servers.lock().unwrap_or_else(|p| p.into_inner());
             servers.retain(|(seen, _)| seen.strong_count() > 0);
@@ -46,7 +46,7 @@ impl StartedServers {
             .send_modify(|count| *count = count.wrapping_add(1));
     }
 
-    fn running(&self) -> Vec<(Arc<RunningEmbeddingServer>, String)> {
+    fn running(&self) -> Vec<(Arc<RunningLlamaServer>, String)> {
         self.servers
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -87,7 +87,7 @@ impl EmbeddingServerStarter for WatchedStarter {
         self.inner.accelerated().await
     }
 
-    async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
+    async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
         let server = self.inner.start(launch).await?;
         self.started.note(&server, &launch.name);
         Ok(server)
@@ -118,7 +118,7 @@ fn server_words(in_flight: u32, gpu_bytes: Option<u64>) -> String {
             " · {:.1} GB on the GPU",
             bytes as f64 / 1_000_000_000.0
         )),
-        None => words.push_str(" · on the CPU"),
+        None => words.push_str(" · no GPU memory"),
     }
     words
 }
@@ -170,13 +170,16 @@ mod tests {
             server_words(1, Some(2_100_000_000)),
             "1 request embedding · 2.1 GB on the GPU"
         );
-        assert_eq!(server_words(3, None), "3 requests embedding · on the CPU");
+        assert_eq!(
+            server_words(3, None),
+            "3 requests embedding · no GPU memory"
+        );
     }
 
     #[test]
     fn started_servers_list_live_servers_once_and_forget_dropped_ones() {
         let started = StartedServers::default();
-        let server = Arc::new(RunningEmbeddingServer::new(
+        let server = Arc::new(RunningLlamaServer::new(
             "http://127.0.0.1:1",
             "token",
             Some(1),

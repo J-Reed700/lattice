@@ -16,6 +16,7 @@
 
 use super::{DownloadProgress, ModelManager};
 use crate::infrastructure::services::traits::ModelManagerTrait;
+use lattice_core::domain::models::curated::CURATED_RERANKER;
 use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::error::AppError;
 use mockito;
@@ -417,50 +418,24 @@ async fn test_emit_error_on_download_failure() {
 }
 
 #[tokio::test]
-#[ignore = "Requires HTTP mocking infrastructure"]
-async fn test_ensure_reranker_available_downloads() {
-    // NOTE: Same limitation - requires URL injection
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let mut server = create_mock_server().await;
-
-    let _m1 = mock_file_response(
-        &mut server,
-        "/reranker/model.safetensors",
-        b"reranker_model",
-    );
-    let _m2 = mock_file_response(
-        &mut server,
-        "/reranker/tokenizer.json",
-        b"reranker_tokenizer",
-    );
-
-    let _manager = create_test_manager(&temp_dir);
-}
-
-#[tokio::test]
 async fn test_is_reranker_ready() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let manager = create_test_manager(&temp_dir);
-
-    fs::create_dir_all(temp_dir.path().join(RERANKER_MODEL_DIR))
+    let gguf = manager.get_reranker_path();
+    fs::create_dir_all(gguf.parent().unwrap())
         .await
         .expect("Failed to create reranker dir");
-    fs::write(manager.get_reranker_path(), b"model")
-        .await
-        .expect("Failed to write model");
-    fs::write(manager.get_reranker_tokenizer_path(), b"tokenizer")
-        .await
-        .expect("Failed to write tokenizer");
-    fs::write(
-        temp_dir.path().join(RERANKER_MODEL_DIR).join("config.json"),
-        b"{}",
-    )
-    .await
-    .expect("Failed to write config");
 
-    let is_ready = manager.is_reranker_ready().await;
+    std::fs::write(&gguf, b"partial").expect("Failed to write model");
+    assert!(
+        !manager.is_reranker_ready().await,
+        "a file of another size is not the reranker"
+    );
 
-    assert!(is_ready);
+    std::fs::File::create(&gguf)
+        .and_then(|file| file.set_len(CURATED_RERANKER.bytes))
+        .expect("Failed to size model");
+    assert!(manager.is_reranker_ready().await);
 }
 
 #[tokio::test]
@@ -468,22 +443,12 @@ async fn test_get_reranker_paths() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let manager = create_test_manager(&temp_dir);
 
-    let model_path = manager.get_reranker_path();
-    let tokenizer_path = manager.get_reranker_tokenizer_path();
-
     assert_eq!(
-        model_path,
+        manager.get_reranker_path(),
         temp_dir
             .path()
             .join(RERANKER_MODEL_DIR)
-            .join("model.safetensors")
-    );
-    assert_eq!(
-        tokenizer_path,
-        temp_dir
-            .path()
-            .join(RERANKER_MODEL_DIR)
-            .join("tokenizer.json")
+            .join("qwen3-reranker-0.6b-q8_0.gguf")
     );
 }
 

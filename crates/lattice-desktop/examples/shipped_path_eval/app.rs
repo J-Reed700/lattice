@@ -10,7 +10,7 @@ use lattice::features::model_management::commands_extra::{
 };
 use lattice::features::settings::repository::SettingsRepository;
 use lattice::infrastructure::setup::database::setup_database;
-use lattice::interfaces::di::modules::embedding::standalone::StandaloneEmbeddingStarter;
+use lattice::interfaces::di::modules::standalone::StandaloneServers;
 use lattice::Container;
 use lattice_core::application::contracts::settings::SettingsDto;
 use lattice_core::application::ports::SettingsRepositoryPort;
@@ -38,8 +38,13 @@ struct Corpus {
 
 /// Writes the settings file, then builds the container on a new database,
 /// in the order the desktop's startup does. With no app to start sidecars,
-/// the container serves embeddings from a llama-server it spawns itself.
-pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
+/// the container serves embeddings, and the reranker in `reranker_gguf` when
+/// there is one, from llama-servers it spawns itself.
+pub async fn open(
+    data_dir: &Path,
+    settings: &SettingsDto,
+    reranker_gguf: Option<&Path>,
+) -> Res<Container> {
     SettingsRepository::new(data_dir.to_path_buf())
         .await?
         .save_all(settings)
@@ -55,8 +60,13 @@ pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
         data_dir.to_path_buf(),
         Arc::default(),
     )
-    .await?
-    .with_embedding_starter(Arc::new(StandaloneEmbeddingStarter::from_env()));
+    .await?;
+    let servers = Arc::new(StandaloneServers::from_env());
+    let container = container.with_embedding_starter(servers.clone());
+    let container = match reranker_gguf {
+        Some(gguf) => container.with_reranker(gguf, servers).await,
+        None => container,
+    };
     Ok(container)
 }
 

@@ -6,9 +6,9 @@
 //! Qwen/Qwen3-Reranker-0.6B. Both run on the platform accelerator.
 //!
 //! Scores are sigmoided to `[0, 1]`, higher meaning more relevant: the
-//! consumer ([`blend_rerank_scores`]) clamps to `[0, 1]` before blending,
-//! which would collapse raw positive logits to 1.0. Sigmoid is monotonic, so
-//! the ordering is kept.
+//! consumer ([`fuse_rerank_order`]) keeps each score, clamped to `[0, 1]`, as
+//! the result's relevance, which would collapse raw positive logits to 1.0.
+//! Sigmoid is monotonic, so the ordering is kept.
 
 use candle_core::{DType, Device};
 use candle_nn::{linear, Linear, VarBuilder};
@@ -72,31 +72,46 @@ pub trait Reranker: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<RerankResult>>;
 }
 
-/// Blend reranker scores with the first-stage retrieval scores.
+/// Reciprocal-rank fusion's offset: a candidate's share from one order is
+/// `1 / (RERANK_FUSION_K + rank)`, ranks counted from 1.
+pub const RERANK_FUSION_K: f64 = 60.0;
+
+/// One judged candidate in its fused place.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FusedCandidate {
+    /// Index into the candidates as the first stage ordered them.
+    pub index: usize,
+    /// The cross-encoder's relevance for it, clamped to `[0, 1]`.
+    pub relevance: f32,
+}
+
+/// Order `candidate_count` candidates, given in first-stage order, by
+/// reciprocal-rank fusion of that order and the reranker's. Ties keep the
+/// first-stage order.
 ///
 /// The reranker must return exactly one finite score for each candidate. Keeping
 /// this policy here prevents chat and direct search from drifting apart.
-pub fn blend_rerank_scores(original_scores: &[f32], reranked: &[RerankResult]) -> Result<Vec<f32>> {
-    if original_scores.is_empty() {
-        return Ok(Vec::new());
-    }
-    if reranked.len() != original_scores.len() {
+pub fn fuse_rerank_order(
+    candidate_count: usize,
+    reranked: &[RerankResult],
+) -> Result<Vec<FusedCandidate>> {
+    if reranked.len() != candidate_count {
         return Err(AppError::InvalidState(format!(
             "Reranker returned {} scores for {} candidates",
             reranked.len(),
-            original_scores.len()
+            candidate_count
         )));
     }
 
     let mut seen = HashSet::with_capacity(reranked.len());
-    let mut rerank_scores = vec![0.0_f32; original_scores.len()];
+    let mut relevance = vec![0.0_f32; candidate_count];
     for entry in reranked {
         if !entry.score.is_finite() {
             return Err(AppError::InvalidState(
                 "Reranker returned a non-finite score".to_string(),
             ));
         }
-        let Some(score) = rerank_scores.get_mut(entry.index) else {
+        let Some(score) = relevance.get_mut(entry.index) else {
             return Err(AppError::InvalidState(format!(
                 "Reranker returned out-of-range candidate index {}",
                 entry.index
@@ -108,26 +123,25 @@ pub fn blend_rerank_scores(original_scores: &[f32], reranked: &[RerankResult]) -
                 entry.index
             )));
         }
-        *score = entry.score.clamp(0.0, 1.0);
+        *score = entry.score;
     }
 
-    if original_scores.iter().any(|score| !score.is_finite()) {
-        return Err(AppError::InvalidState(
-            "First-stage retrieval returned a non-finite score".to_string(),
-        ));
-    }
-    let max_original = original_scores
-        .iter()
-        .copied()
-        .fold(0.0_f32, f32::max)
-        .max(f32::EPSILON);
-
-    Ok(original_scores
-        .iter()
-        .zip(rerank_scores)
-        .map(|(original, rerank)| {
-            let normalized = (*original / max_original).clamp(0.0, 1.0);
-            (0.35 * normalized + 0.65 * rerank).clamp(0.0, 1.0)
+    let mut by_relevance: Vec<(usize, f32)> = relevance.into_iter().enumerate().collect();
+    by_relevance.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let share = |rank: usize| 1.0 / (RERANK_FUSION_K + rank as f64);
+    let mut fused: Vec<(usize, f64, f32)> = by_relevance
+        .into_iter()
+        .enumerate()
+        .map(|(rerank_rank, (index, relevance))| {
+            (index, share(index + 1) + share(rerank_rank + 1), relevance)
+        })
+        .collect();
+    fused.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(fused
+        .into_iter()
+        .map(|(index, _, relevance)| FusedCandidate {
+            index,
+            relevance: relevance.clamp(0.0, 1.0),
         })
         .collect())
 }

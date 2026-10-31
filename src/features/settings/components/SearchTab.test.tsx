@@ -44,21 +44,11 @@ describe('SearchTab', () => {
     expect(screen.getByDisplayValue('10')).toBeInTheDocument();
   });
 
-  it('persists reranking toggle', async () => {
-    const user = userEvent.setup();
+  it('offers no switch for reranking, which is always on', async () => {
     renderSearchTab();
 
-    const checkbox = (await screen.findByLabelText(/Rerank results/i)) as HTMLInputElement;
-    expect(checkbox).toBeChecked();
-
-    await user.click(checkbox);
-
-    await waitFor(() => {
-      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
-        category: 'search',
-        updates: { enableReranking: false },
-      });
-    });
+    expect(await screen.findByText('Reranker')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Rerank/i)).not.toBeInTheDocument();
   });
 
   it('persists the read web pages switch inside the retrieval tuning', async () => {
@@ -112,7 +102,7 @@ describe('SearchTab', () => {
     const user = userEvent.setup();
 
     const stored = makeAppSettings({
-      search: { ...baseSettings.search, enableReranking: false, maxResults: 42 },
+      search: { ...baseSettings.search, maxResults: 42 },
     });
     const getSettings = vi.spyOn(VaultAPI, 'getSettings');
     getSettings.mockResolvedValueOnce({ ok: true, data: structuredClone(baseSettings) });
@@ -126,7 +116,7 @@ describe('SearchTab', () => {
 
     renderSearchTab();
 
-    const checkbox = (await screen.findByLabelText(/Rerank results/i)) as HTMLInputElement;
+    const checkbox = (await screen.findByLabelText(/Document summaries/i)) as HTMLInputElement;
     expect(getSettings).toHaveBeenCalledTimes(1);
 
     await user.click(checkbox);
@@ -192,7 +182,9 @@ describe('SearchTab', () => {
   });
 });
 
-describe('the reranking row', () => {
+describe('the reranker row', () => {
+  const qwen = { modelName: 'Qwen/Qwen3-Reranker-0.6B', downloadBytes: 639_153_184 };
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(VaultAPI, 'getSettings').mockResolvedValue({
@@ -205,52 +197,22 @@ describe('the reranking row', () => {
     });
   });
 
-  it('offers the download, with its size, when the model is missing', async () => {
+  it('offers the download, with its size, and says results are not reranked yet', async () => {
     vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
       ok: true,
-      data: {
-        installed: false,
-        enabled: false,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
-      },
+      data: { ...qwen, installed: false },
     });
 
     renderSearchTab();
 
-    expect(await screen.findByRole('button', { name: /Download \(91 MB\)/ })).toBeInTheDocument();
-  });
-
-  it('says so when the switch is on but nothing can rerank', async () => {
-    vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
-      ok: true,
-      data: {
-        installed: false,
-        enabled: true,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
-      },
-    });
-
-    renderSearchTab();
-
-    expect(
-      await screen.findByText(/Switched on, but the reranker model is not downloaded/)
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Download \(639 MB\)/ })).toBeInTheDocument();
+    expect(screen.getByText(/not being reranked/)).toBeInTheDocument();
   });
 
   it('stops offering the download once the model is installed', async () => {
     vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
       ok: true,
-      data: {
-        installed: true,
-        enabled: true,
-        active: true,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
-      },
+      data: { ...qwen, installed: true },
     });
 
     renderSearchTab();
@@ -259,26 +221,14 @@ describe('the reranking row', () => {
     expect(screen.queryByRole('button', { name: /Download/ })).not.toBeInTheDocument();
   });
 
-  it('downloading does not switch reranking on', async () => {
+  it('reranks once the download lands, without a settings change', async () => {
     const downloadReranker = vi.spyOn(VaultAPI, 'downloadReranker').mockResolvedValue({
       ok: true,
-      data: {
-        installed: true,
-        enabled: false,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
-      },
+      data: { ...qwen, installed: true },
     });
     vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
       ok: true,
-      data: {
-        installed: false,
-        enabled: false,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
-      },
+      data: { ...qwen, installed: false },
     });
 
     renderSearchTab();
@@ -286,16 +236,15 @@ describe('the reranking row', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Download/ }));
 
     await waitFor(() => expect(downloadReranker).toHaveBeenCalledTimes(1));
-    // Acquiring the model is not consent to use it.
     expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Model ready\. Switch on/)).toBeInTheDocument();
+    expect(await screen.findByText(/A cross-encoder rescores the shortlist/)).toBeInTheDocument();
   });
 });
 
 describe('describeReranker', () => {
   const status = {
-    modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-    downloadBytes: 90_870_598,
+    modelName: 'Qwen/Qwen3-Reranker-0.6B',
+    downloadBytes: 639_153_184,
   };
 
   it('says nothing before the status has loaded', () => {
@@ -304,18 +253,13 @@ describe('describeReranker', () => {
 
   it('reports a failed download over any other state', () => {
     expect(
-      describeReranker(
-        { ...status, installed: true, enabled: true, active: true },
-        new Error('network unreachable')
-      )
+      describeReranker({ ...status, installed: true }, new Error('network unreachable'))
     ).toContain('network unreachable');
   });
 
-  it('distinguishes never-downloaded from on-but-unusable', () => {
-    const idle = describeReranker({ ...status, installed: false, enabled: false, active: false });
-    const broken = describeReranker({ ...status, installed: false, enabled: true, active: false });
-    expect(idle).not.toEqual(broken);
-    expect(broken).toMatch(/not being reranked/);
+  it('tells a missing model from a working one', () => {
+    expect(describeReranker({ ...status, installed: false })).toMatch(/not being reranked/);
+    expect(describeReranker({ ...status, installed: true })).toMatch(/rescores the shortlist/);
   });
 });
 

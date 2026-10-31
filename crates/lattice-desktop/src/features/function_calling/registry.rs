@@ -193,11 +193,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "type": "string",
                     "description": "Document ID from search results"
                 },
-                "include_metadata": {
-                    "type": "boolean",
-                    "description": "Include file metadata (size, dates, tags)",
-                    "default": true
-                },
                 "max_content_length": {
                     "type": "integer",
                     "description": "Characters to return from offset; the app fits this to the room the result has",

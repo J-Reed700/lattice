@@ -361,6 +361,7 @@ async fn run_turn(
             conversation_id: CONVERSATION,
             request_id,
             message: "When did the bridge open?",
+            standalone_question: None,
             llm: &llm,
             highlight_terms: &[],
             focus: &FocusScope::default(),

@@ -231,6 +231,15 @@ impl CorpusSearchPlan {
             start_at_beginning: false,
         }
     }
+
+    /// Search `question` as well, the way a message is searched.
+    pub(super) fn also_search(&mut self, question: &str) {
+        for query in Self::fallback(question).queries {
+            if !self.queries.contains(&query) {
+                self.queries.push(query);
+            }
+        }
+    }
 }
 
 fn navigation_only(document: &CorpusDocument) -> bool {

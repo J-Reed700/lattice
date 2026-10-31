@@ -75,10 +75,8 @@ async fn embedding_model() -> Result<Option<Arc<dyn EmbeddingPort>>> {
     let Some(gguf) = std::env::var_os("LATTICE_PAGE_RECALL_EMBEDDING") else {
         return Ok(None);
     };
-    let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
-        std::path::Path::new(&gguf),
-    )
-    .await?;
+    let model =
+        crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf)).await?;
     Ok(Some(Arc::new(model)))
 }
 

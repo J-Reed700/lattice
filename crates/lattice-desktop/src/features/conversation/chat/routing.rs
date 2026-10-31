@@ -70,11 +70,28 @@ impl SearchFlags {
     }
 }
 
+/// What the intent step made of a turn.
+pub(super) struct InferredIntent {
+    pub(super) flags: SearchFlags,
+    /// A follow-up as a question that stands alone, for the search.
+    pub(super) standalone_question: Option<String>,
+}
+
+impl InferredIntent {
+    /// The turn as requested, with nothing inferred.
+    pub(super) fn as_requested(flags: SearchFlags) -> Self {
+        Self {
+            flags,
+            standalone_question: None,
+        }
+    }
+}
+
 /// Ask the utility model what an unflagged turn needs, and fold the answer
 /// into the search flags. Skipped the moment the user said anything explicit —
 /// a toggle, a turn mode, a closed book — because inference exists to fill in
 /// defaults, not to second-guess a decision.
-pub(super) async fn infer_turn_intent_flags(
+pub(super) async fn infer_turn_intent(
     container: &dyn ChatRuntime,
     chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
@@ -82,11 +99,11 @@ pub(super) async fn infer_turn_intent_flags(
     validated_message: &str,
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
-) -> SearchFlags {
+) -> InferredIntent {
     if !should_infer_turn_intent(tool_preferences, search_flags)
         || is_trivial_conversational_message(validated_message)
     {
-        return search_flags;
+        return InferredIntent::as_requested(search_flags);
     }
 
     // Resolved the way the grounding judge below resolves its model: the
@@ -100,7 +117,7 @@ pub(super) async fn infer_turn_intent_flags(
                 error = %e,
                 "Utility LLM load failed — skipping turn-intent classification"
             );
-            return search_flags;
+            return InferredIntent::as_requested(search_flags);
         }
     };
 
@@ -121,7 +138,10 @@ pub(super) async fn infer_turn_intent_flags(
         web_fallback = merged.web_fallback,
         "chat_with_conversation: inferred turn intent"
     );
-    merged
+    InferredIntent {
+        flags: merged,
+        standalone_question: intent.standalone_question,
+    }
 }
 
 /// Inference runs only when every routing control is on its default. Any

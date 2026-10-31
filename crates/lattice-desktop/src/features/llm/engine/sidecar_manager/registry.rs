@@ -283,12 +283,14 @@ pub(super) fn gpu_bytes_where(
 ) -> u64 {
     servers
         .iter()
-        .filter(|server| counted(&server.config) && server.n_gpu_layers > 0)
+        .filter(|server| {
+            counted(&server.config) && server.n_gpu_layers > 0 && server.config.on_offload_gpu()
+        })
         .map(|server| {
             resident_bytes_of(
                 &server.config.model_path,
                 server.context_size,
-                server.config.kv_cache_quantization,
+                server.config.buffers(),
             )
         })
         .fold(0, u64::saturating_add)
@@ -297,10 +299,10 @@ pub(super) fn gpu_bytes_where(
 /// Whether a server for `config` fits beside `servers`, by the memory hint's
 /// arithmetic ([`memory_hint`]). The embedding model is one of `servers`.
 ///
-/// It only decides whether idle models are unloaded to make room. A server
-/// that does not fit still starts, at the window the user chose; if it will
-/// not allocate, the start fails with llama-server's own error and these
-/// numbers beside it.
+/// A chat model that does not fit unloads idle models to make room and still
+/// starts, at the window the user chose; if it will not allocate, the start
+/// fails with llama-server's own error and these numbers beside it. A pooling
+/// server goes where its claim seats it (`LlmInstances::claim_gpu`).
 pub(super) fn admission(
     servers: &[RunningServer],
     config: &SidecarConfig,
@@ -309,7 +311,7 @@ pub(super) fn admission(
     if servers.iter().any(|server| server.config == *config) {
         return Admission::Shared;
     }
-    if config.n_gpu_layers == 0 {
+    if !config.on_offload_gpu() {
         return Admission::NoOffload;
     }
     let held = gpu_bytes_where(servers, |running| running != config);
@@ -320,6 +322,8 @@ pub(super) fn admission(
     let (needed, spare) = (hint.needed, hint.room.spare());
     if hint.fits() {
         Admission::Fits { needed, spare }
+    } else if hint.fits_in_margin() {
+        Admission::Tight { needed, spare }
     } else {
         Admission::Short { needed, spare }
     }
@@ -337,9 +341,22 @@ pub enum Admission {
     Unmetered,
     /// It fits: `needed` of the `spare` bytes the running servers leave.
     Fits { needed: Footprint, spare: u64 },
-    /// It does not fit in the `spare` bytes the running servers leave. Idle
-    /// models are unloaded to make room, and it starts either way.
+    /// It fits only in the margin kept free beyond the `spare` bytes.
+    Tight { needed: Footprint, spare: u64 },
+    /// It does not fit, margin and all.
     Short { needed: Footprint, spare: u64 },
+}
+
+impl Admission {
+    /// Bytes short of the `spare` room, when it comes up short of that.
+    pub fn shortfall(self) -> Option<u64> {
+        match self {
+            Self::Tight { needed, spare } | Self::Short { needed, spare } => {
+                Some(needed.total().saturating_sub(spare))
+            }
+            Self::Shared | Self::NoOffload | Self::Unmetered | Self::Fits { .. } => None,
+        }
+    }
 }
 
 /// Shutdown's sidecar sweep: kills every child in the app's registry and

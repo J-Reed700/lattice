@@ -4,7 +4,7 @@
 use lattice_core::shared::error::AppError;
 use serde::Deserialize;
 
-use super::launch::RunningEmbeddingServer;
+use crate::infrastructure::llama_server::RunningLlamaServer;
 
 /// Why a request produced no vectors.
 #[derive(Debug)]
@@ -61,7 +61,7 @@ struct ServerError {
 /// Embed `inputs`, already prefixed, on `server`.
 pub(super) async fn embed(
     http: &reqwest::Client,
-    server: &RunningEmbeddingServer,
+    server: &RunningLlamaServer,
     inputs: &[String],
 ) -> Result<Embedded, Failure> {
     let _in_flight = server.request();

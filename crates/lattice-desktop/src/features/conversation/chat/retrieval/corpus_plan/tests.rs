@@ -286,6 +286,20 @@ async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
 }
 
 #[test]
+fn a_followup_searches_its_own_words_and_the_question_it_stands_for() {
+    let mut plan = CorpusSearchPlan::fallback("And on the edge ring?");
+    plan.also_search("What is the hold on the edge ring?");
+    plan.also_search("And on the edge ring?");
+    assert_eq!(
+        plan.queries,
+        [
+            "And on the edge ring?",
+            "What is the hold on the edge ring?"
+        ]
+    );
+}
+
+#[test]
 fn plan_cannot_invent_documents_or_escape_scope() {
     let catalog = vec![CorpusDocument {
         sections: Vec::new(),
@@ -465,11 +479,9 @@ async fn live_corpus_retrieval_and_answer() {
             .await
             .unwrap();
     let embedding = Arc::new(
-        crate::interfaces::di::modules::embedding::standalone::open_gguf(std::path::Path::new(
-            &model_path,
-        ))
-        .await
-        .unwrap(),
+        crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&model_path))
+            .await
+            .unwrap(),
     );
     let rows: Vec<(String, Vec<u8>, String, String, String)> = sqlx::query_as("SELECT c.id, e.embedding, c.content, c.document_id, COALESCE(NULLIF(c.contextualized_content,''),c.content) FROM text_chunks c JOIN text_embeddings e ON e.chunk_id=c.id WHERE e.model_name=? ORDER BY c.document_id,c.chunk_index")
         .bind(EmbeddingPort::model_identity(embedding.as_ref())).fetch_all(&pool).await.unwrap();

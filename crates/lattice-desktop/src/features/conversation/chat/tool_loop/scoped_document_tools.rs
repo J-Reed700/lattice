@@ -163,6 +163,7 @@ pub(super) async fn execute(
             score: result.score,
             snippet: result.content,
             chunk_index: result.position,
+            chunk_id: Some(result.id),
             modified_at: *doc.modified_at(),
             size_bytes: doc.size_bytes(),
         });

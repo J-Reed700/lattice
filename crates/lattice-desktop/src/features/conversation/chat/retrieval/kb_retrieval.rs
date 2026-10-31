@@ -24,7 +24,6 @@ pub(super) async fn run_kb_retrieval(
     // characters per token: together, how deep the search reads.
     evidence_tokens: usize,
     chars_per_token: f64,
-    enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
     // The turn's stop button, which the planner's model calls carry.
@@ -34,6 +33,7 @@ pub(super) async fn run_kb_retrieval(
         conv_service,
         conversation_id,
         message: validated_message,
+        standalone_question,
         highlight_terms,
         focus,
         recorder,
@@ -135,9 +135,7 @@ pub(super) async fn run_kb_retrieval(
 
     let repository = container.chat_records();
     // How deep to read: as many passages as the evidence budget can carry, at
-    // what a passage of this library actually measures. The prompt's
-    // best-first fill decides what goes in; this only stops the search from
-    // handing it less than the budget could hold.
+    // what a passage of this library actually measures, up to the shortlist.
     let passage_chars = match repository
         .retrieval_mean_chunk_chars(&scope.document_ids)
         .await
@@ -148,7 +146,7 @@ pub(super) async fn run_kb_retrieval(
             None
         }
     };
-    let kb_search_limit = super::retrieval_depth(evidence_tokens, passage_chars, chars_per_token);
+    let kb_search_limit = super::reading_depth(evidence_tokens, passage_chars, chars_per_token);
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
     let plan_step = recorder.begin_guarded(
@@ -210,6 +208,9 @@ pub(super) async fn run_kb_retrieval(
             )
         }
     };
+    if let Some(question) = standalone_question {
+        plan.also_search(question);
+    }
     summaries.apply(&mut plan, validated_message, &catalog);
     timings.kb_hyde_interpretation_ms = super::elapsed_ms(planning_start);
     // The queries themselves: the one thing a reader can judge a search by.
@@ -240,9 +241,9 @@ pub(super) async fn run_kb_retrieval(
             }
         )),
     );
-    // The shortlist a reranker gets to see. The corrective pass reuses it so
+    // The shortlist the reranker gets to see. The corrective pass reuses it so
     // both passes contribute the same number of candidates to the fusion.
-    let candidate_limit = candidate_limit(enable_reranking, kb_search_limit);
+    let candidate_limit = RerankOptions::candidate_pool(kb_search_limit);
     let response = super::corpus_plan::retrieve(
         repository.as_ref(),
         container.library_search().as_ref(),
@@ -270,7 +271,6 @@ pub(super) async fn run_kb_retrieval(
     };
     let (mut search_response, mut reranked) = rerank_pass(
         container,
-        enable_reranking,
         &plan.queries.join(" "),
         &interpretation,
         search_response,
@@ -351,7 +351,6 @@ pub(super) async fn run_kb_retrieval(
             search_response.total = search_response.results.len();
             (search_response, reranked) = rerank_pass(
                 container,
-                enable_reranking,
                 &[plan.queries.clone(), retry_queries.clone()]
                     .concat()
                     .join(" "),
@@ -413,6 +412,7 @@ pub(super) async fn run_kb_retrieval(
     {
         warn!(%error, "Could not read the hits' section context");
     }
+    search_response.results.truncate(super::MAX_READ_PASSAGES);
     search_response.total = search_response.results.len();
     // RRF scores are ranks, not probabilities. A cosine cutoff must never be
     // applied to them or used to claim the documents are unavailable.
@@ -455,24 +455,12 @@ pub(super) async fn run_kb_retrieval(
     }
 }
 
-/// How many candidates a search pass gathers before the cut to
-/// `kb_search_limit`: the reranker's wider shortlist whenever one will judge
-/// them, so it can promote a passage fusion left just outside the cut.
-fn candidate_limit(enable_reranking: bool, kb_search_limit: usize) -> usize {
-    if enable_reranking {
-        RerankOptions::candidate_pool(kb_search_limit)
-    } else {
-        kb_search_limit
-    }
-}
-
-/// Reranks a pass's pool when reranking is on, and says whether the
-/// cross-encoder's scores were applied. Every plan is reranked;
-/// `finalize_rerank` keeps an ordered reading's leading openings where the
-/// plan put them.
+/// Reranks a pass's pool, and says whether the cross-encoder's scores were
+/// applied: a reranker not downloaded, or one that failed, leaves the pool in
+/// its fused order. Every plan is reranked; `finalize_rerank` keeps an
+/// ordered reading's leading openings where the plan put them.
 async fn rerank_pass(
     container: &dyn ChatRuntime,
-    enable_reranking: bool,
     query: &str,
     interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
     mut response: SearchResponseDto,
@@ -480,9 +468,6 @@ async fn rerank_pass(
     tuning: &RetrievalTuningSettingsDto,
     timings: &mut super::RetrievalSubTimingMetrics,
 ) -> (SearchResponseDto, bool) {
-    if !enable_reranking {
-        return (response, false);
-    }
     bound_leading_structural(&mut response.results, evidence_limit);
     let rerank_start = Instant::now();
     let reranked =

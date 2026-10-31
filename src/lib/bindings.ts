@@ -1863,7 +1863,7 @@ async batchSearch(queries: string[], limit: number | null, searchMode: string | 
 }
 },
 /**
- * Report whether reranking is switched on and whether its model is present.
+ * Report whether the reranker's model is present, and so whether search reranks.
  */
 async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -1874,7 +1874,7 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
 }
 },
 /**
- * Download the reranker artifacts. Does not switch reranking on.
+ * Download the reranker's model, after which search reranks.
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -8694,25 +8694,13 @@ claimId: string }
 export type RequestFactsDto = { promptTokensExact: number | null; promptTokensEstimated: number | null; windowTokens: number; outputReserved: number; serverKind: string; serverMessageSanitized: string | null; attempts: number; step: string }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
- * Whether reranking is switched on, and whether it could run if it were.
- *
- * Both are needed to describe the state honestly: on-but-missing and
- * off-but-installed are different situations with different next steps.
+ * Whether the reranker is on disk, and so whether search reranks.
  */
 export type RerankerStatusDto = {
 /**
- * Every artifact the reranker needs is on disk.
+ * The reranker's model is on disk, so search reranks with it.
  */
-installed: boolean;
-/**
- * The user's `search.enableReranking` setting.
- */
-enabled: boolean;
-/**
- * True only when reranking will actually happen. This is the field a UI
- * should believe; the other two explain why.
- */
-active: boolean; modelName: string; downloadBytes: number }
+installed: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
 /**
@@ -9169,10 +9157,6 @@ maxResults: number;
  * Similarity threshold (0.0 - 1.0)
  */
 similarityThreshold: number;
-/**
- * Enable result reranking
- */
-enableReranking: boolean;
 /**
  * Hybrid search alpha parameter (0.0 = vector, 1.0 = keyword)
  */

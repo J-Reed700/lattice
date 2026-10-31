@@ -14,7 +14,9 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::llm::engine::factory::{CreatedLlm, LocalServerOptions, ServerFacts};
-use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, Admission, SidecarConfig};
+use crate::features::llm::engine::sidecar_manager::{
+    resident_bytes_of, Admission, ServerBuffers, SidecarConfig,
+};
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::loading::LocalModel;
 use crate::infrastructure::ml::instance_pool::{Alive, InstancePool, Lease, Loaded};
@@ -90,6 +92,31 @@ impl ModelKey {
     }
 }
 
+/// What a server outside the pool may take for a place on the GPU. What a
+/// claim may not take stays where it is, and a server its claim does not seat
+/// runs elsewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GpuClaim {
+    /// Memory nothing holds, the margin included.
+    Spare,
+    /// That, and what idle servers outside the pool hold.
+    IdleServers,
+    /// That, and what idle models hold.
+    IdleModels,
+}
+
+impl GpuClaim {
+    /// Whether `outcome` seats a server. A GPU that does not report its memory
+    /// may be full, so only the claim that may unload takes the chance.
+    fn seated_by(self, outcome: Admission) -> bool {
+        match outcome {
+            Admission::Fits { .. } | Admission::Tight { .. } | Admission::Shared => true,
+            Admission::Unmetered => self == Self::IdleModels,
+            Admission::Short { .. } | Admission::NoOffload => false,
+        }
+    }
+}
+
 /// A loaded model.
 pub(crate) struct LoadedLlm {
     pub(crate) llm: Arc<dyn LLMPort>,
@@ -108,7 +135,7 @@ impl LoadedLlm {
             (Some(server), Some(local)) if server.n_gpu_layers > 0 => Some(resident_bytes_of(
                 &local.path,
                 server.context_size,
-                server.kv_cache_quantization,
+                ServerBuffers::chat(server.kv_cache_quantization),
             )),
             (Some(_), _) => Some(0),
             (None, _) => None,
@@ -349,27 +376,47 @@ impl LlmInstances {
         self
     }
 
-    /// Admit a server outside the pool, started for `config` and named
-    /// `name`: when it does not fit beside the others, unload idle models to
-    /// make room, then let it start either way. When it is to take GPU
-    /// memory, the admission turn comes back and must be held until that
-    /// server has started, as for a model [`Self::acquire`] loads.
-    pub(crate) async fn make_room_for(
+    /// Decide whether a server outside the pool, started for `config` and
+    /// named `name`, runs on the GPU, unloading what `claim` allows when it
+    /// comes up short. A seated server that is new gets the admission turn
+    /// back, to hold until it has started, as for a model [`Self::acquire`]
+    /// loads; one that is not seated is to run elsewhere.
+    pub(crate) async fn claim_gpu(
         &self,
         name: &str,
         config: &SidecarConfig,
+        claim: GpuClaim,
         budget: &dyn GpuBudget,
-    ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+    ) -> (bool, Option<tokio::sync::MutexGuard<'_, ()>>) {
         let turn = self.admission.lock().await;
         let first = budget.server_admission(config).await;
-        let evicted = self.evict_for(first);
+        let evicted = match (first, claim) {
+            (Admission::Short { .. }, GpuClaim::IdleServers) => {
+                self.evict_idle_servers(first.shortfall().unwrap_or(0), Vec::new())
+            }
+            (Admission::Short { .. }, GpuClaim::IdleModels) => self.evict_for(first),
+            _ => Vec::new(),
+        };
         let outcome = if evicted.is_empty() {
             first
         } else {
             budget.server_admission(config).await
         };
-        admission::log(name, outcome, &evicted);
-        starting(outcome, turn)
+        let seated = claim.seated_by(outcome);
+        tracing::info!(
+            model = name,
+            ?claim,
+            ?outcome,
+            ?evicted,
+            seated,
+            "model.admission.claim"
+        );
+        let turn = if seated {
+            starting(outcome, turn)
+        } else {
+            None
+        };
+        (seated, turn)
     }
 
     /// Read before the settings a request is built from.
@@ -541,10 +588,9 @@ impl LlmInstances {
     /// idle LLMs first, then idle servers outside the pool. Nothing when it
     /// already fits. Returns what was unloaded and the bytes each freed.
     fn evict_for(&self, outcome: Admission) -> Vec<(String, u64)> {
-        let Admission::Short { needed, spare } = outcome else {
+        let Some(shortfall) = outcome.shortfall() else {
             return Vec::new();
         };
-        let shortfall = needed.total().saturating_sub(spare);
         let evicted = self.pool.evict_idle(
             ModelKey::server,
             |_, loaded| loaded.gpu_bytes.filter(|bytes| *bytes > 0),
@@ -562,10 +608,20 @@ impl LlmInstances {
                 "model.evicted"
             );
         }
-        let mut evicted: Vec<(String, u64)> = evicted
+        let evicted: Vec<(String, u64)> = evicted
             .into_iter()
             .map(|(key, bytes, _)| (key.model.to_string(), bytes))
             .collect();
+        self.evict_idle_servers(shortfall, evicted)
+    }
+
+    /// Stop idle servers outside the pool until `evicted`, what has been
+    /// unloaded so far, and they free `shortfall` bytes between them.
+    fn evict_idle_servers(
+        &self,
+        shortfall: u64,
+        mut evicted: Vec<(String, u64)>,
+    ) -> Vec<(String, u64)> {
         let mut freed = evicted
             .iter()
             .map(|(_, bytes)| *bytes)
@@ -592,7 +648,11 @@ impl LlmInstances {
 /// the CPU or on a GPU that does not report its memory has nothing to be
 /// priced against.
 fn starting<T>(outcome: Admission, turn: T) -> Option<T> {
-    matches!(outcome, Admission::Fits { .. } | Admission::Short { .. }).then_some(turn)
+    matches!(
+        outcome,
+        Admission::Fits { .. } | Admission::Tight { .. } | Admission::Short { .. }
+    )
+    .then_some(turn)
 }
 
 impl Default for LlmInstances {

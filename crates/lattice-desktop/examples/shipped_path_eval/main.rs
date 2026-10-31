@@ -187,6 +187,17 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let corpus_path = recipe::resolve(&recipe.corpus, &root, real_home);
     let questions_path = recipe::resolve(&recipe.questions, &root, real_home);
     let embedding_gguf = recipe::resolve(&recipe.embedding_gguf, &root, real_home);
+    let reranker_gguf = recipe
+        .reranker_gguf
+        .as_ref()
+        .map(|gguf| recipe::resolve(gguf, &root, real_home));
+    let reranker_sha256 = match &reranker_gguf {
+        Some(gguf) => {
+            eprintln!("hashing {}", gguf.display());
+            Some(sha256_file(gguf)?)
+        }
+        None => None,
+    };
     let mut items = recipe::load_items(&questions_path)?;
     if let Some(only) = &args.only {
         items.retain(|item| only.contains(&item.id));
@@ -251,7 +262,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
 
     let data_dir = workdir.join("app-data");
     std::fs::create_dir_all(&data_dir)?;
-    let container = app::open(&data_dir, &settings).await?;
+    let container = app::open(&data_dir, &settings, reranker_gguf.as_deref()).await?;
     eprintln!("activating {}", embedding_gguf.display());
     let embedding =
         app::activate_embedding(&container, &embedding_gguf, &recipe.embedding_model_id).await?;
@@ -351,6 +362,10 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         "settings": settings,
         "tool_preferences": tool_preferences,
         "embedding": embedding,
+        "reranker": reranker_gguf.as_ref().map(|gguf| json!({
+            "gguf": gguf,
+            "sha256": reranker_sha256,
+        })),
         "utility_role": utility,
         "index": index_report,
         "items": items.len(),

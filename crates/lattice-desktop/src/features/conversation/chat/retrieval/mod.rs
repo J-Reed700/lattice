@@ -336,7 +336,6 @@ async fn run_kb_retrieval(
     search_flags: SearchFlags,
     evidence_tokens: usize,
     chars_per_token: f64,
-    enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
     cancel: &tokio_util::sync::CancellationToken,
@@ -347,7 +346,6 @@ async fn run_kb_retrieval(
         search_flags,
         evidence_tokens,
         chars_per_token,
-        enable_reranking,
         semantic_threshold,
         tuning,
         cancel,
@@ -427,6 +425,19 @@ async fn build_hyde_context_window_for_conversation(
 }
 
 use lattice_core::application::services::grounded_generation::retrieval_depth;
+
+/// The most library passages one turn reads, section neighbours included.
+pub(super) const MAX_READ_PASSAGES: usize = 40;
+
+/// How many library passages a turn searches for: as many as its evidence
+/// budget holds, at most [`MAX_READ_PASSAGES`].
+fn reading_depth(
+    evidence_tokens: usize,
+    passage_chars: Option<usize>,
+    chars_per_token: f64,
+) -> usize {
+    retrieval_depth(evidence_tokens, passage_chars, chars_per_token).min(MAX_READ_PASSAGES)
+}
 
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -612,6 +623,10 @@ pub(super) fn build_web_source_citations(
     build_web_source_citations_impl(results, highlight_terms, excerpt_chars)
 }
 
+pub(in crate::features::conversation::chat) use self::source_citations::{
+    build_document_part_citation, build_library_source_citations,
+};
+
 /// Infer human-readable category from file path/extension.
 pub(super) fn infer_category(path: &str) -> String {
     infer_category_impl(path)
@@ -628,6 +643,7 @@ pub(super) fn format_tool_result(
     allowance: usize,
     page_offset: usize,
     source_text: bool,
+    citations: &std::collections::HashMap<String, u32>,
 ) -> String {
     format_tool_result_impl(
         tool_name,
@@ -636,6 +652,7 @@ pub(super) fn format_tool_result(
         allowance,
         page_offset,
         source_text,
+        citations,
     )
 }
 

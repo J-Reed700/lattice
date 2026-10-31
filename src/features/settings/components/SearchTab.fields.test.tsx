@@ -27,7 +27,6 @@ vi.mock('./RetrievalTuningSection', () => ({
 }));
 
 const search = (overrides: Record<string, unknown> = {}) => ({
-  enableReranking: true,
   maxResults: 10,
   similarityThreshold: 0.3,
   hybridSearchAlpha: 0.5,

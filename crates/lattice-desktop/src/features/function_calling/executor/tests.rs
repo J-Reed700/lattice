@@ -453,11 +453,14 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
     assert_eq!(middle.content.len(), 1000);
     assert_eq!(middle.next_offset, Some(2000));
     assert!(middle.content_truncated);
+    assert!(
+        middle.metadata.is_some(),
+        "the citation is built from it, whatever the model sends"
+    );
 
     // A room past 100,000 characters gets the whole document.
     let large_room = read(json!({
         "document_id": document_id,
-        "include_metadata": false,
         "max_content_length": 150_000
     }))
     .await;
@@ -468,7 +471,6 @@ async fn get_document_reads_any_part_the_shipped_schema_is_asked_for() {
     // A room under 1,000 characters gets a short part and where to go on.
     let small_room = read(json!({
         "document_id": document_id,
-        "include_metadata": false,
         "max_content_length": 300,
         "offset": 2400
     }))
@@ -557,6 +559,7 @@ fn test_build_document_evidence_groups_by_document() {
         score,
         snippet: "excerpt".to_string(),
         chunk_index: Some(idx),
+        chunk_id: None,
         modified_at: now,
         size_bytes: 100,
     };

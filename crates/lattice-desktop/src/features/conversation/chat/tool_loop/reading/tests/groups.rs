@@ -41,6 +41,7 @@ async fn read_with(model: &Model, cancel: &CancellationToken) -> Result<Option<N
         &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
     )
     .await
+    .map(notes_of)
 }
 
 /// The room a group of the eight passages needs: the prompt that shows it
@@ -165,7 +166,7 @@ async fn the_reservation_holds_every_group_together() {
     let model = Model::with_context_tokens(four_at_a_time().await, [reply(&first, "stop")]);
     let mut request = planned(&[1, 2, 3, 4, 5, 6, 7, 8]);
     request.max_output_tokens = Some(u32::try_from(reserved).unwrap());
-    let notes = read_passages(
+    let reading = read_passages(
         &model,
         &request,
         &eight_passages(),
@@ -174,8 +175,8 @@ async fn the_reservation_holds_every_group_together() {
         &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
     )
     .await
-    .unwrap()
-    .expect("notes");
+    .unwrap();
+    let notes = notes_of(reading).expect("notes");
     assert_eq!(
         model.requests().len(),
         1,

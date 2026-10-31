@@ -25,8 +25,9 @@ use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, FetchUrlContentOutput, TurnSource,
 };
 use crate::features::conversation::chat::retrieval::{
-    assign_citation_ids, deduplicate_sources, document_page_room, fetched_page_text_room,
-    format_tool_result, merge_tool_sources, record_tool_document_references,
+    assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, document_page_room,
+    fetched_page_text_room, format_tool_result, merge_tool_sources,
+    record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -670,10 +671,11 @@ impl<'a> ToolCalls<'a> {
         // same allowance as the result, so the two together fit it.
         // A picture's source page is numbered for its caption, which the app
         // cites; the model is told not to cite the picture line, so the
-        // number is not offered to it.
+        // number is not offered to it. A library search shows each result
+        // under its number already.
         let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
-            .filter(|_| tool != FIND_IMAGE)
+            .filter(|_| tool != FIND_IMAGE && tool != "semantic_search")
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
@@ -681,8 +683,17 @@ impl<'a> ToolCalls<'a> {
             .scope
             .source
             .is_some_and(|source| source.owns_tool(tool));
+        let citations = citation_ids_by_chunk(sources);
         let result_text = render_with_citations(&citable, allowance, |room| {
-            format_tool_result(tool, &result, settings, room, page_offset, source_text)
+            format_tool_result(
+                tool,
+                &result,
+                settings,
+                room,
+                page_offset,
+                source_text,
+                &citations,
+            )
         });
         let result_text = self
             .document_evidence

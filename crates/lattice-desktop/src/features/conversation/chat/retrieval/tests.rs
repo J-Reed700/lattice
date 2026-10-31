@@ -613,6 +613,7 @@ fn an_intent_that_needs_the_web_searches_the_vault_first() {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,
+        standalone_question: None,
         confidence: 0.9,
     };
     let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);
@@ -720,19 +721,20 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
     assert!(web.should_search_web);
 }
 
-/// The retrieval depth comes from the evidence budget and what a passage of
-/// the library measures, not a fixed clamp.
+/// The reading depth is what the evidence budget holds at what a passage of
+/// the library measures, capped at the reading shortlist.
 #[test]
 fn retrieval_depth_follows_the_evidence_budget() {
     // 90k evidence tokens, 2,000-character passages at four characters a
-    // token: 500 tokens a passage, 180 passages.
-    assert_eq!(retrieval_depth(90_000, Some(2_000), 4.0), 180);
+    // token: 500 tokens a passage, 180 that fit, and the shortlist reads 40.
+    assert_eq!(reading_depth(90_000, Some(2_000), 4.0), MAX_READ_PASSAGES);
+    assert_eq!(reading_depth(20_000, Some(2_000), 4.0), 40);
     // A small window is not handed passages it would only throw away.
-    assert_eq!(retrieval_depth(3_000, Some(2_000), 4.0), 6);
+    assert_eq!(reading_depth(3_000, Some(2_000), 4.0), 6);
     // Rounded up, so the budget is filled rather than left short.
-    assert_eq!(retrieval_depth(3_001, Some(2_000), 4.0), 7);
+    assert_eq!(reading_depth(3_001, Some(2_000), 4.0), 7);
     // Always at least one.
-    assert_eq!(retrieval_depth(0, Some(2_000), 4.0), 1);
+    assert_eq!(reading_depth(0, Some(2_000), 4.0), 1);
     // A library that cannot be measured falls back to the chunker's target.
-    assert_eq!(retrieval_depth(4_800, None, 4.0), 10);
+    assert_eq!(reading_depth(4_800, None, 4.0), 10);
 }

@@ -10,15 +10,15 @@ pub(super) async fn classify_turn(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     tool_preferences: Option<&ToolPreferences>,
-) -> SearchFlags {
+) -> InferredIntent {
     if turn
         .source
         .as_ref()
         .is_some_and(|source| !source.policy().infers_intent)
     {
-        return turn.requested_flags;
+        return InferredIntent::as_requested(turn.requested_flags);
     }
-    infer_turn_intent_flags(
+    infer_turn_intent(
         container,
         &turn.llm,
         tool_preferences,
