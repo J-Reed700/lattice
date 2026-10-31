@@ -128,6 +128,7 @@ rise from 10 to 19 turns with a tool call is the same noise. A single question e
 
 The cause is one thing. With no planner, a follow-up searches its own words, and these have no subject. Both were
 right in earlier runs where the writer happened to search again, so a run's score depends on whether it does.
+[`2026-10-31-FOLLOWUP-SEARCH.md`](2026-10-31-FOLLOWUP-SEARCH.md) fixes that and adds the check that catches the quote.
 
 Short of wrong, reading found these. About 7 of 67 answers still open or close by talking about the passages or the
 search; the script counts 2. `dp-buried-agreement-meeting` and `dp-fragment-stopcock` carry chains of 27 and 10 labels
