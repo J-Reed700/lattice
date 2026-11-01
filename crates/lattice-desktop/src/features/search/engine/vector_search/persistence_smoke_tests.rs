@@ -5,7 +5,7 @@ use crate::features::indexing::use_cases::embedding_input::{
 };
 use crate::infrastructure::persistence::repositories::embedding::generation;
 use crate::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
-use crate::interfaces::di::modules::embedding::standalone::open_gguf;
+use crate::interfaces::di::modules::standalone::open_gguf;
 use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::entities::document::Document;

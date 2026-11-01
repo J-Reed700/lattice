@@ -24,6 +24,11 @@ pub struct Recipe {
     /// The embedding model's GGUF, with its `tokenizer.json` beside it.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
+    /// The reranker's GGUF, served the way the app serves it. Without one the
+    /// run measures a desktop whose reranker is not downloaded yet, which
+    /// keeps search in its first-stage order.
+    #[serde(default)]
+    pub reranker_gguf: Option<String>,
     /// A llama-server the run checks and records. Exactly one of `server`
     /// and `cloud` names the answering model.
     #[serde(default)]

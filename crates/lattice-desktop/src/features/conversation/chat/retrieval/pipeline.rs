@@ -172,7 +172,6 @@ pub(super) async fn run_retrieval_pipeline(
             search_flags,
             evidence.remaining(),
             llm.chars_per_token(),
-            search_settings.enable_reranking,
             search_settings.similarity_threshold,
             tuning,
             &turn_cancellation.turn_token(request_id),

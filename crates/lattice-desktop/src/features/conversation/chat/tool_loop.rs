@@ -35,6 +35,7 @@ use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 use emitter::StreamEmitter;
 use final_round::LastRound;
+use reading::Reading;
 pub(super) use reading::READING_INSTRUCTION;
 use room::{chars_in_flight, tool_result_allowance, window_has_room_for_a_result};
 use written_calls::WrittenCalls;
@@ -243,7 +244,7 @@ pub(super) async fn run_agentic_tool_loop(
     if native_request.input.len() == planned_len {
         if let Some(passages) = reading::asked(&native_request.input, sources.as_slice()) {
             let reading_start = Instant::now();
-            notes = match reading::read_passages(
+            let read = match reading::read_passages(
                 llm.as_ref(),
                 &native_request,
                 &passages,
@@ -253,25 +254,33 @@ pub(super) async fn run_agentic_tool_loop(
             )
             .await
             {
-                Ok(notes) => notes,
+                Ok(read) => read,
                 Err(error) if limits::ran_out(&clock, &turn_cancel) => {
                     warn!(%error, "The turn ran out of time reading its passages; answering without notes");
                     forced = Some(LastRound::OutOfTime);
-                    None
+                    Reading::NoNotes
                 }
                 Err(error) => return Err(error),
             };
-            let given = match notes.as_ref() {
-                Some(read) => reading::append_notes(llm.as_ref(), &mut native_request, read).await,
-                None => false,
+            notes = match read {
+                Reading::Noted(read) => {
+                    reading::append_notes(llm.as_ref(), &mut native_request, &read)
+                        .await
+                        .then_some(read)
+                }
+                Reading::NothingBears => {
+                    reading::search_instead(&mut native_request);
+                    None
+                }
+                Reading::NoNotes => None,
             };
-            notes = notes.filter(|_| given);
             timings.llm_stream_ms = timings
                 .llm_stream_ms
                 .saturating_add(elapsed_ms(reading_start));
         }
         // No notes, none that fit beside the answer, or nothing to read: the
-        // answer is asked for exactly as before reading existed.
+        // answer is asked for exactly as before reading existed. A search asked
+        // for instead has already taken the reading's place.
         if notes.is_none() {
             reading::withdraw(&mut native_request.input);
         }

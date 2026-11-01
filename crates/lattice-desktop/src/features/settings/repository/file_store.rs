@@ -151,6 +151,9 @@ impl SettingsRepository {
             release_untouched_vector_compression(&mut settings_file.settings);
             release_untouched_answer_sampling(&mut settings_file.settings);
         }
+        if settings_file.version < 3 {
+            release_untouched_rerank_candidates(&mut settings_file.settings);
+        }
         settings_file.version = SETTINGS_VERSION;
 
         self.write_settings_file(&settings_file).await?;
@@ -174,6 +177,20 @@ fn release_untouched_vector_compression(
         && stored.quantization == VectorQuantizationDto::I8
     {
         stored.mode = VectorIndexCompressionModeDto::None;
+    }
+}
+
+/// Versions 1 and 2 judged 48 reranking candidates by default; version 3
+/// judges the whole 64-candidate pool the rank fusion was measured on. A
+/// document still on 48 never chose it, so it moves; any other count stays.
+fn release_untouched_rerank_candidates(settings: &mut crate::features::settings::dto::SettingsDto) {
+    const OLD_RERANK_MAX_CANDIDATES: u32 = 48;
+
+    let tuning = &mut settings.search.retrieval_tuning;
+    if tuning.rerank_max_candidates == OLD_RERANK_MAX_CANDIDATES {
+        tuning.rerank_max_candidates =
+            crate::features::settings::dto::RetrievalTuningSettingsDto::default()
+                .rerank_max_candidates;
     }
 }
 

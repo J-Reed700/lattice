@@ -6,6 +6,9 @@ use lattice_core::application::contracts::tools::{
 };
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
 use lattice_core::shared::text::safe_truncate;
+use std::collections::HashMap;
+
+use super::source_citations::library_chunk_id;
 
 /// Room kept at the end of a result for the line saying what had to be left
 /// out of it, so that line always fits.
@@ -18,7 +21,9 @@ const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
 /// A tool's result as the model reads it, in at most `allowance` characters
 /// (its share of the window; see `tool_result_allowance`). When it does not
 /// fit, it says what was left out and how to reach it. `page_offset` is where
-/// a fetched page's text starts.
+/// a fetched page's text starts. `citations` holds the turn's numbers by chunk:
+/// a library result is shown under its own, since a list numbered from one
+/// would read as the passages the turn already holds.
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &FunctionResult,
@@ -26,6 +31,7 @@ pub(super) fn format_tool_result(
     allowance: usize,
     page_offset: usize,
     source_text: bool,
+    citations: &HashMap<String, u32>,
 ) -> String {
     let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
@@ -113,53 +119,22 @@ pub(super) fn format_tool_result(
         }
         "semantic_search" => {
             if let Ok(output) = serde_json::from_value::<SemanticSearchOutput>(data.clone()) {
-                let blocks: Vec<String> = if !output.documents.is_empty() {
-                    output
-                        .documents
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, doc)| {
-                            let mut block = format!(
-                                "[{}] {} (doc_id: {}, best_score: {:.3}, matches: {})",
-                                idx + 1,
-                                doc.filename,
-                                doc.document_id,
-                                doc.max_score,
-                                doc.match_count
-                            );
-                            for (match_idx, evidence) in doc.matches.iter().enumerate() {
-                                let chunk_label = evidence
-                                    .chunk_index
-                                    .map(|v| format!("#{}", v))
-                                    .unwrap_or_else(|| "n/a".to_string());
-                                block.push_str(&format!(
-                                    "\n  [{}] chunk {} score {:.3}: {}",
-                                    match_idx + 1,
-                                    chunk_label,
-                                    evidence.score,
-                                    evidence.excerpt.trim()
-                                ));
-                            }
-                            block
-                        })
-                        .collect()
-                } else {
-                    output
-                        .results
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, res)| {
-                            format!(
-                                "[{}] {} (doc_id: {}, score: {:.3})\nExcerpt: {}",
-                                idx + 1,
-                                res.filename,
-                                res.document_id,
-                                res.score,
-                                res.snippet.trim()
-                            )
-                        })
-                        .collect()
-                };
+                let blocks: Vec<String> = output
+                    .results
+                    .iter()
+                    .map(|hit| {
+                        let label = citations
+                            .get(&library_chunk_id(hit))
+                            .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+                        format!(
+                            "{label} {} (doc_id: {}, score: {:.3})\nExcerpt: {}",
+                            hit.filename,
+                            hit.document_id,
+                            hit.score,
+                            hit.snippet.trim()
+                        )
+                    })
+                    .collect();
                 if blocks.is_empty() {
                     return "Search returned no results.".to_string();
                 }
@@ -443,6 +418,7 @@ mod fetched_page_tests {
             allowance,
             offset,
             false,
+            &HashMap::new(),
         )
     }
 
@@ -516,30 +492,26 @@ mod fetched_page_tests {
     }
 
     fn search_output(documents: usize, matches: usize, excerpt: &str) -> FunctionResult {
-        use lattice_core::application::contracts::tools::{
-            DocumentEvidence, DocumentEvidenceMatch,
-        };
-        let documents = (0..documents)
-            .map(|d| DocumentEvidence {
+        use lattice_core::application::contracts::tools::DocumentResult;
+        let results = (0..documents)
+            .flat_map(|d| (0..matches).map(move |m| (d, m)))
+            .map(|(d, m)| DocumentResult {
                 document_id: format!("doc-{d}"),
                 filename: format!("file-{d}.pdf"),
                 file_path: format!("/vault/file-{d}.pdf"),
                 mime_type: "application/pdf".to_string(),
-                max_score: 0.9,
-                match_count: matches,
-                matches: (0..matches)
-                    .map(|m| DocumentEvidenceMatch {
-                        chunk_index: Some(m),
-                        score: 0.5,
-                        excerpt: format!("{excerpt} ({d}/{m})"),
-                    })
-                    .collect(),
+                score: 0.5,
+                snippet: format!("{excerpt} ({d}/{m})"),
+                chunk_index: Some(m),
+                chunk_id: Some(format!("chunk-{d}-{m}")),
+                modified_at: chrono::Utc::now(),
+                size_bytes: 1,
             })
             .collect();
         FunctionResult::success(
             serde_json::to_value(SemanticSearchOutput {
-                results: Vec::new(),
-                documents,
+                results,
+                documents: Vec::new(),
                 total_found: 0,
                 search_time_ms: 1.0,
                 query: "q".to_string(),
@@ -547,6 +519,27 @@ mod fetched_page_tests {
             })
             .unwrap_or_default(),
         )
+    }
+
+    /// A number of the result's own would read as the passage the turn holds
+    /// under that number, and the citation would point at the wrong document.
+    #[test]
+    fn a_library_result_is_shown_under_the_turn_s_number_for_it() {
+        let citations = HashMap::from([("chunk-0-0".to_owned(), 41), ("chunk-1-0".to_owned(), 7)]);
+
+        let rendered = format_tool_result(
+            "semantic_search",
+            &search_output(2, 1, "text"),
+            &ToolOutputSettingsDto::default(),
+            4_000,
+            0,
+            false,
+            &citations,
+        );
+
+        assert!(rendered.contains("[41] file-0.pdf"), "{rendered}");
+        assert!(rendered.contains("[7] file-1.pdf"), "{rendered}");
+        assert!(!rendered.contains("[1]"), "{rendered}");
     }
 
     /// A search page that may have more says the offset the next starts at.
@@ -591,7 +584,7 @@ mod fetched_page_tests {
             rendered.contains("more result(s) did not fit"),
             "{rendered}"
         );
-        assert!(rendered.contains("[1] file-0.pdf"), "{rendered}");
+        assert!(rendered.contains("- file-0.pdf"), "{rendered}");
     }
 
     /// Every kind of result keeps the line saying what was left out and how to

@@ -3,8 +3,10 @@
 use tracing::{info, warn};
 
 use super::HybridSearchUseCase;
-use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
-use lattice_core::application::contracts::search::{RerankOptions, Reranked, SearchResponseDto};
+use crate::features::search::engine::reranker::{fuse_rerank_order, RerankResult};
+use lattice_core::application::contracts::search::{
+    RerankOptions, Reranked, SearchResponseDto, SearchResultDto,
+};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::safe_truncate;
 
@@ -12,11 +14,12 @@ impl HybridSearchUseCase {
     /// Re-order the head of a fused list with the cross-encoder.
     ///
     /// The leading [`RerankOptions::max_candidates`] results are scored
-    /// against the query as `"{title} {content}"`, their scores blended with
-    /// the fused ones ([`blend_rerank_scores`]), and the whole list sorted by
-    /// score. With no reranker wired or none available, one result or fewer,
-    /// or a failed, empty or malformed cross-encoder answer, the list comes
-    /// back in its fused order and unflagged.
+    /// against the query as `"{title} {content}"` and re-ordered by
+    /// reciprocal-rank fusion of their fused and cross-encoder ranks
+    /// ([`fuse_rerank_order`]); each then carries its cross-encoder relevance,
+    /// 0 to 1, as its score. With no reranker wired or none available, one
+    /// result or fewer, or a failed, empty or malformed cross-encoder answer,
+    /// the list comes back in its fused order and unflagged.
     pub async fn rerank(
         &self,
         mut response: SearchResponseDto,
@@ -50,7 +53,7 @@ impl HybridSearchUseCase {
 
         match reranker.rerank(&query, documents, candidate_count).await {
             Ok(reranked) if !reranked.is_empty() => {
-                match apply_blend(&mut response, &reranked, candidate_count) {
+                match apply_fusion(&mut response, &reranked, candidate_count) {
                     Ok(()) => {
                         info!(
                             candidate_count,
@@ -80,45 +83,32 @@ impl HybridSearchUseCase {
     }
 }
 
-/// Blend the cross-encoder's scores into the leading `candidate_count`
-/// results and order them by it; the results past them follow in their fused
-/// order. Blended and fused scores are on different scales, so sorting the
-/// whole list on them let unjudged results jump judged ones. Nothing is
-/// written unless the blend is valid for every candidate.
-fn apply_blend(
+/// Re-order the leading `candidate_count` results by the fusion of their
+/// fused rank and the cross-encoder's ([`fuse_rerank_order`]), each scored
+/// with its cross-encoder relevance; the results past them follow in their
+/// fused order and keep their fused scores. Nothing is written unless the
+/// fusion is valid for every candidate.
+fn apply_fusion(
     response: &mut SearchResponseDto,
     reranked: &[RerankResult],
     candidate_count: usize,
 ) -> Result<()> {
-    if candidate_count == 0 || response.results.is_empty() {
+    let judged = candidate_count.min(response.results.len());
+    if judged == 0 {
         return Ok(());
     }
-
-    let fused_scores: Vec<f32> = response
-        .results
-        .iter()
-        .take(candidate_count)
-        .map(|result| result.score)
+    let order = fuse_rerank_order(judged, reranked)?;
+    let mut head: Vec<Option<SearchResultDto>> =
+        response.results.drain(..judged).map(Some).collect();
+    let fused: Vec<SearchResultDto> = order
+        .into_iter()
+        .filter_map(|candidate| {
+            let mut result = head.get_mut(candidate.index)?.take()?;
+            result.score = candidate.relevance;
+            Some(result)
+        })
         .collect();
-    let scores = blend_rerank_scores(&fused_scores, reranked)?;
-
-    for (result, score) in response
-        .results
-        .iter_mut()
-        .take(candidate_count)
-        .zip(scores)
-    {
-        result.score = score;
-    }
-
-    let judged = candidate_count.min(response.results.len());
-    if let Some(head) = response.results.get_mut(..judged) {
-        head.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-    }
+    response.results.splice(..0, fused);
     response.total = response.results.len();
     Ok(())
 }

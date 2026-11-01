@@ -5,6 +5,7 @@
 //! - Embedding models: Semantic search optimized
 //! - OCR models: Vision-language models for text extraction
 //! - Transcription models: Whisper for on-device speech-to-text
+//! - The reranker search orders its shortlist with
 //!
 //! ## Design
 //!
@@ -20,6 +21,7 @@ use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 mod chat;
 mod embedding;
 mod ocr;
+mod reranker;
 mod transcription;
 
 pub use chat::{
@@ -32,6 +34,7 @@ pub use embedding::{embedding_model_supports_matryoshka, get_curated_embedding_m
 pub use ocr::{
     get_curated_ocr_models, CuratedOcrModel, CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE,
 };
+pub use reranker::{CuratedReranker, CURATED_RERANKER};
 pub use transcription::get_curated_transcription_models;
 
 /// Get all curated models across all categories.

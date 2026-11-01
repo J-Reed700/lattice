@@ -19,6 +19,8 @@ pub(super) struct PreparedTurn {
     pub(super) model: TurnModelDto,
     /// The user's message, validated.
     pub(super) message: String,
+    /// The intent step's follow-up as a question that stands alone.
+    pub(super) standalone_question: Option<String>,
     /// What the request asked for, widened by an explicit document focus.
     pub(super) requested_flags: SearchFlags,
     pub(super) recorder: TurnRecorder,
@@ -57,6 +59,7 @@ impl PreparedTurn {
             conversation_id: &self.conv_id,
             request_id: &self.turn_id,
             message: &self.message,
+            standalone_question: self.standalone_question.as_deref(),
             llm: &self.llm,
             highlight_terms: &self.highlight_terms,
             focus: &self.focus,
@@ -281,6 +284,7 @@ pub(super) async fn prepare_turn(
         llm,
         model,
         message: validated_message,
+        standalone_question: None,
         requested_flags: search_flags,
         recorder,
         focus,
@@ -402,6 +406,7 @@ pub(super) async fn resume_turn(
         llm,
         model,
         message: request.message.clone(),
+        standalone_question: None,
         requested_flags: flags,
         recorder,
         focus,
@@ -499,6 +504,7 @@ impl PreparedTurn {
             model: TurnModelDto::pinned(&pin),
             llm,
             message: "question".to_string(),
+            standalone_question: None,
             requested_flags: SearchFlags::from_preferences(None),
             recorder: TurnRecorder::silent(conv_id, turn_id),
             focus: FocusScope::default(),

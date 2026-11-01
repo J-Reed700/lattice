@@ -32,7 +32,7 @@ use notes::{as_kept, attribute};
 
 /// Closes a message that shows numbered passages. It is part of the message so
 /// the reading and writing rounds share the cached prompt.
-pub(in crate::features::conversation::chat) const READING_INSTRUCTION: &str = "Before answering, go through every numbered passage above in order and write one line for each: its label, then the sentences of that passage that bear on my question, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. Account for every label. Write only these lines; the answer comes after.";
+pub(in crate::features::conversation::chat) const READING_INSTRUCTION: &str = "Before answering, go through every numbered passage above in order and write one line for each: its label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. When my question names a document, a passage from any other document gets a hyphen. Account for every label. Write only these lines; the answer comes after.";
 
 /// Said after a group's lines that left labels out. `{labels}` lists them.
 pub(super) const SWEEP_INSTRUCTION: &str =
@@ -41,9 +41,17 @@ pub(super) const SWEEP_INSTRUCTION: &str =
 /// Said after the notes, last, to turn the reading into the answer.
 pub(super) const WRITE_INSTRUCTION: &str = "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question.";
 
+/// [`WRITE_INSTRUCTION`] for a round that can still search, where a part of the
+/// question the passages leave open is for a search to answer.
+pub(super) const SEARCH_OR_WRITE_INSTRUCTION: &str = "If the passages leave any part of my question unanswered, do not answer yet: search for that part now. Otherwise, start straight with the answer, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, do not say whether they are enough, and say nothing about passages that do not bear on my question.";
+
+/// Closes the turn's message in place of [`READING_INSTRUCTION`] when no passage
+/// bore on the question and the round can still search.
+pub(super) const NOTHING_BEARS_INSTRUCTION: &str = "None of these passages bears on my question, so do not answer yet: search for it now, spelling out in full what it asks about.";
+
 /// Said after an answer that left out passages its notes quote. `{quotes}`
 /// gives each one's label and note.
-pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these passages, which your notes quote as bearing on my question: {quotes}. Continue your answer with what each of them says, in the same form as above, citing each with its label; do not repeat what you have written. If one of those notes was mistaken, write nothing for it.";
+pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these passages, which your notes quote as bearing on my question: {quotes}. Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen.";
 
 /// Between the answer and what a continuation adds to it.
 const PARAGRAPH_BREAK: &str = "\n\n";
@@ -131,6 +139,17 @@ pub(super) struct Notes {
     tokens: usize,
 }
 
+/// What came of reading the passages.
+#[derive(Debug)]
+pub(super) enum Reading {
+    /// Notes that copy their passages.
+    Noted(Notes),
+    /// Every passage was accounted for, and each with a hyphen.
+    NothingBears,
+    /// Nothing to go on (see [`withdraw`]).
+    NoNotes,
+}
+
 /// The passages to read when the turn's message closes with
 /// [`READING_INSTRUCTION`]; `None` when none of its labels is a source the turn holds.
 pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<Passages> {
@@ -142,8 +161,7 @@ pub(super) fn asked(input: &[CompletionInput], sources: &[SourceDto]) -> Option<
 }
 
 /// Reads every passage in its group (see `reading::groups`) and attributes each
-/// note to the passage it copies. `Ok(None)` when no usable notes came of it
-/// (see [`withdraw`]); only Stop and the turn's deadline are errors.
+/// note to the passage it copies. Only Stop and the turn's deadline are errors.
 pub(super) async fn read_passages(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
@@ -151,7 +169,7 @@ pub(super) async fn read_passages(
     recorder: &TurnRecorder,
     cancel: &CancellationToken,
     clock: &TurnClock,
-) -> Result<Option<Notes>> {
+) -> Result<Reading> {
     let step = recorder.begin_guarded(
         TurnStepKind::Generate,
         "Reading the passages",
@@ -161,7 +179,15 @@ pub(super) async fn read_passages(
     if lines.is_empty() {
         warn!("The reading wrote no notes; answering without them");
         step.failed(Some("No notes".into()));
-        return Ok(None);
+        return Ok(Reading::NoNotes);
+    }
+    if lines.values().all(Option::is_none) && passages.labels().all(|l| lines.contains_key(&l)) {
+        info!(
+            passages = passages.len(),
+            "No passage bears on the question"
+        );
+        step.done(Some("No passage bears on the question".into()));
+        return Ok(Reading::NothingBears);
     }
     let (noted, moved) = attribute(&mut lines, passages);
     // Only a note that copies its own passage reaches the writer; any other line is
@@ -180,7 +206,7 @@ pub(super) async fn read_passages(
             "The reading copied no passage word for word; answering without it"
         );
         step.failed(Some("No passage copied".into()));
-        return Ok(None);
+        return Ok(Reading::NoNotes);
     }
     let text = as_kept(&lines);
     let written = tokens(llm, &text).await;
@@ -198,7 +224,7 @@ pub(super) async fn read_passages(
         tokens = written,
         "Read the passages before answering"
     );
-    Ok(Some(Notes {
+    Ok(Reading::Noted(Notes {
         text,
         lines,
         noted,
@@ -217,7 +243,12 @@ pub(super) async fn append_notes(
 ) -> bool {
     let planned = request.input.len();
     request.input.push(assistant(&notes.text));
-    say_last(&mut request.input, WRITE_INSTRUCTION);
+    let instruction = if request.tools.is_empty() {
+        WRITE_INSTRUCTION
+    } else {
+        SEARCH_OR_WRITE_INSTRUCTION
+    };
+    say_last(&mut request.input, instruction);
     let room = room_left(llm, request).await;
     if room < notes.tokens {
         info!(
@@ -235,9 +266,18 @@ pub(super) async fn append_notes(
 /// Whether a research turn's saved rounds hold its reading: the notes, and
 /// the instruction to write from them said after.
 pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
-    transcript
-        .iter()
-        .any(|item| item.text().ends_with(WRITE_INSTRUCTION))
+    transcript.iter().any(|item| {
+        let text = item.text();
+        text.ends_with(WRITE_INSTRUCTION) || text.ends_with(SEARCH_OR_WRITE_INSTRUCTION)
+    })
+}
+
+/// Have a round that can search do so, in place of the reading that found
+/// nothing. Without tools the reading is [`withdraw`]n like any other.
+pub(super) fn search_instead(request: &mut CompletionRequest) {
+    if !request.tools.is_empty() {
+        replace_reading(&mut request.input, NOTHING_BEARS_INSTRUCTION);
+    }
 }
 
 /// Take the reading instruction back out of the turn's message when no notes
@@ -273,9 +313,9 @@ fn replace_reading(input: &mut [CompletionInput], instead: &str) {
 
 /// Asks the model to add the passages its notes quote that the answer does not
 /// cite, while each continuation cites at least one of them (the set shrinks,
-/// so it ends). A continuation is shown only once written whole, so a failed one
-/// leaves the answer as it was. An answer cut at its output limit is left alone.
-/// Only Stop is an error.
+/// so it ends). A continuation is shown only once written whole and only if it
+/// adds one, so a failed one, or one that declines, leaves the answer as it was.
+/// An answer cut at its output limit is left alone. Only Stop is an error.
 pub(super) async fn add_what_was_left_out(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
@@ -350,7 +390,7 @@ pub(super) async fn add_what_was_left_out(
             1 => "1 passage added".to_string(),
             added => format!("{added} passages added"),
         }));
-        if !written.is_empty() {
+        if added > 0 {
             let note = if cut_short { CUT_SHORT_NOTE } else { "" };
             let shown = format!("{PARAGRAPH_BREAK}{written}{note}");
             emitter.content(&shown)?;

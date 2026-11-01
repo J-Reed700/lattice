@@ -100,11 +100,7 @@ impl ModelManagerTrait for MockModelManager {
     }
 
     fn get_reranker_path(&self) -> std::path::PathBuf {
-        self.model_dir.join("reranker/model.safetensors")
-    }
-
-    fn get_reranker_tokenizer_path(&self) -> std::path::PathBuf {
-        self.model_dir.join("reranker/tokenizer.json")
+        self.model_dir.join("reranker/reranker.gguf")
     }
 
     fn cancel_download(&self) {

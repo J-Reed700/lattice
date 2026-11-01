@@ -174,10 +174,17 @@ fn reply_nothing() -> CompletionResponse {
     reply("", "stop")
 }
 
+fn notes_of(reading: Reading) -> Option<Notes> {
+    match reading {
+        Reading::Noted(notes) => Some(notes),
+        Reading::NothingBears | Reading::NoNotes => None,
+    }
+}
+
 async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
     let recorder = TurnRecorder::silent("conversation", "request");
     let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
-    read_passages(
+    let reading = read_passages(
         model,
         request,
         &passages(),
@@ -186,7 +193,8 @@ async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
         &clock,
     )
     .await
-    .expect("only Stop and the deadline are errors")
+    .expect("only Stop and the deadline are errors");
+    notes_of(reading)
 }
 
 #[test]
@@ -559,6 +567,11 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
         },
     ];
     assert!(noted_in(&read));
+    let searching = vec![CompletionInput::Message {
+        role: "user".into(),
+        content: SEARCH_OR_WRITE_INSTRUCTION.into(),
+    }];
+    assert!(noted_in(&searching));
     let unread = vec![CompletionInput::ToolResult {
         id: "1".into(),
         output: "Results.".into(),
@@ -621,6 +634,65 @@ async fn a_reading_that_copies_no_passage_gives_no_notes() {
         read(&model, &planned(&[1, 2, 3, 4])).await.is_none(),
         "a paraphrase is no copy"
     );
+}
+
+async fn reading_of(reply_text: &str) -> Reading {
+    let model = Model::new([reply(reply_text, "stop"), reply("", "stop")]);
+    let recorder = TurnRecorder::silent("conversation", "request");
+    let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
+    read_passages(
+        &model,
+        &planned(&[1, 2, 3, 4]),
+        &passages(),
+        &recorder,
+        &CancellationToken::new(),
+        &clock,
+    )
+    .await
+    .expect("only Stop and the deadline are errors")
+}
+
+#[tokio::test]
+async fn only_a_hyphen_for_every_passage_means_that_nothing_bears() {
+    assert!(matches!(
+        reading_of("[1] -\n[2] -\n[3] -\n[4] -").await,
+        Reading::NothingBears
+    ));
+    assert!(
+        matches!(
+            reading_of("[1] -\n[2] The last miller retired in December 1887.\n[3] -\n[4] -").await,
+            Reading::NoNotes
+        ),
+        "a paraphrase says something bears on it"
+    );
+    assert!(
+        matches!(reading_of("[1] -\n[2] -").await, Reading::NoNotes),
+        "two passages were never read"
+    );
+}
+
+#[test]
+fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
+    let mut closed = planned(&[1]);
+    closed.tools.clear();
+    search_instead(&mut closed);
+    assert!(closed
+        .input
+        .last()
+        .unwrap()
+        .text()
+        .contains(READING_INSTRUCTION));
+
+    let mut open = planned(&[1]);
+    open.tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    search_instead(&mut open);
+    let message = open.input.last().unwrap().text();
+    assert!(!message.contains(READING_INSTRUCTION));
+    assert!(message.ends_with(NOTHING_BEARS_INSTRUCTION));
 }
 
 #[tokio::test]
@@ -705,7 +777,38 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
         &writing.input[request.input.len()],
         CompletionInput::Message { role, content } if role == "assistant" && content == "[1] -\n[2] -"
     ));
-    assert_eq!(writing.input.last().unwrap().text(), WRITE_INSTRUCTION);
+    assert_eq!(
+        writing.input.last().unwrap().text(),
+        SEARCH_OR_WRITE_INSTRUCTION
+    );
+}
+
+/// A round that can search is told to, for what the passages leave open: a
+/// shortlist reaches further by searching again. One that cannot is told to
+/// answer, or it would promise a search it cannot make.
+#[tokio::test]
+async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
+    let notes = Notes {
+        text: "[1] -".into(),
+        lines: BTreeMap::from([(1, None)]),
+        noted: BTreeSet::new(),
+        tokens: 3,
+    };
+    let mut closed = planned(&[1]);
+    closed.tools.clear();
+    assert!(append_notes(&Model::new([]), &mut closed, &notes).await);
+    assert_eq!(closed.input.last().unwrap().text(), WRITE_INSTRUCTION);
+
+    let mut open = planned(&[1]);
+    open.tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    assert!(append_notes(&Model::new([]), &mut open, &notes).await);
+    let instruction = open.input.last().unwrap().text();
+    assert_eq!(instruction, SEARCH_OR_WRITE_INSTRUCTION);
+    assert!(instruction.starts_with("If the passages leave any part of my question unanswered"));
 }
 
 #[test]
@@ -726,7 +829,7 @@ fn a_continuation_quotes_each_left_out_note() {
     };
     assert_eq!(
         continue_instruction(&[6, 7].into(), &notes),
-        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Continue your answer with what each of them says, in the same form as above, citing each with its label; do not repeat what you have written. If one of those notes was mistaken, write nothing for it."
+        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen."
     );
 }
 

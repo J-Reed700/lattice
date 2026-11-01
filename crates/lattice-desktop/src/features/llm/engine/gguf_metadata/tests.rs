@@ -2,22 +2,32 @@ use super::*;
 use std::io::Write;
 
 struct GgufBuilder {
-    bytes: Vec<u8>,
+    version: u32,
     kv_count: u64,
     body: Vec<u8>,
+    /// Name and offset of each tensor, and the bytes of data after the list.
+    tensors: Vec<(String, u64)>,
+    data_bytes: usize,
 }
 
 impl GgufBuilder {
     fn new(version: u32) -> Self {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&GGUF_MAGIC.to_le_bytes());
-        bytes.extend_from_slice(&version.to_le_bytes());
-        bytes.extend_from_slice(&0u64.to_le_bytes()); // tensor count
         Self {
-            bytes,
+            version,
             kv_count: 0,
             body: Vec::new(),
+            tensors: Vec::new(),
+            data_bytes: 0,
         }
+    }
+
+    fn tensors(mut self, tensors: &[(&str, u64)], data_bytes: usize) -> Self {
+        self.tensors = tensors
+            .iter()
+            .map(|(name, offset)| ((*name).to_owned(), *offset))
+            .collect();
+        self.data_bytes = data_bytes;
+        self
     }
 
     fn key(&mut self, key: &str) {
@@ -113,9 +123,22 @@ impl GgufBuilder {
 
     fn write(self) -> tempfile::NamedTempFile {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        let mut bytes = self.bytes;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&GGUF_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&self.version.to_le_bytes());
+        bytes.extend_from_slice(&(self.tensors.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&self.kv_count.to_le_bytes());
         bytes.extend_from_slice(&self.body);
+        for (name, offset) in &self.tensors {
+            bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.extend_from_slice(&2u32.to_le_bytes()); // dimensions
+            bytes.extend_from_slice(&4096u64.to_le_bytes());
+            bytes.extend_from_slice(&248_320u64.to_le_bytes());
+            bytes.extend_from_slice(&12u32.to_le_bytes()); // Q4_K
+            bytes.extend_from_slice(&offset.to_le_bytes());
+        }
+        bytes.resize(bytes.len() + self.data_bytes, 0);
         file.write_all(&bytes).unwrap();
         file.flush().unwrap();
         file
@@ -393,7 +416,6 @@ fn a_plain_model_costs_the_same_for_every_token_of_its_window() {
         .float("llama.rope.freq_base", 500_000.0)
         .float("llama.attention.layer_norm_rms_epsilon", 1e-5)
         .u32_value("general.file_type", 15)
-        .u32_value("llama.vocab_size", 128_256)
         .u32_value("llama.rope.dimension_count", 128)
         .string_array("tokenizer.ggml.tokens", &["a", "b"])
         .read();
@@ -618,24 +640,10 @@ fn the_header_gives_what_the_compute_buffer_and_recurrent_state_are_priced_from(
     let info = qwen35_9b_header().read();
 
     assert_eq!(info.feed_forward_length, Some(12_288));
-    assert_eq!(
-        info.vocab_size,
-        Some(2),
-        "counted from tokenizer.ggml.tokens"
-    );
     assert_eq!(info.ssm_conv_kernel, Some(4));
     assert_eq!(info.ssm_state_size, Some(128));
     assert_eq!(info.ssm_group_count, Some(16));
     assert_eq!(info.ssm_inner_size, Some(4096));
-}
-
-#[test]
-fn a_stated_vocabulary_size_wins_over_the_token_count() {
-    let info = qwen35_9b_header()
-        .u32_value("qwen35.vocab_size", 248_320)
-        .read();
-
-    assert_eq!(info.vocab_size, Some(248_320));
 }
 
 /// Qwen 3.5 9B: 24 of its 32 layers are linear attention. Each keeps, for each
@@ -665,27 +673,99 @@ fn a_model_without_linear_attention_keeps_no_recurrent_state() {
     assert_eq!(undescribed.recurrent_state_bytes(), 0);
 }
 
-/// The output's logits outweigh a layer's scratch at a short window; the
-/// attention mask over a long window outweighs the logits.
+/// Qwen3.5-9B keeps its 545.62 MiB `token_embd.weight` in `CPU_Mapped` and sends
+/// a separate `output.weight` to the GPU.
 #[test]
-fn the_compute_buffer_is_the_larger_of_the_output_and_a_layer() {
-    let info = GgufModelInfo {
-        vocab_size: Some(248_320),
-        ..qwen35_9b_header().read()
-    };
+fn an_untied_model_leaves_its_input_embedding_on_the_cpu() {
+    let info = qwen35_9b_header()
+        .tensors(
+            &[
+                ("output.weight", 0),
+                ("token_embd.weight", 1_000),
+                ("blk.0.attn_norm.weight", 4_000),
+            ],
+            5_000,
+        )
+        .read();
 
-    let output = 512 * 248_320 * 4;
-    assert_eq!(info.compute_buffer_bytes(8_192), output);
-    let layer_at_full = 512 * (262_144 * 6 + 12_288 * 2 * 4);
-    assert_eq!(info.compute_buffer_bytes(262_144), layer_at_full);
-    assert!(layer_at_full > output);
+    assert_eq!(info.cpu_weight_bytes, 3_000);
+}
+
+/// The offsets need not run in listed order, and the last tensor ends where
+/// the file does.
+#[test]
+fn an_input_embedding_runs_to_the_next_offset_or_the_end_of_the_data() {
+    let last = qwen35_9b_header()
+        .tensors(&[("token_embd.weight", 4_000), ("output.weight", 0)], 5_000)
+        .read();
+
+    assert_eq!(last.cpu_weight_bytes, 1_000);
+}
+
+/// The embedding and reranking models tie their output to the input
+/// embedding: llama.cpp keeps a copy in RAM and the whole file on the GPU.
+#[test]
+fn a_tied_model_keeps_all_of_its_file_on_the_gpu() {
+    let info = qwen35_9b_header()
+        .tensors(
+            &[("token_embd.weight", 0), ("blk.0.ffn_up.weight", 1_000)],
+            2_000,
+        )
+        .read();
+
+    assert_eq!(info.cpu_weight_bytes, 0);
 }
 
 #[test]
-fn a_header_without_vocabulary_or_feed_forward_still_prices_the_mask() {
+fn a_tensor_list_cut_short_counts_nothing_off_the_file() {
+    let file = qwen35_9b_header()
+        .tensors(&[("token_embd.weight", 0), ("output.weight", 1_000)], 0)
+        .write();
+    let length = std::fs::metadata(file.path()).unwrap().len();
+    let cut = std::fs::OpenOptions::new()
+        .write(true)
+        .open(file.path())
+        .unwrap();
+    cut.set_len(length - 12).unwrap();
+
+    assert_eq!(read_model_info(file.path()).unwrap().cpu_weight_bytes, 0);
+}
+
+/// llama-server reserves 120 + 48 MiB at 16,384 tokens and 168 + 96 at 65,536
+/// on Vulkan, for GPU and host: nothing like logits over 248,320 tokens.
+#[test]
+fn the_compute_buffer_is_a_micro_batch_of_a_layer_and_holds_no_logits() {
+    let info = qwen35_9b_header().read();
+
+    assert_eq!(
+        info.compute_buffer_bytes(16_384, 512),
+        512 * (16_384 * 6 + 12_288 * 2 * 4)
+    );
+    assert_eq!(
+        info.compute_buffer_bytes(65_536, 512),
+        512 * (65_536 * 6 + 12_288 * 2 * 4)
+    );
+}
+
+/// A pooled server takes each passage whole, so its micro-batch is its window.
+#[test]
+fn the_compute_buffer_grows_with_the_micro_batch() {
+    let info = GgufModelInfo {
+        feed_forward_length: Some(3_072),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        info.compute_buffer_bytes(4_096, 4_096),
+        4_096 * (4_096 * 6 + 3_072 * 2 * 4)
+    );
+}
+
+#[test]
+fn a_header_without_a_feed_forward_width_still_prices_the_mask() {
     let info = GgufModelInfo::default();
 
-    assert_eq!(info.compute_buffer_bytes(1_024), 512 * 1_024 * 6);
+    assert_eq!(info.compute_buffer_bytes(1_024, 512), 512 * 1_024 * 6);
 }
 
 /// Counts the reads that reach the file beneath a `BufReader`.

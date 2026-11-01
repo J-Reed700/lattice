@@ -15,8 +15,8 @@ use crate::features::llm::engine::system::{
 use crate::features::llm::loading::LlmRuntime;
 
 /// A bundled server outside the pool of loaded LLMs that admission may stop
-/// to make room, while it is idle: the embedding server. It is started again
-/// by the next request that needs it.
+/// to make room, while it is idle: the embedding and reranking servers. Each
+/// is started again by the next request that needs it.
 pub(crate) trait IdleServer: Send + Sync {
     /// What the logs call it.
     fn name(&self) -> String;
@@ -155,7 +155,9 @@ struct Plan<'a> {
 /// idle models evicted to reach it.
 pub(super) fn log(model: &str, outcome: Admission, evicted: &[(String, u64)]) {
     match outcome {
-        Admission::Fits { needed, spare } | Admission::Short { needed, spare } => {
+        Admission::Fits { needed, spare }
+        | Admission::Tight { needed, spare }
+        | Admission::Short { needed, spare } => {
             tracing::info!(
                 model,
                 needed_bytes = needed.total(),

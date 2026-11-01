@@ -170,6 +170,19 @@ fn short() -> Admission {
     }
 }
 
+fn tight() -> Admission {
+    Admission::Tight {
+        needed: Footprint {
+            weights: 5 * GIB,
+            cache: GIB,
+            state: 0,
+            compute: 0,
+            window: 8_704,
+        },
+        spare: 3 * GIB,
+    }
+}
+
 fn fits() -> Admission {
     Admission::Fits {
         needed: Footprint {
@@ -291,35 +304,194 @@ async fn a_busy_embedding_server_is_left_running_and_the_model_starts_anyway() {
     assert_eq!(budget.asked.load(Ordering::SeqCst), 1);
 }
 
+fn pooling_config() -> SidecarConfig {
+    SidecarConfig::for_model(std::path::PathBuf::from("/models/embedder.gguf"))
+}
+
+fn fits_after(stopped: &Arc<AtomicBool>) -> FakeBudget {
+    FakeBudget::until_unloaded(
+        Arc::clone(stopped),
+        |stopped| {
+            if stopped {
+                fits()
+            } else {
+                short()
+            }
+        },
+    )
+}
+
 #[tokio::test]
-async fn room_is_made_for_a_decided_server_and_its_turn_is_handed_back() {
+async fn a_claim_on_idle_models_makes_room_and_keeps_the_turn() {
     let stopped = Arc::new(AtomicBool::new(false));
     let instances = with_idle_server(Some(3 * GIB), &stopped);
-    let budget =
-        FakeBudget::until_unloaded(
-            Arc::clone(&stopped),
-            |stopped| {
-                if stopped {
-                    fits()
-                } else {
-                    short()
-                }
-            },
-        );
-    let config = SidecarConfig::for_model(std::path::PathBuf::from("/models/other.gguf"));
 
-    let turn = instances.make_room_for("other", &config, &budget).await;
+    let (seated, turn) = instances
+        .claim_gpu(
+            "embedder",
+            &pooling_config(),
+            GpuClaim::IdleModels,
+            &fits_after(&stopped),
+        )
+        .await;
 
+    assert!(seated);
     assert!(turn.is_some(), "a server taking GPU memory keeps the turn");
     assert!(stopped.load(Ordering::SeqCst));
-    drop(turn);
-    assert!(
-        instances
-            .make_room_for("other", &config, &FakeBudget::always(Admission::NoOffload))
-            .await
-            .is_none(),
-        "a server on the CPU has nothing to hold the turn for"
+}
+
+/// Indexing never overfills a card a chat is using: it runs elsewhere until
+/// the model is idle.
+#[tokio::test]
+async fn a_claim_that_frees_too_little_seats_nothing() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(None, &stopped);
+
+    let (seated, turn) = instances
+        .claim_gpu(
+            "embedder",
+            &pooling_config(),
+            GpuClaim::IdleModels,
+            &FakeBudget::always(short()),
+        )
+        .await;
+
+    assert!(!seated);
+    assert!(turn.is_none(), "a server off the GPU holds no turn");
+}
+
+/// A search's embedder takes what is free and never stops anything for it.
+#[tokio::test]
+async fn a_claim_on_spare_memory_stops_nothing() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+    let config = pooling_config();
+    let claim = |outcome| {
+        let instances = &instances;
+        let config = &config;
+        async move {
+            let (seated, turn) = instances
+                .claim_gpu(
+                    "embedder",
+                    config,
+                    GpuClaim::Spare,
+                    &FakeBudget::always(outcome),
+                )
+                .await;
+            (seated, turn.is_some())
+        }
+    };
+
+    assert_eq!(claim(short()).await, (false, false));
+    assert_eq!(claim(fits()).await, (true, true));
+    assert_eq!(
+        claim(tight()).await,
+        (true, true),
+        "the margin is room for a claim"
     );
+    assert_eq!(
+        claim(Admission::Shared).await,
+        (true, false),
+        "a server already running starts nothing"
+    );
+    assert_eq!(claim(Admission::Unmetered).await, (false, false));
+    assert_eq!(claim(Admission::NoOffload).await, (false, false));
+    assert!(!stopped.load(Ordering::SeqCst));
+}
+
+/// The reranker has nowhere else to run, so an idle embedder gives way for it.
+/// A chat model never does.
+#[tokio::test]
+async fn a_claim_on_idle_servers_stops_them_and_leaves_an_idle_model_loaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let idle = local_model(&dir, "idle", 7 * GIB);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+    let model_unloaded = Arc::new(AtomicBool::new(false));
+    acquire_local(
+        &instances,
+        &FakeBudget::always(fits()),
+        &idle,
+        None,
+        &model_unloaded,
+    )
+    .await
+    .unwrap();
+
+    let (seated, turn) = instances
+        .claim_gpu(
+            "reranker",
+            &pooling_config(),
+            GpuClaim::IdleServers,
+            &fits_after(&stopped),
+        )
+        .await;
+
+    assert!(seated);
+    assert!(turn.is_some());
+    assert!(stopped.load(Ordering::SeqCst));
+    assert!(!model_unloaded.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_claim_that_fits_in_the_margin_leaves_the_others_where_they_are() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+
+    for claim in [GpuClaim::IdleServers, GpuClaim::IdleModels] {
+        let (seated, _) = instances
+            .claim_gpu(
+                "reranker",
+                &pooling_config(),
+                claim,
+                &FakeBudget::always(tight()),
+            )
+            .await;
+        assert!(seated);
+    }
+    assert!(!stopped.load(Ordering::SeqCst));
+}
+
+/// A chat model in the margin still asks for it back: it can use the room.
+#[tokio::test]
+async fn a_chat_model_that_only_fits_in_the_margin_stops_an_idle_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let wanted = local_model(&dir, "wanted", 1);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let instances = with_idle_server(Some(3 * GIB), &stopped);
+
+    acquire_local(
+        &instances,
+        &FakeBudget::always(tight()),
+        &wanted,
+        None,
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+
+    assert!(stopped.load(Ordering::SeqCst));
+}
+
+/// A GPU that does not report its memory may be full: a search stays off it,
+/// and only indexing, too slow elsewhere, takes the chance.
+#[tokio::test]
+async fn only_indexing_takes_a_gpu_that_does_not_report_its_memory() {
+    let instances = LlmInstances::new();
+    let budget = FakeBudget::always(Admission::Unmetered);
+    let config = pooling_config();
+
+    for (claim, seated) in [
+        (GpuClaim::Spare, false),
+        (GpuClaim::IdleServers, false),
+        (GpuClaim::IdleModels, true),
+    ] {
+        let (outcome, turn) = instances
+            .claim_gpu("embedder", &config, claim, &budget)
+            .await;
+        assert_eq!(outcome, seated, "{claim:?}");
+        assert!(turn.is_none(), "nothing is priced, so nothing is held");
+    }
 }
 
 #[tokio::test]

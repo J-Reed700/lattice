@@ -1,7 +1,7 @@
-//! Embedding servers for tools that run without the app: the retrieval and
-//! shipped-path evals and the ignored live tests. The starter spawns a
-//! llama-server binary itself, with the flags the app's sidecar gets for the
-//! same model, and kills every server it started when it drops.
+//! Embedding and reranking servers for tools that run without the app: the
+//! retrieval and shipped-path evals and the ignored live tests. The starter
+//! spawns a llama-server binary itself, with the flags the app's sidecar gets
+//! for the same model, and kills every server it started when it drops.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -10,27 +10,29 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
 
-use super::{read_header, sidecar_config};
 use crate::features::embedding::llama_cpp::{
     EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, LlamaEmbeddingService,
-    RunningEmbeddingServer,
 };
-use crate::features::llm::engine::sidecar_manager::{build_server_args, new_api_token};
+use crate::features::llm::engine::sidecar_manager::{
+    build_server_args, new_api_token, SidecarConfig,
+};
 use crate::features::llm::engine::system::backend_devices::parse_list_devices;
+use crate::features::search::engine::llama_reranker::{RerankLaunch, RerankServerStarter};
+use crate::infrastructure::llama_server::RunningLlamaServer;
 
 /// How often a starting server's `/health` is asked while it loads.
 const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Starts embedding servers from one llama-server binary, as child processes
-/// of this one: one server per launch, shared while it runs.
-pub struct StandaloneEmbeddingStarter {
+/// Starts servers from one llama-server binary, as child processes of this
+/// one: one server per configuration, shared while it runs.
+pub struct StandaloneServers {
     binary: PathBuf,
     children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<Child>>>>,
     /// Running servers by launch flags.
-    running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningEmbeddingServer>>>,
+    running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningLlamaServer>>>,
 }
 
-impl StandaloneEmbeddingStarter {
+impl StandaloneServers {
     pub fn new(binary: impl Into<PathBuf>) -> Self {
         Self {
             binary: binary.into(),
@@ -48,32 +50,9 @@ impl StandaloneEmbeddingStarter {
                 .unwrap_or_else(bundled_binary),
         )
     }
-}
-
-/// The bundled build for this platform, as `binaries/` holds it.
-fn bundled_binary() -> PathBuf {
-    let triple = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "aarch64-apple-darwin"
-    } else if cfg!(target_os = "macos") {
-        "x86_64-apple-darwin"
-    } else if cfg!(target_os = "windows") {
-        "x86_64-pc-windows-msvc.exe"
-    } else {
-        "x86_64-unknown-linux-gnu"
-    };
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(format!("llama-server-{triple}"))
-}
-
-#[async_trait]
-impl EmbeddingServerStarter for StandaloneEmbeddingStarter {
-    async fn header(&self, gguf: &Path) -> Option<EmbeddingHeader> {
-        read_header(gguf).await
-    }
 
     /// What the binary's own `--list-devices` reports, as the app asks it.
-    async fn accelerated(&self) -> bool {
+    async fn has_accelerator(&self) -> bool {
         let binary = self.binary.clone();
         tokio::task::spawn_blocking(move || Command::new(binary).arg("--list-devices").output())
             .await
@@ -91,27 +70,26 @@ impl EmbeddingServerStarter for StandaloneEmbeddingStarter {
             })
     }
 
-    async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
-        let launched = build_server_args(&sidecar_config(launch), 0).join(" ");
+    /// The server for `config`: the one running for it, else a new one.
+    async fn start_config(&self, config: &SidecarConfig) -> Result<Arc<RunningLlamaServer>> {
+        let launched = build_server_args(config, 0).join(" ");
         let mut running = self.running.lock().await;
         if let Some(server) = running.get(&launched).filter(|server| server.alive()) {
             return Ok(Arc::clone(server));
         }
-        let server = self.spawn(launch).await?;
+        let server = self.spawn(config).await?;
         running.insert(launched, Arc::clone(&server));
         Ok(server)
     }
-}
 
-impl StandaloneEmbeddingStarter {
-    /// A new server for `launch`, once its `/health` answers.
-    async fn spawn(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
+    /// A new server for `config`, once its `/health` answers.
+    async fn spawn(&self, config: &SidecarConfig) -> Result<Arc<RunningLlamaServer>> {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
             .map_err(|e| AppError::ModelLoadFailed(format!("No free local port: {e}")))?
             .port();
         let key = new_api_token();
-        let args = build_server_args(&sidecar_config(launch), port);
+        let args = build_server_args(config, port);
         let child = Command::new(&self.binary)
             .args(&args)
             .env("LLAMA_API_KEY", &key)
@@ -145,7 +123,7 @@ impl StandaloneEmbeddingStarter {
             tokio::time::sleep(HEALTH_POLL).await;
         }
         let watched = Arc::clone(&child);
-        Ok(Arc::new(RunningEmbeddingServer::new(
+        Ok(Arc::new(RunningLlamaServer::new(
             endpoint,
             key,
             None,
@@ -154,7 +132,53 @@ impl StandaloneEmbeddingStarter {
     }
 }
 
-impl Drop for StandaloneEmbeddingStarter {
+/// The bundled build for this platform, as `binaries/` holds it.
+fn bundled_binary() -> PathBuf {
+    let triple = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(target_os = "macos") {
+        "x86_64-apple-darwin"
+    } else if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc.exe"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(format!("llama-server-{triple}"))
+}
+
+#[async_trait]
+impl EmbeddingServerStarter for StandaloneServers {
+    async fn header(&self, gguf: &Path) -> Option<EmbeddingHeader> {
+        super::embedding::read_header(gguf).await
+    }
+
+    async fn accelerated(&self) -> bool {
+        self.has_accelerator().await
+    }
+
+    async fn start(&self, launch: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
+        self.start_config(&super::embedding::sidecar_config(launch))
+            .await
+    }
+}
+
+/// A tool has no other models to make room for, so the reranker goes on the
+/// accelerator whenever there is one.
+#[async_trait]
+impl RerankServerStarter for StandaloneServers {
+    async fn accelerated(&self) -> bool {
+        self.has_accelerator().await
+    }
+
+    async fn start(&self, launch: &RerankLaunch) -> Result<Arc<RunningLlamaServer>> {
+        self.start_config(&super::reranking::sidecar_config(launch))
+            .await
+    }
+}
+
+impl Drop for StandaloneServers {
     fn drop(&mut self) {
         for child in self.children.lock().drain(..) {
             let mut child = child.lock();
@@ -165,7 +189,7 @@ impl Drop for StandaloneEmbeddingStarter {
 }
 
 /// The embedding model in `gguf` (with its `tokenizer.json` beside it) on a
-/// llama-server this process starts from [`StandaloneEmbeddingStarter::from_env`]:
+/// llama-server this process starts from [`StandaloneServers::from_env`]:
 /// what the app's loader does for the active model, from a file. The server
 /// stops when the service drops.
 pub async fn open_gguf(gguf: &Path) -> Result<LlamaEmbeddingService> {
@@ -177,7 +201,7 @@ pub async fn open_gguf(gguf: &Path) -> Result<LlamaEmbeddingService> {
         |name| name.to_string_lossy().into_owned(),
     );
     LlamaEmbeddingService::start_gguf(
-        Arc::new(StandaloneEmbeddingStarter::from_env()),
+        Arc::new(StandaloneServers::from_env()),
         gguf,
         &name,
         &name,

@@ -2,7 +2,8 @@
 //! the whole loop.
 
 use super::super::reading::{
-    prompt_tokens, CONTINUE_INSTRUCTION, READING_INSTRUCTION, WRITE_INSTRUCTION,
+    prompt_tokens, CONTINUE_INSTRUCTION, NOTHING_BEARS_INSTRUCTION, READING_INSTRUCTION,
+    SEARCH_OR_WRITE_INSTRUCTION, WRITE_INSTRUCTION,
 };
 use super::*;
 
@@ -118,7 +119,7 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
         "the answer is written on the planned message"
     );
     assert_eq!(writing.input[2].text(), NOTES);
-    assert_eq!(last_text(writing), WRITE_INSTRUCTION);
+    assert_eq!(last_text(writing), SEARCH_OR_WRITE_INSTRUCTION);
     assert!(
         writing.may_call_tools(),
         "the writing round may still search"
@@ -293,18 +294,20 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
 }
 
 #[tokio::test]
-async fn a_continuation_that_adds_no_passage_ends_the_check() {
-    let model = Model::new([
-        reply(NOTES),
-        reply("The roof was mended in 1851 [2]."),
-        reply("Nothing more to add."),
-    ]);
-    let run = grounded(&model).await;
-    assert_eq!(
-        run.outcome.expect("an answer").response,
-        "The roof was mended in 1851 [2].\n\nNothing more to add."
-    );
-    assert_eq!(model.requests().len(), 3, "no second continuation");
+async fn a_continuation_that_adds_no_passage_is_dropped_and_ends_the_check() {
+    for declined in ["-", "Those passages add nothing to the answer."] {
+        let model = Model::new([
+            reply(NOTES),
+            reply("The roof was mended in 1851 [2]."),
+            reply(declined),
+        ]);
+        let run = grounded(&model).await;
+        assert_eq!(
+            run.outcome.expect("an answer").response,
+            "The roof was mended in 1851 [2]."
+        );
+        assert_eq!(model.requests().len(), 3, "no second continuation");
+    }
 }
 
 #[tokio::test]
@@ -345,7 +348,7 @@ async fn a_reading_with_no_notes_is_taken_back_and_the_answer_asked_for_as_befor
 #[tokio::test]
 async fn a_reading_that_copies_no_passage_is_taken_back_and_the_answer_asked_for_as_before() {
     let model = Model::new([
-        reply("1. [2] -\n2. [5] -\n3. [7] -\n4. [9] -"),
+        reply("[2] The bridge is very old.\n[5] -\n[7] -\n[9] -"),
         reply(ANSWER),
     ]);
     let run = grounded(&model).await;
@@ -356,6 +359,25 @@ async fn a_reading_that_copies_no_passage_is_taken_back_and_the_answer_asked_for
     assert_eq!(answering.input.len(), 2, "no notes");
     assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
+}
+
+#[tokio::test]
+async fn a_reading_that_finds_nothing_asks_for_a_search_in_its_place() {
+    let model = Model::new([
+        reply("1. [2] -\n2. [5] -\n3. [7] -\n4. [9] -"),
+        reply(ANSWER),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(run.outcome.expect("an answer").response, ANSWER);
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let answering = &requests[1];
+    assert_eq!(answering.input.len(), 2, "no notes");
+    let message = last_text(answering);
+    assert!(!message.contains(READING_INSTRUCTION));
+    assert!(message.ends_with(&format!(
+        "Question: Tell me about the bridge.\n\n{NOTHING_BEARS_INSTRUCTION}"
+    )));
 }
 
 #[tokio::test]

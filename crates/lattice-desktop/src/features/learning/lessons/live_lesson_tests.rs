@@ -996,10 +996,9 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         let gguf = std::env::var("LATTICE_LESSON_EMBEDDING").map_err(|_| {
             AppError::InvalidConfig("Hybrid replay needs LATTICE_LESSON_EMBEDDING".into())
         })?;
-        let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
-            std::path::Path::new(&gguf),
-        )
-        .await?;
+        let model =
+            crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
+                .await?;
         Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),

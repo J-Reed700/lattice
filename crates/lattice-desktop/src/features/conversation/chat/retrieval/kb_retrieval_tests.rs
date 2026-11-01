@@ -215,13 +215,12 @@ async fn an_ordered_reading_plan_is_gathered_wide_and_reranked() {
             question,
             &plan,
             &scope,
-            candidate_limit(true, limit),
+            RerankOptions::candidate_pool(limit),
         )
         .await
         .unwrap();
         let (reranked, applied) = rerank_pass(
             &runtime,
-            true,
             &plan.queries.join(" "),
             &HyDEInterpretation::raw_only(question.to_string(), QueryType::Question),
             pool,
@@ -254,17 +253,6 @@ async fn an_ordered_reading_plan_is_gathered_wide_and_reranked() {
             searched.windows(2).all(|pair| pair.first() > pair.last()),
             "{question}: the searched passages keep the reranker's order: {searched:?}"
         );
-    }
-}
-
-#[test]
-fn the_candidate_pool_is_the_rerankers_shortlist_only_when_reranking() {
-    for limit in [1, 10, 40] {
-        assert_eq!(
-            candidate_limit(true, limit),
-            RerankOptions::candidate_pool(limit)
-        );
-        assert_eq!(candidate_limit(false, limit), limit);
     }
 }
 

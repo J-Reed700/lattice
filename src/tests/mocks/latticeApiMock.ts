@@ -24,7 +24,6 @@ export function createVaultAPIMock() {
     search: {
       maxResults: 10,
       similarityThreshold: 0.7,
-      enableReranking: false,
       hybridSearchAlpha: 0.5,
       retrievalTuning: {
         docShortlistCandidateMin: 48,
@@ -41,7 +40,7 @@ export function createVaultAPIMock() {
         externalSearchMaxWikiTerms: 8,
         externalSearchMaxWebTerms: 10,
         externalSearchQueryMaxChars: 1200,
-        rerankMaxCandidates: 48,
+        rerankMaxCandidates: 64,
         rerankQueryMaxChars: 6000,
         sufficiencyMinTopScore: 0.35,
         sufficiencyMinTermCoverage: 0.4,
@@ -179,20 +178,16 @@ export function createVaultAPIMock() {
       ok: true,
       data: {
         installed: false,
-        enabled: false,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
+        modelName: 'Qwen/Qwen3-Reranker-0.6B',
+        downloadBytes: 639_153_184,
       },
     }),
     downloadReranker: vi.fn().mockResolvedValue({
       ok: true,
       data: {
         installed: true,
-        enabled: false,
-        active: false,
-        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-        downloadBytes: 90_870_598,
+        modelName: 'Qwen/Qwen3-Reranker-0.6B',
+        downloadBytes: 639_153_184,
       },
     }),
     testLlamaCppConnection: vi.fn().mockResolvedValue({ ok: true, data: { endpoint: '/v1/chat/completions', models: ['test-model'] } }),

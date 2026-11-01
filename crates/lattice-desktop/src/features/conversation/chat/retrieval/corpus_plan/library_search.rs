@@ -318,7 +318,7 @@ pub(in super::super) async fn append_context(
 }
 
 /// Unions two retrieval passes by chunk id and re-ranks them by RRF over both:
-/// the first pass is on a blended 0-1 scale and the second on raw RRF
+/// the first pass carries cross-encoder relevance and the second raw RRF
 /// weights, which cannot be compared, but their ranks can.
 pub(in super::super) fn fuse_passes(
     hybrid: &dyn HybridSearchTrait,

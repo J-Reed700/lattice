@@ -1,5 +1,7 @@
 use super::*;
-use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
+use crate::features::llm::engine::gguf_metadata::{
+    read_model_info, GgufModelInfo, MICRO_BATCH_TOKENS,
+};
 
 /// A bundled llama-server build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,18 +79,54 @@ pub struct SidecarConfig {
     /// model may see and its catalog projector is downloaded.
     pub projector_path: Option<PathBuf>,
 
-    /// `Some` for an embedding server of this GGUF rather than a chat one.
-    /// Part of the key, so a chat and an embedding server of one file would
-    /// be two processes (no GGUF is both).
-    pub embedding: Option<EmbeddingServing>,
+    /// `Some` for a server that embeds or reranks with this GGUF rather than
+    /// chats. Part of the key, so a chat and an embedding server of one file
+    /// would be two processes (no GGUF is both).
+    pub pooling: Option<PoolingServing>,
 }
 
-/// How an embedding server is launched beyond its window and slots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EmbeddingServing {
-    /// `-b` and `-ub`: the per-slot window, so a non-causal model sees each
-    /// input in one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens`).
+/// How a server that pools its inputs is launched beyond its window and slots.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PoolingServing {
+    /// `-b` and `-ub`: the per-slot window, so the model sees each input in
+    /// one micro-batch (llama.cpp asserts `n_ubatch >= n_tokens` for a pooled
+    /// input).
     pub ubatch: u32,
+    pub task: PoolingTask,
+    pub device: PoolingDevice,
+}
+
+impl PoolingServing {
+    /// `task` at a micro-batch of `ubatch`, where llama.cpp offloads by itself.
+    pub fn new(ubatch: u32, task: PoolingTask) -> Self {
+        Self {
+            ubatch,
+            task,
+            device: PoolingDevice::default(),
+        }
+    }
+}
+
+/// Where a pooling server runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub enum PoolingDevice {
+    /// Where llama.cpp offloads by itself: the GPU models are priced against,
+    /// or the CPU of a machine with none.
+    #[default]
+    Offload,
+    /// Another GPU, by its `--device` id.
+    Spare(String),
+    /// The CPU, beside models holding the GPU.
+    Cpu,
+}
+
+/// What a pooling server answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PoolingTask {
+    /// `/v1/embeddings` (`--embedding`).
+    Embedding,
+    /// `/v1/rerank` (`--reranking`).
+    Reranking,
 }
 
 /// Speculative decoding a bundled server can be launched with.
@@ -110,10 +148,33 @@ pub(crate) const FIT_TARGET_BYTES: u64 = 1024 * 1024 * 1024;
 
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+/// Threads a pooling server gets on the CPU beside models holding the GPU. A
+/// pool as wide as the machine stalls on the cores they are using.
+pub(super) const BESIDE_GPU_THREADS: u32 = 4;
+
+/// What sizes a server's buffers beside its window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerBuffers {
+    pub kv_cache_quantization: bool,
+    /// Tokens in a micro-batch (`-ub`).
+    pub micro_batch: u32,
+}
+
+impl ServerBuffers {
+    /// A chat server's, at llama.cpp's default micro-batch.
+    pub(crate) fn chat(kv_cache_quantization: bool) -> Self {
+        Self {
+            kv_cache_quantization,
+            micro_batch: MICRO_BATCH_TOKENS,
+        }
+    }
+}
+
 /// Memory a server of one model holds at one window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Footprint {
-    /// The GGUF, plus its catalog projector once that is downloaded.
+    /// What the device holds of the GGUF, plus its catalog projector once that
+    /// is downloaded.
     pub weights: u64,
     /// The KV cache of the layers that keep one.
     pub cache: u64,
@@ -150,15 +211,19 @@ pub(super) fn footprint_from(
     weights: u64,
     info: Option<&GgufModelInfo>,
     window: u32,
-    kv_cache_quantization: bool,
+    buffers: ServerBuffers,
 ) -> Footprint {
     Footprint {
-        weights,
+        weights: weights.saturating_sub(info.map_or(0, |info| info.cpu_weight_bytes)),
         cache: info
-            .and_then(|info| info.kv_cache_bytes_with_quantization(window, kv_cache_quantization))
+            .and_then(|info| {
+                info.kv_cache_bytes_with_quantization(window, buffers.kv_cache_quantization)
+            })
             .unwrap_or(0),
         state: info.map_or(0, GgufModelInfo::recurrent_state_bytes),
-        compute: info.map_or(0, |info| info.compute_buffer_bytes(window)),
+        compute: info.map_or(0, |info| {
+            info.compute_buffer_bytes(window, buffers.micro_batch)
+        }),
         window,
     }
 }
@@ -168,13 +233,13 @@ pub(super) fn footprint_from(
 pub(crate) fn footprint_of(
     model_path: &std::path::Path,
     context_size: u32,
-    kv_cache_quantization: bool,
+    buffers: ServerBuffers,
 ) -> Footprint {
     footprint_from(
         resident_weight_bytes(model_path).unwrap_or(0),
         read_model_info(model_path).as_ref(),
         context_size,
-        kv_cache_quantization,
+        buffers,
     )
 }
 
@@ -182,9 +247,9 @@ pub(crate) fn footprint_of(
 pub(crate) fn resident_bytes_of(
     model_path: &std::path::Path,
     context_size: u32,
-    kv_cache_quantization: bool,
+    buffers: ServerBuffers,
 ) -> u64 {
-    footprint_of(model_path, context_size, kv_cache_quantization).total()
+    footprint_of(model_path, context_size, buffers).total()
 }
 
 /// Where the memory a new server could have is reported.
@@ -215,6 +280,15 @@ pub struct MemoryRoom {
 impl MemoryRoom {
     pub fn spare(self) -> u64 {
         self.reported.saturating_sub(self.held)
+    }
+
+    /// Whether `needed` fits what the platform reports, margin and all.
+    fn holds(self, needed: u64) -> bool {
+        let margin = match self.source {
+            MemorySource::GpuFree => FIT_TARGET_BYTES,
+            MemorySource::MetalWorkingSet | MemorySource::SystemRam => 0,
+        };
+        needed.saturating_add(self.held) <= self.reported.saturating_add(margin)
     }
 }
 
@@ -267,13 +341,12 @@ fn largest_window_within(
     weights: u64,
     info: &GgufModelInfo,
     spare_bytes: u64,
-    kv_cache_quantization: bool,
+    buffers: ServerBuffers,
 ) -> Option<u32> {
     let trained = info.trained_context_length?;
-    info.kv_cache_bytes_with_quantization(trained, kv_cache_quantization)?;
-    let fits = |window: u32| {
-        footprint_from(weights, Some(info), window, kv_cache_quantization).total() <= spare_bytes
-    };
+    info.kv_cache_bytes_with_quantization(trained, buffers.kv_cache_quantization)?;
+    let fits =
+        |window: u32| footprint_from(weights, Some(info), window, buffers).total() <= spare_bytes;
     if fits(trained) {
         return Some(trained);
     }
@@ -303,6 +376,11 @@ impl MemoryHint {
     /// Whether the server fits the room this machine reports.
     pub fn fits(self) -> bool {
         self.needed.total() <= self.room.spare()
+    }
+
+    /// Whether it fits at all, in the margin [`Self::fits`] keeps free.
+    pub fn fits_in_margin(self) -> bool {
+        self.room.holds(self.needed.total())
     }
 
     /// The numbers, for a server that failed to start or ran degraded, and
@@ -372,7 +450,7 @@ pub(crate) fn memory_hint(
         weights,
         info,
         config.context_size,
-        config.kv_cache_quantization,
+        config.buffers(),
         room,
     ))
 }
@@ -383,15 +461,14 @@ pub(super) fn hint_for(
     weights: u64,
     info: Option<&GgufModelInfo>,
     window: u32,
-    kv_cache_quantization: bool,
+    buffers: ServerBuffers,
     room: MemoryRoom,
 ) -> MemoryHint {
     MemoryHint {
-        needed: footprint_from(weights, info, window, kv_cache_quantization),
+        needed: footprint_from(weights, info, window, buffers),
         room,
-        fits_window: info.and_then(|info| {
-            largest_window_within(weights, info, room.spare(), kv_cache_quantization)
-        }),
+        fits_window: info
+            .and_then(|info| largest_window_within(weights, info, room.spare(), buffers)),
     }
 }
 
@@ -432,7 +509,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
-            embedding: None,
+            pooling: None,
         }
     }
 
@@ -452,6 +529,41 @@ impl SidecarConfig {
             n_gpu_layers: 0,
             ..self.clone()
         }
+    }
+
+    /// What sizes its buffers beside its window.
+    pub(crate) fn buffers(&self) -> ServerBuffers {
+        ServerBuffers {
+            kv_cache_quantization: self.kv_cache_quantization,
+            micro_batch: self
+                .pooling
+                .as_ref()
+                .map_or(MICRO_BATCH_TOKENS, |pooling| pooling.ubatch),
+        }
+    }
+
+    /// Whether it holds memory on the GPU models are priced against.
+    pub(crate) fn on_offload_gpu(&self) -> bool {
+        let spare = self
+            .pooling
+            .as_ref()
+            .is_some_and(|pooling| matches!(pooling.device, PoolingDevice::Spare(_)));
+        self.n_gpu_layers > 0 && !spare
+    }
+
+    /// The same pooling server kept off that GPU: on the GPU `spare` names, or
+    /// on the CPU.
+    pub(crate) fn off_the_gpu(&self, spare: Option<&str>) -> Self {
+        let mut config = match spare {
+            Some(_) => self.clone(),
+            None => self.without_gpu_offload(),
+        };
+        if let Some(pooling) = config.pooling.as_mut() {
+            pooling.device = spare.map_or(PoolingDevice::Cpu, |device| {
+                PoolingDevice::Spare(device.to_owned())
+            });
+        }
+        config
     }
 
     /// `model_path` at a window of `context_size` tokens, every layer
@@ -479,7 +591,7 @@ impl SidecarConfig {
             seed: None,
             kv_cache_quantization: false,
             projector_path: None,
-            embedding: None,
+            pooling: None,
         }
     }
 }
