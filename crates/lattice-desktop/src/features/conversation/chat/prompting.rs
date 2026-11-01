@@ -11,6 +11,9 @@ pub(super) struct PromptMessageBuilder<'a> {
     is_greeting: bool,
     force_kb_search: bool,
     force_web_search: bool,
+    /// The message is a whole prompt the app wrote, with its own material and
+    /// rules, so no template frames it.
+    closed_book: bool,
     /// How the turn treats the source its conversation reads beside the chat;
     /// with a template of its own, the context travels in it rather than the
     /// saved document-answer template.
@@ -57,6 +60,7 @@ impl<'a> PromptMessageBuilder<'a> {
             is_greeting,
             force_kb_search: search_flags.force_kb_search,
             force_web_search: search_flags.force_web_search,
+            closed_book: search_flags.closed_book,
             source: None,
             source_context: None,
             attachment_context: None,
@@ -277,6 +281,10 @@ from general knowledge as though it came from the user's documents."
                 &context_sections.join("\n\n"),
                 self.question,
             );
+        }
+
+        if self.closed_book {
+            return self.question.to_string();
         }
 
         if self.is_greeting {
