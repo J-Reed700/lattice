@@ -4,6 +4,7 @@
 //! provide types, errors, IPC responses, encoding, filesystem and HTTP helpers,
 //! persistence formatting, runtime support, and resilience policies.
 
+pub mod citation_markers;
 pub mod constants;
 pub mod encoding;
 pub mod error;
