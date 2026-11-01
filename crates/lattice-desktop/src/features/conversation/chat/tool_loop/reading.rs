@@ -39,11 +39,11 @@ pub(super) const SWEEP_INSTRUCTION: &str =
     "You did not account for {labels}. Write one line for each of them, in the same form.";
 
 /// Said after the notes, last, to turn the reading into the answer.
-pub(super) const WRITE_INSTRUCTION: &str = "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question.";
+pub(super) const WRITE_INSTRUCTION: &str = "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
 
 /// [`WRITE_INSTRUCTION`] for a round that can still search, where a part of the
 /// question the passages leave open is for a search to answer.
-pub(super) const SEARCH_OR_WRITE_INSTRUCTION: &str = "If the passages leave any part of my question unanswered, do not answer yet: search for that part now. Otherwise, start straight with the answer, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, do not say whether they are enough, and say nothing about passages that do not bear on my question.";
+pub(super) const SEARCH_OR_WRITE_INSTRUCTION: &str = "If the passages leave any part of my question unanswered, do not answer yet: search for that part now. Otherwise, start straight with the answer, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, do not say whether they are enough, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
 
 /// Closes the turn's message in place of [`READING_INSTRUCTION`] when no passage
 /// bore on the question and the round can still search.
@@ -51,7 +51,7 @@ pub(super) const NOTHING_BEARS_INSTRUCTION: &str = "None of these passages bears
 
 /// Said after an answer that left out passages its notes quote. `{quotes}`
 /// gives each one's label and note.
-pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these passages, which your notes quote as bearing on my question: {quotes}. Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen.";
+pub(super) const CONTINUE_INSTRUCTION: &str = "Your answer does not use these passages, which your notes quote as bearing on my question: {quotes}. Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen. Do not mention your notes or correct them.";
 
 /// Between the answer and what a continuation adds to it.
 const PARAGRAPH_BREAK: &str = "\n\n";
