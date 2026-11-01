@@ -384,7 +384,7 @@ pub(super) async fn add_what_was_left_out(
                 break;
             }
         };
-        let added = cited_labels(written).intersection(&left).count();
+        let added = passages_added(written, &left, notes);
         step.done(Some(match added {
             0 => "nothing added".to_string(),
             1 => "1 passage added".to_string(),
@@ -422,6 +422,16 @@ pub(super) fn whole_lines<'t>(text: &'t str, finish_reason: &str) -> &'t str {
 /// The passages the notes quote that the answer does not cite.
 pub(super) fn left_out(noted: &BTreeSet<u32>, cited: &BTreeSet<u32>) -> BTreeSet<u32> {
     noted.difference(cited).copied().collect()
+}
+
+/// How many passages of `left` a continuation adds. Saying back the quotes it
+/// was given adds none.
+fn passages_added(written: &str, left: &BTreeSet<u32>, notes: &Notes) -> usize {
+    let quoted = quotes(left, notes);
+    if written.split_whitespace().eq(quoted.split_whitespace()) {
+        return 0;
+    }
+    cited_labels(written).intersection(left).count()
 }
 
 /// Where the lines of a reading that ends at `last` end: at a line that starts

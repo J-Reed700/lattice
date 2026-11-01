@@ -833,6 +833,23 @@ fn a_continuation_quotes_each_left_out_note() {
     );
 }
 
+#[test]
+fn a_continuation_that_says_its_quotes_back_adds_nothing() {
+    let notes = Notes {
+        text: String::new(),
+        lines: BTreeMap::from([(6, Some("A.".into())), (7, Some("B.".into()))]),
+        noted: [6, 7].into(),
+        tokens: 4,
+    };
+    let left = [6, 7].into();
+    assert_eq!(passages_added("[6] \"A.\" [7] \"B.\"", &left, &notes), 0);
+    assert_eq!(passages_added("[6] \"A.\"\n[7] \"B.\"", &left, &notes), 0);
+    assert_eq!(
+        passages_added("Both still apply: A [6], B [7].", &left, &notes),
+        2
+    );
+}
+
 fn json(value: &impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
 }

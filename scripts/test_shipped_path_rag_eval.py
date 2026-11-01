@@ -150,6 +150,10 @@ class MechanicalChecks(unittest.TestCase):
              "I found no phone number for her in the passages."),
             ("What's her mobile number?",
              "The pager goes to the bench [1]. No mobile number for her appears in the passages."),
+            ("What's her mobile number?",
+             "No mobile number for Ilse Brantgard is given anywhere in the excerpts searched."),
+            ("What does the Marbleau undertaking oblige?",
+             "I ran three searches, and none of these returned a passage naming the Marbleau undertaking."),
         ):
             declined = turn(answer)
             declined["question"] = question
