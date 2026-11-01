@@ -610,3 +610,28 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
     assert_eq!(cited_only.claims_evaluated, 1);
     assert_eq!(cited_only.supported_claims, 1);
 }
+
+/// A quotation its passage does not hold is a finding without a model, and
+/// the claims around it still go to the judge.
+#[tokio::test]
+async fn a_made_up_quotation_is_a_finding_no_model_is_asked_about() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["supported"]));
+    let verifier = GroundingVerifier::new(Some(llm.clone()));
+    let mut passage = source(
+        "Once the hold expires with the band still broken, page Marisol Quenby and quote TCK-1836.",
+    );
+    passage.citation_id = Some(1);
+    let answer = "The next step is to \"page Anneke Voskuil and quote TCK-1836\" [1].";
+
+    let report = verifier.verify(answer, &[passage]).await;
+
+    assert_eq!(llm.call_count(), 0);
+    assert_eq!(report.unsupported_count(), 1);
+    let claim = report.claims.first().unwrap();
+    assert_eq!(claim.verdict, ClaimVerdict::Unsupported);
+    assert_eq!(claim.method.as_str(), "quote");
+    assert_eq!(
+        report.metadata_json()["claimVerdicts"][0]["method"],
+        "quote"
+    );
+}

@@ -25,6 +25,20 @@ describe('ClaimHoverCard', () => {
     expect(screen.getByText(/gave no usable answer/)).toBeInTheDocument();
   });
 
+  it('says a missing quotation was looked for, and why it was marked', () => {
+    renderCard({
+      sentence: 'The runbook says "page Anneke Voskuil and quote TCK-1836" [1].',
+      citationIds: [1],
+      verdict: 'unsupported',
+      method: 'quote',
+      reason: 'The words in quotation marks are not in the passage this cites.',
+    });
+    expect(screen.getByText('Not found in the cited passage')).toBeInTheDocument();
+    expect(screen.getByText('The quoted words were looked for in the passage')).toBeInTheDocument();
+    expect(screen.queryByText(/shared wording/)).not.toBeInTheDocument();
+    expect(screen.getByText(/not in the passage this cites/)).toBeInTheDocument();
+  });
+
   it('names a page with no saved text as the reason', () => {
     renderCard({
       sentence: 'The page says so.',

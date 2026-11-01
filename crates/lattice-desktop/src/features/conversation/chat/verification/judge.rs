@@ -34,7 +34,7 @@ use lattice_core::application::services::evidence_retrieval::{
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
-use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
+use super::lexical::{best_sentence, best_windows, passage_text, LexicalClaim, ScoredWindow};
 
 /// Output room for the model's reasoning followed by the public verdict,
 /// factual explanation, and exact source quote. Reasoning tokens count toward
@@ -262,11 +262,7 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
         let Some(source) = sources.get(idx) else {
             return Evidence::NoCitation;
         };
-        let body = if source.content.trim().is_empty() {
-            source.excerpt.as_deref().unwrap_or_default()
-        } else {
-            source.content.as_str()
-        };
+        let body = passage_text(source);
         if body.trim().is_empty() {
             continue;
         }

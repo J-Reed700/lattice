@@ -23,6 +23,17 @@ fn a_label_in_bold_before_its_colon_is_read_as_a_field() {
     assert_eq!(final_verdict(&text), Some(ClaimVerdict::Unsupported));
 }
 
+/// Haiku opened 22 of 331 replies this way, and each read as no verdict.
+#[test]
+fn a_bold_opening_label_is_read_as_the_verdict() {
+    let text = without_field_emphasis(
+        "**Label:** unsupported\n\nReason: Not stated.\n\nSource quote: none",
+    );
+    assert_eq!(parse_verdict_word(&text), Some(ClaimVerdict::Unsupported));
+    let text = without_field_emphasis("**Label**: **supported**\nReason: It says so.");
+    assert_eq!(parse_verdict_word(&text), Some(ClaimVerdict::Supported));
+}
+
 #[test]
 fn a_verdict_with_a_closing_full_stop_is_read() {
     assert_eq!(

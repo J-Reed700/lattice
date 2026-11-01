@@ -442,7 +442,8 @@ impl<'a> ClaimChecker<'a> {
 }
 
 /// The labels of the fields a judge writes.
-const FIELD_LABELS: [&str; 7] = [
+const FIELD_LABELS: [&str; 8] = [
+    "Label",
     "Reason",
     "Explanation",
     "Source passage",

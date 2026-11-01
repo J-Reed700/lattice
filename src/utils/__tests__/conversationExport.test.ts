@@ -306,6 +306,15 @@ describe('claimToMarkdown', () => {
     expect(markdown).toContain('matched on shared wording, not read for meaning');
   });
 
+  it('says a missing quotation was looked for, not read', () => {
+    const markdown = claimToMarkdown(
+      { ...backed, verdict: 'unsupported', method: 'quote', evidenceQuote: null },
+      citationMap,
+      { capturedAt: AT },
+    );
+    expect(markdown).toContain('Not found in the cited passage — the quoted words were looked for in it.');
+  });
+
   it('does not export a low-confidence check as a missing citation', () => {
     const markdown = claimToMarkdown(
       {
