@@ -204,6 +204,7 @@ export const COMMAND_PLUGINS = {
   get_mentions_for_document: 'mention',
   get_model_catalog_stats: 'model',
   get_model_download_path: 'model',
+  get_model_limits: 'settings',
   get_model_variants: 'model',
   get_next_daily_note: 'dailynotes',
   get_previous_daily_note: 'dailynotes',

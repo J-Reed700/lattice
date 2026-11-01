@@ -145,7 +145,7 @@ export function RuntimeTuningSection({
 
       <SettingsRow
         label="Max tokens"
-        hint="At most the chat provider's context window, set in Settings → Chat."
+        hint="For downloaded models, and connected models that report no limit. A connected model's own limit is set under Configure in Settings → Downloaded."
         htmlFor="tuning-max-tokens"
       >
         <input

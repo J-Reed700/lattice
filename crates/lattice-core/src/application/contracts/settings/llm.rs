@@ -8,6 +8,8 @@ use crate::domain::models::model_ref::ModelRef;
 use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::{AppError, Result};
 
+use super::model_window::ModelWindowDto;
+
 use super::generation::{
     LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
 };
@@ -75,10 +77,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub thinking_sampling: SamplingProfileDto,
 
-    /// Maximum tokens to generate
+    /// Maximum tokens to generate, for a model nothing more is known about: a
+    /// connected model's own limits come first (`model_windows`).
     pub max_tokens: u32,
 
-    /// Context window size
+    /// The window a connected model runs at until one is chosen for it
+    /// (`model_windows`), held to what its provider reports.
     pub context_window: u32,
 
     /// Context window for the bundled local model, in tokens.
@@ -102,6 +106,11 @@ pub struct LLMSettingsDto {
     /// provider's documented default; any other model without one cannot see.
     #[serde(default)]
     pub vision_declarations: BTreeMap<String, VisionDeclarationDto>,
+
+    /// The window and output ceiling chosen for a connected model, keyed by
+    /// `ModelRef::to_string()`.
+    #[serde(default)]
+    pub model_windows: BTreeMap<String, ModelWindowDto>,
 
     /// Speculative decoding for the bundled local server. Experimental, and
     /// applied only to a model that carries a multi-token-prediction head;
@@ -209,6 +218,25 @@ impl LLMSettingsDto {
     /// The vision declaration saved for `model`, if any.
     pub fn vision_declaration(&self, model: &ModelRef) -> Option<&VisionDeclarationDto> {
         self.vision_declarations.get(&model.to_string())
+    }
+
+    /// The window chosen for `model`; empty when none was.
+    pub fn model_window(&self, model: &ModelRef) -> ModelWindowDto {
+        self.model_windows
+            .get(&model.to_string())
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Problems with the saved model windows, each a sentence for the settings
+    /// check.
+    pub fn model_window_problems(&self) -> Vec<String> {
+        self.model_windows
+            .iter()
+            .filter_map(|(model, window)| {
+                Some(format!("window for {model}: {}", window.problem()?))
+            })
+            .collect()
     }
 
     /// Problems with the saved vision declarations, each a sentence for the
@@ -529,11 +557,12 @@ impl Default for LLMSettingsDto {
             answer_thinking: false,
             thinking_override: ThinkingOverrideDto::Auto,
             thinking_sampling: SamplingProfileDto::thinking(),
-            max_tokens: 131072,
+            max_tokens: 128000,
             context_window: 131072,
             local_context_window: None,
             local_model_configs: BTreeMap::new(),
             vision_declarations: BTreeMap::new(),
+            model_windows: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,

@@ -52,6 +52,10 @@ fn client_changed(key: &ModelKey, before: &LLMSettingsDto, after: &LLMSettingsDt
     if before.vision_declaration(&key.model) != after.vision_declaration(&key.model) {
         return true;
     }
+    // So is the window chosen for the model.
+    if before.model_window(&key.model) != after.model_window(&key.model) {
+        return true;
+    }
     match &key.model {
         // The model's own saved configuration and Settings' server options
         // make up its server; the key carries the launch it was started with.
@@ -68,6 +72,7 @@ fn client_changed(key: &ModelKey, before: &LLMSettingsDto, after: &LLMSettingsDt
             before.ollama_url != after.ollama_url
                 || before.ollama_auth_header_name != after.ollama_auth_header_name
                 || before.ollama_auth_header_value != after.ollama_auth_header_value
+                || before.context_window != after.context_window
         }
         ModelRef::LlamaCpp { .. } => {
             before.llama_cpp.url != after.llama_cpp.url

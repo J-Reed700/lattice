@@ -609,6 +609,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("settings")
         .invoke_handler(tauri::generate_handler![
             crate::interfaces::commands::cloud_models::list_cloud_models,
+            crate::interfaces::commands::cloud_models::get_model_limits,
             set_cloud_api_key,
             get_settings,
             get_settings_category,
