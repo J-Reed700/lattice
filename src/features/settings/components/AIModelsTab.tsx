@@ -91,7 +91,7 @@ function AIModelsTabContent() {
       </div>
       <LearningModelBanner />
       <SettingsSection title="On this computer" actions={<HardDrive className="h-4 w-4 text-text-muted" aria-hidden="true" />}>
-      {localModels.length > 0 ? <LocalContextWindowRow /> : null}
+      {localModels.length > 0 ? <LocalContextWindowRow models={localModels} /> : null}
       {localModels.length > 0 ? (
         <div className="border-b border-border-subtle py-3">
           <SidebarSearch
