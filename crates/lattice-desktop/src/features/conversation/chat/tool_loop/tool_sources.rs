@@ -4,10 +4,12 @@
 
 use super::ToolOutputSettingsDto;
 use crate::features::conversation::chat::dto::SourceDto;
-use crate::features::conversation::chat::retrieval::build_web_source_citations;
+use crate::features::conversation::chat::retrieval::{
+    build_document_part_citation, build_library_source_citations, build_web_source_citations,
+};
 use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::tools::{
-    FunctionResult, WikiSearchOutput, WikiSummaryOutput,
+    FunctionResult, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
@@ -186,6 +188,12 @@ pub(super) fn collect_tool_sources(
     };
 
     match tool_name {
+        "semantic_search" => serde_json::from_value::<SemanticSearchOutput>(data)
+            .map(|output| build_library_source_citations(&output.results, highlight_terms))
+            .unwrap_or_default(),
+        "get_document" => serde_json::from_value::<GetDocumentOutput>(data)
+            .map(|document| build_document_part_citation(&document, highlight_terms))
+            .unwrap_or_default(),
         "web_search" | "find_sources" => {
             if let Ok(output) = serde_json::from_value::<WebSearchOutput>(data) {
                 return build_web_source_citations(
@@ -519,5 +527,115 @@ mod citable_tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].document_id, "web:https://tokio.rs/");
         assert_eq!(sources[0].file_name, "Tokio");
+    }
+
+    fn library_search(chunks: &[&str]) -> FunctionResult {
+        let results: Vec<_> = chunks
+            .iter()
+            .map(|chunk| {
+                serde_json::json!({
+                    "document_id": "doc-1",
+                    "filename": "Agreement.md",
+                    "file_path": "/vault/Agreement.md",
+                    "mime_type": "text/markdown",
+                    "score": 0.5,
+                    "snippet": format!("The text of {chunk}."),
+                    "chunk_index": 2,
+                    "chunk_id": chunk,
+                    "modified_at": "2026-10-30T00:00:00Z",
+                    "size_bytes": 10
+                })
+            })
+            .collect();
+        FunctionResult::success(serde_json::json!({
+            "results": results,
+            "total_found": chunks.len(),
+            "search_time_ms": 1.0,
+            "query": "notice"
+        }))
+    }
+
+    fn collected(tool: &str, result: &FunctionResult) -> Vec<SourceDto> {
+        collect_tool_sources(tool, result, &[], &ToolOutputSettingsDto::default())
+    }
+
+    /// A fact a follow-up search finds is cited as one the turn opened with:
+    /// the passage it already showed keeps its number, and the new one takes
+    /// the next, so no number ever means two things.
+    #[test]
+    fn a_library_search_adds_new_passages_and_keeps_the_numbers_of_known_ones() {
+        use crate::features::conversation::chat::retrieval::{
+            assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, merge_tool_sources,
+        };
+        let mut sources = collected("semantic_search", &library_search(&["known"]));
+        assign_citation_ids(&mut sources);
+        sources[0].citation_id = Some(40);
+
+        let found = collected("semantic_search", &library_search(&["known", "new"]));
+        merge_tool_sources(&mut sources, found);
+        let mut sources = deduplicate_sources(sources);
+        assign_citation_ids(&mut sources);
+
+        let numbers = citation_ids_by_chunk(&sources);
+        assert_eq!(sources.len(), 2);
+        assert_eq!(numbers["known"], 40);
+        assert_eq!(numbers["new"], 41);
+        assert_eq!(sources[1].document_id, "doc-1");
+        assert_eq!(sources[1].content, "The text of new.");
+        assert_eq!(sources[1].category, "Markdown");
+    }
+
+    #[test]
+    fn a_document_part_is_a_source_of_its_own() {
+        let read = |offset: usize| {
+            FunctionResult::success(serde_json::json!({
+                "document_id": "doc-1",
+                "content": "Either party may prevent renewal by giving 70 hours of notice.",
+                "content_truncated": false,
+                "offset": offset,
+                "total_chars": 62,
+                "metadata": {
+                    "filename": "Agreement.md",
+                    "file_path": "/vault/Agreement.md",
+                    "mime_type": "text/markdown",
+                    "extension": "md",
+                    "size_bytes": 62,
+                    "created_at": null,
+                    "modified_at": "2026-10-30T00:00:00Z",
+                    "indexed_at": "2026-10-30T00:00:00Z",
+                    "tags": [],
+                    "chunk_count": 1
+                }
+            }))
+        };
+
+        let first = collected("get_document", &read(0));
+        let second = collected("get_document", &read(6_000));
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].file_name, "Agreement.md");
+        assert!(first[0].content.contains("70 hours"));
+        assert_ne!(first[0].chunk_id, second[0].chunk_id);
+    }
+
+    #[test]
+    fn a_library_result_with_nothing_to_quote_is_no_source() {
+        let result = FunctionResult::success(serde_json::json!({
+            "results": [{
+                "document_id": "doc-1",
+                "filename": "Agreement.md",
+                "file_path": "/vault/Agreement.md",
+                "mime_type": "text/markdown",
+                "score": 0.5,
+                "snippet": "  ",
+                "modified_at": "2026-10-30T00:00:00Z",
+                "size_bytes": 10
+            }],
+            "total_found": 1,
+            "search_time_ms": 1.0,
+            "query": "notice"
+        }));
+
+        assert!(collected("semantic_search", &result).is_empty());
     }
 }

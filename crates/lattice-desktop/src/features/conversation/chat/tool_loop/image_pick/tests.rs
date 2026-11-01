@@ -124,7 +124,7 @@ async fn find_herons(llm: Arc<dyn LLMPort>) -> Called {
         highlight_terms: &[],
         tool_output_settings: &settings,
         focus: &focus,
-        explorer: None,
+        source: None,
         recorder: &recorder,
         history: runtime.chat_records(),
         cancel: &cancel,

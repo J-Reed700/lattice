@@ -512,7 +512,7 @@ impl RoleModels {
                 return Err(self.short_window(role, model, &local.name, floor, window));
             }
         }
-        let generation = want.tuning.generation(settings);
+        let tuning = want.tuning;
         let must_list_model = want.must_list_model;
         let acquired = self
             .instances
@@ -528,7 +528,7 @@ impl RoleModels {
                 || async {
                     let created = self
                         .loader
-                        .load_ref(model, settings, generation)
+                        .load_ref(model, settings, tuning)
                         .await
                         .map_err(|e| refusal::refused(role, Some(model), load_failure(&e), e))?;
                     if must_list_model && !created.llm.is_ready().await? {

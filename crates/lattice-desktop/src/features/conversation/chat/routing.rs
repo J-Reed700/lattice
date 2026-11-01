@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
@@ -69,11 +70,28 @@ impl SearchFlags {
     }
 }
 
+/// What the intent step made of a turn.
+pub(super) struct InferredIntent {
+    pub(super) flags: SearchFlags,
+    /// A follow-up as a question that stands alone, for the search.
+    pub(super) standalone_question: Option<String>,
+}
+
+impl InferredIntent {
+    /// The turn as requested, with nothing inferred.
+    pub(super) fn as_requested(flags: SearchFlags) -> Self {
+        Self {
+            flags,
+            standalone_question: None,
+        }
+    }
+}
+
 /// Ask the utility model what an unflagged turn needs, and fold the answer
 /// into the search flags. Skipped the moment the user said anything explicit —
 /// a toggle, a turn mode, a closed book — because inference exists to fill in
 /// defaults, not to second-guess a decision.
-pub(super) async fn infer_turn_intent_flags(
+pub(super) async fn infer_turn_intent(
     container: &dyn ChatRuntime,
     chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
@@ -81,11 +99,11 @@ pub(super) async fn infer_turn_intent_flags(
     validated_message: &str,
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
-) -> SearchFlags {
+) -> InferredIntent {
     if !should_infer_turn_intent(tool_preferences, search_flags)
         || is_trivial_conversational_message(validated_message)
     {
-        return search_flags;
+        return InferredIntent::as_requested(search_flags);
     }
 
     // Resolved the way the grounding judge below resolves its model: the
@@ -99,7 +117,7 @@ pub(super) async fn infer_turn_intent_flags(
                 error = %e,
                 "Utility LLM load failed — skipping turn-intent classification"
             );
-            return search_flags;
+            return InferredIntent::as_requested(search_flags);
         }
     };
 
@@ -120,7 +138,10 @@ pub(super) async fn infer_turn_intent_flags(
         web_fallback = merged.web_fallback,
         "chat_with_conversation: inferred turn intent"
     );
-    merged
+    InferredIntent {
+        flags: merged,
+        standalone_question: intent.standalone_question,
+    }
 }
 
 /// Inference runs only when every routing control is on its default. Any
@@ -201,14 +222,14 @@ pub(super) async fn resolve_router_decision(
     conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,
-    explorer: bool,
+    source: Option<TurnSourcePolicy>,
     router_settings: &RouterSettingsDto,
     recorder: &TurnRecorder,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
     // In an Explorer turn the question is about the folder on screen, so the
     // router's default "search the library" is not enough to start one.
-    let router_may_search = !explorer;
+    let router_may_search = source.is_none_or(|source| source.routes_to_library);
     // A closed-book turn has nothing to route: the pipeline returns before it
     // reads this, and asking the router model would only spend time. Nor does
     // an Explorer turn the user did not point at the library. A turn with the
@@ -216,7 +237,7 @@ pub(super) async fn resolve_router_decision(
     // so the fallback has a verdict on the vault to go by.
     if search_flags.web_planned()
         || search_flags.closed_book
-        || (explorer && !search_flags.force_kb_search)
+        || (!router_may_search && !search_flags.force_kb_search)
     {
         return Ok((
             RouterDecisionOutcome {

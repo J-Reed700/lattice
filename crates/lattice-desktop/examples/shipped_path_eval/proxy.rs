@@ -115,8 +115,22 @@ impl Recorder {
     }
 }
 
-/// Starts the proxy on a free loopback port and returns its base URL.
-pub async fn start(upstream: String, thinking_off: bool, recorder: Arc<Recorder>) -> Res<String> {
+/// The header a remote llama-server asks for, from `LLAMA_AUTH_HEADER_NAME`
+/// and `LLAMA_AUTH_HEADER_VALUE`. It goes upstream only and is never recorded.
+pub fn server_auth() -> Option<(String, String)> {
+    let name = std::env::var("LLAMA_AUTH_HEADER_NAME").ok()?;
+    let value = std::env::var("LLAMA_AUTH_HEADER_VALUE").ok()?;
+    Some((name, value))
+}
+
+/// Starts the proxy on a free loopback port and returns its base URL. `auth`
+/// is added to every request it forwards.
+pub async fn start(
+    upstream: String,
+    thinking_off: bool,
+    auth: Option<(String, String)>,
+    recorder: Arc<Recorder>,
+) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let client = reqwest::Client::builder().build()?;
@@ -128,11 +142,20 @@ pub async fn start(upstream: String, thinking_off: bool, recorder: Arc<Recorder>
             };
             let client = client.clone();
             let upstream = upstream.clone();
+            let auth = auth.clone();
             let recorder = Arc::clone(&recorder);
             tokio::spawn(async move {
                 recorder.in_flight.fetch_add(1, Ordering::SeqCst);
                 recorder.touch();
-                if let Err(error) = serve(stream, &client, &upstream, thinking_off, &recorder).await
+                if let Err(error) = serve(
+                    stream,
+                    &client,
+                    &upstream,
+                    thinking_off,
+                    auth.as_ref(),
+                    &recorder,
+                )
+                .await
                 {
                     eprintln!("proxy: {error}");
                 }
@@ -214,6 +237,7 @@ async fn serve(
     client: &reqwest::Client,
     upstream: &str,
     thinking_off: bool,
+    auth: Option<&(String, String)>,
     recorder: &Recorder,
 ) -> Res<()> {
     let mut stream = BufReader::new(stream);
@@ -245,6 +269,9 @@ async fn serve(
         if !skip {
             forward = forward.header(name.as_str(), value.as_str());
         }
+    }
+    if let Some((name, value)) = auth {
+        forward = forward.header(name.as_str(), value.as_str());
     }
     let mut record = CallRecord {
         seq: 0,

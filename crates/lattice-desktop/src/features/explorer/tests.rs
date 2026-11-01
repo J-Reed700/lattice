@@ -812,3 +812,17 @@ fn search_in_a_very_long_line_reports_the_true_column() {
     assert_eq!(result.matches[0].line, 1);
     assert_eq!(result.matches[0].column as usize, before.len() + 1);
 }
+
+/// Explaining the folder draws on what no passage holds, so its template does
+/// not ask for a citation on every statement; bracket numbers stay for the
+/// numbered library and web passages.
+#[test]
+fn the_folder_template_cites_only_numbered_passages() {
+    use super::prompt::{FOLDER_POLICY, FOLDER_TEMPLATE};
+    assert_eq!(FOLDER_POLICY.evidence_template, Some(FOLDER_TEMPLATE));
+    assert!(!FOLDER_TEMPLATE.contains("Cite every factual statement"));
+    assert!(!FOLDER_TEMPLATE.contains("using only the provided context"));
+    assert!(FOLDER_TEMPLATE
+        .contains("Bracket numbers like [1] belong only to the numbered library or web passages"));
+    assert!(FOLDER_TEMPLATE.contains("{context}") && FOLDER_TEMPLATE.contains("{question}"));
+}

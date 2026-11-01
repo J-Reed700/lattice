@@ -5,14 +5,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::features::llm::cloud::limits::ReportedLimits;
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::engine::vision::declared_vision;
 use crate::features::llm::engine::GenerationConfig;
-use crate::features::llm::instances::LaunchProfile;
+use crate::features::llm::instances::{LaunchProfile, Tuning};
 use crate::features::llm::scheduler::SchedulerRegistry;
-use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
+use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto, ModelWindowDto};
 use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
@@ -49,6 +50,7 @@ pub(crate) struct LlmRuntime {
     pub(crate) schedulers: Arc<SchedulerRegistry>,
     pub(crate) unloadable: Arc<UnloadableArtifacts>,
     pub(crate) devices: Arc<BackendDevices>,
+    pub(crate) reported_limits: Arc<ReportedLimits>,
 }
 
 impl LlmRuntime {
@@ -195,15 +197,16 @@ impl ModelLoader {
         Ok(Some(LocalModel { name, path }))
     }
 
-    /// Open `model` with `generation`, reaching its server through Settings.
-    /// A downloaded model starts a bundled server launched with
+    /// Open `model` tuned as `tuning` says, reaching its server through
+    /// Settings. A downloaded model starts a bundled server launched with
     /// [`launch_profile_for`], or shares one already running.
     pub(crate) async fn load_ref(
         &self,
         model: &ModelRef,
         settings: &LLMSettingsDto,
-        generation: GenerationConfig,
+        tuning: Tuning,
     ) -> Result<CreatedLlm> {
+        let generation = tuning.generation(settings);
         let remote = |llm| CreatedLlm { llm, server: None };
         match model {
             ModelRef::Local { model_id } => {
@@ -235,7 +238,8 @@ impl ModelLoader {
                 model: name,
             } => {
                 let key = cloud_api_key(*provider)?;
-                let mut connection = with_generation(settings, &generation);
+                let reported = self.runtime.reported_limits.of(*provider, name, &key).await;
+                let mut connection = cloud_connection(settings, model, tuning, &reported);
                 connection.provider = llm_provider(*provider);
                 connection.model = name.clone();
                 Ok(remote(
@@ -350,19 +354,21 @@ impl ModelLoader {
             .then(|| (auth_header_name.to_string(), auth_header_value.to_string()));
 
         tracing::info!(endpoint, model, "Connecting to Ollama");
-        let vision = declared_vision(
-            settings,
-            &ModelRef::Ollama {
-                model: model.to_owned(),
-            },
-        );
+        let model_ref = ModelRef::Ollama {
+            model: model.to_owned(),
+        };
+        let vision = declared_vision(settings, &model_ref);
+        let window = settings
+            .model_window(&model_ref)
+            .context_window
+            .unwrap_or(settings.context_window);
         create_ollama_llm(
             endpoint,
             model,
             auth_header,
             generation_config,
             vision,
-            Some(settings.context_window),
+            Some(window),
             &self.runtime.schedulers,
         )
         .await
@@ -391,6 +397,31 @@ fn with_generation(settings: &LLMSettingsDto, generation: &GenerationConfig) -> 
         temperature: generation.temperature,
         max_tokens: u32::try_from(generation.max_tokens).unwrap_or(u32::MAX),
         ..settings.clone()
+    }
+}
+
+/// `settings` for a client of `model`, at the window and output ceiling it
+/// runs with. A role with an output ceiling of its own keeps it, within what
+/// the model allows.
+fn cloud_connection(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    reported: &ModelWindowDto,
+) -> LLMSettingsDto {
+    let generation = tuning.generation(settings);
+    let chosen = settings.model_window(model);
+    let chosen = ModelWindowDto {
+        max_output_tokens: match tuning {
+            Tuning::Standard => chosen.max_output_tokens,
+            Tuning::Utility | Tuning::Router => u32::try_from(generation.max_tokens).ok(),
+        },
+        ..chosen
+    };
+    LLMSettingsDto {
+        context_window: chosen.context_window_within(reported, settings.context_window),
+        max_tokens: chosen.max_output_within(reported, settings.max_tokens),
+        ..with_generation(settings, &generation)
     }
 }
 

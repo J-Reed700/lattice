@@ -65,6 +65,25 @@ class MechanicalChecks(unittest.TestCase):
         self.assertEqual(checks["forbidden_claims"], ["42 hours"])
         self.assertFalse(checks["passed"])
 
+    def test_a_cited_quote_no_passage_holds_fails(self):
+        passage = [{"content": "Page Marisol Quenby and quote TCK-1836."}]
+        answer = 'It is 14 days: "page Anneke Voskuil and quote TCK-1836." [1]'
+        checks = spe.mechanical(rubric(), turn(answer, evidence=passage))
+        self.assertEqual(checks["invented_quotes"], ["page Anneke Voskuil and quote TCK-1836."])
+        self.assertFalse(checks["passed"])
+
+    def test_a_cited_quote_survives_a_line_break_and_an_elision(self):
+        passage = [{"content": "the central stor-\ne keeps it, and the 14 days run from the date of the notice"}]
+        for answer in ('It is 14 days: "the central store keeps it" [1]',
+                       'It is 14 days: "[t]he central store keeps it ... from the date of the notice" [1]',
+                       'It is 14 days: "and the 14 days [must] run from the date of the notice" [1]'):
+            self.assertEqual(spe.mechanical(rubric(), turn(answer, evidence=passage))["invented_quotes"], [], answer)
+
+    def test_a_quote_is_checked_only_when_it_is_cited_and_a_whole_phrase(self):
+        for answer in ('It is 14 days [1], and "the wait" is the hold.',
+                       'I searched for "ERR-0001 runbook error code owner" and it is 14 days [1].'):
+            self.assertEqual(spe.mechanical(rubric(), turn(answer))["invented_quotes"], [], answer)
+
     def test_invented_citation_number_fails(self):
         checks = spe.mechanical(rubric(), turn("14 days [1][3]."))
         self.assertEqual(checks["invalid_citations"], [3])
@@ -103,6 +122,45 @@ class MechanicalChecks(unittest.TestCase):
         )
         self.assertTrue(spe.abstained(long_decline))
         self.assertTrue(spe.abstained("The records discuss timing, but it cannot be determined."))
+
+    def test_a_caveat_after_the_required_facts_does_not_fail_an_answer(self):
+        answer = (
+            "Fourteen days [1]. Two caveats follow. "
+            "The schedule does not state a separate period for contractors."
+        )
+        self.assertTrue(spe.abstained(answer))
+        self.assertTrue(spe.mechanical(rubric(), turn(answer))["passed"])
+
+    def test_a_caveat_does_not_save_an_answer_missing_its_facts(self):
+        answer = "It varies [1]. The schedule does not state a separate period."
+        self.assertFalse(spe.mechanical(rubric(), turn(answer))["passed"])
+
+    def test_a_refusal_about_the_question_counts_wherever_the_answer_says_it(self):
+        silent = rubric(must_mention=[], expected_citations=[], abstain=True)
+        for question, answer in (
+            ("What does the Marbleau undertaking oblige?",
+             "I searched the library. No passage in the documents mentions the Marbleau undertaking."),
+            ("How much did the boiler repair cost?",
+             "The cost of the boiler repair is not stated in the excerpts searched."),
+            ("Which runbook covers ERR-0001?",
+             "The provided excerpts do not contain any runbook covering ERR-0001."),
+            ("What was the unit price on order PO-00001?",
+             "I searched both, but there is no purchase order numbered PO-00001."),
+            ("What's her mobile number?",
+             "I found no phone number for her in the passages."),
+            ("What's her mobile number?",
+             "The pager goes to the bench [1]. No mobile number for her appears in the passages."),
+        ):
+            declined = turn(answer)
+            declined["question"] = question
+            self.assertTrue(spe.mechanical(silent, declined)["passed"], answer)
+
+    def test_a_guess_with_an_aside_about_something_else_is_no_refusal(self):
+        silent = rubric(must_mention=[], expected_citations=[], abstain=True)
+        guess = turn("Her mobile is 555-0100. The schedule is not stated. Call after nine.")
+        guess["question"] = "What's her mobile number?"
+        self.assertTrue(spe.says_unavailable(guess["answer"]))
+        self.assertFalse(spe.mechanical(silent, guess)["passed"])
 
     def test_a_failed_turn_never_passes(self):
         failed = turn("14 days [1].")

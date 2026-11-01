@@ -24,21 +24,18 @@ pub trait ModelManagerTrait: Send + Sync {
     /// Get path to embedding model tokenizer file
     fn get_tokenizer_path(&self) -> std::path::PathBuf;
 
-    /// Ensure reranker model is available (download if needed)
+    /// Ensure the reranker GGUF is downloaded and verified (download if needed)
     ///
     /// # Errors
     /// - `AppError::Network` if download fails
     /// - `AppError::Other` if disk operations fail
     async fn ensure_reranker_available(&self) -> Result<std::path::PathBuf, AppError>;
 
-    /// Check if reranker model is ready to use
+    /// Check if the reranker GGUF is on disk at its full size
     async fn is_reranker_ready(&self) -> bool;
 
-    /// Get path to reranker model file
+    /// Get path to the reranker GGUF
     fn get_reranker_path(&self) -> std::path::PathBuf;
-
-    /// Get path to reranker tokenizer file
-    fn get_reranker_tokenizer_path(&self) -> std::path::PathBuf;
 
     /// Cancel ongoing download
     ///

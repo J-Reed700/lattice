@@ -60,9 +60,52 @@ impl BackendDevice {
         ) && self.vendor().is_accelerated()
     }
 
+    /// Whether this GPU runs from the system's RAM, told by its name since
+    /// `--list-devices` gives no type.
+    fn is_integrated(&self) -> bool {
+        let name = self.name.to_ascii_lowercase();
+        let named = |models: &[&str]| models.iter().any(|model| name.contains(model));
+        match self.vendor() {
+            GPUVendor::Intel => !named(&[
+                "arc(tm) a",
+                "arc a",
+                "arc(tm) b5",
+                "arc b5",
+                "arc(tm) pro",
+                "arc pro",
+            ]),
+            GPUVendor::AMD => !named(&[" rx ", "(tm) rx", "radeon pro", "firepro"]),
+            _ => false,
+        }
+    }
+
     pub fn total_gb(&self) -> f64 {
         self.total_mib as f64 / 1024.0
     }
+}
+
+/// The device a server's layers land on, the largest when there are several.
+/// llama.cpp leaves an integrated GPU out while a dedicated one is listed, and
+/// the memory an integrated GPU lists is the machine's RAM, so listing the
+/// most does not make it the one.
+pub fn offload_device(devices: &[BackendDevice]) -> Option<&BackendDevice> {
+    let accelerators = || devices.iter().filter(|device| device.is_accelerator());
+    accelerators()
+        .filter(|device| !device.is_integrated())
+        .max_by_key(|device| device.total_mib)
+        .or_else(|| accelerators().max_by_key(|device| device.total_mib))
+}
+
+/// A GPU for a small server when the offload device has no room for it: the
+/// integrated one beside a dedicated card, which draws on the system's RAM and
+/// leaves the card to its models.
+pub fn spare_device(devices: &[BackendDevice]) -> Option<&BackendDevice> {
+    let offload = offload_device(devices)?;
+    devices
+        .iter()
+        .filter(|device| device.is_accelerator() && device.is_integrated())
+        .filter(|device| device.id != offload.id)
+        .max_by_key(|device| device.total_mib)
 }
 
 /// Parse the `Available devices:` block of `llama-server --list-devices`.
@@ -176,11 +219,7 @@ impl BackendDevices {
 /// sidecar listed, or `None` before anything has probed.
 impl AcceleratorProbe for BackendDevices {
     fn probed_gpu(&self) -> Option<GpuInfo> {
-        let device = self
-            .cached()?
-            .iter()
-            .filter(|device| device.is_accelerator())
-            .max_by_key(|device| device.total_mib)?;
+        let device = offload_device(self.cached()?)?;
 
         Some(GpuInfo {
             name: device.name.clone(),
@@ -259,6 +298,88 @@ Available devices:
 Available devices:
   CPU: AMD Ryzen 9 7950X (0 MiB, 0 MiB free)
 ";
+
+    /// Captured from a laptop whose servers all run on the 8 GB card.
+    const HYBRID_LAPTOP: &str = "\
+Available devices:
+  Vulkan0: Intel(R) Iris(R) Xe Graphics (32581 MiB, 32581 MiB free)
+  Vulkan1: NVIDIA GeForce RTX 4070 Laptop GPU (7948 MiB, 7180 MiB free)
+";
+
+    fn device(name: &str, total_mib: u64) -> BackendDevice {
+        BackendDevice {
+            id: "Vulkan0".into(),
+            name: name.into(),
+            total_mib,
+            free_mib: total_mib,
+        }
+    }
+
+    #[test]
+    fn a_dedicated_card_is_the_offload_device_beside_a_larger_integrated_gpu() {
+        let devices = parse_list_devices(HYBRID_LAPTOP);
+        let device = offload_device(&devices).unwrap();
+        assert_eq!(device.id, "Vulkan1");
+        assert_eq!(device.free_mib, 7180);
+    }
+
+    #[test]
+    fn an_integrated_gpu_on_its_own_is_the_offload_device() {
+        let devices = [device("Intel(R) UHD Graphics 770", 16000)];
+        assert_eq!(offload_device(&devices), devices.first());
+    }
+
+    #[test]
+    fn the_largest_dedicated_card_is_the_offload_device() {
+        let devices = parse_list_devices(CUDA);
+        assert_eq!(offload_device(&devices).unwrap().id, "CUDA1");
+    }
+
+    #[test]
+    fn no_accelerator_means_no_offload_device() {
+        assert_eq!(offload_device(&parse_list_devices(CPU_ONLY)), None);
+    }
+
+    #[test]
+    fn the_integrated_gpu_is_spare_beside_a_dedicated_card() {
+        let devices = parse_list_devices(HYBRID_LAPTOP);
+
+        let spare = spare_device(&devices).expect("the Iris Xe beside the RTX");
+        assert_eq!(spare.id, "Vulkan0");
+    }
+
+    #[test]
+    fn nothing_is_spare_without_both_kinds_of_gpu() {
+        assert!(spare_device(&[device("Intel(R) Iris(R) Xe Graphics", 32_581)]).is_none());
+        assert!(spare_device(&[device("NVIDIA GeForce RTX 4070", 7_948)]).is_none());
+        assert!(spare_device(&parse_list_devices(CPU_ONLY)).is_none());
+    }
+
+    #[test]
+    fn a_gpu_name_tells_integrated_from_dedicated() {
+        for name in [
+            "Intel(R) Iris(R) Xe Graphics",
+            "Intel(R) UHD Graphics 630",
+            "Intel(R) Arc(TM) Graphics",
+            "Intel(R) Arc(TM) 140V GPU",
+            "AMD Radeon(TM) Graphics",
+            "AMD Radeon 780M Graphics",
+            "AMD Radeon Vega 8 Graphics",
+        ] {
+            assert!(device(name, 16000).is_integrated(), "{name}");
+        }
+        for name in [
+            "NVIDIA GeForce RTX 4070 Laptop GPU",
+            "Intel(R) Arc(TM) A770 Graphics",
+            "Intel(R) Arc(TM) B580 Graphics",
+            "Intel(R) Arc(TM) Pro A60 Graphics",
+            "AMD Radeon RX 7900 XTX",
+            "AMD Radeon(TM) RX 6600M",
+            "AMD Radeon PRO W7900",
+        ] {
+            assert!(!device(name, 16000).is_integrated(), "{name}");
+        }
+    }
 
     #[test]
     fn metal_device_is_read_with_its_memory() {

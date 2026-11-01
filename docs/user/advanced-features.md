@@ -93,6 +93,8 @@ Each row on that page shows the roles it holds. To change them, open the row's *
 | **Ollama** | An Ollama server, by URL, with an optional auth header or basic auth. |
 | **OpenAI**, **Anthropic** | The provider's API, with your API key (stored in your system keychain). Your prompts and the retrieved passages are sent to the provider. |
 
+**Context window**, under the provider, is the window of every model Lattice doesn't load itself, whatever it does: a cloud or Ollama model that chats, prepares lessons or works in the background keeps its prompt and answer within it, and Ollama loads its model with it (or with less, if the model was trained for less). A `llama-server` reports the window it was started with, and Lattice uses that instead. Downloaded models don't use it: each loads with its own maximum, unless you set **Default context window** on **Settings > AI > Downloaded** or a window in that model's **Configure model** menu. Leave the default on **Model's max** unless the model doesn't fit: a window too large for your graphics memory fails to load.
+
 **The built-in engine** is a llama.cpp `llama-server` that ships inside Lattice and runs GGUF models on your computer. It's reachable only from your computer. It uses Metal on Apple Silicon. On Windows and Linux it uses Vulkan, and falls back to a CPU build if the GPU build can't run. If neither can run, Lattice says why, and what to do, in its error message.
 
 **Getting models:**
@@ -119,7 +121,6 @@ Each row on that page shows the roles it holds. To change them, open the row's *
 
 - **Model runtime:**
   - temperature, top K, top P, repeat penalty, max tokens and streaming
-  - **Context window**, and **Local model context window** for the built-in engine. Leave the local window on automatic: it's sized from what the model was trained for and how much GPU memory you have. A window that's too large for the card pushes the model onto the CPU.
   - **Stall timeout**: how long a reply may go silent before Lattice treats it as dead. It doesn't limit total answer time.
 - **Router:** whether to route follow-up questions, which model routes them, the ambiguity threshold, and the prompts used.
 - **Tool output:** how many results tools return and how much text they include.

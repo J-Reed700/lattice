@@ -605,6 +605,70 @@ async fn version_one_sampling_defaults_migrate_to_the_card_profile() {
     assert_eq!(rewritten.settings.llm.top_k, 20);
 }
 
+/// Reranking is no longer a setting. A file saved with the old switch, on or
+/// off, still loads as it is rather than being set aside as corrupt.
+#[tokio::test]
+async fn a_settings_file_with_the_old_reranking_switch_still_loads() {
+    for switch in [true, false] {
+        let temp_dir = TempDir::new().unwrap();
+        let mut settings = SettingsDto::default();
+        settings.search.max_results = 42;
+        let mut stored = serde_json::to_value(SettingsFile {
+            version: SETTINGS_VERSION,
+            settings,
+        })
+        .unwrap();
+        stored["settings"]["search"]["enableReranking"] = serde_json::json!(switch);
+        fs::write(
+            temp_dir.path().join(SETTINGS_FILE_NAME),
+            serde_json::to_string(&stored).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        assert_eq!(repo.get_all().await.unwrap().search.max_results, 42);
+        let mut entries = fs::read_dir(temp_dir.path()).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            assert!(!name.contains("corrupt"), "set aside as {name}");
+        }
+    }
+}
+
+/// A version-2 document still judging the old 48 reranking candidates moves
+/// to the default pool; a count someone chose stays.
+#[tokio::test]
+async fn version_two_rerank_candidates_default_migrates_to_the_pool() {
+    for (stored, expected) in [(48, 64), (12, 12)] {
+        let temp_dir = TempDir::new().unwrap();
+        let mut settings = SettingsDto::default();
+        settings.search.retrieval_tuning.rerank_max_candidates = stored;
+        let file = SettingsFile {
+            version: 2,
+            settings,
+        };
+        fs::write(
+            temp_dir.path().join(SETTINGS_FILE_NAME),
+            serde_json::to_string(&file).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let migrated = repo.get_all().await.unwrap();
+        assert_eq!(
+            migrated.search.retrieval_tuning.rerank_max_candidates,
+            expected
+        );
+    }
+}
+
 /// The dims are remembered while the mode is `none`, so validation only
 /// reads them when truncation is actually on. Rejecting a remembered value
 /// nothing consumes would make the whole settings document unsaveable.

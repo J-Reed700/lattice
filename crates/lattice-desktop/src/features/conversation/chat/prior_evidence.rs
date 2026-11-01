@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::features::conversation::chat::ports::ChatStorage;
+use crate::features::conversation::chat::verification::cited_labels;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
@@ -203,10 +204,14 @@ fn rank_sources(
         else {
             continue;
         };
+        let cited = cited_labels(&message.content);
         for value in sources {
             let Ok(mut source) = serde_json::from_value::<SourceDto>(value.clone()) else {
                 continue;
             };
+            if !source.citation_id.is_some_and(|id| cited.contains(&id)) {
+                continue;
+            }
             if !source.document_id.starts_with(WEB_SOURCE_PREFIX)
                 && !allowed_documents.contains(&source.document_id)
             {
@@ -400,6 +405,25 @@ mod tests {
         let recalled = rank_sources(&messages, &terms, &allowed, &[web]);
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].document_id, "private-doc");
+    }
+
+    #[test]
+    fn a_passage_an_answer_read_but_did_not_cite_is_not_recalled() {
+        let read = SourceDto {
+            citation_id: Some(2),
+            ..source("web:https://example.com/read", "Blueberry evidence read")
+        };
+        let cited = source("web:https://example.com/cited", "Blueberry evidence cited");
+        let mut answer = message(cited.clone());
+        answer.metadata = Some(serde_json::json!({"sources": [cited, read]}).to_string());
+        let recalled = rank_sources(
+            &[answer],
+            &query_terms("blueberry evidence"),
+            &HashSet::new(),
+            &[],
+        );
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].content, "Blueberry evidence cited");
     }
 
     #[test]

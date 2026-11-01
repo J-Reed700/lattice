@@ -54,7 +54,7 @@ def cut_reading(ctx, cut):
         group = dropped[i:i + GROUP_SIZE]
         block = "\n\n".join(every[l] for l in group)
         messages = grouped.with_message(read_req, f"{message}\n\n{CUT_GROUP.format(passages=block)}")
-        stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
+        stop = [f"\n[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = grouped.ask(read_req, "cut", reserved, stop=stop, messages=messages)
         reqs.append(base.req_record(group, r, reserved))
         got = grouped.parse_into(lines, r, set(group))

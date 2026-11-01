@@ -111,7 +111,7 @@ async fn a_downloaded_model_is_found_by_id_and_a_missing_file_says_where_it_was(
             .load_ref(
                 &ModelRef::Local { model_id: "never-downloaded".into() },
                 &LLMSettingsDto::default(),
-                GenerationConfig::default(),
+                Tuning::Standard,
             )
             .await,
         Err(AppError::AiModelsNotInstalled(message)) if message.starts_with("never-downloaded is not downloaded")
@@ -322,7 +322,7 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
                     model: "test-model".into(),
                 },
                 &settings,
-                GenerationConfig::from_settings(&settings),
+                Tuning::Standard,
             )
             .await
             .unwrap()
@@ -370,7 +370,7 @@ async fn an_ollama_model_is_the_one_picked_not_the_settings_model() {
                 model: "qwen3:8b".into(),
             },
             &settings,
-            GenerationConfig::from_settings(&settings),
+            Tuning::Standard,
         )
         .await
         .unwrap()
@@ -394,7 +394,7 @@ async fn missing_ollama_configuration_fails_before_network_access() {
                     model: "qwen3:8b".into()
                 },
                 &settings,
-                GenerationConfig::from_settings(&settings),
+                Tuning::Standard,
             )
             .await,
         Err(AppError::InvalidConfig(_))
@@ -434,11 +434,7 @@ async fn an_ollama_that_refuses_connections_is_an_outage_a_job_waits_out() {
 
     for _ in 0..2 {
         let error = loader
-            .load_ref(
-                &model,
-                &settings,
-                GenerationConfig::from_settings(&settings),
-            )
+            .load_ref(&model, &settings, Tuning::Standard)
             .await
             .err();
         let Some(error @ AppError::Network(_)) = error else {
@@ -453,4 +449,73 @@ async fn an_ollama_that_refuses_connections_is_an_outage_a_job_waits_out() {
             "{error}"
         );
     }
+}
+
+fn claude() -> ModelRef {
+    ModelRef::Cloud {
+        provider: CloudProvider::Anthropic,
+        model: "claude-haiku-5-5".into(),
+    }
+}
+
+const CLAUDE_REPORTS: ModelWindowDto = ModelWindowDto {
+    context_window: Some(1_000_000),
+    max_output_tokens: Some(128_000),
+};
+
+/// A saved `max_tokens` of 131,072 is past what Claude accepts, and a role that
+/// picks a model never set it: the provider's ceiling decides. The window
+/// stays at the default until someone chooses a larger one.
+#[test]
+fn a_cloud_model_keeps_the_default_window_under_its_providers_ceiling() {
+    let settings = LLMSettingsDto {
+        max_tokens: 131_072,
+        ..Default::default()
+    };
+    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    assert_eq!(connection.context_window, settings.context_window);
+    assert_eq!(connection.max_tokens, 128_000);
+}
+
+#[test]
+fn a_cloud_model_runs_at_what_was_chosen_for_it() {
+    let mut settings = LLMSettingsDto::default();
+    settings.model_windows.insert(
+        claude().to_string(),
+        ModelWindowDto {
+            context_window: Some(64_000),
+            max_output_tokens: Some(4_096),
+        },
+    );
+    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    assert_eq!(connection.context_window, 64_000);
+    assert_eq!(connection.max_tokens, 4_096);
+}
+
+#[test]
+fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
+    let settings = LLMSettingsDto {
+        context_window: 90_000,
+        max_tokens: 8_192,
+        ..Default::default()
+    };
+    let unreported = ModelWindowDto::default();
+    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
+    assert_eq!(connection.context_window, 90_000);
+    assert_eq!(connection.max_tokens, 8_192);
+}
+
+/// A role's ceiling is its own, and is not raised by the model's.
+#[test]
+fn the_utility_role_keeps_its_own_output_ceiling() {
+    let mut settings = LLMSettingsDto::default();
+    settings.model_windows.insert(
+        claude().to_string(),
+        ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(64_000),
+        },
+    );
+    let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    assert_eq!(connection.max_tokens, 8_192);
 }

@@ -22,11 +22,12 @@ use crate::features::conversation::chat::fetch_memory::{self, Delivery, FetchMem
 use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::history_tools::{self, HistoryToolMemo};
 use crate::features::conversation::chat::ports::{
-    ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput,
+    ChatRecords, ChatRuntime, FetchUrlContentOutput, TurnSource,
 };
 use crate::features::conversation::chat::retrieval::{
-    assign_citation_ids, deduplicate_sources, document_page_room, fetched_page_text_room,
-    format_tool_result, merge_tool_sources, record_tool_document_references,
+    assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, document_page_room,
+    fetched_page_text_room, format_tool_result, merge_tool_sources,
+    record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -34,7 +35,6 @@ use crate::features::conversation::chat::{
 };
 use crate::features::conversation::ConversationServiceTrait;
 use futures::{FutureExt, StreamExt};
-use lattice_core::application::contracts::tools::explorer::is_explorer_tool;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
@@ -53,6 +53,13 @@ use tracing::{info, warn};
 /// site's queue.
 pub(super) const MAX_CONCURRENT_CALLS: usize = 4;
 
+/// Whether `tool` may run alongside the other calls of its round: a built-in
+/// that only reads, or one of the turn source's tools that only reads.
+fn runs_alongside(tool: &str, source: Option<&TurnSource>) -> bool {
+    runs_alongside_others(tool)
+        || source.is_some_and(|source| source.owns_tool(tool) && source.reads_only(tool))
+}
+
 /// Whether a tool only reads, so it may run alongside the other calls of its
 /// round. Named one by one so a new tool runs alone until decided otherwise.
 /// History tools share one per-turn memo, a custom query tool could do
@@ -70,7 +77,7 @@ pub(super) fn runs_alongside_others(tool: &str) -> bool {
             | "get_document"
             | "list_documents"
             | "list_attachments"
-    ) || is_explorer_tool(tool)
+    )
 }
 
 /// The page a call reads, when the call is a `fetch_url_content`. `follow_links`
@@ -94,8 +101,9 @@ pub(super) struct CallScope<'a> {
     pub(super) highlight_terms: &'a [String],
     pub(super) tool_output_settings: &'a ToolOutputSettingsDto,
     pub(super) focus: &'a FocusScope,
-    /// The folder of an Explorer conversation; its tools are only offered then.
-    pub(super) explorer: Option<&'a ExplorerTurn>,
+    /// The source the conversation reads beside the chat; its tools are only
+    /// offered then.
+    pub(super) source: Option<&'a TurnSource>,
     pub(super) recorder: &'a TurnRecorder,
     /// Reading this conversation's own transcript is not a vault read, so it
     /// does not go through the space/focus scope path.
@@ -188,16 +196,16 @@ pub(super) async fn run_tool_bounded<T>(
 /// Where the batch of calls that starts at `start` ends. A call that may not run
 /// alongside others is a batch of its own; a second read of the same page waits
 /// for the first, so memory answers it as it would one call at a time.
-fn batch_end(calls: &[RequestedCall], start: usize) -> usize {
+fn batch_end(calls: &[RequestedCall], start: usize, source: Option<&TurnSource>) -> usize {
     match calls.get(start) {
-        Some(first) if runs_alongside_others(canonical_tool_name(&first.name)) => {}
+        Some(first) if runs_alongside(canonical_tool_name(&first.name), source) => {}
         _ => return start + 1,
     }
     let mut pages = HashSet::new();
     let mut end = start;
     while let Some(call) = calls.get(end) {
         let tool = canonical_tool_name(&call.name);
-        if !runs_alongside_others(tool) {
+        if !runs_alongside(tool, source) {
             break;
         }
         if let Some(url) = page_read_target(tool, &call.arguments) {
@@ -246,7 +254,7 @@ impl<'a> ToolCalls<'a> {
         let started = Instant::now();
         let mut start = 0;
         while start < calls.len() {
-            let end = batch_end(calls, start);
+            let end = batch_end(calls, start, self.scope.source);
             let planned = self.prepare(calls, start..end, input, timings)?;
             let outcomes = self.execute(&planned).await?;
             for (plan, outcome) in planned.into_iter().zip(outcomes) {
@@ -419,7 +427,13 @@ impl<'a> ToolCalls<'a> {
         }
         let step = self.scope.recorder.begin_guarded_with_links(
             tool_step_kind(tool),
-            tool_activity_label(tool, &call.arguments),
+            self.scope
+                .source
+                .filter(|source| source.owns_tool(tool))
+                .map_or_else(
+                    || tool_activity_label(tool, &call.arguments),
+                    |source| source.activity_label(tool, &call.arguments),
+                ),
             web_steps::tool_detail(tool, &call.arguments)
                 .or_else(|| Some(tool_argument_summary(&call.arguments))),
             web_steps::links_for_call(tool, &call.arguments),
@@ -501,11 +515,10 @@ impl<'a> ToolCalls<'a> {
             tool,
             pending.arguments.clone(),
         );
-        let explorer_turn = scope.explorer.filter(|_| is_explorer_tool(tool));
-        if let Some(turn) = explorer_turn {
+        if let Some(source) = scope.source.filter(|source| source.owns_tool(tool)) {
             // Cut to the same allowance as every other result, at a line
             // boundary, with a note saying where to read on.
-            return turn.execute_tool(call, pending.allowance).await;
+            return source.execute_tool(call, pending.allowance).await;
         }
         if history_tools::is_history_tool(tool) {
             let budget = history_tools::HistoryToolBudget {
@@ -658,15 +671,29 @@ impl<'a> ToolCalls<'a> {
         // same allowance as the result, so the two together fit it.
         // A picture's source page is numbered for its caption, which the app
         // cites; the model is told not to cite the picture line, so the
-        // number is not offered to it.
+        // number is not offered to it. A library search shows each result
+        // under its number already.
         let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
-            .filter(|_| tool != FIND_IMAGE)
+            .filter(|_| tool != FIND_IMAGE && tool != "semantic_search")
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
+        let source_text = self
+            .scope
+            .source
+            .is_some_and(|source| source.owns_tool(tool));
+        let citations = citation_ids_by_chunk(sources);
         let result_text = render_with_citations(&citable, allowance, |room| {
-            format_tool_result(tool, &result, settings, room, page_offset)
+            format_tool_result(
+                tool,
+                &result,
+                settings,
+                room,
+                page_offset,
+                source_text,
+                &citations,
+            )
         });
         let result_text = self
             .document_evidence

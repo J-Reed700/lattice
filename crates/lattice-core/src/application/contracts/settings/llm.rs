@@ -8,6 +8,8 @@ use crate::domain::models::model_ref::ModelRef;
 use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::{AppError, Result};
 
+use super::model_window::ModelWindowDto;
+
 use super::generation::{
     LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
 };
@@ -75,10 +77,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub thinking_sampling: SamplingProfileDto,
 
-    /// Maximum tokens to generate
+    /// Maximum tokens to generate, for a model nothing more is known about: a
+    /// connected model's own limits come first (`model_windows`).
     pub max_tokens: u32,
 
-    /// Context window size
+    /// The window a connected model runs at until one is chosen for it
+    /// (`model_windows`), held to what its provider reports.
     pub context_window: u32,
 
     /// Context window for the bundled local model, in tokens.
@@ -102,6 +106,11 @@ pub struct LLMSettingsDto {
     /// provider's documented default; any other model without one cannot see.
     #[serde(default)]
     pub vision_declarations: BTreeMap<String, VisionDeclarationDto>,
+
+    /// The window and output ceiling chosen for a connected model, keyed by
+    /// `ModelRef::to_string()`.
+    #[serde(default)]
+    pub model_windows: BTreeMap<String, ModelWindowDto>,
 
     /// Speculative decoding for the bundled local server. Experimental, and
     /// applied only to a model that carries a multi-token-prediction head;
@@ -209,6 +218,25 @@ impl LLMSettingsDto {
     /// The vision declaration saved for `model`, if any.
     pub fn vision_declaration(&self, model: &ModelRef) -> Option<&VisionDeclarationDto> {
         self.vision_declarations.get(&model.to_string())
+    }
+
+    /// The window chosen for `model`; empty when none was.
+    pub fn model_window(&self, model: &ModelRef) -> ModelWindowDto {
+        self.model_windows
+            .get(&model.to_string())
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Problems with the saved model windows, each a sentence for the settings
+    /// check.
+    pub fn model_window_problems(&self) -> Vec<String> {
+        self.model_windows
+            .iter()
+            .filter_map(|(model, window)| {
+                Some(format!("window for {model}: {}", window.problem()?))
+            })
+            .collect()
     }
 
     /// Problems with the saved vision declarations, each a sentence for the
@@ -529,11 +557,12 @@ impl Default for LLMSettingsDto {
             answer_thinking: false,
             thinking_override: ThinkingOverrideDto::Auto,
             thinking_sampling: SamplingProfileDto::thinking(),
-            max_tokens: 131072,
+            max_tokens: 128000,
             context_window: 131072,
             local_context_window: None,
             local_model_configs: BTreeMap::new(),
             vision_declarations: BTreeMap::new(),
+            model_windows: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,
@@ -557,12 +586,17 @@ impl Default for LLMSettingsDto {
     }
 }
 
+/// The answer template a turn with passages renders in, unless the user set
+/// their own: search before concluding evidence is missing, then say it was
+/// not found in what was searched.
+pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
 impl Default for LLMPromptSettingsDto {
     fn default() -> Self {
         Self {
             system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
-            rag_prompt_template: "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:".to_string(),
+            rag_prompt_template: DEFAULT_RAG_PROMPT_TEMPLATE.to_string(),
             no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
         }
     }

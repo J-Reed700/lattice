@@ -10,11 +10,15 @@ pub(super) async fn classify_turn(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     tool_preferences: Option<&ToolPreferences>,
-) -> SearchFlags {
-    if turn.explorer.is_some() {
-        return turn.requested_flags;
+) -> InferredIntent {
+    if turn
+        .source
+        .as_ref()
+        .is_some_and(|source| !source.policy().infers_intent)
+    {
+        return InferredIntent::as_requested(turn.requested_flags);
     }
-    infer_turn_intent_flags(
+    infer_turn_intent(
         container,
         &turn.llm,
         tool_preferences,
@@ -44,7 +48,7 @@ pub(super) async fn route_turn(
         &turn.document_context,
         &turn.message,
         flags,
-        turn.explorer.is_some(),
+        turn.source.as_ref().map(|source| source.policy()),
         &turn.settings.llm.router,
         &turn.recorder,
         turn.cancel_token(),

@@ -440,17 +440,18 @@ Open Settings with **⌘,**. The buttons at the bottom of the tab list
 ### AI
 
 - **Chat**: the chat provider (**Auto**, **Local only**, **Ollama**,
-  **llama.cpp**, **OpenAI** or **Anthropic**), connection details and API keys,
+  **llama.cpp**, **OpenAI** or **Anthropic**) and its context window, connection details and API keys,
   the active chat, embedding and utility models, and conversation memory.
 - **Models**: the model catalog, which shows how well each model fits your
   computer and downloads it; external folders where you keep your own GGUF
   models; and a Hugging Face token for gated downloads.
 - **Downloaded**: installed models and your llama.cpp, Ollama and cloud
   connections. Each row's **Configure model** menu assigns its roles (Chat,
-  Utility, Embedding, Learning, Verifier); from the row you can also delete a
-  downloaded model.
+  Utility, Embedding, Learning, Verifier) and a downloaded model's context
+  window; from the row you can also delete a downloaded model. **Default
+  context window** sets the window for every downloaded model that has none.
 - **Prompts**: prompt templates and answer verification.
-- **Tuning**: context window, maximum tokens, stall timeout, repeat penalty,
+- **Tuning**: sampling, maximum tokens, stall timeout, repeat penalty,
   follow-up routing and related options.
 - **Tools**: the built-in tools a chat can use, plus your own search tools that
   call an HTTP endpoint.

@@ -213,11 +213,19 @@ impl Container {
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
-        // The embedding server is the one server outside the pool of LLMs
-        // that their admission may stop while it is idle.
-        let current_embedding =
-            Arc::new(super::modules::embedding::CurrentEmbeddingServer::default());
-        let llm_instances = Arc::new(LlmInstances::new().with_evictable(current_embedding.clone()));
+        // The embedding and reranking servers are the servers outside the pool
+        // of LLMs that their admission may stop while they are idle.
+        let current_embedding = Arc::new(super::modules::current_server::CurrentServer::new(
+            "embedding server",
+        ));
+        let current_reranker = Arc::new(super::modules::current_server::CurrentServer::new(
+            "reranking server",
+        ));
+        let llm_instances = Arc::new(
+            LlmInstances::new()
+                .with_evictable(current_embedding.clone())
+                .with_evictable(current_reranker.clone()),
+        );
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // State more than one feature reaches. Each is built once, here, and
@@ -233,6 +241,14 @@ impl Container {
         // the embedding server.
         let embedding_servers =
             Arc::new(crate::features::embedding::activity::StartedServers::default());
+        let rerank_starter: Arc<
+            dyn crate::features::search::engine::llama_reranker::RerankServerStarter,
+        > = Arc::new(super::modules::reranking::SidecarRerankStarter::new(
+            app_handle.clone(),
+            llm_instances.clone(),
+            llm_runtime.clone(),
+            current_reranker,
+        ));
         let embedding_starter: Arc<
             dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
         > = Arc::new(crate::features::embedding::activity::WatchedStarter::new(
@@ -277,6 +293,7 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 embedding_starter.clone(),
+                rerank_starter,
             )
             .await?,
         );
@@ -466,7 +483,7 @@ impl Container {
 
     /// Serve embeddings through `starter` instead of the bundled sidecar.
     /// Tools that build a container without the app (the shipped-path eval)
-    /// pass a [`StandaloneEmbeddingStarter`](super::modules::embedding::standalone::StandaloneEmbeddingStarter).
+    /// pass a [`StandaloneServers`](super::modules::standalone::StandaloneServers).
     /// After construction the container is the starter's only holder, so
     /// every load and activation from here on uses this one.
     pub fn with_embedding_starter(
@@ -478,6 +495,17 @@ impl Container {
                 starter,
                 Arc::clone(&self.embedding_servers),
             ));
+        self
+    }
+
+    /// Serve the reranker in `gguf` through `starter` instead of the bundled
+    /// sidecar, as the evals that build a container without the app do.
+    pub async fn with_reranker(
+        self,
+        gguf: impl Into<PathBuf>,
+        starter: Arc<dyn crate::features::search::engine::llama_reranker::RerankServerStarter>,
+    ) -> Self {
+        self.search.reranker().serve_from(gguf, starter).await;
         self
     }
 

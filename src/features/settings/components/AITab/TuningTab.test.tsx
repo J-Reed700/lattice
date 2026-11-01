@@ -40,7 +40,6 @@ const settings = () => ({
   presencePenalty: 1.5,
   maxTokens: 4096,
   contextWindow: 32768,
-  localContextWindow: null,
   timeoutSeconds: 30,
   streamResponses: true,
   router,
@@ -110,10 +109,6 @@ describe('TuningTab', () => {
       fireEvent.change(maxTokens, { target: { value: '99999' } });
       fireEvent.blur(maxTokens);
       expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ maxTokens: 32768 });
-      edit('Context window', '8192');
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ contextWindow: 8192, maxTokens: 8192 });
-      edit('Context window', '100');
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ contextWindow: 512, maxTokens: 100 });
     });
 
     it('switches streaming', () => {

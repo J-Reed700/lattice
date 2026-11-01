@@ -1863,7 +1863,7 @@ async batchSearch(queries: string[], limit: number | null, searchMode: string | 
 }
 },
 /**
- * Report whether reranking is switched on and whether its model is present.
+ * Report whether the reranker's model is present, and so whether search reranks.
  */
 async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -1874,7 +1874,7 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
 }
 },
 /**
- * Download the reranker artifacts. Does not switch reranking on.
+ * Download the reranker's model, after which search reranks.
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -3563,6 +3563,18 @@ async deleteMention(mentionId: string) : Promise<Result<null, ApiError>> {
 async listCloudModels(provider: CloudProvider) : Promise<Result<CloudModelCatalogDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|list_cloud_models", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What `model`'s provider reports it can take: the top of its window and
+ * output settings. Empty for a limit its provider does not state.
+ */
+async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_model_limits", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6674,11 +6686,13 @@ thinkingOverride: ThinkingOverrideDto;
  */
 thinkingSampling: SamplingProfileDto;
 /**
- * Maximum tokens to generate
+ * Maximum tokens to generate, for a model nothing more is known about: a
+ * connected model's own limits come first (`model_windows`).
  */
 maxTokens: number;
 /**
- * Context window size
+ * The window a connected model runs at until one is chosen for it
+ * (`model_windows`), held to what its provider reports.
  */
 contextWindow: number;
 /**
@@ -6703,6 +6717,11 @@ localModelConfigs: { [key in string]: LocalModelConfigDto };
  * provider's documented default; any other model without one cannot see.
  */
 visionDeclarations: { [key in string]: VisionDeclarationDto };
+/**
+ * The window and output ceiling chosen for a connected model, keyed by
+ * `ModelRef::to_string()`.
+ */
+modelWindows: { [key in string]: ModelWindowDto };
 /**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
@@ -8462,6 +8481,12 @@ export type ModelSourceDto =
  * External API (Hugging Face)
  */
 "External"
+/**
+ * A model's context window and output ceiling, in tokens. As a choice, an
+ * empty field follows the provider; as a report, it is a limit the provider
+ * does not state.
+ */
+export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
@@ -8714,25 +8739,13 @@ claimId: string }
 export type RequestFactsDto = { promptTokensExact: number | null; promptTokensEstimated: number | null; windowTokens: number; outputReserved: number; serverKind: string; serverMessageSanitized: string | null; attempts: number; step: string }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
- * Whether reranking is switched on, and whether it could run if it were.
- *
- * Both are needed to describe the state honestly: on-but-missing and
- * off-but-installed are different situations with different next steps.
+ * Whether the reranker is on disk, and so whether search reranks.
  */
 export type RerankerStatusDto = {
 /**
- * Every artifact the reranker needs is on disk.
+ * The reranker's model is on disk, so search reranks with it.
  */
-installed: boolean;
-/**
- * The user's `search.enableReranking` setting.
- */
-enabled: boolean;
-/**
- * True only when reranking will actually happen. This is the field a UI
- * should believe; the other two explain why.
- */
-active: boolean; modelName: string; downloadBytes: number }
+installed: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
 /**
@@ -9189,10 +9202,6 @@ maxResults: number;
  * Similarity threshold (0.0 - 1.0)
  */
 similarityThreshold: number;
-/**
- * Enable result reranking
- */
-enableReranking: boolean;
 /**
  * Hybrid search alpha parameter (0.0 = vector, 1.0 = keyword)
  */

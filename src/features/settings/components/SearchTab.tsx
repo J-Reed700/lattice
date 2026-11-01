@@ -123,30 +123,21 @@ export function SearchTab() {
 
       <SettingsSection title="Retrieval">
         <SettingsRow
-          label="Rerank results"
+          label="Reranker"
           hint={describeReranker(rerankerStatus, downloadReranker.error)}
-          htmlFor="search-rerank"
         >
-          <div className="flex items-center gap-3">
-            {rerankerStatus && !rerankerStatus.installed ? (
-              <button
-                type="button"
-                onClick={() => downloadReranker.mutate()}
-                disabled={downloadReranker.isPending}
-                className="h-8 shrink-0 rounded-sm border border-border-default px-2.5 text-sm text-text-primary transition-colors duration-fast hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {downloadReranker.isPending
-                  ? 'Downloading…'
-                  : `Download (${formatDownloadSize(rerankerStatus.downloadBytes)})`}
-              </button>
-            ) : null}
-            <Switch
-              id="search-rerank"
-              checked={searchSettings.enableReranking}
-              onCheckedChange={(checked) => saveSearchUpdates({ enableReranking: checked })}
-              className={SWITCH_CLASS}
-            />
-          </div>
+          {rerankerStatus && !rerankerStatus.installed ? (
+            <button
+              type="button"
+              onClick={() => downloadReranker.mutate()}
+              disabled={downloadReranker.isPending}
+              className="h-8 shrink-0 rounded-sm border border-border-default px-2.5 text-sm text-text-primary transition-colors duration-fast hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {downloadReranker.isPending
+                ? 'Downloading…'
+                : `Download (${formatDownloadSize(rerankerStatus.downloadBytes)})`}
+            </button>
+          ) : null}
         </SettingsRow>
 
         <SettingsRow

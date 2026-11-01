@@ -24,7 +24,8 @@ pub enum RouterAction {
 pub struct RouterDecision {
     pub action: RouterAction,
     pub confidence: f32,
-    #[serde(default)]
+    /// The routing prompt asks for `clarify_question`.
+    #[serde(default, alias = "clarify_question")]
     pub clarify_question: Option<String>,
     #[serde(default)]
     pub rationale: Option<String>,
@@ -226,5 +227,17 @@ mod tests {
 
         let prompt = render_clarify_prompt(&settings, &input);
         assert!(prompt.contains("NDA.pdf"));
+    }
+
+    #[test]
+    fn the_models_own_clarifying_question_is_kept_under_the_key_the_prompt_asks_for() {
+        let decision = parse_router_decision(
+            r#"{"action":"clarify","confidence":0.4,"clarify_question":"Do you mean the NDA you opened?","rationale":"ambiguous"}"#,
+        )
+        .expect("a decision");
+        assert_eq!(
+            decision.clarify_question.as_deref(),
+            Some("Do you mean the NDA you opened?")
+        );
     }
 }

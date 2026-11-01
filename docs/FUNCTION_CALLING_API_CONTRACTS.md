@@ -128,7 +128,6 @@ Read a document's indexed text, paged.
 | Param | Type | Default | Constraint |
 |-------|------|---------|------------|
 | `document_id` | string | required | |
-| `include_metadata` | boolean | true | |
 | `max_content_length` | integer | 50000 | 1000-100000 characters per page |
 | `page` | integer | 1 | >= 1 |
 

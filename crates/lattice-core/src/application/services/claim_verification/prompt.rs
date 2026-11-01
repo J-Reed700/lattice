@@ -11,25 +11,31 @@ pub(super) struct Reply {
     pub(super) output_tokens: u64,
 }
 
+/// The texts of [`CLAIM_CHECK_SYSTEM`] that a check's variant rewrites.
+const QUOTE_LINE: &str =
+    "Source quote: an exact contiguous quote from a passage that supports that comparison, or none.";
+const INVENTED_QUOTE: &str = "do not invent a quote";
+const ONE_SOURCE_ENOUGH: &str =
+    ", and one source supporting the claim is enough unless the claim says the sources agree";
+const LABEL_FIRST: &str = "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:";
+
 impl ClaimChecker<'_> {
     pub(super) fn system_prompt(&self, located: bool, reasoned: bool) -> String {
         let mut base = if located {
-            CLAIM_CHECK_SYSTEM.replace("Source quote: an exact contiguous quote from a passage that supports that comparison, or none.", "Source passage: the application-assigned passage-N identifier that supports that comparison, or none.")
-                .replace("do not invent a quote", "do not invent a passage identifier")
+            CLAIM_CHECK_SYSTEM
+                .replace(QUOTE_LINE, "Source passage: the application-assigned passage-N identifier that supports that comparison, or none.")
+                .replace(INVENTED_QUOTE, "do not invent a passage identifier")
         } else {
             CLAIM_CHECK_SYSTEM.into()
         };
         if matches!(self.policy, CheckPolicy::Strict) {
             // Chat's one-supporting-source rule conflicts with publication's
             // requirement to resolve all supplied counter-evidence.
-            base = base.replace(
-                ", and one source supporting the claim is enough unless the claim says the sources agree",
-                "",
-            );
+            base = base.replace(ONE_SOURCE_ENOUGH, "");
         }
         if reasoned {
             base = base.replace(
-                "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:",
+                LABEL_FIRST,
                 "Compare the evidence before classifying. Write two short labeled lines first:",
             );
             base.push_str(" End with a third line: Verdict: supported, contradicted, or unsupported. Choose this final label from the completed factual comparison, never before it. If the comparison identifies a missing fact or incompatible fact, the final label cannot be supported.");
@@ -125,5 +131,17 @@ impl ClaimChecker<'_> {
                     output_tokens,
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_variant_finds_the_text_it_rewrites() {
+        for rewritten in [QUOTE_LINE, INVENTED_QUOTE, ONE_SOURCE_ENOUGH, LABEL_FIRST] {
+            assert!(CLAIM_CHECK_SYSTEM.contains(rewritten), "{rewritten}");
+        }
     }
 }
