@@ -220,6 +220,8 @@ pub struct Indexer {
     pub status: Arc<StatusCell>,
     pub cancel: CancellationToken,
     pub limits: Limits,
+    /// The files a walk past the bound found, which the rows cannot count.
+    pub files_found: Option<u32>,
     /// The turn order the folder's embedding takes its place in.
     pub turns: Arc<EmbedTurns>,
 }
@@ -253,7 +255,7 @@ impl Indexer {
     async fn refresh_counts(&self) -> Result<Counts> {
         let counts = self.store.counts(&self.prefix).await?;
         self.status.update(|status| {
-            status.files_total = counts.documents_total;
+            status.files_total = self.files_found.unwrap_or(counts.documents_total);
             status.files_indexed = counts.documents_embedded;
             status.passages_total = counts.passages_total;
             status.passages_embedded = counts.passages_embedded;
