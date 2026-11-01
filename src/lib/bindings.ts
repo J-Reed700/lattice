@@ -6675,8 +6675,8 @@ thinkingSampling: SamplingProfileDto;
  */
 maxTokens: number;
 /**
- * The window of a connected model nobody chose one for and whose provider
- * reports none, and the window an Ollama model starts at.
+ * The window a connected model runs at until one is chosen for it
+ * (`model_windows`), held to what its provider reports.
  */
 contextWindow: number;
 /**
@@ -6703,7 +6703,7 @@ localModelConfigs: { [key in string]: LocalModelConfigDto };
 visionDeclarations: { [key in string]: VisionDeclarationDto };
 /**
  * The window and output ceiling chosen for a connected model, keyed by
- * `ModelRef::to_string()`. A model with no entry follows its provider.
+ * `ModelRef::to_string()`.
  */
 modelWindows: { [key in string]: ModelWindowDto };
 /**
