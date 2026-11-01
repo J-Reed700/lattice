@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
+import { ModelWindowControls } from './ModelWindowControls';
 import { ActiveRoleBadge, RoleButton, RoleToggle } from './RoleButton';
 import { CONNECTION_ROLES, isLearningModel, isUtilityModel, roleDescriptor } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
@@ -71,7 +72,8 @@ export function OllamaMetaRow() {
   };
 
   // Each Ollama model that can answer a chat carries its own vision
-  // declaration: the chat tag, then any tag downloaded as a row of its own.
+  // declaration and window: the chat tag, then any tag downloaded as a row of
+  // its own.
   const visionTags = Array.from(new Set([
     chatTag,
     ...models
@@ -161,6 +163,9 @@ export function OllamaMetaRow() {
           detail={ollamaUrl || undefined}
           hint="Choose which tasks this connection powers. Role changes take effect immediately."
           onClose={() => setShowConfigModal(false)}
+          limits={visionTags.map((tag) => (
+            <ModelWindowControls key={tag} modelRef={{ kind: 'ollama', model: tag }} modelName={tag} />
+          ))}
         >
           {ollamaRoles.map((role) => {
             const tagForRole = role.id === 'utility' ? resolvedUtilityTag : chatTag;

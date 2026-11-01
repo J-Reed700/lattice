@@ -75,6 +75,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       localContextWindow: null,
       localModelConfigs: {},
       visionDeclarations: {},
+      modelWindows: {},
       ollamaUrl: 'http://localhost:11434',
       ollamaConfigured: false,
       ollamaUtilityModel: '',

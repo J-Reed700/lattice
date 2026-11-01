@@ -17,11 +17,22 @@ use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 pub mod catalog;
+pub(crate) mod limits;
 mod messages;
 mod reply;
 mod schema;
 mod streaming;
 mod timing;
+
+/// The provider's API root. An evaluation run sends every request through a
+/// local recording proxy, named by `variable` in place of the `public` host.
+fn api_base(variable: &str, public: &str) -> String {
+    std::env::var(variable)
+        .ok()
+        .map(|base| base.trim().trim_end_matches('/').to_owned())
+        .filter(|base| !base.is_empty())
+        .unwrap_or_else(|| public.to_owned())
+}
 
 pub struct CloudLlm {
     provider: LLMProvider,
@@ -60,7 +71,7 @@ impl CloudLlm {
                 "Cloud model and API key are required".into(),
             ));
         }
-        let (variable, base, path) = match settings.provider {
+        let (variable, public, path) = match settings.provider {
             LLMProvider::Openai => (
                 "LATTICE_OPENAI_BASE_URL",
                 "https://api.openai.com",
@@ -82,14 +93,7 @@ impl CloudLlm {
                 ))
             }
         };
-        // An evaluation run sends every request through a local recording
-        // proxy, named here in place of the provider's public host.
-        let base = std::env::var(variable)
-            .ok()
-            .map(|base| base.trim().trim_end_matches('/').to_owned())
-            .filter(|base| !base.is_empty())
-            .unwrap_or_else(|| base.to_owned());
-        let endpoint = format!("{base}{path}");
+        let endpoint = format!("{}{path}", api_base(variable, public));
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
         let client = lattice_core::shared::http::reqwest_client_builder()

@@ -14,6 +14,10 @@ export const settingsApi = {
   listCloudModels: async (provider: Wire.CloudProvider): Promise<ApiResult<Wire.CloudModelCatalogDto>> =>
     apiCall<Wire.CloudModelCatalogDto>('list_cloud_models', { provider }),
 
+  /** What a connected model's provider reports it can take. */
+  getModelLimits: async (model: Wire.ModelRef): Promise<ApiResult<Wire.ModelWindowDto>> =>
+    apiCall<Wire.ModelWindowDto>('get_model_limits', { model }),
+
   /**
    * Adds a folder to the file watcher.
    * Enables automatic reindexing when files in this folder change.

@@ -468,6 +468,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::mentions::plugin::delete_mention,
             // Settings plugin
             lattice::interfaces::commands::cloud_models::list_cloud_models,
+            lattice::interfaces::commands::cloud_models::get_model_limits,
             lattice::features::settings::plugin::test_ollama_connection,
             lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,

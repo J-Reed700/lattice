@@ -3568,6 +3568,18 @@ async listCloudModels(provider: CloudProvider) : Promise<Result<CloudModelCatalo
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * What `model`'s provider reports it can take: the top of its window and
+ * output settings. Empty for a limit its provider does not state.
+ */
+async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_model_limits", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -6658,11 +6670,13 @@ thinkingOverride: ThinkingOverrideDto;
  */
 thinkingSampling: SamplingProfileDto;
 /**
- * Maximum tokens to generate
+ * Maximum tokens to generate, for a model nothing more is known about: a
+ * connected model's own limits come first (`model_windows`).
  */
 maxTokens: number;
 /**
- * Context window size
+ * The window of a connected model nobody chose one for and whose provider
+ * reports none, and the window an Ollama model starts at.
  */
 contextWindow: number;
 /**
@@ -6687,6 +6701,11 @@ localModelConfigs: { [key in string]: LocalModelConfigDto };
  * provider's documented default; any other model without one cannot see.
  */
 visionDeclarations: { [key in string]: VisionDeclarationDto };
+/**
+ * The window and output ceiling chosen for a connected model, keyed by
+ * `ModelRef::to_string()`. A model with no entry follows its provider.
+ */
+modelWindows: { [key in string]: ModelWindowDto };
 /**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
@@ -8442,6 +8461,12 @@ export type ModelSourceDto =
  * External API (Hugging Face)
  */
 "External"
+/**
+ * A model's context window and output ceiling, in tokens. As a choice, an
+ * empty field follows the provider; as a report, it is a limit the provider
+ * does not state.
+ */
+export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }

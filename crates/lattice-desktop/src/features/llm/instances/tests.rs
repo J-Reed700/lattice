@@ -1045,3 +1045,52 @@ fn a_finished_projector_is_not_a_setting_but_the_vision_switch_is() {
     });
     assert!(invalidation::matches(&blind, &switched_on));
 }
+
+/// A window is baked into its client, so changing the one chosen for a model
+/// reloads that model, and nothing else.
+#[test]
+fn a_chosen_window_reloads_its_model_and_no_other() {
+    use lattice_core::application::contracts::settings::ModelWindowDto;
+    use lattice_core::domain::models::model_ref::CloudProvider;
+    let cloud = |model: &str| ModelRef::Cloud {
+        provider: CloudProvider::Anthropic,
+        model: model.into(),
+    };
+    let key = |model: ModelRef| ModelKey {
+        model,
+        launch: None,
+        tuning: Tuning::Standard,
+    };
+    let chosen = changed(&settings(), |s| {
+        s.model_windows.insert(
+            cloud("claude-haiku-5-5").to_string(),
+            ModelWindowDto {
+                context_window: Some(64_000),
+                max_output_tokens: None,
+            },
+        );
+    });
+    assert!(invalidation::matches(
+        &key(cloud("claude-haiku-5-5")),
+        &chosen
+    ));
+    assert!(!invalidation::matches(
+        &key(cloud("claude-opus-5-5")),
+        &chosen
+    ));
+}
+
+/// An Ollama client asks for its window as `num_ctx` on every request, so a
+/// new one cannot wait for the client to go.
+#[test]
+fn a_changed_window_reloads_an_ollama_client() {
+    let key = ModelKey {
+        model: ModelRef::Ollama {
+            model: "qwen:27b".into(),
+        },
+        launch: None,
+        tuning: Tuning::Standard,
+    };
+    let changed_window = changed(&settings(), |s| s.context_window = 32_768);
+    assert!(invalidation::matches(&key, &changed_window));
+}

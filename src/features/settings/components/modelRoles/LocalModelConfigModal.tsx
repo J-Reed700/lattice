@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
 import * as Dialog from '@radix-ui/react-dialog';
-import { ChevronLeft, HelpCircle } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 
-import { Switch, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui';
+import { Switch } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import type { JsonValue, LocalModelConfigDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
@@ -12,35 +12,9 @@ import { contextFitWarning } from '@/utils/chatModelSelection';
 
 import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
+import { HelpTooltip, MIN_CONTEXT_LENGTH, TokenLimitField } from './TokenLimitField';
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS, clamp, toFinite } from '../AITab/shared';
 
-function HelpTooltip({ content }: { content: string }) {
-  return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            title={content}
-            aria-label={`More information: ${content}`}
-            className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full text-text-muted transition-colors hover:text-text-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            <HelpCircle className="h-3.5 w-3.5" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent
-          side="top"
-          sideOffset={6}
-          className="z-[60] max-w-[280px] bg-[hsl(var(--surface-overlay))] px-2.5 py-1.5 text-xs font-normal leading-relaxed text-[hsl(var(--text-primary))] shadow-xl"
-        >
-          {content}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-const MIN_CONTEXT_LENGTH = 512;
 const DEFAULT_MAX_CONTEXT_LENGTH = 262_144;
 const DEFAULT_CONCURRENT_PREDICTIONS = 4;
 
@@ -222,62 +196,25 @@ export function LocalModelConfigModal({
 
             {/* Context Length */}
             {!isEmbeddingModel ? (
-            <div>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
-                    <span>Context Length</span>
-                    <HelpTooltip content="Tokens the model keeps in its active context window. The model loads with the window you set here, or with its maximum until you set one. A larger window needs more memory; if it does not fit, the model fails to load and says how much it needed." />
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-                    <span>Max</span>
-                    <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
-                      {maxSupportedTokens.toLocaleString()}
-                    </span>
-                    <span>tokens</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    aria-label="Context Length"
-                    type="number"
-                    min={MIN_CONTEXT_LENGTH}
-                    max={maxSupportedTokens}
-                    step={512}
-                    value={contextLength}
-                    onChange={(event) => {
-                      setContextEdited(true);
-                      setContextLength(
-                        Math.round(toFinite(event.target.value, contextLength)),
-                      );
-                    }}
-                    className={NUMBER_FIELD_CLASS}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3">
-                <input
-                  aria-label="Context Length Slider"
-                  type="range"
-                  min={MIN_CONTEXT_LENGTH}
-                  max={maxSupportedTokens}
-                  step={512}
-                  value={Math.min(Math.max(contextLength, MIN_CONTEXT_LENGTH), maxSupportedTokens)}
-                  onChange={(event) => {
-                    setContextEdited(true);
-                    setContextLength(Number(event.target.value));
-                  }}
-                  className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface accent-[hsl(var(--accent))]"
-                />
+            <>
+              <TokenLimitField
+                label="Context Length"
+                help="Tokens the model keeps in its active context window. The model loads with the window you set here, or with its maximum until you set one. A larger window needs more memory; if it does not fit, the model fails to load and says how much it needed."
+                min={MIN_CONTEXT_LENGTH}
+                max={maxSupportedTokens}
+                value={contextLength}
+                onChange={(value) => {
+                  setContextEdited(true);
+                  setContextLength(value);
+                }}
+              >
                 {fitWarning ? (
                   <p role="status" className="mt-1.5 text-[11px] text-warning-fg">
                     {fitWarning}
                   </p>
                 ) : null}
-              </div>
-            </div>
+              </TokenLimitField>
+            </>
             ) : null}
 
             {/* Advanced settings */}

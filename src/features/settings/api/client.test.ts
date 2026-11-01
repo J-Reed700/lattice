@@ -15,6 +15,7 @@ const route = (command: CommandName) => {
 type Case = [label: string, call: () => Promise<unknown>, command: CommandName, args: Record<string, unknown>];
 
 const cases: Case[] = [
+  ['getModelLimits', () => settingsApi.getModelLimits({ kind: 'ollama', model: 'qwen' }), 'get_model_limits', { model: { kind: 'ollama', model: 'qwen' } }],
   ['listCloudModels', () => settingsApi.listCloudModels('anthropic'), 'list_cloud_models', { provider: 'anthropic' }],
   ['addWatchFolder', () => settingsApi.addWatchFolder('/archives'), 'add_watch_folder', { path: '/archives' }],
   ['removeWatchFolder', () => settingsApi.removeWatchFolder('/archives'), 'remove_watch_folder', { path: '/archives' }],

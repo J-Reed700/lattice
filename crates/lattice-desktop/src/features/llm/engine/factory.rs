@@ -18,7 +18,9 @@ use crate::features::llm::engine::vision::local_vision;
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
 use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
-use lattice_core::application::contracts::settings::{LLMSettingsDto, SpeculativeDecodingDto};
+use lattice_core::application::contracts::settings::{
+    LLMSettingsDto, ModelWindowDto, SpeculativeDecodingDto,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::AppError;
 
@@ -442,6 +444,32 @@ fn with_memory_hint(
         LLMError::Other(message) => LLMError::Other(format!("{message}\n\n{}", hint.describe())),
         error => LLMError::Other(format!("{error}\n\n{}", hint.describe())),
     }
+}
+
+/// What the Ollama server in `settings` reports for `model`. It reports a
+/// window only: an output ceiling is not something it limits.
+pub(crate) async fn reported_ollama_window(
+    settings: &LLMSettingsDto,
+    model: &str,
+) -> lattice_core::shared::error::Result<ModelWindowDto> {
+    let name = settings.ollama_auth_header_name.trim();
+    let value = settings.ollama_auth_header_value.trim();
+    let auth_header =
+        (!name.is_empty() && !value.is_empty()).then(|| (name.to_owned(), value.to_owned()));
+    let client = OllamaClient::with_model_and_timeouts_and_header(
+        settings.ollama_url.trim(),
+        model,
+        Duration::from_secs(8),
+        Duration::from_secs(8),
+        auth_header,
+    )?;
+    Ok(ModelWindowDto {
+        context_window: client
+            .reported_window()
+            .await
+            .and_then(|window| u32::try_from(window).ok()),
+        max_output_tokens: None,
+    })
 }
 
 /// Create an Ollama LLM client, run at `context_window` (the settings'

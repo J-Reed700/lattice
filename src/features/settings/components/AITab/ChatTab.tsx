@@ -16,7 +16,6 @@ import { isCloudProvider } from '@/utils/chatModelSelection';
 import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import { CloudConnection } from './CloudConnection';
-import { ContextWindowRow } from './ContextWindowRow';
 import { LlamaCppConnection } from "./LlamaCppConnection";
 import {
   GHOST_BUTTON_CLASS,
@@ -245,7 +244,6 @@ export function ChatTab() {
             </select>
           </SettingsRow>
         )}
-        {llmSettings ? <ContextWindowRow llmSettings={llmSettings} saveLlmUpdates={saveLlmUpdates} /> : null}
       </SettingsSection>
 
       {llmSettings && isCloudProvider(provider) && <CloudConnection key={provider} provider={provider}

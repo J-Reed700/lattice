@@ -26,13 +26,18 @@ pub struct CloudModelCatalogDto {
     pub models: Vec<CloudModelDto>,
 }
 
-pub async fn list_models(provider: CloudProvider) -> Result<CloudModelCatalogDto> {
-    let key = tokio::task::spawn_blocking(move || {
+/// The key saved for `provider`, if one is.
+pub(crate) async fn saved_key(provider: CloudProvider) -> Result<Option<String>> {
+    tokio::task::spawn_blocking(move || {
         crate::infrastructure::security::keyring_storage::SecureStorage::new()
             .cloud_api_key(cloud_provider_id(provider))
     })
     .await
-    .map_err(|_| AppError::Security("Could not read the cloud API key".into()))??;
+    .map_err(|_| AppError::Security("Could not read the cloud API key".into()))?
+}
+
+pub async fn list_models(provider: CloudProvider) -> Result<CloudModelCatalogDto> {
+    let key = saved_key(provider).await?;
     let endpoint = match provider {
         CloudProvider::Openai => "https://api.openai.com/v1/models",
         CloudProvider::Anthropic => "https://api.anthropic.com/v1/models",

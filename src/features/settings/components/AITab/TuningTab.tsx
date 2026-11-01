@@ -23,7 +23,7 @@ export function TuningTab() {
     topK: 20,
     repeatPenalty: 1.0,
     presencePenalty: 1.5,
-    maxTokens: 131072,
+    maxTokens: 128000,
     contextWindow: 131072,
     timeoutSeconds: 30,
   });
