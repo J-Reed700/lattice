@@ -102,7 +102,7 @@ def run(args):
                 short = shortlisted(ctx, labels)
                 rec = write.record(dict(short, cond="complete"), "W0", write.run_arm(short, "W0", {}))
                 rec.update(arm=arm, shown=labels, fact_passages=sorted(short["fl"]))
-                out.write(json.dumps(rec) + "\n")
+                out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
                 out.flush()
                 print(ctx["qid"], arm, rec["stated"], "/", rec["facts"], f"{rec['secs']}s", flush=True)
 

@@ -9,7 +9,11 @@ continuations while they make progress. Scored on the subset file's rubric.
 
 argv: calls.jsonl subset.json out.jsonl [query ids...]
 """
-import copy, json, re, sys, time, urllib.request
+import copy, json, os, re, sys, time, urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import served_model  # noqa: E402
 
 CALLS, SUBSET, OUT = sys.argv[1:4]
 ONLY = set(sys.argv[4:])
@@ -90,6 +94,7 @@ for line in open(CALLS):
         requests.setdefault(r['query_id'], (c['path'], q))
 
 out = open(OUT, 'a')
+MODEL = served_model('http://127.0.0.1:8089')
 for qid, (path, shipped) in requests.items():
     if ONLY and qid not in ONLY:
         continue
@@ -141,6 +146,6 @@ for qid, (path, shipped) in requests.items():
                'writing_s': round(wsecs, 1), 'continuations': continuations, 'continuation_s': round(cont_s, 1),
                'tool_calls': len(calls), 'cited': sorted(cited(answer)), 'left_out_after': sorted(noted - cited(answer)),
                'missing': missing(qid, answer), 'facts': len(facts(qid)), 'notes': notes_text, 'answer': answer}
-        out.write(json.dumps(rec) + '\n'); out.flush()
+        out.write(json.dumps({'model': MODEL, **rec}) + '\n'); out.flush()
         print(f"{qid} s{seed} | read {rec['reading_s']}s sweeps={sweeps} noted={rec['noted']} unverified={rec['unverified_notes']} | "
               f"write {rec['writing_s']}s cont={continuations} ({rec['continuation_s']}s) | {'PASS' if not rec['missing'] else 'miss ' + str(rec['missing'])}", flush=True)

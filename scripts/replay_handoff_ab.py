@@ -164,7 +164,7 @@ def run(args):
                        "max_tokens": 2048, "chat_template_kwargs": {"enable_thinking": False}, "cache_prompt": True}
                 r = base.call(req, "handoff")
                 note = r["content"].strip()
-                out.write(json.dumps({"id": conv["id"], "arm": arm, "shown": conv["shown"], "last": conv["last"],
+                out.write(json.dumps({"model": base.running_model(), "id": conv["id"], "arm": arm, "shown": conv["shown"], "last": conv["last"],
                                       **score(conv, note), "finish": r["finish"], "secs": r["secs"],
                                       "prompt_tokens": (r.get("usage") or {}).get("prompt_tokens"), "note": note})
                           + "\n")

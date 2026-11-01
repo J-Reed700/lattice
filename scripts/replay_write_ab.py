@@ -242,7 +242,7 @@ def run(args):
         cache, line = {}, []
         for arm in todo:
             rec = record(ctx, arm, run_arm(ctx, arm, cache))
-            out.write(json.dumps(rec) + "\n")
+            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
             out.flush()
             line.append(f"{arm} " + (f"call {rec['called']['name']}{'*' if rec['on_target'] else ''}" if rec["called"]
                                      else f"{rec['stated']}/{rec['facts']}") + f" {rec['secs']}s")
