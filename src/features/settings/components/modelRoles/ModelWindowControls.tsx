@@ -2,9 +2,9 @@
  * ModelWindowControls
  *
  * The window and output ceiling a connected model runs at, up to what its
- * provider reports. A cloud model follows its provider until one is chosen
- * here. An Ollama model allocates its window when it loads, so it stays at
- * the app's default until a larger one is chosen.
+ * provider reports. The window stays at the app's default until one is chosen
+ * here, because a larger one costs more on a cloud model and more memory on
+ * Ollama. The output ceiling follows the provider: it costs nothing until used.
  */
 
 import { useEffect, useState } from 'react';
@@ -76,9 +76,7 @@ export function ModelWindowControls({ modelRef, modelName }: { modelRef: Connect
   const chosen: ModelWindowDto = llm.modelWindows[key] ?? { contextWindow: null, maxOutputTokens: null };
   const reportedWindow = limits.data?.contextWindow ?? null;
   const reportedOutput = limits.data?.maxOutputTokens ?? null;
-  const followingWindow = isCloud
-    ? reportedWindow ?? llm.contextWindow
-    : Math.min(llm.contextWindow, reportedWindow ?? llm.contextWindow);
+  const followingWindow = Math.min(llm.contextWindow, reportedWindow ?? llm.contextWindow);
 
   const save = async (limit: Limit, value: number | null) => {
     const next = { ...chosen, [limit]: value };
@@ -108,7 +106,7 @@ export function ModelWindowControls({ modelRef, modelName }: { modelRef: Connect
         following={followingWindow}
         chosen={chosen.contextWindow}
         onSave={(value) => void save('contextWindow', value)}
-        followLabel={isCloud ? `Use the maximum ${provider} reports` : 'Use the default'}
+        followLabel="Use the default"
       />
       {isCloud ? (
         <LimitControl

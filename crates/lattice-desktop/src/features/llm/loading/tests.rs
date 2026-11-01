@@ -463,16 +463,17 @@ const CLAUDE_REPORTS: ModelWindowDto = ModelWindowDto {
     max_output_tokens: Some(128_000),
 };
 
-/// The default's 131,072 is past what Claude accepts, and a role that picks a
-/// model never set `max_tokens` for it: what the provider reports decides.
+/// A saved `max_tokens` of 131,072 is past what Claude accepts, and a role that
+/// picks a model never set it: the provider's ceiling decides. The window
+/// stays at the default until someone chooses a larger one.
 #[test]
-fn a_cloud_model_runs_at_what_its_provider_reports() {
+fn a_cloud_model_keeps_the_default_window_under_its_providers_ceiling() {
     let settings = LLMSettingsDto {
         max_tokens: 131_072,
         ..Default::default()
     };
     let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
-    assert_eq!(connection.context_window, 1_000_000);
+    assert_eq!(connection.context_window, settings.context_window);
     assert_eq!(connection.max_tokens, 128_000);
 }
 
@@ -491,9 +492,8 @@ fn a_cloud_model_runs_at_what_was_chosen_for_it() {
     assert_eq!(connection.max_tokens, 4_096);
 }
 
-/// Settings' numbers matter only when the provider says nothing.
 #[test]
-fn a_model_nobody_reports_on_runs_at_the_settings_fallback() {
+fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
     let settings = LLMSettingsDto {
         context_window: 90_000,
         max_tokens: 8_192,
@@ -518,5 +518,4 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
     );
     let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
     assert_eq!(connection.max_tokens, 8_192);
-    assert_eq!(connection.context_window, 1_000_000);
 }

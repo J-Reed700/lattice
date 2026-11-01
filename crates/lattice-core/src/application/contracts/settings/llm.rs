@@ -81,8 +81,8 @@ pub struct LLMSettingsDto {
     /// connected model's own limits come first (`model_windows`).
     pub max_tokens: u32,
 
-    /// The window of a connected model nobody chose one for and whose provider
-    /// reports none, and the window an Ollama model starts at.
+    /// The window a connected model runs at until one is chosen for it
+    /// (`model_windows`), held to what its provider reports.
     pub context_window: u32,
 
     /// Context window for the bundled local model, in tokens.
@@ -108,7 +108,7 @@ pub struct LLMSettingsDto {
     pub vision_declarations: BTreeMap<String, VisionDeclarationDto>,
 
     /// The window and output ceiling chosen for a connected model, keyed by
-    /// `ModelRef::to_string()`. A model with no entry follows its provider.
+    /// `ModelRef::to_string()`.
     #[serde(default)]
     pub model_windows: BTreeMap<String, ModelWindowDto>,
 

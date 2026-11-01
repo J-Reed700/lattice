@@ -1,6 +1,8 @@
-//! How much a connected model takes at once. A model runs at what was chosen
-//! for it, else at what its provider reports, and at the app's fallback only
-//! when neither says; nothing runs past what its provider reports.
+//! How much a connected model takes at once. Its window is what was chosen for
+//! it, else the app's default, because about forty paths size themselves to
+//! the window and most have only run at that default. Its output ceiling is
+//! what was chosen, else what its provider reports: a ceiling costs nothing
+//! until it is used. Neither ever runs past what the provider reports.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,13 +18,21 @@ pub struct ModelWindowDto {
 
 impl ModelWindowDto {
     /// The context window this choice runs at.
-    pub fn context_window_within(&self, reported: &Self, fallback: u32) -> u32 {
-        settled(self.context_window, reported.context_window, fallback)
+    pub fn context_window_within(&self, reported: &Self, default: u32) -> u32 {
+        within(
+            self.context_window.unwrap_or(default),
+            reported.context_window,
+        )
     }
 
     /// The output ceiling this choice runs at.
     pub fn max_output_within(&self, reported: &Self, fallback: u32) -> u32 {
-        settled(self.max_output_tokens, reported.max_output_tokens, fallback)
+        within(
+            self.max_output_tokens
+                .or(reported.max_output_tokens)
+                .unwrap_or(fallback),
+            reported.max_output_tokens,
+        )
     }
 
     /// What is wrong with this choice, as a sentence for the settings check.
@@ -32,8 +42,7 @@ impl ModelWindowDto {
     }
 }
 
-fn settled(chosen: Option<u32>, reported: Option<u32>, fallback: u32) -> u32 {
-    let wanted = chosen.or(reported).unwrap_or(fallback);
+fn within(wanted: u32, reported: Option<u32>) -> u32 {
     reported.map_or(wanted, |limit| wanted.min(limit))
 }
 
@@ -51,14 +60,24 @@ mod tests {
     };
 
     #[test]
-    fn with_no_choice_a_model_runs_at_what_its_provider_reports() {
+    fn with_no_choice_a_window_stays_at_the_default_and_output_follows_the_provider() {
         let chosen = ModelWindowDto::default();
-        assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 1_000_000);
-        assert_eq!(chosen.max_output_within(&REPORTED, 131_072), 128_000);
+        assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 131_072);
+        assert_eq!(chosen.max_output_within(&REPORTED, 8_192), 128_000);
     }
 
     #[test]
-    fn the_fallback_only_counts_when_nothing_says_otherwise() {
+    fn a_default_past_what_a_smaller_model_reports_is_held_to_it() {
+        let small = ModelWindowDto {
+            context_window: Some(64_000),
+            max_output_tokens: Some(8_192),
+        };
+        let chosen = ModelWindowDto::default();
+        assert_eq!(chosen.context_window_within(&small, 131_072), 64_000);
+    }
+
+    #[test]
+    fn with_no_report_a_choice_stands_and_the_rest_falls_back() {
         let chosen = ModelWindowDto {
             context_window: Some(40_000),
             max_output_tokens: None,
