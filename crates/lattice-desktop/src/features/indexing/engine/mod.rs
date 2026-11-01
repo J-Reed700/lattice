@@ -15,7 +15,7 @@
 //!        │
 //!        ├─> Content Extraction
 //!        │   ├─> PDF (lopdf)
-//!        │   ├─> DOCX (docx-rs)
+//!        │   ├─> DOCX (zip + markup)
 //!        │   ├─> TXT (raw text)
 //!        │   └─> Code (syntax-aware)
 //!        │
@@ -98,7 +98,7 @@
 //! |-----------|-----------|-------|
 //! | .txt, .md | Raw Text  | UTF-8 detection |
 //! | .pdf      | lopdf     | Text + metadata |
-//! | .docx     | docx-rs   | Formatted text |
+//! | .docx     | zip + markup | Document text |
 //! | .rs, .py  | Code      | Syntax-aware |
 //! | .json     | JSON      | Pretty-printed |
 //!
