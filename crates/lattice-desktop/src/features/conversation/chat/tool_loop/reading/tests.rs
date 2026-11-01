@@ -815,7 +815,7 @@ async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
 fn the_writing_round_asks_for_the_answer_in_the_passages_own_words() {
     assert_eq!(
         WRITE_INSTRUCTION,
-        "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question."
+        "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another."
     );
 }
 
@@ -829,7 +829,7 @@ fn a_continuation_quotes_each_left_out_note() {
     };
     assert_eq!(
         continue_instruction(&[6, 7].into(), &notes),
-        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen."
+        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen. Do not mention your notes or correct them."
     );
 }
 
