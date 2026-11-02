@@ -125,8 +125,9 @@ fn main() -> Res<()> {
         return Err(format!("{} exists; runs never overwrite", args.out.display()).into());
     }
     let real_home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .ok_or("HOME is not set")?;
+        .ok_or("neither HOME nor USERPROFILE is set")?;
     let workdir = tempfile::Builder::new()
         .prefix("lattice-tutor-eval-")
         .tempdir()?;
