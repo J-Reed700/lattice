@@ -1020,7 +1020,7 @@ fn serving(pages: &[(&str, &str)]) -> Arc<ResearchWeb> {
     );
     for (index, (url, title)) in pages.iter().enumerate() {
         web.0.set_url_content(
-            url,
+            *url,
             FetchUrlContentOutput {
                 url: (*url).into(),
                 title: Some((*title).into()),

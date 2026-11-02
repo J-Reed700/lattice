@@ -81,6 +81,7 @@ fn restored_quote(sources: &[Value], index: Option<u64>, quote: &str) -> Option<
         return None;
     }
     crate::features::learning::outline_citations::exact_source_quote(excerpt, quote)
+        .map(str::to_owned)
 }
 
 pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {

@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use super::replay::{apply_check, charge, hand_to_user, redecided, reopened, Cursor};
 use super::{
-    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class, ClassifiedBy,
-    EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind,
-    MACHINE_ATTEMPTS,
+    Actor, AttachOutcome, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
+    ClassifiedBy, EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction,
+    VerdictKind, MACHINE_ATTEMPTS,
 };
 use crate::shared::error::AppError;
 
