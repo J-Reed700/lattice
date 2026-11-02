@@ -7082,7 +7082,50 @@ note: string | null;
  * Whether the claim's support met the bar for its kind; `None` when it
  * was not weighed.
  */
-sufficiency: LearningSufficiencyDto | null }
+sufficiency: LearningSufficiencyDto | null;
+/**
+ * The class the statement was checked as; none for a lesson prepared
+ * before statements were sorted.
+ */
+class?: LearningStatementClassDto | null;
+/**
+ * How the provenance gate labelled its support, by the label's name
+ * (`attributed`, `practice`, `secondary`...); none when it takes none.
+ */
+label?: string | null;
+/**
+ * The parts a Sourced statement's cited passage was read as, which say
+ * what a passage states and what is common knowledge beside it.
+ */
+parts?: LearningClaimPartDto[] }
+/**
+ * One part of a statement as the part-wise check read it.
+ */
+export type LearningClaimPartDto = { part: string; kind: LearningClaimPartKindDto;
+/**
+ * The saved source version that states the part; none for another.
+ */
+sourceVersionId: string | null }
+/**
+ * What the part-wise check found of one part of a statement (§3.3).
+ */
+export type LearningClaimPartKindDto =
+/**
+ * A passage states it.
+ */
+"stated" |
+/**
+ * No passage states it, and it is standard knowledge of the field.
+ */
+"common" |
+/**
+ * No passage gives a specific it states.
+ */
+"specific_missing" |
+/**
+ * A passage says otherwise.
+ */
+"contradicted"
 /**
  * A claim's profile (§12.3): its kind and subject.
  */
@@ -7845,6 +7888,23 @@ export type LearningSourceWorkspaceDto = { programId: string; sources: LearningS
  * added found; null when no re-check ran.
  */
 recheck: WaitingClaimsRecheckDto | null }
+/**
+ * The class a published statement was checked as (claim classes design
+ * §3.1): what the learner is told of the check it met.
+ */
+export type LearningStatementClassDto =
+/**
+ * Checked against the source passage its sentence cites.
+ */
+"sourced" |
+/**
+ * Checked for consistency with the passages its section cites.
+ */
+"reasoning" |
+/**
+ * Standard knowledge, put to the model alone.
+ */
+"common"
 /**
  * The statements of a lesson by the check each gets (claim classes design
  * §3.1, §3.12): "73 statements: 36 to check against their sources, 29 to

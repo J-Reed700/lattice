@@ -15,7 +15,7 @@ use crate::features::learning::dto::{
     LearningTrustReasonDto,
 };
 use lattice_core::domain::provenance::{
-    Available, BarBasis, BarChange, Calibration, ClaimProfile, Decision, EffectiveBar,
+    Available, BarBasis, BarChange, Calibration, ClaimProfile, Decision, EffectiveBar, Label,
     OverrideScope, Policy, ProvenanceRecord, ProvenanceSignals, Reason, RelationKind,
     RelationTarget, SiteStanding, SourceRelation, Standing, SubjectClass, SubjectKey, Support,
     TrustLevel, TrustOverride,
@@ -392,6 +392,12 @@ pub fn support_trust(profile: &ClaimProfile, support: &Support) -> LearningSourc
         reasons: reasons(&support.trust.reasons),
         override_scope: support.trust.override_.as_ref().map(|by| scope(&by.scope)),
     }
+}
+
+/// The name of a gate label (`attributed`, `practice`, `secondary`...) as the
+/// learner's evidence carries it.
+pub fn label_name(label: &Label) -> Option<String> {
+    wire_name(label, Some("label"))
 }
 
 /// A serialised enum's tag or name, as the wire spells it.

@@ -33,6 +33,43 @@ pub enum LearningClaimResolutionDto {
     SourceRemoved,
 }
 
+/// The class a published statement was checked as (claim classes design
+/// §3.1): what the learner is told of the check it met.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningStatementClassDto {
+    /// Checked against the source passage its sentence cites.
+    Sourced,
+    /// Checked for consistency with the passages its section cites.
+    Reasoning,
+    /// Standard knowledge, put to the model alone.
+    Common,
+}
+
+/// What the part-wise check found of one part of a statement (§3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningClaimPartKindDto {
+    /// A passage states it.
+    Stated,
+    /// No passage states it, and it is standard knowledge of the field.
+    Common,
+    /// No passage gives a specific it states.
+    SpecificMissing,
+    /// A passage says otherwise.
+    Contradicted,
+}
+
+/// One part of a statement as the part-wise check read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningClaimPartDto {
+    pub part: String,
+    pub kind: LearningClaimPartKindDto,
+    /// The saved source version that states the part; none for another.
+    pub source_version_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningClaimEvidenceDto {
@@ -52,6 +89,18 @@ pub struct LearningClaimEvidenceDto {
     /// Whether the claim's support met the bar for its kind; `None` when it
     /// was not weighed.
     pub sufficiency: Option<crate::features::learning::dto::LearningSufficiencyDto>,
+    /// The class the statement was checked as; none for a lesson prepared
+    /// before statements were sorted.
+    #[serde(default)]
+    pub class: Option<LearningStatementClassDto>,
+    /// How the provenance gate labelled its support, by the label's name
+    /// (`attributed`, `practice`, `secondary`...); none when it takes none.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The parts a Sourced statement's cited passage was read as, which say
+    /// what a passage states and what is common knowledge beside it.
+    #[serde(default)]
+    pub parts: Vec<LearningClaimPartDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

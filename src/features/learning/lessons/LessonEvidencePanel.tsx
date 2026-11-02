@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, FileSearch, ShieldCheck } from 'lucide-react';
 
 import { useLearningLessonEvidence, type LessonEvidenceQuery } from '@/features/learning/api/evidenceQueries';
-import { passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
+import { checkWords, commonParts, passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
 import { sufficiencyNote, verifiedByLevel } from '@/features/learning/sources/trust/trustPresentation';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
@@ -97,6 +97,12 @@ function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
   if (claim.resolution === 'source_removed') {
     return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">Source removed · review</span>;
   }
+  if (claim.class === 'common') {
+    return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">Common knowledge · not checked against a source</span>;
+  }
+  if (claim.class === 'reasoning') {
+    return <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">Consistent</span>;
+  }
   return (
     <span className="rounded-full bg-emerald-700/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
       {claim.verdict || 'checked'}
@@ -104,12 +110,22 @@ function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
   );
 }
 
-/** "12 claims verified against sources · 3 confirmed by you · 2 general knowledge" (§5.6). */
+/** What a statement was checked as and passed by: its class, when it has one and the user has not settled it. */
+function passedAs(claim: LearningClaimEvidenceDto, checked: 'reasoning' | 'common') {
+  return claim.class === checked && claim.resolution === 'verified';
+}
+
+/** "12 claims verified against sources · 4 consistent with their sources · 6 common knowledge · 3 confirmed by you" (§5.6). */
 export function evidenceSummary(report: LearningLessonEvidenceDto): string {
-  const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount);
-  const byLevel = verifiedByLevel(report.teachingClaims);
+  const consistent = report.teachingClaims.filter((claim) => passedAs(claim, 'reasoning')).length;
+  const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
+  const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount - consistent - common);
+  const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
+  const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`] : [];
   return [
-    ...(byLevel.length ? byLevel : [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`]),
+    ...against,
+    consistent > 0 ? `${consistent} consistent with their sources` : null,
+    common > 0 ? `${common} common knowledge, not checked against a source` : null,
     report.confirmedCount > 0 ? `${report.confirmedCount} confirmed by you` : null,
     report.generalKnowledgeCount > 0 ? `${report.generalKnowledgeCount} general knowledge, not checked against a source` : null,
   ].filter(Boolean).join(' · ');
@@ -128,6 +144,8 @@ function ClaimEvidence({
   passageNumbers: Map<string, number>;
   onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
 }) {
+  const how = checkWords(claim) ?? (claim.sufficiency ? sufficiencyNote(claim.sufficiency) : null);
+  const common = commonParts(claim);
   return (
     <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -146,7 +164,10 @@ function ClaimEvidence({
           {claim.contentQuote}
         </blockquote>
       )}
-      {claim.sufficiency && <p className="mt-2 text-xs leading-5 text-text-primary">{sufficiencyNote(claim.sufficiency)}</p>}
+      {how && <p className="mt-2 text-xs leading-5 text-text-primary">{how}</p>}
+      {common.length > 0 && (
+        <p className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">Common knowledge, not in the source: </span>{common.join('; ')}</p>
+      )}
       <p className="mt-2 text-xs leading-5 text-text-secondary">{claim.reason}</p>
       {claim.supportingQuote && (
         <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">
@@ -269,7 +290,9 @@ export function LessonSectionEvidence({
   const sectionPassages = new Set(claims.flatMap((claim) => claim.passages.map(passageKey)));
   const general = claims.filter(isGeneralKnowledge).length;
   const confirmed = claims.filter((claim) => claim.resolution === 'confirmed_by_you').length;
-  const checked = claims.length - general - confirmed;
+  const consistent = claims.filter((claim) => passedAs(claim, 'reasoning')).length;
+  const common = claims.filter((claim) => passedAs(claim, 'common')).length;
+  const checked = claims.length - general - confirmed - consistent - common;
 
   const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
     setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
@@ -286,6 +309,8 @@ export function LessonSectionEvidence({
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
           <ShieldCheck size={14} />
           Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
+          {consistent > 0 && ` · ${consistent} consistent with their sources`}
+          {common > 0 && ` · ${common} common knowledge`}
           {confirmed > 0 && ` · ${confirmed} confirmed by you`}
           {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
           <span className="ml-auto flex gap-1" aria-label="Citations in this section">

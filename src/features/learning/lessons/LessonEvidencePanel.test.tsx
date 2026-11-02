@@ -103,4 +103,58 @@ describe('lesson evidence', () => {
     expect(screen.getByText('Source removed · review')).toBeVisible();
     expect(screen.getByRole('status')).toHaveTextContent('1 claim lost its source');
   });
+
+  describe('statements sorted into classes', () => {
+    const passage = (version: string, title: string, text: string) => ({ sourceVersionId: version, title, url: null, text, startByte: 0, endByte: text.length, retrievalKind: 'hybrid' });
+    const manual = passage('version-5', 'Quillet manual', 'Quillet is a lexer written in Rust.');
+    const notes = passage('version-6', 'Compiler notes', 'A parser consumes the tokens a lexer makes.');
+    const claim = (overrides: Record<string, unknown>) => ({
+      sectionIndex: 0, contentQuote: 'The sentence.', claim: 'A statement.', verdict: 'supported', reason: 'Checked.', supportingQuote: null,
+      passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], ...overrides,
+    });
+    const data = {
+      policy: 'lesson-evidence-v20', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 3, generalKnowledgeCount: 0, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+      teachingClaims: [
+        claim({
+          claim: 'Quillet is a lexer, and a lexer turns characters into tokens.', reason: 'The manual says Quillet is a lexer; the rest is standard.',
+          passages: [manual], label: 'attributed',
+          parts: [{ part: 'Quillet is a lexer', kind: 'stated', sourceVersionId: 'version-5' }, { part: 'a lexer turns characters into tokens', kind: 'common', sourceVersionId: null }],
+        }),
+        claim({ claim: 'Quillet suits the front end of a parser.', class: 'reasoning', passages: [manual, notes], reason: 'Consistent with both.' }),
+        claim({ claim: 'Tokens are small pieces of text.', class: 'common', reason: 'Standard knowledge of the field.' }),
+      ],
+    };
+
+    it('tells the learner how each statement was checked, naming its source, and what in a sourced one is common knowledge', async () => {
+      mocks.evidence.mockResolvedValue({ ok: true, data });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText(/1 claim verified against sources · 1 consistent with their sources · 1 common knowledge, not checked against a source/)).toBeVisible();
+      expect(screen.getByText('According to Quillet manual')).toBeVisible();
+      expect(screen.getByText(/Common knowledge, not in the source/)).toBeVisible();
+      expect(screen.getByText('a lexer turns characters into tokens')).toBeVisible();
+      expect(screen.getByText('Consistent with Quillet manual and Compiler notes')).toBeVisible();
+      expect(screen.getByText('Consistent')).toBeVisible();
+      expect(screen.getByText('Common knowledge · not checked against a source')).toBeVisible();
+      expect(screen.getByText('Standard knowledge of the field.')).toBeVisible();
+    });
+
+    it('counts them apart beside the section they are in', async () => {
+      const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
+      render(<LessonSectionEvidence report={report} sectionIndex={0} />);
+
+      expect(screen.getByText(/Evidence · 1 checked claim · 1 consistent with their sources · 1 common knowledge · 2 passages/)).toBeVisible();
+    });
+
+    it('does not count a statement the user settled as having passed its class’s check', async () => {
+      const confirmed = { ...data, claimCount: 3, confirmedCount: 1, teachingClaims: [...data.teachingClaims.slice(0, 2), claim({ claim: 'Tokens are small pieces of text.', class: 'common', resolution: 'confirmed_by_you', note: 'Fine.' })] };
+      mocks.evidence.mockResolvedValue({ ok: true, data: confirmed });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText(/1 claim verified against sources · 1 consistent with their sources · 1 confirmed by you/)).toBeVisible();
+      expect(screen.queryByText(/common knowledge, not checked against a source/)).not.toBeInTheDocument();
+    });
+  });
 });
