@@ -111,7 +111,7 @@ pub(super) fn verified(id: &str, statement: &str) -> ClaimLedgerEntry {
 pub(super) fn confirmed(id: &str, statement: &str) -> ClaimLedgerEntry {
     let mut entry = extracted(id, statement);
     let failed = CheckResult::Failed {
-        kind: VerdictKind::CouldNotJudge,
+        kind: VerdictKind::Unsupported,
     };
     entry.append(machine(2), local_check(failed, "v1")).unwrap();
     let action = UserAction::Confirm {
