@@ -31,15 +31,20 @@ vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 
 const NO_MESSAGES: Array<{ id: string; content: string }> = [];
 
-// Stands in for the shared chat: it shows whatever conversation the panel scopes it to.
+// Stands in for the shared chat: it shows whatever conversation the panel scopes
+// it to and, while that is empty, what its host asked it to say, or the library's
+// questions when the host asked for none.
 function Chat(props: Record<string, any>) {
   h.chatProps = props;
   const id = useConversationsStore((state) => state.activeConversationId);
   const thread = useConversationsStore((state) => state.conversations.find((conversation) => conversation.id === id)?.messages ?? NO_MESSAGES);
+  const hosted = Boolean(props.starters || props.startersNote);
   return (
     <section aria-label="Shared chat" data-conversation={id}>
       {thread.map((item) => <p key={item.id}>{item.content}</p>)}
-      {thread.length === 0 && props.renderEmptyState?.(vi.fn())}
+      {thread.length === 0 && !hosted && <p>The library’s suggested questions</p>}
+      {thread.length === 0 && props.startersNote && <p>{props.startersNote}</p>}
+      {thread.length === 0 && props.starters?.map((starter: string) => <button key={starter} type="button">{starter}</button>)}
     </section>
   );
 }
@@ -129,10 +134,13 @@ describe('TangentPanel', () => {
       expect(await screen.findByText('Chat inside')).toHaveAttribute('data-follows', 'c2');
     });
 
-    it('invites a question about the passage in an empty tangent', async () => {
+    it('invites a question about the passage in an empty tangent, with a line of its own and no suggested questions', async () => {
       renderPanel();
       await ready();
+      expect(h.chatProps).toMatchObject({ startersNote: 'Ask about this passage. You can return to the main conversation whenever you’re ready.' });
+      expect(h.chatProps!.starters).toBeUndefined();
       expect(screen.getByText('Ask about this passage. You can return to the main conversation whenever you’re ready.')).toBeInTheDocument();
+      expect(screen.queryByText('The library’s suggested questions')).not.toBeInTheDocument();
     });
 
     it('offers a retry when the tangent cannot be opened, with no chat to type into', async () => {

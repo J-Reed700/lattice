@@ -234,6 +234,22 @@ describe('ChatPanel', () => {
     expect(h.composer.fill).toHaveBeenCalledWith('Quiz me');
   });
 
+  it('says its host’s note above the host’s starters in an empty thread', () => {
+    render(<ChatPanel starters={['Quiz me']} startersNote="Ask about this passage." />);
+    expect(screen.getByText('Ask about this passage.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Quiz me' })).toBeInTheDocument();
+    expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
+  });
+
+  it('says only its host’s note, and not the library’s starters, when the host has none of its own', () => {
+    render(<ChatPanel startersNote="Ask about this passage." />);
+    expect(screen.getByText('Ask about this passage.')).toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
+  });
+
   it('takes starters from the sidebar’s space before the chat has one', () => {
     h.store = makeStore({ selectedSpaceId: 's-hist' });
     render(<ChatPanel />);

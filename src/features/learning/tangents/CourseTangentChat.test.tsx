@@ -27,7 +27,9 @@ vi.mock('@/features/chat/api/conversationQueryData', () => ({
   fetchConversationDetail: vi.fn(),
   fetchBookmarks: vi.fn().mockResolvedValue([]),
 }));
-// Stands in for the shared chat: it shows whatever conversation the tangent scopes it to.
+// Stands in for the shared chat: it shows whatever conversation the tangent scopes
+// it to and, while that is empty, the note and starters its host gave it, where
+// picking a starter fills the composer.
 vi.mock('@/features/chat/components/ChatPanel', async () => {
   const { useConversationsStore } = await import('@/shared/conversations/conversationsStore');
   const none: Array<{ id: string; content: string }> = [];
@@ -39,7 +41,10 @@ vi.mock('@/features/chat/components/ChatPanel', async () => {
       return (
         <section aria-label="Shared chat" data-conversation={id}>
           {thread.map((item) => <p key={item.id}>{item.content}</p>)}
-          {thread.length === 0 && props.renderEmptyState?.(mocks.pick)}
+          {thread.length === 0 && props.startersNote && <p>{props.startersNote}</p>}
+          {thread.length === 0 && props.starters?.map((starter: string) => (
+            <button key={starter} type="button" onClick={() => mocks.pick(starter)}>{starter}</button>
+          ))}
         </section>
       );
     },
@@ -145,10 +150,21 @@ describe('CourseTangentChat', () => {
     await sharedChat();
   });
 
-  it('suggests questions to an empty tangent, which fill the composer rather than send', async () => {
+  it('gives an empty tangent a line about the passage and three starters, as data', async () => {
     vi.mocked(fetchMessages).mockResolvedValue([seed] as never);
     renderChat();
-    fireEvent.click(await screen.findByRole('button', { name: /Give me a concrete example/ }));
+    expect(await screen.findByText('Ask a question or explore a side-topic about this study guide passage.')).toBeInTheDocument();
+    expect(mocks.chatProps).toMatchObject({
+      startersNote: 'Ask a question or explore a side-topic about this study guide passage.',
+      starters: ['Explain this intuitively', 'Give me a concrete example', 'How does this connect to the module goal?'],
+    });
+    expect(screen.getAllByRole('button', { name: /intuitively|concrete example|module goal/ })).toHaveLength(3);
+  });
+
+  it('fills the composer with a starter rather than sending it', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([seed] as never);
+    renderChat();
+    fireEvent.click(await screen.findByRole('button', { name: 'Give me a concrete example' }));
     expect(mocks.pick).toHaveBeenCalledWith('Give me a concrete example');
     expect(mocks.store.sendMessage).not.toHaveBeenCalled();
   });
