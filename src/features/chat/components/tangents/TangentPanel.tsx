@@ -14,9 +14,7 @@ import { toast } from '@/stores/toastStore';
 
 import { TangentConversation } from './TangentConversation';
 
-const renderEmptyState = () => (
-  <p className="text-sm leading-relaxed text-text-muted">Ask about this passage. You can return to the main conversation whenever you’re ready.</p>
-);
+const STARTERS_NOTE = 'Ask about this passage. You can return to the main conversation whenever you’re ready.';
 
 export function TangentPanel({ tangent, chat: Chat, onPromoted }: {
   tangent: ConversationTangentDto;
@@ -71,7 +69,7 @@ export function TangentPanel({ tangent, chat: Chat, onPromoted }: {
       </div>
     </div>
     <TangentConversation conversationId={id} inheritedCount={tangent.contextMessageCount} onTurnEnd={refreshTangents}>
-      <Chat embedded autoFocus renderEmptyState={renderEmptyState} />
+      <Chat embedded autoFocus startersNote={STARTERS_NOTE} />
     </TangentConversation>
   </>;
 }

@@ -20,29 +20,7 @@ const STARTER_PROMPTS = [
   'Give me a concrete example',
   'How does this connect to the module goal?',
 ];
-
-/** Fills the composer rather than sending, as the library's suggested questions do. */
-function renderStarters(onPick: (text: string) => void) {
-  return (
-    <div className="space-y-3 p-2 text-center sm:p-4">
-      <p className="text-sm leading-relaxed text-text-muted">
-        Ask a question or explore a side-topic about this study guide passage.
-      </p>
-      <div className="flex flex-col gap-1.5 pt-1">
-        {STARTER_PROMPTS.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            onClick={() => onPick(prompt)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-left text-xs text-text-secondary hover:border-accent hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            {prompt} →
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+const STARTERS_NOTE = 'Ask a question or explore a side-topic about this study guide passage.';
 
 export interface CourseTangentChatProps {
   tangent: LearningTangentDto;
@@ -189,7 +167,7 @@ export function CourseTangentChat({
         inheritedCount={Math.max(1, tangent.contextMessageCount)}
         onTurnEnd={refreshTangents}
       >
-        <ChatPanel embedded autoFocus renderEmptyState={renderStarters} />
+        <ChatPanel embedded autoFocus starters={STARTER_PROMPTS} startersNote={STARTERS_NOTE} />
       </TangentConversation>
     </div>
   );

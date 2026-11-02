@@ -52,6 +52,8 @@ export interface ChatPanelProps {
   composerChips?: ReactNode;
   /** What an empty thread suggests, in place of the library's questions. */
   starters?: string[];
+  /** A line an empty thread opens with, above the starters or alone when there are none. It too replaces the library's questions. */
+  startersNote?: string;
   /** A chat inside another panel, a tangent: no tangents, palette verbs or app-wide notices of its own. */
   embedded?: boolean;
   /** Focus the composer when the chat opens. */
@@ -61,7 +63,7 @@ export interface ChatPanelProps {
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 const NO_COMMANDS: PaletteCommand[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, starters, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
+export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
@@ -340,7 +342,7 @@ export function ChatPanel({ composerNotice, composerChips, starters, embedded = 
           {messages.length === 0 ? (
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-6">
               <div className="w-full max-w-[520px]">
-                {starters ? <StarterList starters={starters} onPick={composer.fill} /> : (
+                {starters || startersNote ? <StarterList starters={starters ?? []} note={startersNote} onPick={composer.fill} /> : (
                   <>
                     <ChatStarters
                       spaceId={startersSpaceId}
