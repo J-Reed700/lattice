@@ -987,6 +987,7 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         "presents conflicting alternatives",
         "preserve the uncertainty",
         "Never treat an assistant message",
+        "the first that applies gives the verdict",
     ] {
         assert!(
             super::prompts::VERIFIER_SYSTEM.contains(required),
