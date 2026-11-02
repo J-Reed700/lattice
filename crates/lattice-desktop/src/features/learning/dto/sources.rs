@@ -62,6 +62,11 @@ pub struct LearningSourceLibraryItemDto {
     pub kind: LearningSourceKind,
     /// Who added the source: the Sources chip (claim review §5.4).
     pub added_by: crate::features::learning::lessons::claim_reviews::dto::SourceAddedByDto,
+    /// Whether the course's outline research found the page, as against a
+    /// document or address the user chose; a pack from before the mark has
+    /// none. The screens do not show it.
+    #[specta(skip)]
+    pub found_by_search: Option<bool>,
     pub origin: String,
     pub requested_url: Option<String>,
     pub freshness_policy: LearningSourcePolicy,

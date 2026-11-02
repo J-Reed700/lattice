@@ -443,8 +443,14 @@ pub(super) async fn insert_source_workspace(
         let added_by =
             lattice_core::domain::learning::claim_review::SourceAddedBy::from(source.added_by)
                 .as_str();
-        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,deleted_at,deletion_reason,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,NULL,NULL,?,?,?,?,?,?)")
-            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).bind(added_by).execute(&mut *tx).await.map_err(db)?;
+        // A pack from before the mark has none: an outline page saved from
+        // the web was found, as the migration reads a saved row.
+        let outline = lattice_core::domain::learning::claim_review::SourceAddedBy::Outline.as_str();
+        let found = source
+            .found_by_search
+            .unwrap_or(added_by == outline && kind == "web");
+        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,deleted_at,deletion_reason,created_at,updated_at,added_by,found_by_search) VALUES(?,?,?,?,?,?,NULL,NULL,?,?,?,?,?,?,?)")
+            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).bind(added_by).bind(found).execute(&mut *tx).await.map_err(db)?;
         let mut restored_digests = HashSet::new();
         for version in &source.versions {
             validate_source_id(&version.id)?;

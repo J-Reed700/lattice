@@ -88,6 +88,7 @@ impl LearningSourceLibraryRepository {
                 id: id.clone(),
                 kind: parse_kind(row.get("kind"))?,
                 added_by: parse_added_by(row.get("added_by"))?.into(),
+                found_by_search: Some(row.get::<i64, _>("found_by_search") != 0),
                 origin: row.get("origin"),
                 requested_url: row.get("requested_url"),
                 freshness_policy: parse_policy(row.get("freshness_policy"))?,
