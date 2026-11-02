@@ -38,9 +38,9 @@ pub use ocr::{
 };
 pub use reranker::{CuratedReranker, CURATED_RERANKER};
 pub use speech::{
-    get_curated_speech_models, speech_voice_file, CuratedVoice, DEFAULT_SPEECH_VOICE,
-    SPEECH_CONFIG_FILE, SPEECH_G2P_CONFIG_FILE, SPEECH_G2P_WEIGHTS_FILE, SPEECH_LEXICON_GOLD_FILE,
-    SPEECH_LEXICON_SILVER_FILE, SPEECH_MODEL_ID, SPEECH_VOICES, SPEECH_WEIGHTS_FILE,
+    find_speech_voice, get_curated_speech_models, speech_voice_file, CuratedVoice, SpeechAccent,
+    SpeechGender, SpeechReaderFiles, DEFAULT_SPEECH_VOICE, SPEECH_CONFIG_FILE, SPEECH_MODEL_ID,
+    SPEECH_VOICES, SPEECH_VOICE_PACK_ID, SPEECH_WEIGHTS_FILE,
 };
 pub use transcription::get_curated_transcription_models;
 pub use transcription::VOICE_TRANSCRIPTION_MODEL_ID;

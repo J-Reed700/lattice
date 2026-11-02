@@ -1,5 +1,6 @@
-//! British English text to Kokoro's phonemes: misaki's `G2P` pipeline over
-//! its lexicon, with the BART fallback for words neither dictionary has.
+//! English text to Kokoro's phonemes in a voice's accent: misaki's `G2P`
+//! pipeline over that accent's lexicon, with the BART fallback for words
+//! neither dictionary has.
 //! spaCy's tokenizer is approximated by splitting punctuation off the ends of
 //! each whitespace-separated chunk; misaki's subtokenizer runs on the rest.
 
@@ -13,6 +14,7 @@ mod tests;
 
 use std::path::Path;
 
+use lattice_core::domain::models::curated::SpeechAccent;
 use unicode_normalization::UnicodeNormalization;
 
 use fallback::Fallback;
@@ -249,19 +251,18 @@ pub struct G2p {
 }
 
 impl G2p {
-    pub fn load(
-        gold: &Path,
-        silver: &Path,
-        fallback_config: &Path,
-        fallback_weights: &Path,
-    ) -> Result<Self, String> {
-        let read =
-            |path: &Path| std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()));
+    /// Reads `accent` from its files in `dir`.
+    pub fn load(accent: SpeechAccent, dir: &Path) -> Result<Self, String> {
+        let files = accent.reader_files();
+        let read = |name: &str| {
+            let path = dir.join(name);
+            std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+        };
         Ok(Self {
-            lexicon: Lexicon::from_json(&read(gold)?, &read(silver)?)
+            lexicon: Lexicon::from_json(accent, &read(files.gold)?, &read(files.silver)?)
                 .map_err(|e| format!("lexicon: {e}"))?,
             fallback: Some(
-                Fallback::load(fallback_config, fallback_weights)
+                Fallback::load(&dir.join(files.g2p_config), &dir.join(files.g2p_weights))
                     .map_err(|e| format!("G2P fallback: {e}"))?,
             ),
         })
@@ -312,7 +313,9 @@ impl G2p {
                 out.push(' ');
             }
         }
-        out.trim().to_string()
+        // misaki's last step for Kokoro-82M: the lexicons write `ɾ` and `ʔ`,
+        // and the model is handed `T` and `t`.
+        out.trim().replace('ɾ', "T").replace('ʔ', "t")
     }
 
     /// Reads a written word made of several subtokens, longest known span
