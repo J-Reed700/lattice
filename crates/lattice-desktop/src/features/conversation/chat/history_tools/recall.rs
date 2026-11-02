@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 /// How much of a turn's weight a message must hold to be recalled for it. Not
 /// measured yet: set from the memory eval, like [`SHARED_RELEVANCE_FLOOR`].
-pub(super) const RECALL_RELEVANCE_FLOOR: f32 = 0.25;
+pub const RECALL_RELEVANCE_FLOOR: f32 = 0.25;
 /// A turn's weight is that of its rarest words, this many of them, so a long
 /// message does not ask more of a passage than a short one.
 const TURN_WEIGHT_TERMS: usize = 2;
@@ -371,7 +371,7 @@ fn cut_mark(left_out_bytes: usize) -> String {
 /// A message with no words of its own ("and then?") stands on the turns before
 /// it; any other answers for itself, so what was just discussed brings back
 /// nothing it did not ask for.
-fn what_the_turn_asks<'a>(
+pub fn what_the_turn_asks<'a>(
     user_input: &str,
     recent_turns: &'a [String],
 ) -> (Vec<String>, &'a [String]) {
@@ -392,7 +392,7 @@ fn what_the_turn_asks<'a>(
 /// counted in this conversation alone, so one that most messages hold says
 /// little and one that a single message holds picks it out. Raw BM25 scores
 /// run on no fixed scale, but this share reads the same in any conversation.
-pub(super) fn relevance_by_message(held: &TermHolders) -> HashMap<&str, f32> {
+pub fn relevance_by_message(held: &TermHolders) -> HashMap<&str, f32> {
     let messages = held.messages as f32;
     let weights: Vec<f32> = held
         .holders
@@ -423,7 +423,7 @@ pub(super) fn relevance_by_message(held: &TermHolders) -> HashMap<&str, f32> {
 /// The tail exists for pronouns: "does that still hold?" has nothing in it to
 /// match on. It is capped in tokens rather than messages because one pasted
 /// message would otherwise become the entire query.
-pub(super) fn build_recall_query(user_input: &str, recent_turns: &[String]) -> String {
+pub fn build_recall_query(user_input: &str, recent_turns: &[String]) -> String {
     let mut query = String::from(user_input.trim());
     let mut budget = MAX_CONTEXT_TOKENS;
     // Newest first: the nearest turn is the one a pronoun refers to.
@@ -449,7 +449,7 @@ pub(super) fn build_recall_query(user_input: &str, recent_turns: &[String]) -> S
 /// These are held separately from the lexical query because truncating that
 /// query must never be able to discard one (§9.1 step 1), and because
 /// `instr` is case-sensitive: `AuthToken` and `authtoken` are different names.
-pub(super) fn exact_identifiers(user_input: &str, recent_turns: &[String]) -> Vec<String> {
+pub fn exact_identifiers(user_input: &str, recent_turns: &[String]) -> Vec<String> {
     fn push(candidate: &str, found: &mut Vec<String>) {
         let candidate = candidate.trim();
         if candidate.is_empty()
