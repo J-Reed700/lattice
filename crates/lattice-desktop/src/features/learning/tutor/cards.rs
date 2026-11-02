@@ -11,6 +11,7 @@ use crate::features::learning::recall::schedule::DAY_MS;
 use crate::features::learning::recall::study_dto::StudyRating;
 use crate::features::learning::recall_repository::LearningRecallRepository;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
+use futures::TryStreamExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::VecDeque;
@@ -71,6 +72,33 @@ pub(super) fn interleaved(cards: Vec<DueCard>) -> Vec<DueCard> {
     mixed
 }
 
+/// `text` without the emphasis a reply puts on it, its spacing or its case.
+fn plain_words(text: &str) -> String {
+    text.replace(['*', '_', '`'], "")
+        .replace('’', "'")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Whether a reply of the chat put `front` to the learner. Newest first, as the
+/// card asked last is the one answered.
+async fn asked_in(pool: &SqlitePool, conversation_id: &str, front: &str) -> Result<bool> {
+    let front = plain_words(front);
+    let mut replies = sqlx::query_scalar::<_, String>(
+        "SELECT content FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC",
+    )
+    .bind(conversation_id)
+    .fetch(pool);
+    while let Some(reply) = replies.try_next().await.map_err(db)? {
+        if plain_words(&reply).contains(&front) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(super) struct NewCard<'a> {
     pub question: &'a str,
     pub answer: &'a str,
@@ -109,8 +137,9 @@ impl CourseTurn {
     }
 
     /// Rates the learner's answer to a due card into its schedule, as the
-    /// Recall tab does. A card that is not due was not asked from the due
-    /// list, or was rated already: its schedule stays as it is.
+    /// Recall tab does. A card that is not due was rated already, and one no
+    /// reply of this chat asked has no answer to rate: either way its schedule
+    /// stays as it is.
     pub(super) async fn rate_card(
         &self,
         card_id: &str,
@@ -119,7 +148,7 @@ impl CourseTurn {
     ) -> Result<String> {
         let at = now();
         let row = sqlx::query(
-            "SELECT c.due_at,c.review_count,c.format FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
+            "SELECT c.due_at,c.review_count,c.format,c.question FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
         )
         .bind(card_id)
         .bind(&self.program_id)
@@ -135,6 +164,11 @@ impl CourseTurn {
         if row.get::<i64, _>("due_at") > at {
             return Err(invalid(
                 "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.",
+            ));
+        }
+        if !asked_in(&self.pool, &self.conversation_id, row.get("question")).await? {
+            return Err(invalid(
+                "That card was not asked in this chat, so there is no answer to rate. Nothing was recorded. Ask it as written, then rate the learner's answer.",
             ));
         }
         if row.get::<String, _>("format") == "multiple_choice" && selected_option.is_none() {

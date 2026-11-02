@@ -471,6 +471,13 @@ async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
         recall.workspace(&program).await.expect("cards").due_count,
         1
     );
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does k flatten?",
+    )
+    .await;
 
     let recorded = course
         .text(
@@ -500,6 +507,13 @@ async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
 async fn a_card_that_is_not_due_keeps_its_schedule() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does k flatten?",
+    )
+    .await;
     let rate = json!({ "card_id": card, "rating": "good" });
     course.text("record_recall", rate.clone()).await;
     let reviewed = course.schedule(&card).await;
@@ -631,6 +645,13 @@ async fn a_multiple_choice_card_is_rated_by_the_option_the_learner_chose() {
 
     let due = course.text("due_reviews", json!({})).await;
     assert!(due.contains("1. A larger k"), "{due}");
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Which flattens the top ranks?",
+    )
+    .await;
 
     let unsaid = course
         .call(
@@ -684,6 +705,13 @@ async fn save_card_cites_its_source_and_joins_the_recall_deck() {
         std::slice::from_ref(&course.version)
     );
     assert_eq!(workspace.due_count, 1, "the tutor can ask it at once");
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does a larger k do?",
+    )
+    .await;
     course
         .text(
             "record_recall",
