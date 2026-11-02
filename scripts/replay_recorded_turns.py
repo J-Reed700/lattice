@@ -28,6 +28,8 @@ import time
 import urllib.error
 import urllib.request
 
+from replay_model import one_model, served_model
+
 LANGUAGE_ADD = " Write in the language of my question, translating any passage in another."
 NOTES_OLD = "If your answer already covers my question, reply with a single hyphen."
 NOTES_NEW = NOTES_OLD + " Do not mention your notes or correct them."
@@ -191,6 +193,7 @@ def main():
     if args.dry_run:
         return
     send = sender(args.model)
+    model = one_model([job[4] for job in jobs]) if args.model == "haiku" else served_model(os.environ["LLAMA_REPLAY_URL"])
 
     def one(job):
         kind, query, arm, repeat, request = job[:5]
@@ -204,7 +207,7 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=4 if args.model == "haiku" else 1) as pool:
         for result in pool.map(one, jobs):
             with open(args.out, "a", encoding="utf-8") as out:
-                out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                out.write(json.dumps({"model": model, **result}, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
