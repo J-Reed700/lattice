@@ -430,7 +430,11 @@ impl ClaimLedger {
                 ))
             })
             .collect();
-        Rewrites::new(self.pending.previous.clone(), parents)
+        Rewrites::new(
+            !self.entries.is_empty(),
+            self.pending.previous.clone(),
+            parents,
+        )
     }
 
     /// The repair sent for `claims` (§4): which attempt it is for each claim,

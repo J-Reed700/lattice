@@ -38,12 +38,21 @@ pub(super) async fn verify_with_references(
                 llm,
                 &content,
                 saved.inventory,
-                &candidate_text,
+                (&candidate_text, candidate),
                 Some(saved.coverage),
+                &checks.rewrites,
             )
             .await?
         }
-        None => extract_audited_inventory(llm, &content, &candidate_text).await?,
+        None => {
+            extract_audited_inventory(
+                llm,
+                &content,
+                (&candidate_text, candidate),
+                &checks.rewrites,
+            )
+            .await?
+        }
     };
     let checkpoint = InventoryCheckpoint {
         policy: INVENTORY_POLICY.into(),

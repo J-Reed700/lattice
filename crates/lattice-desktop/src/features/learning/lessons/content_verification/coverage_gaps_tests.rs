@@ -1,10 +1,13 @@
-//! The coverage audit reports what the claim inventory leaves out; it does not
-//! complete the inventory. An assertion the fidelity judge names as
-//! unrepresented is a finding for the teaching review, never a claim: it is
-//! not checked, repaired or cut, and it does not stop the lesson (claim
-//! classes design §3.4).
+//! The coverage audit reports what the claim inventory leaves out. An
+//! assertion the fidelity judge names as unrepresented is a finding for the
+//! teaching review, not a claim: it is not checked, repaired or cut, and it
+//! does not stop the lesson. The exception is a specific (a figure, a
+//! quotation, an attribution) in a passage the inventory reads: it joins the
+//! inventory in the first pass and gets the strict check (claim classes design
+//! §3.4).
 use super::*;
 use crate::features::learning::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
+use crate::features::learning::lesson_drafts;
 use crate::features::learning::review_findings::{FindingKind, FindingSite};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -17,6 +20,9 @@ const UNSOURCED_PREMISE: &str = "Exercise: assuming the reader logs every parsed
 const UNSOURCED: &str = "DictReader logs every parsed row to standard error by default.";
 /// A deliverable and rubric: the lesson's own choices, not assertions.
 const RUBRIC: &str = "Deliverable: submit a markdown report. Rubric: Strong answers cite their sources; Adequate answers name the behaviour.";
+/// An exercise that presupposes a figure the extractor missed.
+const FIGURE_PREMISE: &str = "Exercise: assuming the reader buffers 100 rows before parsing, write code that sizes its memory for that buffer.";
+const FIGURE: &str = "DictReader buffers 100 rows before parsing.";
 
 struct JudgingModel {
     inner: Model,
@@ -73,7 +79,7 @@ impl JudgingModel {
             proposed_passage,
             judge_reply: json!({"missingAssertions":missing,"reason":reason}),
             watched_claim,
-            unsourced: watched_claim == UNSOURCED,
+            unsourced: watched_claim == UNSOURCED || watched_claim == FIGURE,
             premise_missed: !missing.is_empty(),
             judged: AtomicUsize::new(0),
             judged_watched_claim: AtomicBool::new(false),
@@ -136,9 +142,10 @@ fn lesson(second_body: &str) -> Value {
 
 /// The 2026-10-14 live failure's shape: extraction missed a factual premise
 /// embedded in an exercise, the mapper proposed the omission and the judge
-/// named it. The assertion is reported on its section, as a finding for the
-/// teaching review, and is no claim: no evidence check runs for it, nothing is
-/// repaired, the lesson is not stopped and its text is untouched.
+/// named it. With no figure, quotation or attribution in it, the assertion is
+/// reported on its section, as a finding for the teaching review, and is no
+/// claim: no evidence check runs for it, nothing is repaired, the lesson is
+/// not stopped and its text is untouched.
 async fn a_named_assertion_is_a_finding_not_a_claim(
     premise: &'static str,
     statement: &'static str,
@@ -189,6 +196,205 @@ async fn an_assertion_no_source_mentions_is_a_finding_not_a_claim() -> Result<()
 #[tokio::test]
 async fn an_assertion_the_sources_contradict_is_a_finding_not_a_claim() -> Result<()> {
     a_named_assertion_is_a_finding_not_a_claim(PREMISE, BAD).await
+}
+
+/// A figure the extractor missed in an exercise is a statement the lesson
+/// makes, and a source must back it: the audit's gap joins the inventory,
+/// located at the judged passage, and the rule layer sorts it Sourced.
+#[tokio::test]
+async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_check() -> Result<()>
+{
+    let model = JudgingModel::new(FIGURE_PREMISE, &[FIGURE], FIGURE);
+
+    let report = verify(&model, &lesson(FIGURE_PREMISE), &[source()]).await?;
+
+    let adopted: Vec<_> = report.coverage[1]
+        .claims
+        .iter()
+        .filter(|claim| claim.statement == FIGURE)
+        .collect();
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(adopted[0].quote, FIGURE_PREMISE);
+    assert!(report.coverage_audit[1].complete);
+    assert!(
+        report.coverage_findings(2).is_empty(),
+        "a claim now, no finding"
+    );
+    assert!(model.judged_watched_claim.load(Ordering::Relaxed));
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.statement == FIGURE)
+        .unwrap();
+    assert_eq!(
+        finding.class,
+        Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule
+        })
+    );
+    assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
+    assert!(!report.issues.is_empty(), "an unbacked figure is an issue");
+    Ok(())
+}
+
+/// A question's stem and options, and a rubric, are not passages the inventory
+/// reads, so a gap cannot be placed in them; a gap that names one is a finding.
+#[test]
+fn a_gap_in_a_question_or_an_option_is_never_adopted() {
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"A","body":GOOD,"rubric":[]}],
+        "questions":[{"kind":"quiz","prompt":"Which buffers 100 rows?",
+            "options":["It buffers 100 rows.","It buffers none."],"correctIndex":0,
+            "explanation":"Because the reference says so."}]});
+    let content = units(&candidate).unwrap();
+    let mut inventory = Inventory {
+        units: vec![
+            UnitClaims {
+                index: 0,
+                claims: vec![],
+                non_factual_reason: "A section.".into(),
+            },
+            UnitClaims {
+                index: 1,
+                claims: vec![],
+                non_factual_reason: "A question.".into(),
+            },
+        ],
+    };
+    let gap = |passage_id: &str| MissingAssertion {
+        passage_id: passage_id.into(),
+        statement: FIGURE.into(),
+    };
+    let mut coverage = Coverage {
+        units: vec![CoverageUnit {
+            index: 1,
+            complete: false,
+            reason: "gaps".into(),
+            missing_assertions: vec![
+                gap("unit-1-context-0"),
+                gap("unit-1-context-1"),
+                gap("unit-1-passage-9"),
+            ],
+        }],
+    };
+
+    let adopted = inventory_checkpoint::adopt_specifics(
+        &mut inventory,
+        &mut coverage,
+        &content,
+        (&candidate, &claim_ledger::Rewrites::default()),
+    );
+
+    assert_eq!(adopted, 0);
+    assert!(inventory.units[1].claims.is_empty());
+    assert!(!coverage.units[0].complete);
+    assert_eq!(coverage.units[0].missing_assertions.len(), 3);
+}
+
+/// A rubric is never read, so a figure in one never reaches the audit.
+#[tokio::test]
+async fn a_figure_in_a_rubric_is_neither_read_nor_adopted() -> Result<()> {
+    let rubric = "Cite the 2019 survey figure of 100 rows.";
+    let mut original = lesson("A header row names the columns of a table in its first line.");
+    original["blocks"][1]["rubric"] =
+        json!([{"title":"Cites","description":rubric,"dimension":"application"}]);
+    let model = JudgingModel::new(rubric, &[FIGURE], FIGURE);
+
+    let report = verify(&model, &original, &[source()]).await?;
+
+    assert_eq!(model.judged.load(Ordering::Relaxed), 0);
+    assert!(report.coverage_audit.iter().all(|unit| unit.complete));
+    assert!(report
+        .coverage
+        .iter()
+        .flat_map(|unit| &unit.claims)
+        .all(|claim| !claim.statement.contains("100")));
+    Ok(())
+}
+
+/// After the first pass only a gap in a sentence written since the last is
+/// adopted, whoever wrote it, so the audit cannot widen the inventory again.
+#[test]
+fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
+    let candidate = lesson(FIGURE_PREMISE);
+    let content = units(&candidate).unwrap();
+    let fresh = || {
+        (
+            Inventory {
+                units: vec![
+                    UnitClaims {
+                        index: 0,
+                        claims: vec![],
+                        non_factual_reason: "A section.".into(),
+                    },
+                    UnitClaims {
+                        index: 1,
+                        claims: vec![],
+                        non_factual_reason: "An exercise instruction.".into(),
+                    },
+                ],
+            },
+            Coverage {
+                units: vec![CoverageUnit {
+                    index: 1,
+                    complete: false,
+                    reason: FIGURE.into(),
+                    missing_assertions: vec![MissingAssertion {
+                        passage_id: "unit-1-passage-0".into(),
+                        statement: FIGURE.into(),
+                    }],
+                }],
+            },
+        )
+    };
+    let adopt = |rewrites: &claim_ledger::Rewrites| {
+        let (mut inventory, mut coverage) = fresh();
+        let adopted = inventory_checkpoint::adopt_specifics(
+            &mut inventory,
+            &mut coverage,
+            &content,
+            (&candidate, rewrites),
+        );
+        (
+            adopted,
+            inventory.units[1].claims.len(),
+            coverage.units[0].complete,
+        )
+    };
+
+    // The first pass reads the whole lesson.
+    assert_eq!(adopt(&claim_ledger::Rewrites::default()), (1, 1, true));
+    // A later pass over text that did not change adopts nothing.
+    let unchanged = claim_ledger::Rewrites::new(true, Some(candidate.clone()), vec![]);
+    assert_eq!(adopt(&unchanged), (0, 0, false));
+    // The sentence is new to a later pass when something wrote it since.
+    let before = lesson("Exercise: write code that reads a file one row at a time.");
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before), vec![]);
+    assert_eq!(adopt(&rewritten), (1, 1, true));
+}
+
+/// The audit of a section is a receipt: a second pass over it audits nothing
+/// and adopts nothing again.
+#[tokio::test]
+async fn a_second_pass_over_an_unchanged_section_audits_and_adopts_nothing_again() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = JudgingModel::new(FIGURE_PREMISE, &[FIGURE], FIGURE);
+    let original = lesson(FIGURE_PREMISE);
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("gaps-fixture".into()).await?;
+        let first = verify(&model, &original, &[source()]).await?;
+        let judged = model.judged.load(Ordering::Relaxed);
+        assert_eq!((first.coverage[1].claims.len(), judged), (1, 1));
+
+        let again = verify(&model, &original, &[source()]).await?;
+
+        assert_eq!(again.coverage[1].claims.len(), 1);
+        assert_eq!(model.judged.load(Ordering::Relaxed), judged);
+        Ok(())
+    })
+    .await
 }
 
 /// The correct neighbour: a mapper proposing an omission for a deliverable

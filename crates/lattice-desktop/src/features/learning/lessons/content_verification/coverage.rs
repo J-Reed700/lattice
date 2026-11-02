@@ -148,7 +148,11 @@ fn resolve(raw: &str, units: &[Value]) -> Result<Vec<CoverageUnit>> {
 }
 
 impl CoverageUnit {
-    fn from_missing(index: usize, missing: Vec<MissingAssertion>, complete_reason: &str) -> Self {
+    pub(super) fn from_missing(
+        index: usize,
+        missing: Vec<MissingAssertion>,
+        complete_reason: &str,
+    ) -> Self {
         let complete = missing.is_empty();
         let reason = if complete {
             complete_reason.into()

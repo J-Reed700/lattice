@@ -150,8 +150,13 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     let model = Model::new();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         let content = units(&candidate)?;
-        let (inventory, coverage) =
-            extract_audited_inventory(&model, &content, &candidate.to_string()).await?;
+        let (inventory, coverage) = extract_audited_inventory(
+            &model,
+            &content,
+            (&candidate.to_string(), &candidate),
+            &claim_ledger::Rewrites::default(),
+        )
+        .await?;
         assert!(
             model.extracted_sections.lock().unwrap().is_empty(),
             "A changed section updates its saved inventory instead of re-extracting it"

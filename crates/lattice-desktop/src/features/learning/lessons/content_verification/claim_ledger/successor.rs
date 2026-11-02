@@ -89,21 +89,54 @@ fn strictness(class: Class) -> u8 {
     }
 }
 
-/// What the repairs of one step leave for the pass that checks their text:
-/// the lesson as it was before them, and each repaired claim with the field
-/// its sentence stood in and the class it was checked as.
+/// What the last step leaves for the pass that checks the lesson: whether
+/// that pass comes after another, the lesson as it was before the repairs or
+/// edits, and each repaired claim with the field its sentence stood in and the
+/// class it was checked as.
 #[derive(Default)]
 pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
+    later: bool,
     previous: Option<Value>,
     parents: Vec<(RepairRecord, String, Classed)>,
 }
 
 impl Rewrites {
-    pub(super) fn new(
+    pub(in crate::features::learning::lessons::content_verification) fn new(
+        later: bool,
         previous: Option<Value>,
         parents: Vec<(RepairRecord, String, Classed)>,
     ) -> Self {
-        Self { previous, parents }
+        Self {
+            later,
+            previous,
+            parents,
+        }
+    }
+
+    /// Whether this pass is the first to read `claim`: the first pass reads
+    /// the whole lesson, a later one only the sentences written since the
+    /// last, by a repair or by the user.
+    pub(in crate::features::learning::lessons::content_verification) fn is_new(
+        &self,
+        current: &Value,
+        claim: &ExtractedClaim,
+    ) -> bool {
+        if !self.later {
+            return true;
+        }
+        let (unit, field) = (claim.location.unit_index, claim.location.field.as_str());
+        let Some(after) = field_text(current, unit, field) else {
+            return false;
+        };
+        let Some(before) = self
+            .previous
+            .as_ref()
+            .and_then(|previous| field_text(previous, unit, field))
+        else {
+            return false;
+        };
+        let region = sentence_region(&after, changed_region(&before, &after));
+        written(claim, unit, field, &before, region)
     }
 
     /// For each of `extracted`, taken from `current`, the class of the
