@@ -157,7 +157,7 @@ def merge(draft, name, registry=grading.REGISTRY):
     problems = grading.set_problems(rows + reviewed, bank)
     if problems:
         raise SystemExit("the merged set would not be valid: " + "; ".join(problems))
-    with Path(entry["rows_path"]).open("a") as out:
+    with Path(entry["rows_path"]).open("a", encoding="utf-8") as out:
         for row in reviewed:
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
     return len(reviewed), len(drafted) - len(reviewed)

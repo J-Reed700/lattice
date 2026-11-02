@@ -179,7 +179,7 @@ def outline_lines(criterion, set_item):
 # --- reading a raw run -----------------------------------------------------
 
 def read_json(path, default=None):
-    return json.loads(Path(path).read_text()) if Path(path).exists() else default
+    return json.loads(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else default
 
 
 def load_optional(path):
@@ -336,7 +336,7 @@ def render_lesson(document, request):
 # --- collect ---------------------------------------------------------------
 
 def load_set(path):
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     if data.get("schema") != SET_SCHEMA:
         raise SystemExit(f"{path} is not {SET_SCHEMA}")
     items = unique_records(data["items"], "id")
@@ -509,11 +509,11 @@ def gather_request(source, set_item):
 
 
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def write_jsonl(path, rows, mode="x"):
-    with Path(path).open(mode) as out:
+    with Path(path).open(mode, encoding="utf-8") as out:
         for row in rows:
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -726,7 +726,7 @@ def score_file(results, items_name, answers_name, out_name, judge, judge_setting
     answers = unique_records(load_jsonl(results / answers_name), "query_id")
     manifest, out_path, done = scored_output(results, items_doc, out_name, judge_settings)
     counts = {"graded": 0, "skipped": len(done), "no_artifact": 0, "too_long": 0}
-    with out_path.open("a") as out:
+    with out_path.open("a", encoding="utf-8") as out:
         for entry in items_doc["items"]:
             if entry["id"] in done:
                 continue
@@ -751,7 +751,7 @@ def score_quiz(results, judge, solver, judge_settings, window):
     items_doc = read_json(results / "quiz.items.json")
     manifest, out_path, done = scored_output(results, items_doc, "quiz.scored.jsonl", judge_settings)
     counts = {"graded": 0, "skipped": len(done), "ungraded": 0}
-    with out_path.open("a") as out:
+    with out_path.open("a", encoding="utf-8") as out:
         for entry in items_doc["items"]:
             if entry["id"] in done:
                 continue
@@ -1022,7 +1022,7 @@ def summarize(results):
         "metrics": metrics,
     }
     write_json(results / "summary.json", summary)
-    (results / "summary.md").write_text(markdown(summary, relative(results)))
+    (results / "summary.md").write_text(markdown(summary, relative(results)), encoding="utf-8")
     return summary
 
 
@@ -1206,7 +1206,7 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
     else:
         summarize(args.results)
-        print((args.results / "summary.md").read_text())
+        print((args.results / "summary.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

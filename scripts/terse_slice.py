@@ -47,8 +47,8 @@ def words(text):
 
 
 def load(path):
-    terse = json.loads(Path(path).read_text())
-    source = json.loads((ROOT / terse["source"]).read_text())
+    terse = json.loads(Path(path).read_text(encoding="utf-8"))
+    source = json.loads((ROOT / terse["source"]).read_text(encoding="utf-8"))
     return terse, source
 
 
@@ -221,9 +221,9 @@ def main():
         print(json.dumps(report, indent=2, ensure_ascii=False))
         raise SystemExit(1 if report["problems"] else 0)
     elif args.command == "build":
-        args.output.write_text(json.dumps(build(terse, source), ensure_ascii=False) + "\n")
+        args.output.write_text(json.dumps(build(terse, source), ensure_ascii=False) + "\n", encoding="utf-8")
     else:
-        read = lambda path: [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        read = lambda path: [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         print(json.dumps(compare(terse, source, read(args.v3_run), read(args.terse_run), args.k), indent=2))
 
 

@@ -80,9 +80,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     name = args.checker or f'granite-guardian-3.3-8b{"-think" if args.think else ""}'
     out = Path(args.out)
-    done = {json.loads(line)['id'] for line in out.read_text().splitlines() if line.strip()} \
+    done = {json.loads(line)['id'] for line in out.read_text(encoding="utf-8").splitlines() if line.strip()} \
         if out.exists() else set()
-    pairs = [json.loads(line) for line in Path(args.dataset).read_text().splitlines() if line.strip()]
+    pairs = [json.loads(line) for line in Path(args.dataset).read_text(encoding="utf-8").splitlines() if line.strip()]
     with out.open('a', encoding='utf-8') as results:
         for pair in pairs:
             if pair['id'] in done:

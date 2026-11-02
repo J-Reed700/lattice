@@ -110,7 +110,7 @@ def contains(haystack, needle):
 
 
 def load_jsonl(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def validate_row(row):
@@ -723,7 +723,7 @@ def manifest(questions, run_meta, judge_settings):
         },
         "harness_sha256": digest({
             "runner": run_meta.get("harness_sha256"),
-            "scorer": digest((scripts / "shipped_path_eval.py").read_text()),
+            "scorer": digest((scripts / "shipped_path_eval.py").read_text(encoding="utf-8")),
         }),
     }
     return {**identity, "run_id": digest(identity)}
@@ -753,9 +753,9 @@ def main():
     labelled.add_argument("output", type=Path)
     args = parser.parse_args()
 
-    questions = json.loads(args.questions.read_text())
+    questions = json.loads(args.questions.read_text(encoding="utf-8"))
     if args.command == "validate":
-        problems = validate_questions(questions, json.loads(args.corpus.read_text()))
+        problems = validate_questions(questions, json.loads(args.corpus.read_text(encoding="utf-8")))
         print("\n".join(problems) or f"{len(questions['items'])} items valid")
         raise SystemExit(1 if problems else 0)
 
@@ -763,9 +763,9 @@ def main():
         raise SystemExit(f"{args.output} exists; scores are never overwritten")
     rows = load_jsonl(args.answers)
     if args.command == "score-dataset":
-        expectations = json.loads(args.expectations.read_text())
+        expectations = json.loads(args.expectations.read_text(encoding="utf-8"))
         scored = score_dataset(questions, expectations, rows)
-        with args.output.open("x") as out:
+        with args.output.open("x", encoding="utf-8") as out:
             for row in scored:
                 out.write(json.dumps(row, ensure_ascii=False) + "\n")
         report = aggregate(scored, len(questions["queries"]))
@@ -777,11 +777,11 @@ def main():
         report["timing_ms"] = {key: {"median": median([t[key] for r in scored for t in r["timing"]]),
                                      "p95": percentile([t[key] for r in scored for t in r["timing"]], 95)}
                                for key in ("answered_ms", "retrieval_ms", "generation_ms")}
-        Path(str(args.output) + ".summary.json").write_text(json.dumps(report, indent=2) + "\n")
+        Path(str(args.output) + ".summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
         return
     run_meta_path = Path(str(args.answers) + ".run.json")
-    run_meta = json.loads(run_meta_path.read_text()) if run_meta_path.exists() else {}
+    run_meta = json.loads(run_meta_path.read_text(encoding="utf-8")) if run_meta_path.exists() else {}
     answer_model = answering_model(run_meta)[0]
     if args.judge_provider == "anthropic":
         judge = anthropic_judge(args.model)
@@ -797,12 +797,12 @@ def main():
                              "identity": judge_identity(args.endpoint, args.model, answer_model)}) if judge else None
     scored = score(questions, rows, judge)
     identity = manifest(questions, run_meta, judge_settings)
-    with args.output.open("x") as out:
+    with args.output.open("x", encoding="utf-8") as out:
         for row in scored:
             out.write(json.dumps({**row, "run_id": identity["run_id"]}, ensure_ascii=False) + "\n")
-    Path(str(args.output) + ".manifest.json").write_text(json.dumps(identity, indent=2) + "\n")
+    Path(str(args.output) + ".manifest.json").write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
     summary = summarize(scored, questions)
-    Path(str(args.output) + ".summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    Path(str(args.output) + ".summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(markdown(summary))
     print(json.dumps({k: summary[k] for k in summary if k not in ("by_tag", "overall")}, indent=2))
 

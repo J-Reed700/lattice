@@ -86,7 +86,7 @@ def lettuce_support(token_predictions):
 def resolved_revision(repo, cache_dir):
     """The commit a `main` download resolved to, read from the hub cache."""
     ref = Path(cache_dir) / f"models--{repo.replace('/', '--')}" / 'refs' / 'main'
-    return ref.read_text().strip() if ref.exists() else None
+    return ref.read_text(encoding="utf-8").strip() if ref.exists() else None
 
 
 def parameter_count(model):
@@ -196,7 +196,7 @@ def main(argv=None):
         'torch': torch.__version__, 'transformers': transformers.__version__,
         'python': platform.python_version(), 'machine': platform.machine(), **notes,
     }
-    (out_dir / f'{args.run_date}-{args.checker}.meta.json').write_text(json.dumps(meta, indent=2) + '\n')
+    (out_dir / f'{args.run_date}-{args.checker}.meta.json').write_text(json.dumps(meta, indent=2) + '\n', encoding="utf-8")
     print(json.dumps(meta, indent=2), file=sys.stderr)
 
 

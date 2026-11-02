@@ -27,7 +27,7 @@ ONLY = set(filter(None, os.environ.get("ONLY", "").split(",")))
 ARMS = set(filter(None, os.environ.get("ARMS", "A2,A2e,W").split(",")))
 URL = os.environ.get("LLAMA", "http://127.0.0.1:8089")
 
-items = {i["id"]: i for i in json.load(open(RUBRIC))["items"]}
+items = {i["id"]: i for i in json.load(open(RUBRIC, encoding="utf-8"))["items"]}
 
 READ_OLD = ("Before answering, go through every numbered passage above in order and write one line for each: its label, "
             "then the sentences of that passage that bear on my question, copied exactly as written and in the passage's "
@@ -387,7 +387,7 @@ def arm_from_raw(raw, text0, texts, fl, moved_key):
 saved = {}  # (run, qid) -> {"read": (req, logged notes), "write": logged write request}
 for path in CALL_FILES:
     run = os.path.basename(path).split(".")[0]
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         row = json.loads(line)
         c = row["call"]
         q = c.get("request") or {}
@@ -401,12 +401,12 @@ for path in CALL_FILES:
         elif last.endswith("Leave out a note that was mistaken."):
             saved.setdefault(key, {}).setdefault("write", q)
 
-out = open(OUT, "a")
+out = open(OUT, "a", encoding="utf-8")
 MODEL = served_model(URL)
 pass1_by_key = {}
 pass1_path = os.path.join(os.path.dirname(OUT), "ab-pass1.jsonl")
 if os.path.exists(pass1_path):
-    for line in open(pass1_path):
+    for line in open(pass1_path, encoding="utf-8"):
         if line.strip():
             r1 = json.loads(line)
             pass1_by_key[(r1["run"], r1["query_id"])] = r1

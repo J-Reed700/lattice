@@ -129,7 +129,7 @@ class IntegrityTests(unittest.TestCase):
             output = Path(directory) / 'run.jsonl'
             current = {'run_id': 'one'}
             self.assertEqual(integrity.prepare_output(output, current, False), [])
-            output.write_text(json.dumps({'query_id': 'q', 'run_id': 'one'}) + '\n')
+            output.write_text(json.dumps({'query_id': 'q', 'run_id': 'one'}) + '\n', encoding="utf-8")
             self.assertEqual(len(integrity.prepare_output(output, current, True)), 1)
             for resume, identity in [(False, current), (True, {'run_id': 'two'})]:
                 with self.assertRaises(ValueError):
@@ -168,11 +168,11 @@ class IntegrityTests(unittest.TestCase):
             root = Path(directory)
             dataset, labels, retrieval, output, config = [root / name for name in
                 ('dataset.json', 'labels.json', 'retrieval.jsonl', 'answers.jsonl', 'config.json')]
-            dataset.write_text(json.dumps(self.dataset))
-            labels.write_text(json.dumps(self.labels))
-            retrieval.write_text(json.dumps({'query_id': 'q', 'ranked_ids': ['a'], 'latency_ms': 1}) + '\n')
+            dataset.write_text(json.dumps(self.dataset), encoding="utf-8")
+            labels.write_text(json.dumps(self.labels), encoding="utf-8")
+            retrieval.write_text(json.dumps({'query_id': 'q', 'ranked_ids': ['a'], 'latency_ms': 1}) + '\n', encoding="utf-8")
             config.write_text(json.dumps({'model': 'local/m', 'provider': {'local': {
-                'options': {'baseURL': 'http://localhost:1', 'headers': {'Authorization': 'SECRET'}}}}}))
+                'options': {'baseURL': 'http://localhost:1', 'headers': {'Authorization': 'SECRET'}}}}}), encoding="utf-8")
             argv = ['chat', str(dataset), str(retrieval), str(labels), str(output),
                     '--config', str(config), '--model-revision', 'weights-sha', '--delay', '0']
             with patch('sys.argv', argv), patch.object(chat, 'request_answer', return_value=(
@@ -184,16 +184,16 @@ class IntegrityTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     chat.main()
                 request.assert_not_called()
-            self.assertNotIn('SECRET', output.with_suffix('.jsonl.manifest.json').read_text())
+            self.assertNotIn('SECRET', output.with_suffix('.jsonl.manifest.json').read_text(encoding="utf-8"))
             packet_path = root / 'packets.jsonl'
             with patch('sys.argv', ['review', str(dataset), str(output), '--export', str(packet_path)]):
                 review.main()
-            packet = json.loads(packet_path.read_text())
+            packet = json.loads(packet_path.read_text(encoding="utf-8"))
             judgment = dict(self.judgment)
             for key in ('rubric', 'query_id', 'answer_sha256', 'run_id', 'packet_sha256'):
                 judgment[key] = packet[key]
             reviews = root / 'reviews.jsonl'
-            reviews.write_text(json.dumps(judgment) + '\n')
+            reviews.write_text(json.dumps(judgment) + '\n', encoding="utf-8")
             with patch('sys.argv', ['review', str(dataset), str(output), '--expectations', str(labels),
                                     '--reviews', str(reviews)]):
                 with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit) as result:

@@ -37,7 +37,7 @@ def main():
     connection.execute('PRAGMA foreign_keys = ON')
     migrations = sorted((ROOT / 'crates/lattice-desktop/migrations').glob('*.sql'))
     for migration in migrations:
-        connection.executescript('BEGIN;\n' + migration.read_text() + '\nCOMMIT;')
+        connection.executescript('BEGIN;\n' + migration.read_text(encoding="utf-8") + '\nCOMMIT;')
     # sqlx creates its own bookkeeping table at runtime; the backup feature
     # reads it to compare schema versions between databases.
     connection.executescript(

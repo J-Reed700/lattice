@@ -60,7 +60,7 @@ CITATION_RE = re.compile(r"(?<!\^)\[(\d+)\]")
 
 
 def load_structured(path):
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
     if Path(path).suffix.lower() == ".json":
         return json.loads(text)
     try:
@@ -131,7 +131,7 @@ def chat_completions_url(base_url):
 
 
 def load_jsonl(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def render_context(ranked_ids, documents, top_k):
@@ -379,7 +379,7 @@ def main():
             raise ValueError("Resume row content or context is incompatible")
         rows.append(evaluate_answer(queries[qid], expectations[qid], cached["answer"],
                                     selected_ids, cached["latency_ms"], provider["model"]))
-    with args.output.open(mode) as output:
+    with args.output.open(mode, encoding="utf-8") as output:
         for index, query_id in enumerate(selected_queries, 1):
             if query_id in existing:
                 continue

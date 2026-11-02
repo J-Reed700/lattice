@@ -181,10 +181,10 @@ class Models(unittest.TestCase):
         import json
         from pathlib import Path
         path = Path(directory) / f"{name}.scored.jsonl"
-        path.write_text("")
+        path.write_text("", encoding="utf-8")
         manifest = {"settings": {"model": model, "model_revision": revision, "thinking": "off",
                                  "judge": {"model": judge}}}
-        Path(str(path) + ".manifest.json").write_text(json.dumps(manifest))
+        Path(str(path) + ".manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         return path
 
     def test_runs_of_one_model_compare(self):
@@ -219,7 +219,7 @@ class Models(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             a = self.write(directory, "a", "qwen")
             bare = Path(directory) / "bare.scored.jsonl"
-            bare.write_text("")
+            bare.write_text("", encoding="utf-8")
             with self.assertRaises(ValueError):
                 sps.check_models([a], [bare])
 
