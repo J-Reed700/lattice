@@ -1,0 +1,94 @@
+{
+  "schema": "lattice-tutor-sessions/1",
+  "note": "Each session is one tutor chat on a fresh copy of course-v1.json. A say turn sends its text as written. A play turn is the learner played by the model under test from the reply just given: `right` answers from the course's sources, `wrong` holds the misconception written beside it. `done` lists what the course must hold after the last turn, read from the database.",
+  "sessions": [
+    {
+      "id": "teach-retries",
+      "tags": ["teach", "retrieval-question"],
+      "turns": [
+        { "say": "Teach me how retries work in Tidewell." },
+        { "play": "right" },
+        { "play": "right" },
+        { "play": "right" }
+      ]
+    },
+    {
+      "id": "due-first",
+      "tags": ["due-opening", "recall"],
+      "turns": [
+        { "say": "Hi, I'm ready to study." },
+        { "play": "right" },
+        { "play": "right" }
+      ],
+      "expect": { "reviews_at_least": 1 }
+    },
+    {
+      "id": "quiz-due",
+      "tags": ["due-opening", "recall", "interleaving"],
+      "turns": [
+        { "say": "Quiz me on what is due" },
+        { "play": "right" },
+        { "play": "wrong", "misconception": "You think the answer is the opposite of what the card says, and you answer with confidence." },
+        { "play": "right" },
+        { "play": "right" }
+      ],
+      "expect": { "reviews_at_least": 2 }
+    },
+    {
+      "id": "misconception",
+      "tags": ["feedback", "save-card"],
+      "turns": [
+        { "say": "A lease is basically a lock, right? So only one worker can ever be running a job at once, and that's why Tidewell can't deliver twice." },
+        { "play": "wrong", "misconception": "You think a dedupe_key stops a worker from running a job twice." },
+        { "say": "Thanks. Save that as a card so I get it again later." }
+      ],
+      "expect": { "cards_added_at_least": 1 }
+    },
+    {
+      "id": "summary-note",
+      "tags": ["notebook"],
+      "turns": [
+        { "say": "Teach me what happens to a job that keeps failing, in a few sentences." },
+        { "say": "Let me sum that up in my own words: a failed job waits on a ladder of growing delays, and after five tries it goes to the holding pen, where an operator decides what to do with it. Please save that to my notes." }
+      ],
+      "expect": { "notes_containing": ["holding pen"] }
+    },
+    {
+      "id": "not-covered",
+      "tags": ["honesty"],
+      "turns": [
+        { "say": "How does Tidewell encrypt jobs at rest, and which cipher does it use?" },
+        { "say": "And what's the maximum size of a single job's payload?" }
+      ]
+    },
+    {
+      "id": "lesson-fences",
+      "tags": ["lesson-bound", "contrast"],
+      "lesson": "m2.l2",
+      "turns": [
+        { "say": "Teach me this lesson." },
+        { "play": "right" },
+        { "say": "How is that different from a lease?" },
+        { "play": "right" }
+      ]
+    },
+    {
+      "id": "pick-a-passage",
+      "tags": ["reading-rounds"],
+      "turns": [
+        { "say": "Give me the two main differences between tw drain and tw quiesce." },
+        { "say": "Tell me more about the second one." },
+        { "say": "Okay, got it." }
+      ]
+    },
+    {
+      "id": "explain-simply",
+      "tags": ["explain", "feedback"],
+      "turns": [
+        { "say": "Ask me to explain watermarks as if to a beginner, and tell me what I miss." },
+        { "say": "So the disk fills up, and at some point the broker stops taking jobs until there's room again. That's it really." },
+        { "say": "What should I work on next?" }
+      ]
+    }
+  ]
+}
