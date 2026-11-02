@@ -93,7 +93,7 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border">
         {chats.activeId ? (
-          <ChatPanel emptyState={(onPick) => <TutorStarters subject={lesson?.title ?? program.summary.title} onPick={onPick} />} />
+          <ChatPanel renderEmptyState={(onPick) => <TutorStarters subject={lesson?.title ?? program.summary.title} onPick={onPick} />} />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             {chats.error
