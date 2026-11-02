@@ -129,6 +129,13 @@ pub(in crate::features::learning) fn model_calls(count: u32) -> ModelCall {
     ModelCall(progress)
 }
 
+/// A request the plan does not count is running (a lesson's draft, the
+/// extraction of its claims, the coverage audit, the teaching review): the
+/// panel shows the model working and the calls made stay as they are.
+pub(in crate::features::learning) fn request() -> ModelCall {
+    model_calls(0)
+}
+
 pub(in crate::features::learning) fn model_retry(attempt: usize) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
