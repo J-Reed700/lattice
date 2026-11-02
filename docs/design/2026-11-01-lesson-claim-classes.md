@@ -148,14 +148,14 @@ Related, not designed around: the "database is locked" failures of 2026-10-26 ha
 
 ### 3.9 Work already in the database
 
-The database holds 8 pending `learning.lesson_preparation` jobs (one resumed tonight, the rest from 2026-10-26), saved drafts without statement-level citations, `claim-v1` receipts, `claim-walk-v1` budgets and `inventory-section-v1` checkpoints of the old pipeline, and they all resume by themselves when the app opens. Under the new pipeline a resumed job:
+The database holds 8 pending `learning.lesson_preparation` jobs (one resumed tonight, the rest from 2026-10-26), saved drafts without statement-level citations, `claim-v1` receipts, `claim-walk-v1` budgets and `inventory-section-v1` checkpoints of the old pipeline, and they all resume by themselves when the app opens. Josh dropped legacy support on 2026-11-01 ("if fixing things would be easier if we don't need to support anything legacy I can delete both of these lessons"), so there is no compatibility code, no old-format branch and no resume of old work. There is one migration:
 
-- keeps the draft and nothing else: old receipts, walk budgets, evidence selections, coverage checkpoints and the pending-repair checkpoint are not read (their keys carry policy versions, `lesson-evidence-v21`, `claim-walk-v1`, `coverage-unit-v2`; the new policy names are different, so the lookups miss by construction) and are deleted by the job's first step, so no old walk is resumed and nothing is spent on it;
-- gives an old draft its statement-level citations before anything else by one bounded writer call per section ("cite each sentence that states a specific or an attribution from the section's cited source, or rewrite it without the specific"), counted in the plan like any other call; a draft that cannot be parsed is written again from the outline, which is what today's job does for a missing draft;
-- re-extracts the inventory under the new policy, so Internal statements leave the ledger and the 32 coverage injections never return; existing ledger rows for statements no longer extracted end as `Edited { successor: None, by: Machine }`, the state the domain already has for "re-extraction found no successor";
-- then runs the new loop to `ready`, as a fresh job would.
+- it cancels every unfinished `learning.lesson_preparation` job (`pending`, `running`, retry-queued) with the message "Preparation starts again under the new pipeline" and deletes their `job_checkpoints`;
+- it deletes the old pipeline's unpublished state: lesson drafts, pending repairs, claim inventories, `learning_lesson_claims` and `learning_lesson_claim_events`, `learning_lesson_reviews`, `learning_lesson_teaching_findings` and `learning_lesson_audits` of every lesson whose `preparation` is not `ready`;
+- it keeps programs, modules, lesson rows and outlines, the source library and its provenance, and everything of a lesson that is `preparation = 'ready'` (none exists, 0 of 18; the rule still holds for any database that has one);
+- it is tested on a database holding the old rows: after it, no unfinished preparation job, no checkpoint of one, no claim or review row of an unprepared lesson, and every program, outline, source version and `ready` lesson exactly as before.
 
-Test: a job resumed from a copy of tonight's checkpoints for `f36400bc` reaches `preparation='ready'`, its `job_checkpoints` hold only new-policy keys at the end, and its call count equals the plan written at its start (no walk pages, no standing pages, no research beyond §3.6's count).
+A lesson is then prepared from its outline by the new pipeline when the user asks, as a new lesson is. The admission sweep of §3.6 over the existing library is separate and stays.
 
 ### 3.10 Sections after cuts
 
@@ -275,7 +275,7 @@ For this lesson as replayed: classification 7, strict judge 36 (2.8 s each on a 
 7. `inventory`/`coverage`: no adoption; no extraction from rubric, reflection, options, brief quotations.
 8. `lesson_rules` and the block schema: statement-level `citations` and the specifics rule for the writer (§3.5).
 9. `research`: the per-statement and per-lesson counts of §3.6; `FollowCitation`, `Scrutiny::follow` and the chain fetch deleted; the admission gate before `compare` (expect `capture::record(&Comparison)` from `fix/source-save-lock`); the sweep over existing versions.
-10. Resumed work (§3.9): old-policy checkpoints ignored and deleted on resume; the citation pass for an old draft; the test of a job resumed from tonight's checkpoints.
+10. The clean-slate migration (§3.9): cancels unfinished preparation jobs, deletes the old pipeline's unpublished state, keeps programs, outlines, the library and `ready` lessons; tested on a database holding the old rows.
 11. Sections after cuts (§3.10): the once-only flow repair, the too-little-to-teach rule, the `Stopped` reason.
 12. The user interface (§3.12): the plan counters in `LessonPreparationProgress.tsx`, the removed-statements list in the review surface, per-statement citations and labels in the learner's evidence panel, the admission sweep's list.
 13. Evals and acceptance: the planted set and the 85-claim gold set under `evals/grounding/` with the replay script (every planted false rejected, every planted true passed, strict-judge accuracy on gold unchanged), then §3.11's run on a copy of the real database, scored against its written call count and end state.
