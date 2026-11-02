@@ -523,7 +523,10 @@ pub async fn prepare_lesson_with_references<'a>(
     // user too (claim classes design §3.4), unless its part of the lesson
     // already holds a finding of its own.
     let held = crate::features::learning::teaching::held_findings(&value).await?;
-    let blocks = value["blocks"].as_array().map_or(0, Vec::len);
+    let blocks = value
+        .get("blocks")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
     findings.extend(
         report
             .coverage_findings(blocks)

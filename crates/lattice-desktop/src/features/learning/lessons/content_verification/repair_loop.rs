@@ -554,20 +554,22 @@ pub(super) fn repair_context(
             // design §18.5).
             let sentence = ledger.entry(id).map(|entry| entry.location().quote.clone());
             let mut claim = json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence});
-            if escalates(id) {
-                claim["lastAttempt"] = json!(true);
-            }
-            // What the sentence says besides the failed claim, which the
-            // rewrite keeps (claim classes design §3.2).
-            let also: Vec<&str> = mates
-                .get(id)
-                .into_iter()
-                .flatten()
-                .filter(|mate| !targets.contains(mate))
-                .filter_map(|mate| ledger.entry(mate).map(|entry| entry.statement()))
-                .collect();
-            if !also.is_empty() {
-                claim["alsoStates"] = json!(also);
+            if let Some(fields) = claim.as_object_mut() {
+                if escalates(id) {
+                    fields.insert("lastAttempt".into(), json!(true));
+                }
+                // What the sentence says besides the failed claim, which the
+                // rewrite keeps (claim classes design §3.2).
+                let also: Vec<&str> = mates
+                    .get(id)
+                    .into_iter()
+                    .flatten()
+                    .filter(|mate| !targets.contains(mate))
+                    .filter_map(|mate| ledger.entry(mate).map(|entry| entry.statement()))
+                    .collect();
+                if !also.is_empty() {
+                    fields.insert("alsoStates".into(), json!(also));
+                }
             }
             claim
         }).collect();
@@ -586,7 +588,9 @@ pub(super) fn repair_context(
         "exampleClaims":examples.iter().map(|(observation, id)| {
             let mut example = json!({"unit":observation.unit,"claimId":id.0});
             if escalates(id) {
-                example["lastAttempt"] = json!(true);
+                if let Some(fields) = example.as_object_mut() {
+                    fields.insert("lastAttempt".into(), json!(true));
+                }
             }
             example
         }).collect::<Vec<_>>(),

@@ -69,7 +69,9 @@ pub(super) async fn finish(
             shown,
         })?;
         if !parts.is_empty() {
-            receipt["parts"] = serde_json::to_value(&parts)?;
+            if let Some(fields) = receipt.as_object_mut() {
+                fields.insert("parts".into(), serde_json::to_value(&parts)?);
+            }
         }
         crate::features::learning::lesson_drafts::record_checkpoint(&pending.receipt_key, receipt)
             .await?;
