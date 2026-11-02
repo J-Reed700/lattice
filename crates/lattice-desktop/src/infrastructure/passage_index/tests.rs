@@ -288,6 +288,14 @@ mod store {
         assert!(PassageStore::open(temp.path()).await.is_err());
     }
 
+    #[test]
+    fn a_journal_sqlite_deleted_first_counts_as_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = temp.path().join(format!("{DB_FILE}-shm"));
+
+        super::super::store::remove_index_file(&journal).unwrap();
+    }
+
     #[tokio::test]
     async fn another_schema_version_rebuilds_from_an_empty_directory() {
         let temp = tempfile::tempdir().unwrap();

@@ -188,16 +188,23 @@ fn clear_directory(dir: &Path) -> Result<()> {
     for entry in entries.filter_map(|entry| entry.ok()) {
         let owned = entry.file_name().to_str().is_some_and(index_file);
         if owned && entry.file_type().is_ok_and(|kind| kind.is_file()) {
-            let path = entry.path();
-            lattice_core::shared::fs::removal::remove_written_file(&path).map_err(|error| {
-                AppError::FileStorage(format!(
-                    "Passage index: could not remove {}: {error}",
-                    path.display()
-                ))
-            })?;
+            remove_index_file(&entry.path())?;
         }
     }
     Ok(())
+}
+
+/// Removes one of the index's files; one already gone counts as removed.
+pub(super) fn remove_index_file(path: &Path) -> Result<()> {
+    match lattice_core::shared::fs::removal::remove_written_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(AppError::FileStorage(format!(
+                "Passage index: could not remove {}: {error}",
+                path.display()
+            )))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Clears `dir` off the runtime, since a held file is waited for.
