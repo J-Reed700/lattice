@@ -78,6 +78,7 @@ describe('describeEvent', () => {
     expect(event({ kind: 'born_of_repair' })).toBe('Added while repairing another claim');
     expect(event({ kind: 'classified', class: 'sourced', by: 'rule' })).toBe('Sorted as a statement that needs a source, by a rule');
     expect(event({ kind: 'classified', class: 'common', by: 'model' })).toBe('Sorted as common knowledge, by the model');
+    expect(event({ kind: 'classified', class: 'sourced', by: 'writer' })).toBe('Sorted as a statement that needs a source, by the writer’s citation');
     expect(event({ kind: 'reopened', cause: { cause: 'verifier_dispute' } })).toBe('Reopened: an independent check disagrees');
     expect(event({ kind: 'undone', eventOrdinal: 4 })).toBe('Undid step 4');
     expect(event({ kind: 'stopped', reason: { message: 'The model ran out of room' } })).toBe('Stopped: The model ran out of room');

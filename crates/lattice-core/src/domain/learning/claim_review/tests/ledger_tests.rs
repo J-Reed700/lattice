@@ -841,6 +841,34 @@ fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
         "a model never lightens a rule"
     );
 
+    // A sentence the writer cited is Sourced whatever else is said of it.
+    let mut cited = claim("c3");
+    cited
+        .append(machine(2), classified(Class::Internal, ClassifiedBy::Rule))
+        .unwrap();
+    cited
+        .append(machine(3), classified(Class::Sourced, ClassifiedBy::Writer))
+        .unwrap();
+    assert_eq!(
+        cited.class(),
+        Some(Class::Sourced),
+        "the writer outranks a rule"
+    );
+    cited
+        .append(machine(4), classified(Class::Internal, ClassifiedBy::Rule))
+        .unwrap();
+    cited
+        .append(
+            machine(5),
+            classified(Class::Reasoning, ClassifiedBy::Model),
+        )
+        .unwrap();
+    assert_eq!(
+        cited.class(),
+        Some(Class::Sourced),
+        "and nothing later lightens it"
+    );
+
     // A judge reclassing what the model classed is the model deciding again.
     let mut reclassed = claim("c2");
     reclassed

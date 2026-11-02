@@ -338,6 +338,7 @@ impl From<Class> for ClassDto {
 pub enum ClassifiedByDto {
     Model,
     Rule,
+    Writer,
 }
 
 impl From<ClassifiedBy> for ClassifiedByDto {
@@ -345,6 +346,7 @@ impl From<ClassifiedBy> for ClassifiedByDto {
         match by {
             ClassifiedBy::Model => Self::Model,
             ClassifiedBy::Rule => Self::Rule,
+            ClassifiedBy::Writer => Self::Writer,
         }
     }
 }

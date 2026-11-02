@@ -305,5 +305,18 @@
       "class": "sourced",
       "by": "rule"
     }
+  },
+  {
+    "ordinal": 14,
+    "actor": "machine",
+    "at": 1760000000014,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "classified",
+      "class": "sourced",
+      "by": "writer"
+    }
   }
 ]

@@ -374,6 +374,10 @@ fn claim_events_mirror_the_domain() {
             class: Class::Sourced,
             by: ClassifiedBy::Rule,
         },
+        ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        },
     ];
     let records: Vec<RecordedEvent> = events
         .into_iter()

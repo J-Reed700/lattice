@@ -452,10 +452,16 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         serde_json::to_value(entry.state()).unwrap(),
         json!({"state": "queued", "kind": "contradicted", "reason": "compared v1"})
     );
-    assert_eq!(
-        serde_json::to_value(classified(Class::Sourced, ClassifiedBy::Rule)).unwrap(),
-        json!({"kind": "classified", "class": "sourced", "by": "rule"})
-    );
+    for (by, name) in [
+        (ClassifiedBy::Model, "model"),
+        (ClassifiedBy::Rule, "rule"),
+        (ClassifiedBy::Writer, "writer"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(classified(Class::Sourced, by)).unwrap(),
+            json!({"kind": "classified", "class": "sourced", "by": name})
+        );
+    }
     for (value, column) in [
         (UnitKind::AnswerKey.as_str(), "answer_key"),
         (LessonReviewState::NeedsReview.as_str(), "needs_review"),

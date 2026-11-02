@@ -271,7 +271,7 @@ const CLASSES: Record<ClassDto, string> = {
   common: 'common knowledge',
   internal: 'a remark about the lesson itself',
 };
-const CLASSIFIERS: Record<ClassifiedByDto, string> = { rule: 'by a rule', model: 'by the model' };
+const CLASSIFIERS: Record<ClassifiedByDto, string> = { writer: 'by the writer’s citation', rule: 'by a rule', model: 'by the model' };
 
 /** A verdict in words, for the history and the checks. */
 function verdictWords(kind: VerdictKindDto): string {

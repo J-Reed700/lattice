@@ -156,13 +156,15 @@ pub enum Class {
 }
 
 /// Who decided a statement's class, weakest first. The model only splits
-/// what the rule layer leaves, so its class never lightens the rule layer's
-/// (claim classes design §3.1).
+/// what the rule layer leaves, and a sentence the writer cited is Sourced
+/// whatever anyone says later, so a class is never replaced by a weaker
+/// authority's (claim classes design §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClassifiedBy {
     Model,
     Rule,
+    Writer,
 }
 
 /// Why a claim is not verified, in honest words, one per case.
