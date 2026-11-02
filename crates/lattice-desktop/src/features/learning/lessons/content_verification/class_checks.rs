@@ -6,8 +6,10 @@
 //! a lighter check cannot pass on its own goes to the strict check as
 //! Sourced. Every judgment is saved as a receipt, so a resumed pass asks
 //! nothing twice.
+use super::claim_ledger::{stand_together, Place};
 use super::classify::{classify, rule_class, ToSort};
 use super::*;
+use crate::features::learning::lessons::call_plan::{Counted, Fate, SAMPLES};
 use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
     KnowledgeVerdict, CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
@@ -20,8 +22,20 @@ pub(super) enum Route {
     Left,
     /// To be checked against its sources by the strict check, as this class.
     Strict(Classed),
-    /// Checked: its finding.
-    Done(Box<Finding>),
+    /// Checked: its finding, and how it fared.
+    Done(Box<Finding>, Fate),
+}
+
+impl Route {
+    /// How the statement fared in the check its class names; none when it is
+    /// left out.
+    fn fate(&self) -> Option<Fate> {
+        match self {
+            Self::Left => None,
+            Self::Strict(_) => Some(Fate::ToSource),
+            Self::Done(_, fate) => Some(*fate),
+        }
+    }
 }
 
 /// Tokens a passage costs beside its text in the consistency check: its
@@ -75,10 +89,47 @@ pub(super) async fn sort(
             }
         }
     }
-    sorted
+    let classes = sorted
         .into_iter()
         .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))
+        .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
+    plan_calls(&classes, claims, &fields);
+    Ok(classes)
+}
+
+/// The calls the statements' checks can make, now that each has a class.
+fn plan_calls(classes: &[Classed], claims: &[(usize, Claim)], fields: &[String]) {
+    let counted: Vec<(Class, Place<'_>)> = classes
+        .iter()
+        .zip(claims.iter().zip(fields))
+        .filter(|(classed, _)| classed.class != Class::Internal)
+        .map(|(classed, ((unit, claim), field))| {
+            (
+                classed.class,
+                Place {
+                    unit: *unit,
+                    field: field.as_str(),
+                    quote: claim.quote.as_str(),
+                },
+            )
+        })
+        .collect();
+    let statements: Vec<Counted> = counted
+        .iter()
+        .enumerate()
+        .map(|(at, (class, here))| Counted {
+            class: *class,
+            shares: counted
+                .iter()
+                .enumerate()
+                .any(|(other, (_, there))| other != at && stand_together(here, there)),
+        })
+        .collect();
+    let sections: HashSet<usize> = counted.iter().map(|(_, place)| place.unit).collect();
+    crate::features::learning::lesson_progress::calls_planned(
+        &statements,
+        u32::try_from(sections.len()).unwrap_or(u32::MAX),
+    );
 }
 
 /// Each of `claims` met with the check its class names, in order. A claim
@@ -90,14 +141,21 @@ pub(super) async fn check(
     citations: &Citations,
 ) -> Result<Vec<Route>> {
     let mut routes = Vec::with_capacity(claims.len());
+    let mut fates = Vec::with_capacity(claims.len());
     for ((unit, claim), classed) in claims.iter().zip(classes) {
-        routes.push(match classed.class {
+        let class = classed.class;
+        let route = match class {
             Class::Internal => Route::Left,
             Class::Sourced => Route::Strict(classed),
             Class::Reasoning => reasoning(llm, *unit, claim, classed, citations).await?,
             Class::Common => common(llm, *unit, claim, classed).await?,
-        });
+        };
+        if let Some(fate) = route.fate() {
+            fates.push((class, fate));
+        }
+        routes.push(route);
     }
+    crate::features::learning::lesson_progress::lighter_checked(&fates);
     Ok(routes)
 }
 
@@ -129,7 +187,7 @@ async fn reasoning(
         ConsistencyVerdict::UnfoundedSpecific => Route::Strict(sourced()),
         ConsistencyVerdict::Contradicted => done(
             (unit, claim, classed),
-            ClaimVerdict::Contradicted,
+            (ClaimVerdict::Contradicted, Fate::Failed),
             consistency.reason,
             &shown,
             None,
@@ -141,7 +199,7 @@ async fn reasoning(
             if !knowledge.is_false() {
                 return Ok(done(
                     (unit, claim, classed),
-                    ClaimVerdict::Supported,
+                    (ClaimVerdict::Supported, Fate::Passed),
                     consistency.reason,
                     &shown,
                     None,
@@ -150,14 +208,14 @@ async fn reasoning(
             match stated_by(llm, &claim.statement, &shown).await? {
                 Some((quote, reason)) => done(
                     (unit, claim, classed),
-                    ClaimVerdict::Supported,
+                    (ClaimVerdict::Supported, Fate::Vetoed { stated: true }),
                     reason,
                     &shown,
                     Some(quote),
                 ),
                 None => done(
                     (unit, claim, classed),
-                    ClaimVerdict::Contradicted,
+                    (ClaimVerdict::Contradicted, Fate::Vetoed { stated: false }),
                     vetoed(&knowledge),
                     &shown,
                     None,
@@ -177,7 +235,7 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
     Ok(if knowledge.is_common() {
         done(
             (unit, claim, classed),
-            ClaimVerdict::Supported,
+            (ClaimVerdict::Supported, Fate::Passed),
             standard(&knowledge),
             &[],
             None,
@@ -185,7 +243,7 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
     } else if knowledge.is_false() {
         done(
             (unit, claim, classed),
-            ClaimVerdict::Contradicted,
+            (ClaimVerdict::Contradicted, Fate::Failed),
             vetoed(&knowledge),
             &[],
             None,
@@ -201,32 +259,35 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
 /// The finding of a statement a lighter check decided.
 fn done(
     (unit, claim, classed): (usize, &Claim, Classed),
-    verdict: ClaimVerdict,
+    (verdict, fate): (ClaimVerdict, Fate),
     reason: String,
     evidence: &[EvidencePassage],
     supporting_quote: Option<String>,
 ) -> Route {
-    Route::Done(Box::new(Finding {
-        unit,
-        quote: claim.quote.clone(),
-        statement: claim.statement.clone(),
-        verdict,
-        reason,
-        evidence: evidence.to_vec(),
-        supporting_quote,
-        resolution: None,
-        trust: None,
-        label: None,
-        class: Some(classed),
-        two_pass: Default::default(),
-    }))
+    Route::Done(
+        Box::new(Finding {
+            unit,
+            quote: claim.quote.clone(),
+            statement: claim.statement.clone(),
+            verdict,
+            reason,
+            evidence: evidence.to_vec(),
+            supporting_quote,
+            resolution: None,
+            trust: None,
+            label: None,
+            class: Some(classed),
+            two_pass: Default::default(),
+        }),
+        fate,
+    )
 }
 
 /// A statement whose check's answer could not be read.
 fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePassage]) -> Route {
     done(
         (unit, claim, classed),
-        ClaimVerdict::Unverified,
+        (ClaimVerdict::Unverified, Fate::Unanswered),
         "The answer to this statement's check could not be read.".into(),
         evidence,
         None,
@@ -328,10 +389,13 @@ async fn consistency_of(
         .iter()
         .map(|passage| passage.text.clone())
         .collect();
-    match consistency_checker(llm)
-        .check_consistency(statement, &texts)
-        .await
-    {
+    let judged = {
+        let _model_call = crate::features::learning::lesson_progress::model_call();
+        consistency_checker(llm)
+            .check_consistency(statement, &texts)
+            .await
+    };
+    match judged {
         ClassJudgment::Judged(outcome) => {
             crate::features::learning::lesson_drafts::record_checkpoint(
                 &key,
@@ -371,7 +435,11 @@ async fn knowledge_of(llm: &dyn LLMPort, statement: &str) -> Result<Option<Knowl
         CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Knowledge,
     );
-    match checker.check_knowledge(statement).await {
+    let judged = {
+        let _model_calls = crate::features::learning::lesson_progress::model_calls(SAMPLES);
+        checker.check_knowledge(statement).await
+    };
+    match judged {
         ClassJudgment::Judged(outcome) => {
             crate::features::learning::lesson_drafts::record_checkpoint(
                 &key,

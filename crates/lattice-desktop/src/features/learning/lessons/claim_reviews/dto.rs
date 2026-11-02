@@ -475,9 +475,7 @@ pub struct RepairAttemptDto {
 pub enum RepairOutcomeDto {
     Rewritten,
     Removed,
-    Rejected {
-        reason: String,
-    },
+    Rejected { reason: String },
     SupersededByUser,
 }
 

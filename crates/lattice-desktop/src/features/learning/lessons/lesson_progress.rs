@@ -1,10 +1,12 @@
 //! Progress for the current durable lesson job, scoped to its future. Keeping
 //! this context task-local lets nested review calls report without affecting
 //! concurrent chat, outline generation, or other jobs.
+use super::call_plan::{CallPlan, Counted, Fate};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
     LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
 };
+use lattice_core::domain::learning::claim_review::Class;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
@@ -18,6 +20,12 @@ struct State {
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
+    /// The most calls the lesson's checks can make, once its statements are
+    /// sorted.
+    plan: Option<CallPlan>,
+    /// Every ceiling the plan published, in order.
+    #[cfg(test)]
+    ceilings: Vec<u32>,
 }
 
 #[derive(Clone, Default)]
@@ -88,6 +96,12 @@ impl Drop for ModelCall {
 }
 
 pub(in crate::features::learning) fn model_call() -> ModelCall {
+    model_calls(1)
+}
+
+/// `count` calls are about to be made: a knowledge check asks its samples one
+/// after another.
+pub(in crate::features::learning) fn model_calls(count: u32) -> ModelCall {
     let progress = CURRENT.try_with(Clone::clone).ok();
     if let Some(progress) = &progress {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -98,6 +112,17 @@ pub(in crate::features::learning) fn model_call() -> ModelCall {
         state.active_model_calls += 1;
         state.activity.model_running = true;
         state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
+        let before = state.activity.model_calls;
+        state.activity.model_calls = before.saturating_add(count);
+        if let Some(ceiling) = state.activity.model_calls_ceiling {
+            if before <= ceiling && state.activity.model_calls > ceiling {
+                tracing::warn!(
+                    calls = state.activity.model_calls,
+                    ceiling,
+                    "claim.plan: the checks made more calls than the plan allowed"
+                );
+            }
+        }
     }
     ModelCall(progress)
 }
@@ -167,6 +192,9 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.model_checks_total = None;
             state.activity.deeper_evidence = None;
             state.activity.verification_pass = 0;
+            state.activity.model_calls = 0;
+            state.activity.model_calls_ceiling = None;
+            state.plan = None;
         }
         state.activity.lesson_title = Some(title.into());
     });
@@ -257,6 +285,107 @@ pub(in crate::features::learning) fn new_references(count: Option<usize>) {
     });
 }
 
+/// The lesson's statements are sorted: from here its checks' calls have a
+/// ceiling (claim classes design §3.12). Later passes sort again and change
+/// nothing.
+pub(in crate::features::learning) fn calls_planned(statements: &[Counted], sections: u32) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.plan.is_none() {
+            let sorting = state.activity.model_calls;
+            state.plan = Some(CallPlan::new(sorting, statements, sections));
+            publish_ceiling(&mut state);
+        }
+    });
+}
+
+/// Every Reasoning and Common statement has met the check its class names.
+pub(in crate::features::learning) fn lighter_checked(fates: &[(Class, Fate)]) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.lighter_checked(fates);
+        }
+        publish_ceiling(&mut state);
+    });
+}
+
+/// Every statement that needed a source has met the strict check.
+pub(in crate::features::learning) fn strict_checked(fates: &[(Class, Fate)]) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.strict_checked(fates);
+        }
+        publish_ceiling(&mut state);
+    });
+}
+
+fn publish_ceiling(state: &mut State) {
+    state.activity.model_calls_ceiling = state.plan.as_ref().map(CallPlan::ceiling);
+    #[cfg(test)]
+    {
+        if let Some(ceiling) = state.activity.model_calls_ceiling {
+            state.ceilings.push(ceiling);
+        }
+    }
+}
+
+/// What a traced run recorded.
+#[cfg(test)]
+pub(in crate::features::learning) struct Trace {
+    /// The calls made.
+    pub calls: u32,
+    /// The ceiling after each event of the plan.
+    pub ceilings: Vec<u32>,
+}
+
+#[cfg(test)]
+impl Trace {
+    /// Whether the ceiling only came down across the plan's events.
+    pub(in crate::features::learning) fn only_came_down(&self) -> bool {
+        self.ceilings
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if after <= before))
+    }
+
+    /// Whether the calls made stayed within the ceiling the run ended on.
+    pub(in crate::features::learning) fn within_the_ceiling(&self) -> bool {
+        self.ceilings
+            .last()
+            .is_some_and(|ceiling| self.calls <= *ceiling)
+    }
+}
+
+/// `future` run with its progress recorded.
+#[cfg(test)]
+pub(in crate::features::learning) async fn traced<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, Trace) {
+    let progress = Progress::default();
+    let value = CURRENT.scope(progress.clone(), future).await;
+    let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+    let trace = Trace {
+        calls: state.activity.model_calls,
+        ceilings: state.ceilings.clone(),
+    };
+    (value, trace)
+}
+
+/// The activity a job restarts with: where it left off, its time and its
+/// calls counted anew.
+fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
+    let mut activity: LearningGenerationActivity = saved
+        .and_then(|activity| serde_json::from_value(activity).ok())
+        .unwrap_or_default();
+    // A new run starts by reopening references, even when the prior run
+    // stopped in that same phase. Do not count time with the app closed.
+    activity.phase_started_at = 0;
+    activity.model_calls = 0;
+    activity.model_calls_ceiling = None;
+    activity
+}
+
 impl Progress {
     fn snapshot(&self) -> (u32, String, LearningGenerationActivity) {
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -298,15 +427,8 @@ pub(in crate::features::learning) async fn run<T>(
     {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         state.completed = job.progress_current;
-        state.activity = job
-            .activity
-            .clone()
-            .and_then(|activity| serde_json::from_value(activity).ok())
-            .unwrap_or_default();
+        state.activity = resumed(job.activity.clone());
         state.program_id = job.subject_id.clone();
-        // A new run starts by reopening references, even when the prior run
-        // stopped in that same phase. Do not count time with the app closed.
-        state.activity.phase_started_at = 0;
     }
     CURRENT
         .scope(progress.clone(), async {
@@ -514,5 +636,69 @@ mod tests {
             })
             .await;
         assert!(!active());
+    }
+
+    #[tokio::test]
+    async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorted() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                lesson("A lesson");
+                drop(model_call());
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.model_calls, activity.model_calls_ceiling),
+                    (1, None)
+                );
+
+                let statements = [Counted {
+                    class: Class::Sourced,
+                    shares: false,
+                }];
+                calls_planned(&statements, 1);
+                // The sorting call made, the check, the three calls after it
+                // fails, the flow repair of its section and the repeat of an
+                // answer that cannot be read.
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(7));
+                calls_planned(&[], 0);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(7));
+
+                lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
+                strict_checked(&[(Class::Sourced, Fate::Failed)]);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(6));
+                drop(model_calls(3));
+                assert_eq!(progress.snapshot().2.model_calls, 4);
+
+                lesson("Another lesson");
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.model_calls, activity.model_calls_ceiling),
+                    (0, None)
+                );
+            })
+            .await;
+    }
+
+    #[test]
+    fn a_restarted_job_counts_its_calls_again_and_keeps_the_rest() {
+        let saved = LearningGenerationActivity {
+            model_calls: 40,
+            model_calls_ceiling: Some(300),
+            checks_total: 10,
+            phase_started_at: 5,
+            ..Default::default()
+        };
+
+        let activity = resumed(Some(serde_json::to_value(&saved).unwrap()));
+
+        assert_eq!(
+            (
+                activity.model_calls,
+                activity.model_calls_ceiling,
+                activity.phase_started_at
+            ),
+            (0, None, 0)
+        );
+        assert_eq!(activity.checks_total, 10);
     }
 }

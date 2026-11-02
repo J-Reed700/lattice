@@ -24,9 +24,9 @@ use crate::features::learning::lessons::claim_reviews::repository::{
 use crate::features::learning::persistence::now;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
-    EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision, StopReason,
-    UserAction, VerdictKind, MACHINE_ATTEMPTS,
+    end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
+    ClaimState, EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision,
+    StopReason, UserAction, VerdictKind, MACHINE_ATTEMPTS,
 };
 
 pub(in crate::features::learning) use located::{located, located_quote};
@@ -37,6 +37,35 @@ const PENDING_KEY: &str = "claim-ledger-v1:pending";
 /// The prefix of a job's result reference when lessons wait for review.
 const NEEDS_REVIEW_REF: &str = "needs_review:";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Where a statement stands in the lesson: its section, field and quote.
+#[derive(Clone, Copy)]
+pub(super) struct Place<'a> {
+    pub(super) unit: usize,
+    pub(super) field: &'a str,
+    pub(super) quote: &'a str,
+}
+
+impl<'a> Place<'a> {
+    fn of(location: &'a ClaimLocation) -> Self {
+        Self {
+            unit: location.unit_index,
+            field: &location.field,
+            quote: &location.quote,
+        }
+    }
+}
+
+/// Whether two statements stand on one sentence: in one field of one
+/// section, one quote holding the other. A rewrite of the sentence changes
+/// them both (claim classes design §3.2).
+pub(super) fn stand_together(a: &Place<'_>, b: &Place<'_>) -> bool {
+    a.unit == b.unit
+        && a.field == b.field
+        && !a.quote.trim().is_empty()
+        && !b.quote.trim().is_empty()
+        && (a.quote.contains(b.quote) || b.quote.contains(a.quote))
+}
 
 /// A repair sent for a claim, awaiting the pass that shows what became of
 /// its sentence: rewritten (the check decides) or removed.
@@ -462,20 +491,11 @@ impl ClaimLedger {
         let Some(entry) = self.entry(claim_id) else {
             return Vec::new();
         };
-        let place = entry.location();
-        if place.quote.trim().is_empty() {
-            return Vec::new();
-        }
+        let here = Place::of(entry.location());
         self.entries
             .iter()
             .filter(|other| other.claim_id() != claim_id && !is_gone(other.state()))
-            .filter(|other| {
-                let there = other.location();
-                there.unit_index == place.unit_index
-                    && there.field == place.field
-                    && !there.quote.trim().is_empty()
-                    && (place.quote.contains(&there.quote) || there.quote.contains(&place.quote))
-            })
+            .filter(|other| stand_together(&here, &Place::of(other.location())))
             .map(|other| other.claim_id().clone())
             .collect()
     }

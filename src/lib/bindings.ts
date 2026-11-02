@@ -7270,6 +7270,17 @@ newReferences: number | null;
  */
 modelChecksTotal: number | null;
 /**
+ * Calls made to sort, check and rewrite this lesson's statements since
+ * this run began.
+ */
+modelCalls?: number;
+/**
+ * The most calls the checks can make in all, once the statements are
+ * sorted. It only comes down: terms of the count are replaced by what
+ * the first checks find.
+ */
+modelCallsCeiling?: number | null;
+/**
  * Set while claims this pass left unsupported are checked against further
  * pages of their evidence.
  */

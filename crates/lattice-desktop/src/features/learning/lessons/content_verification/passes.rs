@@ -2,6 +2,7 @@
 //! coverage audit (reused per unchanged section), its executed examples, and
 //! the evidence check of every claim.
 use super::*;
+use crate::features::learning::lessons::call_plan::Fate;
 
 pub(super) async fn verify_with_references(
     llm: &dyn LLMPort,
@@ -107,6 +108,7 @@ pub(super) async fn check_evidence(
         })
         .collect();
     let classes = class_checks::sort(llm, candidate, &claims).await?;
+    let origins: Vec<Class> = classes.iter().map(|classed| classed.class).collect();
     let routes = class_checks::check(llm, &claims, classes, &citations).await?;
     // The strict check is asked about the statements that need a source, a
     // section at a time in the inventory's order.
@@ -137,6 +139,14 @@ pub(super) async fn check_evidence(
         &citations,
     )
     .await?;
+    let fates: Vec<(Class, Fate)> = checked
+        .iter()
+        .filter_map(|(ordinal, _, finding, _)| {
+            let at = *strict_at.get(*ordinal)?;
+            Some((*origins.get(at)?, Fate::of_strict(finding.verdict)))
+        })
+        .collect();
+    crate::features::learning::lesson_progress::strict_checked(&fates);
     let mut strict: HashMap<usize, (String, Finding)> = HashMap::new();
     for (ordinal, key, mut finding, _) in checked {
         let at = strict_at.get(ordinal).copied();
@@ -175,7 +185,7 @@ pub(super) async fn check_evidence(
     for (at, route) in routes.into_iter().enumerate() {
         match route {
             class_checks::Route::Left => {}
-            class_checks::Route::Done(finding) => findings.push(*finding),
+            class_checks::Route::Done(finding, _) => findings.push(*finding),
             class_checks::Route::Strict(_) => {
                 let (key, finding) = strict.remove(&at).ok_or_else(|| {
                     AppError::InternalError("A statement was left without a check".into())

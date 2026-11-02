@@ -90,6 +90,7 @@ pub(super) async fn classify(
             "Sorting {} statements by what checks them",
             batch.len()
         ));
+        let _model_call = crate::features::learning::lesson_progress::model_call();
         let classes = crate::features::learning::generation::complete_checked(
             llm,
             SYSTEM,

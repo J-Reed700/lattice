@@ -355,6 +355,51 @@ async fn a_common_statement_passes_only_when_every_sample_agrees() -> Result<()>
 }
 
 #[tokio::test]
+async fn the_calls_ceiling_only_comes_down_while_a_pass_checks_a_mix_of_classes() -> Result<()> {
+    const FALSE: &str = "A header row names the columns of a CSV file after its data.";
+    const LONE: &str = "DictReader keeps whitespace in field names.";
+    const WANTS: &str = "Missing values in nonblank rows default to None.";
+    let model = Classes::new(&[COMMON, FALSE, LONE, WANTS, REASONED, GOOD])
+        .classed(&[
+            (COMMON, "common"),
+            (FALSE, "common"),
+            (LONE, "common"),
+            (WANTS, "common"),
+            (REASONED, "reasoning"),
+        ])
+        .knows(&[
+            (FALSE, ["false", "false", "true_common"]),
+            (LONE, ["true_common", "true_common", "false"]),
+            (WANTS, ["needs_source", "true_common", "true_common"]),
+        ]);
+    let body = format!("{COMMON} {FALSE} {LONE} {WANTS} {REASONED} {GOOD}");
+
+    let (report, trace) = crate::features::learning::lesson_progress::traced(verify(
+        &model,
+        &lesson(&body),
+        &[source()],
+    ))
+    .await;
+    report?;
+
+    // The statements sorted, the Reasoning and Common ones checked, the
+    // strict check done: three events, each at or below the one before, two
+    // Common statements sent on to their source check among them.
+    assert_eq!(trace.ceilings.len(), 3, "{:?}", trace.ceilings);
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
+    // The sort, the knowledge samples of five statements, the consistency
+    // call and the strict checks.
+    assert!(trace.calls >= 1 + 5 * 3 + 1 + 1, "{} calls", trace.calls);
+    assert!(
+        trace.within_the_ceiling(),
+        "{} calls, ceilings {:?}",
+        trace.calls,
+        trace.ceilings
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_judgment_is_asked_once_and_a_resumed_pass_restores_it() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;

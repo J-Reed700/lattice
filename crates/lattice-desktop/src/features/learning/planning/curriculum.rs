@@ -217,6 +217,15 @@ pub struct LearningGenerationActivity {
     /// None while looking up saved checks; otherwise the number requiring the
     /// model in this pass, after every reusable comparison has been restored.
     pub model_checks_total: Option<u32>,
+    /// Calls made to sort, check and rewrite this lesson's statements since
+    /// this run began.
+    #[serde(default)]
+    pub model_calls: u32,
+    /// The most calls the checks can make in all, once the statements are
+    /// sorted. It only comes down: terms of the count are replaced by what
+    /// the first checks find.
+    #[serde(default)]
+    pub model_calls_ceiling: Option<u32>,
     /// Set while claims this pass left unsupported are checked against further
     /// pages of their evidence.
     pub deeper_evidence: Option<LearningDeeperEvidence>,

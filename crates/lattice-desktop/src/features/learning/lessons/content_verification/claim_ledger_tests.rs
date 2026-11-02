@@ -400,6 +400,40 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
 }
 
 #[tokio::test]
+async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_is_cut() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let model = Figures::new();
+
+    let (prepared, trace) = crate::features::learning::lesson_progress::traced(prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[BAD]).to_string()),
+        &sources,
+    ))
+    .await;
+    prepared?;
+
+    // The first check, the rewrite and its re-check were calls, and the
+    // plan's ceiling, set once from the first pass, never moved up while the
+    // later passes ran.
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
+    assert!(trace.calls >= 3, "{} calls", trace.calls);
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
+    assert!(
+        trace.within_the_ceiling(),
+        "{} calls, ceilings {:?}",
+        trace.calls,
+        trace.ceilings
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attempts_and_the_job_stops(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
