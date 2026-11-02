@@ -400,7 +400,7 @@ def claim_items(slot, document, request):
         items.append(item(slot, f"{slot['slot']}/claim/{unit}-{per_unit[unit]}", "C1", "True statement",
                           f"Subject: {field(request, 'goal', default='')}", list(CLAIM_LINES), stage="claim",
                           mechanical=verdict == "supported", pipeline_verdict=verdict,
-                          general_knowledge=verdict == "unsupported" and finding.get("resolution") is not None))
+                          statement_class=(finding.get("class") or {}).get("class")))
         answers.append({"query_id": items[-1]["id"],
                         "turns": [{"answer": field(finding, "statement", "quote", default="")}]})
     return items, answers
@@ -739,7 +739,7 @@ def score_file(results, items_name, answers_name, out_name, judge, judge_setting
                    "judge_pass": verdict["pass"], "mechanical_checks_passed": entry["mechanical_checks_passed"],
                    "turn_scores": [{"turn": 0, "judge": verdict}], "answer_sha256": digest(answer),
                    "run_id": manifest["run_id"]}
-            row |= {k: entry[k] for k in ("pipeline_verdict", "general_knowledge") if k in entry}
+            row |= {k: entry[k] for k in ("pipeline_verdict", "statement_class") if k in entry}
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
             out.flush()
     return counts
@@ -969,11 +969,12 @@ def summarize(results):
     quizzes = [s for s in slots if s["stage"] == "quiz"]
     ready = [s for s in lessons if s["outcome"] == "ready"]
     ground = {key: sum(count(dig(stage_metrics(s), "claims", key)) for s in ready)
-              for key in ("total", "supported", "unsupported", "contradicted", "unverified", "general_knowledge")}
+              for key in ("total", "supported", "unsupported", "contradicted", "unverified")}
+    ground["common"] = sum(count(dig(stage_metrics(s), "claims", "by_class", "common")) for s in ready)
     total, fails = ground["total"], [r["turn_scores"][0]["judge"]["reason"] for r in claims if not r["judge_pass"]]
     ground |= {"supported_share": ground["supported"] / total if total else None,
                "supported_wilson95": wilson(ground["supported"], total),
-               "general_knowledge_share": ground["general_knowledge"] / total if total else None,
+               "common_knowledge_share": ground["common"] / total if total else None,
                "claim_judge": {"graded": sum(r["turn_scores"][0]["judge"]["graded"] for r in claims),
                                "total": len(claims), "false": sum(f.startswith("FALSE:") for f in fails),
                                "unsure": sum(f.startswith("UNSURE:") for f in fails),
@@ -1114,8 +1115,8 @@ def markdown(summary, here):
                    f"is quoted once claims.calibration-labels.json is labelled "
                    f"({ground['claim_judge']['graded']} claims judged)")
     lines.append(f"3. **Grounding**: {ground['supported']}/{ground['total']} claims supported"
-                 + (f" ({share:.1%})" if share is not None else "") + ", general-knowledge share "
-                 + ("—" if ground["general_knowledge_share"] is None else f"{ground['general_knowledge_share']:.1%}")
+                 + (f" ({share:.1%})" if share is not None else "") + ", common-knowledge share "
+                 + ("—" if ground["common_knowledge_share"] is None else f"{ground['common_knowledge_share']:.1%}")
                  + f", {ground['contradicted']} contradicted, {ground['unverified']} unverified. "
                  f"Claim correctness {correctness}.")
     lines.append(f"4. **Cost**: outline minutes median {number(cost['outline_minutes']['median'])}, max "

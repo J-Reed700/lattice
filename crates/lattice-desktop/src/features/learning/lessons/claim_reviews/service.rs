@@ -178,15 +178,15 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
-    /// Whether claim activity, a different checker, or an outdated standing
-    /// assessment gives verification new work since the lesson stopped.
+    /// Whether claim activity or a different checker gives verification new
+    /// work since the lesson stopped.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
         self.changed_in(&ledger).await
     }
 
-    /// `changed_since_stop` over a loaded ledger. Settings and verification
-    /// upgrades count even when the user has not acted on a claim card.
+    /// `changed_since_stop` over a loaded ledger. A different checker counts
+    /// even when the user has not acted on a claim card.
     pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
@@ -209,10 +209,7 @@ impl ClaimReviewService {
             .review_written_at(&ledger.lesson_id)
             .await?
             .unwrap_or(i64::MAX);
-        if changed_since(ledger, stopped_at) {
-            return Ok(true);
-        }
-        self.stale_standing(ledger).await
+        Ok(changed_since(ledger, stopped_at))
     }
 
     async fn resolution(

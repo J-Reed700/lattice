@@ -380,9 +380,10 @@ impl ClaimLedger {
     /// repair what the rules allow; check again what the checker did not
     /// answer once; otherwise publish if every claim is resolved, else the
     /// lesson waits for the user. Only claims in the user's hands are left
-    /// then: a dispute, a reopening, a withdrawn confirmation, or a claim
-    /// whose last attempt could not take its sentence out (claim classes
-    /// design §3.2).
+    /// then: a dispute, a reopening, a withdrawn confirmation, or what the
+    /// user's own change of a source's trust re-decided. A last attempt that
+    /// cannot take its sentence out ends its claim removed with its section
+    /// (claim classes design §3.2, §3.10).
     pub(super) fn decide(&self) -> Decision {
         let unanswered = |times: usize| {
             self.observed()

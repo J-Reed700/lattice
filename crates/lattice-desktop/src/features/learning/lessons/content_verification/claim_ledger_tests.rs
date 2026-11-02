@@ -95,15 +95,6 @@ impl Figures {
         }
     }
 
-    fn judged_figures(&self) -> usize {
-        self.judged
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|claim| claim.starts_with("DictReader buffers "))
-            .count()
-    }
-
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
@@ -579,80 +570,6 @@ async fn a_claim_the_checker_did_not_answer_for_is_asked_again_once_and_then_sto
     assert_eq!(entry.state(), &ClaimState::Unchecked);
     assert_eq!(entry.unjudged(), 2);
     assert!(repairs(entry).is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_confirmed_claim_publishes_on_resume_without_being_checked_again() -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
-    let sources = [source()];
-    let model = Figures::new();
-    let raw = candidate(BAD).to_string();
-    assert!(
-        prepare(&repo, &job, &lesson_id, &model, Some(raw), &sources)
-            .await
-            .is_err()
-    );
-    let service = ClaimReviewService::new(pool.clone());
-    // Resume with nothing changed reruns nothing (§6.2).
-    assert!(!service.changed_since_stop(&lesson_id).await?);
-    let store = ClaimReviewRepository::new(pool.clone());
-    let ledger = store.load(&lesson_id).await?;
-    let claim = waiting(&ledger.claims)[0].claim_id().clone();
-    assert!(service
-        .resolve(
-            &lesson_id,
-            &claim.0,
-            ClaimActionRequestDto::Confirm {
-                note: None,
-                source_version_ids: vec![],
-            },
-            ledger.revision.0 - 1,
-        )
-        .await
-        .is_err());
-    service
-        .resolve(
-            &lesson_id,
-            &claim.0,
-            ClaimActionRequestDto::Confirm {
-                note: None,
-                source_version_ids: vec![],
-            },
-            ledger.revision.0,
-        )
-        .await?;
-    assert!(service.changed_since_stop(&lesson_id).await?);
-
-    let judged = model.judged_figures();
-    let (_, report) = prepare(&repo, &job, &lesson_id, &model, None, &sources).await?;
-    assert_eq!(
-        model.judged_figures(),
-        judged,
-        "the confirmed claim is not rechecked"
-    );
-    assert_eq!(model.repairs.load(Ordering::Relaxed), 1, "nor repaired");
-    assert!(report.issues.is_empty(), "{:?}", report.issues);
-    let finding = &report.findings[0];
-    assert_eq!(finding.statement, figure(0));
-    assert!(matches!(
-        finding.resolution,
-        Some(resolution::Resolution::Confirmed { note: None, .. })
-    ));
-    let ledger = store.load(&lesson_id).await?;
-    assert!(matches!(
-        ledger.claims[0].state(),
-        ClaimState::Confirmed { .. }
-    ));
-    // The confirmation over the checker's flag is a labelled example (§15).
-    let examples = CheckerExamples::new(pool.clone()).list(None).await?;
-    assert_eq!(examples.len(), 1);
-    assert_eq!(examples[0].label_source, LabelSource::UserConfirm);
-    assert_eq!(examples[0].label, Label::True);
-    assert_eq!(examples[0].local_verdict, "unsupported");
-    assert_eq!(examples[0].claim, figure(0));
-    assert!(!examples[0].passages.is_empty());
     Ok(())
 }
 
