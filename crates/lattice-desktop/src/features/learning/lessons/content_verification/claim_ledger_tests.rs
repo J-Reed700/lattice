@@ -1,8 +1,9 @@
 //! The claim ledger drives the verify-and-repair loop (§4, §12): a claim gets
-//! two machine attempts in its life, whatever evidence later checks bring, and
-//! then waits for the user, with everything compared kept; the user's verdicts
-//! are never re-litigated and are labelled examples of the checker's accuracy
-//! (§15).
+//! two machine attempts in its life, whatever evidence later checks bring, a
+//! rewrite and then taking its sentence out, and waits for the user only when
+//! the sentence cannot be taken out, with everything compared kept; the user's
+//! verdicts are never re-litigated and are labelled examples of the checker's
+//! accuracy (§15).
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
@@ -73,7 +74,6 @@ pub(super) struct Figures {
     fail_repair_at: Option<usize>,
     unusable_judge: bool,
     repairs: AtomicUsize,
-    escalations: AtomicUsize,
     judged: Mutex<Vec<String>>,
     extracted: Mutex<Vec<Vec<usize>>>,
 }
@@ -86,7 +86,6 @@ impl Figures {
             fail_repair_at: None,
             unusable_judge: false,
             repairs: AtomicUsize::new(0),
-            escalations: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
             extracted: Mutex::new(Vec::new()),
         }
@@ -144,9 +143,10 @@ impl Figures {
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);
-            if data["repeatedDefects"].as_bool() == Some(true) {
-                self.escalations.fetch_add(1, Ordering::Relaxed);
-            }
+            assert!(
+                !prompt.contains("lastAttempt"),
+                "a last attempt is cut in code, never sent"
+            );
             let repair = self.repairs.fetch_add(1, Ordering::Relaxed);
             assert!(repair < 6, "repairs must end");
             if self.fail_repair_at == Some(repair) {
@@ -262,7 +262,7 @@ pub(super) fn waiting(entries: &[ClaimLedgerEntry]) -> Vec<&ClaimLedgerEntry> {
 }
 
 #[tokio::test]
-async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_everything_kept(
+async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_the_claim_to_the_user_with_everything_kept(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -281,9 +281,9 @@ async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_e
     .unwrap()
     .to_string();
     assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
-    // A correction, then the escalated rewrite, then the user: no third try.
-    assert_eq!(model.repairs.load(Ordering::Relaxed), 2);
-    assert_eq!(model.escalations.load(Ordering::Relaxed), 1);
+    // A rewrite, then the last attempt, which the code makes: the sentence
+    // is the whole of its field, so it stays and the claim is the user's.
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
 
     let store = ClaimReviewRepository::new(pool.clone());
     let ledger = store.load(&lesson_id).await?;
@@ -293,7 +293,7 @@ async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_e
     // The rewrites kept the claim: one card, with both attempts on it.
     assert_eq!(ledger.claims.len(), 1, "{:?}", ledger.claims);
     let claim = waiting(&ledger.claims)[0];
-    assert_eq!(claim.statement(), figure(1));
+    assert_eq!(claim.statement(), figure(0));
     assert_eq!(claim.location().unit_index, 0);
     assert_eq!(claim.location().unit_kind, UnitKind::Block);
     assert_eq!(claim.location().field, "body");
@@ -302,12 +302,11 @@ async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_e
     };
     assert_eq!(*kind, VerdictKind::Unsupported);
     assert!(reason.contains("buffer size"), "{reason}");
-    assert_eq!(
-        repairs(claim),
-        vec![
-            (1, false, RepairOutcome::Rewritten),
-            (2, true, RepairOutcome::Rewritten)
-        ]
+    let spent = repairs(claim);
+    assert_eq!(spent[0], (1, false, RepairOutcome::Rewritten));
+    assert!(
+        matches!(&spent[1..], [(2, true, RepairOutcome::Rejected { .. })]),
+        "{spent:?}"
     );
     // Research ran once (no web here: nothing found) and is on the record.
     assert_eq!(
@@ -344,7 +343,54 @@ async fn a_claim_that_fails_twice_on_the_same_evidence_waits_for_the_user_with_e
 }
 
 #[tokio::test]
-async fn a_claim_the_checker_cannot_judge_waits_for_the_user_instead_of_failing_the_job(
+async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_publishes(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let model = Figures::new();
+    let (raw, report) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[BAD]).to_string()),
+        &sources,
+    )
+    .await?;
+    // One rewrite request; the last attempt is made by the code.
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
+    let lesson: Value = serde_json::from_str(&raw)?;
+    assert_eq!(lesson["blocks"][0]["body"], PRACTICE.repeat(5).trim_start());
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let gone = ledger
+        .claims
+        .iter()
+        .find(|entry| matches!(entry.state(), ClaimState::Removed { .. }))
+        .unwrap();
+    assert!(matches!(
+        gone.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert_eq!(
+        repairs(gone),
+        vec![
+            (1, false, RepairOutcome::Rewritten),
+            (2, true, RepairOutcome::Removed)
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_the_checker_cannot_judge_is_the_machines_and_waits_only_where_it_cannot_be_cut(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -368,7 +414,11 @@ async fn a_claim_the_checker_cannot_judge_waits_for_the_user_instead_of_failing_
         error.to_string().starts_with("Needs your review:"),
         "{error}"
     );
-    assert_eq!(model.repairs.load(Ordering::Relaxed), 0, "never repaired");
+    assert_eq!(
+        model.repairs.load(Ordering::Relaxed),
+        1,
+        "rewritten once; the last attempt is the code's"
+    );
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
@@ -435,10 +485,10 @@ async fn a_confirmed_claim_publishes_on_resume_without_being_checked_again() -> 
         judged,
         "the confirmed claim is not rechecked"
     );
-    assert_eq!(model.repairs.load(Ordering::Relaxed), 2, "nor repaired");
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1, "nor repaired");
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     let finding = &report.findings[0];
-    assert_eq!(finding.statement, figure(1));
+    assert_eq!(finding.statement, figure(0));
     assert!(matches!(
         finding.resolution,
         Some(general_knowledge::Resolution::Confirmed { note: None, .. })
@@ -454,7 +504,7 @@ async fn a_confirmed_claim_publishes_on_resume_without_being_checked_again() -> 
     assert_eq!(examples[0].label_source, LabelSource::UserConfirm);
     assert_eq!(examples[0].label, Label::True);
     assert_eq!(examples[0].local_verdict, "unsupported");
-    assert_eq!(examples[0].claim, figure(1));
+    assert_eq!(examples[0].claim, figure(0));
     assert!(!examples[0].passages.is_empty());
     Ok(())
 }
@@ -464,25 +514,31 @@ async fn an_edit_is_applied_on_resume_and_only_its_section_is_extracted_again() 
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
-    let model = Figures::new();
+    let model = Figures {
+        fail_repair_at: Some(0),
+        ..Figures::new()
+    };
     let raw = lesson(&[GOOD, BAD]).to_string();
     let error = prepare(&repo, &job, &lesson_id, &model, Some(raw), &sources)
         .await
         .err()
         .unwrap()
         .to_string();
-    assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
+    assert!(error.contains("fixture server failure"), "{error}");
     let store = ClaimReviewRepository::new(pool.clone());
     let ledger = store.load(&lesson_id).await?;
-    let edited = waiting(&ledger.claims)[0];
-    assert_eq!(edited.location().unit_index, 1);
+    let edited = ledger
+        .claims
+        .iter()
+        .find(|entry| entry.location().unit_index == 1)
+        .unwrap();
     let edited = edited.claim_id().clone();
     ClaimReviewService::new(pool.clone())
         .resolve(
             &lesson_id,
             &edited.0,
             ClaimActionRequestDto::Edit {
-                before: figure(1),
+                before: BAD.into(),
                 after: GOOD.into(),
             },
             ledger.revision.0,
@@ -1088,7 +1144,7 @@ async fn a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sente
 }
 
 #[tokio::test]
-async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_waits_without_a_repair_call(
+async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_not_rewritten_and_is_cut_on_its_last_attempt(
 ) -> Result<()> {
     let model = Model::new();
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
@@ -1140,13 +1196,21 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_waits_without_a
     );
     assert!(matches!(
         entry.state(),
-        ClaimState::Queued {
+        ClaimState::Open {
             kind: VerdictKind::Unsupported,
+            machine_attempts_left: 1,
             ..
         }
     ));
-    assert!(!ledger.may_repair(&shared));
+    assert!(ledger.may_repair(&shared));
     assert!(ledger.may_repair(&own));
+    // The last attempt takes the sentence out whole, shared or not.
+    assert_eq!(
+        ledger
+            .withhold_shared(std::slice::from_ref(&shared))
+            .await?,
+        std::slice::from_ref(&shared)
+    );
     assert_eq!(ledger.entry(&verified).unwrap(), &untouched);
     assert!(!*model.repaired.lock().unwrap());
     assert_eq!(*model.judge_calls.lock().unwrap(), 0);

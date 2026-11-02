@@ -4,7 +4,7 @@
 //! (`citation::cite_where_supported`), with no model call.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{
-    claim_ids, context_claims, drop_group, escalated, ledger_targets, rejected, section_examples,
+    claim_ids, context_claims, drop_group, ledger_targets, rejected, section_examples,
     withdraw_resolved,
 };
 use super::*;
@@ -14,6 +14,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 mod citation;
 mod confine;
+mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
 pub(super) use citation::{cite_where_supported, number_sources};
@@ -154,12 +155,11 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
         "failedClaims":failures,"evidence":evidence,
         "executions":observations(context)?.into_iter().filter(|o|o.unit==Some(unit)).collect::<Vec<_>>(),
         "repairHistory":repair_history,
-        "repeatedDefects":escalated(failures) || escalated(&section_examples(context, unit))
     }))
 }
 
 fn repair_system() -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. A failed claim with repeatedDefect true was left unresolved by the previous repair on the same evidence: remove that entire factual assertion while preserving the rest of the section; repeatedDefects is true when any listed claim or failed example is such a claim. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
@@ -373,25 +373,37 @@ pub(in crate::features::learning) async fn candidate(
     llm: &dyn LLMPort,
     prompt: &str,
     schema: &Value,
-    context: Value,
+    mut context: Value,
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
     ledger: &mut ClaimLedger,
 ) -> Result<String> {
-    let targets = context_claims(&context);
-    let candidate = repair_sections(
-        llm,
-        prompt,
-        schema,
-        context,
-        output_tokens,
-        references,
-        ledger,
-    )
-    .await?;
+    let sent = context_claims(&context);
+    // A claim on its last attempt has its sentence taken out in code; the
+    // model is asked only for the others.
+    let handled = cut::last_attempts(&mut context, ledger).await?;
+    let candidate = if handled > 0 && targets(&context)?.is_empty() {
+        let candidate = context
+            .get("candidate")
+            .cloned()
+            .ok_or_else(|| invalid("Missing repair candidate."))?;
+        crate::features::learning::lesson_drafts::save_repair(&candidate.to_string(), None).await?;
+        candidate
+    } else {
+        repair_sections(
+            llm,
+            prompt,
+            schema,
+            context,
+            output_tokens,
+            references,
+            ledger,
+        )
+        .await?
+    };
     // What this repair left as it was: the teaching review after it leaves
     // it too (claim sources design §10.3), as the synced ledger has it now.
-    let protected = Protected::of_ledger(ledger, &targets);
+    let protected = Protected::of_ledger(ledger, &sent);
     crate::features::learning::teaching::review_lesson(
         llm,
         crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,

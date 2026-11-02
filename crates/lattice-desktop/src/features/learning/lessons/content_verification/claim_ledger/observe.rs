@@ -38,19 +38,31 @@ fn example_statement(observation_id: &str) -> String {
     format!("The code example {observation_id} runs to completion with the output it shows.")
 }
 
+/// Where a lesson field is in the lesson, as a JSON pointer: `body`,
+/// `rubric/2/description`, `options/1` of a unit.
+pub(in crate::features::learning) fn field_pointer(
+    candidate: &Value,
+    unit: usize,
+    field: &str,
+) -> Option<String> {
+    let blocks = candidate.get("blocks")?.as_array()?.len();
+    Some(if unit < blocks {
+        format!("/blocks/{unit}/{field}")
+    } else {
+        format!("/questions/{}/{field}", unit - blocks)
+    })
+}
+
 /// The text of a lesson field: `body`, `rubric/2/description`, `options/1`.
 pub(in crate::features::learning) fn field_text(
     candidate: &Value,
     unit: usize,
     field: &str,
 ) -> Option<String> {
-    let blocks = candidate.get("blocks")?.as_array()?.len();
-    let pointer = if unit < blocks {
-        format!("/blocks/{unit}/{field}")
-    } else {
-        format!("/questions/{}/{field}", unit - blocks)
-    };
-    candidate.pointer(&pointer)?.as_str().map(str::to_owned)
+    candidate
+        .pointer(&field_pointer(candidate, unit, field)?)?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// The fields of a unit a claim can come from, in the order searched.

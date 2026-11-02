@@ -899,13 +899,11 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
 }
 
 #[tokio::test]
-async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -> Result<()> {
+async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()> {
     const SECOND: &str = "DictReader removes all whitespace from CSV values by default.";
     struct GradualRepair {
         inner: Model,
         repairs: std::sync::atomic::AtomicUsize,
-        repeats_once: bool,
-        repeated_escalations: std::sync::atomic::AtomicUsize,
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
@@ -952,26 +950,17 @@ async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -
                 .to_string());
             }
             if prompt.starts_with("Repair verified lesson defects.") {
-                let data = self::context(prompt);
-                if data["repeatedDefects"].as_bool() == Some(true) {
-                    self.repeated_escalations
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
                 let repair = self
                     .repairs
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(repair < 2, "A claim gets two attempts in its life");
-                let mut body = candidate(if repair == 0 || (self.repeats_once && repair == 1) {
-                    SECOND
-                } else {
-                    GOOD
-                })["blocks"][0]["body"]
+                assert!(repair < 1, "A claim's last attempt is no request");
+                assert!(!prompt.contains("lastAttempt"));
+                // The correction drops the first sentence and leaves the
+                // second as it was.
+                let body = self::context(prompt)["candidate"]["blocks"][0]["body"]
                     .as_str()
                     .unwrap()
-                    .to_owned();
-                if self.repeats_once && repair == 1 {
-                    body.push(' ');
-                }
+                    .replace(&format!("{BAD} "), "");
                 return Ok(repair_body(prompt, json!(body)));
             }
             if prompt.starts_with("Source passages:")
@@ -988,44 +977,31 @@ async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -
     }
 
     // The first repair corrects both claims; SECOND survives it on the same
-    // evidence, so the second repair is its last: escalated (remove it whole).
-    for repeats_once in [false, true] {
-        let model = GradualRepair {
-            inner: Model::new(),
-            repairs: Default::default(),
-            repeats_once,
-            repeated_escalations: Default::default(),
-        };
-        let verified = verify_and_repair(
-            &model,
-            "{}",
-            &json!({}),
-            candidate(&format!("{BAD} {SECOND}")).to_string(),
-            &[source()],
-            3000,
-        )
-        .await;
-        assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 2);
-        assert_eq!(
-            model
-                .repeated_escalations
-                .load(std::sync::atomic::Ordering::Relaxed),
-            1
-        );
-        if repeats_once {
-            // Two attempts on the same evidence: the claim is the user's, and
-            // the lesson waits for review instead of a third rewrite.
-            let error = verified.err().unwrap().to_string();
-            assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
-        } else {
-            let (_, report) = verified?;
-            assert!(report.issues.is_empty());
-            assert!(report
-                .findings
-                .iter()
-                .all(|finding| finding.verdict == ClaimVerdict::Supported));
-        }
-    }
+    // evidence, so the second attempt is its last: its sentence is taken out
+    // in code, the lesson keeps what was verified and publishes.
+    let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
+    let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
+    let model = GradualRepair {
+        inner: Model::new(),
+        repairs: Default::default(),
+    };
+    let (raw, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        lesson.to_string(),
+        &[source()],
+        3000,
+    )
+    .await?;
+    assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
+    assert!(raw.contains(GOOD));
+    assert!(report.issues.is_empty());
+    assert!(report
+        .findings
+        .iter()
+        .all(|finding| finding.verdict == ClaimVerdict::Supported));
     Ok(())
 }
 
@@ -1240,7 +1216,9 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     };
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
-    // A claim the checker could not judge waits for the user (§4).
+    // A claim the checker could not judge is the machine's: a rewrite, then
+    // the last attempt; its sentence being the whole field, it stays and
+    // the lesson waits for the user (claim classes design §3.2).
     let error = verify_and_repair(
         &offline,
         "{}",
@@ -1256,7 +1234,7 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
         error.to_string().starts_with("Needs your review:"),
         "{error}"
     );
-    assert!(!*offline.repaired.lock().unwrap());
+    assert!(*offline.repaired.lock().unwrap());
     let incomplete = Model {
         incomplete_coverage: true,
         ..Model::new()

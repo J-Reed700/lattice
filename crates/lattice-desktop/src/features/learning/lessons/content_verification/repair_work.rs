@@ -25,14 +25,6 @@ pub(super) fn section_examples(context: &Value, unit: usize) -> Vec<Value> {
         .collect()
 }
 
-/// A request's failed claims or examples on their last attempt: the repair
-/// removes the assertion whole (`repeatedDefect`, §4 escalation).
-pub(super) fn escalated(items: &[Value]) -> bool {
-    items
-        .iter()
-        .any(|item| item.get("repeatedDefect").and_then(Value::as_bool) == Some(true))
-}
-
 /// Whether a section repair's failure is its answer's, so the claims it was
 /// for use their attempt and the loop goes on (§3 `Rejected`), rather than an
 /// outage or a cancellation, which stop the job.
@@ -71,6 +63,12 @@ pub(super) fn drop_group(context: &mut Value, unit: usize, sent: usize, first: b
 /// Withdraws from the remaining work every claim the ledger no longer lets
 /// the machine repair, and returns them (§9).
 pub(super) fn withdraw_resolved(context: &mut Value, ledger: &ClaimLedger) -> Vec<ClaimId> {
+    withdraw(context, |id| !ledger.may_repair(id))
+}
+
+/// Withdraws from the remaining work every claim `gone` names, and the
+/// executions of examples no claim tracks any more; returns the claims.
+pub(super) fn withdraw(context: &mut Value, gone: impl Fn(&ClaimId) -> bool) -> Vec<ClaimId> {
     let mut withdrawn = Vec::new();
     let Some(object) = context.as_object_mut() else {
         return withdrawn;
@@ -82,7 +80,7 @@ pub(super) fn withdraw_resolved(context: &mut Value, ledger: &ClaimLedger) -> Ve
                     return true;
                 };
                 let id = ClaimId(id.to_owned());
-                let keep = ledger.may_repair(&id);
+                let keep = !gone(&id);
                 if !keep {
                     withdrawn.push(id);
                 }

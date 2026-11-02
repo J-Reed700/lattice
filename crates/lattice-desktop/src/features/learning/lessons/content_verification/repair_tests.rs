@@ -1,11 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+use lattice_core::domain::learning::claim_review::{
+    Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, EvidenceFingerprint,
+    RepairOutcome, UnitKind, VerdictKind,
+};
 use std::sync::Mutex;
 #[test]
 fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Result<()> {
     let original = json!({"blocks":[{"kind":"explanation","title":"First","body":"Keep byte-for-byte"},{"kind":"explanation","title":"Second","body":"Fix this"}],"questions":[{"kind":"quiz","prompt":"Keep this question"}]});
-    let context = json!({"candidate":original,"requirements":{},"failedClaims":[{"unit":1,"evidence":["evidence-1"],"repeatedDefect":true},{"unit":2,"evidence":["evidence-2"]}],"evidence":[{"id":"evidence-1","text":"Relevant"},{"id":"evidence-2","text":"Another section"}],"executions":[],"repairHistory":[{"unit":1,"statement":"Rejected here"},{"unit":2,"statement":"Rejected elsewhere"}]});
+    let context = json!({"candidate":original,"requirements":{},"failedClaims":[{"unit":1,"evidence":["evidence-1"]},{"unit":2,"evidence":["evidence-2"]}],"evidence":[{"id":"evidence-1","text":"Relevant"},{"id":"evidence-2","text":"Another section"}],"executions":[],"repairHistory":[{"unit":1,"statement":"Rejected here"},{"unit":2,"statement":"Rejected elsewhere"}]});
     let local = section_context(&context, 1, &section_failures(&context, 1))?;
     assert_eq!(local["candidate"]["blocks"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -16,10 +20,8 @@ fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Resul
         local["repairHistory"],
         json!([{"unit":1,"statement":"Rejected here"}])
     );
-    assert_eq!(local["repeatedDefects"], true);
-    // The other section's claim is on its first attempt.
-    let other = section_context(&context, 2, &section_failures(&context, 2))?;
-    assert_eq!(other["repeatedDefects"], false);
+    // A last attempt is no request: the code takes the sentence out.
+    assert!(local.get("repeatedDefects").is_none());
     let patch = json!({"blocks":[{"kind":"explanation","title":"Second","body":"Corrected"}],"questions":[]});
     let mut result = original.clone();
     merge(&mut result, patch, 1)?;
@@ -126,10 +128,6 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     // Open for repair, as a pass leaves its failed claims.
     for k in 0..6 {
-        use lattice_core::domain::learning::claim_review::{
-            Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, EvidenceFingerprint,
-            UnitKind, VerdictKind,
-        };
         let id = ClaimId(format!("claim-{k}"));
         let location = ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), body);
         ledger
@@ -203,5 +201,155 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     for part in 0..requests.len() {
         assert!(body.contains(&format!("({part})")), "{body}");
     }
+    Ok(())
+}
+
+/// A ledger of failed claims, each with the repair attempts already used on
+/// it, as a pass and the repairs before it leave them.
+async fn failed_ledger(
+    llm: &dyn LLMPort,
+    body: &str,
+    claims: &[(&str, &str, u8)],
+) -> Result<ClaimLedger> {
+    let mut ledger = ClaimLedger::open(llm, "{}").await?;
+    for &(id, sentence, used) in claims {
+        let id = ClaimId(id.to_owned());
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, body);
+        let extracted = ClaimEvent::Extracted {
+            location,
+            statement: sentence.to_owned(),
+        };
+        ledger.append(&id, extracted).await?;
+        let check = Check {
+            checker: Checker::Local {
+                model: llm.model_name().into(),
+            },
+            result: CheckResult::Failed {
+                kind: VerdictKind::Unsupported,
+            },
+            reason: "Unstated.".into(),
+            fingerprint: EvidenceFingerprint::of("fixture-v1", llm.model_name(), &[]),
+            evidence: Vec::new(),
+            window_tokens: 4_000,
+        };
+        ledger.append(&id, ClaimEvent::Checked(check)).await?;
+        for attempt in 1..=used {
+            let spent = ClaimEvent::RepairAttempted {
+                attempt,
+                escalated: false,
+                before: sentence.to_owned(),
+                after: None,
+                outcome: RepairOutcome::Rejected {
+                    reason: "Unusable.".into(),
+                },
+            };
+            ledger.append(&id, spent).await?;
+        }
+    }
+    Ok(ledger)
+}
+
+fn lesson_of(body: &str) -> Value {
+    json!({"blocks":[{"kind":"explanation","title":"T","body":body}],"questions":[]})
+}
+
+#[tokio::test]
+async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_model() -> Result<()> {
+    let body = "Keep this. Cut this. Fix this.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        body,
+        &[("last", "Cut this.", 1), ("first", "Fix this.", 0)],
+    )
+    .await?;
+    let (last, first) = (ClaimId("last".into()), ClaimId("first".into()));
+    ledger
+        .begin_repairs(&lesson_of(body), &[last.clone(), first.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
+            {"unit":0,"claimId":"first","sentence":"Fix this.","evidence":[]},
+        ],
+    });
+
+    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        "Keep this. Fix this."
+    );
+    assert_eq!(claim_ids(&section_failures(&context, 0)), vec![first]);
+    assert!(ledger
+        .pending
+        .repairs
+        .iter()
+        .any(|record| record.claim_id == last));
+    assert!(llm.requests.lock().unwrap().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_last_attempt_that_cannot_take_the_sentence_out_uses_the_attempt_and_waits() -> Result<()>
+{
+    let body = "Cut this.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(&llm, body, &[("last", "Cut this.", 1)]).await?;
+    let last = ClaimId("last".into());
+    ledger
+        .begin_repairs(&lesson_of(body), &[last.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
+        ],
+    });
+
+    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    assert!(section_failures(&context, 0).is_empty());
+    let entry = ledger.entry(&last).unwrap();
+    assert!(entry.state().awaits_user(), "{:?}", entry.state());
+    assert!(ledger.pending.repairs.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> Result<()> {
+    let body = "Intro.\n\n```python\nprint(1)\n```\n\nAfter.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(&llm, body, &[("example", "print(1)\n", 1)]).await?;
+    let example = ClaimId("example".into());
+    ledger
+        .begin_repairs(&lesson_of(body), &[example.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [], "failedClaims": [],
+        "exampleClaims": [{"unit":0,"claimId":"example","lastAttempt":true}],
+    });
+
+    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        "Intro.\n\nAfter."
+    );
+    assert!(section_examples(&context, 0).is_empty());
     Ok(())
 }

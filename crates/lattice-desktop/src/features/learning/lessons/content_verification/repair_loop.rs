@@ -466,7 +466,8 @@ impl PendingRepair {
 /// The repair context, with each exact passage sent once rather than per
 /// finding; nothing is discarded. Passages carry their source titles so a
 /// source index is not read as evidence N. Only `targets` are sent, each with
-/// its claim id and, on its last attempt, `repeatedDefect`.
+/// its claim id and, on its last attempt, `lastAttempt`: that attempt takes
+/// the sentence out in code, so the model never reads the flag.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
@@ -506,7 +507,11 @@ pub(super) fn repair_context(
             // The exact lesson text the repair may change (claim sources
             // design §18.5).
             let sentence = ledger.entry(id).map(|entry| entry.location().quote.clone());
-            json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence,"repeatedDefect":escalates(id)})
+            let mut claim = json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence});
+            if escalates(id) {
+                claim["lastAttempt"] = json!(true);
+            }
+            claim
         }).collect();
     let examples: Vec<(&execution::Observation, &ClaimId)> = report
         .executions
@@ -520,7 +525,13 @@ pub(super) fn repair_context(
         "requirements":crate::features::learning::generation::parse_json::<Value>(prompt)?,
         "candidate":candidate,"failedClaims":failed,"evidence":passages,
         "executions":examples.iter().map(|(observation, _)| observation).collect::<Vec<_>>(),
-        "exampleClaims":examples.iter().map(|(observation, id)| json!({"unit":observation.unit,"claimId":id.0,"repeatedDefect":escalates(id)})).collect::<Vec<_>>(),
+        "exampleClaims":examples.iter().map(|(observation, id)| {
+            let mut example = json!({"unit":observation.unit,"claimId":id.0});
+            if escalates(id) {
+                example["lastAttempt"] = json!(true);
+            }
+            example
+        }).collect::<Vec<_>>(),
         "repairHistory":repair_history,
     }))
 }

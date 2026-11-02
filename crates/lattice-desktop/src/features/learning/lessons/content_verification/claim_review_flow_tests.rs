@@ -182,8 +182,10 @@ pub(super) struct Waiting {
 }
 
 impl Waiting {
-    /// The flagged claim: unsupported, corrected, rewritten, then handed to
-    /// the user (§4); the job completes as the worker completes it (§6.1).
+    /// The flagged claim: unsupported, rewritten once, then, its sentence
+    /// being the whole of its field, left to the user by the last attempt
+    /// (claim classes design §3.2); the job completes as the worker
+    /// completes it (§6.1).
     pub(super) async fn new(model: &Supporting) -> Result<Self> {
         let course = Self::course().await?;
         course.hold(model).await?;

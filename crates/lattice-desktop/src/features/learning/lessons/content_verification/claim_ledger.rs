@@ -33,7 +33,7 @@ use lattice_core::shared::text::sentences;
 pub(in crate::features::learning) use located::{located, located_quote};
 #[cfg(test)]
 pub(in crate::features::learning) use observe::locate;
-pub(in crate::features::learning) use observe::{field_text, unit_texts};
+pub(in crate::features::learning) use observe::{field_pointer, field_text, unit_texts};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";
@@ -395,8 +395,9 @@ impl ClaimLedger {
 
     /// The targets a repair may rewrite (claim sources design §18.5): editable
     /// when some sentence of its quote is not one another live, settled or
-    /// waiting claim stands on. The rest wait for the user, recorded as a repair
-    /// not attempted.
+    /// waiting claim stands on, and always on the claim's last attempt, which
+    /// takes the sentence out whole. The rest use their attempt, recorded as a
+    /// repair not attempted.
     pub(super) async fn withhold_shared(&mut self, targets: &[ClaimId]) -> Result<Vec<ClaimId>> {
         let protected = Protected::of_ledger(self, targets);
         let mut editable = Vec::new();
@@ -429,7 +430,7 @@ impl ClaimLedger {
                 editable.push(id.clone());
                 continue;
             };
-            if free {
+            if free || entry.next_repair_escalates() {
                 editable.push(id.clone());
             } else {
                 withheld.push((
