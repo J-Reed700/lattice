@@ -34,6 +34,11 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     activity_snapshot: () => ({ items: [], running: 0 }),
     // Iris, in the rail, counts the flashcards due.
     list_study_decks: () => [],
+    // Every answer and lesson offers Listen; the voice is not downloaded.
+    get_speech_status: () => ({
+      modelReady: false, modelId: 'kokoro-82m-british', modelName: 'Kokoro 82M (British voices)', downloadBytes: 0,
+      license: 'Apache-2.0', voices: [{ id: 'bf_emma', name: 'Emma' }], defaultVoice: 'bf_emma',
+    }),
     get_indexed_folders: () => [],
     get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: 'idle', paused: false, failures: [] }),
     detect_system_capabilities: () => ({ total_ram_gb: 16, cpu_cores: 8, cpu_architecture: 'e2e', gpu_type: 'none', gpu_acceleration: 'none', vram_gb: null, available_disk_gb: 100 }),

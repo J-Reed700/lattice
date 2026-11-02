@@ -25,8 +25,12 @@ import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseI
 import { SectionTangentBar, StudyTangentSelection } from '@/features/learning/tangents/StudyTangentSelection';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { ListenButton } from '@/features/speech/components/ListenButton';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
+
+const LISTEN_CLASS =
+  'inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 
 const blockLabels: Record<LearningBlockKind, string> = {
   explanation: 'The idea', worked_example: 'Worked example', contrast: 'Don’t confuse it with', check: 'Your turn',
@@ -180,6 +184,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
                   <div className="studio-section-label">{blockLabels[block.kind]}</div>
                   <h4>{block.title}</h4>
+                  {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
                   {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />
                     : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
                     : <div className="studio-lesson-prose">{prose(block.body)}</div>}

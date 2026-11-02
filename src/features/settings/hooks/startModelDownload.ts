@@ -17,7 +17,7 @@ import { voidAsync } from '@/utils/promiseHandlers';
 type AddToast = ReturnType<typeof useToastStore.getState>['addToast'];
 
 export interface StartModelDownloadArgs {
-  metadata: ModelMetadata;
+  metadata: Pick<ModelMetadata, 'id' | 'name' | 'category' | 'embedding_compatibility'>;
   addToast: AddToast;
   queryClient: QueryClient;
 }

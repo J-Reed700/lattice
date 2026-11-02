@@ -106,6 +106,9 @@ impl DownloadModelUseCase {
                         // constraint has no `transcription` value yet.
                         "custom".to_string()
                     }
+                    lattice_core::domain::models::selection::ModelCategory::Speech => {
+                        "unknown".to_string()
+                    }
                 },
                 status: ModelStatus::Pending,
                 files: vec![],

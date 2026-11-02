@@ -14,6 +14,7 @@ import { fetchDocumentFileName, useLinkDocumentToSpaceMutation } from '@/feature
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
@@ -56,6 +57,7 @@ export function ChatView() {
     setComposerDraft,
     loadConversationLinkedDocuments,
   } = useConversationsStore();
+  useStopSpeechOnChange(activeConversationId);
   const { fetchDownloadedModels } = useDownloadedModels();
   const { mutateAsync: linkDocumentToSpace } = useLinkDocumentToSpaceMutation();
   const [isSpotlightOpen, setIsSpotlightOpen] = useState(false);
