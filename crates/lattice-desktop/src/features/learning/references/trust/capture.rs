@@ -2,8 +2,11 @@
 //! calls [`record`] inside the version's own transaction: it writes what
 //! capture read about the version (its provenance row) and how the version
 //! relates to the course's other sources, so a version never exists without
-//! them. The signal builders here give each kind of source its signals, and
-//! [`publisher`] is the name the library's `publisher` column shows.
+//! them. [`compare`] reads those other sources ahead of the transaction: it
+//! takes seconds on a real course, and no other write gets in while a
+//! transaction runs. The signal builders here give each kind of source its
+//! signals, and [`publisher`] is the name the library's `publisher` column
+//! shows.
 
 use super::repository::unix_seconds;
 use super::rows::{from_json, write_provenance, write_relations};
@@ -17,8 +20,9 @@ use lattice_core::domain::provenance::{
     Origin, PastedSignals, ProvenanceRecord, ProvenanceSignals, RelationEvidence, RelationKind,
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
-use lattice_core::shared::error::Result;
-use sqlx::{Row, Sqlite, SqliteConnection, Transaction};
+use lattice_core::shared::error::{AppError, Result};
+use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
 pub const DOCUMENT_SIGNALS_VERSION: &str = "document-signals-v1";
@@ -160,6 +164,106 @@ pub struct CapturedVersion<'a> {
     pub acquired_at_ms: i64,
 }
 
+/// A version's text, before the version is saved.
+#[derive(Debug, Clone, Copy)]
+pub struct VersionText<'a> {
+    pub source_id: &'a str,
+    pub version_id: &'a str,
+    pub text: &'a str,
+}
+
+/// How a version's text relates to the course's other sources.
+#[derive(Debug, Clone)]
+pub struct Comparison {
+    page: ShingleSet,
+    sketch: Sketch,
+    compared: BTreeSet<String>,
+    relations: Vec<SourceRelation>,
+}
+
+/// One saved or about-to-be-saved text of a course.
+struct CourseText {
+    source_id: String,
+    version_id: String,
+    text: String,
+}
+
+/// Compares a version with the course's active sources.
+pub async fn compare(
+    pool: &SqlitePool,
+    program_id: &str,
+    version: VersionText<'_>,
+) -> Result<Comparison> {
+    compare_all(pool, program_id, &[version])
+        .await?
+        .pop()
+        .ok_or_else(|| AppError::InternalError("A version went uncompared.".into()))
+}
+
+/// [`compare`] for versions saved together: each is compared with the ones
+/// before it too, as it would be if they were saved in turn.
+pub async fn compare_all(
+    pool: &SqlitePool,
+    program_id: &str,
+    versions: &[VersionText<'_>],
+) -> Result<Vec<Comparison>> {
+    let saved = sqlx::query(
+        "SELECT l.id AS source_id, v.id, v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL",
+    )
+    .bind(program_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let saved: Vec<CourseText> = saved
+        .iter()
+        .map(|row| CourseText {
+            source_id: row.get("source_id"),
+            version_id: row.get("id"),
+            text: row.get("full_text"),
+        })
+        .collect();
+    let versions: Vec<CourseText> = versions
+        .iter()
+        .map(|version| CourseText {
+            source_id: version.source_id.to_owned(),
+            version_id: version.version_id.to_owned(),
+            text: version.text.to_owned(),
+        })
+        .collect();
+    tokio::task::spawn_blocking(move || comparisons(saved, versions))
+        .await
+        .map_err(|error| {
+            AppError::InternalError(format!("Comparing sources stopped unexpectedly: {error}"))
+        })
+}
+
+fn comparisons(saved: Vec<CourseText>, versions: Vec<CourseText>) -> Vec<Comparison> {
+    let mut course: Vec<(String, String, ShingleSet)> = saved
+        .into_iter()
+        .map(|saved| {
+            let set = shingles(&saved.text, &POLICY);
+            (saved.source_id, saved.version_id, set)
+        })
+        .collect();
+    let mut compared = Vec::with_capacity(versions.len());
+    for version in versions {
+        let page = shingles(&version.text, &POLICY);
+        let others: Vec<(&str, &ShingleSet)> = course
+            .iter()
+            .filter(|(source_id, _, _)| *source_id != version.source_id)
+            .map(|(_, version_id, set)| (version_id.as_str(), set))
+            .collect();
+        compared.push(Comparison {
+            sketch: Sketch::of(&page),
+            compared: others.iter().map(|(id, _)| (*id).to_owned()).collect(),
+            relations: page_relations(&version.version_id, &page, &others, &POLICY),
+            page: page.clone(),
+        });
+        course.push((version.source_id, version.version_id, page));
+    }
+    compared
+}
+
 /// What the hook wrote.
 #[derive(Debug, Clone)]
 pub struct Recorded {
@@ -173,22 +277,22 @@ pub async fn record(
     tx: &mut Transaction<'_, Sqlite>,
     version: &CapturedVersion<'_>,
     signals: &ProvenanceSignals,
+    comparison: &Comparison,
 ) -> Result<Recorded> {
-    let text_shingles = shingles(version.text, &POLICY);
     let record = ProvenanceRecord {
         source_version_id: version.version_id.to_owned(),
         program_id: version.program_id.to_owned(),
         origin: origin_of(version, signals),
         signals: signals.clone(),
         signals_sha256: signals.signals_sha256(),
-        sketch: Sketch::of(&text_shingles),
+        sketch: comparison.sketch.clone(),
         links: markdown_links(version.text),
         extracted_from: extracted_from(signals),
         extraction_version: extraction_version(signals),
         extracted_at: version.acquired_at_ms.div_euclid(MILLIS_PER_SECOND),
     };
     write_provenance(tx, &record).await?;
-    let relations = relate(tx, version, &record, &text_shingles).await?;
+    let relations = relate(tx, version, &record, comparison).await?;
     write_relations(tx, version.program_id, &relations, record.extracted_at).await?;
     Ok(Recorded { record, relations })
 }
@@ -260,31 +364,47 @@ fn extraction_version(signals: &ProvenanceSignals) -> String {
 /// Page-level relations (§7): copies against the course's other active
 /// sources, the archive a wrapper URL unwrapped to, and a canonical on
 /// another site. A target the course has captured is linked by version.
+/// The copies are `comparison`'s, for the sources still active; only one
+/// saved since it ran is read here.
 async fn relate(
     tx: &mut Transaction<'_, Sqlite>,
     version: &CapturedVersion<'_>,
     record: &ProvenanceRecord,
-    text_shingles: &ShingleSet,
+    comparison: &Comparison,
 ) -> Result<Vec<SourceRelation>> {
-    let others = sqlx::query(
-        "SELECT v.id, v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL AND l.id<>? ORDER BY v.id",
+    let active: BTreeSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT v.id FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL AND l.id<>?",
     )
     .bind(version.program_id)
     .bind(version.source_id)
     .fetch_all(&mut **tx)
     .await
-    .map_err(db)?;
-    let sets: Vec<(String, ShingleSet)> = others
+    .map_err(db)?
+    .into_iter()
+    .collect();
+    let mut relations: Vec<SourceRelation> = comparison
+        .relations
         .iter()
-        .map(|row| {
-            let id: String = row.get("id");
-            let text: String = row.get("full_text");
-            (id, shingles(&text, &POLICY))
-        })
+        .filter(|relation| active.contains(other_end(relation, version.version_id)))
+        .cloned()
         .collect();
-    let existing: Vec<(&str, &ShingleSet)> =
-        sets.iter().map(|(id, set)| (id.as_str(), set)).collect();
-    let mut relations = page_relations(version.version_id, text_shingles, &existing, &POLICY);
+    for id in active.difference(&comparison.compared) {
+        let text: String = sqlx::query_scalar(
+            "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
+        )
+        .bind(version.program_id)
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?;
+        let other = shingles(&text, &POLICY);
+        relations.extend(page_relations(
+            version.version_id,
+            &comparison.page,
+            &[(id.as_str(), &other)],
+            &POLICY,
+        ));
+    }
     if let Some(archived) = &record.origin.archived {
         relations.push(SourceRelation {
             from: version.version_id.to_owned(),
@@ -309,6 +429,14 @@ async fn relate(
         }
     }
     Ok(relations)
+}
+
+/// The end of a copy relation that is not `version_id`.
+fn other_end<'a>(relation: &'a SourceRelation, version_id: &str) -> &'a str {
+    match &relation.to {
+        RelationTarget::Version(to) if to != version_id => to,
+        _ => &relation.from,
+    }
 }
 
 /// The course's captured version of `url` from another source, else the URL.

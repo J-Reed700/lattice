@@ -14,7 +14,21 @@ pub(in super::super) fn sample() -> Lexicon {
         "egg": "ˈɛɡ", "apple": "ˈapᵊl",
     });
     let silver = serde_json::json!({ "lattice": "lˈatɪs" });
-    Lexicon::from_json(gold.to_string().as_bytes(), silver.to_string().as_bytes()).unwrap()
+    Lexicon::from_json(
+        SpeechAccent::British,
+        gold.to_string().as_bytes(),
+        silver.to_string().as_bytes(),
+    )
+    .unwrap()
+}
+
+pub(in super::super) fn american_sample() -> Lexicon {
+    let gold = serde_json::json!({
+        "kiss": "kˈɪs", "cat": "kˈæt", "wait": "wˈAt", "want": "wˈɑnt", "need": "nˈid",
+        "walk": "wˈɔk", "subpoena": "səpˈinə", "water": "wˈɔɾəɹ", "button": "bˈʌʔn",
+        "hello": "həlˈO",
+    });
+    Lexicon::from_json(SpeechAccent::American, gold.to_string().as_bytes(), b"{}").unwrap()
 }
 
 fn read(lexicon: &Lexicon, word: &str) -> Option<String> {
@@ -37,6 +51,36 @@ fn inflects_known_stems() {
     assert_eq!(read(&lexicon, "kisses").as_deref(), Some("kˈɪsɪz"));
     assert_eq!(read(&lexicon, "walked").as_deref(), Some("wˈɔːkt"));
     assert_eq!(read(&lexicon, "running").as_deref(), Some("ɹˈʌnɪŋ"));
+}
+
+#[test]
+fn american_suffixes_take_the_american_vowel_and_tap() {
+    let lexicon = american_sample();
+    assert_eq!(read(&lexicon, "cats").as_deref(), Some("kˈæts"));
+    assert_eq!(read(&lexicon, "kisses").as_deref(), Some("kˈɪsᵻz"));
+    assert_eq!(read(&lexicon, "walked").as_deref(), Some("wˈɔkt"));
+    assert_eq!(read(&lexicon, "needed").as_deref(), Some("nˈidᵻd"));
+    assert_eq!(read(&lexicon, "waited").as_deref(), Some("wˈAɾᵻd"));
+    assert_eq!(read(&lexicon, "wanted").as_deref(), Some("wˈɑntᵻd"));
+    assert_eq!(read(&lexicon, "waiting").as_deref(), Some("wˈAɾɪŋ"));
+    assert_eq!(read(&lexicon, "wanting").as_deref(), Some("wˈɑntɪŋ"));
+    assert_eq!(read(&lexicon, "subpoenaing").as_deref(), Some("səpˈinəɪŋ"));
+}
+
+#[test]
+fn british_suffixes_keep_their_own_rules() {
+    let british = sample();
+    assert_eq!(read(&british, "kisses").as_deref(), Some("kˈɪsɪz"));
+    assert_eq!(read(&british, "walked").as_deref(), Some("wˈɔːkt"));
+    let stems = serde_json::json!({
+        "wait": "wˈAt", "need": "nˈiːd", "subpoena": "səpˈiːnə",
+    });
+    let british =
+        Lexicon::from_json(SpeechAccent::British, stems.to_string().as_bytes(), b"{}").unwrap();
+    assert_eq!(read(&british, "waited").as_deref(), Some("wˈAtɪd"));
+    assert_eq!(read(&british, "needed").as_deref(), Some("nˈiːdɪd"));
+    assert_eq!(read(&british, "waiting").as_deref(), Some("wˈAtɪŋ"));
+    assert_eq!(read(&british, "subpoenaing"), None);
 }
 
 #[test]

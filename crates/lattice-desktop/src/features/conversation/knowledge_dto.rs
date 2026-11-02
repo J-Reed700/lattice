@@ -44,6 +44,8 @@ pub struct KnowledgeItemDto {
 pub struct KnowledgeResponseDto {
     pub items: Vec<KnowledgeItemDto>,
     pub has_more: bool,
+    /// What this chat's pool is: `space`, `folder` or `course`.
+    pub pool: String,
     /// Items supplied in the initial context of the latest completed answer.
     pub last_answer_memory_ids: Vec<String>,
 }

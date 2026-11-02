@@ -152,6 +152,11 @@ function splitLong(sentence: string, max: number): string[] {
   return pieces;
 }
 
+/** The sentences read-aloud says from `markdown`, none longer than `max` characters. */
+export function speechSentences(markdown: string, max = 300): string[] {
+  return sentences(speakableText(markdown)).flatMap((sentence) => splitLong(sentence, max));
+}
+
 export interface ChunkOptions {
   /** The longest piece sent to the voice in one call. */
   max?: number;
@@ -164,7 +169,7 @@ export interface ChunkOptions {
  * its own, then sentences gathered up to `target` characters.
  */
 export function speechChunks(markdown: string, { max = 300, target = 220 }: ChunkOptions = {}): string[] {
-  const pieces = sentences(speakableText(markdown)).flatMap((sentence) => splitLong(sentence, max));
+  const pieces = speechSentences(markdown, max);
   const chunks: string[] = [];
   for (const piece of pieces) {
     const last = chunks.length >= 2 ? chunks[chunks.length - 1] : null;

@@ -178,6 +178,10 @@ fn background_verification_for(
             .source
             .as_ref()
             .is_some_and(|source| source.policy().verifies_cited_only),
+        drops_session_talk: turn
+            .source
+            .as_ref()
+            .is_some_and(|source| source.policy().drops_session_talk),
         tuning: turn.settings.llm.verification.clone(),
         chat_llm: Arc::clone(&turn.llm),
         turn: Some(record),

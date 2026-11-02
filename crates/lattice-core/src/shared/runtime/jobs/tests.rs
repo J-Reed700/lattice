@@ -465,6 +465,30 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
     Ok(())
 }
 
+/// A lesson job ended with "another attempt would fail again" on a busy
+/// database while another job was saving sources. Being kept out of the
+/// database says nothing about the work, so it is waited out.
+#[tokio::test]
+async fn a_busy_database_never_ends_a_job_however_often_it_repeats() -> Result<()> {
+    for error in [
+        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::ServiceNotAvailable(
+            "The database is temporarily busy. Saved work is retained.".into(),
+        ),
+    ] {
+        let (runtime, id) = repeating(error.clone(), false).await?;
+        let job = saved_once(&runtime, &id, |job| {
+            job.status.is_finished() || job.retry_count >= 3
+        })
+        .await;
+        assert_ne!(job.status, JobStatus::Failed, "{error}");
+        assert!(job.retry_count >= 3, "{error}");
+        runtime.close();
+        runtime.drain().await;
+    }
+    Ok(())
+}
+
 /// Fails every attempt the same way in words that change: a server error
 /// carrying a new request id each time.
 struct Renumbered(std::sync::atomic::AtomicU32);

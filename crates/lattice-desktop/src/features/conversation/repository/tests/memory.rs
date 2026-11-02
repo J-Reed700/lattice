@@ -274,6 +274,101 @@ fn candidate(
 }
 
 #[tokio::test]
+async fn a_commit_retires_a_shared_item_in_the_chat_it_came_from() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let source = seed_memory_thread(&pool).await;
+    let here = "conv-here".to_string();
+    sqlx::query("INSERT INTO conversations (id, title, space_id) VALUES ('conv-here', 'Here', 'space_general')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_message(
+        &pool,
+        "conv-here",
+        "hm1",
+        "user",
+        "Actually the budget is $150 now.",
+        10,
+        "2026-09-02T10:00:00Z",
+    )
+    .await;
+    let repo = ConversationRepository::new(pool.clone());
+    let old = MemoryId::new();
+    let new = MemoryId::new();
+    let old_span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
+    let new_span = whole_message_span(&pool, "hm1", EvidencePurpose::Assertion).await;
+    let before = repo.load_memory_snapshot(&source).await.unwrap();
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: source.clone(),
+            operation_id: "source".into(),
+            expected_memory_revision: 0,
+            expected_transcript_revision: before.transcript_revision,
+        },
+        &candidate(
+            MemoryCommit {
+                inserts: vec![item(&old, &source, MemoryKind::UserFact, old_span.clone())],
+                processed_through_sequence: 1,
+                ..Default::default()
+            },
+            before.transcript_revision,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+
+    let mut retired = item(&old, &source, MemoryKind::UserFact, old_span);
+    retired.state = MemoryState::Superseded;
+    retired.superseded_by = Some(new.clone());
+    retired.evidence.push(new_span.clone());
+    let transcript_revision = repo
+        .load_memory_snapshot(&here)
+        .await
+        .unwrap()
+        .transcript_revision;
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: here.clone(),
+            operation_id: "here".into(),
+            expected_memory_revision: 0,
+            expected_transcript_revision: transcript_revision,
+        },
+        &candidate(
+            MemoryCommit {
+                inserts: vec![item(&new, &here, MemoryKind::UserFact, new_span)],
+                updates: vec![retired],
+                processed_through_sequence: 1,
+                ..Default::default()
+            },
+            transcript_revision,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+
+    let snapshot = repo.load_memory_snapshot(&source).await.unwrap();
+    assert!(snapshot.active_items.is_empty());
+    assert_eq!(snapshot.state.memory_revision, 2);
+    let evidence: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_memory_evidence WHERE item_id = ?")
+            .bind(old.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(evidence, 1, "the source's evidence stays as it was");
+    let replacement: Option<String> =
+        sqlx::query_scalar("SELECT superseded_by FROM conversation_memory_items WHERE id = ?")
+            .bind(old.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(replacement.as_deref(), Some(new.as_str()));
+}
+
+#[tokio::test]
 async fn a_commit_makes_ledger_summary_watermark_and_revision_durable_together() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

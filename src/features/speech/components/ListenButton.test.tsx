@@ -12,6 +12,7 @@ import { createTestApi } from '@/tests/apiClient';
 import { ListenButton } from './ListenButton';
 import { SPEECH_STATUS_QUERY_KEY } from '../hooks/useSpeech';
 import { speechPlayer } from '../model/speechPlayer';
+import { useSpeechPrefsStore } from '../stores/speechPrefsStore';
 
 const output = vi.hoisted(() => ({
   currentTime: 0,
@@ -31,10 +32,14 @@ vi.mock('../model/speechPlayer', async (importOriginal) => {
 const status = (modelReady: boolean): SpeechStatusDto => ({
   modelReady,
   modelId: 'kokoro-82m-british',
-  modelName: 'Kokoro 82M (British voices)',
+  modelName: 'Kokoro 82M',
   downloadBytes: 339_000_000,
   license: 'Apache-2.0',
-  voices: [{ id: 'bf_emma', name: 'Emma' }],
+  voicePack: { ready: false, modelId: 'kokoro-82m-more-voices', modelName: 'Kokoro 82M: more voices', downloadBytes: 22_000_000 },
+  voices: [
+    { id: 'bf_emma', name: 'Emma', accent: 'british', gender: 'female', grade: 'B-', downloaded: modelReady },
+    { id: 'af_heart', name: 'Heart', accent: 'american', gender: 'female', grade: 'A', downloaded: false },
+  ],
   defaultVoice: 'bf_emma',
 });
 
@@ -63,6 +68,17 @@ describe('ListenButton', () => {
   beforeEach(() => {
     speechPlayer.stop();
     useToastStore.setState({ toasts: [] });
+    useSpeechPrefsStore.setState({ voice: 'bf_emma', speed: 1 });
+  });
+
+  it('keeps reading, in the default voice, when the chosen voice is no longer here', async () => {
+    useSpeechPrefsStore.setState({ voice: 'af_heart' });
+    const { api, client, user } = setup();
+    await waitFor(() => expect(client.getQueryData(SPEECH_STATUS_QUERY_KEY)).toBeDefined());
+
+    await user.click(screen.getByRole('button', { name: 'Listen to this answer' }));
+    await waitFor(() => expect(api.synthesizeSpeech).toHaveBeenCalledWith('First sentence.', 'bf_emma', 1));
+    expect(useSpeechPrefsStore.getState().voice).toBe('af_heart');
   });
 
   it('reads the answer’s prose aloud, then pauses, resumes and stops', async () => {

@@ -409,9 +409,14 @@ export function createVaultAPIMock() {
         text: '',
       },
     }),
+    transcribeSpeech: vi.fn().mockResolvedValue({ ok: true, data: { text: '', language: 'en', durationMs: 0 } }),
     getTranscriptionStatus: vi
       .fn()
-      .mockResolvedValue({ ok: true, data: { modelReady: false } }),
+      .mockResolvedValue({ ok: true, data: {
+        modelReady: false,
+        modelName: null,
+        voiceModel: { modelId: 'whisper-tiny-q8', modelName: 'Whisper Tiny', downloadBytes: 41_841_632, license: 'MIT' },
+      } }),
 
     // A course's evidence index: ready unless a test says otherwise.
     courseIndexStatus: vi
