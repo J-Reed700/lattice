@@ -574,7 +574,10 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
             &references,
             &claims,
             &[],
-            &ClaimChecks::default(),
+            &ClaimChecks {
+                corroborate: HashSet::from([(0, CLAIM.to_owned())]),
+                ..ClaimChecks::default()
+            },
             &citations,
         )
         .await?;

@@ -1,6 +1,7 @@
-//! A claim's two passes (course evidence index §5.1): pass A against what
-//! its own section cites, pass B across the course, packed into one
-//! request, and what they decide together.
+//! A claim's two passes (course evidence index §5.1, claim classes design
+//! §3.2): pass A against what its own section cites, pass B across the course
+//! for a claim that cites nothing and for one whose research round has ended,
+//! and what they decide together.
 use super::evidence_paging_tests::{
     inventory, marker_collection, reference, related, PagingModel, CLAIM, CONTRARY, MARKER,
 };
@@ -25,6 +26,15 @@ fn claim() -> Claim {
     Claim {
         quote: CLAIM.into(),
         statement: CLAIM.into(),
+    }
+}
+
+/// The checks of a pass that follows the research round of `CLAIM`: pass B
+/// reads its page though its section cites a passage.
+fn researched() -> ClaimChecks {
+    ClaimChecks {
+        corroborate: HashSet::from([(0, CLAIM.to_owned())]),
+        ..ClaimChecks::default()
     }
 }
 
@@ -76,7 +86,7 @@ async fn pass_b_never_shows_what_pass_a_shows() -> Result<()> {
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
-        &ClaimChecks::default(),
+        &researched(),
         &citations,
     )
     .await?;
@@ -93,13 +103,12 @@ async fn pass_b_never_shows_what_pass_a_shows() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_claims_pass_a_is_read_part_by_part_alone_and_pass_b_in_a_request_of_its_own(
-) -> Result<()> {
+async fn a_cited_claim_its_citation_supports_is_asked_once_and_no_page_is_read() -> Result<()> {
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(32_000);
     let citations = citing(&references, MARKER)?;
     // A later pass of a job that has measured what an answer costs.
-    evidence_checks::check_with_citations(
+    let results = evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
@@ -108,11 +117,42 @@ async fn a_claims_pass_a_is_read_part_by_part_alone_and_pass_b_in_a_request_of_i
         &citations,
     )
     .await?;
+    let finding = &results[0].2;
+    assert_eq!(finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(finding.two_pass.pass, Some(Pass::Attribution));
+    assert_eq!(
+        model.checks.lock().unwrap().len(),
+        1,
+        "the cited passage, read part by part, and no page beside it"
+    );
+    assert_eq!(model.requests.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn once_its_research_round_has_ended_a_claims_page_is_read_in_a_request_of_its_own(
+) -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(32_000);
+    let citations = citing(&references, MARKER)?;
+    let checks = ClaimChecks {
+        corroborate: HashSet::from([(0, CLAIM.to_owned())]),
+        ..measured()
+    };
+    evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &checks,
+        &citations,
+    )
+    .await?;
     assert_eq!(model.checks.lock().unwrap().len(), 2);
     assert_eq!(
         model.requests.load(Ordering::SeqCst),
         2,
-        "the cited passage is read part by part in a call of its own, and pass B's page in another"
+        "the cited passage is read part by part in a call of its own, and the page in another"
     );
     Ok(())
 }
@@ -144,7 +184,7 @@ async fn supported_elsewhere(references: &ReferenceCollection<'_>) -> Result<Fin
         references,
         &inventory(&[CLAIM.into()]),
         &[],
-        &ClaimChecks::default(),
+        &researched(),
         &citing_the_wrong_passage(references)?,
     )
     .await?;
@@ -301,12 +341,19 @@ async fn the_first_request_carries_pass_a_only_and_its_answers_size_pass_b() -> 
     };
     let model = PagingModel::paced(32_000, pace, 130);
     let statements = [CLAIM.to_owned(), format!("{CLAIM} It holds in the lab.")];
+    let researched = ClaimChecks {
+        corroborate: statements
+            .iter()
+            .map(|statement| (0, statement.clone()))
+            .collect(),
+        ..ClaimChecks::default()
+    };
     evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&statements),
         &[],
-        &ClaimChecks::default(),
+        &researched,
         &citing(&references, MARKER)?,
     )
     .await?;
@@ -384,7 +431,7 @@ async fn a_contradiction_pass_b_finds_beside_pass_a_support_reaches_the_gate() -
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
-        &ClaimChecks::default(),
+        &researched(),
         &citations,
     )
     .await?;
@@ -419,7 +466,7 @@ async fn pass_a_receipt_survives_a_change_in_the_course_ranking() -> Result<()> 
             &references,
             &inventory(&[CLAIM.into()]),
             &[],
-            &ClaimChecks::default(),
+            &researched(),
             &citations,
         )
         .await?;
@@ -433,7 +480,7 @@ async fn pass_a_receipt_survives_a_change_in_the_course_ranking() -> Result<()> 
             &references,
             &inventory(&[CLAIM.into()]),
             &[],
-            &ClaimChecks::default(),
+            &researched(),
             &citations,
         )
         .await?;
@@ -834,4 +881,76 @@ async fn a_claim_supported_elsewhere_has_the_citation_of_its_own_sentence_repair
     let read = next.of_claim(0, CLAIM);
     assert!(!read.is_empty() && read.iter().all(|passage| passage.source_id == "marker"));
     Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_its_citation_fails_waits_for_its_research_round_and_keeps_the_page_it_then_reads(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = PagingModel::new(32_000);
+    let citations = citing_the_wrong_passage(&references)?;
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        // Before its research round: the citation does not support it, and no
+        // page is read for it, though one is waiting.
+        let before = ClaimChecks::default();
+        let first = evidence_checks::check_with_citations(
+            &model,
+            &references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &before,
+            &citations,
+        )
+        .await?;
+        assert_eq!(first[0].2.verdict, ClaimVerdict::Unsupported);
+        assert_eq!(model.checks.lock().unwrap().len(), 1);
+        assert_eq!(
+            before.unread_of(std::slice::from_ref(&first[0].2)),
+            HashSet::from([(0, CLAIM.to_owned())])
+        );
+
+        // After it: the page is read, once, and finds what the citation lacked.
+        let after = researched();
+        let second = evidence_checks::check_with_citations(
+            &model,
+            &references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &after,
+            &citations,
+        )
+        .await?;
+        assert_eq!(second[0].2.verdict, ClaimVerdict::Supported);
+        assert_eq!(second[0].2.two_pass.pass, Some(Pass::Corroboration));
+        assert_eq!(model.checks.lock().unwrap().len(), 2, "one page, once");
+        assert!(after
+            .unread_of(std::slice::from_ref(&second[0].2))
+            .is_empty());
+
+        // Later passes keep what it read, and ask nothing.
+        let later = ClaimChecks::default();
+        let third = evidence_checks::check_with_citations(
+            &model,
+            &references,
+            &inventory(&[CLAIM.into()]),
+            &[],
+            &later,
+            &citations,
+        )
+        .await?;
+        assert_eq!(third[0].2.verdict, ClaimVerdict::Supported);
+        assert_eq!(
+            third[0].2.two_pass.supported_by,
+            second[0].2.two_pass.supported_by
+        );
+        assert_eq!(model.checks.lock().unwrap().len(), 2);
+        assert!(later
+            .unread_of(std::slice::from_ref(&third[0].2))
+            .is_empty());
+        Ok(())
+    })
+    .await
 }

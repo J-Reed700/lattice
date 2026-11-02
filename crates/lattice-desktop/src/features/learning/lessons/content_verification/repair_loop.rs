@@ -172,52 +172,70 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             let expansion = research::expand(llm, active, &findings, &hints, &checks)
                 .boxed()
                 .await?;
-            match expansion {
+            // Whether the round is the claims' own, and whether it saved
+            // anything.
+            let (searched, round, saved) = match expansion {
                 research::Expansion::Saved(additional, searched) => {
                     expanded = Some(*additional);
-                    let active = expanded.as_ref().ok_or_else(|| {
-                        AppError::InternalError("Missing expanded references".into())
-                    })?;
-                    crate::features::learning::lesson_progress::new_references(Some(
-                        searched.sources_added.len(),
-                    ));
-                    let rechecked = check_evidence(
-                        llm,
-                        &candidate,
-                        active,
-                        Inventory {
-                            units: report.coverage,
-                        },
-                        Coverage {
-                            units: report.coverage_audit,
-                        },
-                        report.executions,
-                        &mut checks,
-                    )
-                    .await;
-                    crate::features::learning::lesson_progress::new_references(None);
-                    report = rechecked?;
-                    // The round is recorded first: it was each claim's one.
-                    ledger.record_research(&claims, &searched, &report).await?;
-                    ledger.observe(&candidate, &report).await?;
+                    (searched, true, true)
                 }
                 research::Expansion::Unchanged(searched) => {
                     // A round that reached no search engine and no page is
                     // not the claims' research: they keep their round.
-                    if !searched.unreached {
-                        ledger.record_research(&claims, &searched, &report).await?;
-                    } else {
+                    if searched.unreached {
                         tracing::info!(
                             "claim.state: research reached nothing; the claims keep their round"
                         );
                     }
-                    break;
+                    let round = !searched.unreached;
+                    (searched, round, false)
                 }
                 research::Expansion::Exhausted(exhausted, searched) => {
                     tracing::info!(%exhausted, "claim.state: research found nothing new for these claims");
-                    ledger.record_research(&claims, &searched, &report).await?;
-                    break;
+                    (searched, true, false)
                 }
+            };
+            // What research saved is checked at once; and the page of a
+            // statement whose section cites a passage is read, once, now: the
+            // re-check against what research found, if it found anything
+            // (design §3.2).
+            let waiting = checks.unread_of(&findings);
+            let rechecked = saved || !waiting.is_empty();
+            if rechecked {
+                let active = expanded.as_ref().unwrap_or(references);
+                if saved {
+                    crate::features::learning::lesson_progress::new_references(Some(
+                        searched.sources_added.len(),
+                    ));
+                }
+                checks.corroborate = waiting;
+                let evidence = check_evidence(
+                    llm,
+                    &candidate,
+                    active,
+                    Inventory {
+                        units: report.coverage,
+                    },
+                    Coverage {
+                        units: report.coverage_audit,
+                    },
+                    report.executions,
+                    &mut checks,
+                )
+                .await;
+                checks.corroborate.clear();
+                crate::features::learning::lesson_progress::new_references(None);
+                report = evidence?;
+            }
+            // The round is recorded first: it was each claim's one.
+            if round {
+                ledger.record_research(&claims, &searched, &report).await?;
+            }
+            if rechecked {
+                ledger.observe(&candidate, &report).await?;
+            }
+            if !saved {
+                break;
             }
         }
         // A claim supported elsewhere in the course keeps its text; its

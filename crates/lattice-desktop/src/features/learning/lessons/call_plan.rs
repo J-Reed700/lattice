@@ -53,10 +53,11 @@ pub(crate) struct Counted {
     pub(crate) shares: bool,
 }
 
-/// The most calls one check of a statement of `class` makes: the strict
-/// check of a Sourced one; the consistency check, the veto's samples and the
-/// strict call on its passages for a Reasoning one; the knowledge samples and
-/// the strict call of a source check for a Common one.
+/// The most calls one check of a statement of `class` makes: the check of a
+/// Sourced one, its cited passage read part by part or, if it cites nothing,
+/// the course's page, never both; the consistency check, the veto's samples
+/// and the strict call on its passages for a Reasoning one; the knowledge
+/// samples and the strict call of a source check for a Common one.
 fn most_calls(class: Class) -> u32 {
     match class {
         Class::Sourced => 1,

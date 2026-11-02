@@ -98,6 +98,23 @@ pub(super) fn decision_key(attribution: Option<&str>, corroboration: &str) -> St
     digest(&json!({"attribution": attribution, "corroboration": corroboration}).to_string())
 }
 
+/// The key of a claim's decision when only its pass A comparison was asked.
+pub(super) fn alone_key(attribution: &str) -> String {
+    digest(&json!({"attribution": attribution, "corroboration": Value::Null}).to_string())
+}
+
+/// A claim's finding when pass B read no page for it: the passages its section
+/// cites decided it alone.
+pub(super) fn alone(mut finding: Finding) -> Finding {
+    if matches!(
+        finding.verdict,
+        ClaimVerdict::Supported | ClaimVerdict::Contradicted
+    ) {
+        finding.two_pass.pass = Some(Pass::Attribution);
+    }
+    finding
+}
+
 /// The passages of a contradicted `finding` that say otherwise: those
 /// holding the quotation the judge cited, or every passage it compared when
 /// it cited none.

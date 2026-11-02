@@ -98,7 +98,7 @@ impl Run {
         let waiting: Vec<usize> = self
             .compared
             .values()
-            .filter(|claim| claim.corroboration.is_none())
+            .filter(|claim| claim.corroborates && claim.corroboration.is_none())
             .map(|claim| claim.ordinal)
             .collect();
         for ordinal in waiting {

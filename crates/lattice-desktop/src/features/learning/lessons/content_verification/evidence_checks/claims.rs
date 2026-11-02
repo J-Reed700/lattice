@@ -61,17 +61,25 @@ pub(super) struct Compared {
     pub(super) reach: Option<Reach>,
     /// The source versions the claim's section cites.
     pub(super) cited: Vec<String>,
+    /// Whether pass B reads a page for it: not while a passage its section
+    /// cites decides it alone, until its research round has ended.
+    pub(super) corroborates: bool,
 }
 
 impl Compared {
     /// The claim's finding once every comparison is done, and whether all
     /// of them were restored.
     pub(super) fn decided(&self) -> Option<(Finding, bool)> {
-        let (b, b_reused) = self.corroboration.as_ref()?.done()?;
         let a = match &self.attribution {
             Some(side) => Some(side.done()?),
             None => None,
         };
+        let Some(page) = self.corroboration.as_ref() else {
+            // No page was read for it: what its section cites decided it.
+            let (finding, reused) = a.filter(|_| !self.corroborates)?;
+            return Some((alone(finding.clone()), reused));
+        };
+        let (b, b_reused) = page.done()?;
         let reused = b_reused && a.is_none_or(|(_, reused)| reused);
         Some((
             combine(
@@ -186,14 +194,32 @@ impl Context<'_, '_> {
             shown_by_a,
             reach: None,
             cited,
+            corroborates: true,
         };
+        let mut sourced = false;
         if let Some(a_key) = a_key {
             let pending = pending(llm, &compared, a_key, attribution, Pass::Attribution);
+            sourced = bridge::applies(&pending);
             let side = compare(llm, self.retained, pending).await?;
             let (page, judged) = side.page();
             log_page(llm, (ordinal, 1), Pass::Attribution, page, None, judged).await;
             compared.attribution = Some(side);
         }
+        // Pass B reads the course's page for a claim whose section cites no
+        // passage of a source, and for one whose research round has ended:
+        // what a section cites decides the rest, and a page beside it is a
+        // call the plan does not count (design §3.2).
+        let due = self
+            .retained
+            .corroborate
+            .contains(&(unit, compared.claim.statement.clone()));
+        compared.corroborates = !sourced || due;
+        if !compared.corroborates {
+            compared.key = alone_key(compared.a_key.as_deref().unwrap_or_default());
+            self.remember(&mut compared).await?;
+            return Ok(Prepared::Compared(Box::new(compared)));
+        }
+        self.mark_unread(&compared, false);
         if let Some(finding) = self.corroborate(&mut compared, sizing).await? {
             return Ok(Prepared::Complete(
                 Box::new((ordinal, compared.key, finding, true)),
@@ -201,6 +227,62 @@ impl Context<'_, '_> {
             ));
         }
         Ok(Prepared::Compared(Box::new(compared)))
+    }
+
+    /// Whether `claim`'s page waits for its research round.
+    fn mark_unread(&self, claim: &Compared, waiting: bool) {
+        let key = (claim.unit, claim.claim.statement.clone());
+        let mut unread = self
+            .retained
+            .unread
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if waiting {
+            unread.insert(key);
+        } else {
+            unread.remove(&key);
+        }
+    }
+
+    /// The page pass B read for a claim whose section cites a passage, when
+    /// it read one: restored with its comparison, and never asked. A page not
+    /// read waits for the claim's research round.
+    async fn remember(&self, claim: &mut Compared) -> Result<()> {
+        let selected = evidence_selection::select(
+            self.llm,
+            (&claim.claim, &claim.checked, claim.unit),
+            self.references,
+            self.sources,
+            self.retained,
+            (&claim.shown_by_a, &Sizing::Unmeasured),
+        )
+        .await?;
+        let Some(selected) = selected else {
+            self.mark_unread(claim, true);
+            return Ok(());
+        };
+        let checked = Claim {
+            quote: claim.claim.quote.clone(),
+            statement: claim.checked.clone(),
+        };
+        let b_key = ClaimChecks::key(claim.unit, &checked, &selected.evidence);
+        let pending = pending(
+            self.llm,
+            claim,
+            b_key.clone(),
+            selected.evidence,
+            Pass::Corroboration,
+        );
+        match compare(self.llm, self.retained, pending).await? {
+            Comparison::Done(finding, reused) => {
+                claim.key = decision_key(claim.a_key.as_deref(), &b_key);
+                claim.reach = selected.reach;
+                claim.corroboration = Some(Comparison::Done(finding, reused));
+                self.mark_unread(claim, false);
+            }
+            _ => self.mark_unread(claim, true),
+        }
+        Ok(())
     }
 
     /// Pass B's first page for `claim`, when it can be had at `sizing`:

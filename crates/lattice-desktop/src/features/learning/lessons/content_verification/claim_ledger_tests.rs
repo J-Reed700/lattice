@@ -1587,3 +1587,174 @@ async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
     );
     Ok(())
 }
+
+// ── The calls the checks make, against the ceiling the panel shows (claim
+// classes design §3.2, §3.11): the code makes only the calls the plan counts,
+// and the plan counts every call the code makes ───────────────────────────
+
+/// The figures fixture, counting the requests of the kinds the call plan
+/// counts: sorting, claim checks, knowledge samples, rewrites and flow
+/// repairs. Every other request (extraction, coverage, the teaching review) is
+/// outside it.
+struct Counting {
+    inner: Figures,
+    planned: AtomicUsize,
+    /// Of those, the claim checks that read a statement part by part against
+    /// the passages its sentence cites, and the strict ones that read a page.
+    part_wise: AtomicUsize,
+    strict: AtomicUsize,
+}
+
+impl Counting {
+    fn new() -> Self {
+        Self {
+            inner: Figures::new(),
+            planned: AtomicUsize::new(0),
+            part_wise: AtomicUsize::new(0),
+            strict: AtomicUsize::new(0),
+        }
+    }
+
+    fn made(&self) -> u32 {
+        u32::try_from(self.planned.load(Ordering::Relaxed)).unwrap_or(u32::MAX)
+    }
+}
+
+/// Whether a prompt is a call of a kind the plan counts.
+fn planned_kind(prompt: &str) -> bool {
+    prompt.starts_with("You sort statements")
+        || prompt.starts_with("Source passages:")
+        || prompt.starts_with("You decide whether one statement is standard knowledge")
+        || prompt.starts_with("Repair verified lesson defects.")
+        || prompt.contains("\"verifiedSentences\"")
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Counting {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompts = fixture_prompts(request);
+        if prompts.iter().any(|prompt| planned_kind(prompt)) {
+            self.planned.fetch_add(1, Ordering::Relaxed);
+            let checking = prompts.iter().any(|prompt| {
+                prompt.starts_with("Source passages:")
+                    && !prompt.contains("\n\nExplanatory statement: ")
+            });
+            let (system, _) = fixture_messages(request);
+            if checking
+                && system == lattice_core::application::services::claim_verification::BRIDGE_SYSTEM
+            {
+                self.part_wise.fetch_add(1, Ordering::Relaxed);
+            } else if checking {
+                self.strict.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A lesson of `statements`, one to a section; each section cites the
+/// source's passage unless its index is in `uncited`.
+fn cited_lesson(statements: &[&str], uncited: &[usize]) -> Value {
+    let blocks: Vec<Value> = statements
+        .iter()
+        .enumerate()
+        .map(|(index, statement)| {
+            let mut block = json!({
+                "kind": "explanation",
+                "title": format!("Section {index}"),
+                "body": section(statement),
+                "rubric": [],
+            });
+            if !uncited.contains(&index) {
+                block["quote"] = json!(GOOD);
+                block["sourceIndex"] = json!(0);
+            }
+            block
+        })
+        .collect();
+    json!({"blocks": blocks, "questions": []})
+}
+
+/// A whole preparation of `cited_lesson(statements, uncited)`: the requests it
+/// made and the plan's ceilings across it.
+async fn prepared_counting(
+    statements: &[&str],
+    uncited: &[usize],
+) -> Result<(Counting, crate::features::learning::lesson_progress::Trace)> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let model = Counting::new();
+    let (prepared, trace) = crate::features::learning::lesson_progress::traced(prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(cited_lesson(statements, uncited).to_string()),
+        &sources,
+    ))
+    .await;
+    prepared?;
+    Ok((model, trace))
+}
+
+/// The requests made are at most the ceiling the run ended on, and the
+/// ceiling never rose along the way.
+fn within_the_plan(model: &Counting, trace: &crate::features::learning::lesson_progress::Trace) {
+    let ceiling = trace.ceilings.last().copied().unwrap();
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
+    assert!(
+        model.made() <= ceiling,
+        "{} requests, ceilings {:?}",
+        model.made(),
+        trace.ceilings
+    );
+}
+
+#[tokio::test]
+async fn statements_their_citations_support_cost_one_call_each_and_no_page_is_read() -> Result<()> {
+    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[]).await?;
+
+    within_the_plan(&model, &trace);
+    assert_eq!(model.part_wise.load(Ordering::Relaxed), 3);
+    assert_eq!(
+        model.strict.load(Ordering::Relaxed),
+        0,
+        "a page beside what the citation supports is a call the plan does not count"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cited_statement_that_fails_reads_a_page_once_and_the_run_stays_within_the_plan(
+) -> Result<()> {
+    let (model, trace) = prepared_counting(&[GOOD, GOOD, BAD], &[]).await?;
+
+    within_the_plan(&model, &trace);
+    // The failing statement's page is its re-check against what research
+    // found: once, and not for the two its citations support.
+    assert_eq!(model.strict.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_that_cites_nothing_is_checked_against_a_page_alone() -> Result<()> {
+    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[2]).await?;
+
+    within_the_plan(&model, &trace);
+    assert_eq!(model.part_wise.load(Ordering::Relaxed), 2);
+    assert_eq!(model.strict.load(Ordering::Relaxed), 1);
+    Ok(())
+}

@@ -256,10 +256,30 @@ struct ClaimChecks {
     /// their statements are not sorted or judged and their examples not
     /// reported.
     removed: sections::Going,
+    /// The statements whose research round has just ended: pass B reads a
+    /// page for them though their section cites a passage, the re-check
+    /// against what research found (design §3.2).
+    corroborate: HashSet<(usize, String)>,
+    /// The statements whose section cites a passage and whose page pass B has
+    /// not read: each waits for its research round.
+    unread: std::sync::Mutex<HashSet<(usize, String)>>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
 impl ClaimChecks {
+    /// Which of `findings` are statements whose page pass B has not read.
+    fn unread_of(&self, findings: &[Finding]) -> HashSet<(usize, String)> {
+        let unread = self
+            .unread
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        findings
+            .iter()
+            .map(|finding| (finding.unit, finding.statement.clone()))
+            .filter(|key| unread.contains(key))
+            .collect()
+    }
+
     fn key(unit: usize, claim: &Claim, evidence: &[EvidencePassage]) -> String {
         // Ranking scores may change when the corpus grows. They are not judge
         // inputs; preserve the freshly retrieved metadata in the new report.

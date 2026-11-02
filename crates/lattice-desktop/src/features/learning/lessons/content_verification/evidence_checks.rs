@@ -6,7 +6,9 @@
 //! one section's claims while the window holds them with their answers, and
 //! pass B pages are sized by what the job's answers cost (`page_budget`).
 //! What the two passes decide together is `outcome`'s. Pass A reads a claim
-//! part by part (`bridge`).
+//! part by part (`bridge`). Pass B reads a page for a claim whose section
+//! cites nothing, and for one whose research round has ended; what a section
+//! cites decides the rest alone (claim classes design §3.2).
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
@@ -22,7 +24,7 @@ mod walk;
 use claims::{Compared, Comparison, Context, Prepared};
 #[cfg(test)]
 pub(in crate::features::learning) use outcome::ContraryPassage;
-use outcome::{combine, decision_key};
+use outcome::{alone, alone_key, combine, decision_key};
 pub(in crate::features::learning) use outcome::{
     same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
 };
@@ -219,7 +221,7 @@ pub(super) async fn check_with_citations(
         let waiting: Vec<usize> = run
             .compared
             .values()
-            .filter(|claim| claim.corroboration.is_none())
+            .filter(|claim| claim.corroborates && claim.corroboration.is_none())
             .map(|claim| claim.ordinal)
             .collect();
         for ordinal in waiting {
