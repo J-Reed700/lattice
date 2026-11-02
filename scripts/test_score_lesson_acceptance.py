@@ -100,10 +100,15 @@ class ScoreLessonAcceptance(unittest.TestCase):
     def setUp(self):
         handle, self.path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
-        self.addCleanup(os.remove, self.path)
         os.remove(self.path)
+        self.addCleanup(self.remove)
+
+    def remove(self):
+        if os.path.exists(self.path):
+            os.remove(self.path)
 
     def failures(self, **kwargs):
+        self.remove()
         build(self.path, **kwargs)
         return sla.score(self.path)["failures"]
 

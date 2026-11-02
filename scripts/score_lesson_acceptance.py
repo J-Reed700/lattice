@@ -336,6 +336,13 @@ def models(claims, review, report, activity_model):
 
 def score(path, lesson_prefix=LESSON):
     db = connect(path)
+    try:
+        return scored(db, lesson_prefix)
+    finally:
+        db.close()
+
+
+def scored(db, lesson_prefix):
     failures = []
     lesson = db.execute(
         "SELECT id, program_id, preparation FROM learning_lessons WHERE id LIKE ? || '%'", (lesson_prefix,)
@@ -355,7 +362,6 @@ def score(path, lesson_prefix=LESSON):
         "models": models(claims, review, report, made.get("model_name")),
         "failures": failures,
     }
-    db.close()
     return result
 
 
