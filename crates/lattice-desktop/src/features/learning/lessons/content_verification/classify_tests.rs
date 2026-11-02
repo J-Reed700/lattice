@@ -4,12 +4,13 @@ use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use std::sync::Mutex;
 
 /// The replay's planted statements (evals/grounding/claim-classes/
-/// replay_classes.py) and what the rules alone make of each: every planted
-/// specific is caught, and a statement with no cue is the model's to sort.
+/// replay_classes.py) and what the rules alone make of each: a figure, a
+/// quotation or an attribution cue is caught, and a statement with no cue,
+/// a named product's behaviour among them, is the model's to sort.
 const PLANTED: [(&str, Option<Class>); 17] = [
     ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Some(Class::Sourced)),
     ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Some(Class::Sourced)),
-    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", Some(Class::Sourced)),
+    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", None),
     ("Donut is an OCR-free model that goes from image to output with a single Transformer.", None),
     ("The survey states that 'the deployment and inference costs associated with VLMs cannot be ignored.'", Some(Class::Sourced)),
     ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", None),
@@ -41,9 +42,21 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 }
 
 #[test]
-fn the_rules_alone_catch_every_planted_specific_and_leave_the_rest_to_the_model() {
+fn the_rules_catch_a_figure_a_quotation_or_a_cue_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
         assert_eq!(rule_class(statement, "body"), expected, "{statement}");
+    }
+}
+
+#[test]
+fn a_vendors_name_alone_is_no_cue_and_the_model_sorts_what_a_named_product_does() {
+    for statement in [
+        "Microsoft's grounding feature returns bounding box coordinates in millimetres.",
+        "Google builds its search index in tiers.",
+        "Confluent Cloud manages the brokers of a cluster.",
+        "The Kafka documentation is long.",
+    ] {
+        assert_eq!(rule_class(statement, "body"), None, "{statement}");
     }
 }
 

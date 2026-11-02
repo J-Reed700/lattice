@@ -50,7 +50,7 @@ pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
     let specific = lazy_regex::regex!(r"\d").is_match(statement)
         || lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(statement)
         || lazy_regex::regex!(
-            r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to|states?|reports?|found|notes? that|describes?|says?|documented|microsoft|google|confluent|kafka documentation)\b"
+            r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to|states?|reports?|found|notes? that|describes?|says?|documented)\b"
         )
         .is_match(statement);
     specific.then_some(Class::Sourced)
