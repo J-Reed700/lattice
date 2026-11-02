@@ -37,10 +37,11 @@ export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairin
     case 'queued': return 'needs_you';
     case 'unchecked':
     case 'open': return 'repairing';
-    case 'resolved_by_evidence': return 'machine';
+    case 'resolved_by_evidence':
+    case 'consistent': return 'machine';
     case 'removed': return state.by === 'machine' ? 'machine' : 'changed';
     case 'confirmed': return 'confirmed';
-    case 'general_knowledge': return 'general';
+    case 'general_knowledge': return state.by === 'machine' ? 'machine' : 'general';
     case 'edited': return 'changed';
     case 'reopened': return 'needs_you';
   }
@@ -318,6 +319,8 @@ function checkVerdict(result: CheckResultDto): string {
   switch (result.verdict) {
     case 'supported': return 'Supported';
     case 'supported_elsewhere': return 'Supported elsewhere, citation repaired';
+    case 'consistent': return 'Consistent with its sources';
+    case 'known_common': return 'Common knowledge';
     case 'failed': return verdictWords(result.kind);
   }
 }
@@ -370,7 +373,7 @@ function side(check: CheckerVerdictDto): CheckerSide {
     model: check.checker.model,
     verdict: checkVerdict(result),
     reason: check.reason,
-    supportingQuote: result.verdict === 'failed' ? null : result.supportingQuote,
+    supportingQuote: result.verdict === 'supported' || result.verdict === 'supported_elsewhere' ? result.supportingQuote : null,
     quotedSource: check.quotedSource,
     passages: check.passages,
   };

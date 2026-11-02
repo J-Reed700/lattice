@@ -28,6 +28,10 @@ describe('describeEvent', () => {
       .toBe('Checker (herb-4b): supported · matches Livy');
     expect(event({ kind: 'checked', check: check('verifier', { verdict: 'supported_elsewhere', supportingQuote: 'q' }) }))
       .toBe('Independent check (herb-4b): supported elsewhere, citation repaired');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'consistent' }, 'no passage says otherwise') }))
+      .toBe('Checker (herb-4b): consistent with its sources · no passage says otherwise');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'known_common' }) }))
+      .toBe('Checker (herb-4b): common knowledge');
   });
 
   it.each<[VerdictKindDto, string]>([
@@ -124,10 +128,12 @@ describe('claimFilterOf', () => {
     [{ state: 'unchecked' }, 'repairing'],
     [{ state: 'open', machineAttemptsLeft: 1 }, 'repairing'],
     [{ state: 'resolved_by_evidence' }, 'machine'],
+    [{ state: 'consistent', at: 1 }, 'machine'],
     [{ state: 'removed', at: 1, by: 'machine' }, 'machine'],
     [{ state: 'removed', at: 1, by: 'user' }, 'changed'],
     [{ state: 'confirmed', at: 1 }, 'confirmed'],
     [{ state: 'general_knowledge', at: 1, by: 'user' }, 'general'],
+    [{ state: 'general_knowledge', at: 1, by: 'machine' }, 'machine'],
     [{ state: 'edited', at: 1, successor: null }, 'changed'],
     [{ state: 'reopened', cause: { cause: 'unconfirmed' }, previous: { state: 'confirmed', at: 1 } }, 'needs_you'],
   ])('files %j as %s', (state, filter) => {

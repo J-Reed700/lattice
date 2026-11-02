@@ -13,6 +13,10 @@
     "state": "resolved_by_evidence"
   },
   {
+    "state": "consistent",
+    "at": 1760000250000
+  },
+  {
     "state": "confirmed",
     "at": 1760000300000
   },
@@ -30,6 +34,11 @@
     "state": "general_knowledge",
     "at": 1760000600000,
     "by": "user"
+  },
+  {
+    "state": "general_knowledge",
+    "at": 1760000650000,
+    "by": "machine"
   },
   {
     "state": "reopened",

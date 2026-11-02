@@ -317,8 +317,11 @@ pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> 
 /// design §11): only the user's actions are "resolved by you".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimCounts {
+    /// Passed by the machine: by evidence, by consistency, or as common
+    /// knowledge.
     pub verified: usize,
     pub confirmed: usize,
+    /// Accepted as general knowledge by the user.
     pub general_knowledge: usize,
     /// Waiting for the user: Queued, Reopened, or held for standing.
     pub queued: usize,
@@ -338,9 +341,16 @@ impl ClaimCounts {
         let mut counts = Self::default();
         for claim in claims {
             let slot = match claim.state() {
-                ClaimState::ResolvedByEvidence { .. } => &mut counts.verified,
+                ClaimState::ResolvedByEvidence { .. }
+                | ClaimState::Consistent { .. }
+                | ClaimState::GeneralKnowledge {
+                    by: Actor::Machine,
+                    ..
+                } => &mut counts.verified,
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
-                ClaimState::GeneralKnowledge { .. } => &mut counts.general_knowledge,
+                ClaimState::GeneralKnowledge {
+                    by: Actor::User, ..
+                } => &mut counts.general_knowledge,
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => &mut counts.queued,
                 ClaimState::Open { .. } if claim.held_for_standing() => &mut counts.queued,
                 ClaimState::Unchecked | ClaimState::Open { .. } => &mut counts.open,

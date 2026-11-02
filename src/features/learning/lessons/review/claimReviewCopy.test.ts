@@ -154,12 +154,14 @@ describe('whyItWaits', () => {
 describe('resolvedChip', () => {
   it.each<[ClaimStateDto, string]>([
     [{ state: 'resolved_by_evidence' }, 'Verified'],
+    [{ state: 'consistent', at: 1 }, 'Consistent with the sources'],
     [{ state: 'confirmed', at: 1 }, 'Confirmed by you'],
     [{ state: 'removed', at: 1, by: 'user' }, 'Removed by you'],
     [{ state: 'removed', at: 1, by: 'machine' }, 'Removed'],
     [{ state: 'edited', at: 1, successor: 'claim-2' }, 'Edited'],
     [{ state: 'edited', at: 1, successor: null }, 'Removed by an edit'],
     [{ state: 'general_knowledge', at: 1, by: 'user' }, 'Common knowledge'],
+    [{ state: 'general_knowledge', at: 1, by: 'machine' }, 'Common knowledge'],
     [{ state: 'unchecked' }, 'Being checked'],
     [{ state: 'open', machineAttemptsLeft: 1 }, 'Being checked'],
     [{ state: 'queued' }, 'Says otherwise'],

@@ -120,6 +120,9 @@ fn claim_states_mirror_the_domain() {
             source_version_id: "v1".into(),
             supporting_quote: "boils at 100 °C".into(),
         },
+        ClaimState::Consistent {
+            at: 1_760_000_250_000,
+        },
         confirmed.clone(),
         ClaimState::Removed {
             at: 1_760_000_400_000,
@@ -133,6 +136,10 @@ fn claim_states_mirror_the_domain() {
         ClaimState::GeneralKnowledge {
             at: 1_760_000_600_000,
             by: Actor::User,
+        },
+        ClaimState::GeneralKnowledge {
+            at: 1_760_000_650_000,
+            by: Actor::Machine,
         },
         ClaimState::Reopened {
             cause: ReopenCause::SourceReplaced {
@@ -378,6 +385,18 @@ fn claim_events_mirror_the_domain() {
             class: Class::Sourced,
             by: ClassifiedBy::Writer,
         },
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::Consistent,
+        )),
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::KnownCommon,
+        )),
     ];
     let records: Vec<RecordedEvent> = events
         .into_iter()

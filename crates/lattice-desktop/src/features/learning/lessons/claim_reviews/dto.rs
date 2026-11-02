@@ -204,6 +204,9 @@ pub enum ClaimStateDto {
     },
     Queued,
     ResolvedByEvidence,
+    Consistent {
+        at: i64,
+    },
     Confirmed {
         at: i64,
     },
@@ -237,6 +240,7 @@ impl From<&ClaimState> for ClaimStateDto {
             },
             ClaimState::Queued { .. } => Self::Queued,
             ClaimState::ResolvedByEvidence { .. } => Self::ResolvedByEvidence,
+            ClaimState::Consistent { at } => Self::Consistent { at: *at },
             ClaimState::Confirmed { at, .. } => Self::Confirmed { at: *at },
             ClaimState::Removed { at, by } => Self::Removed {
                 at: *at,

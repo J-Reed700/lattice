@@ -295,6 +295,8 @@ pub enum CheckResultDto {
         #[serde(rename = "supportingQuote")]
         supporting_quote: String,
     },
+    Consistent,
+    KnownCommon,
     Failed {
         kind: VerdictKindDto,
     },
@@ -319,6 +321,8 @@ impl From<&CheckResult> for CheckResultDto {
                 source_version_id: source_version_id.clone(),
                 supporting_quote: supporting_quote.clone(),
             },
+            CheckResult::Consistent => Self::Consistent,
+            CheckResult::KnownCommon => Self::KnownCommon,
             CheckResult::Failed { kind } => Self::Failed { kind: kind.into() },
         }
     }

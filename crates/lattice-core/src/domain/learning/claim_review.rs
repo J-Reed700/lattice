@@ -283,6 +283,10 @@ pub enum ClaimState {
         source_version_id: String,
         supporting_quote: String,
     },
+    /// A Reasoning statement its section's passages do not contradict and
+    /// that asserts no specific they lack (claim classes design §3.11). Like
+    /// a verification it is the machine's, and the lesson may publish with it.
+    Consistent { at: i64 },
     /// The user's verdict.
     Confirmed {
         at: i64,
@@ -321,8 +325,8 @@ impl ClaimState {
     }
 
     /// Closed in one of the ways a lesson may publish with (§2.1): verified,
-    /// confirmed, removed, edited (the successor answers for it) or accepted
-    /// as general knowledge.
+    /// found consistent, confirmed, removed, edited (the successor answers
+    /// for it) or accepted as general knowledge.
     pub fn is_resolved(&self) -> bool {
         !self.is_machine_owned() && !self.awaits_user()
     }
@@ -449,6 +453,13 @@ pub enum CheckResult {
         source_version_id: String,
         supporting_quote: String,
     },
+    /// A Reasoning statement the passages compared do not contradict, and
+    /// that asserts no specific they lack: it rests on no one passage (claim
+    /// classes design §3.1).
+    Consistent,
+    /// A Common statement every sample of the knowledge judge called true and
+    /// common: it rests on no passage at all (claim classes design §3.1).
+    KnownCommon,
     Failed {
         kind: VerdictKind,
     },
@@ -457,7 +468,7 @@ pub enum CheckResult {
 impl CheckResult {
     /// The passage that entails the claim, as its source version and
     /// quotation: wherever it was found, the claim stands on it. `None` for a
-    /// failed check.
+    /// failed check, and for a pass that rests on no passage.
     pub fn support(&self) -> Option<(&str, &str)> {
         match self {
             Self::Supported {
@@ -469,7 +480,7 @@ impl CheckResult {
                 supporting_quote,
                 ..
             } => Some((source_version_id, supporting_quote)),
-            Self::Failed { .. } => None,
+            Self::Consistent | Self::KnownCommon | Self::Failed { .. } => None,
         }
     }
 }

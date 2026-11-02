@@ -4736,7 +4736,7 @@ export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; su
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
-{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -4950,7 +4950,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */

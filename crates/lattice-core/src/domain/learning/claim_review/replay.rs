@@ -2,7 +2,7 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
+    Actor, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
     ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
 
@@ -127,13 +127,18 @@ fn after_machine_failure(
 /// A check's effect. A claim waiting for the user stays the user's: a
 /// recheck on new information may verify it or update its reason, never hand
 /// it back to an automatic repair (§4, §5.1). `attached`: the check answers
-/// evidence the user attached, so an Open claim becomes the user's too.
-pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
+/// evidence the user attached, so an Open claim becomes the user's too. `at`
+/// is when the check was recorded, which a pass that rests on no passage
+/// carries into its state.
+pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at: i64) {
     let previous_failure = std::mem::replace(
         &mut cursor.latest_failure,
         match &check.result {
             CheckResult::Failed { kind } => Some(kind.clone()),
-            CheckResult::Supported { .. } | CheckResult::SupportedElsewhere { .. } => None,
+            CheckResult::Supported { .. }
+            | CheckResult::SupportedElsewhere { .. }
+            | CheckResult::Consistent
+            | CheckResult::KnownCommon => None,
         },
     );
     let model = match &check.checker {
@@ -180,6 +185,11 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
         } => ClaimState::ResolvedByEvidence {
             source_version_id: source_version_id.clone(),
             supporting_quote: supporting_quote.clone(),
+        },
+        CheckResult::Consistent => ClaimState::Consistent { at },
+        CheckResult::KnownCommon => ClaimState::GeneralKnowledge {
+            at,
+            by: Actor::Machine,
         },
         CheckResult::Failed { kind } => {
             let (kind, reason) = (kind.clone(), check.reason.clone());

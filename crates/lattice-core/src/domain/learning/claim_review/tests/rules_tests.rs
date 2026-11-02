@@ -401,6 +401,15 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         },
         ClaimEvent::Undone { event_ordinal: 4 },
         classified(Class::Reasoning, ClassifiedBy::Model),
+        ClaimEvent::Checked(Check {
+            result: CheckResult::Consistent,
+            ..local_check(None, "v1")
+        }),
+        ClaimEvent::Checked(Check {
+            result: CheckResult::KnownCommon,
+            evidence: vec![],
+            ..local_check(None, "v1")
+        }),
         ClaimEvent::Stopped {
             reason: StopReason {
                 code: "model_rejected".into(),
@@ -428,6 +437,11 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
 
     let states = [
         ClaimState::Unchecked,
+        ClaimState::Consistent { at: 5 },
+        ClaimState::GeneralKnowledge {
+            at: 6,
+            by: Actor::Machine,
+        },
         entry.state().clone(),
         ClaimState::Reopened {
             cause: ReopenCause::VerifierDispute,
@@ -451,6 +465,14 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
     assert_eq!(
         serde_json::to_value(entry.state()).unwrap(),
         json!({"state": "queued", "kind": "contradicted", "reason": "compared v1"})
+    );
+    assert_eq!(
+        serde_json::to_value(ClaimState::Consistent { at: 5 }).unwrap(),
+        json!({"state": "consistent", "at": 5})
+    );
+    assert_eq!(
+        serde_json::to_value(CheckResult::KnownCommon).unwrap(),
+        json!("known_common")
     );
     for (by, name) in [
         (ClassifiedBy::Model, "model"),

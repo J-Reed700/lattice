@@ -468,7 +468,7 @@ impl ClaimLedgerEntry {
                     return Err(self.refuse(&record.event));
                 }
             }
-            ClaimEvent::Checked(check) => apply_check(&mut next, check, false),
+            ClaimEvent::Checked(check) => apply_check(&mut next, check, false, at),
             ClaimEvent::Researched { passages_found, .. } => {
                 next.researched = true;
                 if let ClaimState::Open {
@@ -514,7 +514,7 @@ impl ClaimLedgerEntry {
                     return Err(self.refuse(&record.event));
                 }
                 match result {
-                    AttachOutcome::Checked(check) => apply_check(&mut next, check, true),
+                    AttachOutcome::Checked(check) => apply_check(&mut next, check, true, at),
                     AttachOutcome::NoPassage => hand_to_user(&mut next.state),
                 }
             }
@@ -724,6 +724,7 @@ fn state_name(state: &ClaimState) -> &'static str {
         ClaimState::Open { .. } => "open",
         ClaimState::Queued { .. } => "queued",
         ClaimState::ResolvedByEvidence { .. } => "resolved by evidence",
+        ClaimState::Consistent { .. } => "consistent",
         ClaimState::Confirmed { .. } => "confirmed",
         ClaimState::Removed { .. } => "removed",
         ClaimState::Edited { .. } => "edited",

@@ -963,3 +963,68 @@ fn a_claim_that_was_verified_and_fails_again_resumes_from_what_it_had_left() {
         }
     ));
 }
+
+#[test]
+fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_general_knowledge() {
+    let passed = |result: CheckResult, evidence: Vec<EvidenceSeen>| {
+        ClaimEvent::Checked(Check {
+            result,
+            evidence,
+            ..local_check(None, "v1")
+        })
+    };
+    let mut reasoning = claim("c1");
+    reasoning
+        .append(machine(2), passed(CheckResult::Consistent, vec![seen("v1")]))
+        .unwrap();
+    assert_eq!(reasoning.state(), &ClaimState::Consistent { at: 2 });
+    assert_eq!(reasoning.latest_failure(), None);
+    assert!(
+        reasoning.allows(ClaimActionKind::Remove) && !reasoning.allows(ClaimActionKind::Confirm)
+    );
+
+    let mut common = claim("c2");
+    common
+        .append(machine(2), passed(CheckResult::KnownCommon, vec![]))
+        .unwrap();
+    let machines = ClaimState::GeneralKnowledge {
+        at: 2,
+        by: Actor::Machine,
+    };
+    assert_eq!(common.state(), &machines);
+    // The machine's own pass is settled: no later check of its moves it.
+    common
+        .append(machine(3), checked(Some(VerdictKind::Unsupported), "v2"))
+        .unwrap();
+    assert_eq!(common.state(), &machines);
+
+    // Both passes resolve the lesson, and neither is the user's doing.
+    let verified = verified_claim("c3");
+    assert_eq!(
+        end_state([&verified, &reasoning, &common]),
+        LessonReviewState::Ready
+    );
+    let counts = ClaimCounts::tally([&verified, &reasoning, &common]);
+    assert_eq!(
+        (
+            counts.verified,
+            counts.general_knowledge,
+            counts.resolved_by_you()
+        ),
+        (3, 0, 0)
+    );
+
+    // A later failing check demotes a consistent claim as it does a verified
+    // one, with the attempts it has.
+    reasoning
+        .append(machine(3), checked(Some(VerdictKind::Contradicted), "v2"))
+        .unwrap();
+    assert!(matches!(
+        reasoning.state(),
+        ClaimState::Open {
+            kind: VerdictKind::Contradicted,
+            machine_attempts_left: MACHINE_ATTEMPTS,
+            ..
+        }
+    ));
+}

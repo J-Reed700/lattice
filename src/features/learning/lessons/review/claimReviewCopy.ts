@@ -207,6 +207,7 @@ export function resolvedChip(item: ClaimReviewItemDto): string {
   const state = item.state;
   switch (state.state) {
     case 'resolved_by_evidence': return 'Verified';
+    case 'consistent': return 'Consistent with the sources';
     case 'confirmed': return 'Confirmed by you';
     case 'removed': return state.by === 'user' ? 'Removed by you' : 'Removed';
     case 'edited': return state.successor ? 'Edited' : 'Removed by an edit';
