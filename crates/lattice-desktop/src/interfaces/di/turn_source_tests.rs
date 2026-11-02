@@ -1,7 +1,7 @@
 //! What the container gives a turn: a tutor chat its course, a folder's thread
 //! its folder, any other chat nothing.
 use super::Container;
-use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::learning::tutor::{bind_conversation, SetConversationCourseRequestDto};
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use lattice_core::application::contracts::tools::FunctionCall;

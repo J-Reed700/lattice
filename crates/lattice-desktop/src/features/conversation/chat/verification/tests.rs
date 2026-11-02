@@ -349,6 +349,7 @@ async fn a_slow_judge_still_judges_every_claim() {
     let verifier = GroundingVerifier {
         judge: Some(scheduled_judge(Arc::clone(&llm), 1)),
         cited_only: false,
+        without_session_talk: false,
     };
 
     let started = tokio::time::Instant::now();
@@ -386,6 +387,7 @@ async fn concurrent_calls_judge_claims_side_by_side() {
     let verifier = GroundingVerifier {
         judge: Some(scheduled_judge(Arc::clone(&llm), 4)),
         cited_only: false,
+        without_session_talk: false,
     };
 
     let started = std::time::Instant::now();
