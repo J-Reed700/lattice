@@ -5,7 +5,8 @@
  * A source is spoken piece by piece. Each piece is synthesised while the one
  * before it plays and is scheduled to start the moment it ends, so a long
  * answer starts after its first sentence and plays without gaps. Synthesis
- * keeps at most {@link LEAD_SECONDS} of audio ahead of the listener.
+ * keeps at most {@link LEAD_SECONDS} of audio ahead of the listener. The pieces
+ * may still be arriving: a reply being written is spoken as its sentences come.
  */
 
 export interface SpeechClip {
@@ -16,6 +17,8 @@ export interface SpeechClip {
 }
 
 export type Synthesize = (text: string) => Promise<SpeechClip>;
+
+export type SpeechPieces = readonly string[] | AsyncIterable<string>;
 
 export type SpeechStatus = 'idle' | 'loading' | 'playing' | 'paused';
 
@@ -56,6 +59,10 @@ interface Session {
   nodes: AudioBufferSourceNode[];
   /** When the last scheduled piece ends, on the output's clock. */
   endsAt: number;
+  /** Every piece has been scheduled. */
+  allScheduled: boolean;
+  /** The newest scheduled piece has finished playing, or none has been scheduled. */
+  caughtUp: boolean;
 }
 
 export class SpeechPlayer {
@@ -79,26 +86,28 @@ export class SpeechPlayer {
   }
 
   /** Speaks `pieces` as `sourceId`, stopping whatever was speaking. */
-  async play(sourceId: string, pieces: readonly string[], synthesize: Synthesize): Promise<void> {
+  async play(sourceId: string, pieces: SpeechPieces, synthesize: Synthesize): Promise<void> {
     this.stop();
-    if (pieces.length === 0) return;
+    if ('length' in pieces && pieces.length === 0) return;
     this.output ??= this.createOutput();
     const output = this.output;
-    const session: Session = { sourceId, cancelled: false, nodes: [], endsAt: 0 };
+    const session: Session = { sourceId, cancelled: false, nodes: [], endsAt: 0, allScheduled: false, caughtUp: true };
     this.session = session;
     this.publish({ sourceId, status: 'loading', error: null });
     if (output.state === 'suspended') await output.resume();
 
     try {
-      for (const [index, piece] of pieces.entries()) {
+      for await (const piece of pieces) {
         while (!session.cancelled && session.endsAt - output.currentTime > LEAD_SECONDS) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
         if (session.cancelled) return;
         const clip = await synthesize(piece);
         if (session.cancelled) return;
-        this.schedule(session, decodeClip(output, clip), index === pieces.length - 1);
+        this.schedule(session, decodeClip(output, clip));
       }
+      session.allScheduled = true;
+      this.finishIfDone(session);
     } catch (error) {
       if (session.cancelled) return;
       this.stop();
@@ -106,7 +115,13 @@ export class SpeechPlayer {
     }
   }
 
-  private schedule(session: Session, buffer: AudioBuffer, last: boolean) {
+  private finishIfDone(session: Session) {
+    if (!session.allScheduled || !session.caughtUp || this.session !== session) return;
+    this.session = null;
+    this.publish(IDLE);
+  }
+
+  private schedule(session: Session, buffer: AudioBuffer) {
     const output = this.output;
     if (!output) return;
     const node = output.createBufferSource();
@@ -115,12 +130,11 @@ export class SpeechPlayer {
     const startAt = Math.max(output.currentTime, session.endsAt);
     session.endsAt = startAt + buffer.duration;
     session.nodes.push(node);
+    session.caughtUp = false;
     node.onended = () => {
+      session.caughtUp ||= session.nodes[session.nodes.length - 1] === node;
       session.nodes = session.nodes.filter((n) => n !== node);
-      if (last && this.session === session) {
-        this.session = null;
-        this.publish(IDLE);
-      }
+      this.finishIfDone(session);
     };
     node.start(startAt);
     if (this.snapshot.status === 'loading') this.publish({ sourceId: session.sourceId, status: 'playing', error: null });
@@ -136,6 +150,18 @@ export class SpeechPlayer {
     if (!this.session || !this.output || this.snapshot.status !== 'paused') return;
     void this.output.resume();
     this.publish({ ...this.snapshot, status: 'playing' });
+  }
+
+  /** Settles once nothing is speaking. */
+  whenIdle(): Promise<void> {
+    if (!this.session) return Promise.resolve();
+    return new Promise((resolve) => {
+      const unsubscribe = this.subscribe(() => {
+        if (this.session) return;
+        unsubscribe();
+        resolve();
+      });
+    });
   }
 
   /** Stops speaking; a source that was never this player's is left alone. */

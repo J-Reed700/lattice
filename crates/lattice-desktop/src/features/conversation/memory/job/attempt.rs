@@ -162,7 +162,14 @@ impl CompactionJob {
             self.config.max_batch_bytes,
         );
 
-        let mut ledger = CandidateLedger::new(snapshot.active_items.clone());
+        let mut ledger = CandidateLedger::new(
+            snapshot
+                .active_items
+                .iter()
+                .cloned()
+                .chain(self.shared_items(conversation_id, &eligible).await)
+                .collect(),
+        );
         let next_revision = snapshot.state.memory_revision + 1;
         let mut accepted_through = boundary_sequence;
         let mut segments_rejected: Vec<String> = Vec::new();
@@ -374,7 +381,7 @@ impl CompactionJob {
                     deadline,
                     previous_summary,
                     &folded,
-                    &ledger.mandatory_labels(),
+                    &ledger.mandatory_labels(conversation_id),
                     &forgotten_labels,
                     self.config.summary_token_budget,
                     self.count_tokens.as_ref(),

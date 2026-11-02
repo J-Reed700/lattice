@@ -78,6 +78,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             ));
             lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
+            #[cfg(windows)]
+            setup::microphone::allow_in_main_window(app);
+
             // Plugins require the managed container. A failed initialization
             // shows its dialog and exits the process from inside this call;
             // an `Err` returned from this hook would abort the app instead.
@@ -145,6 +148,7 @@ fn main() {
     if lattice::features::learning::lab_runner::is_runner_invocation() {
         std::process::exit(lattice::features::learning::lab_runner::run_child());
     }
+    lattice::features::transcription::engine::prefer_float_weights();
     lattice::infrastructure::crash::install_panic_hook();
     // This entrypoint exists only in an instrumented, isolated test package.
     // Exercise the installed executable's signing policy and bundled assets

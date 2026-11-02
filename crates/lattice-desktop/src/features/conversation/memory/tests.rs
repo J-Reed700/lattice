@@ -210,6 +210,8 @@ struct PortState {
     /// Bump the transcript revision just before the next commit, to make the
     /// compare-and-swap fire exactly once.
     conflict_next_commit: bool,
+    shared: Vec<MemoryItem>,
+    span_reads: Vec<String>,
 }
 
 struct FakePort {
@@ -237,8 +239,14 @@ impl FakePort {
                 operations: HashSet::new(),
                 errors: Vec::new(),
                 conflict_next_commit: false,
+                shared: Vec::new(),
+                span_reads: Vec::new(),
             }),
         })
+    }
+
+    fn share(&self, item: MemoryItem) {
+        self.inner.lock().shared.push(item);
     }
 
     fn conflict_once(&self) {
@@ -402,6 +410,10 @@ impl FakePort {
 
 #[async_trait]
 impl ConversationMemoryPort for FakePort {
+    async fn shared_items(&self, _conversation_id: &str, _text: &str) -> Result<Vec<MemoryItem>> {
+        Ok(self.inner.lock().shared.clone())
+    }
+
     async fn load_snapshot(&self, _conversation_id: &str) -> Result<MemorySnapshot> {
         let inner = self.inner.lock();
         Ok(MemorySnapshot {
@@ -516,11 +528,12 @@ impl ConversationMemoryPort for FakePort {
 
     async fn read_source_spans(
         &self,
-        _conversation_id: &str,
+        conversation_id: &str,
         spans: &[SourceSpanRef],
         _limits: SourceReadLimits,
     ) -> Result<Vec<ResolvedSpan>> {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
+        inner.span_reads.push(conversation_id.to_string());
         Ok(spans
             .iter()
             .map(|span| {
@@ -987,6 +1000,7 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         "presents conflicting alternatives",
         "preserve the uncertainty",
         "Never treat an assistant message",
+        "the first that applies gives the verdict",
     ] {
         assert!(
             super::prompts::VERIFIER_SYSTEM.contains(required),
@@ -1408,6 +1422,126 @@ async fn a_response_that_omits_an_existing_active_item_leaves_that_item_active()
     assert_eq!(item.state, MemoryState::Active);
     assert_eq!(item.revision, 1, "an untouched item is not rewritten");
     assert_eq!(port.watermark(), 4, "coverage still advances");
+}
+
+#[tokio::test]
+async fn a_correction_here_reaches_a_fact_from_another_chat() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![proposed_transition(
+                "item-shared",
+                "m3",
+                "Actually you may deploy staging.",
+            )],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[(
+            "transition:item-shared",
+            "supported",
+        )]))],
+        vec![Ok("Deployment is now allowed on staging.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("a correction to a shared item commits here");
+
+    assert!(llm.prompts_for(Task::Extract)[0].contains("Deployment requires approval"));
+    assert!(port
+        .inner
+        .lock()
+        .span_reads
+        .contains(&"other-chat".to_string()));
+    let [retired] = outcome.commit.updates.as_slice() else {
+        panic!(
+            "expected the shared item alone: {:?}",
+            outcome.commit.updates
+        );
+    };
+    assert_eq!(retired.conversation_id, "other-chat");
+    assert_ne!(retired.state, MemoryState::Active);
+}
+
+/// The conflict is recorded here, and a commit refuses a span from another
+/// chat, so it must not carry the shared item's own passages.
+#[tokio::test]
+async fn an_unclear_correction_to_a_shared_item_quotes_only_this_chat() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![proposed_transition(
+                "item-shared",
+                "m3",
+                "Actually you may deploy staging.",
+            )],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[(
+            "transition:item-shared",
+            "ambiguous",
+        )]))],
+        vec![Ok("Deployment may have changed.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("an unclear correction still commits");
+
+    assert!(outcome.commit.updates.is_empty());
+    let [conflict] = outcome.commit.inserts.as_slice() else {
+        panic!("expected the conflict alone: {:?}", outcome.commit.inserts);
+    };
+    assert_eq!(conflict.kind, MemoryKind::UnresolvedChange);
+    let quoted: Vec<&str> = conflict
+        .evidence
+        .iter()
+        .map(|span| span.message_id.as_str())
+        .collect();
+    assert_eq!(quoted, ["m3"]);
+}
+
+#[tokio::test]
+async fn a_shared_item_does_not_become_a_requirement_of_the_summary() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS))],
+        vec![],
+        vec![Ok("Talked about deployment.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("the run commits");
+
+    for prompt in llm.prompts_for(Task::Summarize) {
+        assert!(!prompt.contains("Deployment requires approval"), "{prompt}");
+    }
 }
 
 #[tokio::test]

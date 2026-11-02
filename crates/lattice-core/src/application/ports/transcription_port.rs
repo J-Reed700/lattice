@@ -4,6 +4,9 @@
 //! transcript, the transcript becomes the document's text, and the timestamp
 //! windows rendered from its segments become each chunk's `section`.
 //!
+//! A chat's voice conversation comes through it too, with audio already in
+//! memory rather than in a file.
+//!
 //! Implementations must be `Send + Sync`, must not load a model until the first
 //! `transcribe` call (nothing may block app startup), and must run inference off
 //! the async runtime.
@@ -34,7 +37,7 @@ pub struct Transcript {
     pub duration_ms: u64,
 }
 
-/// Port for transcribing an audio file on-device.
+/// Port for transcribing audio on-device.
 #[async_trait]
 pub trait TranscriptionPort: Send + Sync {
     /// Transcribe `audio`.
@@ -43,6 +46,12 @@ pub trait TranscriptionPort: Send + Sync {
     /// is downloaded, and with [`AppError::InvalidInput`] when the recording is
     /// longer than the supported cap.
     async fn transcribe(&self, audio: &Path) -> Result<Transcript, AppError>;
+
+    /// Transcribe mono 16 kHz samples in [-1.0, 1.0].
+    ///
+    /// Errors with [`AppError::ServiceNotAvailable`] when no transcription model
+    /// is downloaded.
+    async fn transcribe_samples(&self, samples: Vec<f32>) -> Result<Transcript, AppError>;
 
     /// Whether a transcription model is downloaded and loadable.
     ///

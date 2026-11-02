@@ -1086,8 +1086,10 @@ export async function installLearningStudioBackend(page: Page) {
       list_downloaded_models: () => [],
       list_loaded_models: () => [],
       get_speech_status: () => ({
-        modelReady: false, modelId: "kokoro-82m-british", modelName: "Kokoro 82M (British voices)", downloadBytes: 0,
-        license: "Apache-2.0", voices: [{ id: "bf_emma", name: "Emma" }], defaultVoice: "bf_emma",
+        modelReady: false, modelId: "kokoro-82m-british", modelName: "Kokoro 82M", downloadBytes: 0, license: "Apache-2.0",
+        voicePack: { ready: false, modelId: "kokoro-82m-more-voices", modelName: "Kokoro 82M: more voices", downloadBytes: 0 },
+        voices: [{ id: "bf_emma", name: "Emma", accent: "british", gender: "female", grade: "B-", downloaded: false }],
+        defaultVoice: "bf_emma",
       }),
       last_learning_window_shortfall: () => null,
       // Every course in the fixture is indexed, so no evidence action waits.

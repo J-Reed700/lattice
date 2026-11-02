@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
 type Props = Record<string, any>;
-const h = vi.hoisted(() => ({ props: {} as Record<string, Props> }));
+const h = vi.hoisted(() => ({ props: {} as Record<string, Props>, voice: { phase: 'off', toggle: () => {} } }));
 const { stub } = vi.hoisted(() => ({
   stub: (name: string, render?: (props: Props) => ReactNode) => (props: Props) => {
     h.props[name] = props;
@@ -22,6 +22,10 @@ vi.mock('@/features/chat/components/composer/FocusChips', () => ({ FocusChips: s
 vi.mock('@/features/chat/components/composer/ModeChips', () => ({ ModeChips: stub('ModeChips') }));
 vi.mock('@/features/chat/components/ComposerControls', () => ({ ComposerControls: stub('ComposerControls', () => <p>Turn mode and tools panel</p>) }));
 vi.mock('@/features/spaces/components/SpacePickerPopover', () => ({ SpacePickerPopover: stub('SpacePickerPopover', (p) => p.children) }));
+vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: (options: Props) => {
+  h.props.voice = options;
+  return h.voice;
+} }));
 
 const makeComposer = (overrides: Record<string, unknown> = {}) => ({
   input: '',
@@ -80,7 +84,10 @@ const renderComposer = (overrides: Record<string, any> = {}) => {
 const textarea = () => screen.getByRole('textbox', { name: 'Message composer' });
 
 describe('Composer', () => {
-  beforeEach(() => { h.props = {}; });
+  beforeEach(() => {
+    h.props = {};
+    h.voice = { phase: 'off', toggle: () => {} };
+  });
 
   it('wires typing, caret and focus to the composer state', () => {
     const { composer } = renderComposer();
@@ -154,6 +161,27 @@ describe('Composer', () => {
     second.unmount();
     renderComposer({ model: { effective: null } });
     expect(h.props.ChatDropStaging.blindModelName).toBeNull();
+  });
+
+  it('puts a mic beside Send, and leaves everything else as it was until it is pressed', () => {
+    const toggle = vi.fn();
+    h.voice = { phase: 'off', toggle };
+    const send = vi.fn();
+    const fill = vi.fn();
+    renderComposer({ composer: { conversationId: 'c1', sendSpoken: send, fill } });
+
+    expect(h.props.voice).toEqual({ conversationId: 'c1', send, fill });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Start a voice conversation' }));
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it('says where a voice conversation has got to in place of the hint', () => {
+    h.voice = { phase: 'listening', toggle: vi.fn() };
+    renderComposer({ isSending: true });
+    expect(screen.getByRole('status')).toHaveTextContent('Listening…');
+    expect(screen.queryByText('Generating…')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'End the voice conversation' })).toBeInTheDocument();
   });
 
   it('shows a hint, sends, and waits for the model', () => {

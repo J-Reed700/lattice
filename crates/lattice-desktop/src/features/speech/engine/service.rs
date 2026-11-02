@@ -1,5 +1,7 @@
 //! Read-aloud on this computer: the downloaded Kokoro bundle, loaded on the
-//! first request and dropped after [`SPEECH_IDLE_TTL`] without one.
+//! first request and dropped after [`SPEECH_IDLE_TTL`] without one. A reader
+//! or a voice loads the first time it is asked for, so an install is only
+//! ever asked for the files of the voice it speaks in.
 //!
 //! Synthesis runs on `spawn_blocking`, one request at a time. The loaded
 //! model is shared as an `Arc`, so unloading never pulls it from under a
@@ -18,9 +20,8 @@ use tracing::info;
 use super::g2p::G2p;
 use super::kokoro::{Kokoro, SeededNoise, Voice, MAX_PHONEMES, SAMPLE_RATE};
 use lattice_core::domain::models::curated::{
-    speech_voice_file, SPEECH_CONFIG_FILE, SPEECH_G2P_CONFIG_FILE, SPEECH_G2P_WEIGHTS_FILE,
-    SPEECH_LEXICON_GOLD_FILE, SPEECH_LEXICON_SILVER_FILE, SPEECH_MODEL_ID, SPEECH_VOICES,
-    SPEECH_WEIGHTS_FILE,
+    speech_voice_file, CuratedVoice, SpeechAccent, SPEECH_CONFIG_FILE, SPEECH_MODEL_ID,
+    SPEECH_VOICE_PACK_ID, SPEECH_WEIGHTS_FILE,
 };
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
@@ -38,8 +39,15 @@ pub struct Clip {
 struct Loaded {
     dir: PathBuf,
     kokoro: Kokoro,
-    g2p: G2p,
-    voices: HashMap<String, Voice>,
+    readers: parking_lot::Mutex<HashMap<SpeechAccent, Arc<G2p>>>,
+    voices: parking_lot::Mutex<HashMap<&'static str, Arc<Voice>>>,
+}
+
+/// Where the files of one voice are.
+#[derive(Debug, PartialEq, Eq)]
+struct VoiceDirs {
+    voice: PathBuf,
+    reader: PathBuf,
 }
 
 fn load_failed(e: impl std::fmt::Display) -> AppError {
@@ -55,24 +63,6 @@ impl Loaded {
             &Device::Cpu,
         )
         .map_err(load_failed)?;
-        let g2p = G2p::load(
-            &dir.join(SPEECH_LEXICON_GOLD_FILE),
-            &dir.join(SPEECH_LEXICON_SILVER_FILE),
-            &dir.join(SPEECH_G2P_CONFIG_FILE),
-            &dir.join(SPEECH_G2P_WEIGHTS_FILE),
-        )
-        .map_err(load_failed)?;
-        let voices = SPEECH_VOICES
-            .iter()
-            .map(|voice| {
-                let bytes =
-                    std::fs::read(dir.join(speech_voice_file(voice.id))).map_err(load_failed)?;
-                Ok((
-                    voice.id.to_string(),
-                    Voice::from_bytes(&bytes).map_err(load_failed)?,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, AppError>>()?;
         info!(
             elapsed_ms = started.elapsed().as_millis() as u64,
             "read-aloud voice loaded"
@@ -80,17 +70,41 @@ impl Loaded {
         Ok(Self {
             dir: dir.to_path_buf(),
             kokoro,
-            g2p,
-            voices,
+            readers: parking_lot::Mutex::new(HashMap::new()),
+            voices: parking_lot::Mutex::new(HashMap::new()),
         })
     }
 
-    fn speak(&self, text: &str, voice: &str, speed: f32) -> Result<Vec<f32>, AppError> {
-        let voice = self
-            .voices
-            .get(voice)
-            .ok_or_else(|| AppError::InvalidInput(format!("Unknown voice: {voice}")))?;
-        let phonemes = self.g2p.phonemize(text);
+    fn reader(&self, accent: SpeechAccent, dir: &Path) -> Result<Arc<G2p>, AppError> {
+        let mut readers = self.readers.lock();
+        if let Some(reader) = readers.get(&accent) {
+            return Ok(Arc::clone(reader));
+        }
+        let reader = Arc::new(G2p::load(accent, dir).map_err(load_failed)?);
+        readers.insert(accent, Arc::clone(&reader));
+        Ok(reader)
+    }
+
+    fn voice(&self, voice: &CuratedVoice, dir: &Path) -> Result<Arc<Voice>, AppError> {
+        let mut voices = self.voices.lock();
+        if let Some(loaded) = voices.get(voice.id) {
+            return Ok(Arc::clone(loaded));
+        }
+        let bytes = std::fs::read(dir.join(speech_voice_file(voice.id))).map_err(load_failed)?;
+        let loaded = Arc::new(Voice::from_bytes(&bytes).map_err(load_failed)?);
+        voices.insert(voice.id, Arc::clone(&loaded));
+        Ok(loaded)
+    }
+
+    fn speak(
+        &self,
+        text: &str,
+        voice: &CuratedVoice,
+        dirs: &VoiceDirs,
+        speed: f32,
+    ) -> Result<Vec<f32>, AppError> {
+        let phonemes = self.reader(voice.accent(), &dirs.reader)?.phonemize(text);
+        let voice = self.voice(voice, &dirs.voice)?;
         let mut noise = SeededNoise::new({
             let mut hasher = DefaultHasher::new();
             phonemes.hash(&mut hasher);
@@ -100,7 +114,7 @@ impl Loaded {
         for piece in split_phonemes(&phonemes, MAX_PHONEMES) {
             samples.extend(
                 self.kokoro
-                    .synthesize(&piece, voice, speed, &mut noise)
+                    .synthesize(&piece, &voice, speed, &mut noise)
                     .map_err(|e| AppError::Other(format!("Reading aloud failed: {e}")))?,
             );
         }
@@ -163,16 +177,41 @@ impl KokoroSpeech {
         }
     }
 
-    /// Where the downloaded bundle is, when it is complete on disk.
-    pub async fn model_dir(&self) -> Result<Option<PathBuf>, AppError> {
-        if !self.models.is_downloaded(SPEECH_MODEL_ID).await? {
+    async fn entry_dir(&self, model_id: &str) -> Result<Option<PathBuf>, AppError> {
+        if !self.models.is_downloaded(model_id).await? {
             return Ok(None);
         }
         Ok(self
             .models
-            .find_by_model_id(SPEECH_MODEL_ID)
+            .find_by_model_id(model_id)
             .await?
             .and_then(|model| model.location().enclosing_dir()))
+    }
+
+    /// Where the downloaded bundle is, when it is complete on disk.
+    pub async fn model_dir(&self) -> Result<Option<PathBuf>, AppError> {
+        self.entry_dir(SPEECH_MODEL_ID).await
+    }
+
+    /// Where the voice pack is, when it is complete on disk.
+    pub async fn voice_pack_dir(&self) -> Result<Option<PathBuf>, AppError> {
+        self.entry_dir(SPEECH_VOICE_PACK_ID).await
+    }
+
+    async fn dirs_for(&self, voice: &CuratedVoice) -> Result<VoiceDirs, AppError> {
+        let dir = |model_id: &'static str| async move {
+            self.entry_dir(model_id).await?.ok_or_else(|| {
+                AppError::ServiceNotAvailable(format!(
+                    "{} is in the voices that are not downloaded. Download them in Settings, \
+                     Read aloud.",
+                    voice.name
+                ))
+            })
+        };
+        Ok(VoiceDirs {
+            voice: dir(voice.model_id()).await?,
+            reader: dir(voice.accent().model_id()).await?,
+        })
     }
 
     async fn model(&self) -> Result<Arc<Loaded>, AppError> {
@@ -223,7 +262,7 @@ impl KokoroSpeech {
     pub async fn synthesize(
         &self,
         text: String,
-        voice: String,
+        voice: &'static CuratedVoice,
         speed: f32,
     ) -> Result<Clip, AppError> {
         let _turn = self
@@ -231,9 +270,10 @@ impl KokoroSpeech {
             .acquire()
             .await
             .map_err(|e| AppError::InternalError(format!("read-aloud queue closed: {e}")))?;
+        let dirs = self.dirs_for(voice).await?;
         let model = self.model().await?;
         *self.last_used.lock() = Instant::now();
-        let samples = tokio::task::spawn_blocking(move || model.speak(&text, &voice, speed))
+        let samples = tokio::task::spawn_blocking(move || model.speak(&text, voice, &dirs, speed))
             .await
             .map_err(|e| AppError::InternalError(format!("reading aloud failed: {e}")))??;
         *self.last_used.lock() = Instant::now();
@@ -243,3 +283,7 @@ impl KokoroSpeech {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod tests;

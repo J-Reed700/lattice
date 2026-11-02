@@ -1,3 +1,4 @@
+import { StarterList } from '@/features/chat/components/StarterList';
 import { useChatStartersQuery } from '@/features/chat/hooks/useChatStartersQuery';
 
 /**
@@ -37,19 +38,11 @@ export function ChatStarters({ onPick, spaceId = null }: ChatStartersProps) {
   return (
     <div>
       <p className="text-sm text-[hsl(var(--text-muted))]">{lead}</p>
-      <ul className="mt-4 border-t border-subtle">
-        {data.starters.map((starter) => (
-          <li key={starter.question} className="border-b border-subtle">
-            <button
-              type="button"
-              onClick={() => onPick(starter.question)}
-              className="w-full px-1 py-2.5 text-left font-serif text-sm text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-            >
-              {starter.question}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <StarterList
+        starters={data.starters.map((starter) => starter.question)}
+        onPick={onPick}
+        className="mt-4"
+      />
     </div>
   );
 }

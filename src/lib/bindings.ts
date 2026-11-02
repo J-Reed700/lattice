@@ -3925,6 +3925,14 @@ async transcribeFile(path: string) : Promise<Result<TranscriptDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async transcribeSpeech(pcm: string) : Promise<Result<TranscribedSpeechDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|transcribe_speech", { pcm }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|get_transcription_status") };
@@ -6618,6 +6626,10 @@ action: string; itemId: string | null;
  */
 text: string | null; scope: string | null; kind: string | null; validFrom: string | null; validUntil: string | null; offset: number | null }
 export type KnowledgeResponseDto = { items: KnowledgeItemDto[]; hasMore: boolean;
+/**
+ * What this chat's pool is: `space`, `folder` or `course`.
+ */
+pool: string;
 /**
  * Items supplied in the initial context of the latest completed answer.
  */
@@ -9606,6 +9618,10 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  */
 { mode: "mtpDraft"; nMax: number }
 /**
+ * The English a voice speaks.
+ */
+export type SpeechAccentDto = "american" | "british"
+/**
  * Speech for one piece of text.
  */
 export type SpeechClipDto = { sampleRate: number;
@@ -9613,6 +9629,10 @@ export type SpeechClipDto = { sampleRate: number;
  * Mono 16-bit little-endian PCM, base64.
  */
 pcm: string; durationMs: number }
+/**
+ * How a voice's speaker is described in Kokoro's voice list.
+ */
+export type SpeechGenderDto = "female" | "male"
 /**
  * Whether read-aloud can speak now, and what downloading it involves.
  */
@@ -9628,15 +9648,39 @@ modelId: string; modelName: string;
 /**
  * Total bytes of the download.
  */
-downloadBytes: number; license: string; voices: SpeechVoiceDto[]; defaultVoice: string }
+downloadBytes: number; license: string; voicePack: SpeechVoicePackDto; voices: SpeechVoiceDto[]; defaultVoice: string }
 /**
- * One of the voices the downloaded model speaks in.
+ * One of the voices Kokoro can speak in.
  */
 export type SpeechVoiceDto = {
 /**
  * Kokoro's voice id, e.g. `bf_emma`.
  */
-id: string; name: string }
+id: string; name: string; accent: SpeechAccentDto; gender: SpeechGenderDto;
+/**
+ * hexgrad's overall grade for the voice's training data, `A` to `F+`.
+ */
+grade: string;
+/**
+ * True when everything this voice needs is on disk.
+ */
+downloaded: boolean }
+/**
+ * The second download: the voices and accents the first one leaves out.
+ */
+export type SpeechVoicePackDto = {
+/**
+ * True when the pack is downloaded and complete.
+ */
+ready: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -10012,6 +10056,22 @@ focusDocumentIds?: string[] | null;
  */
 explorerFocus?: ExplorerFocusDto | null }
 /**
+ * What was said in a recording made in the app.
+ */
+export type TranscribedSpeechDto = {
+/**
+ * The words, empty when the recording was not speech.
+ */
+text: string;
+/**
+ * Language tag reported by the model.
+ */
+language: string;
+/**
+ * Length of the recording.
+ */
+durationMs: number }
+/**
  * The transcript of one audio file.
  */
 export type TranscriptDto = {
@@ -10062,7 +10122,11 @@ modelReady: boolean;
 /**
  * Display name of the model that would be used.
  */
-modelName: string | null }
+modelName: string | null;
+/**
+ * What to download for a voice conversation.
+ */
+voiceModel: VoiceModelDto }
 export type TruncateConversationAfterRequestDto = { conversationId: string; messageId: string;
 /**
  * When true, `message_id` itself is deleted as well. Defaults to false.
@@ -10396,6 +10460,26 @@ export type VisionProjectorDownloadDto = {
  * when the whole projector is already on disk.
  */
 downloadId: string | null }
+/**
+ * The transcription model offered for a voice conversation.
+ */
+export type VoiceModelDto = {
+/**
+ * Catalog id, to start the download with.
+ */
+modelId: string;
+/**
+ * Display name.
+ */
+modelName: string;
+/**
+ * Size of the download.
+ */
+downloadBytes: number;
+/**
+ * Licence of the weights.
+ */
+license: string }
 /**
  * The course's waiting claims checked against a source the user added
  * (UI design §5.3): the held lessons' open claims the source mentions.

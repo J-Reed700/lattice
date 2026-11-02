@@ -15,7 +15,9 @@ use lattice_core::application::contracts::web::{FetchUrlContentOutput, Reference
 use lattice_core::domain::provenance::{Origin, ProvenanceSignals, PAGE_SIGNALS_VERSION};
 use lattice_core::shared::error::Result;
 use serde_json::{json, Value};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+use std::time::Duration;
 
 pub(super) fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -38,6 +40,36 @@ pub(super) async fn course() -> Result<Course> {
         program_id,
         pool,
     })
+}
+
+/// A course on a database file with the app's journal mode and more than one
+/// connection, so a write can wait on another. The file goes with the guard.
+pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let options = SqliteConnectOptions::new()
+        .filename(directory.path().join("course.db"))
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(30));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(3)
+        .connect_with(options)
+        .await
+        .expect("a pool on the database file");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrations");
+    let program_id = course_on(&pool).await?;
+    let course = Course {
+        library: LearningSourceLibraryRepository::new(pool.clone()),
+        store: SqliteSourceTrustStore::new(pool.clone()),
+        program_id,
+        pool,
+    };
+    Ok((course, directory))
 }
 
 /// Another active course on the same database: its seeded fixture source

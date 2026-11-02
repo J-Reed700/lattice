@@ -112,8 +112,9 @@ impl LearningRepository {
         references: &[super::sources::InitialReference],
         draft: Option<&super::outline_draft::OutlineDraft>,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
         let s = &program.summary;
+        let comparisons = compare_sources(&self.pool, &s.id, &program.sources, references).await?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status.clone())).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await.map_err(db)?;
         for (mi, m) in program.modules.iter().enumerate() {
@@ -124,12 +125,13 @@ impl LearningRepository {
                     .bind(&l.id).bind(&s.id).bind(&m.id).bind(li as i64).bind(&l.title).bind(&l.objective).bind(l.estimated_minutes).bind(prep(l.preparation.clone())).bind(l.completed as i64).execute(&mut *tx).await.map_err(db)?;
             }
         }
-        for source in &program.sources {
+        for (source, comparison) in program.sources.iter().zip(&comparisons) {
             insert_source(
                 &mut tx,
                 &s.id,
                 source,
-                references.iter().find(|r| r.source_id == source.id),
+                reference_of(references, source),
+                comparison,
             )
             .await?;
         }
@@ -297,19 +299,59 @@ impl LearningRepository {
     }
 }
 
-pub(super) async fn insert_source(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    program_id: &str,
+pub(super) fn reference_of<'a>(
+    references: &'a [super::sources::InitialReference],
+    source: &LearningSourceDto,
+) -> Option<&'a super::sources::InitialReference> {
+    references.iter().find(|r| r.source_id == source.id)
+}
+
+/// The text saved for a source: its capture's, else its preview.
+fn source_text(
     source: &LearningSourceDto,
     reference: Option<&super::sources::InitialReference>,
-) -> Result<()> {
-    let text = reference
+) -> String {
+    reference
         .map(|r| r.captured.text.as_str())
         .unwrap_or(&source.excerpt)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .trim()
-        .to_owned();
+        .to_owned()
+}
+
+/// Compares sources about to be saved together, one [`capture::Comparison`]
+/// per source in order.
+pub(super) async fn compare_sources(
+    pool: &SqlitePool,
+    program_id: &str,
+    sources: &[LearningSourceDto],
+    references: &[super::sources::InitialReference],
+) -> Result<Vec<capture::Comparison>> {
+    let texts: Vec<String> = sources
+        .iter()
+        .map(|source| source_text(source, reference_of(references, source)))
+        .collect();
+    let versions: Vec<_> = sources
+        .iter()
+        .zip(&texts)
+        .map(|(source, text)| capture::VersionText {
+            source_id: &source.id,
+            version_id: &source.id,
+            text,
+        })
+        .collect();
+    capture::compare_all(pool, program_id, &versions).await
+}
+
+pub(super) async fn insert_source(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    program_id: &str,
+    source: &LearningSourceDto,
+    reference: Option<&super::sources::InitialReference>,
+    comparison: &capture::Comparison,
+) -> Result<()> {
+    let text = source_text(source, reference);
     let preview = source
         .excerpt
         .replace("\r\n", "\n")
@@ -368,6 +410,6 @@ pub(super) async fn insert_source(
         text: &text,
         acquired_at_ms: source.acquired_at,
     };
-    capture::record(tx, &version, &signals).await?;
+    capture::record(tx, &version, &signals, comparison).await?;
     Ok(())
 }

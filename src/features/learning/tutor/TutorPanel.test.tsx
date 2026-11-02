@@ -29,8 +29,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/chat/components/ChatPanel', () => ({
-  ChatPanel: ({ renderEmptyState }: { renderEmptyState?: (_onPick: (_text: string) => void) => ReactNode }) => (
-    <div>The shared chat{renderEmptyState?.(mocks.fill)}</div>
+  ChatPanel: ({ starters }: { starters?: string[] }) => (
+    <div>
+      The shared chat
+      {starters?.map((starter) => <button key={starter} type="button" onClick={() => mocks.fill(starter)}>{starter}</button>)}
+    </div>
   ),
 }));
 vi.mock('@/contexts/ApiContext', () => ({ useApi: () => mocks.api }));

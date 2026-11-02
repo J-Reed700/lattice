@@ -420,8 +420,8 @@ pub(super) async fn plan_request(
     let tool_prep_start = Instant::now();
     let tools = select_tools(container, turn, flags, tool_preferences, prompt);
     metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
-    let system_policy = with_picture_guidance(&turn.system_prompt, &tools);
-    let plain_system_prompt = with_picture_guidance(&turn.prompt_settings.system_prompt, &tools);
+    let system_policy = with_tool_guidance(&turn.system_prompt, &tools);
+    let plain_system_prompt = with_tool_guidance(&turn.prompt_settings.system_prompt, &tools);
 
     // Enabled memory must account for unprocessed history before generation,
     // including conversations that have no extracted ledger yet.
@@ -589,12 +589,8 @@ pub(super) fn grounded_tool_tokens(
     if tools.is_empty() {
         0
     } else {
-        let guidance = if offers_pictures(&tools) {
-            llm.count_tokens(PICTURE_GUIDANCE)
-        } else {
-            0
-        };
-        llm.count_tokens(&tool_loop::tool_schema_text(&tools)) + guidance
+        llm.count_tokens(&tool_loop::tool_schema_text(&tools))
+            + llm.count_tokens(&tool_guidance(&tools))
     }
 }
 
@@ -605,18 +601,30 @@ const PICTURE_GUIDANCE: &str = "\nA picture helps when the reader would otherwis
     concrete thing. Get one only with find_image and paste its `markdown` line as its own paragraph, \
     unchanged; never write an image address of your own, and do not add a citation to the picture line.";
 
-fn offers_pictures(tools: &[ToolDefinition]) -> bool {
-    tools.iter().any(|tool| tool.name == "find_image")
+/// When to search memory, sent on every turn that can. What memory holds for
+/// the turn is already in the prompt, and a tool call is a whole extra round.
+const SAVED_KNOWLEDGE_GUIDANCE: &str =
+    "\nUse search_saved_knowledge only for something from before \
+    that is not already in front of you.";
+
+/// What the tools a turn offers need said about them, the line that comes with
+/// nearly every turn first, so the picture guidance never moves it.
+fn tool_guidance(tools: &[ToolDefinition]) -> String {
+    let offers = |name: &str| tools.iter().any(|tool| tool.name == name);
+    let mut guidance = String::new();
+    if offers(history_tools::TOOL_SEARCH_SAVED_KNOWLEDGE) {
+        guidance.push_str(SAVED_KNOWLEDGE_GUIDANCE);
+    }
+    if offers("find_image") {
+        guidance.push_str(PICTURE_GUIDANCE);
+    }
+    guidance
 }
 
-/// The turn's standing instructions, with the picture guidance when the turn
-/// can fetch pictures. Charged with the tool schemas by `grounded_tool_tokens`.
-pub(super) fn with_picture_guidance(system_prompt: &str, tools: &[ToolDefinition]) -> String {
-    if offers_pictures(tools) {
-        format!("{system_prompt}{PICTURE_GUIDANCE}")
-    } else {
-        system_prompt.to_string()
-    }
+/// The turn's standing instructions, with the guidance for the tools it offers.
+/// Charged with the tool schemas by `grounded_tool_tokens`.
+pub(super) fn with_tool_guidance(system_prompt: &str, tools: &[ToolDefinition]) -> String {
+    format!("{system_prompt}{}", tool_guidance(tools))
 }
 
 /// What the prompt carries, as far as the choice of tools goes.

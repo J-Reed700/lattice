@@ -7,6 +7,7 @@ from eval_integrity import validate_expectations
 from shipped_path_eval import validate_questions
 import terse_slice
 import course_eval_grading
+import tutor_eval
 
 
 def main():
@@ -45,6 +46,14 @@ def main():
         if problems:
             raise ValueError(f'{name}: ' + '; '.join(problems))
         print(f'{name}: quiz grading set validated')
+    # The tutor eval's synthetic course and its scripted sessions.
+    tutor = root.parent / 'tutor'
+    course = json.loads((tutor / 'course-v1.json').read_text(encoding='utf-8'))
+    sessions = json.loads((tutor / 'sessions-v1.json').read_text(encoding='utf-8'))
+    problems = tutor_eval.validate_course(course) + tutor_eval.validate_sessions(sessions, course)
+    if problems:
+        raise ValueError('evals/tutor: ' + '; '.join(problems))
+    print(f'evals/tutor: {len(sessions["sessions"])} sessions validated')
 
 
 if __name__ == '__main__':
