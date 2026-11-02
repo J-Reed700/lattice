@@ -92,3 +92,5 @@ mod clean_slate_tests;
 mod consistency_tests;
 #[cfg(test)]
 mod content_caps_tests;
+#[cfg(test)]
+mod found_by_search_tests;
