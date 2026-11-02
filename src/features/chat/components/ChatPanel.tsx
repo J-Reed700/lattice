@@ -13,6 +13,7 @@ import { ConversationNavigator } from '@/features/chat/components/ConversationNa
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 import { Message } from '@/features/chat/components/Message';
 import { NoConversationOpen } from '@/features/chat/components/NoConversationOpen';
+import { StarterList } from '@/features/chat/components/StarterList';
 import { ConversationTangents } from '@/features/chat/components/tangents/ConversationTangents';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
 import { VirtualizedMessageList } from '@/features/chat/components/VirtualizedMessageList';
@@ -49,8 +50,8 @@ export interface ChatPanelProps {
   composerNotice?: ReactNode;
   /** Chips at the top of the composer for what the host sends with the next turn. */
   composerChips?: ReactNode;
-  /** What an empty thread offers, in place of the library's suggested questions. */
-  renderEmptyState?: (_onPick: (_text: string) => void) => ReactNode;
+  /** What an empty thread suggests, in place of the library's questions. */
+  starters?: string[];
   /** A chat inside another panel, a tangent: no tangents, palette verbs or app-wide notices of its own. */
   embedded?: boolean;
   /** Focus the composer when the chat opens. */
@@ -60,7 +61,7 @@ export interface ChatPanelProps {
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 const NO_COMMANDS: PaletteCommand[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, renderEmptyState, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
+export function ChatPanel({ composerNotice, composerChips, starters, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
@@ -339,7 +340,7 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState, emb
           {messages.length === 0 ? (
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-6">
               <div className="w-full max-w-[520px]">
-                {renderEmptyState ? renderEmptyState(composer.fill) : (
+                {starters ? <StarterList starters={starters} onPick={composer.fill} /> : (
                   <>
                     <ChatStarters
                       spaceId={startersSpaceId}

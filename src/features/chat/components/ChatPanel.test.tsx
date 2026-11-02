@@ -227,7 +227,7 @@ describe('ChatPanel', () => {
 
   it('shows what its host offers in an empty thread, in place of the library’s starters', () => {
     h.store = makeStore({ conversations: [{ id: 'c1', spaceId: 's-hist', messages: [] }] });
-    render(<ChatPanel renderEmptyState={(onPick) => <button type="button" onClick={() => onPick('Quiz me')}>Quiz me</button>} />);
+    render(<ChatPanel starters={['Quiz me']} />);
     expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Quiz me' }));
