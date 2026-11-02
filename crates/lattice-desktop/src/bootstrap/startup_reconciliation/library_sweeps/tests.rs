@@ -1,5 +1,6 @@
 //! The startup sweeps over real files in a tempdir and a real migrated
-//! database: which files they leave alone and which they collect.
+//! database: which files they leave alone and which they collect, at start and
+//! after a chat is deleted, and the model cleanup that reads the same decision.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
-use super::LibrarySweeps;
+use super::super::reconcile_orphaned_files;
+use super::{open_gate_if_owner, LibrarySweeps};
 use crate::features::indexing::library_owner::LibraryFiles;
 use crate::features::indexing::LibraryGc;
 use crate::features::web::images::{ChatImageService, ImageNetwork};
@@ -21,9 +23,13 @@ use crate::features::web::mocks::MockPageCapture;
 use crate::features::web::services::web::{BoundedBody, BoundedFetchError};
 use crate::features::web::snapshots::store::new_id;
 use crate::features::web::snapshots::{AppEvents, WebPageSnapshotService};
+use crate::infrastructure::persistence::database::DatabaseConnection;
+use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::setup::setup_database;
 use crate::infrastructure::storage::ContentAddressedStorage;
+use lattice_core::application::ports::ChatImagesPort;
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 
@@ -67,8 +73,14 @@ fn files_in(home: &Path) -> LibraryFiles {
     }
 }
 
-/// The three collectors over `pool`'s database and the files under `home`.
-fn sweeps_over(pool: &SqlitePool, home: &Path, background: &Arc<BackgroundTasks>) -> LibrarySweeps {
+/// The three collectors over `pool`'s database and the files under `home`,
+/// the two services holding `gate` as the container gives it to them.
+fn sweeps_over(
+    pool: &SqlitePool,
+    home: &Path,
+    gate: &Arc<SweepGate>,
+    background: &Arc<BackgroundTasks>,
+) -> LibrarySweeps {
     LibrarySweeps {
         library_gc: Arc::new(LibraryGc::new(
             Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
@@ -81,27 +93,71 @@ fn sweeps_over(pool: &SqlitePool, home: &Path, background: &Arc<BackgroundTasks>
             JobRuntime::new(pool.clone()),
             Arc::new(AppEvents::default()),
             Arc::clone(background),
+            Arc::clone(gate),
         )),
         images: Arc::new(ChatImageService::new(
             pool.clone(),
             home.join("chat-images"),
             Arc::new(NoNetwork),
             Arc::clone(background),
+            Arc::clone(gate),
         )),
     }
 }
 
-/// A start over `pool`'s database and the files under `home`: decide, start
-/// the sweeps, and wait for them to finish.
-async fn start_up(pool: &SqlitePool, home: &Path) {
+/// One run of the app: its services and the gate they share.
+struct Run {
+    gate: Arc<SweepGate>,
+    sweeps: LibrarySweeps,
+}
+
+/// A start over `pool`'s database and the files under `home`: decide who owns
+/// the files, start the sweeps, and wait for them to finish.
+async fn start_up(pool: &SqlitePool, home: &Path) -> Run {
+    let gate = Arc::new(SweepGate::default());
     let background = Arc::new(BackgroundTasks::default());
-    sweeps_over(pool, home, &background)
-        .start(pool, &files_in(home), &background, async {
-            Ok(HashSet::new())
-        })
-        .await;
+    let sweeps = sweeps_over(pool, home, &gate, &background);
+    open_gate_if_owner(pool, &files_in(home), &gate).await;
+    sweeps.start(&gate, &background, async { Ok(HashSet::new()) });
     background.close();
     background.wait().await;
+    Run { gate, sweeps }
+}
+
+impl Run {
+    /// The user deletes a chat: its rows go by cascade, and the app sweeps the
+    /// frozen pages and, as after a truncate, the pictures nothing names.
+    async fn delete_a_chat(&self, pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+             VALUES ('chat', 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM conversations WHERE id = 'chat'")
+            .execute(pool)
+            .await
+            .unwrap();
+        self.sweeps.snapshots.sweep().await.unwrap();
+        self.sweeps.images.remove_unclaimed_files().await.unwrap();
+    }
+}
+
+/// The database file is corrupted, moved aside, and an empty database takes
+/// its place.
+async fn corrupt_and_recover(database: DatabaseConnection, db_path: &Path) -> DatabaseConnection {
+    database.close().await.unwrap();
+    std::fs::write(db_path, vec![0x42u8; 8192]).unwrap();
+    for sidecar in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{sidecar}", db_path.display()));
+    }
+    let database = setup_database(db_path.to_path_buf()).await.unwrap();
+    assert!(
+        database.recovered_from().is_some(),
+        "the corrupt database was moved aside"
+    );
+    database
 }
 
 /// An imported file as the library keeps it: `files/<sha256>/paper.txt`.
@@ -131,6 +187,30 @@ fn picture(home: &Path) -> PathBuf {
     path
 }
 
+/// A model as the downloader leaves it: `<models>/<id>/weights`.
+fn model_directory(models: &Path, id: &str) -> PathBuf {
+    let directory = models.join(id);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("weights"), b"model data").unwrap();
+    directory
+}
+
+/// The row of a model that finished downloading into `<models>/<id>`.
+async fn installed(pool: &SqlitePool, models: &Path, id: &str) {
+    sqlx::query(
+        "INSERT INTO models (id, model_id, model_name, base_path, total_size_bytes, status, \
+         model_type, architecture, storage_kind, storage_path) \
+         VALUES (?, ?, ?, '', 10, 'completed', 'chat', 'llama', 'local_dir', ?)",
+    )
+    .bind(id)
+    .bind(id)
+    .bind(id)
+    .bind(models.join(id).to_string_lossy().to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// The row of the document that imported the file with `hash`.
 async fn reference(pool: &SqlitePool, hash: &str, path: &Path) {
     sqlx::query(
@@ -151,6 +231,12 @@ async fn record(pool: &SqlitePool, id: &str) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// This database owns the library: it holds `id` and so does the owner file.
+async fn own(pool: &SqlitePool, home: &Path, id: &str) {
+    record(pool, id).await;
+    std::fs::write(home.join("owner"), id).unwrap();
 }
 
 async fn recorded(pool: &SqlitePool) -> Option<String> {
@@ -215,18 +301,8 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
     let owner = filed(home.path());
-    database.close().await.unwrap();
 
-    // The file is corrupted, moved aside, and an empty database takes its place.
-    std::fs::write(&db_path, vec![0x42u8; 8192]).unwrap();
-    for sidecar in ["-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{sidecar}", db_path.display()));
-    }
-    let database = setup_database(db_path).await.unwrap();
-    assert!(
-        database.recovered_from().is_some(),
-        "the corrupt database was moved aside"
-    );
+    let database = corrupt_and_recover(database, &db_path).await;
 
     start_up(database.pool(), home.path()).await;
     let gone = deleted(&library);
@@ -244,6 +320,30 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
     assert!(newer.exists());
     assert_eq!(filed(home.path()), owner, "the owner file is untouched");
     assert_eq!(recorded(database.pool()).await, None);
+    database.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn deleting_a_chat_after_corruption_recovery_leaves_the_old_snapshots_and_pictures() {
+    let home = TempDir::new().unwrap();
+    let app = TempDir::new().unwrap();
+    let db_path = app.path().join("lattice.db");
+
+    // The database that imported the library takes it at its first start.
+    let database = setup_database(db_path.clone()).await.unwrap();
+    start_up(database.pool(), home.path()).await;
+    let library = [snapshot(home.path()), picture(home.path())];
+
+    let database = corrupt_and_recover(database, &db_path).await;
+
+    let run = start_up(database.pool(), home.path()).await;
+    let gone = deleted(&library);
+    assert!(gone.is_empty(), "the start after recovery deleted {gone:?}");
+
+    run.delete_a_chat(database.pool()).await;
+
+    let gone = deleted(&library);
+    assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
     database.close().await.unwrap();
 }
 
@@ -275,8 +375,7 @@ async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
 async fn the_owning_database_still_collects_what_nothing_references() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
-    record(&pool, A).await;
-    std::fs::write(home.path().join("owner"), A).unwrap();
+    own(&pool, home.path(), A).await;
     let (hash, referenced) = imported_file(home.path(), "referenced here");
     reference(&pool, &hash, &referenced).await;
     // An import that crashed before it committed, a frozen page and a picture
@@ -289,6 +388,24 @@ async fn the_owning_database_still_collects_what_nothing_references() {
     let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
     assert!(left.is_empty(), "the owner's sweep left {left:?}");
     assert!(referenced.exists(), "a referenced file survives the sweep");
+}
+
+#[tokio::test]
+async fn the_owning_database_still_sweeps_snapshots_and_pictures_after_a_chat_delete() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    // What the deleted chat's rows named: nothing names these files now.
+    let orphans = [snapshot(home.path()), picture(home.path())];
+
+    run.delete_a_chat(&pool).await;
+
+    let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
+    assert!(
+        left.is_empty(),
+        "the sweep after a chat delete left {left:?}"
+    );
 }
 
 #[tokio::test]
@@ -306,4 +423,51 @@ async fn an_existing_install_with_documents_takes_its_files_on_upgrade_and_sweep
     assert_eq!(filed(home.path()).as_deref(), Some(id.as_str()));
     assert!(!crashed.exists(), "what nothing references is collected");
     assert!(referenced.exists(), "a referenced file survives the sweep");
+}
+
+#[tokio::test]
+async fn a_fresh_database_beside_a_models_directory_keeps_every_model() {
+    let home = TempDir::new().unwrap();
+    let models = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    // The install's earlier database named itself the owner; this one has no id.
+    std::fs::write(home.path().join("owner"), A).unwrap();
+    let kept = ["chat-model", "embedding-model"].map(|id| model_directory(models.path(), id));
+
+    let run = start_up(&pool, home.path()).await;
+    let removed = reconcile_orphaned_files(
+        Arc::new(DownloadedModelRepository::new(pool)),
+        models.path(),
+        &run.gate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(removed, 0);
+    let gone = deleted(&kept);
+    assert!(gone.is_empty(), "the model cleanup deleted {gone:?}");
+}
+
+#[tokio::test]
+async fn the_owning_database_still_removes_a_model_directory_no_row_names() {
+    let home = TempDir::new().unwrap();
+    let models = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    installed(&pool, models.path(), "installed").await;
+    let kept = model_directory(models.path(), "installed");
+    let orphan = model_directory(models.path(), "orphan");
+
+    let run = start_up(&pool, home.path()).await;
+    let removed = reconcile_orphaned_files(
+        Arc::new(DownloadedModelRepository::new(pool)),
+        models.path(),
+        &run.gate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(removed, 1);
+    assert!(!orphan.exists(), "a directory no row names is removed");
+    assert!(kept.exists(), "an installed model is kept");
 }

@@ -11,9 +11,9 @@
 //!
 //! - [`LibraryGc::release`] runs after a document referencing a hash was
 //!   deleted, or after an import failed before committing its row.
-//! - [`LibraryGc::sweep`] runs at startup, for the database that owns the
-//!   library (`library_owner`), and collects what an interrupted import or a
-//!   crash left behind.
+//! - [`LibraryGc::sweep`] runs at startup, once the sweep gate is open for the
+//!   database that owns the library (`library_owner`), and collects what an
+//!   interrupted import or a crash left behind.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -24,6 +24,7 @@ use lattice_core::application::ports::{
     BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort, DocumentRepositoryPort,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::fs::SweepGate;
 
 /// What a [`LibraryGc::sweep`] did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -103,7 +104,7 @@ impl LibraryGc {
         Ok(removal)
     }
 
-    /// Remove every blob no document references.
+    /// Remove every blob no document references, once `gate` is open.
     ///
     /// Loads the referenced checksums once, then walks the blobs on disk. A
     /// document committed between those two reads is still safe: the storage
@@ -117,7 +118,11 @@ impl LibraryGc {
     ///
     /// A blob that cannot be removed is logged and counted as retained rather
     /// than failing the whole sweep; the next startup tries again.
-    pub async fn sweep(&self) -> Result<SweepReport> {
+    pub async fn sweep(&self, gate: &SweepGate) -> Result<SweepReport> {
+        if !gate.is_open() {
+            tracing::debug!("Left the library alone: this database does not own its files");
+            return Ok(SweepReport::default());
+        }
         let referenced: HashSet<String> =
             self.documents.list_checksums().await?.into_iter().collect();
         let hashes = self.library.list_hashes().await?;
@@ -179,6 +184,12 @@ mod tests {
         (blob.hash.clone(), blob.path.clone())
     }
 
+    fn open_gate() -> SweepGate {
+        let gate = SweepGate::default();
+        gate.open();
+        gate
+    }
+
     fn document_for(path: &Path, checksum: &str) -> Document {
         let metadata = FileMetadata::new(
             path.file_name()
@@ -219,7 +230,7 @@ mod tests {
             Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(&documents) as Arc<dyn DocumentRepositoryPort>,
         );
-        let report = gc.sweep().await.unwrap();
+        let report = gc.sweep(&open_gate()).await.unwrap();
 
         assert_eq!(report.removed, 1);
         assert_eq!(report.retained, 1);
@@ -237,7 +248,29 @@ mod tests {
             Arc::new(MockDocumentRepository::new()),
         );
 
-        assert_eq!(gc.sweep().await.unwrap(), SweepReport::default());
+        assert_eq!(
+            gc.sweep(&open_gate()).await.unwrap(),
+            SweepReport::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shut_gate_leaves_every_blob_alone() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let (_, orphan_path) = import(&storage, temp.path(), "orphan.txt", "orphaned blob").await;
+        let gc = LibraryGc::new(
+            Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
+            Arc::new(MockDocumentRepository::new()),
+        );
+
+        let report = gc.sweep(&SweepGate::default()).await.unwrap();
+
+        assert_eq!(report, SweepReport::default());
+        assert!(
+            orphan_path.exists(),
+            "a shut gate keeps an unreferenced blob"
+        );
     }
 
     #[tokio::test]

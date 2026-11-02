@@ -21,6 +21,7 @@ use lattice_core::application::ports::chat_images::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 use super::commons::{page_candidate, page_title, parse_search, search_url, Candidate};
@@ -51,11 +52,12 @@ impl ChatImageService {
         root: PathBuf,
         network: Arc<dyn ImageNetwork>,
         background: Arc<BackgroundTasks>,
+        sweep_gate: Arc<SweepGate>,
     ) -> Self {
         let repository = ImageRepository::new(pool);
         let store = ImageStore::new(root);
         Self {
-            gc: ChatImageGc::new(store.clone(), repository.clone()),
+            gc: ChatImageGc::new(store.clone(), repository.clone(), sweep_gate),
             repository,
             store,
             network,

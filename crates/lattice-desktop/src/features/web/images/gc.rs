@@ -3,7 +3,8 @@
 //! staged since this start), then every file no row claims; the second half
 //! also runs after a truncate or regenerate (`remove_unclaimed_files`). It
 //! touches only direct children of the image directory with names it
-//! recognises, and `prepared/` cache files whose `<id>` no row names.
+//! recognises, and `prepared/` cache files whose `<id>` no row names. The
+//! file passes do nothing while the sweep gate is shut.
 
 use super::is_allowed_extension;
 use super::repository::{ImageRepository, ImageRow};
@@ -11,7 +12,9 @@ use super::store::{is_valid_id, recognised_prepared, ImageStore, PART_SUFFIX};
 use chrono::{DateTime, Utc};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::fs::SweepGate;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImageSweepReport {
@@ -30,6 +33,7 @@ pub struct ChatImageGc {
     /// When this process built the service: a draft staged since then
     /// belongs to a composer that is still open.
     started_at: DateTime<Utc>,
+    gate: Arc<SweepGate>,
 }
 
 /// `(id, ext)` of a file name the store writes, finished or not.
@@ -40,11 +44,12 @@ fn recognised(name: &str) -> Option<(&str, &str)> {
 }
 
 impl ChatImageGc {
-    pub fn new(store: ImageStore, repository: ImageRepository) -> Self {
+    pub fn new(store: ImageStore, repository: ImageRepository, gate: Arc<SweepGate>) -> Self {
         Self {
             store,
             repository,
             started_at: Utc::now(),
+            gate,
         }
     }
 
@@ -79,9 +84,14 @@ impl ChatImageGc {
                 .is_ok_and(|created| created >= self.started_at)
     }
 
-    /// Remove every recognised file no row claims.
+    /// Remove every recognised file no row claims, once the sweep gate is
+    /// open.
     pub async fn remove_unclaimed_files(&self) -> Result<ImageSweepReport> {
         let mut report = ImageSweepReport::default();
+        if !self.gate.is_open() {
+            tracing::debug!("Left the chat image files alone: this database does not own them");
+            return Ok(report);
+        }
         let root = self.store.root().to_path_buf();
         if !tokio::fs::try_exists(&root).await.unwrap_or(false) {
             return Ok(report);

@@ -18,7 +18,7 @@ bootstrap/
 ├── startup_reconciliation.rs    # Startup sweeps: re-exports the four below
 ├── startup_reconciliation/
 │   ├── download_sessions.rs     # Stale downloads, orphaned sessions
-│   ├── library_sweeps.rs        # Imported files, snapshots, chat pictures no row claims
+│   ├── library_sweeps.rs        # Who owns the library files (the sweep gate), and the sweeps of what no row claims
 │   ├── model_files.rs           # Model directories with no model record
 │   └── turns.rs                 # Stuck turns, interrupted verifications
 ├── background_workers.rs        # Owns worker handles so shutdown can wait on them

@@ -11,7 +11,18 @@ use crate::features::indexing::LibraryGc;
 use crate::features::web::images::ChatImageService;
 use crate::features::web::snapshots::WebPageSnapshotService;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
+
+/// Decide, once per start, whether the database behind `pool` owns the files
+/// `files` names, and open `gate` if it does. Every cleanup that deletes a file
+/// because no row names it reads the gate afterwards; none reads the database
+/// or the owner file again.
+pub async fn open_gate_if_owner(pool: &SqlitePool, files: &LibraryFiles, gate: &SweepGate) {
+    if library_owner::may_sweep(pool, files).await {
+        gate.open();
+    }
+}
 
 /// The three collectors of files under the lattice home.
 pub struct LibrarySweeps {
@@ -21,29 +32,19 @@ pub struct LibrarySweeps {
 }
 
 impl LibrarySweeps {
-    /// Start all three in the background, but only if `pool`'s database owns
-    /// the files in `files`: each deletes whatever this database does not
-    /// reference, and only the database that imported the files may say so.
-    /// `resuming` names the requests whose chat pictures are kept.
-    pub async fn start<R>(
-        self,
-        pool: &SqlitePool,
-        files: &LibraryFiles,
-        background: &BackgroundTasks,
-        resuming: R,
-    ) where
+    /// Start all three in the background, if `gate` is open. `resuming` names
+    /// the requests whose chat pictures are kept.
+    pub fn start<R>(&self, gate: &Arc<SweepGate>, background: &BackgroundTasks, resuming: R)
+    where
         R: Future<Output = Result<HashSet<String>>> + Send + 'static,
     {
-        if !library_owner::may_sweep(pool, files).await {
+        if !gate.is_open() {
             return;
         }
-        let Self {
-            library_gc,
-            snapshots,
-            images,
-        } = self;
+        let library_gc = Arc::clone(&self.library_gc);
+        let gate = Arc::clone(gate);
         background.spawn(async move {
-            match library_gc.sweep().await {
+            match library_gc.sweep(&gate).await {
                 Ok(report) => tracing::info!(
                     removed = report.removed,
                     retained = report.retained,
@@ -56,11 +57,11 @@ impl LibrarySweeps {
             }
         });
         // Frozen web snapshots whose rows are gone, and writes a crash cut short.
-        snapshots.sweep_in_background("startup");
+        self.snapshots.sweep_in_background("startup");
         // Chat pictures a turn leased and never attached, and files no row
         // claims. No turn survives a restart except a research turn, which
         // resumes from its saved rounds and still owns the pictures they found.
-        images.sweep_in_background("startup", resuming);
+        self.images.sweep_in_background("startup", resuming);
     }
 }
 

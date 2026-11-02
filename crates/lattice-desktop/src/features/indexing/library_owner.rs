@@ -6,6 +6,8 @@
 //! of the app, that is every file. A leaked file costs disk and a deleted one is
 //! gone, so a database sweeps only files it owns: it holds an id, the home holds
 //! a file with the same id, and [`may_sweep`] says yes only where they agree.
+//! Startup asks once and keeps the answer in the `SweepGate` that every sweep
+//! reads afterwards.
 
 use std::path::{Path, PathBuf};
 
@@ -49,7 +51,7 @@ pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
             tracing::warn!(
                 reason,
                 owner_file = %files.owner_file.display(),
-                "Not collecting unreferenced library files"
+                "Not deleting files that no row of this database names"
             );
             false
         }
@@ -57,7 +59,7 @@ pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
             tracing::warn!(
                 %error,
                 owner_file = %files.owner_file.display(),
-                "Not collecting unreferenced library files: could not tell whether this database owns them"
+                "Not deleting files that no row of this database names: could not tell whether this database owns them"
             );
             false
         }
