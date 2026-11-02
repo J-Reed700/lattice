@@ -2,7 +2,7 @@
 //! §3.10): saved with the job, so a restart finds the sections that go and the
 //! flow repairs made where it left them.
 
-use super::super::sections::Going;
+use super::super::sections::{Going, NOTHING_LEFT};
 use super::*;
 
 /// The job checkpoint holding the record.
@@ -43,6 +43,43 @@ impl ClaimLedger {
         claims: &[ClaimId],
     ) -> Result<()> {
         self.close_records(claims, RepairOutcome::Removed).await
+    }
+
+    /// Whether the machine's cuts leave the lesson no statement: it has taken
+    /// one out, and every claim is out, is one of `cut` (taken out just now),
+    /// or stands in a section that goes.
+    pub(in crate::features::learning::lessons::content_verification) fn nothing_left(
+        &self,
+        cut: &[ClaimId],
+    ) -> bool {
+        let took = !cut.is_empty()
+            || self.entries.iter().any(|entry| {
+                matches!(
+                    entry.state(),
+                    ClaimState::Removed {
+                        by: Actor::Machine,
+                        ..
+                    }
+                )
+            });
+        took && self.entries.iter().all(|entry| {
+            is_gone(entry.state())
+                || cut.contains(entry.claim_id())
+                || self.cuts.going.contains_key(&entry.location().unit_index)
+        })
+    }
+
+    /// The last attempts took out every statement the lesson had: the claims
+    /// they cut end removed, as the next pass would end them, and the lesson
+    /// stops with the draft as cut.
+    pub(in crate::features::learning::lessons::content_verification) async fn stop_cut_out(
+        &mut self,
+        cut: &[ClaimId],
+        raw: &str,
+    ) -> Result<AppError> {
+        self.remove(cut).await?;
+        crate::features::learning::lesson_drafts::save(raw).await?;
+        self.stop_unsupported(raw, NOTHING_LEFT).await
     }
 
     /// The claims still standing in a unit.

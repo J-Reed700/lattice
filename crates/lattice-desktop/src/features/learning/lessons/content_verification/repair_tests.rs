@@ -400,7 +400,12 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
         window: 4_000,
         requests: Mutex::new(Vec::new()),
     };
-    let mut ledger = failed_ledger(&llm, body, &[("example", "print(1)\n", 1)]).await?;
+    let mut ledger = failed_ledger(
+        &llm,
+        body,
+        &[("example", "print(1)\n", 1), ("intro", "Intro.", 0)],
+    )
+    .await?;
     let example = ClaimId("example".into());
     ledger
         .begin_repairs(&lesson_of(body), &[example.clone()])
@@ -431,7 +436,11 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
     let mut ledger = failed_ledger(
         &llm,
         body,
-        &[("last", "Cut this.", 1), ("mate", "Cut this.", 0)],
+        &[
+            ("last", "Cut this.", 1),
+            ("mate", "Cut this.", 0),
+            ("kept", "Keep this.", 0),
+        ],
     )
     .await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));

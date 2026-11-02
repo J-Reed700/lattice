@@ -19,6 +19,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// What the flow repair is told besides the edit protocol.
 const FLOW: &str = "Sentences were taken out of this lesson section because the course's sources do not support them. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
 
+/// What a lesson is told when the cuts leave it no statement: the part of it
+/// that would have to be taken out.
+pub(super) const NOTHING_LEFT: &str = "every statement in it would have to be taken out";
+
 /// The sentences kept on either side of one place a cut took text out of.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Gap {
@@ -460,9 +464,9 @@ pub(super) enum Settled {
 }
 
 /// The step the loop takes when every claim is resolved (claim classes design
-/// §3.10): sections left with too little go, a lesson that loses too much
-/// stops, every section that took a cut gets its one flow repair, and the
-/// teaching review reads the lesson as it will be.
+/// §3.10): sections left with too little go, a lesson that loses too much,
+/// or every statement it had, stops, every section that took a cut gets its
+/// one flow repair, and the teaching review reads the lesson as it will be.
 pub(super) async fn settle(
     llm: &dyn LLMPort,
     (prompt, schema, output_tokens): (&str, &Value, usize),
@@ -489,6 +493,11 @@ pub(super) async fn settle(
     let going = ledger.cuts.units();
     if let Some(what) = thin(&lesson, &going) {
         return Ok(Settled::Stopped(ledger.stop_unsupported(raw, &what).await?));
+    }
+    if ledger.nothing_left(&[]) {
+        return Ok(Settled::Stopped(
+            ledger.stop_unsupported(raw, NOTHING_LEFT).await?,
+        ));
     }
     let mendable: Vec<usize> = ledger
         .cuts

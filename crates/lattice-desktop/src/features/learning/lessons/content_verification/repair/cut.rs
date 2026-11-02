@@ -146,7 +146,8 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
 /// left beside each cut for the section's flow repair. A claim whose text
 /// cannot be taken out, because it is the whole of its field or sits in a code
 /// block, ends removed with its section, which goes out of the lesson (claim
-/// classes design §3.10). Returns how many claims it dealt with.
+/// classes design §3.10). Returns how many claims it dealt with, or the error
+/// that stops the lesson when the cuts leave no claim of it standing.
 pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger) -> Result<usize> {
     ledger.sync().await?;
     let dropped = withdraw_resolved(context, ledger);
@@ -222,9 +223,14 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
             .entry(id)
             .is_some_and(|entry| ledger.cuts.going.contains_key(&entry.location().unit_index))
     };
-    withdraw(context, |id| {
-        taken.contains(id) || refused.contains(id) || vanished(id) || goes(id)
-    });
+    let cut: Vec<ClaimId> = ledger
+        .entries()
+        .iter()
+        .map(|entry| entry.claim_id())
+        .filter(|id| taken.contains(*id) || refused.contains(*id) || vanished(*id))
+        .cloned()
+        .collect();
+    withdraw(context, |id| cut.contains(id) || goes(id));
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;
     }
@@ -233,6 +239,12 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
     }
     if !taken.is_empty() || !refused.is_empty() {
         ledger.save_cuts().await?;
+    }
+    if refused.is_empty() && !taken.is_empty() && ledger.nothing_left(&cut) {
+        let text = context
+            .get("candidate")
+            .map_or_else(String::new, Value::to_string);
+        return Err(ledger.stop_cut_out(&cut, &text).await?);
     }
     Ok(taken.len() + refused.len())
 }
