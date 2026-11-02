@@ -99,6 +99,16 @@ impl LearningSourceLibraryRepository {
             LearningSourceKind::Document => "document",
             LearningSourceKind::Pasted => "pasted",
         };
+        let comparison = trust::capture::compare(
+            &self.pool,
+            program_id,
+            trust::capture::VersionText {
+                source_id,
+                version_id,
+                text: &full_text,
+            },
+        )
+        .await?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, program_id).await?;
         if source_operation(
@@ -163,7 +173,7 @@ impl LearningSourceLibraryRepository {
             text: &text,
             acquired_at_ms: acquired,
         };
-        trust::capture::record(&mut tx, &captured_version, &captured.signals).await?;
+        trust::capture::record(&mut tx, &captured_version, &captured.signals, &comparison).await?;
         mirror_legacy(
             &mut tx,
             program_id,
@@ -244,6 +254,22 @@ impl LearningSourceLibraryRepository {
             }
         }
         let payload_hash = hash(req)?;
+        let version_id = uuid::Uuid::new_v4().to_string();
+        let comparison = match captured.as_ref().filter(|_| failure.is_none()) {
+            Some(captured) => Some(
+                trust::capture::compare(
+                    &self.pool,
+                    &req.program_id,
+                    trust::capture::VersionText {
+                        source_id: &req.source_id,
+                        version_id: &version_id,
+                        text: &normalized(&captured.text),
+                    },
+                )
+                .await?,
+            ),
+            None => None,
+        };
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
@@ -293,7 +319,9 @@ impl LearningSourceLibraryRepository {
                 Some(message.chars().take(500).collect::<String>()),
             )
         } else {
-            let captured = captured.ok_or_else(|| invalid("Refresh result is missing"))?;
+            let (captured, comparison) = captured
+                .zip(comparison)
+                .ok_or_else(|| invalid("Refresh result is missing"))?;
             let text = normalized(&captured.text);
             if text.trim().is_empty()
                 || captured.title.trim().is_empty()
@@ -324,7 +352,6 @@ impl LearningSourceLibraryRepository {
                     } else {
                         let next:i64=sqlx::query_scalar("SELECT COALESCE(MAX(version_number),0)+1 FROM learning_source_versions WHERE program_id=? AND source_id=?")
                             .bind(&req.program_id).bind(&req.source_id).fetch_one(&mut *tx).await.map_err(db)?;
-                        let version_id = uuid::Uuid::new_v4().to_string();
                         let requested_url: Option<String> = src.get("requested_url");
                         insert_version(
                             &mut tx,
@@ -355,8 +382,13 @@ impl LearningSourceLibraryRepository {
                             text: &text,
                             acquired_at_ms: checked,
                         };
-                        trust::capture::record(&mut tx, &captured_version, &captured.signals)
-                            .await?;
+                        trust::capture::record(
+                            &mut tx,
+                            &captured_version,
+                            &captured.signals,
+                            &comparison,
+                        )
+                        .await?;
                         mirror_legacy(
                             &mut tx,
                             &req.program_id,
