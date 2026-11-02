@@ -165,7 +165,7 @@ Removal (§3.2) is per statement; a section can lose several sentences, and a cu
 
 The acceptance run is an isolated app instance on a copy of the real database, the 27B as Learning model, lesson `f36400bc` prepared by the app's own job. Expected, written down so the run is scored against it:
 
-- end state: `learning_lessons.preparation = 'ready'`, `learning_lesson_reviews.state = 'ready'`, a `learning_lesson_verifications` row; every ledger claim in `ResolvedByEvidence`, `Removed { by: Machine }`, `Edited`, or a consistency/knowledge pass state; no `Queued`, no `Open`, no `InsufficientStanding`, no `GeneralKnowledgeProposed`;
+- end state: `learning_lessons.preparation = 'ready'`, `learning_lesson_reviews.state = 'ready'`, a `learning_lesson_verifications` row; every ledger claim in one of five terminal states, by its class: a Sourced pass is `ResolvedByEvidence`, whether or not it needed a common-knowledge bridge (the bridge is in the check's record); a Reasoning pass is `Consistent { at }`, the new state of §3.8; a Common pass is the existing `GeneralKnowledge { at, by: Machine }`; any class may end `Removed { by: Machine }`, or `Edited` when a repair's successor answers for it. So Sourced ends `ResolvedByEvidence` or `Removed`, Reasoning `Consistent` or `Removed`, Common `GeneralKnowledge { by: Machine }` or `Removed`, and a claim in any other pairing fails acceptance; no `Queued`, no `Open`, no `InsufficientStanding`, no `GeneralKnowledgeProposed`;
 - the ledger holds no Internal statements and at most 73 statements (105 less the 32 coverage injections);
 - calls: at most `7 + 3·S + R + 3·R + 3·C + 2·F + K` where S Sourced, R Reasoning, C Common statements, F the Sourced statements that failed their cited passage, K the sections that took cuts; with the replay's shares (36, 45, 8), F ≤ 3 and K ≤ 3 that is at most 247 + 9 model calls and at most 6 page fetches, shown in the progress panel before the first call; the run fails acceptance if the count shown moves up;
 - content: the two real catches (§1.1) are rewritten or removed; the Tesseract-shaped sentences pass with the "common knowledge" part shown; no sentence cites a page the admission gate refuses;
@@ -188,7 +188,7 @@ The acceptance run is an isolated app instance on a copy of the real database, t
 
 ### 3.8 What stays, reused
 
-`ClaimLedger` and its events (add `Classified { class, by: Rule | Model }`), `ClaimChecks` receipts keyed by (unit, statement, passages), `ClaimChecker` strict policy and `ClaimReceipt`, `page_one`, `research::expand`, `repair::candidate` with `confine`/`Protected`, `successor::heirs`, `provenance_gate` as a labeller, `teaching::review_lesson`, `lesson_progress`. The consistency and knowledge judges are two new `ClaimChecker` policies (`CheckPolicy::Consistency`, `CheckPolicy::Knowledge`) beside `Strict` and `Fidelity`, so sizing, retries and receipts are inherited.
+`ClaimLedger` and its events (add `Classified { class, by: Model | Rule | Writer }`, weakest first: the ledger keeps the class of the strongest authority that decided it, so the model never lightens a rule's class and nothing lightens a sentence the writer cited, §3.1; and `ClaimState` gains `Consistent { at }`, the terminal pass state of a Reasoning statement, counted as resolved by `end_state`, §3.11), `ClaimChecks` receipts keyed by (unit, statement, passages), `ClaimChecker` strict policy and `ClaimReceipt`, `page_one`, `research::expand`, `repair::candidate` with `confine`/`Protected`, `successor::heirs`, `provenance_gate` as a labeller, `teaching::review_lesson`, `lesson_progress`. The consistency and knowledge judges are two new `ClaimChecker` policies (`CheckPolicy::Consistency`, `CheckPolicy::Knowledge`) beside `Strict` and `Fidelity`, so sizing, retries and receipts are inherited.
 
 ## 4. Evidence from the replay
 
@@ -268,7 +268,7 @@ For this lesson as replayed: classification 7, strict judge 36 (2.8 s each on a 
 
 1. `lattice-core/domain/learning/claim_review`: `Class` enum, `Classified` event, `MACHINE_ATTEMPTS` per claim, `Removed { by: Machine }` reachable from a failed check (domain tests first: a failed claim's attempts never rise; a lesson with a removed claim is `Ready`).
 2. `content_verification/classify.rs`: the rule layer (pure, tested on the planted set) and the model layer as a `structured_call`.
-3. `CheckPolicy::Consistency` and `CheckPolicy::Knowledge` in `claim_verification` with the prompts of §4; receipts as today.
+3. `CheckPolicy::Consistency` and `CheckPolicy::Knowledge` in `claim_verification` with the prompts of §4; receipts as today; the pass states they end in (`ClaimState::Consistent { at }`, and `GeneralKnowledge` with the machine as its actor, §3.11).
 4. `evidence_checks`: pass A + `page_one` only; `deepen`, `standing` and `scrutiny` deleted with their tests.
 5. `provenance_gate::weigh` returns labels only.
 6. `repair_loop`: decide → repair once → recheck the changed sentences → remove → publish. `NeedsReview` only from user state.
