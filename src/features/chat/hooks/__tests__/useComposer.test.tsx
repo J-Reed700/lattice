@@ -48,6 +48,73 @@ beforeEach(() => {
   store.sendMessage.mockResolvedValue(undefined);
 });
 
+describe('sendSpoken', () => {
+  it('sends the words as a turn, with the switches and pictures, and leaves the draft', async () => {
+    const pictures = [{ id: 'picture-1' }] as never;
+    const { result } = render({ staged: [], importStaged: vi.fn(), takePictures: () => pictures });
+    store.sendMessage.mockResolvedValue('answered');
+    act(() => result.current.setInput('half a thought'));
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.sendSpoken('What is a monad?');
+    });
+
+    expect(outcome).toBe('answered');
+    expect(store.sendMessage).toHaveBeenCalledWith('What is a monad?', 'conversation-1', expect.anything(), undefined, undefined, pictures);
+    expect(result.current.input).toBe('half a thought');
+  });
+
+  it('never runs spoken words as a command', async () => {
+    const { result } = render();
+    await act(async () => {
+      await result.current.sendSpoken('/compact');
+    });
+    expect(store.sendMessage).toHaveBeenCalledWith('/compact', 'conversation-1', expect.anything(), undefined, undefined, undefined);
+  });
+
+  it('brings staged files along, and sends nothing when they fail to import', async () => {
+    const importStaged = vi.fn().mockResolvedValueOnce({ names: ['a.pdf'], documentIds: ['d1'] }).mockResolvedValueOnce(null);
+    const { result } = render({ staged: [{}] as never, importStaged, takePictures: () => [] });
+
+    await act(async () => {
+      await result.current.sendSpoken('Read this.');
+    });
+    expect(store.sendMessage).toHaveBeenCalledWith('Read this.', 'conversation-1', expect.anything(), ['a.pdf'], ['d1'], undefined);
+
+    let outcome: unknown = 'unset';
+    await act(async () => {
+      outcome = await result.current.sendSpoken('And this.');
+    });
+    expect(outcome).toBeUndefined();
+    expect(store.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['no conversation', { conversationId: null }],
+    ['an unavailable model', { isChatUnavailable: true }],
+    ['compacting', { isCompacting: true }],
+  ])('does not send during %s', async (_label, options) => {
+    const { result } = renderHook(() =>
+      useComposer({
+        conversationId: 'conversation-1',
+        conversationSpaceId: 'space-thesis',
+        conversationSpaceName: 'Thesis',
+        isSending: false,
+        isCompacting: false,
+        isChatUnavailable: false,
+        canCompact: true,
+        onCompact: vi.fn(),
+        attachments: { staged: [], importStaged: vi.fn(), takePictures: () => [] },
+        ...options,
+      }),
+    );
+
+    await expect(result.current.sendSpoken('Hello.')).resolves.toBeUndefined();
+    expect(store.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('the composer', () => {
   it('opens a conversation with the switches its space saved', () => {
     const { result } = render();

@@ -18,6 +18,7 @@ import { SPEEDS, useSpeechPrefsStore } from '@/features/speech/stores/speechPref
 import { useToastStore } from '@/stores/toastStore';
 import { formatBytes } from '@/utils/formatters';
 
+import { ListeningModelSection } from './ListeningModelSection';
 import { GHOST_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from './settingsStyles';
 import { startModelDownload } from '../hooks/startModelDownload';
 
@@ -154,6 +155,8 @@ export function ReadAloudTab() {
           </select>
         </SettingsRow>
       </SettingsSection>
+
+      <ListeningModelSection />
     </>
   );
 }
