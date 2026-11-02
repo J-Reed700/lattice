@@ -595,6 +595,122 @@ async fn the_message_being_answered_is_not_recalled_as_an_older_passage() {
 }
 
 // ---------------------------------------------------------------------------
+// Candidate order
+// ---------------------------------------------------------------------------
+
+/// `count` messages that hold none of the words the tests below ask about.
+async fn seed_unrelated(pool: &SqlitePool, conversation: &str, count: usize) {
+    for index in 0..count {
+        seed_message(
+            pool,
+            conversation,
+            &format!("{conversation}-pad{index}"),
+            "user",
+            &format!("the weather on day {index} was fine"),
+            "completed",
+        )
+        .await;
+    }
+}
+
+struct Embedder;
+#[async_trait::async_trait]
+impl lattice_core::application::ports::EmbeddingPort for Embedder {
+    async fn embed_single(&self, _: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
+        Ok(vec![1.0, 0.0])
+    }
+    async fn embed_batch(
+        &self,
+        texts: &[String],
+    ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+    }
+    fn dimension(&self) -> usize {
+        2
+    }
+    fn model_identity(&self) -> String {
+        "test-space".into()
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+}
+
+async fn seed_vector(pool: &SqlitePool, conversation: &str, message: &str, vector: [f32; 2]) {
+    let content: String =
+        sqlx::query_scalar("SELECT content FROM conversation_messages WHERE id=?")
+            .bind(message)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO conversation_memory_vectors(id,conversation_id,message_id,role,content,embedding,dimension,embedding_model) VALUES (?,?,?,'user',?,?,2,'test-space')")
+        .bind(message)
+        .bind(conversation)
+        .bind(message)
+        .bind(content)
+        .bind(lattice_core::shared::persistence::embedding_encoding::encode_embedding(&vector))
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// With semantic search on, a candidate's score is its fused rank, where
+/// higher is better, not BM25. The best group is still the one packed first.
+#[tokio::test]
+async fn the_strongest_fused_candidate_is_the_first_one_packed() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 3).await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "best",
+        "user",
+        "the interview schedule is on Friday",
+        "completed",
+    )
+    .await;
+    for index in 0..3 {
+        seed_message(
+            &pool,
+            "conv-mine",
+            &format!("gap{index}"),
+            "user",
+            "noted",
+            "completed",
+        )
+        .await;
+    }
+    seed_message(
+        &pool,
+        "conv-mine",
+        "weak",
+        "user",
+        "an interview",
+        "completed",
+    )
+    .await;
+    seed_vector(&pool, "conv-mine", "best", [1.0, 0.0]).await;
+    let port = port(&pool).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
+
+    let recalled = recall_for_turn(
+        &port,
+        &scope("conv-mine"),
+        &RecallRequest {
+            user_input: "interview schedule",
+            recent_turns: &[],
+            active_memory: &[],
+            max_bytes: 80,
+        },
+    )
+    .await
+    .unwrap();
+
+    let selected = recalled.diagnostics.selected_message_ids;
+    assert!(selected.contains(&"best".to_string()), "{selected:?}");
+}
+
+// ---------------------------------------------------------------------------
 // Three different kinds of nothing
 // ---------------------------------------------------------------------------
 

@@ -175,8 +175,9 @@ pub async fn recall_for_turn(
         diagnostics.semantic_ran |= found.semantic_ran;
         diagnostics.index_error = found.index_error.clone();
         let exhausted = found.candidates.len() < limit;
-        let fresh: Vec<&RecallCandidate> = ranked(&found.candidates)
-            .into_iter()
+        let fresh: Vec<&RecallCandidate> = found
+            .candidates
+            .iter()
             .filter(|candidate| considered.insert(candidate.message_id.clone()))
             .collect();
         let had_fresh = !fresh.is_empty();
@@ -323,24 +324,6 @@ const CUT_MARK_BYTES: usize = 96;
 /// The mark on a passage cut to the recall budget.
 fn cut_mark(left_out_bytes: usize) -> String {
     format!(" […cut: {left_out_bytes} more bytes of this message are not shown]")
-}
-
-/// Candidates in selection order: exact-identifier hits first, then BM25 rank
-/// (more negative is better), with sequence breaking ties so the order is
-/// stable across runs.
-fn ranked(candidates: &[RecallCandidate]) -> Vec<&RecallCandidate> {
-    let mut ordered: Vec<&RecallCandidate> = candidates.iter().collect();
-    ordered.sort_by(|a, b| {
-        b.exact_identifier
-            .cmp(&a.exact_identifier)
-            .then(
-                a.score
-                    .partial_cmp(&b.score)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
-            .then(a.sequence.cmp(&b.sequence))
-    });
-    ordered
 }
 
 // ---------------------------------------------------------------------------

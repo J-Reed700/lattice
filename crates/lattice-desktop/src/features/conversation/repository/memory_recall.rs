@@ -154,7 +154,7 @@ impl ConversationRepository {
                AND conversation_search_fts.source = 'message' \
                AND conversation_search_fts.conversation_id = ? \
                AND m.conversation_id = ? \
-             ORDER BY score ASC LIMIT ?",
+             ORDER BY score ASC, m.sequence ASC LIMIT ?",
         )
         .bind(&match_expression)
         .bind(conversation_id)

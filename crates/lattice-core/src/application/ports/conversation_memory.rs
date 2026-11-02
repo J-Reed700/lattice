@@ -348,7 +348,8 @@ pub trait ConversationMemoryReadPort: Send + Sync {
         Ok(serde_json::json!({"items":[],"unavailable":true}))
     }
 
-    /// Lexical and exact-identifier candidates, ranked.
+    /// Lexical and exact-identifier candidates, best first, exact hits ahead
+    /// of ranked ones.
     async fn search_source_messages(
         &self,
         conversation_id: &str,
