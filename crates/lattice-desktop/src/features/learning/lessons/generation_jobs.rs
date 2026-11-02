@@ -183,6 +183,24 @@ impl LessonGenerationWorker {
         // This snapshots the already accepted outline; it approves no content.
         repo.seed_accepted(&job.program_id).await?;
         (self.refresh_sources)(job.program_id.clone()).await?;
+        // Pages the admission gate refuses leave retrieval and citation before
+        // anything is compared with them (claim classes design §3.6).
+        crate::features::learning::lesson_progress::stage(
+            "Checking that the course's saved pages are sources",
+        );
+        let refused =
+            crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+                self.pool.clone(),
+            )
+            .sweep_admission(&job.program_id)
+            .await?;
+        if !refused.is_empty() {
+            tracing::info!(
+                program_id = %job.program_id,
+                pages = refused.len(),
+                "Saved pages that are not sources are left out of retrieval"
+            );
+        }
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
         if had_sources && program.sources.is_empty() {

@@ -398,3 +398,101 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
         .any(|record| record.claim_id == mate));
     Ok(())
 }
+
+#[test]
+fn the_evidence_table_names_the_lessons_source_index_of_a_numbered_source() {
+    let source = |id: &str| LearningSourceDto {
+        id: id.into(),
+        title: id.into(),
+        url: None,
+        excerpt: String::new(),
+        acquired_at: 0,
+    };
+    let mut context = json!({"evidence":[
+        {"id":"evidence-0","sourceId":"v2"},
+        {"id":"evidence-1","sourceId":"found-by-research"}]});
+
+    number_evidence(&mut context, &[source("v1"), source("v2")]);
+
+    assert_eq!(context["evidence"][0]["sourceIndex"], 1);
+    assert!(context["evidence"][1].get("sourceIndex").is_none());
+}
+
+/// A rewrite to the figure an evidence passage states cites that passage in
+/// the same response, so the final structural pass finds nothing uncited in
+/// it; confinement, which takes back what changed outside the failed
+/// sentence, keeps the citation of the sentence it allowed.
+#[tokio::test]
+async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncited_specific(
+) -> Result<()> {
+    let original = json!({"blocks":[{"kind":"explanation","title":"T","body":"Keep this. Fix this.","citations":[]}],"questions":[]});
+    let local = json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Fix this."}]});
+    let sentence = "The default timeout is 30 seconds.";
+    let quote = "A timeout of 30 seconds applies to each request.";
+    let response = json!({
+        "edits":[{"path":"/blocks/0/body","before":"Fix this.","after":sentence}],
+        "citations":[{"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]
+    });
+    let model = ScriptedModel {
+        outputs: Mutex::new(vec![response.to_string()].into()),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let failed = Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Fix this.".into(),
+    };
+    let kept = Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Keep this.".into(),
+    };
+
+    let repaired = repair_group(
+        &model,
+        "system",
+        (&local, &original),
+        &schema,
+        "blocks",
+        4_000,
+        (&[failed], &[kept]),
+    )
+    .await?;
+
+    let section = &repaired["blocks"][0];
+    assert_eq!(section["body"], format!("Keep this. {sentence}"));
+    assert_eq!(
+        section["citations"],
+        json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}])
+    );
+    let uncited = |lesson: &Value| {
+        crate::features::learning::generation::lesson_rules(lesson)
+            .into_iter()
+            .filter(|finding| {
+                finding.kind == crate::features::learning::review_findings::FindingKind::Quotation
+            })
+            .count()
+    };
+    assert_eq!(uncited(&repaired), 0);
+    // The same rewrite without its citation is what the pass would list.
+    let mut bare = repaired.clone();
+    bare["blocks"][0]["citations"] = json!([]);
+    assert_eq!(uncited(&bare), 1);
+    Ok(())
+}
+
+#[test]
+fn a_citation_for_a_sentence_the_confinement_took_back_is_not_kept() {
+    let mut confined = json!({"kind":"explanation","body":"Keep this. Fix this.","citations":[]});
+    let stray = json!({"sentence":"A sentence the section lacks.","sourceIndex":0,"quote":"x"});
+    let kept = json!({"sentence":"Fix this.","sourceIndex":0,"quote":"y"});
+
+    citation::restore_appended(
+        &mut confined,
+        vec![stray, kept.clone(), kept.clone()],
+        "blocks",
+    );
+
+    assert_eq!(confined["citations"], json!([kept]));
+}

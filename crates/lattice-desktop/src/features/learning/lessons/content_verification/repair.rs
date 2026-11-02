@@ -17,7 +17,7 @@ mod confine;
 mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
-pub(super) use citation::{cite_where_supported, number_sources};
+pub(super) use citation::{cite_where_supported, number_evidence, number_sources};
 pub(in crate::features::learning) use confine::{confine, Protected};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
@@ -158,8 +158,8 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
     }))
 }
 
-fn repair_system() -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. A failed claim's alsoStates lists other statements its sentence makes that the lesson keeps: write the corrected sentence so that each of them is still said, and true. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
+fn repair_system(schema: &Value) -> String {
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. A failed claim's alsoStates lists other statements its sentence makes that the lesson keeps: write the corrected sentence so that each of them is still said, and true. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::rewrite_instructions(schema))
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
@@ -443,7 +443,7 @@ async fn repair_sections(
         .get("candidate")
         .cloned()
         .ok_or_else(|| invalid("Missing repair candidate."))?;
-    let system = repair_system();
+    let system = repair_system(schema);
     for (position, unit) in pending.iter().copied().enumerate() {
         let (field, _) = location(&candidate, unit)?;
         ledger.sync().await?;
@@ -601,7 +601,7 @@ async fn repair_group(
             llm,
             system,
             local.to_string(),
-            text_edits::schema(original),
+            text_edits::schema_for(original, schema),
             output_tokens,
         )
         .await?
@@ -612,7 +612,12 @@ async fn repair_group(
     if let (Some(before), Some(after)) =
         (original.pointer(&pointer), repaired.pointer_mut(&pointer))
     {
+        // Confinement takes back what changed outside the failed sentences,
+        // a citation the rewrite appended among it; the ones whose sentence
+        // stands in the confined text are put back.
+        let appended = citation::appended(before, after);
         *after = confine(before, after, targets, protected)?;
+        citation::restore_appended(after, appended, field);
     }
     let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
         .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;

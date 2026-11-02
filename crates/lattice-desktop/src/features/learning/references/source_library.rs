@@ -13,6 +13,10 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
+mod admission;
+#[cfg(test)]
+mod admission_tests;
+pub use admission::RefusedSource;
 mod capture;
 mod lifecycle;
 #[cfg(test)]

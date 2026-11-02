@@ -153,8 +153,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         let mut report =
             verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
         ledger.observe(&candidate, &report).await?;
-        // Research once per claim and evidence: what it saves is checked at
-        // once; what it does not find is recorded as tried (§4).
+        // Research once per claim: what it saves is checked at once; what it
+        // does not find is recorded as tried (§4).
         loop {
             let (claims, findings, hints) = ledger.research_targets(&report);
             if claims.is_empty() {
@@ -189,8 +189,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .await;
                     crate::features::learning::lesson_progress::new_references(None);
                     report = rechecked?;
-                    // The round is recorded first: a claim whose evidence it
-                    // changed may be researched again on that evidence.
+                    // The round is recorded first: it was each claim's one.
                     ledger.record_research(&claims, &searched, &report).await?;
                     ledger.observe(&candidate, &report).await?;
                 }
@@ -311,7 +310,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     },
                 );
                 let active = expanded.as_ref().unwrap_or(references);
-                let context = repair_context(
+                let mut context = repair_context(
                     prompt,
                     &candidate,
                     &report,
@@ -320,6 +319,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     &targets,
                     active,
                 )?;
+                repair::number_evidence(&mut context, numbered);
                 ledger.begin_repairs(&candidate, &targets).await?;
                 let pending = PendingRepair {
                     fingerprint: repair_fingerprint(llm, prompt, schema, &candidate, active),

@@ -14,7 +14,8 @@ pub(super) struct Cursor {
     pub(super) basis: Option<CheckBasis>,
     /// A rewrite awaits the check that decides it.
     pub(super) repair_pending: bool,
-    /// Research ran under the current fingerprint.
+    /// Research ran: once per claim for its life, whatever evidence a later
+    /// check brings (claim classes design §3.6).
     pub(super) researched: bool,
     /// The latest failing verdict from either checker; cleared by Supported.
     pub(super) latest_failure: Option<VerdictKind>,
@@ -147,16 +148,13 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
         }
         return;
     }
-    let previous_failure = std::mem::replace(
-        &mut cursor.latest_failure,
-        match &check.result {
-            CheckResult::Failed { kind } => Some(kind.clone()),
-            CheckResult::Supported { .. }
-            | CheckResult::SupportedElsewhere { .. }
-            | CheckResult::Consistent
-            | CheckResult::KnownCommon => None,
-        },
-    );
+    cursor.latest_failure = match &check.result {
+        CheckResult::Failed { kind } => Some(kind.clone()),
+        CheckResult::Supported { .. }
+        | CheckResult::SupportedElsewhere { .. }
+        | CheckResult::Consistent
+        | CheckResult::KnownCommon => None,
+    };
     let model = match &check.checker {
         Checker::Verifier { .. } => {
             apply_verifier(&mut cursor.state, &check.result, &check.reason);
@@ -167,15 +165,6 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
     // The gate's assessment, if it decided this check, follows it.
     cursor.trust = None;
     let charged = std::mem::take(&mut cursor.repair_pending);
-    let new_evidence = !charged
-        && cursor
-            .basis
-            .as_ref()
-            .is_none_or(|basis| basis.fingerprint != check.fingerprint)
-        && !support_unchanged(previous_failure.as_ref(), &check.result);
-    if new_evidence {
-        cursor.researched = false;
-    }
     cursor.basis = Some(CheckBasis {
         fingerprint: check.fingerprint.clone(),
         checker_model: model,
@@ -217,50 +206,6 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
             }
         }
     };
-}
-
-/// Whether a failing check on other evidence leaves the claim's support
-/// where it was (source provenance §6.2, §8): its supports still fail the
-/// same bar, and none it gained comes from an origin cluster it lacked or
-/// stands above the best it had. Such evidence cannot make the claim
-/// sufficient, so it is not new information: it restores no budget and
-/// earns no further research round, and the claim goes on to its repairs
-/// and then the user, as a citation hop that adds no new cluster ends its
-/// chain. Without this, every research round that saved anything at all
-/// would restart every scrutinised claim it touched.
-fn support_unchanged(previous: Option<&VerdictKind>, result: &CheckResult) -> bool {
-    let (
-        Some(VerdictKind::InsufficientStanding {
-            bar: bar_before,
-            have: before,
-        }),
-        CheckResult::Failed {
-            kind: VerdictKind::InsufficientStanding { bar, have: after },
-        },
-    ) = (previous, result)
-    else {
-        return false;
-    };
-    let had = |version: &str| {
-        before
-            .iter()
-            .any(|support| support.source_version_id == version)
-    };
-    let best_before = before.iter().filter_map(|support| support.counted).max();
-    bar == bar_before
-        && !after.iter().any(|gained| {
-            let Some(level) = gained.counted else {
-                return false;
-            };
-            // Cluster ids name a cluster's smallest member, so a cluster is
-            // new when none of its members was a support before.
-            let new_cluster = !after
-                .iter()
-                .filter(|member| member.origin_cluster == gained.origin_cluster)
-                .any(|member| had(&member.source_version_id));
-            !had(&gained.source_version_id)
-                && (new_cluster || best_before.is_none_or(|best| level > best))
-        })
 }
 
 /// §14.5: the Verifier only audits. It never resolves a claim; a dispute

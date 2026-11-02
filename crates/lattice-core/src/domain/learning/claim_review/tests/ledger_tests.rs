@@ -230,9 +230,8 @@ fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_the_che
     assert_eq!(entry.state(), &open(VerdictKind::NoSource, 2));
     assert!(entry.may_repair());
 
-    // Research runs once per fingerprint; a round that finds nothing leaves
-    // the claim to the machine, which rewrites its sentence and then takes
-    // it out.
+    // Research runs once per claim; a round that finds nothing leaves the
+    // claim to the machine, which rewrites its sentence and then takes it out.
     let research = |found| ClaimEvent::Researched {
         queries: vec!["boiling point sea level".into()],
         sources_added: vec!["v2".into()],
@@ -245,7 +244,7 @@ fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_the_che
         .unwrap();
     assert!(entry.may_research());
     entry.append(machine(3), research(1)).unwrap();
-    assert!(!entry.may_research(), "once per fingerprint");
+    assert!(!entry.may_research(), "once per claim");
     entry
         .append(machine(4), checked(Some(VerdictKind::NoSource), "v1"))
         .unwrap();
@@ -266,8 +265,14 @@ fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_the_che
 }
 
 #[test]
-fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
+fn evidence_a_round_saved_never_earns_a_claim_another_round() {
     use crate::domain::provenance::{Bar, ClusterId, CountedSupport, TrustLevel};
+    let research = || ClaimEvent::Researched {
+        queries: vec!["boiling point sea level".into()],
+        sources_added: vec!["v2".into()],
+        passages_found: 1,
+        round_ms_per_claim: None,
+    };
     let counted = |version: &str, cluster: &str, level| CountedSupport {
         source_version_id: version.into(),
         origin_cluster: ClusterId(cluster.into()),
@@ -279,67 +284,47 @@ fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
             have,
         })
     };
-    let research = || ClaimEvent::Researched {
-        queries: vec!["boiling point sea level".into()],
-        sources_added: vec!["v2".into()],
-        passages_found: 1,
-        round_ms_per_claim: None,
-    };
     let blog = || counted("v1", "v1", TrustLevel::Established);
-    let started = |id: &str| {
+
+    // Whatever the next check finds, on other evidence, in a stronger or an
+    // independent source, the claim's one round is spent and its attempts do
+    // not rise.
+    for (id, kind) in [
+        ("c1", VerdictKind::Unsupported),
+        ("c2", VerdictKind::NoSource),
+    ] {
+        let mut entry = claim(id);
+        entry
+            .append(machine(2), checked(Some(kind.clone()), "v1"))
+            .unwrap();
+        entry.append(machine(3), research()).unwrap();
+        entry
+            .append(machine(4), checked(Some(kind), "v2"))
+            .unwrap();
+        assert!(!entry.may_research(), "{id}: other evidence is not a round");
+        assert!(matches!(
+            entry.state(),
+            ClaimState::Open {
+                machine_attempts_left: MACHINE_ATTEMPTS,
+                ..
+            }
+        ));
+    }
+    for (id, gained) in [
+        ("c3", counted("v2", "v2", TrustLevel::Established)),
+        ("c4", counted("v2", "v1", TrustLevel::Authoritative)),
+    ] {
         let mut entry = claim(id);
         entry
             .append(machine(2), checked(short(vec![blog()]), "v1"))
             .unwrap();
         entry.append(machine(3), research()).unwrap();
         entry
-    };
-
-    // The round saved another page of the same publisher, no higher: the
-    // evidence changed, but not what the claim can reach.
-    let mut entry = started("c1");
-    let same_publisher = counted("v2", "v1", TrustLevel::Established);
-    entry
-        .append(
-            machine(4),
-            checked(short(vec![blog(), same_publisher.clone()]), "v2"),
-        )
-        .unwrap();
-    assert!(
-        !entry.may_research(),
-        "no further research on that evidence"
-    );
-    assert!(
-        !entry.may_repair(),
-        "a claim is never rewritten for standing"
-    );
-    assert!(
-        entry.held_for_standing(),
-        "after research it waits for the user: {:?}",
-        entry.state()
-    );
-
-    // An independent origin, or a stronger source of the same one, is
-    // progress: research may go on; the budget, never charged here, stays
-    // (it never rises).
-    for (id, gained) in [
-        ("c2", counted("v2", "v2", TrustLevel::Established)),
-        ("c3", counted("v2", "v1", TrustLevel::Authoritative)),
-    ] {
-        let mut entry = started(id);
-        entry
             .append(machine(4), checked(short(vec![blog(), gained]), "v2"))
             .unwrap();
-        assert!(entry.may_research(), "{id}");
         assert!(
-            matches!(
-                entry.state(),
-                ClaimState::Open {
-                    machine_attempts_left: MACHINE_ATTEMPTS,
-                    ..
-                }
-            ),
-            "{id}"
+            !entry.may_research(),
+            "{id}: a stronger or an independent source is not a round"
         );
     }
 }

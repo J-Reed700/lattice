@@ -3,6 +3,7 @@
 //! finder routes each to the finders that hold its kind of source. Search
 //! snippets never become evidence: only a complete capture of a page,
 //! validated for full text, is returned.
+use crate::features::learning::references::admission;
 use crate::features::learning::references::trust::capture::web_capture;
 use crate::features::learning::source_library::CapturedLearningSource;
 use lattice_core::application::contracts::web::{
@@ -449,6 +450,12 @@ pub(in crate::features::learning) async fn search_need(
         owner = owner.or(output.owner);
         for result in output.results {
             if found.iter().any(|known| known.result.url == result.url) {
+                continue;
+            }
+            // A login, search or error page shows itself in its title and
+            // address; it is never offered to the selector or fetched.
+            if let Err(refusal) = admission::admit_address(&result.url, &result.title) {
+                tracing::info!(url = %result.url, %refusal, "A search result is not a source; it is not offered");
                 continue;
             }
             let candidate = Candidate {

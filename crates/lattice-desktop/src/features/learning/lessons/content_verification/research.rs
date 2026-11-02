@@ -2,7 +2,7 @@
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
 use crate::features::learning::model_call;
-use crate::features::learning::references::web_research;
+use crate::features::learning::references::{admission, web_research};
 #[cfg(test)]
 use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::application::contracts::web::WebSearchResult;
@@ -316,6 +316,8 @@ pub(super) struct Searched {
     pub(super) queries: Vec<String>,
     /// Source version ids this round saved.
     pub(super) sources_added: Vec<String>,
+    /// Pages this round fetched, whether it saved them or not.
+    pub(super) fetched: usize,
     /// A claim research round's time from its start to its result over the
     /// claims it researched: what researching one claim on the web costs.
     /// `None` when no round ran.
@@ -371,7 +373,7 @@ impl Finding {
 }
 
 /// Research for `findings`, the claims the ledger allows to be researched
-/// (once per claim and evidence), with the user's `hints` searched verbatim
+/// (once per claim, for its life), with the user's `hints` searched verbatim
 /// before the planned queries (§5.1 "Research again with a hint"). A round
 /// whose planning or selection gives no usable answer, or does not fit the
 /// window, is [`Expansion::Unchanged`]: the claims stay held for review.
@@ -474,6 +476,61 @@ pub(in crate::features::learning) async fn research_topics<'a>(
     }
 }
 
+/// The pages a round of research may fetch (claim classes design §3.6): for
+/// the statements it researches, at most two each, the selector's first choice
+/// among the results for the statement and, when the statement names an owner,
+/// one result on the owner's site; and in all at most twice the number of
+/// statements, a count known before the first request. A hint's searches are
+/// held to the total alone, and a lesson's topics, which no statement stands
+/// behind, to nothing.
+struct Pages {
+    left: usize,
+    /// Per statement: whether its general page and its owner-site page are
+    /// fetched.
+    taken: Vec<(bool, bool)>,
+}
+
+impl Pages {
+    fn of(kind: Gaps, statements: usize) -> Self {
+        match kind {
+            Gaps::Claims => Self {
+                left: statements.saturating_mul(2),
+                taken: vec![(false, false); statements],
+            },
+            Gaps::Topics => Self {
+                left: usize::MAX,
+                taken: Vec::new(),
+            },
+        }
+    }
+
+    /// Whether a page may still be fetched for the search of `gap`, as an
+    /// owner-site page or not.
+    fn allows(&self, gap: Option<usize>, owned: bool) -> bool {
+        self.left > 0
+            && gap
+                .and_then(|gap| self.taken.get(gap))
+                .is_none_or(|(general, owner)| !(if owned { *owner } else { *general }))
+    }
+
+    /// One page fetched for the search of `gap`.
+    fn take(&mut self, gap: Option<usize>, owned: bool) {
+        self.left = self.left.saturating_sub(1);
+        if let Some((general, owner)) = gap.and_then(|gap| self.taken.get_mut(gap)) {
+            *(if owned { owner } else { general }) = true;
+        }
+    }
+
+    /// What the progress says before the first request.
+    fn announced(&self, statements: usize) -> String {
+        format!(
+            "Looking up {statements} statement{} on the web, at most {} pages",
+            if statements == 1 { "" } else { "s" },
+            self.left
+        )
+    }
+}
+
 /// What a research round is asked to fill.
 #[derive(Clone, Copy, PartialEq)]
 enum Gaps {
@@ -556,19 +613,22 @@ async fn research<'a>(
     .await?;
     // The user's hints are searches like the planner's, their site written
     // where they wrote it.
-    let mut needs: Vec<web_research::PlannedNeed> = Vec::new();
+    let mut needs: Vec<(web_research::PlannedNeed, Option<usize>)> = Vec::new();
     for hint in hints {
         match web_research::PlannedNeed::web(hint.clone()).searches() {
-            Some(searches) => needs.extend(searches),
+            Some(searches) => needs.extend(searches.into_iter().map(|need| (need, None))),
             None => tracing::warn!(
                 chars = hint.chars().count(),
                 "A research hint is not a search: it needs 3 to 240 characters besides any site: operators"
             ),
         }
     }
-    for web_research::GapNeed { need, .. } in planned {
-        if !needs.iter().any(|existing| existing.line() == need.line()) {
-            needs.push(need);
+    for web_research::GapNeed { gap, need } in planned {
+        if !needs
+            .iter()
+            .any(|(existing, _)| existing.line() == need.line())
+        {
+            needs.push((need, Some(gap)));
         }
     }
     // An empty plan is the planner's answer that public search cannot help
@@ -614,7 +674,15 @@ async fn research<'a>(
         program_repo: &program_repo,
         library: &library,
     };
-    for need in needs {
+    let mut pages = Pages::of(kind, gaps.len());
+    // Said before the first request and kept on the line while the round
+    // searches, so the count is what the user reads.
+    let looking = match kind {
+        Gaps::Claims => pages.announced(gaps.len()),
+        Gaps::Topics => "Searching the web for missing lesson evidence".to_owned(),
+    };
+    crate::features::learning::lesson_progress::stage(looking.clone());
+    for (need, gap) in needs {
         let line = need.line();
         if !context
             .searched
@@ -625,9 +693,7 @@ async fn research<'a>(
             continue;
         }
         searched.queries.push(line.clone());
-        crate::features::learning::lesson_progress::stage(
-            "Searching the web for missing lesson evidence",
-        );
+        crate::features::learning::lesson_progress::stage(looking.clone());
         let cost = selection_cost(llm, gaps);
         let room = web_research::Room {
             tokens: selection_room(llm, &context.topic, &need.query, gaps),
@@ -651,15 +717,30 @@ async fn research<'a>(
         };
         reached = true;
         let mut capture_failed = false;
-        let candidates = results
+        let candidates: Vec<web_research::Candidate> = results
             .into_iter()
             .filter(|candidate| !urls.contains(&identity(&candidate.result.url)))
             .collect();
+        // The subject's owner, when the search resolved one: a result on its
+        // site is the statement's owner-site page.
+        let owner: Vec<String> = candidates
+            .iter()
+            .filter_map(|candidate| candidate.owner.as_ref())
+            .map(|owner| owner.domain.clone())
+            .take(1)
+            .collect();
         let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
         for (result, note) in selected {
+            let owned =
+                need.site.is_some() || super::provenance_gate::owner_hinted(&result.url, &owner);
+            if !pages.allows(gap, owned) {
+                continue;
+            }
             if !urls.insert(identity(&result.url)) {
                 continue;
             }
+            pages.take(gap, owned);
+            searched.fetched += 1;
             crate::features::learning::lesson_progress::stage(
                 "Saving an additional reference for lesson verification",
             );
@@ -672,6 +753,14 @@ async fn research<'a>(
                     continue;
                 }
             };
+            // The page read is judged as the library judges every page it
+            // holds: a login, home or listing page, a directory of links, a
+            // page too short to say anything and an abstract are not sources.
+            let address = captured.resolved_url.as_deref().unwrap_or(&result.url);
+            if let Err(refusal) = admission::admit(address, &captured.title, &captured.text) {
+                tracing::info!(url = %result.url, %refusal, "A fetched page is not a source; it is not saved");
+                continue;
+            }
             if let Some(version_id) = saving
                 .save(&mut sources, &mut urls, &result.url, captured, Some(&note))
                 .await?

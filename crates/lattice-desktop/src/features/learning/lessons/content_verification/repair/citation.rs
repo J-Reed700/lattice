@@ -78,6 +78,75 @@ pub(in crate::features::learning::lessons::content_verification) fn number_sourc
     }
 }
 
+/// Names, in the repair context's evidence table, the `sourceIndex` of each
+/// passage whose source the lesson numbers, so a repair that cites a passage
+/// can say which excerpt it is.
+pub(in crate::features::learning::lessons::content_verification) fn number_evidence(
+    context: &mut Value,
+    numbered: &[LearningSourceDto],
+) {
+    let Some(passages) = context.get_mut("evidence").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for passage in passages {
+        let index = passage
+            .get("sourceId")
+            .and_then(Value::as_str)
+            .and_then(|id| numbered.iter().position(|source| source.id == id));
+        if let (Some(index), Some(passage)) = (index, passage.as_object_mut()) {
+            passage.insert("sourceIndex".into(), json!(index));
+        }
+    }
+}
+
+/// The citations `repaired` appended to `section`'s own, in order.
+pub(super) fn appended(section: &Value, repaired: &Value) -> Vec<Value> {
+    let had = section
+        .get("citations")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    repaired
+        .get("citations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .skip(had)
+        .cloned()
+        .collect()
+}
+
+/// Puts the `appended` citations back into `confined`, a section whose repair
+/// was confined to the failed sentences. Only a citation of a sentence that
+/// stands in the section's text is kept, and none twice.
+pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field: &str) {
+    let text = if field == "blocks" {
+        "body"
+    } else {
+        "explanation"
+    };
+    let held = confined
+        .get(text)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let Some(listed) = confined
+        .as_object_mut()
+        .map(|section| section.entry("citations").or_insert_with(|| json!([])))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for entry in appended {
+        let stands = entry
+            .get("sentence")
+            .and_then(Value::as_str)
+            .is_some_and(|sentence| held.contains(sentence));
+        if stands && !listed.contains(&entry) {
+            listed.push(entry);
+        }
+    }
+}
+
 /// Rewrites the citation of each section one of whose claims pass B supported
 /// elsewhere to the passage found, the citation of the claim's sentence when
 /// the writer cited it: `quote` becomes the best-matching run of its

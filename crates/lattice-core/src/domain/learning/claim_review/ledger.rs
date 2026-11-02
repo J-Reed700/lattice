@@ -338,9 +338,10 @@ impl ClaimLedgerEntry {
         )
     }
 
-    /// Research runs once per claim and fingerprint, for the kinds new
-    /// passages can answer (§4): a claim below the bar too, which research
-    /// may find a stronger source for though no rewrite fixes it.
+    /// Research runs once per claim for its life, for the kinds new passages
+    /// can answer (§4): a claim below the bar too, which research may find a
+    /// stronger source for though no rewrite fixes it. Evidence a round
+    /// saved does not earn another (claim classes design §3.6).
     pub fn may_research(&self) -> bool {
         let cursor = self.cursor();
         matches!(

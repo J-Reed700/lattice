@@ -16,7 +16,7 @@ use lattice_core::application::contracts::web::{
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 pub(in crate::features::learning) const CAPTURE: &str =
-    "Random assignment reduces confounding in comparisons between treatment groups.";
+    "Random assignment reduces confounding in comparisons between treatment groups. A study that assigns participants to its groups by chance spreads every characteristic it did not measure across the groups in the same way, so the difference it finds afterward is not owed to who was placed where. Researchers give this as the reason a randomised comparison can support a causal claim where an observational one cannot. The method does not remove chance variation, which shrinks as the groups grow, and it does not repair a measurement that was biased or a trial in which many participants left. Those need their own safeguards, such as blinding the people who record the outcome and following up everyone who was assigned. Random assignment is also distinct from random sampling: sampling decides who is studied, assignment decides who receives which treatment, and the two protect different conclusions. Reports of trials state how the sequence of assignments was generated so a reader can judge whether the groups were comparable at the start.";
 pub(in crate::features::learning) struct ResearchWeb(
     MockWebService,
     Arc<Mutex<Vec<WebSearchInput>>>,
@@ -505,7 +505,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
 #[tokio::test]
 async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparisons() -> Result<()> {
     const SECOND_CAPTURE: &str =
-        "Allocation concealment prevents foreknowledge of treatment assignments.";
+        "Allocation concealment prevents foreknowledge of treatment assignments. The people enrolling participants in a trial must not be able to see or guess which group the next participant will join, because a recruiter who can foresee the assignment may steer sicker or healthier people toward one group, deliberately or without noticing. Concealment is kept until the moment a participant is irrevocably enrolled, for example by sealed opaque envelopes, a central telephone service or a pharmacy that prepares identical containers. It differs from blinding, which hides the assignment from participants and assessors after enrolment and protects the measurement of outcomes rather than the make-up of the groups. A trial can conceal its allocation even when blinding is impossible, as in a surgical comparison, and reports of trials describe the method of concealment separately from the method that generated the sequence. Where concealment fails, studies tend to exaggerate the benefit of the treatment under test.";
     struct ResearchRounds {
         first: Arc<ResearchWeb>,
         second: Arc<ResearchWeb>,
@@ -572,12 +572,15 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
                 let mut plans = self.plans.lock().unwrap();
                 *plans += 1;
                 assert!(
-                    *plans <= 2,
-                    "Research should finish once both gaps are resolved"
+                    *plans <= 1,
+                    "A claim is researched once: one round serves every gap"
                 );
                 return Ok(
-                    json!({"needs":[{"gap":0,"kind":"web","query":if *plans == 1 {"random assignment confounding official guidance"} else {"allocation concealment official guidance"}}]})
-                        .to_string(),
+                    json!({"needs":[
+                        {"gap":0,"kind":"web","query":"random assignment confounding official guidance"},
+                        {"gap":1,"kind":"web","query":"allocation concealment official guidance"}
+                    ]})
+                    .to_string(),
                 );
             }
             if prompt.starts_with("Select trustworthy references") {
@@ -637,7 +640,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     .await?;
     assert!(report.issues.is_empty());
     assert_eq!(report.sources.len(), 3);
-    assert_eq!(*llm.plans.lock().unwrap(), 2);
+    assert_eq!(*llm.plans.lock().unwrap(), 1);
     let checks = llm.claims.lock().unwrap();
     assert_eq!(
         checks
@@ -646,17 +649,19 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             .count(),
         1
     );
-    // The missing claim had no retrieval hits on the first pass, so its first
-    // model judgment happens only after research supplies a complete capture;
-    // Later automatic research is scoped to the remaining failed claim. Even
-    // when its page shares terminology with an already supported claim, that
-    // completed comparison stays reusable.
-    assert!(
-        !checks
-            .iter()
-            .any(|(round, claim)| *round == 2 && claim == CAPTURE),
-        "The second research round must not reopen a claim resolved by the first round: {checks:?}"
-    );
+    // The two missing claims had no retrieval hits on the first pass, so
+    // their first model judgments happen only after research supplies a
+    // complete capture of each, and the expanded collection judges each once.
+    for claim in [CAPTURE, SECOND_CAPTURE] {
+        assert_eq!(
+            checks
+                .iter()
+                .filter(|(round, checked)| *round == 1 && checked == claim)
+                .count(),
+            1,
+            "{checks:?}"
+        );
+    }
     for finding in &report.findings {
         assert_eq!(finding.verdict, ClaimVerdict::Supported);
         assert!(finding
@@ -679,7 +684,7 @@ async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() ->
 
     let target_url = "https://learn.microsoft.com/en-us/dotnet/api/system.threading.asynclocal-1";
     let second_url = "https://learn.microsoft.com/en-us/dotnet/fundamentals/runtime-libraries/system-threading-asynclocal";
-    let capture = "AsyncLocal<T> represents ambient data local to an asynchronous flow.";
+    let capture = "AsyncLocal<T> represents ambient data local to an asynchronous flow. A value stored in an AsyncLocal belongs to the logical flow of control that set it, not to any one thread, so code running after an await sees the value its caller set even when a different thread resumes it. The runtime copies the value into each flow that the setting code starts, which is why a change made in a child task is not seen by its parent, while a change made before the child starts is seen by the child. Libraries use this to carry request identifiers, culture settings and logging scopes through layers of asynchronous calls without passing them as arguments. Because the copy is made when work is queued, a long-lived background loop started early keeps the values it was given and does not see later changes. A notification callback can be supplied to observe each change, whether the value was set directly or replaced when a flow moved to another thread, which helps to diagnose a value that appears to leak.";
     let web = web_capture(false, target_url, capture);
     web.0.set_search_results(vec![
         WebSearchResult {
@@ -988,6 +993,180 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
                 assert!(searched.per_claim.is_some(), "the round is still timed");
                 assert!(searched.sources_added.is_empty());
             }
+            assert_eq!(
+                repo.verification_sources(&program.summary.id).await?.len(),
+                sources.len()
+            );
+            Ok(())
+        },
+    )
+    .await
+}
+
+/// The pages `serving` offers, each a long page of its own.
+fn serving(pages: &[(&str, &str)]) -> Arc<ResearchWeb> {
+    let web = web_capture(false, pages[0].0, CAPTURE);
+    web.0.set_search_results(
+        pages
+            .iter()
+            .map(|(url, title)| WebSearchResult {
+                title: (*title).into(),
+                url: (*url).into(),
+                snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
+    );
+    for (index, (url, title)) in pages.iter().enumerate() {
+        web.0.set_url_content(
+            url,
+            FetchUrlContentOutput {
+                url: (*url).into(),
+                title: Some((*title).into()),
+                content: format!("{CAPTURE} Page {index}."),
+                content_truncated: false,
+                word_count: 170,
+                fetch_time_ms: 1.,
+                content_type: None,
+                from_cache: false,
+                read_via: Default::default(),
+            },
+        );
+    }
+    web
+}
+
+#[test]
+fn a_round_fetches_at_most_two_pages_for_a_statement_and_twice_the_statements_in_all() {
+    assert_eq!(
+        Pages::of(Gaps::Claims, 7).announced(7),
+        "Looking up 7 statements on the web, at most 14 pages"
+    );
+    assert_eq!(
+        Pages::of(Gaps::Claims, 1).announced(1),
+        "Looking up 1 statement on the web, at most 2 pages"
+    );
+    let mut pages = Pages::of(Gaps::Claims, 3);
+    // The selector's first choice for a statement, then one page on its
+    // owner's site, then no more.
+    assert!(pages.allows(Some(0), false));
+    pages.take(Some(0), false);
+    assert!(!pages.allows(Some(0), false), "one general page");
+    assert!(pages.allows(Some(0), true));
+    pages.take(Some(0), true);
+    assert!(!pages.allows(Some(0), true) && !pages.allows(Some(0), false));
+    // Another statement's pages are its own.
+    assert!(pages.allows(Some(1), false));
+    // A hint's search stands behind no statement: only the total holds it.
+    pages.take(None, false);
+    assert!(pages.allows(None, false));
+    pages.take(Some(1), false);
+    pages.take(Some(1), true);
+    pages.take(Some(2), false);
+    assert!(!pages.allows(None, false), "six pages in all");
+    assert!(!pages.allows(Some(2), true));
+    // A lesson's topics have no statement and no bound.
+    let topics = Pages::of(Gaps::Topics, 9);
+    assert!(topics.allows(Some(4), false) && topics.allows(None, true));
+}
+
+#[tokio::test]
+async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_site_and_no_more(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = serving(&[
+        ("https://docs.example.org/guide", "Random assignment guide"),
+        (
+            "https://docs.example.org/reference",
+            "Random assignment reference",
+        ),
+        ("https://docs.example.org/notes", "Random assignment notes"),
+        (
+            "https://other.example.net/post",
+            "A post about random assignment",
+        ),
+        ("https://example.org/login", "Sign in"),
+    ]);
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                json!({"needs":[
+                    {"gap":0,"query":"random assignment confounding","kind":"web"},
+                    {"gap":0,"query":"random assignment guidance","kind":"official_docs","subject":"Example","site":"docs.example.org"}
+                ]})
+                .to_string(),
+                selection(&[0, 1, 2]),
+                selection(&[0, 1]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            let Expansion::Saved(expanded, searched) = outcome else {
+                panic!("the pages are sources");
+            };
+            // The selector chose three pages for the statement's general
+            // search and two for its owner-site search; one of each is read.
+            assert_eq!(searched.fetched, 2);
+            assert_eq!(searched.sources_added.len(), 2);
+            assert_eq!(expanded.sources.len(), sources.len() + 2);
+            // A login page is never offered to the selector.
+            let prompts = llm.prompts.lock().unwrap();
+            assert!(prompts.iter().all(|prompt| !prompt.contains("Sign in")));
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not_saved(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = web_capture(
+        false,
+        "https://example.org/research",
+        "Please sign in to continue to the library.",
+    );
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(
+                &model(),
+                &references,
+                &[gap()],
+                &[],
+                &ClaimChecks::default(),
+            )
+            .await?;
+            let Expansion::Unchanged(searched) = outcome else {
+                panic!("a page that is not a source adds nothing");
+            };
+            assert_eq!(searched.fetched, 1);
+            assert!(searched.sources_added.is_empty());
             assert_eq!(
                 repo.verification_sources(&program.summary.id).await?.len(),
                 sources.len()

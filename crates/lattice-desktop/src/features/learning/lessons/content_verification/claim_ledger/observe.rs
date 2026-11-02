@@ -747,7 +747,7 @@ impl ClaimLedger {
     }
 
     /// The claims research may look for evidence for, with the hints the user
-    /// gave: once per claim and evidence (§4), and a hint once (§5.1).
+    /// gave: once per claim for its life (§4), and a hint once (§5.1).
     pub(in crate::features::learning::lessons::content_verification) fn research_targets(
         &self,
         report: &LessonVerificationReport,

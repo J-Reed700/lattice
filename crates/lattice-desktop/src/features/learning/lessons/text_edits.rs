@@ -10,6 +10,11 @@ pub(super) const INSTRUCTIONS: &str = "Give edits, never a replacement lesson or
 /// parts list the sentences they cite (claim classes design §3.5).
 const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording or an attribution to a source needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body or explanation, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of 25 to 1200 characters and at least five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states.";
 
+/// What the claim repair is told besides [`INSTRUCTIONS`] when a lesson's
+/// parts list the sentences they cite: its corrected sentence cites the
+/// evidence passage it was given.
+const CITING_REWRITE: &str = "When your corrected sentence states a figure, a date, a version, a product's behaviour, quoted wording or an attribution that an evidence passage states, append a citation for it: the block or question by path, the corrected sentence copied exactly, the passage's sourceIndex from the evidence table and a quote, an exact span of the passage of 25 to 1200 characters and at least five words, that contains it. Never cite a passage that lacks what the sentence states; leave that detail out of the sentence instead.";
+
 /// Where a lesson's schema describes one cited sentence of a part.
 const CITATION: &str = "/properties/blocks/items/properties/citations/items";
 
@@ -55,6 +60,15 @@ pub(super) fn schema(candidate: &Value) -> Value {
 pub(super) fn instructions(lesson: &Value) -> String {
     if lesson.pointer(CITATION).is_some() {
         format!("{INSTRUCTIONS} {CITING}")
+    } else {
+        INSTRUCTIONS.to_owned()
+    }
+}
+
+/// [`INSTRUCTIONS`] for the claim repair under `lesson`'s schema.
+pub(super) fn rewrite_instructions(lesson: &Value) -> String {
+    if lesson.pointer(CITATION).is_some() {
+        format!("{INSTRUCTIONS} {CITING_REWRITE}")
     } else {
         INSTRUCTIONS.to_owned()
     }
