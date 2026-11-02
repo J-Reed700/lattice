@@ -438,10 +438,8 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert!(shown[&claim_id]
         .iter()
         .any(|passage| passage.source_version_id == version));
-    assert!(CheckerExamples::new(course.pool.clone())
-        .list(None)
-        .await?
-        .is_empty());
+    let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
+    assert!(examples.is_empty(), "{examples:?}");
     assert!(
         course
             .service()
@@ -491,6 +489,10 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
             ledger.revision.0,
         )
         .await?;
+    // The Verifier flagged it, the local checker passed it: no example of the
+    // local checker's.
+    let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
+    assert!(examples.is_empty(), "{examples:?}");
 
     let next = course.resume().await?;
     assert_eq!(
