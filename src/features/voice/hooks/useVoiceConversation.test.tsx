@@ -61,7 +61,9 @@ const QUIET = new Float32Array(FRAME_SAMPLES);
 const LOUD = new Float32Array(FRAME_SAMPLES).fill(0.05);
 
 function hear(frame: Float32Array, count: number) {
-  for (let i = 0; i < count; i += 1) h.mic?.onFrame(frame);
+  act(() => {
+    for (let i = 0; i < count; i += 1) h.mic?.onFrame(frame);
+  });
 }
 
 function publish(change: () => void) {

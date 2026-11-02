@@ -477,11 +477,11 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     await pageSays('Listening…', 60_000);
     voice.steps.push('webview2-opened-the-mic');
     // This test library has no chat model, so what was heard waits in the composer.
-    const composer = await displayedElement('textarea[aria-label="Message composer"]');
-    await browser.waitUntil(async () => /brown fox/i.test(await composer.getValue()), {
+    const composerText = async () => (await browser.$('textarea[aria-label="Message composer"]')).getValue();
+    await browser.waitUntil(async () => /brown fox/i.test(await composerText()), {
       timeout: 240_000, timeoutMsg: 'Whisper never put the recording in the composer',
     });
-    voice.transcript = await composer.getValue();
+    voice.transcript = await composerText();
     assert.match(voice.transcript, /lazy dog/i);
     await displayedElement('button[aria-label="Start a voice conversation"]');
     voice.steps.push('whisper-heard-it');
