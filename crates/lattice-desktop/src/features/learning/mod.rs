@@ -19,6 +19,7 @@ pub mod references;
 pub mod repository;
 pub mod runtime;
 pub mod service;
+pub mod tutor;
 
 // Public feature facade; implementations remain grouped by capability.
 pub use assessment::assessment_engine;

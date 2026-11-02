@@ -605,6 +605,7 @@ fn main() {
                     "create_interview_study_deck",
                     "create_learning_tangent",
                     "list_learning_tangents",
+                    "set_conversation_course",
                 ]),
             )
             .plugin(

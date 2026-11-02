@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Layers3, PanelRightClose, PanelRightOpen } from 'lucide-react';
@@ -40,6 +40,7 @@ import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMainte
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { useCourseIndexOpen, useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
+import { TutorPanel } from '@/features/learning/tutor/TutorPanel';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -120,6 +121,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
+  // A tutor turn may add to a lesson's note; a draft kept from before would save over it.
+  const clearNotebookDrafts = useCallback(() => setNotebookDrafts({}), []);
   const [savingBeforeMove, setSavingBeforeMove] = useState(false);
   const repair = useRepairLearningOutline(program.summary.id);
   const outlineBlocked = repair.isPending || outlineGeneration?.isPending || Boolean(program.outlineReview && program.outlineReview.status !== 'passed');
@@ -152,7 +155,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   // A prepared or replaced lesson changes what its quiz can ask.
   useEffect(() => { void queryClient.invalidateQueries({ queryKey: learningQuizOverviewKey(program.summary.id) }); }, [queryClient, program.summary.id, program.summary.revision]);
   const resume = allLessons.find(({ lesson }) => lesson.id === program.summary.currentLessonId) ?? allLessons.find(({ lesson }) => !lesson.completed);
-  const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'sources' as const, label: 'Sources' }];
+  const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'tutor' as const, label: 'Tutor' }, { id: 'sources' as const, label: 'Sources' }];
   const activateTab = (next: Tab) => {
     if (next === 'canvas') setCanvasOpened(true);
     if (next === 'practical') setPracticalOpened(true);
@@ -403,6 +406,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           onOpenLesson={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId); if (target) void afterNotebookSave(() => { setModuleId(target.module.id); setLessonId(lessonId); activateTab('lessons'); }); }}
           completionFor={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId)?.lesson; return target ? { completed: target.completed, pending: completePending, onComplete: () => onComplete(target) } : undefined; }} /></div>}
         {tab === 'sources' && <div className="mt-5">{program.summary.status === 'active' ? <><SourcesPanel programId={program.summary.id} onOpenReview={openHeldReview} /><SourceMaintenancePanel programId={program.summary.id} /></> : <div className="rounded-xl border border-dashed border-border bg-background p-6"><h3 className="font-serif text-xl text-text-primary">Accept this outline to open its source library</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">The outline’s original material is shown in each citation. After acceptance, you can add program-scoped snapshots, read saved versions, search their text, and review changes here.</p></div>}</div>}
+        {activeProgram && tab === 'tutor' && <TutorPanel program={program} lesson={currentLesson} onCourseChanged={clearNotebookDrafts} />}
         {activeProgram && tab === 'notebook' && <div className="mt-5"><NotebookPanel enabled program={program} lessonId={currentLesson?.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} /></div>}
         {activeProgram && canvasOpened && tab === 'canvas' && <div className="mt-5"><Suspense fallback={<div role="status" className="rounded-xl border border-border bg-surface p-8 text-sm text-text-muted">Opening Canvas…</div>}><LazyCanvasPanel programId={program.summary.id} lessonId={currentLesson?.id} lessonTitle={currentLesson?.title ?? 'Learning canvas'} theme={theme} enabled lesson={currentLesson} /></Suspense></div>}
         {activeProgram && tab === 'recall' && (

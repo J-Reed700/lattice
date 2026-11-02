@@ -14,6 +14,7 @@ import { fetchDocumentFileName, useLinkDocumentToSpaceMutation } from '@/feature
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
@@ -91,16 +92,17 @@ export function ChatView() {
     writeSidebarCollapsed(sidebarCollapsed);
   }, [sidebarCollapsed]);
 
-  // Chat never shows an Explorer thread: it would be continued without its
-  // folder. Coming back from the Explorer lands on the newest Chat
-  // conversation instead, or on none.
-  const activeExplorerRoot = conversations.find((conversation) => conversation.id === activeConversationId)?.explorerRoot;
+  // Chat never shows a bound chat: an Explorer thread would be continued
+  // without its folder, and a tutor chat lives in its course. Coming back
+  // lands on the newest Chat conversation instead, or on none.
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
+  const activeIsBound = Boolean(activeConversation && isBoundChat(activeConversation));
   useEffect(() => {
-    if (!activeExplorerRoot) return;
-    const next = conversations.find((conversation) => !conversation.explorerRoot);
+    if (!activeIsBound) return;
+    const next = conversations.find((conversation) => !isBoundChat(conversation));
     if (next) void selectConversation(next.id);
     else conversationUiStore.setState({ activeConversationId: null });
-  }, [activeExplorerRoot, conversations, selectConversation]);
+  }, [activeIsBound, conversations, selectConversation]);
 
   useEffect(() => {
     const element = rowRef.current;

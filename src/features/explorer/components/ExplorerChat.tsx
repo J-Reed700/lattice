@@ -1,12 +1,11 @@
 import { useState } from 'react';
 
-import { Check, ChevronDown, Loader2, MessageSquarePlus, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, MessageSquarePlus, MoreHorizontal, Trash2 } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
+import { DeleteConversationDialog } from '@/features/chat/components/DeleteConversationDialog';
 import { cn } from '@/lib/utils';
 
 import { ExplorerIndexNotice } from './ExplorerIndexNotice';
@@ -26,21 +25,7 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
   const [open, setOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const active = threads.threads.find((thread) => thread.id === threads.activeId);
-
-  const deleteConversation = async () => {
-    if (!deleteTarget || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      if (await threads.remove(deleteTarget.id)) setDeleteTarget(null);
-      else setDeleteError('The conversation could not be deleted. Try again.');
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -84,7 +69,7 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
         </IconButton>
         <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
           <PopoverTrigger asChild>
-            <IconButton label="Conversation actions" disabled={!active || deleting}>
+            <IconButton label="Conversation actions" disabled={!active}>
               <MoreHorizontal />
             </IconButton>
           </PopoverTrigger>
@@ -94,7 +79,6 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
               className="flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger-muted focus-visible:bg-danger-muted focus-visible:outline-hidden"
               onClick={() => {
                 setActionsOpen(false);
-                setDeleteError(null);
                 if (active) setDeleteTarget({ id: active.id, title: active.title });
               }}
             >
@@ -119,23 +103,7 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
         </div>
       )}
       {deleteTarget && (
-        <Dialog open onOpenChange={(next) => !next && !deleting && setDeleteTarget(null)}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Delete this conversation?</DialogTitle>
-              <DialogDescription>
-                &ldquo;{deleteTarget.title}&rdquo; and all of its messages will be permanently deleted. This can&apos;t be undone.
-              </DialogDescription>
-            </DialogHeader>
-            {deleteError && <p role="alert" className="text-sm text-danger-fg">{deleteError}</p>}
-            <DialogFooter>
-              <Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button>
-              <Button type="button" variant="destructive" disabled={deleting} onClick={() => void deleteConversation()}>
-                {deleting ? <><Loader2 className="h-4 w-4 animate-spin" />Deleting…</> : 'Delete conversation'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <DeleteConversationDialog conversation={deleteTarget} onDelete={threads.remove} onClose={() => setDeleteTarget(null)} />
       )}
     </div>
   );

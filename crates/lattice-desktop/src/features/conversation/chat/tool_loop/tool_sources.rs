@@ -14,6 +14,7 @@ use lattice_core::application::contracts::tools::{
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
+use lattice_core::application::ports::turn_source::SourcePassages;
 use lattice_core::shared::text::build_excerpt;
 
 /// Preview length for a page the model fetched itself, matching the preview a
@@ -171,6 +172,33 @@ fn picture_sources(output: &FindImageOutput) -> Vec<SourceDto> {
         });
     }
     sources
+}
+
+/// The sources a call adds to the turn. A turn source's tool adds the passages
+/// it returned; one of plain text, as all of a folder's are, adds none.
+pub(super) fn result_sources(
+    tool_name: &str,
+    result: &FunctionResult,
+    from_turn_source: bool,
+    highlight_terms: &[String],
+    tool_output_settings: &ToolOutputSettingsDto,
+) -> Vec<SourceDto> {
+    if !from_turn_source {
+        return collect_tool_sources(tool_name, result, highlight_terms, tool_output_settings);
+    }
+    result
+        .data
+        .clone()
+        .filter(|_| result.success)
+        .and_then(|data| serde_json::from_value::<SourcePassages>(data).ok())
+        .map(|output| {
+            output
+                .passages
+                .into_iter()
+                .map(|passage| passage.source)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn collect_tool_sources(

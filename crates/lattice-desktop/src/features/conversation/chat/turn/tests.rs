@@ -7,6 +7,7 @@ use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::application::ports::turn_source::SourcePassage;
 use lattice_core::application::ports::LLMPort;
 use std::sync::Mutex;
 
@@ -646,6 +647,236 @@ impl lattice_core::application::ports::turn_source::TurnSourcePort for Folder {
         _max_chars: usize,
     ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
         unreachable!("only offered tools")
+    }
+}
+
+fn passage(chunk: &str, content: &str) -> SourcePassage {
+    SourcePassage {
+        label: format!("Ranking › Fusion › Notes ({chunk})"),
+        source: serde_json::from_value(serde_json::json!({
+            "documentId": "course:version-1",
+            "chunkId": chunk,
+            "content": content,
+            "score": 1.0,
+            "fileName": "Notes",
+            "filePath": "",
+            "mimeType": "text/plain",
+            "category": "Course source",
+            "fileSizeBytes": 0,
+            "modifiedAt": "",
+        }))
+        .unwrap(),
+    }
+}
+
+/// A source that finds a passage for every question.
+#[derive(Debug)]
+struct Course {
+    policy: lattice_core::application::ports::turn_source::TurnSourcePolicy,
+}
+
+impl Course {
+    fn new() -> Self {
+        Self {
+            policy: lattice_core::application::ports::turn_source::TurnSourcePolicy {
+                routes_to_library: false,
+                offers_library_tools: true,
+                infers_intent: false,
+                verifies_cited_only: false,
+                tool_rounds: 10,
+                evidence_template: None,
+            },
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::turn_source::TurnSourcePort for Course {
+    fn policy(&self) -> lattice_core::application::ports::turn_source::TurnSourcePolicy {
+        self.policy
+    }
+    fn owns_tool(&self, tool: &str) -> bool {
+        tool == "search_course"
+    }
+    fn reads_only(&self, _tool: &str) -> bool {
+        true
+    }
+    fn activity_label(&self, tool: &str, _arguments: &serde_json::Value) -> String {
+        tool.into()
+    }
+    fn add_tools(&self, _tools: &mut Vec<lattice_core::application::ports::ToolDefinition>) {}
+    async fn context_block(&self, _: usize, _: bool, _: Option<&str>) -> String {
+        "Course: Search.".into()
+    }
+    async fn passages(&self, _question: &str, _max_chars: usize) -> Vec<SourcePassage> {
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")]
+    }
+    async fn execute_tool(
+        &self,
+        _call: lattice_core::application::contracts::tools::FunctionCall,
+        _max_chars: usize,
+    ) -> Result<lattice_core::application::contracts::tools::FunctionResult> {
+        unreachable!("not run")
+    }
+}
+
+fn course_turn(runtime: &FakeRuntime, source: TurnSource) -> PreparedTurn {
+    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
+    let mut turn = PreparedTurn::for_test(
+        "stage-course-conversation",
+        "stage-course-turn",
+        llm,
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    turn.source = Some(source);
+    turn
+}
+
+fn rendered(
+    turn: &PreparedTurn,
+    passages: Vec<SourcePassage>,
+    evidence: lattice_core::application::services::context_assembler::EvidenceBudget,
+) -> RenderedPrompt {
+    let mut retrieval = retrieval::empty_pipeline_outcome();
+    retrieval.evidence = evidence;
+    let carried = super::carry::CarriedMaterial {
+        attachments: TurnAttachments::default(),
+        pictures: Default::default(),
+        source_context: Some("Course: Search.".into()),
+        source_passages: passages,
+        attachment_names: Vec::new(),
+        attachment_ids: Vec::new(),
+    };
+    let retrieved = super::retrieve::Retrieved {
+        prior_sources: Vec::new(),
+        prior_left_out: 0,
+        retrieval,
+    };
+    let (sink, _) = recording_sink();
+    super::assemble::render_prompt(
+        turn,
+        SearchFlags::from_preferences(None),
+        None,
+        carried,
+        retrieved,
+        &sink,
+        &mut ConversationFlowTimingMetrics::default(),
+    )
+}
+
+/// A course's passages reach the prompt as a library passage does: numbered,
+/// read one by one, and in the list the answer's citations resolve against.
+#[test]
+fn a_source_s_passages_join_the_turn_s_numbered_passages() {
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
+    let runtime = FakeRuntime::default();
+    let turn = course_turn(&runtime, Arc::new(Course::new()));
+
+    let prompt = rendered(
+        &turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+
+    let message = &prompt.enhanced_message;
+    assert!(
+        message.contains(
+            "[1] Document: Ranking › Fusion › Notes (chunk-1)\nContent: Fusion sums reciprocal ranks."
+        ),
+        "{message}"
+    );
+    assert!(
+        !message.contains("Document ID:"),
+        "it reads on with the course's tools: {message}"
+    );
+    assert!(
+        message.ends_with(crate::features::conversation::chat::tool_loop::READING_INSTRUCTION),
+        "{message}"
+    );
+    assert_eq!(prompt.sources[0].citation_id, Some(1));
+    assert_eq!(prompt.sources[0].document_id, "course:version-1");
+    assert_eq!(prompt.sources[0].content, "Fusion sums reciprocal ranks.");
+    assert!(prompt.has_grounded_context);
+}
+
+/// A passage the budget cut is no source of the answer, as for the library.
+#[test]
+fn a_source_s_passage_the_budget_cut_is_no_source() {
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
+    let runtime = FakeRuntime::default();
+    let turn = course_turn(&runtime, Arc::new(Course::new()));
+
+    let prompt = rendered(
+        &turn,
+        vec![passage("chunk-1", &"word ".repeat(400))],
+        EvidenceBudget::new(5),
+    );
+
+    assert!(prompt.sources.is_empty());
+    assert!(!prompt.enhanced_message.contains("[1] Document:"));
+}
+
+async fn carried_passages(source: TurnSource, closed_book: bool) -> usize {
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
+    let runtime = FakeRuntime::default();
+    let turn = course_turn(&runtime, source);
+    let flags = SearchFlags {
+        closed_book,
+        ..SearchFlags::from_preferences(None)
+    };
+    let mut evidence = EvidenceBudget::new(10_000);
+    let carried = super::carry::carry_material(
+        &runtime,
+        &turn,
+        flags,
+        Vec::new(),
+        Vec::new(),
+        &mut evidence,
+    )
+    .await;
+    carried.source_passages.len()
+}
+
+/// A closed-book turn searches nothing, and a folder cites by line.
+#[tokio::test]
+async fn only_an_open_turn_on_a_source_with_passages_carries_them() {
+    assert_eq!(carried_passages(Arc::new(Course::new()), false).await, 1);
+    assert_eq!(carried_passages(Arc::new(Course::new()), true).await, 0);
+    assert_eq!(carried_passages(Arc::new(Folder), false).await, 0);
+}
+
+/// A tutor keeps a chat's tools: its library search stays offered without the
+/// user turning it on.
+#[test]
+fn a_source_that_offers_the_library_keeps_its_tools() {
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
+    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
+    let course: TurnSource = Arc::new(Course::new());
+    let offered: Vec<String> = super::assemble::offered_tools(
+        &runtime,
+        &llm,
+        &[],
+        Some(&course),
+        SearchFlags::from_preferences(None),
+        None,
+        super::assemble::Grounding {
+            can_open_pages: false,
+            has_grounded_context: false,
+        },
+    )
+    .into_iter()
+    .map(|tool| tool.name)
+    .collect();
+    for name in LIBRARY_TOOL_NAMES {
+        assert!(
+            offered.iter().any(|tool| tool == name),
+            "{name} in {offered:?}"
+        );
     }
 }
 

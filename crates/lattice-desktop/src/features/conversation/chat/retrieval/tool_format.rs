@@ -5,6 +5,7 @@ use lattice_core::application::contracts::tools::{
     WikiSummaryOutput,
 };
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
+use lattice_core::application::ports::turn_source::SourcePassages;
 use lattice_core::shared::text::safe_truncate;
 use std::collections::HashMap;
 
@@ -52,6 +53,9 @@ pub(super) fn format_tool_result(
     if source_text {
         if let Some(text) = data.as_str() {
             return safe_truncate(text, allowance);
+        }
+        if let Ok(output) = serde_json::from_value::<SourcePassages>(data.clone()) {
+            return render_source_passages(&output, allowance, citations);
         }
     }
     let templates = &settings.templates;
@@ -252,6 +256,42 @@ pub(super) fn format_tool_result(
     fit_text(&rendered, allowance)
 }
 
+/// A turn source's passages, each under the turn's number for it as a library
+/// result is, as many as fit, closed by the source's note.
+fn render_source_passages(
+    output: &SourcePassages,
+    allowance: usize,
+    citations: &HashMap<String, u32>,
+) -> String {
+    let note = output
+        .note
+        .as_deref()
+        .map_or_else(String::new, |note| format!("\n[{note}]"));
+    let blocks: Vec<String> = output
+        .passages
+        .iter()
+        .map(|passage| {
+            let number = citations
+                .get(&passage.source.chunk_id)
+                .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+            format!(
+                "{number} {}\n{}",
+                passage.label,
+                passage.source.content.trim()
+            )
+        })
+        .collect();
+    if blocks.is_empty() {
+        return note.trim_start().to_string();
+    }
+    let (text, _) = fit_blocks(
+        &blocks,
+        allowance.saturating_sub(note.chars().count()),
+        "Search again more narrowly to see them.",
+    );
+    keep_note(&format!("{text}{note}"), allowance)
+}
+
 /// `blocks` joined by blank lines, as many from the front as fit `room`
 /// characters, and how many that was. When some do not fit, a closing line
 /// says how many were left out and `how_to_reach` says how to see them: the
@@ -392,6 +432,7 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
 mod fetched_page_tests {
     use super::*;
     use lattice_core::application::contracts::tools::FunctionResult;
+    use lattice_core::application::ports::turn_source::SourcePassage;
 
     fn page(content: &str) -> FunctionResult {
         FunctionResult::success(
@@ -519,6 +560,120 @@ mod fetched_page_tests {
             })
             .unwrap_or_default(),
         )
+    }
+
+    fn source_passage(chunk: &str, content: &str) -> SourcePassage {
+        let source = serde_json::from_value(serde_json::json!({
+            "documentId": "course:version-1",
+            "chunkId": chunk,
+            "content": content,
+            "score": 1.0,
+            "fileName": "Search notes",
+            "filePath": "",
+            "mimeType": "text/plain",
+            "category": "Course source",
+            "fileSizeBytes": 0,
+            "modifiedAt": "",
+        }))
+        .unwrap();
+        SourcePassage {
+            label: format!("Ranking › Fusion › Search notes (source_id: {chunk})"),
+            source,
+        }
+    }
+
+    fn source_result(passages: Vec<SourcePassage>, note: Option<&str>) -> FunctionResult {
+        FunctionResult::success(
+            serde_json::to_value(SourcePassages {
+                passages,
+                note: note.map(str::to_string),
+            })
+            .unwrap(),
+        )
+    }
+
+    fn render_source(
+        result: &FunctionResult,
+        allowance: usize,
+        citations: &HashMap<String, u32>,
+    ) -> String {
+        format_tool_result(
+            "search_course",
+            result,
+            &ToolOutputSettingsDto::default(),
+            allowance,
+            0,
+            true,
+            citations,
+        )
+    }
+
+    /// Each passage reads under the turn's number for it, so the model cites
+    /// it as it cites a library passage, and what closes the result stays.
+    #[test]
+    fn a_source_s_passages_are_shown_under_the_turn_s_numbers() {
+        let citations = HashMap::from([("a".to_owned(), 7), ("b".to_owned(), 8)]);
+        let result = source_result(
+            vec![
+                source_passage("a", "Fusion sums reciprocal ranks."),
+                source_passage("b", "A larger k flattens them."),
+            ],
+            Some("Call read_course_source to read on."),
+        );
+
+        let rendered = render_source(&result, 4_000, &citations);
+
+        assert!(
+            rendered.contains(
+                "[7] Ranking › Fusion › Search notes (source_id: a)\nFusion sums reciprocal ranks."
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[8] Ranking"), "{rendered}");
+        assert!(
+            rendered.ends_with("\n[Call read_course_source to read on.]"),
+            "{rendered}"
+        );
+    }
+
+    /// With no room for every passage, the note still closes the result and
+    /// says how many were left out.
+    #[test]
+    fn a_source_s_passages_past_the_allowance_are_counted() {
+        let long = "word ".repeat(400);
+        let result = source_result(
+            vec![source_passage("a", &long), source_passage("b", &long)],
+            Some("Read on."),
+        );
+        let citations = HashMap::from([("a".to_owned(), 1), ("b".to_owned(), 2)]);
+
+        let rendered = render_source(&result, 2_800, &citations);
+
+        assert!(rendered.chars().count() <= 2_800, "{}", rendered.len());
+        assert!(
+            rendered.contains("1 more result(s) did not fit"),
+            "{rendered}"
+        );
+        assert!(rendered.ends_with("[Read on.]"), "{rendered}");
+    }
+
+    #[test]
+    fn a_source_with_nothing_found_says_why() {
+        let result = source_result(Vec::new(), Some("No passage matched."));
+        assert_eq!(
+            render_source(&result, 4_000, &HashMap::new()),
+            "[No passage matched.]"
+        );
+    }
+
+    /// A folder's tools return plain text, and it stays what they wrote.
+    #[test]
+    fn a_source_s_plain_text_is_left_as_it_is() {
+        let result = FunctionResult::success(serde_json::Value::String("  1 fn main() {}".into()));
+        assert_eq!(
+            render_source(&result, 4_000, &HashMap::new()),
+            "  1 fn main() {}"
+        );
     }
 
     /// A number of the result's own would read as the passage the turn holds

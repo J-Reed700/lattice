@@ -23,6 +23,8 @@ pub(super) struct ConversationExplorerRow {
     pub(super) forked_from_conversation_id: Option<String>,
     pub(super) forked_from_message_id: Option<String>,
     pub(super) explorer_root: Option<String>,
+    pub(super) program_id: Option<String>,
+    pub(super) lesson_id: Option<String>,
 }
 
 impl ConversationExplorerRow {
@@ -53,6 +55,8 @@ impl ConversationExplorerRow {
             forked_from_conversation_id: self.forked_from_conversation_id,
             forked_from_message_id: self.forked_from_message_id,
             explorer_root: self.explorer_root,
+            program_id: self.program_id,
+            lesson_id: self.lesson_id,
             tangent_parent_id: None,
         })
     }
@@ -110,6 +114,8 @@ impl ConversationRepository {
             c.forked_from_conversation_id,
             c.forked_from_message_id,
             c.explorer_root,
+            c.program_id,
+            c.lesson_id,
             (
                 SELECT m.content
                 FROM conversation_messages m
@@ -125,6 +131,10 @@ impl ConversationRepository {
         if let Some(space_id) = &query.space_id {
             ensure_standard_space(&self.pool, space_id).await?;
             qb.push(" AND c.space_id = ").push_bind(space_id);
+        }
+
+        if let Some(program_id) = &query.program_id {
+            qb.push(" AND c.program_id = ").push_bind(program_id);
         }
 
         if query.saved_only.unwrap_or(false) {

@@ -81,6 +81,11 @@ pub struct ConversationDto {
     /// path. Set only on Explorer threads; Chat leaves them out of its list
     /// so a thread is never continued without its folder.
     pub explorer_root: Option<String>,
+    /// The course a tutor chat teaches from. Set only on tutor chats, which
+    /// live in the course's Tutor tab; Chat leaves them out of its list.
+    pub program_id: Option<String>,
+    /// The lesson a tutor chat was opened from, when it was.
+    pub lesson_id: Option<String>,
     /// Present while this transcript lives in its parent's Tangents panel.
     pub tangent_parent_id: Option<String>,
 }
@@ -333,6 +338,8 @@ mod tests {
             forked_from_conversation_id: None,
             forked_from_message_id: None,
             explorer_root: None,
+            program_id: None,
+            lesson_id: None,
             tangent_parent_id: None,
         };
 

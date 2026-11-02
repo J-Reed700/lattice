@@ -105,6 +105,17 @@ async fn tangent(
     Ok(conversation)
 }
 
+/// A tutor chat opened from `lesson_id`.
+async fn tutor_chat(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<()> {
+    sqlx::query("INSERT INTO conversations (id,title,program_id,lesson_id) VALUES (?,'Tutor',?,?)")
+        .bind(id())
+        .bind(program_id)
+        .bind(lesson_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn audit_on(pool: &SqlitePool, program_id: &str) -> Result<()> {
     sqlx::query("UPDATE learning_programs SET verifier_audit='on',verifier_web_search=1,verifier_consent_at=9,verifier_consent_provider='provider' WHERE id=?")
         .bind(program_id)
@@ -128,6 +139,7 @@ async fn course(pool: &SqlitePool) -> Result<(String, String, String, String)> {
         reviewed_lesson(pool, &program.summary.id, published, "ready", "completed").await?;
     reviewed_lesson(pool, &program.summary.id, failed, "verifying", "failed").await?;
     tangent(pool, &program.summary.id, &module.id, published).await?;
+    tutor_chat(pool, &program.summary.id, published).await?;
     audit_on(pool, &program.summary.id).await?;
     Ok((program.summary.id.clone(), published.clone(), job, claim))
 }
@@ -377,6 +389,16 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
             .fetch_one(&pool)
             .await?;
     assert_eq!(tangent_lesson, lesson);
+    let tutor_lesson: Option<String> =
+        sqlx::query_scalar("SELECT lesson_id FROM conversations WHERE program_id=?")
+            .bind(&course)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        tutor_lesson.as_deref(),
+        Some(lesson.as_str()),
+        "replacing a course leaves its tutor chats on it"
+    );
     let verifier: (String, i64, Option<i64>, Option<String>) = sqlx::query_as(
         "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
     )

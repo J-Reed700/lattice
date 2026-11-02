@@ -825,4 +825,10 @@ fn the_folder_template_cites_only_numbered_passages() {
     assert!(FOLDER_TEMPLATE
         .contains("Bracket numbers like [1] belong only to the numbered library or web passages"));
     assert!(FOLDER_TEMPLATE.contains("{context}") && FOLDER_TEMPLATE.contains("{question}"));
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(FOLDER_TEMPLATE)),
+        "6ce3edf0508f98fe598f5ca5ed82681ec6e70010114fea969e4157a10f2fbc70",
+        "the folder's template is as it was before the tutor"
+    );
 }

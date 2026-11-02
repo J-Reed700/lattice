@@ -21,6 +21,7 @@ import {
 } from '@/types/conversation';
 import { createCitationMap } from '@/utils/citations';
 import { sanitizeFileName } from '@/utils/sanitize';
+import { isCourseSource } from '@/utils/sourcePreview';
 
 /** How many ungrounded sentences a verification line names before it counts. */
 const MAX_NAMED_UNSUPPORTED = 3;
@@ -82,14 +83,15 @@ export function isWebSource(
 /**
  * The distinct vault documents an answer rests on, in citation order.
  *
- * What "Compare sources" opens. Web pages are left out: Compare reads files,
- * and handing it a page id produces a row that can never be filled.
+ * What "Compare sources" opens. Web pages and course passages are left out:
+ * Compare reads files, and handing it another id produces a row that can never
+ * be filled.
  */
 export function vaultDocumentIds(sources: readonly SourceWithMetadata[]): string[] {
   const seen = new Set<string>();
   const ids: string[] = [];
   for (const source of sources) {
-    if (isWebSource(source)) continue;
+    if (isWebSource(source) || isCourseSource(source)) continue;
     const id = source.documentId?.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);

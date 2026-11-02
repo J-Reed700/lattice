@@ -114,6 +114,53 @@ fn the_evidence_frame_is_the_template_the_turn_sends() {
     assert!(evidence_frame(&settings, QUESTION, None).starts_with(document_opening));
 }
 
+/// Every prompt a turn outside the tutor renders, byte for byte. The digest
+/// was taken from the code before the tutor existed: it moves only when one of
+/// those prompts does.
+#[test]
+fn prompts_outside_the_tutor_are_unchanged() {
+    use sha2::{Digest, Sha256};
+    let settings = settings();
+    let ordinary = |is_greeting: bool| {
+        PromptMessageBuilder::new(
+            &settings,
+            QUESTION,
+            is_greeting,
+            SearchFlags::from_preferences(None),
+        )
+    };
+    let prompts = [
+        ordinary(false).build(),
+        ordinary(true).build(),
+        ordinary(false).with_kb_attempted(true).build(),
+        ordinary(false)
+            .with_kb_context(Some(PASSAGE.into()))
+            .with_kb_attempted(true)
+            .reading_passages(true)
+            .build(),
+        ordinary(false)
+            .with_web_context(Some(PASSAGE.into()))
+            .reading_passages(true)
+            .build(),
+        source_turn(&settings, Some(TEMPLATE))
+            .with_source_context(Some(SOURCE.into()))
+            .build(),
+        source_turn(&settings, Some(TEMPLATE))
+            .with_source_context(Some(SOURCE.into()))
+            .with_kb_context(Some(PASSAGE.into()))
+            .reading_passages(true)
+            .build(),
+        evidence_frame(&settings, QUESTION, None),
+        evidence_frame(&settings, QUESTION, Some(policy(Some(TEMPLATE)))),
+        settings.system_prompt.clone(),
+    ];
+    let digest = format!("{:x}", Sha256::digest(prompts.join("\u{0}")));
+    assert_eq!(
+        digest,
+        "446432fefdeb1630aca0419cb828bb57bbec79f51c9af127e698b4f2e97b9384"
+    );
+}
+
 /// An ordinary chat still answers from its documents and cites them.
 #[test]
 fn an_ordinary_turn_keeps_the_document_answer_template() {

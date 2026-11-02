@@ -1143,6 +1143,7 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_programs: () => [program.summary],
       // No journey opens a tangent from a lesson, so every program lists none.
       list_learning_tangents: (): LearningTangentDto[] => [],
+      set_conversation_course: (): null => null,
       get_learning_program: () => program,
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {

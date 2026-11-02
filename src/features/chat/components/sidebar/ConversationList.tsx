@@ -39,6 +39,7 @@ import { useForkLineage } from '@/features/chat/hooks/useForkLineage';
 import { useJournalsQuery } from '@/features/chat/hooks/workspaceQueries';
 import { useGenerateConversationFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
 import { normalizeHexColor } from '@/features/spaces/model/spaces';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
@@ -69,9 +70,9 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     setConversationPinned,
     setConversationArchived,
   } = useConversationsStore();
-  // Explorer threads live in the Explorer, beside their folder.
+  // Bound chats live beside what they are bound to.
   const conversations = useMemo(
-    () => allConversations.filter((conversation) => !conversation.explorerRoot),
+    () => allConversations.filter((conversation) => !isBoundChat(conversation)),
     [allConversations]
   );
   const { journals } = useJournalsQuery();

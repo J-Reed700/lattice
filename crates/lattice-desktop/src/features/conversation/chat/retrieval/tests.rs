@@ -164,7 +164,8 @@ fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
     }
 }
 
-fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
+pub(in crate::features::conversation::chat) fn empty_pipeline_outcome() -> RetrievalPipelineOutcome
+{
     RetrievalPipelineOutcome {
         short_circuit_response: None,
         interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(

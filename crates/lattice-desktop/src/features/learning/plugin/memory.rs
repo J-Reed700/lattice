@@ -67,20 +67,8 @@ pub async fn ensure_learning_lesson_note(
                 "Lesson does not belong to this learning program.".into(),
             ))
         })?;
-    let mut content = "# Lesson notes\n\n## Sources\n".to_owned();
-    for source in &program.sources {
-        content.push_str(&format!(
-            "- **{}** — {}\n",
-            source.title,
-            source.url.as_deref().unwrap_or("Selected document")
-        ));
-    }
-    content.push_str("\n## Key ideas\n\n_Add notes in your own words._\n\n## Reflection\n\n");
-    content.push_str(&format!(
-        "How does this lesson help with the objective: {}?\n",
-        lesson.objective
-    ));
-    let title = format!("{} — {}", program.summary.title, lesson.title);
+    let (title, content) =
+        crate::features::learning::repository::lesson_note_draft(&program, lesson);
     let (note_id, created) = repo
         .ensure_lesson_note(&request.program_id, &request.lesson_id, &title, &content)
         .await

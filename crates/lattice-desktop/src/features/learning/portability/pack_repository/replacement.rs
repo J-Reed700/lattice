@@ -129,12 +129,15 @@ type TangentLink = (
 type VerifierConsent = (String, i64, Option<i64>, Option<String>);
 
 /// What lives on this computer outside any pack: lesson notes in the
-/// notebook, tangent chats, and the Verifier audit consent given here.
+/// notebook, tangent chats, tutor chats, and the Verifier audit consent given
+/// here.
 /// Taken before the replaced course is deleted, which cascades it away.
 pub(super) struct LocalLinks {
     journal_id: Option<String>,
     notes: Vec<(String, String, i64)>,
     tangents: Vec<TangentLink>,
+    /// Each tutor chat's id and the lesson it was opened from.
+    tutor_chats: Vec<(String, Option<String>)>,
     verifier: Option<VerifierConsent>,
 }
 
@@ -167,6 +170,11 @@ pub(super) async fn snapshot_local_links(
     .fetch_all(&mut *connection)
     .await
     .map_err(db)?;
+    let tutor_chats = sqlx::query_as("SELECT id,lesson_id FROM conversations WHERE program_id=?")
+        .bind(program_id)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
     let verifier = sqlx::query_as(
         "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
     )
@@ -178,6 +186,7 @@ pub(super) async fn snapshot_local_links(
         journal_id,
         notes,
         tangents,
+        tutor_chats,
         verifier,
     })
 }
@@ -238,6 +247,16 @@ pub(super) async fn restore_local_links(
             .bind(&selected_text)
             .bind(context)
             .bind(created_at)
+            .bind(program_id)
+            .bind(&lesson_id)
+            .bind(&conversation_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(db)?;
+    }
+    for (conversation_id, lesson_id) in saved.tutor_chats {
+        sqlx::query("UPDATE conversations SET program_id=?,lesson_id=(SELECT id FROM learning_lessons WHERE program_id=? AND id=?) WHERE id=?")
+            .bind(program_id)
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&conversation_id)

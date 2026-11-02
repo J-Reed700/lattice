@@ -1325,6 +1325,18 @@ async listLearningTangents(request: ListLearningTangentsRequestDto) : Promise<Re
 }
 },
 /**
+ * Makes a conversation a tutor chat of a course, on one of its lessons when it
+ * was opened from one.
+ */
+async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_conversation_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Download a model by ID
  *
  * Thin wrapper over `download_model_impl`, the shared model-setup command.
@@ -5308,6 +5320,15 @@ forkedFromMessageId: string | null;
  */
 explorerRoot: string | null;
 /**
+ * The course a tutor chat teaches from. Set only on tutor chats, which
+ * live in the course's Tutor tab; Chat leaves them out of its list.
+ */
+programId: string | null;
+/**
+ * The lesson a tutor chat was opened from, when it was.
+ */
+lessonId: string | null;
+/**
  * Present while this transcript lives in its parent's Tangents panel.
  */
 tangentParentId: string | null }
@@ -8070,7 +8091,11 @@ export type ListBatchJobsResponseDto = {
  * List of batch job summaries (newest first)
  */
 jobs: BatchJobSummaryDto[] }
-export type ListConversationsExplorerQueryDto = { spaceId: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListConversationsExplorerQueryDto = { spaceId: string | null;
+/**
+ * Only the tutor chats of this course.
+ */
+programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
 /**
  * Query parameters for listing conversations.
  */
@@ -9211,6 +9236,11 @@ export type SetArchivePassphraseRequestDto = {
  * `None` removes the passphrase slot; the recovery code always remains.
  */
 passphrase?: string | null }
+export type SetConversationCourseRequestDto = { conversationId: string; programId: string;
+/**
+ * The lesson the chat was opened from, when it was.
+ */
+lessonId: string | null }
 export type SetConversationStateRequestDto = { conversationId: string; value: boolean }
 /**
  * Pins or unpins an entry in one journal; the conversation's own pin in the

@@ -15,6 +15,8 @@ struct ConversationStateRow {
     forked_from_conversation_id: Option<String>,
     forked_from_message_id: Option<String>,
     explorer_root: Option<String>,
+    program_id: Option<String>,
+    lesson_id: Option<String>,
     tangent_parent_id: Option<String>,
 }
 async fn fetch_conversation_state(
@@ -36,6 +38,8 @@ async fn fetch_conversation_state(
             c.forked_from_conversation_id AS forked_from_conversation_id,
             c.forked_from_message_id AS forked_from_message_id,
             c.explorer_root AS explorer_root,
+            c.program_id AS program_id,
+            c.lesson_id AS lesson_id,
             c.tangent_parent_id AS tangent_parent_id,
             (
                 SELECT m.content
@@ -75,6 +79,8 @@ fn to_conversation_dto(
         forked_from_conversation_id,
         forked_from_message_id,
         explorer_root,
+        program_id,
+        lesson_id,
         tangent_parent_id,
     ) = if let Some(s) = state {
         (
@@ -91,6 +97,8 @@ fn to_conversation_dto(
             s.forked_from_conversation_id,
             s.forked_from_message_id,
             s.explorer_root,
+            s.program_id,
+            s.lesson_id,
             s.tangent_parent_id,
         )
     } else {
@@ -100,6 +108,8 @@ fn to_conversation_dto(
             Some(false),
             Some(false),
             Some(false),
+            None,
+            None,
             None,
             None,
             None,
@@ -135,6 +145,8 @@ fn to_conversation_dto(
         forked_from_conversation_id,
         forked_from_message_id,
         explorer_root,
+        program_id,
+        lesson_id,
         tangent_parent_id,
     }
 }

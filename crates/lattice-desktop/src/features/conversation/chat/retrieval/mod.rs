@@ -38,6 +38,8 @@ pub use self::source_citations::WEB_SOURCE_PREFIX;
 pub(super) use self::source_citations::{
     drop_unbudgeted_sources, web_context_entries, WebContextItem,
 };
+#[cfg(test)]
+pub(super) use self::tests::empty_pipeline_outcome;
 mod sufficiency;
 mod summary_tier;
 mod tool_format;
@@ -182,6 +184,35 @@ pub(super) struct RetrievalPipelineOutcome {
     /// Every web search retrieval ran before the model did, the first one
     /// first, so a deep-research turn can tell the model what not to repeat.
     pub(super) web_queries: Vec<String>,
+}
+
+impl RetrievalPipelineOutcome {
+    /// Puts a turn source's passages ahead of what the library found. From
+    /// here they are the same evidence: fitted, numbered, shown and cited as a
+    /// library passage is. No document id is shown, so the model reads on with
+    /// the source's tools rather than `get_document`.
+    pub(super) fn lead_with(
+        &mut self,
+        passages: Vec<lattice_core::application::ports::turn_source::SourcePassage>,
+    ) {
+        let results = passages.iter().map(|passage| SearchResultDto {
+            id: passage.source.chunk_id.clone(),
+            title: passage.label.clone(),
+            content: passage.source.content.clone(),
+            score: passage.source.score,
+            path: None,
+            document_id: None,
+            position: None,
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: HashMap::new(),
+        });
+        self.search_response.results.splice(0..0, results);
+        self.sources
+            .splice(0..0, passages.into_iter().map(|passage| passage.source));
+    }
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
