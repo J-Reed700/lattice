@@ -30,20 +30,21 @@ pub(super) fn figure(n: usize) -> String {
     format!("DictReader buffers {}00 rows before parsing.", n + 1)
 }
 
-/// The claim a fixture section states.
-fn statement_in(text: &str) -> String {
+/// The claim a fixture section states; a section of practice alone states
+/// none.
+fn statement_in(text: &str) -> Option<String> {
     if let Some(start) = text.find("DictReader buffers ") {
         let rest = &text[start..];
-        return rest[..=rest.find('.').unwrap()].to_owned();
+        return Some(rest[..=rest.find('.').unwrap()].to_owned());
     }
-    if text.contains(BAD) {
-        BAD.into()
-    } else if text.contains(GOOD) {
-        GOOD.into()
-    } else {
-        text.into()
-    }
+    [BAD, GOOD]
+        .into_iter()
+        .find(|statement| text.contains(*statement))
+        .map(str::to_owned)
 }
+
+/// What the fixture says of a section that states nothing to check.
+const NOTHING_TO_CHECK: &str = "The fixture's section holds only practice.";
 
 /// A lesson of one-sentence sections.
 /// Practice that states nothing to check, so each section holds one claim.
@@ -72,10 +73,11 @@ pub(super) struct Figures {
     inner: Model,
     repair_to_good: bool,
     fail_repair_at: Option<usize>,
-    /// The first passes, counted by the sorting each begins with, whose
-    /// strict judgments come back unreadable.
-    unusable_passes: usize,
-    passes: AtomicUsize,
+    /// The first asks for a strict judgment, each with the correction the
+    /// checker sends after an answer it cannot read, whose answers come back
+    /// unreadable.
+    unusable_asks: usize,
+    asks: AtomicUsize,
     repairs: AtomicUsize,
     judged: Mutex<Vec<String>>,
     extracted: Mutex<Vec<Vec<usize>>>,
@@ -87,8 +89,8 @@ impl Figures {
             inner: Model::new(),
             repair_to_good: false,
             fail_repair_at: None,
-            unusable_passes: 0,
-            passes: AtomicUsize::new(0),
+            unusable_asks: 0,
+            asks: AtomicUsize::new(0),
             repairs: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
             extracted: Mutex::new(Vec::new()),
@@ -114,7 +116,10 @@ impl Figures {
                             .find(|p| p["field"] == "/body")
                             .unwrap();
                         let statement = statement_in(passage["text"].as_str().unwrap());
-                        json!({"index":unit["index"],"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""})
+                        match statement {
+                            Some(statement) => json!({"index":unit["index"],"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""}),
+                            None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
+                        }
                     })
                     .collect(),
             )
@@ -132,9 +137,17 @@ impl Figures {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|claim| json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if claim["statement"] == json!(statement) { Value::Null } else { json!(statement) }}))
+                .map(|claim| match &statement {
+                    Some(statement) => json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if claim["statement"] == json!(statement) { Value::Null } else { json!(statement) }}),
+                    None => json!({"claimId":claim["claimId"],"passageId":Value::Null,"statement":Value::Null}),
+                })
                 .collect();
-            return Ok(json!({"changes":changes,"nonFactualReason":""}).to_string());
+            let reason = if statement.is_some() {
+                ""
+            } else {
+                NOTHING_TO_CHECK
+            };
+            return Ok(json!({"changes":changes,"nonFactualReason":reason}).to_string());
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);
@@ -155,7 +168,7 @@ impl Figures {
             } else {
                 figure(repair)
             };
-            let after = body.replace(&statement_in(body), &replacement);
+            let after = body.replace(&statement_in(body).unwrap(), &replacement);
             return Ok(
                 json!({"edits":[{"path":"/blocks/0/body","before":body,"after":after}]})
                     .to_string(),
@@ -185,16 +198,19 @@ impl LLMPort for Figures {
         let prompts = fixture_prompts(request);
         if prompts
             .iter()
-            .any(|prompt| prompt.starts_with("You sort statements"))
+            .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            self.passes.fetch_add(1, Ordering::Relaxed);
-        }
-        if self.passes.load(Ordering::Relaxed) <= self.unusable_passes
-            && prompts
+            let correcting = prompts
                 .iter()
-                .any(|prompt| prompt.starts_with("Source passages:"))
-        {
-            return Ok(CompletionResponse::from_text("no verdict here"));
+                .any(|prompt| prompt.contains("Your previous response was incomplete"));
+            let ask = if correcting {
+                self.asks.load(Ordering::Relaxed)
+            } else {
+                self.asks.fetch_add(1, Ordering::Relaxed) + 1
+            };
+            if ask <= self.unusable_asks {
+                return Ok(CompletionResponse::from_text("no verdict here"));
+            }
         }
         let mut replies = Vec::new();
         for prompt in prompts {
@@ -390,7 +406,14 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
         .claims
         .iter()
         .find(|entry| matches!(entry.state(), ClaimState::Removed { .. }))
-        .unwrap();
+        .unwrap_or_else(|| {
+            let held: Vec<_> = ledger
+                .claims
+                .iter()
+                .map(|entry| (entry.statement(), entry.state()))
+                .collect();
+            panic!("no claim was removed: {held:?}")
+        });
     assert!(matches!(
         gone.state(),
         ClaimState::Removed {
@@ -449,7 +472,7 @@ async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attem
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
     let model = Figures {
-        unusable_passes: usize::MAX,
+        unusable_asks: usize::MAX,
         ..Figures::new()
     };
     let draft = lesson(&[GOOD]).to_string();
@@ -507,7 +530,7 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
     let model = Figures {
-        unusable_passes: 1,
+        unusable_asks: 1,
         ..Figures::new()
     };
     let (raw, report) = prepare(
@@ -1606,10 +1629,10 @@ fn cited_lesson(statements: &[&str], uncited: &[usize]) -> Value {
 async fn prepared_counting(
     statements: &[&str],
     uncited: &[usize],
+    sources: &[LearningSourceDto],
 ) -> Result<(Counting, crate::features::learning::lesson_progress::Trace)> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
-    let sources = [source()];
     let model = Counting::new();
     let (prepared, trace) = crate::features::learning::lesson_progress::traced(prepare(
         &repo,
@@ -1617,11 +1640,26 @@ async fn prepared_counting(
         &lesson_id,
         &model,
         Some(cited_lesson(statements, uncited).to_string()),
-        &sources,
+        sources,
     ))
     .await;
     prepared?;
     Ok((model, trace))
+}
+
+/// A second page of the course on the subject of the lesson's statements:
+/// what a page read beside a section's citation is read from, since a page
+/// never shows again what the citation does.
+fn beside_the_citation() -> LearningSourceDto {
+    LearningSourceDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: "CSV header handling".into(),
+        url: Some("https://docs.python.org/3.14/library/csv.html#csv.DictReader".into()),
+        excerpt: format!(
+            "{GOOD} A header row that holds spaces keeps them in the field names DictReader gives each row."
+        ),
+        acquired_at: 0,
+    }
 }
 
 /// The requests made are at most the ceiling the run ended on, and the
@@ -1639,7 +1677,7 @@ fn within_the_plan(model: &Counting, trace: &crate::features::learning::lesson_p
 
 #[tokio::test]
 async fn statements_their_citations_support_cost_one_call_each_and_no_page_is_read() -> Result<()> {
-    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[]).await?;
+    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[], &[source()]).await?;
 
     within_the_plan(&model, &trace);
     assert_eq!(model.part_wise.load(Ordering::Relaxed), 3);
@@ -1654,18 +1692,26 @@ async fn statements_their_citations_support_cost_one_call_each_and_no_page_is_re
 #[tokio::test]
 async fn a_cited_statement_that_fails_reads_a_page_once_and_the_run_stays_within_the_plan(
 ) -> Result<()> {
-    let (model, trace) = prepared_counting(&[GOOD, GOOD, BAD], &[]).await?;
+    let (model, trace) =
+        prepared_counting(&[GOOD, GOOD, BAD], &[], &[source(), beside_the_citation()]).await?;
 
     within_the_plan(&model, &trace);
     // The failing statement's page is its re-check against what research
     // found: once, and not for the two its citations support.
-    assert_eq!(model.strict.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        model.strict.load(Ordering::Relaxed),
+        1,
+        "{} part by part, {} requests the plan counts, ceilings {:?}",
+        model.part_wise.load(Ordering::Relaxed),
+        model.made(),
+        trace.ceilings
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn a_statement_that_cites_nothing_is_checked_against_a_page_alone() -> Result<()> {
-    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[2]).await?;
+    let (model, trace) = prepared_counting(&[GOOD, GOOD, GOOD], &[2], &[source()]).await?;
 
     within_the_plan(&model, &trace);
     assert_eq!(model.part_wise.load(Ordering::Relaxed), 2);
