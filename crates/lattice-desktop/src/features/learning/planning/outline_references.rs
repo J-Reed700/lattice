@@ -383,6 +383,7 @@ pub(in crate::features::learning) async fn gather_for(
                 source_id: id,
                 origin: result.url,
                 captured,
+                found: true,
             });
         }
     }

@@ -265,6 +265,7 @@ pub(super) fn references(
                     "test fixture",
                 ),
             },
+            found: false,
         })
         .collect()
 }

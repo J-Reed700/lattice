@@ -551,6 +551,7 @@ mod repository_tests {
                                 "test fixture",
                             ),
                     },
+                    found: false,
                 },
             )
             .collect();

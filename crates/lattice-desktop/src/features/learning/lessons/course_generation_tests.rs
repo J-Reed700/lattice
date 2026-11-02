@@ -1172,6 +1172,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         source_id: id,
         origin: url.into(),
         captured,
+        found: false,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     // Linking keeps the author's exact citation (offered as a candidate) and
@@ -1697,6 +1698,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     source_id: id,
                     origin: url.clone(),
                     captured,
+                    found: false,
                 });
             }
             progress.model(client.model_name());

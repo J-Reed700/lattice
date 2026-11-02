@@ -65,13 +65,14 @@ pub struct ShortSource {
 
 impl LearningSourceLibraryRepository {
     /// Reads, under the gate, the active version of every source the machine
-    /// added to the program (research, an outline, the Verifier) that the
-    /// gate has not read, and marks those that are not sources. A page the
-    /// user added is theirs and is never marked. No model is asked. Returns
-    /// the pages refused now.
+    /// saved for the program (found by research or by the outline's research,
+    /// or added by the Verifier) that the gate has not read, and marks those
+    /// that are not sources. A page the user added, or chose when making the
+    /// course, is theirs and is never marked. No model is asked. Returns the
+    /// pages refused now.
     pub async fn sweep_admission(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
         let rows = sqlx::query(
-            "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.full_text, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by<>'user' AND (v.admission_policy IS NULL OR v.admission_policy<>?) ORDER BY s.created_at,s.id",
+            "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.full_text, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by<>'user' AND (s.added_by<>'outline' OR s.found_by_search=1) AND (v.admission_policy IS NULL OR v.admission_policy<>?) ORDER BY s.created_at,s.id",
         )
         .bind(program_id)
         .bind(gate::POLICY)
