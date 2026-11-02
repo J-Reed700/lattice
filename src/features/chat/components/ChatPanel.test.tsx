@@ -223,6 +223,15 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('VirtualizedMessageList')).not.toBeInTheDocument();
   });
 
+  it('shows what its host offers in an empty thread, in place of the library’s starters', () => {
+    h.store = makeStore({ conversations: [{ id: 'c1', spaceId: 's-hist', messages: [] }] });
+    render(<ChatPanel emptyState={(onPick) => <button type="button" onClick={() => onPick('Quiz me')}>Quiz me</button>} />);
+    expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Quiz me' }));
+    expect(h.composer.fill).toHaveBeenCalledWith('Quiz me');
+  });
+
   it('takes starters from the sidebar’s space before the chat has one', () => {
     h.store = makeStore({ selectedSpaceId: 's-hist' });
     render(<ChatPanel />);

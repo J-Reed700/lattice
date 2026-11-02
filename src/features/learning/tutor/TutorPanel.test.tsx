@@ -25,10 +25,13 @@ const mocks = vi.hoisted(() => ({
     setConversationCourse: vi.fn(),
   },
   listeners: new Set<() => void>(),
+  fill: vi.fn(),
 }));
 
 vi.mock('@/features/chat/components/ChatPanel', () => ({
-  ChatPanel: () => <div>The shared chat</div>,
+  ChatPanel: ({ emptyState }: { emptyState?: (_onPick: (_text: string) => void) => ReactNode }) => (
+    <div>The shared chat{emptyState?.(mocks.fill)}</div>
+  ),
 }));
 vi.mock('@/contexts/ApiContext', () => ({ useApi: () => mocks.api }));
 vi.mock('@/shared/conversations/conversationsStore', async () => {
@@ -90,6 +93,20 @@ describe('TutorPanel', () => {
     expect(screen.getByRole('button', { name: 'Search · Oct 30' })).toBeInTheDocument();
     expect(screen.getByText('The shared chat')).toBeInTheDocument();
     expect(mocks.api.listConversationsExplorer).toHaveBeenCalledWith({ programId: 'course-1' });
+  });
+
+  it('starts an empty chat from the lesson and the reviews, not the library', async () => {
+    mocks.api.listConversationsExplorer.mockResolvedValue({
+      ok: true,
+      data: { conversations: [chat('one', 'Fusion')] },
+    });
+    mocks.store.activeConversationId = 'one';
+    show();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Teach me Fusion' }));
+    expect(mocks.fill).toHaveBeenCalledWith('Teach me Fusion');
+    expect(screen.getByRole('button', { name: 'Quiz me on what is due' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What should I work on next?' })).toBeInTheDocument();
   });
 
   it('opens the most recent chat when the one open belongs to no course chat', async () => {

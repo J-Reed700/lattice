@@ -48,11 +48,13 @@ interface ChatPanelProps {
   composerNotice?: ReactNode;
   /** Chips at the top of the composer for what the host sends with the next turn. */
   composerChips?: ReactNode;
+  /** What an empty thread offers, in place of the library's suggested questions. */
+  emptyState?: (_onPick: (_text: string) => void) => ReactNode;
 }
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 
-export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}) {
+export function ChatPanel({ composerNotice, composerChips, emptyState }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
@@ -324,11 +326,15 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
           {messages.length === 0 ? (
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-6">
               <div className="w-full max-w-[520px]">
-                <ChatStarters
-                  spaceId={startersSpaceId}
-                  onPick={composer.fill}
-                />
-                <ChatEmptyStateIngestDelta />
+                {emptyState ? emptyState(composer.fill) : (
+                  <>
+                    <ChatStarters
+                      spaceId={startersSpaceId}
+                      onPick={composer.fill}
+                    />
+                    <ChatEmptyStateIngestDelta />
+                  </>
+                )}
               </div>
             </div>
           ) : (
