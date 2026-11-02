@@ -12,7 +12,10 @@ fn words(count: usize) -> String {
 
 async fn active_program(pool: &SqlitePool) -> Result<String> {
     let repo = LearningRepository::new(pool.clone());
-    let program = tests::fixture();
+    let mut program = tests::fixture();
+    for source in &mut program.sources {
+        source.excerpt = tests::admitted_text();
+    }
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
         program_id: program.summary.id.clone(),

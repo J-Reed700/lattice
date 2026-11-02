@@ -23,6 +23,13 @@ pub(super) async fn pool() -> Result<SqlitePool> {
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
+/// A passage long enough to be a source under the admission gate (claim
+/// classes design §3.5(4)), which the fixture program's one-line passage is
+/// not.
+pub(super) fn admitted_text() -> String {
+    "The course's saved reference explains its subject at enough length to count as a source. "
+        .repeat(12)
+}
 pub(super) fn fixture() -> LearningProgramDto {
     let mut modules = Vec::new();
     for mi in 0..2 {

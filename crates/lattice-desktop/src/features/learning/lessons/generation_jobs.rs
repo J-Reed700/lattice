@@ -530,7 +530,10 @@ mod repository_tests {
         crate::features::learning::curriculum::LearningGenerationJob,
     ) {
         let program_repo = LearningRepository::new(pool.clone());
-        let program = crate::features::learning::tests::fixture();
+        let mut program = crate::features::learning::tests::fixture();
+        for source in &mut program.sources {
+            source.excerpt = crate::features::learning::tests::admitted_text();
+        }
         let references: Vec<_> = program
             .sources
             .iter()
