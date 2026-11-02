@@ -1,6 +1,6 @@
 use crate::features::learning::{
     dto::*,
-    practice_generation::validate_citations,
+    practice_generation::{grade_schema, validate_citations},
     practice_repository::{default_rubric, LearningPracticeRepository, SubmissionWrite},
     repository::LearningRepository,
 };
@@ -333,4 +333,34 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
     };
     assert!(validate_citations(&[cross], std::slice::from_ref(&source)).is_err());
     assert_eq!(default_rubric().len(), 4);
+}
+
+/// A constrained decoder writes a reply in schema order. With the score first,
+/// the 27B answered a plainly wrong artifact with `uncertain` and no score, 9
+/// times in 9, against a prompt that says zero is an observed wrong attempt.
+#[test]
+fn the_grader_writes_its_grounds_before_it_scores() {
+    let schema = grade_schema(&default_rubric());
+    let keys = |pointer: &str| -> Vec<String> {
+        schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_object)
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+
+    assert_eq!(keys("/properties"), ["criteria", "status"]);
+    assert_eq!(
+        keys("/properties/criteria/items/properties"),
+        ["criterion_id", "evidence_quote", "observation", "score"]
+    );
+    assert_eq!(
+        schema.pointer("/properties/criteria/items/required"),
+        Some(&serde_json::json!([
+            "criterion_id",
+            "evidence_quote",
+            "observation",
+            "score"
+        ]))
+    );
 }

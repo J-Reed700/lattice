@@ -82,7 +82,7 @@ def run(args):
                 if (key, arm, seed) in done:
                     continue
                 flags, r = ask(req, sent, seed)
-                out.write(json.dumps({"key": key, "query_id": qid, "turn": turn, "arm": arm, "seed": seed,
+                out.write(json.dumps({"model": base.running_model(), "key": key, "query_id": qid, "turn": turn, "arm": arm, "seed": seed,
                                       "flags": flags, "prompt_chars": len(sent), "secs": r["secs"]}) + "\n")
                 out.flush()
         print(key, flush=True)

@@ -3,16 +3,19 @@ import { useEffect, useState } from 'react';
 import { SettingsRow } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { toast } from '@/stores/toastStore';
+import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { NUMBER_FIELD_CLASS, clamp } from '../AITab/shared';
 
-// The floor still holds a turn; the ceiling is the largest any current model
-// is trained for, so a typo cannot ask for something no model supports.
+// The floor still holds a turn; the ceiling is the largest window any model on
+// this computer is trained for, so a typo cannot ask for what none supports.
 const MIN_WINDOW = 512;
-const MAX_WINDOW = 262_144;
+const CEILING_WHEN_UNREPORTED = 262_144;
 
 /** The window every model on this computer loads with, unless it sets its own. */
-export function LocalContextWindowRow() {
+export function LocalContextWindowRow({ models }: { models: DownloadedModel[] }) {
+  const ceiling = Math.max(0, ...models.map((model) => model.trained_context_length ?? 0))
+    || CEILING_WHEN_UNREPORTED;
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   // What the user is typing, from when they untick "Model's max" until they
@@ -42,7 +45,7 @@ export function LocalContextWindowRow() {
     const typed = entry.trim();
     const value = typed === '' ? null : Number(typed);
     if (value !== null && !Number.isFinite(value)) return;
-    const next = value === null ? null : Math.round(clamp(value, MIN_WINDOW, MAX_WINDOW));
+    const next = value === null ? null : Math.round(clamp(value, MIN_WINDOW, ceiling));
     if (next !== shown) void save(next);
   };
 
@@ -72,7 +75,7 @@ export function LocalContextWindowRow() {
           id="local-context-window"
           type="number"
           min={MIN_WINDOW}
-          max={MAX_WINDOW}
+          max={ceiling}
           step={1}
           disabled={usesModelMax}
           placeholder={usesModelMax ? undefined : 'Tokens'}

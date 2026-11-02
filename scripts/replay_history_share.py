@@ -26,8 +26,13 @@ import pathlib
 import random
 import re
 import time
+import sys
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import served_model  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS = ROOT / "crates/lattice-desktop/src/features/conversation/memory/prompts.rs"
@@ -250,6 +255,7 @@ def main():
     args = parser.parse_args()
 
     server = Server(os.environ["LLAMA_REPLAY_URL"])
+    model = served_model(os.environ["LLAMA_REPLAY_URL"])
     system = pathlib.Path(args.system).read_text(encoding="utf-8")
     source = PROMPTS.read_text(encoding="utf-8")
     summary_system = rust_string(source, "SUMMARIZER_SYSTEM")
@@ -321,7 +327,7 @@ def main():
                     "recent_messages": len(recent), "older_messages": len(older), "summary_chars": len(summary),
                 }
                 with out.open("a", encoding="utf-8") as file:
-                    file.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    file.write(json.dumps({"model": model, **row}, ensure_ascii=False) + "\n")
                 print(f"c{index} {share:.2f} {kind:8} {'PASS' if row['passed'] else 'fail'} {seconds:6.1f}s prompt {prompt_tokens}", flush=True)
     print("done", flush=True)
 

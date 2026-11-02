@@ -133,7 +133,7 @@ def run(args):
         cache, line = {}, []
         for arm in todo:
             rec = record(ctx, arm, run_arm(ctx, arm, cache))
-            out.write(json.dumps(rec) + "\n")
+            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
             out.flush()
             line.append(f"{arm} {rec['stated']}/{rec['facts']} {rec['secs']}s")
         print(ctx["key"], " | ".join(line), flush=True)

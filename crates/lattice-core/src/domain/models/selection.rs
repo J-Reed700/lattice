@@ -70,6 +70,8 @@ pub enum ModelCategory {
     OCR,
     /// On-device speech-to-text model (whisper family)
     Transcription,
+    /// On-device text-to-speech model (Kokoro)
+    Speech,
 }
 
 impl fmt::Display for ModelCategory {
@@ -79,6 +81,7 @@ impl fmt::Display for ModelCategory {
             ModelCategory::Embedding => write!(f, "Embedding"),
             ModelCategory::OCR => write!(f, "OCR"),
             ModelCategory::Transcription => write!(f, "Transcription"),
+            ModelCategory::Speech => write!(f, "Speech"),
         }
     }
 }

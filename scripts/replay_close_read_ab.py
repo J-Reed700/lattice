@@ -29,6 +29,10 @@ Room and token counts come from the server (/props n_ctx, /tokenize) only; HTTP 
 """
 import argparse, collections, copy, json, os, re, sys, time, urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import model_of  # noqa: E402
+
 # ---------- copied verbatim from scripts/replay_reading_ab.py ----------
 READ_OLD = ("Before answering, go through every numbered passage above in order and write one line for each: its label, "
             "then the sentences of that passage that bear on my question, copied exactly as written and in the passage's "
@@ -201,6 +205,15 @@ def reading_metrics(lines, noted, fl):
 # ---------- server (no timeouts; dry mode stubs /props and /tokenize and never calls the model) ----------
 URL, DRY, N_CTX, DRY_SENT = None, False, None, []
 CLAUDE = None  # scripts/replay_claude.py when the replay runs on Claude
+MODEL = None
+
+
+def running_model():
+    """The model this run is on, asked for once."""
+    global MODEL
+    if MODEL is None:
+        MODEL = "dry run" if DRY else model_of(CLAUDE, URL)
+    return MODEL
 # A server behind an auth header (a remote llama.cpp): the header's name and value from the environment, never
 # from the command line, so the value is in no shell history or process list.
 HEADERS = ({os.environ["LLAMA_AUTH_HEADER_NAME"]: os.environ["LLAMA_AUTH_HEADER_VALUE"]}
@@ -690,7 +703,7 @@ def run_stage1(args, ctxs):
                 else:
                     recs.append(stage1_record(ctx, arm, "live", close_read_built(ctx)))
             for r in recs[-1:]:
-                out.write(json.dumps(r) + "\n")
+                out.write(json.dumps({"model": running_model(), **r}) + "\n")
                 out.flush()
         if recs:
             print(ctx["key"], " | ".join(f"{r['arm']}({r['how']}) {r['after']['recall']}/{r['after']['of']} "
@@ -718,7 +731,7 @@ def run_stage2(args, ctxs, notes_arm):
                     continue
                 r = write_round2(ctx, lines, n["text"], noted, arm, seed)
                 r["notes_arm"] = notes_arm
-                out.write(json.dumps(r) + "\n")
+                out.write(json.dumps({"model": running_model(), **r}) + "\n")
                 out.flush()
                 res.append(r)
         if res:

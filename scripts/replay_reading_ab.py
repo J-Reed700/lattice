@@ -17,6 +17,10 @@ Every call records usage + timings (cache_n / prompt_n), so cache behaviour is m
 """
 import copy, json, math, os, re, sys, time, urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import served_model  # noqa: E402
+
 RUBRIC, OUT = sys.argv[1], sys.argv[2]
 CALL_FILES = sys.argv[3:]
 ONLY = set(filter(None, os.environ.get("ONLY", "").split(",")))
@@ -398,6 +402,7 @@ for path in CALL_FILES:
             saved.setdefault(key, {}).setdefault("write", q)
 
 out = open(OUT, "a")
+MODEL = served_model(URL)
 pass1_by_key = {}
 pass1_path = os.path.join(os.path.dirname(OUT), "ab-pass1.jsonl")
 if os.path.exists(pass1_path):
@@ -507,7 +512,7 @@ for (run, qid), s in saved.items():
 
     rec["calls"] = [{"kind": k, "secs": r["secs"], "finish": r["finish"], "usage": r["usage"], "timings": r["timings"],
                      "content": r["content"]} for k, r in log]
-    out.write(json.dumps(rec) + "\n")
+    out.write(json.dumps({"model": MODEL, **rec}) + "\n")
     out.flush()
     reads = " | ".join(f"{a} {rec[a]['recall']}/{rec[a]['of']} fq={len(rec[a]['false_quotes'])}"
                        + (" WITHDRAWN" if rec[a].get("withdrawn") else "") for a in ("A1", "A2", "A2e", "A3", "F", "F-A2") if a in rec)

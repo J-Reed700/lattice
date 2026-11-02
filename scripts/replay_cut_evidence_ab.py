@@ -84,7 +84,7 @@ def run(args):
         if ctx["key"] in done:
             continue
         rec = cut_reading(ctx, args.cut)
-        out.write(json.dumps(rec) + "\n")
+        out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
         out.flush()
         print(f"{ctx['key']} cut {rec['passages']}: facts {len(rec['facts_noted'])}/{len(rec['fact_labels'])} "
               f"nf{len(rec['nonfact_lines'])} req{rec['requests']} {rec['secs']}s", flush=True)

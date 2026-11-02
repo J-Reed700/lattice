@@ -92,7 +92,7 @@ def run(args):
             if (ctx["key"], arm) in done:
                 continue
             rec = {"key": ctx["key"], "arm": arm, "background_of": other["key"], **turn(ctx, other, arm)}
-            out.write(json.dumps(rec) + "\n")
+            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
             out.flush()
             chat = [c for c in rec["calls"] if c["kind"] == "chat"]
             line.append(f"{arm} {rec['turn_secs']}s reprocessed {sum(c['prompt_new'] or 0 for c in chat):,}")
