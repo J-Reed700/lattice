@@ -72,6 +72,12 @@ fn structure(site: FindingSite, note: String) -> ReviewFinding {
     ReviewFinding::new(FindingKind::Structure, Some(site), note)
 }
 
+/// A citation a part lacks. Not structure: it does not hold up the content
+/// review, and the repair that follows settles it by appending the citation.
+fn citation(site: FindingSite, note: String) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Quotation, Some(site), note)
+}
+
 /// The sections that state what is so, where a specific needs its citation:
 /// a worked example's, a practice's and a check's cases are hypothetical.
 const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
@@ -132,14 +138,20 @@ fn same_sentence(a: &str, b: &str) -> bool {
 }
 
 /// A specific stands only in a sentence the writer lists in the part's
-/// citations, with a quote that contains it; otherwise the part is written in
-/// its general form (claim classes design §3.4, §3.5). Code is exempt.
+/// citations, with a quote that contains it. Otherwise it is cited, when a
+/// supplied excerpt states it, or the part is written in its general form,
+/// when none does (claim classes design §3.4, §3.5). Code is exempt.
 fn uncited_specifics(
     item: &Value,
     field: &str,
     (site, label): (FindingSite, &str),
     findings: &mut Vec<ReviewFinding>,
 ) {
+    let path = match site {
+        FindingSite::Section(index) => format!("/blocks/{index}"),
+        FindingSite::Question(index) => format!("/questions/{index}"),
+        FindingSite::Lesson => return,
+    };
     let cited: Vec<(&str, &str)> = item
         .get("citations")
         .and_then(Value::as_array)
@@ -152,27 +164,34 @@ fn uncited_specifics(
             continue;
         }
         let shown: String = sentence.chars().take(90).collect();
-        let Some((_, quote)) = cited
+        let quotes: Vec<&str> = cited
             .iter()
-            .find(|(cited, _)| same_sentence(cited, &sentence))
-        else {
-            findings.push(structure(
-                site,
-                format!("{label} states a specific in \"{shown}\" without citing it: list the sentence in its citations with the source and a quote that contains it, or write the general form."),
-            ));
-            continue;
-        };
-        let held = normalize(quote);
-        let missing: Vec<String> = specifics(&sentence)
-            .into_iter()
-            .filter(|specific| !held.contains(&normalize(specific)))
+            .filter(|(cited, _)| same_sentence(cited, &sentence))
+            .map(|(_, quote)| *quote)
             .collect();
-        if !missing.is_empty() {
-            findings.push(structure(
-                site,
-                format!("{label}: the quote cited for \"{shown}\" does not contain {}; cite a quote that does, or write the general form.", missing.join(", ")),
-            ));
-        }
+        let wanted = specifics(&sentence);
+        let lacking = |quote: &str| -> Vec<String> {
+            let held = normalize(quote);
+            wanted
+                .iter()
+                .filter(|specific| !held.contains(&normalize(specific)))
+                .cloned()
+                .collect()
+        };
+        let note = if quotes.is_empty() {
+            format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.")
+        } else {
+            let missing = quotes
+                .iter()
+                .map(|quote| lacking(quote))
+                .min_by_key(Vec::len)
+                .unwrap_or_default();
+            if missing.is_empty() {
+                continue;
+            }
+            format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "))
+        };
+        findings.push(citation(site, note));
     }
 }
 
@@ -517,9 +536,10 @@ mod tests {
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].key().site, FindingSite::Section(0));
-        assert_eq!(findings[0].kind, FindingKind::Structure);
+        assert_eq!(findings[0].kind, FindingKind::Quotation);
         assert!(findings[0].note.contains("without citing it"));
         assert!(findings[0].note.contains(TIMEOUT));
+        assert!(findings[0].note.contains("citations of /blocks/0"));
 
         cited(
             &mut candidate,
@@ -566,6 +586,70 @@ mod tests {
             "Read the file like this:\n```python\nrows = 100\nprint(rows)\n```\n1. Open the file.\n2) Read it row by row.\n- Close it."
         );
         assert!(lesson_rules(&candidate).is_empty());
+    }
+
+    const SOURCE_SAYS: &str = "A timeout of 30 seconds applies to each request.";
+
+    fn uncited_lesson() -> Value {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
+        candidate["blocks"][0]["citations"] = json!([]);
+        candidate
+    }
+
+    fn patch(patch: Value) -> Value {
+        crate::features::learning::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string())
+            .unwrap()
+    }
+
+    /// An uncited figure the supplied excerpt states ends cited, its sentence
+    /// as it was.
+    #[test]
+    fn an_uncited_figure_a_source_contains_is_settled_by_citing_it() {
+        let before = uncited_lesson();
+        assert_eq!(lesson_rules(&before).len(), 1);
+
+        let revised = patch(json!({"edits":[],"citations":[
+            {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":SOURCE_SAYS}]}));
+
+        assert_eq!(revised["blocks"][0]["body"], before["blocks"][0]["body"]);
+        assert_eq!(
+            revised["blocks"][0]["citations"],
+            json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":SOURCE_SAYS}])
+        );
+        assert!(lesson_rules(&revised).is_empty());
+    }
+
+    /// One no excerpt states ends in the general form, with nothing cited.
+    #[test]
+    fn an_uncited_figure_no_source_contains_is_settled_by_the_general_form() {
+        let revised = patch(json!({"edits":[
+            {"path":"/blocks/0/body","before":TIMEOUT,"after":"The default timeout is set by the caller."}],
+            "citations":[]}));
+
+        assert!(lesson_rules(&revised).is_empty());
+        assert_eq!(revised["blocks"][0]["citations"], json!([]));
+    }
+
+    /// A citation whose quote lacks the figure settles nothing: the quote
+    /// has to contain what the sentence states, whoever appended it.
+    #[test]
+    fn a_citation_appended_with_a_quote_that_lacks_the_figure_settles_nothing() {
+        let revised = patch(json!({"edits":[],"citations":[
+            {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,
+             "quote":"A timeout applies to each request, in seconds."}]}));
+
+        let findings = lesson_rules(&revised);
+
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].note.contains("does not contain 30"));
+        // A second citation whose quote holds the figure settles it.
+        let mut again = revised;
+        again["blocks"][0]["citations"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"sentence":TIMEOUT,"sourceIndex":0,"quote":SOURCE_SAYS}));
+        assert!(lesson_rules(&again).is_empty());
     }
 
     #[test]

@@ -217,6 +217,17 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .collect()
 }
 
+/// Whether the structure findings hold up the content review. Structure the
+/// machine stopped repairing no longer does, and neither does a missing
+/// citation, which the edits of the repair after the review can append
+/// (claim classes design §3.5).
+fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
+    structure
+        .iter()
+        .filter(|finding| finding.kind != FindingKind::Quotation)
+        .any(|finding| passes.is_none_or(|passes| passes.repairable(&finding.key())))
+}
+
 /// A second model call critiques the actual candidate. One targeted repair is
 /// allowed; unresolved issues fail closed without publishing partial material.
 /// A lesson (`review_lesson`) instead repairs while each pass fixes something
@@ -519,13 +530,7 @@ async fn review_material(
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
         let structure = structural_findings(schema, &candidate)?;
-        // Structure the machine stopped repairing no longer holds up the
-        // content review.
-        let blocking = structure.iter().any(|finding| {
-            passes
-                .as_ref()
-                .is_none_or(|passes| passes.repairable(&finding.key()))
-        });
+        let blocking = holds_up_review(&structure, passes.as_ref());
         let can_edit_spans = !is_outline && !blocking;
         let issues = if !blocking {
             crate::features::learning::lesson_progress::phase(
@@ -663,9 +668,9 @@ async fn review_material(
         let repaired = if can_edit_spans {
             crate::features::learning::generation::complete_checked(
                 llm,
-                &format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::INSTRUCTIONS),
+                &format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema)),
                 json!({"originalRequirements":authoring_context,"candidate":candidate_value,"sourceQuoteChecks":quote_checks,"issuesToFix":issues}).to_string(),
-                super::text_edits::schema(&candidate_value), output_tokens, progress, None,
+                super::text_edits::schema_for(&candidate_value, schema), output_tokens, progress, None,
                 |raw| super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string()),
             ).await
         } else {

@@ -422,3 +422,22 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     );
     Ok(())
 }
+
+#[test]
+fn a_missing_citation_does_not_hold_up_the_content_review_but_other_structure_does() {
+    let note = "Something to fix in this section.";
+    let citation = ReviewFinding::new(FindingKind::Quotation, Some(FindingSite::Section(1)), note);
+    let shape = ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Lesson), note);
+    let passes = Passes::default();
+
+    assert!(!holds_up_review(&[citation.clone()], Some(&passes)));
+    assert!(holds_up_review(
+        &[citation.clone(), shape.clone()],
+        Some(&passes)
+    ));
+    // Without a lesson's passes every structure finding holds the review up.
+    assert!(holds_up_review(&[shape.clone()], None));
+    // Structure the machine stopped repairing does not.
+    let stopped = Passes::new(BTreeSet::from([shape.key()]));
+    assert!(!holds_up_review(&[citation, shape], Some(&stopped)));
+}

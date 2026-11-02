@@ -301,3 +301,29 @@ fn a_cited_sentence_whose_quote_matches_nothing_is_cited_to_the_nearest_passage_
     assert_eq!(candidate["blocks"][0]["citations"][0]["sourceIndex"], 1);
     assert_eq!(candidate["blocks"][0]["citations"][0]["quote"], REPLICATION);
 }
+
+#[test]
+fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() {
+    let candidate = lesson(EXCERPT);
+    let sentence = "A substantive teaching explanation with practice context.";
+    let appended = |quote: &str| {
+        let patch = json!({"edits":[],"citations":[
+            {"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]});
+        super::super::text_edits::apply(&candidate, &patch.to_string()).unwrap()
+    };
+
+    // A quote the source holds stands.
+    assert!(lesson_quote_checks(&appended(EXCERPT), &context()).is_empty());
+
+    // One it does not is refused, at the part that cites it.
+    let refused = lesson_quote_checks(
+        &appended("An invented quotation that does not appear in the selected source."),
+        &context(),
+    );
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["path"], "blocks[0]");
+    assert!(refused[0]["error"]
+        .as_str()
+        .unwrap()
+        .starts_with("Citation 1 of this part:"));
+}
