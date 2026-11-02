@@ -1,7 +1,23 @@
 //! The tokio runtime every task of the app runs on.
 
-/// Hands Tauri the runtime its tasks run on. Call it before anything spawns a task.
+use std::sync::OnceLock;
+
+/// Each worker and blocking thread's stack: the `RUST_MIN_STACK` every test
+/// runs with (`.cargo/config.toml`), which a packaged app never sees.
+pub const THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+/// Hands Tauri a runtime whose threads have [`THREAD_STACK_BYTES`]. Call it
+/// before anything spawns a task; Tauri accepts one runtime.
 pub fn install() -> std::io::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("tokio-rt-worker")
+        .thread_stack_size(THREAD_STACK_BYTES)
+        .build()?;
+    let runtime = RUNTIME.get_or_init(|| runtime);
+    tauri::async_runtime::set(runtime.handle().clone());
     Ok(())
 }
 
@@ -47,6 +63,20 @@ mod tests {
         assert!(
             status.success(),
             "a task needing {PROBE_BYTES} bytes of stack overflowed the app's runtime: {status}"
+        );
+    }
+
+    #[test]
+    fn the_app_threads_get_at_least_the_stack_the_tests_run_with() {
+        let config = include_str!("../../.cargo/config.toml");
+        let tests: usize = config
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("RUST_MIN_STACK = "))
+            .map(|value| value.trim_matches('"').parse().expect("a byte count"))
+            .expect("RUST_MIN_STACK in .cargo/config.toml");
+        assert!(
+            THREAD_STACK_BYTES >= tests,
+            "the app's threads get {THREAD_STACK_BYTES} bytes and its tests {tests}"
         );
     }
 }
