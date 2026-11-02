@@ -618,8 +618,11 @@ fn main() {
             )
             .plugin(
                 "transcription",
-                tauri_build::InlinedPlugin::new()
-                    .commands(&["transcribe_file", "get_transcription_status"]),
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "transcribe_file",
+                    "transcribe_speech",
+                    "get_transcription_status",
+                ]),
             )
             .plugin(
                 "speech",

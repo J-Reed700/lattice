@@ -19,7 +19,9 @@ use candle_transformers::models::whisper::{quantized_model, Config};
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
+use crate::features::transcription::engine::audio_decode::{
+    decode_to_mono_16k, TARGET_SAMPLE_RATE,
+};
 use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
@@ -37,6 +39,20 @@ pub const TRANSCRIPTION_IDLE_TTL: Duration = Duration::from_secs(300);
 
 /// Longest recording accepted, in seconds.
 pub const MAX_AUDIO_SECS: u64 = 2 * 60 * 60;
+
+/// Threads one transcription runs on. Past this they only wait for each other:
+/// each step takes as long as its slowest thread, and a busy machine has one.
+const INFERENCE_THREADS: usize = 4;
+
+/// Candle's q8 kernels exist only in builds with AVX2 switched on, which a
+/// portable x86 build can't assume, so its products run as scalar loops. Loaded
+/// as floats they use the matrix kernels, which pick AVX2 at run time and are
+/// six times faster here. Call first thing in `main`: this sets a variable for
+/// the whole process.
+pub fn prefer_float_weights() {
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    std::env::set_var("CANDLE_DEQUANTIZE_ALL", "1");
+}
 
 fn idle_expired(last_used: Instant, now: Instant, idle_ttl: Duration) -> bool {
     now.saturating_duration_since(last_used) >= idle_ttl
@@ -109,6 +125,9 @@ struct LoadedWhisper {
     suppress: Tensor,
     /// `(token id, language tag)` pairs, empty for English-only models.
     language_tokens: Vec<(u32, String)>,
+    /// How often the encoder has run, for the test that holds a clip to one pass.
+    #[cfg(test)]
+    encoder_passes: usize,
 }
 
 /// One decoding attempt over a single 30 s mel window.
@@ -260,9 +279,12 @@ impl WhisperTranscriptionService {
 /// repo omits it still loads.
 const BUNDLED_MEL_FILTERS_80: &[u8] = include_bytes!("melfilters.bytes");
 
-#[async_trait]
-impl TranscriptionPort for WhisperTranscriptionService {
-    async fn transcribe(&self, audio: &Path) -> Result<Transcript, AppError> {
+impl WhisperTranscriptionService {
+    /// Runs the model over the samples `audio` yields on the blocking thread.
+    async fn run<F>(&self, audio: F) -> Result<Transcript, AppError>
+    where
+        F: FnOnce() -> Result<(Vec<f32>, u64), AppError> + Send + 'static,
+    {
         let Some(resolved) = self.resolve_model().await? else {
             return Err(AppError::ServiceNotAvailable(
                 "No transcription model is downloaded.".to_string(),
@@ -276,7 +298,6 @@ impl TranscriptionPort for WhisperTranscriptionService {
             .await
             .map_err(|e| AppError::InternalError(format!("transcription queue closed: {e}")))?;
 
-        let path = audio.to_path_buf();
         let loaded_slot = Arc::clone(&self.loaded);
         let last_used = Arc::clone(&self.last_used);
         self.schedule_idle_unload();
@@ -287,7 +308,7 @@ impl TranscriptionPort for WhisperTranscriptionService {
             // holds the model lock.
             let _permit = permit;
             with_autorelease_pool(move || -> Result<Transcript, AppError> {
-                let decoded = decode_to_mono_16k(&path, MAX_AUDIO_SECS)?;
+                let (samples, duration_ms) = audio()?;
 
                 let mut guard = loaded_slot.lock();
                 let needs_load = guard
@@ -300,13 +321,18 @@ impl TranscriptionPort for WhisperTranscriptionService {
                     AppError::ModelLoadFailed("transcription model was not loaded".to_string())
                 })?;
 
-                let (segments, language) = transcribe_pcm(loaded, &decoded.samples)?;
+                let threads = rayon::ThreadPoolBuilder::new()
+                    .num_threads(INFERENCE_THREADS)
+                    .build()
+                    .map_err(|e| AppError::Other(format!("transcription threads failed: {e}")))?;
+                let (segments, language) = threads
+                    .install(|| with_autorelease_pool(|| transcribe_pcm(loaded, &samples)))?;
                 *last_used.lock() = Instant::now();
 
                 Ok(Transcript {
                     segments,
                     language,
-                    duration_ms: decoded.duration_ms,
+                    duration_ms,
                 })
             })
         })
@@ -314,6 +340,23 @@ impl TranscriptionPort for WhisperTranscriptionService {
         .map_err(|e| AppError::InternalError(format!("transcription task failed: {e}")))?;
 
         outcome
+    }
+}
+
+#[async_trait]
+impl TranscriptionPort for WhisperTranscriptionService {
+    async fn transcribe(&self, audio: &Path) -> Result<Transcript, AppError> {
+        let path = audio.to_path_buf();
+        self.run(move || {
+            let decoded = decode_to_mono_16k(&path, MAX_AUDIO_SECS)?;
+            Ok((decoded.samples, decoded.duration_ms))
+        })
+        .await
+    }
+
+    async fn transcribe_samples(&self, samples: Vec<f32>) -> Result<Transcript, AppError> {
+        let duration_ms = samples.len() as u64 * 1_000 / u64::from(TARGET_SAMPLE_RATE);
+        self.run(move || Ok((samples, duration_ms))).await
     }
 
     async fn is_ready(&self) -> Result<bool, AppError> {

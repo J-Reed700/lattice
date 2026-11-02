@@ -404,6 +404,7 @@ export const COMMAND_PLUGINS = {
   test_llama_cpp_connection: 'settings',
   test_ollama_connection: 'settings',
   transcribe_file: 'transcription',
+  transcribe_speech: 'transcription',
   truncate_conversation_after: 'conversation',
   unbookmark_conversation_message: 'conversation',
   update_conversation_space: 'conversation',
