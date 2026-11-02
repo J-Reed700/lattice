@@ -11,6 +11,7 @@ import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/Claim
 import { ALL_RESOLVED, tallyLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
+import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
 import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
@@ -175,6 +176,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const focus = (() => {
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
+    if (session.removedActive) return <RemovedStatements sentences={session.removed} />;
     if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
       onKept={(remaining) => session.setMessage(`Kept as written. ${remaining > 0 ? teachingNotesForYou(remaining) : 'No teaching notes left.'}`)} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
@@ -197,7 +199,9 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     onSelect={(claimId) => { session.select(claimId); if (narrow) setNarrowView('claim'); requestAnimationFrame(() => document.getElementById(queueRowId(claimId))?.focus()); }}
     onAcceptSource={(group) => acceptSource(group.claims[0]?.support ?? null)} onAddSource={openGroupSheet}
     onAcceptProposals={(proposals) => void session.acceptProposals(proposals)} resolved={session.resolved}
-    teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
+    teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
+    removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
+    onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
 
   return (
     <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-background ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>

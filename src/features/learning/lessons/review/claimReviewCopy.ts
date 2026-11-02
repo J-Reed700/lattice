@@ -21,6 +21,7 @@ import type {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 export const claimsCount = (count: number) => plural(count, 'claim', 'claims');
+export const statementsCount = (count: number) => plural(count, 'statement', 'statements');
 
 // ── Sources: kind, standing, "counts as" (§4.3) ─────────────────────────────
 

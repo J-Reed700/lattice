@@ -66,6 +66,32 @@ describe('Claim review screen', () => {
     await waitFor(() => expect(statement()).toHaveFocus());
   });
 
+  it('lists what the checks took out of the lesson once, a sentence several statements stood on naming each of them', async () => {
+    const sentence = 'Tesseract is an OCR engine written in 2019 that reads pixels into text.';
+    const gone = (claimId: string, statement: string, overrides: Partial<ClaimReviewItemDto> = {}) => ({
+      ...unsupportedItem(1), claimId, state: { state: 'removed' as const, at: 5, by: 'machine' as const }, availableActions: [],
+      verdictKind: null, reason: null, location: { unitIndex: 2, unitKind: 'block' as const, unitTitle: '', field: 'body', quote: sentence, span: null },
+      presentation: { statement, sentence, contextBefore: '', contextAfter: '', place: '' }, ...overrides,
+    });
+    show(review([
+      gone('a', 'Tesseract was written in 2019.', { verdictKind: { kind: 'unsupported' }, reason: 'No passage gives the year.' }),
+      gone('b', 'Tesseract reads pixels into text.'),
+    ], { state: 'ready', counts: counts(0) }));
+
+    const row = await screen.findByRole('button', { name: /Taken out of the lesson/ });
+    expect(row).toHaveTextContent('2 statements');
+    // They wait for no one: nothing is left to resolve, and they are not among the resolved.
+    expect(screen.queryByRole('button', { name: /Show resolved/ })).not.toBeInTheDocument();
+    await userEvent.click(row);
+    const list = await screen.findByRole('region', { name: 'Statements taken out of the lesson' });
+    expect(within(list).getAllByText(sentence)).toHaveLength(1);
+    expect(within(list).getByText('Tesseract was written in 2019.')).toBeVisible();
+    expect(within(list).getByText('Not stated by the passages compared · No passage gives the year.')).toBeVisible();
+    expect(within(list).getByText('Tesseract reads pixels into text.')).toBeVisible();
+    expect(within(list).getByText('Taken out with the sentence or section it stood in')).toBeVisible();
+    expect(within(list).queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('shows the checked statement in plain text inside its sentence, never markdown or citation markers', async () => {
     const item = waitingOnSource(1);
     item.location = { ...item.location, quote: 'The **eastern** `population` migrates *up to* 3,000 miles [5].' };

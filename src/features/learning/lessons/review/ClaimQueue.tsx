@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { claimsCount, resolvedChip, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { claimsCount, resolvedChip, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { GROUP_MODE_LABELS, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
 
@@ -47,7 +47,7 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
  */
 export function ClaimQueue({
   groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource, onAcceptProposals,
-  resolved, teachingWaiting, teachingActive, onOpenTeaching, busy,
+  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, removedActive, onOpenRemoved, busy,
 }: {
   groups: ClaimGroup[];
   mode: GroupMode;
@@ -66,6 +66,10 @@ export function ClaimQueue({
   teachingWaiting: number;
   teachingActive: boolean;
   onOpenTeaching: () => void;
+  /** Statements the machine took out of the lesson, which have a list of their own. */
+  removedCount: number;
+  removedActive: boolean;
+  onOpenRemoved: () => void;
   busy: boolean;
 }) {
   const id = useId();
@@ -160,6 +164,15 @@ export function ClaimQueue({
             <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
             <span className="font-medium text-text-primary">Teaching notes</span>
             <span className="text-xs text-text-muted">· {teachingNotesForYou(teachingWaiting)}</span>
+          </button>
+        </section>}
+
+        {removedCount > 0 && <section aria-label="Taken out of the lesson" className="rounded-xl border border-border bg-surface">
+          <button type="button" data-queue-row="" tabIndex={-1} aria-current={removedActive ? 'true' : undefined} onClick={onOpenRemoved}
+            className={`row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${removedActive ? 'bg-accent/10' : ''}`}>
+            <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
+            <span className="font-medium text-text-primary">Taken out of the lesson</span>
+            <span className="text-xs text-text-muted">· {statementsCount(removedCount)}</span>
           </button>
         </section>}
 

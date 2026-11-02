@@ -19,7 +19,8 @@ function setup(overrides: Partial<Parameters<typeof ClaimQueue>[0]> = {}) {
   const props = {
     groups: groupBySection(claims), mode: 'section' as const, onModeChange: vi.fn(), activeId: null as string | null,
     openedIds: new Set<string>(), settledIds: new Set<string>(), onSelect: vi.fn(), onAcceptSource: vi.fn(), onAddSource: vi.fn(),
-    onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(), busy: false,
+    onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(),
+    removedCount: 0, removedActive: false, onOpenRemoved: vi.fn(), busy: false,
     ...overrides,
   };
   render(<ClaimQueue {...props} />);
@@ -80,7 +81,8 @@ describe('ClaimQueue', () => {
     const groups = groupBySection(claims);
     const base = {
       groups, mode: 'section' as const, onModeChange: vi.fn(), openedIds: new Set<string>(), settledIds: new Set<string>(), onSelect: vi.fn(),
-      onAcceptSource: vi.fn(), onAddSource: vi.fn(), onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(), busy: false,
+      onAcceptSource: vi.fn(), onAddSource: vi.fn(), onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(),
+      removedCount: 0, removedActive: false, onOpenRemoved: vi.fn(), busy: false,
     };
     const { rerender } = render(<ClaimQueue {...base} activeId="claim-3" />);
     const first = screen.getAllByRole('region')[0];
@@ -163,6 +165,20 @@ describe('ClaimQueue', () => {
   it('hides the teaching notes row when none wait', () => {
     setup();
     expect(screen.queryByRole('region', { name: 'Teaching notes' })).not.toBeInTheDocument();
+  });
+
+  it('opens the taken-out row with the count of statements the machine took out', async () => {
+    const props = setup({ removedCount: 3, removedActive: true });
+    const row = screen.getByRole('button', { name: /Taken out of the lesson/ });
+    expect(row).toHaveTextContent('3 statements');
+    expect(row).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(row);
+    expect(props.onOpenRemoved).toHaveBeenCalled();
+  });
+
+  it('has no taken-out row when the machine took nothing out', () => {
+    setup();
+    expect(screen.queryByRole('region', { name: 'Taken out of the lesson' })).not.toBeInTheDocument();
   });
 
   it('shows resolved claims behind a toggle and selects one', async () => {

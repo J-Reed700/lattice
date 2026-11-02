@@ -61,6 +61,41 @@ export function unitLabel(location: ClaimLocationDto): string {
   }
 }
 
+// ── What the machine took out (design 3.12) ─────────────────────────────────
+
+/** The machine took the statement's sentence out of the lesson. */
+export const isTakenOut = (item: ClaimReviewItemDto) => item.state.state === 'removed' && item.state.by === 'machine';
+
+/** Why a statement went, in words: the check that failed it, else the sentence or section it stood in. */
+export function removalReason(item: ClaimReviewItemDto): string {
+  if (item.verdictKind) {
+    const why = verdictWords(item.verdictKind);
+    return item.reason ? `${why} · ${item.reason}` : why;
+  }
+  return 'Taken out with the sentence or section it stood in';
+}
+
+/** A sentence taken out of the lesson and every statement that stood on it. */
+export type TakenOutSentence = {
+  key: string;
+  sentence: string;
+  statements: Array<{ claimId: string; statement: string; why: string }>;
+};
+
+/** The machine's removals, a sentence several statements stood on listed once, naming each of them. */
+export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentence[] {
+  const sentences = new Map<string, TakenOutSentence>();
+  for (const claim of claims.filter(isTakenOut)) {
+    const { unitIndex, field } = claim.location;
+    const { sentence, statement } = claim.presentation;
+    const key = `${unitIndex}:${field}:${sentence}`;
+    const entry = sentences.get(key) ?? { key, sentence, statements: [] };
+    entry.statements.push({ claimId: claim.claimId, statement, why: removalReason(claim) });
+    sentences.set(key, entry);
+  }
+  return [...sentences.values()];
+}
+
 // ── The queue's groups (§3.2) ───────────────────────────────────────────────
 
 export type GroupMode = 'source' | 'section' | 'fix';

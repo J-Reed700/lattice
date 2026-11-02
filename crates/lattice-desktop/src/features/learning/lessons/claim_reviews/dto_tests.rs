@@ -448,3 +448,47 @@ fn the_review_shows_the_claims_own_sentence_for_a_location_stored_as_a_passage()
         "This description is called a tool schema. Most APIs write it as a JSON object."
     );
 }
+
+#[test]
+fn a_statement_the_machine_removed_shows_its_own_sentence_and_names_no_section() {
+    use lattice_core::domain::learning::claim_review::ClaimLedgerEntry;
+    const SENTENCE: &str = "Water boils at 100 °C at sea level.";
+    let mut entry = ClaimLedgerEntry::extracted(
+        ClaimId("claim-1".into()),
+        provenance(Actor::Machine, 1),
+        ClaimLocation::locate(2, UnitKind::Block, "body", SENTENCE, SENTENCE),
+        SENTENCE.into(),
+    )
+    .unwrap();
+    entry
+        .append(
+            provenance(Actor::Machine, 2),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    // The section it stood in went out of the lesson; another section holds
+    // its place now.
+    let units = serde_json::json!({
+        "blocks": [
+            { "kind": "explanation", "title": "First", "body": "One thing." },
+            { "kind": "explanation", "title": "Second", "body": "Another thing." },
+            { "kind": "explanation", "title": "Third", "body": "Something else entirely." },
+        ],
+        "questions": [],
+    });
+    let card = super::view::presentation(&entry, &units, "Third");
+    assert_eq!(card.sentence, SENTENCE);
+    assert_eq!(card.context_before, "");
+    assert_eq!(card.context_after, "");
+    assert_eq!(card.place, "");
+}

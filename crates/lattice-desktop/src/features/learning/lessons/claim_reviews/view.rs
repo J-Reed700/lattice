@@ -460,7 +460,13 @@ fn item(
         ),
         _ => (failed_reason(entry), None, None),
     };
-    let unit_title = titles.get(location.unit_index).cloned().unwrap_or_default();
+    // A section that went out of the lesson moved the ones after it: the
+    // title at a taken-out statement's old place is another section's.
+    let unit_title = if presentation::taken_out(entry) {
+        String::new()
+    } else {
+        titles.get(location.unit_index).cloned().unwrap_or_default()
+    };
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
     ClaimReviewItemDto {
