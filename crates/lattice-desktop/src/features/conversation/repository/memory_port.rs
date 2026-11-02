@@ -32,6 +32,10 @@ impl ConversationMemoryPort for ConversationRepository {
             .map(Some)
     }
 
+    async fn shared_items(&self, conversation_id: &str, text: &str) -> Result<Vec<MemoryItem>> {
+        self.shared_memory_items(conversation_id, text).await
+    }
+
     async fn load_snapshot(&self, conversation_id: &str) -> Result<MemorySnapshot> {
         self.load_memory_snapshot(conversation_id).await
     }

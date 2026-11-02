@@ -71,6 +71,10 @@ pub struct RecallCandidate {
     pub exact_identifier: bool,
 }
 
+/// How close in meaning a passage or shared item must be to a turn it shares no
+/// word with. Not measured yet: set from the memory eval.
+pub const SHARED_RELEVANCE_FLOOR: f32 = 0.6;
+
 /// What recall returned, and which modes actually ran.
 ///
 /// The distinction matters: "no hits" and "the index was unavailable" lead to
@@ -231,6 +235,17 @@ pub trait ConversationMemoryPort: Send + Sync {
         _query: &str,
     ) -> Result<Option<PreparedMemory>> {
         Ok(None)
+    }
+
+    /// Items from other chats in this one's pool that bear on `text`, for a
+    /// correction said here to reach. Their sequences count another chat's
+    /// messages, so they read as older than anything here.
+    async fn shared_items(
+        &self,
+        _conversation_id: &str,
+        _text: &str,
+    ) -> Result<Vec<crate::domain::conversation::memory::MemoryItem>> {
+        Ok(Vec::new())
     }
 
     /// One consistent read of state, active items with their evidence, the

@@ -9,33 +9,43 @@ const requestFor = (conversationId: string, action: string): KnowledgeRequestDto
 });
 const inputClass = 'w-full rounded-md border border-[hsl(var(--border-default))] bg-transparent p-2 text-xs';
 const buttonClass = 'rounded-md border border-[hsl(var(--border-default))] px-2 py-1 text-xs disabled:opacity-50';
+const aboutTheUser = ['user_fact', 'preference', 'goal'];
+
+function ScopeOptions({ pool }: { pool: string }) {
+  return <>
+    <option value="conversation">This conversation</option><option value="pool">This {pool}</option><option value="personal">All conversations</option>
+  </>;
+}
 
 /** Shared facts retain their source conversation. Editing creates user evidence. */
 export function KnowledgePanel({ conversationId, onOpenConversation }: { conversationId: string; onOpenConversation?: (id: string) => void }) {
   const [offset, setOffset] = useState(0);
   const [text, setText] = useState('');
-  const [scope, setScope] = useState('conversation');
+  const [chosenScope, setScope] = useState<string | null>(null);
   const [kind, setKind] = useState('user_fact');
+  const scope = chosenScope ?? (aboutTheUser.includes(kind) ? 'pool' : 'conversation');
   const [editing, setEditing] = useState<KnowledgeItemDto | null>(null);
   const [from, setFrom] = useState('');
   const [until, setUntil] = useState('');
   const query = useConversationKnowledgeQuery(conversationId, offset);
+  const pool = query.data?.pool ?? 'space';
+  const sharing = (item: KnowledgeItemDto) => item.scope === pool ? 'pool' : item.scope;
   const mutation = useManageKnowledgeMutation((request) => {
     if (request.action === 'remember' || request.action === 'correct') {
-      setText(''); setEditing(null); setFrom(''); setUntil('');
+      setText(''); setEditing(null); setFrom(''); setUntil(''); setScope(null);
     }
   });
   const act = (item: KnowledgeItemDto, action: string, extras: Partial<KnowledgeRequestDto> = {}) =>
     mutation.mutate({ ...requestFor(conversationId, action), itemId: item.id, ...extras });
   const date = (value: string) => value ? `${value}T00:00:00Z` : null;
   const beginEdit = (item: KnowledgeItemDto) => {
-    setEditing(item); setText(item.label); setScope(item.scope);
+    setEditing(item); setText(item.label); setScope(sharing(item));
     setFrom(item.validFrom?.slice(0, 10) ?? ''); setUntil(item.validUntil?.slice(0, 10) ?? '');
   };
   return (
     <section className="mt-5 space-y-3 border-t border-[hsl(var(--border-subtle))] pt-4">
       <h3 className="text-sm font-medium">Saved knowledge</h3>
-      <p className="text-xs text-text-muted">Facts, decisions and open work you can reuse. Sharing with a space or all conversations is explicit. Dates describe when a fact applies; verification records when you checked it.</p>
+      <p className="text-xs text-text-muted">Facts, decisions and open work you can reuse. What you say about yourself reaches the chats in this {pool} when it bears on them, unless you keep it to this conversation. Decisions and instructions stay here unless you share them. Dates describe when a fact applies; verification records when you checked it.</p>
       <form className="space-y-2" onSubmit={(event) => {
         event.preventDefault();
         mutation.mutate({ ...requestFor(conversationId, editing ? 'correct' : 'remember'), itemId: editing?.id ?? null, text, scope, kind, validFrom: date(from), validUntil: date(until) });
@@ -48,7 +58,7 @@ export function KnowledgePanel({ conversationId, onOpenConversation }: { convers
         </select></label>}
         <label className="block text-xs">Available in
           <select aria-label="Memory scope" className={inputClass} value={scope} onChange={e => setScope(e.target.value)}>
-            <option value="conversation">This conversation</option><option value="space">This space</option><option value="personal">All conversations</option>
+            <ScopeOptions pool={pool} />
           </select>
         </label>
         <div className="flex gap-2">
@@ -56,7 +66,7 @@ export function KnowledgePanel({ conversationId, onOpenConversation }: { convers
           <label className="flex-1 text-xs">Valid until<input aria-label="Valid until" type="date" className={inputClass} value={until} onChange={e => setUntil(e.target.value)} /></label>
         </div>
         <button className={buttonClass} disabled={!text.trim() || mutation.isPending} type="submit">{editing ? 'Save correction' : 'Remember'}</button>
-        {editing && <button className={`${buttonClass} ml-2`} type="button" onClick={() => {setEditing(null); setText(''); setFrom(''); setUntil('');}}>Cancel correction</button>}
+        {editing && <button className={`${buttonClass} ml-2`} type="button" onClick={() => {setEditing(null); setText(''); setFrom(''); setUntil(''); setScope(null);}}>Cancel correction</button>}
       </form>
       {(query.error || mutation.error) && <p role="alert" className="text-xs text-[hsl(var(--error-fg))]">{(mutation.error ?? query.error)?.message}</p>}
       {query.isPending && <p className="text-xs">Loading saved knowledge…</p>}
@@ -71,15 +81,15 @@ export function KnowledgePanel({ conversationId, onOpenConversation }: { convers
             <p className="mt-1 text-text-muted">{item.availabilityReason} · {item.conversationTitle}</p>
             <p className="mt-1 text-text-muted">Learned {item.learnedAt.slice(0, 10)}{item.validFrom ? ` · From ${item.validFrom.slice(0, 10)}` : ''}{item.validUntil ? ` · Until ${item.validUntil.slice(0, 10)}` : ''}{item.verifiedAt ? ` · Checked ${item.verifiedAt.slice(0, 10)}` : ' · Not manually verified'}</p>
             <details className="mt-2"><summary className="cursor-pointer">Evidence and provenance</summary>{item.evidence.map((e, i) => <blockquote key={`${e.messageId}-${i}`} className="mt-2 border-l-2 pl-2">{e.text ?? 'Source changed or was removed.'}<span className="block text-text-muted">{e.role} · message {e.sequence}</span></blockquote>)}</details>
-            {owned && item.state === 'active' && !item.forgotten && <div className="mt-2 flex flex-wrap gap-2">
+            {item.state === 'active' && !item.forgotten && <div className="mt-2 flex flex-wrap gap-2">
               <button className={buttonClass} disabled={mutation.isPending} onClick={() => beginEdit(item)}>Correct</button>
-              <button className={buttonClass} disabled={mutation.isPending} onClick={() => act(item, 'verify')}>Mark checked</button>
-              <select aria-label={`Sharing for ${item.label}`} className={buttonClass} value={item.scope} disabled={mutation.isPending} onChange={e => act(item, 'scope', {scope:e.target.value})}>
-                <option value="conversation">This conversation</option><option value="space">This space</option><option value="personal">All conversations</option>
-              </select>
+              {owned && <button className={buttonClass} disabled={mutation.isPending} onClick={() => act(item, 'verify')}>Mark checked</button>}
+              {owned && <select aria-label={`Sharing for ${item.label}`} className={buttonClass} value={sharing(item)} disabled={mutation.isPending} onChange={e => act(item, 'scope', {scope:e.target.value})}>
+                <ScopeOptions pool={pool} />
+              </select>}
               <button className={buttonClass} disabled={mutation.isPending} onClick={() => act(item, 'forget')}>Forget saved item</button>
             </div>}
-            {!owned && <p className="mt-2 text-text-muted">Open its source conversation to change this item.
+            {!owned && <p className="mt-2 text-text-muted">Correcting or forgetting this changes it in every chat that shares it. Open its source conversation to change its sharing, dates or check.
               {onOpenConversation && <button className={`${buttonClass} ml-2`} onClick={() => onOpenConversation(item.conversationId)}>Open source conversation</button>}
             </p>}
           </li>;

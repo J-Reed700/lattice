@@ -19,7 +19,7 @@ const item = (overrides: Partial<KnowledgeItemDto> = {}): KnowledgeItemDto => ({
   ...overrides,
 } as KnowledgeItemDto);
 
-const respond = (items: KnowledgeItemDto[], hasMore = false) => ({ ok: true, data: { items, hasMore, lastAnswerMemoryIds: [] } });
+const respond = (items: KnowledgeItemDto[], hasMore = false, pool = 'space') => ({ ok: true, data: { items, hasMore, pool, lastAnswerMemoryIds: [] } });
 const requests = () => manageKnowledge.mock.calls.map(([request]) => request);
 
 const renderPanel = (onOpenConversation?: (id: string) => void) => render(
@@ -31,7 +31,52 @@ const renderPanel = (onOpenConversation?: (id: string) => void) => render(
 describe('KnowledgePanel actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    manageKnowledge.mockImplementation(async (request: { action: string }) => (request.action === 'list' ? respond([item()]) : { ok: true, data: { items: [], hasMore: false, lastAnswerMemoryIds: [] } }));
+    manageKnowledge.mockImplementation(async (request: { action: string }) => (request.action === 'list' ? respond([item()]) : { ok: true, data: { items: [], hasMore: false, pool: 'space', lastAnswerMemoryIds: [] } }));
+  });
+
+  it.each(['folder', 'course'])('names the pool the chat belongs to: %s', async (pool) => {
+    manageKnowledge.mockResolvedValue(respond([item({ scope: pool })], false, pool));
+    renderPanel();
+    await screen.findByText('Basil needs full sun');
+    expect(screen.getByRole('combobox', { name: 'Sharing for Basil needs full sun' })).toHaveValue('pool');
+    expect(screen.getAllByRole('option', { name: `This ${pool}` })).toHaveLength(2);
+    expect(screen.queryByRole('option', { name: 'This space' })).not.toBeInTheDocument();
+  });
+
+  it('remembers with the pool unless told to keep it to this conversation', async () => {
+    renderPanel();
+    await screen.findByText('Basil needs full sun');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Memory text' }), { target: { value: 'I have an interview on Friday' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    await waitFor(() => expect(requests().some((request) => request.action === 'remember' && request.scope === 'pool')).toBe(true));
+  });
+
+  it('keeps a requirement to this conversation unless told to share it', async () => {
+    renderPanel();
+    await screen.findByText('Basil needs full sun');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Memory type' }), { target: { value: 'constraint' } });
+    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('conversation');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Memory text' }), { target: { value: 'No LINQ in this answer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+    await waitFor(() => expect(requests().some((request) => request.action === 'remember' && request.scope === 'conversation')).toBe(true));
+  });
+
+  it('keeps a sharing the user chose when the memory type changes', async () => {
+    renderPanel();
+    await screen.findByText('Basil needs full sun');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Memory scope' }), { target: { value: 'pool' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Memory type' }), { target: { value: 'decision' } });
+    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('pool');
+  });
+
+  it('corrects and forgets a shared item from another chat, and leaves its sharing to its source', async () => {
+    manageKnowledge.mockImplementation(async (request: { action: string }) => respond(request.action === 'list' ? [item({ conversationId: 'two' })] : []));
+    renderPanel();
+    await screen.findByText('Basil needs full sun');
+    expect(screen.queryByRole('button', { name: 'Mark checked' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Sharing for Basil needs full sun' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Forget saved item' }));
+    await waitFor(() => expect(requests().some((request) => request.action === 'forget' && request.itemId === 'fact-1')).toBe(true));
   });
 
   it('shows dates, a check mark and evidence whose source changed', async () => {

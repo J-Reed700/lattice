@@ -8,6 +8,7 @@ mod document_references;
 mod fork;
 mod knowledge;
 mod memory;
+mod memory_pools_migration;
 mod messages;
 mod model_choice;
 mod pruning;

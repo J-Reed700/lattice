@@ -188,7 +188,13 @@ pub fn apply_patch(
 
         // The evidence is real but its meaning is ambiguous: record the
         // conflict without changing the existing item.
-        let mut evidence = existing.evidence.clone();
+        let mut evidence = if existing.conversation_id == conversation_id {
+            existing.evidence.clone()
+        } else {
+            // A shared item's passages are in its own chat, and a commit
+            // refuses a span from anywhere but this one.
+            Vec::new()
+        };
         evidence.extend(transition.evidence.iter().cloned());
         evidence.truncate(MAX_EVIDENCE_PER_ITEM * 2);
         let mut related = vec![existing.id.clone()];

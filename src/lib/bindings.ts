@@ -6613,6 +6613,10 @@ action: string; itemId: string | null;
 text: string | null; scope: string | null; kind: string | null; validFrom: string | null; validUntil: string | null; offset: number | null }
 export type KnowledgeResponseDto = { items: KnowledgeItemDto[]; hasMore: boolean;
 /**
+ * What this chat's pool is: `space`, `folder` or `course`.
+ */
+pool: string;
+/**
  * Items supplied in the initial context of the latest completed answer.
  */
 lastAnswerMemoryIds: string[] }

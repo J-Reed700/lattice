@@ -4,8 +4,8 @@ use tracing::warn;
 
 use lattice_core::application::ports::conversation_memory::{SourceReadLimits, SourceSpanRef};
 use lattice_core::domain::conversation::memory::{
-    EvidenceSpan, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan, ValidatedPatch,
-    ValidatedTransitionTarget,
+    EvidenceSpan, MemoryItem, MemorySnapshot, SourceMessage, SourceRole, SuppressedSpan,
+    ValidatedPatch, ValidatedTransitionTarget,
 };
 
 use super::super::verify::EvidenceText;
@@ -13,6 +13,31 @@ use super::super::CompactionError;
 use super::{CompactionJob, RangeRead, Refold};
 
 impl CompactionJob {
+    /// What the pool holds that bears on what the user said in this window. A
+    /// failed read costs only a correction reaching across chats this time.
+    pub(super) async fn shared_items(
+        &self,
+        conversation_id: &str,
+        window: &[SourceMessage],
+    ) -> Vec<MemoryItem> {
+        let said: Vec<&str> = window
+            .iter()
+            .filter(|message| message.role == SourceRole::User)
+            .map(|message| message.content.as_str())
+            .collect();
+        match self
+            .memory
+            .shared_items(conversation_id, &said.join("\n"))
+            .await
+        {
+            Ok(items) => items,
+            Err(error) => {
+                warn!(conversation_id, %error, "Could not read this chat's shared memory");
+                Vec::new()
+            }
+        }
+    }
+
     /// Page the unprocessed range up to this attempt's work cap.
     ///
     /// Returns the messages read and whether they reach the end of the
@@ -195,30 +220,40 @@ impl CompactionJob {
             targeted.iter().flat_map(|item| item.evidence.iter()),
         );
 
-        let outstanding: Vec<&EvidenceSpan> = targeted
-            .iter()
-            .flat_map(|item| item.evidence.iter())
-            .filter(|span| evidence.text(span).is_none())
-            .collect();
-        if outstanding.is_empty() {
-            return Ok(evidence);
+        // A shared item's passages live in the chat it came from.
+        let mut sources: Vec<&str> = vec![conversation_id];
+        for item in &targeted {
+            if !sources.contains(&item.conversation_id.as_str()) {
+                sources.push(&item.conversation_id);
+            }
         }
-        let refs: Vec<SourceSpanRef> = outstanding
-            .iter()
-            .map(|span| SourceSpanRef {
-                message_id: span.message_id.clone(),
-                start_byte: span.start_byte,
-                end_byte: span.end_byte,
-            })
-            .collect();
-        let resolved = self
-            .memory
-            .read_source_spans(conversation_id, &refs, self.config.source_read_limits)
-            .await?;
-        // The port answers one resolved span per request, in request order.
-        for (span, resolution) in outstanding.iter().zip(resolved) {
-            if let Some(text) = resolution.text {
-                evidence.insert(span, text);
+        for source in sources {
+            let outstanding: Vec<&EvidenceSpan> = targeted
+                .iter()
+                .filter(|item| item.conversation_id == source)
+                .flat_map(|item| item.evidence.iter())
+                .filter(|span| evidence.text(span).is_none())
+                .collect();
+            if outstanding.is_empty() {
+                continue;
+            }
+            let refs: Vec<SourceSpanRef> = outstanding
+                .iter()
+                .map(|span| SourceSpanRef {
+                    message_id: span.message_id.clone(),
+                    start_byte: span.start_byte,
+                    end_byte: span.end_byte,
+                })
+                .collect();
+            let resolved = self
+                .memory
+                .read_source_spans(source, &refs, self.config.source_read_limits)
+                .await?;
+            // The port answers one resolved span per request, in request order.
+            for (span, resolution) in outstanding.iter().zip(resolved) {
+                if let Some(text) = resolution.text {
+                    evidence.insert(span, text);
+                }
             }
         }
         Ok(evidence)

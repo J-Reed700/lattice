@@ -7,7 +7,7 @@ use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions,
 };
 use lattice_core::domain::conversation::memory::{
-    compute_digest, MemoryItem, MemoryKind, MEMORY_SCHEMA_VERSION,
+    compute_digest, MemoryId, MemoryItem, MemoryKind, MEMORY_SCHEMA_VERSION,
 };
 use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
@@ -172,11 +172,16 @@ impl ConversationRepository {
         // The model call happened outside this transaction, so the source may
         // have moved since. Trusting the candidate's own digests here would let
         // a span that stopped resolving be committed as authoritative.
+        let (updates, shared): (Vec<&MemoryItem>, Vec<&MemoryItem>) = candidate
+            .commit
+            .updates
+            .iter()
+            .partition(|item| item.conversation_id == conversation_id);
         for item in candidate
             .commit
             .inserts
             .iter()
-            .chain(&candidate.commit.updates)
+            .chain(updates.iter().copied())
         {
             for span in &item.evidence {
                 #[derive(sqlx::FromRow)]
@@ -213,7 +218,7 @@ impl ConversationRepository {
                 .await
                 .map_err(db)?;
         }
-        for item in &candidate.commit.updates {
+        for item in &updates {
             Self::update_memory_item(&mut tx, item, next_revision, &now)
                 .await
                 .map_err(db)?;
@@ -221,7 +226,12 @@ impl ConversationRepository {
         // Superseded-by links are set in a second pass: a replacement inserted
         // in this same patch does not exist when the item it retires is written,
         // and the foreign key would reject the forward reference.
-        for item in &candidate.commit.updates {
+        for item in &shared {
+            Self::retire_shared_item(&mut tx, item, &now)
+                .await
+                .map_err(db)?;
+        }
+        for item in &updates {
             if let Some(replacement) = &item.superseded_by {
                 sqlx::query(
                     "UPDATE conversation_memory_items SET superseded_by = ? \
@@ -472,6 +482,43 @@ impl ConversationRepository {
         .execute(&mut **tx)
         .await?;
         Self::replace_evidence(tx, item).await
+    }
+
+    /// Another chat's item, corrected here. Only its state moves: its evidence
+    /// stays in the chat it came from. That chat's in-flight work and any
+    /// summary repeating the old value do not survive it, as with a correction
+    /// made by hand.
+    async fn retire_shared_item(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        item: &MemoryItem,
+        now: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let source = item.conversation_id.as_str();
+        sqlx::query(
+            "UPDATE conversation_memory_items SET \
+                state = ?, superseded_by = ?, revision = revision + 1, updated_at = ? \
+             WHERE id = ? AND conversation_id = ? AND state = 'active'",
+        )
+        .bind(item.state.as_str())
+        .bind(item.superseded_by.as_ref().map(MemoryId::as_str))
+        .bind(now)
+        .bind(item.id.as_str())
+        .bind(source)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query(
+            "UPDATE conversation_memory_state SET memory_revision = memory_revision + 1, \
+             updated_at = ? WHERE conversation_id = ?",
+        )
+        .bind(now)
+        .bind(source)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query("DELETE FROM conversation_summaries WHERE conversation_id = ?")
+            .bind(source)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
     }
 
     async fn update_memory_item(
