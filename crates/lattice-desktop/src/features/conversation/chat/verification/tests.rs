@@ -611,10 +611,10 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
     assert_eq!(cited_only.supported_claims, 1);
 }
 
-const LEASE_PASSAGE: &str = "A worker holds a lease of 45 seconds on the job it was given.";
+const LEASE_PASSAGE: &str = "A worker holds a lease on the job the broker handed it.";
 
 const SESSION_REPLY: &str = "Good work, you have named that part exactly as the handbook does.\n\n\
-     A worker holds a lease of 45 seconds on the job it was given [1].\n\n\
+     A worker holds a lease on the job the broker handed it [1].\n\n\
      Let's move on to the next card in your deck, one at a time.\n\n\
      The backoff ladder has six rungs in total, each one longer than the last.";
 

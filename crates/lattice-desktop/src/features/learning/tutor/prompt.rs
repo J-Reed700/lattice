@@ -41,11 +41,12 @@ pub(crate) const TUTOR_TEMPLATE: &str =
 /// How a turn treats the course. The question is about the course, so the
 /// router does not start a library search of its own and the web comes only
 /// when the learner turns it on, but the library's tools stay offered, as in
-/// any chat. Every claim is checked, as in a chat, because a tutor cites. A
-/// session reads, reviews and saves a few things per round, so it gets a
-/// folder's rounds. It does not read its passages into notes first: the round
-/// after the notes answers in the passages' words whatever the learner said,
-/// which restated a card's answer and left the card unrated.
+/// any chat. Every claim is checked, as in a chat, because a tutor cites; what
+/// only runs the session is no claim. A session reads, reviews and saves a few
+/// things per round, so it gets a folder's rounds. It does not read its
+/// passages into notes first: the round after the notes answers in the
+/// passages' words whatever the learner said, which restated a card's answer
+/// and left the card unrated.
 pub(crate) const TUTOR_POLICY: TurnSourcePolicy = TurnSourcePolicy {
     routes_to_library: false,
     offers_library_tools: true,

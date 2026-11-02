@@ -391,10 +391,40 @@ impl GroundingVerifier {
         self
     }
 
+    /// Takes out the sentences that cite nothing and say nothing about the
+    /// subject, as the judge sorts them. Without a judge's answer they all stay.
+    async fn drop_session_talk(&self, claims: &mut Vec<lexical::LexicalClaim>) {
+        let Some(judge) = self.judge.as_ref() else {
+            return;
+        };
+        let uncited: Vec<&str> = claims
+            .iter()
+            .filter(|claim| claim.citation_ids.is_empty())
+            .map(|claim| claim.claim_text.as_str())
+            .collect();
+        if uncited.is_empty() {
+            return;
+        }
+        let Some(about_the_subject) = judge.about_the_subject(&uncited).await else {
+            return;
+        };
+        let mut position = 0;
+        claims.retain(|claim| {
+            if !claim.citation_ids.is_empty() {
+                return true;
+            }
+            position += 1;
+            about_the_subject.contains(&(position - 1))
+        });
+    }
+
     pub async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
         let mut claims = lexical::lexical_pass(response, sources);
         if self.cited_only {
             claims.retain(|claim| !claim.citation_ids.is_empty());
+        }
+        if self.without_session_talk {
+            self.drop_session_talk(&mut claims).await;
         }
         if claims.is_empty() {
             return GroundingReport::default();
