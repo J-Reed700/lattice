@@ -525,7 +525,6 @@ async fn lesson_stage(
                 let activity = job.activity.as_ref();
                 let state = json!({
                     "status": job.status, "phase": activity.map(|a| a.phase), "message": job.progress_message,
-                    "deeper_page": activity.and_then(|a| a.deeper_evidence.as_ref()).map(|d| d.page),
                 });
                 let mut last = last
                     .lock()

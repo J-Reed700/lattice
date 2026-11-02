@@ -989,8 +989,7 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
 }
 
 #[test]
-fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() {
-    use lattice_core::domain::provenance::{Bar, ClusterId, CountedSupport, TrustLevel};
+fn the_tally_separates_a_claim_awaiting_research_from_a_repair() {
     let machine = || EventProvenance {
         actor: Actor::Machine,
         at: 1,
@@ -1004,7 +1003,7 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
         end_byte: SOURCE.len(),
         text_sha256: text_sha256(SOURCE),
     }];
-    let entry = |index: usize, kind: Option<VerdictKind>, researched: bool| {
+    let entry = |index: usize, failed: bool, researched: bool| {
         let sentence = figure(index);
         let mut entry = ClaimLedgerEntry::extracted(
             ClaimId(format!("claim-{index}")),
@@ -1013,12 +1012,14 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
             sentence.clone(),
         )
         .unwrap();
-        if let Some(kind) = kind {
+        if failed {
             let check = Check {
                 checker: Checker::Local {
                     model: "figures-fixture".into(),
                 },
-                result: CheckResult::Failed { kind },
+                result: CheckResult::Failed {
+                    kind: VerdictKind::Unsupported,
+                },
                 reason: "The reference does not say so.".into(),
                 fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
                 evidence: seen.clone(),
@@ -1041,33 +1042,21 @@ fn the_tally_names_a_claim_sent_back_for_stronger_sources_apart_from_a_repair() 
         }
         entry
     };
-    let weak = || VerdictKind::InsufficientStanding {
-        bar: Bar::Primary,
-        have: vec![CountedSupport {
-            source_version_id: "source-1".into(),
-            origin_cluster: ClusterId("source-1".into()),
-            counted: Some(TrustLevel::Established),
-        }],
-    };
     let entries = vec![
-        entry(0, None, false),
-        entry(1, Some(VerdictKind::Unsupported), false),
-        entry(2, Some(weak()), false),
-        entry(3, Some(weak()), false),
-        // Researched on this evidence and nothing found: no rewrite fixes
-        // standing, so it waits for the user (claim sources design §10.4).
-        entry(4, Some(weak()), true),
+        entry(0, false, false),
+        entry(1, true, false),
+        // Researched on this evidence: a rewrite is next.
+        entry(2, true, true),
     ];
     let tally = claim_ledger::claim_tally(&entries);
     assert_eq!(
         (
             tally.unchecked,
             tally.searching,
-            tally.sent_back,
             tally.repairing,
             tally.waiting
         ),
-        (1, 1, 2, 0, 1)
+        (1, 1, 1, 0)
     );
 }
 

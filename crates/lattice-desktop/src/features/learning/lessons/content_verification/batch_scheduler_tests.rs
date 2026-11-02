@@ -543,7 +543,6 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         "Late saved checks must be visible before the slow first request finishes"
     );
     assert_eq!(activity.checks_completed, 167);
-    assert_eq!(activity.model_checks_total, Some(3));
     assert_eq!(
         *blocked.batch_sizes.lock().unwrap(),
         vec![3],
@@ -631,7 +630,6 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         activity.checks_completed, 7,
         "Progress must include completed siblings while the last check is blocked"
     );
-    assert_eq!(activity.checks_unresolved, 0);
     assert_eq!(activity.checks_reused, 0);
     drop(repo);
     pool.close().await;

@@ -7114,8 +7114,7 @@ export type LearningClaimSubjectDto = { name: string; kind: string; aliases: str
 classes: string[] }
 /**
  * The lesson's claims by who acts next and what is done to them (§6.3):
- * "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
- * waiting for you · 108 verified".
+ * "2 being repaired · 5 waiting for you · 108 verified".
  */
 export type LearningClaimTally = {
 /**
@@ -7127,12 +7126,6 @@ unchecked: number;
  * research looks for sources before they are checked again.
  */
 searching: number;
-/**
- * The machine's: the checker supported them, but the source check found
- * their sources too weak, and research looks for stronger ones before
- * they are checked again.
- */
-sentBack: number;
 /**
  * The machine's: research is done, and their text is rewritten next or
  * a rewrite awaits its check.
@@ -7205,22 +7198,6 @@ export type LearningCurriculumModule = { id: string; title: string; purpose: str
 export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
-/**
- * One round of checking unsupported claims against their next evidence page.
- */
-export type LearningDeeperEvidence = {
-/**
- * The evidence page of this round. Page 1 is each claim's first check.
- */
-page: number;
-/**
- * Claims checked against this page.
- */
-claims: number;
-/**
- * Of those claims, the ones whose check against this page has finished.
- */
-checked: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
 export type LearningDiagnosticCoverageGapDto = { outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
 export type LearningDiagnosticFindingDto = { promptId: string; outcomeId: string; signal: LearningDiagnosticSignal; feedback: string; evidenceQuote: string | null }
@@ -7249,26 +7226,15 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase; phase
  */
 checksCompleted: number; checksTotal: number; checksReused: number;
 /**
- * Checked claims of this pass that are not supported at present. A claim
- * a deeper evidence page supports leaves this count.
- */
-checksUnresolved: number;
-/**
- * Checked claims of this pass the checker supported but whose sources
- * the source check found too weak for the claim: research looks for
- * stronger sources for them. Not counted in `checks_unresolved`.
- */
-checksSentBack: number;
-/**
  * Set while this pass checks its claims again against references
  * research has just saved: how many it saved.
  */
 newReferences: number | null;
 /**
- * None while looking up saved checks; otherwise the number requiring the
- * model in this pass, after every reusable comparison has been restored.
+ * The lesson's statements by the check each gets, once they are sorted
+ * (claim classes design §3.12); none before.
  */
-modelChecksTotal: number | null;
+statements?: LearningStatementPlan | null;
 /**
  * Calls made to sort, check and rewrite this lesson's statements since
  * this run began.
@@ -7280,11 +7246,6 @@ modelCalls?: number;
  * the first checks find.
  */
 modelCallsCeiling?: number | null;
-/**
- * Set while claims this pass left unsupported are checked against further
- * pages of their evidence.
- */
-deeperEvidence: LearningDeeperEvidence | null;
 /**
  * Where the lesson's claims stand after the latest pass; none before
  * the first pass observed them.
@@ -7884,6 +7845,24 @@ export type LearningSourceWorkspaceDto = { programId: string; sources: LearningS
  * added found; null when no re-check ran.
  */
 recheck: WaitingClaimsRecheckDto | null }
+/**
+ * The statements of a lesson by the check each gets (claim classes design
+ * §3.1, §3.12): "73 statements: 36 to check against their sources, 29 to
+ * check for consistency, 8 common knowledge".
+ */
+export type LearningStatementPlan = {
+/**
+ * Checked against their sources.
+ */
+sourced: number;
+/**
+ * Checked for consistency with the passages their section cites.
+ */
+reasoning: number;
+/**
+ * Common knowledge, put to the model alone.
+ */
+common: number }
 /**
  * A subject class as the user named it ("Web platform APIs").
  */

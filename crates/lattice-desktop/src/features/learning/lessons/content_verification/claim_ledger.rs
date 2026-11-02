@@ -29,7 +29,7 @@ use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision,
-    StopReason, UserAction, VerdictKind, MACHINE_ATTEMPTS,
+    StopReason, UserAction, MACHINE_ATTEMPTS,
 };
 
 pub(in crate::features::learning) use located::{located, located_quote};
@@ -714,20 +714,15 @@ impl ClaimLedger {
 }
 
 /// Where the lesson's claims stand (§6.3). The machine's are told apart by
-/// what is done to them next: a first check, research then a recheck (the
-/// source check's apart from the checker's), or a rewrite; only the last is
-/// a repair.
+/// what is done to them next: a first check, research then a recheck, or a
+/// rewrite; only the last is a repair.
 pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
     let counts = ClaimCounts::tally(entries.iter());
     let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
-    let (mut unchecked, mut searching, mut sent_back) = (0, 0, 0);
+    let (mut unchecked, mut searching) = (0, 0);
     for entry in entries {
         match entry.state() {
             ClaimState::Unchecked => unchecked += 1,
-            ClaimState::Open {
-                kind: VerdictKind::InsufficientStanding { .. },
-                ..
-            } if entry.may_research() => sent_back += 1,
             ClaimState::Open { .. } if entry.may_research() => searching += 1,
             _ => {}
         }
@@ -735,12 +730,7 @@ pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
     LearningClaimTally {
         unchecked: count(unchecked),
         searching: count(searching),
-        sent_back: count(sent_back),
-        repairing: count(
-            counts
-                .open
-                .saturating_sub(unchecked + searching + sent_back),
-        ),
+        repairing: count(counts.open.saturating_sub(unchecked + searching)),
         waiting: count(counts.queued),
         verified: count(counts.verified),
         resolved_by_you: count(counts.resolved_by_you()),

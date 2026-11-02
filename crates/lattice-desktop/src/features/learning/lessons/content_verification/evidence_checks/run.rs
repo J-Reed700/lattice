@@ -27,10 +27,7 @@ impl Run {
             self.decided.insert(result.0);
         }
         if self.reported.insert(result.0) {
-            crate::features::learning::lesson_progress::checked(
-                result.3,
-                result.2.verdict != ClaimVerdict::Supported,
-            );
+            crate::features::learning::lesson_progress::checked(result.3);
         }
         self.results.push(result);
     }
@@ -42,15 +39,12 @@ impl Run {
             if self.reported.contains(&claim.ordinal) {
                 continue;
             }
-            let Some((finding, all_reused)) = claim.decided() else {
+            let Some((_, all_reused)) = claim.decided() else {
                 continue;
             };
             self.reported.insert(claim.ordinal);
             self.reused += usize::from(all_reused);
-            crate::features::learning::lesson_progress::checked(
-                all_reused,
-                finding.verdict != ClaimVerdict::Supported,
-            );
+            crate::features::learning::lesson_progress::checked(all_reused);
         }
     }
 
@@ -64,16 +58,13 @@ impl Run {
         if self.reported.contains(ordinal) {
             return;
         }
-        let Some((decided, all_reused)) = claim.decided() else {
+        let Some((_, all_reused)) = claim.decided() else {
             return;
         };
         self.reported.insert(*ordinal);
         self.reused += usize::from(all_reused);
         self.done += 1;
-        crate::features::learning::lesson_progress::checked(
-            all_reused,
-            decided.verdict != ClaimVerdict::Supported,
-        );
+        crate::features::learning::lesson_progress::checked(all_reused);
     }
 
     /// The job's first request, which measures what an answer costs before

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { preparationState, preparationSummary } from '@/features/learning/lessons/lessonPreparationActivity';
+import { callsLine, preparationState, preparationSummary, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGenerationJob => ({
@@ -9,7 +9,7 @@ const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGeneration
   activity: {
     phase: 'review', phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: 'Boiling', modelName: null,
     modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 0,
-    checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null,
+    checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
     recentSteps: [],
   },
   progressTotal: 1, progressMessage: '', resultId: null, error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: null,
@@ -34,5 +34,22 @@ describe('Lesson preparation in one line', () => {
     expect(line(job({ status: 'completed' }))).toBeNull();
     expect(line(undefined, true)).toBe('Preparing lesson · Starting');
     expect(line(undefined, false, 'The request could not be saved.')).toBe('Lesson preparation failed');
+  });
+});
+
+describe('The plan of a lesson\'s statements', () => {
+  it('says what the statements were sorted into', () => {
+    expect(statementsLine({ sourced: 36, reasoning: 29, common: 8 })).toBe('73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge');
+    expect(statementsLine({ sourced: 1, reasoning: 0, common: 0 })).toBe('1 statement: 1 to check against their sources, 0 to check for consistency, 0 common knowledge');
+  });
+
+  it('puts the calls made beside the most there can be, and has nothing to say before the first call', () => {
+    const activity = (modelCalls?: number, modelCallsCeiling?: number | null) => ({ ...job().activity!, modelCalls, modelCallsCeiling });
+    expect(callsLine(activity(112, 278))).toBe('112 calls so far, at most 278');
+    expect(callsLine(activity(1, 278))).toBe('1 call so far, at most 278');
+    expect(callsLine(activity(2, null))).toBe('2 calls so far');
+    expect(callsLine(activity(0, 278))).toBe('0 calls so far, at most 278');
+    expect(callsLine(activity())).toBeNull();
+    expect(callsLine(activity(0, null))).toBeNull();
   });
 });

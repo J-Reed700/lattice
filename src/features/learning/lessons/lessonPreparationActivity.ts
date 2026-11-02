@@ -1,5 +1,5 @@
 import { heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
-import type { LearningGenerationJob, LearningGenerationPhase } from '@/lib/bindings';
+import type { LearningGenerationActivity, LearningGenerationJob, LearningGenerationPhase, LearningStatementPlan } from '@/lib/bindings';
 
 export const PREPARATION_PHASES: Record<LearningGenerationPhase, { title: string; detail: string; next: string; group: number }> = {
   references: { title: 'Preparing reference material', detail: 'Loading saved sources and building the searchable passages used to check this lesson.', next: 'Write or restore the lesson draft.', group: 0 },
@@ -13,6 +13,25 @@ export const PREPARATION_PHASES: Record<LearningGenerationPhase, { title: string
   repair: { title: 'Repairing the draft', detail: 'Revising affected sections using the recorded problems and evidence. Each repaired section is saved before work continues.', next: 'Review and verify the revised lesson. Unchanged checks can be reused.', group: 4 },
   publishing: { title: 'Saving the verified lesson', detail: 'Confirming the lesson and sources still match the verification report, then making the finished material available.', next: 'The prepared lesson opens for study.', group: 5 },
 };
+
+/** "73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge". */
+export function statementsLine(plan: LearningStatementPlan): string {
+  const total = plan.sourced + plan.reasoning + plan.common;
+  return `${total} ${total === 1 ? 'statement' : 'statements'}: ${plan.sourced} to check against their sources, ${plan.reasoning} to check for consistency, ${plan.common} common knowledge`;
+}
+
+/**
+ * "112 calls so far, at most 278". The most is known once the statements are
+ * sorted, and only comes down; before that the calls so far stand alone, and
+ * before the first call there is nothing to say.
+ */
+export function callsLine(activity: LearningGenerationActivity): string | null {
+  const calls = activity.modelCalls ?? 0;
+  const most = activity.modelCallsCeiling ?? null;
+  if (calls === 0 && most == null) return null;
+  const made = `${calls} ${calls === 1 ? 'call' : 'calls'} so far`;
+  return most == null ? made : `${made}, at most ${most}`;
+}
 
 export function preparationDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));

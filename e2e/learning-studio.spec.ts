@@ -99,7 +99,8 @@ test('Lesson preparation explains verification and research across navigation an
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 95_000, lastCheckpointAt: Date.now() - 96_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
-        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134,
+        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, newReferences: null,
+        statements: { sourced: 90, reasoning: 54, common: 20 }, modelCalls: 112, modelCallsCeiling: 278,
         recentSteps: [{ phase: 'review', startedAt: Date.now() - 900_000 }, { phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
       },
     }];
@@ -111,7 +112,9 @@ test('Lesson preparation explains verification and research across navigation an
   await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
   await panel.getByRole('button', { name: 'Details' }).click();
   await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
-  await expect(panel.getByText('30 saved checks reused. 87 of 134 model checks remaining in this pass.')).toBeVisible();
+  await expect(panel.getByText('164 statements: 90 to check against their sources, 54 to check for consistency, 20 common knowledge')).toBeVisible();
+  await expect(panel.getByText('112 calls so far, at most 278')).toBeVisible();
+  await expect(panel.getByText('Saved checks reused')).toBeVisible();
   await expect(panel.getByText(/Checkpoint saved at/)).toBeVisible();
   await expect(panel.getByText(/No new output or completed step/)).toBeVisible();
   await panel.getByText('Recent activity', { exact: true }).click();

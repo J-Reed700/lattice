@@ -276,7 +276,7 @@ export function tallyLine(counts: ClaimCountsDto): string {
 
 /** The running job's claims, for the preparation details: the same order and words. */
 export function jobTallyLine(tally: LearningClaimTally): string {
-  const checking = tally.unchecked + tally.searching + tally.sentBack + tally.repairing;
+  const checking = tally.unchecked + tally.searching + tally.repairing;
   const parts: Array<[number, string]> = [
     [tally.waiting, tally.waiting === 1 ? 'claim needs you' : 'claims need you'],
     [tally.verified, 'verified'],
@@ -290,7 +290,7 @@ export function jobTallyLine(tally: LearningClaimTally): string {
 /** "Preparing · 44 of 44 checked", from the running job's tally. */
 export function preparingLine(tally: LearningClaimTally | null | undefined): string {
   if (!tally) return 'Preparing';
-  const total = tally.unchecked + tally.searching + tally.sentBack + tally.repairing + tally.waiting + tally.verified + tally.resolvedByYou;
+  const total = tally.unchecked + tally.searching + tally.repairing + tally.waiting + tally.verified + tally.resolvedByYou;
   return total > 0 ? `Preparing · ${total - tally.unchecked} of ${total} checked` : 'Preparing';
 }
 

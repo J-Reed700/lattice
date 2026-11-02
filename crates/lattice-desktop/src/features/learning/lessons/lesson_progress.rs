@@ -4,7 +4,8 @@
 use super::call_plan::{CallPlan, Counted, Fate};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
-    LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
+    LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase,
+    LearningGenerationStep, LearningStatementPlan,
 };
 use lattice_core::domain::learning::claim_review::Class;
 use lattice_core::shared::error::{AppError, Result};
@@ -189,10 +190,8 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.checks_total = 0;
             state.activity.checks_completed = 0;
             state.activity.checks_reused = 0;
-            state.activity.checks_unresolved = 0;
-            state.activity.model_checks_total = None;
-            state.activity.deeper_evidence = None;
             state.activity.verification_pass = 0;
+            state.activity.statements = None;
             state.activity.model_calls = 0;
             state.activity.model_calls_ceiling = None;
             state.plan = None;
@@ -245,31 +244,15 @@ pub(in crate::features::learning) fn begin_checks(total: usize) {
         activity.checks_total = total as u32;
         activity.checks_completed = 0;
         activity.checks_reused = 0;
-        activity.checks_unresolved = 0;
-        activity.checks_sent_back = 0;
-        activity.model_checks_total = None;
-        activity.deeper_evidence = None;
-    });
-}
-
-pub(in crate::features::learning) fn plan_model_checks(total: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .model_checks_total = Some(total as u32);
     });
 }
 
 /// A claim's first check in this pass finished.
-pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
+pub(in crate::features::learning) fn checked(reused: bool) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         state.activity.checks_completed += 1;
         state.activity.checks_reused += u32::from(reused);
-        state.activity.checks_unresolved += u32::from(unresolved);
     });
 }
 
@@ -294,6 +277,17 @@ pub(in crate::features::learning) fn calls_planned(statements: &[Counted], secti
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.plan.is_none() {
             let sorting = state.activity.model_calls;
+            let count = |class: Class| {
+                let of_class = statements
+                    .iter()
+                    .filter(|statement| statement.class == class);
+                u32::try_from(of_class.count()).unwrap_or(u32::MAX)
+            };
+            state.activity.statements = Some(LearningStatementPlan {
+                sourced: count(Class::Sourced),
+                reasoning: count(Class::Reasoning),
+                common: count(Class::Common),
+            });
             state.plan = Some(CallPlan::new(sorting, statements, sections));
             publish_ceiling(&mut state);
         }
@@ -396,6 +390,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     activity.phase_started_at = 0;
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
+    activity.statements = None;
     activity
 }
 
@@ -507,25 +502,24 @@ mod tests {
                 let second = model_call();
                 received("Answer");
                 drop(first);
-                checked(false, true);
+                checked(false);
                 stage("Checked 1 of 3 claims");
                 assert!(
                     progress.snapshot().2.model_running,
                     "One request is still active"
                 );
-                assert_eq!(progress.snapshot().2.checks_unresolved, 1);
+                assert_eq!(progress.snapshot().2.checks_completed, 1);
                 drop(second);
                 assert!(!progress.snapshot().2.model_running);
                 checkpoint_saved();
                 phase(Phase::Research, "Finding missing evidence");
                 phase(Phase::Evidence, "Rechecking evidence");
                 begin_checks(3);
-                checked(true, false);
+                checked(true);
                 let activity = progress.snapshot().2;
                 // A recheck after research is a step of the same pass (§6.3).
                 assert_eq!(activity.verification_pass, 1);
                 assert_eq!(activity.checks_reused, 1);
-                assert_eq!(activity.checks_unresolved, 0);
                 assert!(activity.last_checkpoint_at.is_some());
                 assert_eq!(
                     activity
@@ -664,11 +658,31 @@ mod tests {
                     (1, None)
                 );
 
-                let statements = [Counted {
-                    class: Class::Sourced,
-                    shares: false,
-                }];
+                let statements = [
+                    Counted {
+                        class: Class::Sourced,
+                        shares: false,
+                    },
+                    Counted {
+                        class: Class::Common,
+                        shares: false,
+                    },
+                    Counted {
+                        class: Class::Common,
+                        shares: false,
+                    },
+                ];
+                assert_eq!(progress.snapshot().2.statements, None);
                 calls_planned(&statements, 1);
+                // The plan is what the statements were sorted into.
+                assert_eq!(
+                    progress.snapshot().2.statements,
+                    Some(LearningStatementPlan {
+                        sourced: 1,
+                        reasoning: 0,
+                        common: 2
+                    })
+                );
                 // The sorting call made, the check, the three calls after it
                 // fails, the flow repair of its section and the repeat of an
                 // answer that cannot be read.

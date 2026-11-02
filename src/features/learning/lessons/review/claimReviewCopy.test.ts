@@ -209,15 +209,15 @@ describe('tallies', () => {
   });
 
   it('describes the running job’s claims', () => {
-    const tally = { unchecked: 1, searching: 2, sentBack: 3, repairing: 4, waiting: 1, verified: 10, resolvedByYou: 2, rewritten: 5 };
+    const tally = { unchecked: 1, searching: 5, repairing: 4, waiting: 1, verified: 10, resolvedByYou: 2, rewritten: 5 };
     expect(jobTallyLine(tally)).toBe('1 claim needs you · 10 verified · 2 resolved by you · 5 rewritten by the machine · 10 being checked');
-    expect(jobTallyLine({ ...tally, waiting: 2, rewritten: undefined, unchecked: 0, searching: 0, sentBack: 0, repairing: 0 })).toBe('2 claims need you · 10 verified · 2 resolved by you');
+    expect(jobTallyLine({ ...tally, waiting: 2, rewritten: undefined, unchecked: 0, searching: 0, repairing: 0 })).toBe('2 claims need you · 10 verified · 2 resolved by you');
   });
 
   it('counts how far preparation has got', () => {
     expect(preparingLine(null)).toBe('Preparing');
     expect(preparingLine(undefined)).toBe('Preparing');
-    const empty = { unchecked: 0, searching: 0, sentBack: 0, repairing: 0, waiting: 0, verified: 0, resolvedByYou: 0 };
+    const empty = { unchecked: 0, searching: 0, repairing: 0, waiting: 0, verified: 0, resolvedByYou: 0 };
     expect(preparingLine(empty)).toBe('Preparing');
     expect(preparingLine({ ...empty, unchecked: 4, verified: 40 })).toBe('Preparing · 40 of 44 checked');
   });

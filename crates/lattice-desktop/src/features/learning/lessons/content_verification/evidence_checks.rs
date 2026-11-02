@@ -234,7 +234,6 @@ pub(super) async fn check_with_citations(
     let pending: Vec<PendingClaim> = run.compared.values_mut().flat_map(Compared::send).collect();
     run.asked.extend(pending.iter().map(|item| item.ordinal));
     let model_checks = run.asked.len();
-    crate::features::learning::lesson_progress::plan_model_checks(model_checks);
     tracing::info!(
         total,
         reused = run.reused,
