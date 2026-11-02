@@ -70,7 +70,7 @@ pub(in crate::features::learning) fn needs_citation(text: &str) -> bool {
 /// saying, which the rule layer reads as an attribution and so errs toward a
 /// check. The writer's rule leaves that to the check: an imperative to
 /// "state your assumptions" is no attribution.
-fn states_a_specific(text: &str) -> bool {
+pub(super) fn states_a_specific(text: &str) -> bool {
     needs_citation(text)
         || lazy_regex::regex!(
             r"(?i)\b(states?|reports?|found|notes? that|describes?|says?|documented)\b"

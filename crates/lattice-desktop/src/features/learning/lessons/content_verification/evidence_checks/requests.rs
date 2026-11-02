@@ -8,11 +8,14 @@ use super::*;
 /// Finish `pending` with the judge's `judgment`. `shown` holds the positions
 /// in the page of the passages the judge was shown when it was not shown them
 /// all; the pending claim's evidence is already cut to those, and its receipt
-/// records them, so a restored decision names the same passages.
+/// records them, so a restored decision names the same passages. `parts` are
+/// the parts the judge read the claim as, when it reads claims part by part:
+/// the finding and its receipt record them.
 pub(super) async fn finish(
     pending: PendingClaim,
     judgment: ClaimJudgment,
     shown: Option<Vec<usize>>,
+    parts: Vec<CheckedPart>,
 ) -> Result<CheckedClaim> {
     let (verdict, reason, supporting_quote) = match judgment {
         ClaimJudgment::Failed(error) => return Err(error),
@@ -47,25 +50,29 @@ pub(super) async fn finish(
         supporting_quote,
         resolution: None,
         trust: None,
-        two_pass: TwoPass::default(),
+        two_pass: TwoPass {
+            parts: parts.clone(),
+            ..TwoPass::default()
+        },
         label: None,
         class: None,
     };
     if finding.verdict != ClaimVerdict::Unverified {
-        crate::features::learning::lesson_drafts::record_checkpoint(
-            &pending.receipt_key,
-            serde_json::to_value(ClaimReceipt {
-                verdict: finding.verdict,
-                reason: finding.reason.clone(),
-                supporting_quote: finding.supporting_quote.clone(),
-                interpretation_policy: Some(
-                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
-                        .into(),
-                ),
-                shown,
-            })?,
-        )
-        .await?;
+        let mut receipt = serde_json::to_value(ClaimReceipt {
+            verdict: finding.verdict,
+            reason: finding.reason.clone(),
+            supporting_quote: finding.supporting_quote.clone(),
+            interpretation_policy: Some(
+                lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                    .into(),
+            ),
+            shown,
+        })?;
+        if !parts.is_empty() {
+            receipt["parts"] = serde_json::to_value(&parts)?;
+        }
+        crate::features::learning::lesson_drafts::record_checkpoint(&pending.receipt_key, receipt)
+            .await?;
     }
     Ok((pending.ordinal, pending.key, finding, false))
 }
@@ -157,7 +164,10 @@ pub(super) async fn individual(
     let answer = AnswerSize::of(judged.output_tokens, 1);
     let pass = pending.pass;
     Ok((
-        (pass, finish(pending, judgment, cut.then_some(shown)).await?),
+        (
+            pass,
+            finish(pending, judgment, cut.then_some(shown), Vec::new()).await?,
+        ),
         answer,
     ))
 }
@@ -175,7 +185,8 @@ pub(super) fn completed(
 }
 
 /// Check `pending`'s comparisons, with what the judge's answers to them
-/// cost.
+/// cost. A comparison against the passages a claim's sentence cites is read
+/// part by part, alone (`bridge`); the others are packed.
 pub(super) async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
@@ -184,6 +195,12 @@ pub(super) async fn group(
 ) -> Result<(Vec<(Pass, CheckedClaim)>, AnswerSize)> {
     let mut results = Vec::new();
     let mut answers = AnswerSize::default();
+    let (cited, pending): (Vec<_>, Vec<_>) = pending.into_iter().partition(bridge::applies);
+    for item in cited {
+        let (result, answer) = bridge::individual(llm, item, labels).await?;
+        answers.add(answer);
+        completed(&mut results, result, tell);
+    }
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
@@ -287,7 +304,7 @@ pub(super) async fn group(
                 let pass = item.pass;
                 completed(
                     &mut results,
-                    (pass, finish(item, judgment, None).await?),
+                    (pass, finish(item, judgment, None, Vec::new()).await?),
                     tell,
                 );
             }

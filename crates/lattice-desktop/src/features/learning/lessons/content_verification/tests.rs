@@ -121,10 +121,60 @@ pub(crate) fn fixture_completion(
             .next()
             .map(|reply| verdict_last(&reply, &local))
             .unwrap_or_default()
+    } else if is_claim_check(user)
+        && system == lattice_core::application::services::claim_verification::BRIDGE_SYSTEM
+    {
+        replies
+            .into_iter()
+            .next()
+            .map(|reply| part_wise_reply(&reply, user))
+            .unwrap_or_default()
     } else {
         replies.concat()
     };
     CompletionResponse::from_text(text)
+}
+
+/// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
+/// passage-0") as the part-wise judge answers it: the claim as one part,
+/// stated by the passage the verdict names, contradicted by it, or not given.
+/// Anything else is returned as written.
+fn part_wise_reply(reply: &str, user: &str) -> String {
+    let mut lines = reply.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Some(label) = lines
+        .next()
+        .map(str::to_ascii_lowercase)
+        .filter(|label| ["supported", "contradicted", "unsupported"].contains(&label.as_str()))
+    else {
+        return reply.to_owned();
+    };
+    let (mut reason, mut passage) = (String::new(), Value::Null);
+    for line in lines {
+        if let Some(value) = line.strip_prefix("Reason:") {
+            reason = value.trim().to_owned();
+        } else if let Some(value) = line.strip_prefix("Source passage:") {
+            let value = value.trim();
+            if value.starts_with("passage-") {
+                passage = json!(value);
+            }
+        }
+    }
+    let claim = user
+        .split("\n\nClaim: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_default();
+    let (kind, passage) = match label.as_str() {
+        "supported" => ("stated", passage),
+        "contradicted" => ("contradicted", passage),
+        _ => ("specific_missing", Value::Null),
+    };
+    json!({
+        "parts": [{"part": claim, "kind": kind, "passage": passage}],
+        "verdict": label,
+        "reason": reason,
+    })
+    .to_string()
 }
 
 /// Every schema-constrained learning request a fixture answers: its grammar
@@ -494,6 +544,9 @@ mod audit_flow_tests;
 
 #[path = "rounds_tests.rs"]
 mod rounds_tests;
+
+#[path = "bridge_tests.rs"]
+mod bridge_tests;
 
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>

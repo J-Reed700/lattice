@@ -299,35 +299,61 @@ impl ClaimChecker<'_> {
         sampling: SamplingOverride,
         read: impl Fn(&str) -> Option<T>,
     ) -> ClassJudgment<T> {
+        self.class_judged_counted(
+            system,
+            prompt,
+            schema,
+            sampling,
+            "reply with one JSON object holding a verdict from the list and a reason",
+            read,
+        )
+        .await
+        .0
+    }
+
+    /// [`Self::class_judged`] for a reply of another shape, which `asked_again`
+    /// describes, with the output tokens the replies took.
+    pub(super) async fn class_judged_counted<T>(
+        &self,
+        system: &str,
+        prompt: &str,
+        schema: &Value,
+        sampling: SamplingOverride,
+        asked_again: &str,
+        read: impl Fn(&str) -> Option<T>,
+    ) -> (ClassJudgment<T>, u64) {
         let mut asked = prompt.to_owned();
+        let mut spent = 0_u64;
         for attempt in 0..2 {
-            let text = match self.class_reply(system, &asked, schema, sampling).await {
-                Ok(text) => text,
+            let (text, tokens) = match self.class_reply(system, &asked, schema, sampling).await {
+                Ok(reply) => reply,
                 Err(error) => {
                     warn!(%error, "Class judge call failed — leaving this statement unchecked");
-                    return ClassJudgment::from_request_error(error);
+                    return (ClassJudgment::from_request_error(error), spent);
                 }
             };
+            spent = spent.saturating_add(tokens);
             if let Some(value) = read(&text) {
-                return ClassJudgment::Judged(value);
+                return (ClassJudgment::Judged(value), spent);
             }
             if attempt == 0 {
-                asked = format!("{prompt}\n\nYour previous reply could not be read: reply with one JSON object holding a verdict from the list and a reason. Previous reply (untrusted JSON string): {}", json!(text));
+                asked = format!("{prompt}\n\nYour previous reply could not be read: {asked_again}. Previous reply (untrusted JSON string): {}", json!(text));
             }
         }
         warn!("Class judge reply could not be read twice — leaving this statement unchecked");
-        ClassJudgment::Unusable
+        (ClassJudgment::Unusable, spent)
     }
 
-    /// The model's reply to `prompt` under `system`, shaped by `schema`. A
-    /// reply that did not finish on its own comes back empty.
+    /// The model's reply to `prompt` under `system`, shaped by `schema`, and
+    /// the output tokens it took. A reply that did not finish on its own comes
+    /// back empty.
     async fn class_reply(
         &self,
         system: &str,
         prompt: &str,
         schema: &Value,
         sampling: SamplingOverride,
-    ) -> Result<String> {
+    ) -> Result<(String, u64)> {
         let response = self
             .llm
             .complete(&CompletionRequest {
@@ -349,7 +375,8 @@ impl ClaimChecker<'_> {
                 ..Default::default()
             })
             .await?;
-        Ok(
+        let tokens = response.output_tokens;
+        Ok((
             if matches!(
                 response.finish_reason.as_str(),
                 "stop" | "end_turn" | "completed"
@@ -358,6 +385,7 @@ impl ClaimChecker<'_> {
             } else {
                 String::new()
             },
-        )
+            tokens,
+        ))
     }
 }

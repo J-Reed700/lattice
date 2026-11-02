@@ -10,16 +10,20 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 mod batch;
+mod bridge;
 mod classes;
 mod prompt;
 mod rooms;
 
+#[cfg(test)]
+mod bridge_tests;
 #[cfg(test)]
 mod classes_tests;
 #[cfg(test)]
 mod field_emphasis_tests;
 
 pub use batch::{render_batch_evidence, LocatedClaim};
+pub use bridge::{BridgeDecision, BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
 pub use classes::{
     ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
     KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_POLICY, KNOWLEDGE_SAMPLES,
@@ -71,6 +75,9 @@ pub enum CheckPolicy {
     /// standard knowledge, false, or in need of a source (§3.1). See
     /// [`ClaimChecker::check_knowledge`].
     Knowledge,
+    /// A Sourced statement against the passages its sentence cites, part by
+    /// part (§3.3). See [`ClaimChecker::check_bridge`].
+    Bridge,
 }
 impl CheckPolicy {
     fn strict(self) -> bool {

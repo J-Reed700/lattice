@@ -8,27 +8,29 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 /// What a scripted model does with its next request.
-enum Reply {
+pub(super) enum Reply {
     Text(String),
+    /// A reply, and the output tokens the backend reports for it.
+    Counted(String, u64),
     Cut(String),
     Outage,
 }
 
 /// Answers each request as scripted and records every one it was sent.
-struct Scripted {
+pub(super) struct Scripted {
     replies: Mutex<VecDeque<Reply>>,
     sent: Mutex<Vec<CompletionRequest>>,
 }
 
 impl Scripted {
-    fn new(replies: Vec<Reply>) -> Self {
+    pub(super) fn new(replies: Vec<Reply>) -> Self {
         Self {
             replies: Mutex::new(replies.into()),
             sent: Mutex::new(Vec::new()),
         }
     }
 
-    fn sent(&self) -> Vec<CompletionRequest> {
+    pub(super) fn sent(&self) -> Vec<CompletionRequest> {
         self.sent.lock().unwrap().clone()
     }
 }
@@ -39,6 +41,10 @@ impl LLMPort for Scripted {
         self.sent.lock().unwrap().push(request.clone());
         match self.replies.lock().unwrap().pop_front() {
             Some(Reply::Text(text)) => Ok(CompletionResponse::from_text(text)),
+            Some(Reply::Counted(text, tokens)) => Ok(CompletionResponse {
+                output_tokens: tokens,
+                ..CompletionResponse::from_text(text)
+            }),
             Some(Reply::Cut(text)) => Ok(CompletionResponse {
                 finish_reason: "length".into(),
                 ..CompletionResponse::from_text(text)
@@ -59,7 +65,7 @@ impl LLMPort for Scripted {
     }
 }
 
-fn checker(llm: &Scripted, policy: CheckPolicy) -> ClaimChecker<'_> {
+pub(super) fn checker(llm: &Scripted, policy: CheckPolicy) -> ClaimChecker<'_> {
     ClaimChecker::new(llm, SamplingOverride::deterministic(), 512, policy)
 }
 
@@ -81,7 +87,7 @@ fn judged<T: std::fmt::Debug>(judgment: ClassJudgment<T>) -> T {
 }
 
 /// The system and the user message of a request.
-fn messages(request: &CompletionRequest) -> (String, String) {
+pub(super) fn messages(request: &CompletionRequest) -> (String, String) {
     let content = |wanted: &str| {
         request
             .input

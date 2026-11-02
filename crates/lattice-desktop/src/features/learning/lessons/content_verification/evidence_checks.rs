@@ -5,11 +5,13 @@
 //! `walk`), and a claim neither supports goes to web research. Requests hold
 //! one section's claims while the window holds them with their answers, and
 //! pass B pages are sized by what the job's answers cost (`page_budget`).
-//! What the two passes decide together is `outcome`'s.
+//! What the two passes decide together is `outcome`'s. Pass A reads a claim
+//! part by part (`bridge`).
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
 
+mod bridge;
 mod claims;
 mod outcome;
 mod page_budget;
@@ -22,7 +24,7 @@ use claims::{Compared, Comparison, Context, Prepared};
 pub(in crate::features::learning) use outcome::ContraryPassage;
 use outcome::{combine, decision_key};
 pub(in crate::features::learning) use outcome::{
-    same_passage, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
+    same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
 };
 pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
 #[cfg(test)]

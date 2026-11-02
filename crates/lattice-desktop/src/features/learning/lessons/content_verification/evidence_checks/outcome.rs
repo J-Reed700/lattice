@@ -6,6 +6,7 @@
 //! the claim; when both passes support it, both supports travel together.
 use super::walk::Reach;
 use super::*;
+use lattice_core::application::services::claim_verification::PartKind;
 
 /// Which of a claim's checks decided it. Pass A's comparison comes first in
 /// a request.
@@ -50,6 +51,19 @@ pub(in crate::features::learning) struct SupportingPassage {
     pub(in crate::features::learning) quote: String,
 }
 
+/// One part of a claim as pass A's part-wise judge read it (claim classes
+/// design §3.3): what the learner is told is common knowledge, and what the
+/// acceptance run counts as bridged, are read from these.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(in crate::features::learning) struct CheckedPart {
+    pub(in crate::features::learning) part: String,
+    pub(in crate::features::learning) kind: PartKind,
+    /// The source version that states the part; none for a part no passage
+    /// states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::features::learning) source_id: Option<String>,
+}
+
 /// What the two passes made of one claim, on its finding.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(in crate::features::learning) struct TwoPass {
@@ -71,6 +85,10 @@ pub(in crate::features::learning) struct TwoPass {
     /// other pass's support.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(in crate::features::learning) also_supported: Vec<SupportingPassage>,
+    /// The parts pass A's judge read the claim as, when it reads a claim part
+    /// by part: every claim checked against the passages its sentence cites.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::features::learning) parts: Vec<CheckedPart>,
 }
 
 /// The key of a claim's whole decision: its pass A comparison, when it has

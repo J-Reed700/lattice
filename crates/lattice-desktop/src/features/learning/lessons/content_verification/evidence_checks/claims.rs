@@ -282,13 +282,17 @@ async fn compare(
     pending: PendingClaim,
 ) -> Result<Comparison> {
     let (unit, claim, evidence) = (pending.unit, &pending.claim, &pending.evidence);
-    if let Some(finding) =
-        crate::features::learning::lesson_drafts::checkpoint(&pending.receipt_key)
-            .await?
-            .and_then(|value| serde_json::from_value::<ClaimReceipt>(value).ok())
-            .and_then(|receipt| receipt.finding(unit, claim, evidence))
+    if let Some(value) =
+        crate::features::learning::lesson_drafts::checkpoint(&pending.receipt_key).await?
     {
-        return Ok(Comparison::Done(finding, true));
+        let parts = bridge::saved_parts(&value);
+        if let Some(mut finding) = serde_json::from_value::<ClaimReceipt>(value)
+            .ok()
+            .and_then(|receipt| receipt.finding(unit, claim, evidence))
+        {
+            finding.two_pass.parts = parts;
+            return Ok(Comparison::Done(finding, true));
+        }
     }
     if let Some(receipt) = claim_reuse::legacy_receipt(llm, retained, unit, claim, evidence).await?
     {
@@ -309,7 +313,7 @@ async fn compare(
             quote: None,
             confidence: None,
         });
-        let (_, _, finding, _) = finish(pending, judgment, None).await?;
+        let (_, _, finding, _) = finish(pending, judgment, None, Vec::new()).await?;
         return Ok(Comparison::Done(finding, false));
     }
     Ok(Comparison::Pending(pending))

@@ -93,7 +93,8 @@ async fn pass_b_never_shows_what_pass_a_shows() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_claims_two_comparisons_share_one_request() -> Result<()> {
+async fn a_claims_pass_a_is_read_part_by_part_alone_and_pass_b_in_a_request_of_its_own(
+) -> Result<()> {
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(32_000);
     let citations = citing(&references, MARKER)?;
@@ -110,8 +111,8 @@ async fn a_claims_two_comparisons_share_one_request() -> Result<()> {
     assert_eq!(model.checks.lock().unwrap().len(), 2);
     assert_eq!(
         model.requests.load(Ordering::SeqCst),
-        1,
-        "one prompt, two answers"
+        2,
+        "the cited passage is read part by part in a call of its own, and pass B's page in another"
     );
     Ok(())
 }
@@ -311,7 +312,11 @@ async fn the_first_request_carries_pass_a_only_and_its_answers_size_pass_b() -> 
     .await?;
     let sizes = model.request_sizes.lock().unwrap().clone();
     let checks = model.checks.lock().unwrap().clone();
-    assert_eq!(sizes[0], 2, "both claims' pass A, together");
+    assert_eq!(sizes[0], 1, "the first claim's pass A, read part by part");
+    assert_eq!(
+        sizes[1], 1,
+        "the second claim's pass A, in a call of its own"
+    );
     assert!(checks[..2].iter().all(|check| read_marker(check)));
     // Every later request reads pass B pages sized by the measured answers,
     // not by the most an answer could be.

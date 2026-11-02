@@ -44,7 +44,7 @@ use evidence_checks::{
     same_passage, Reach, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
 };
 #[cfg(test)]
-use evidence_checks::{ContraryPassage, Pass};
+use evidence_checks::{CheckedPart, ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
 mod general_knowledge;
