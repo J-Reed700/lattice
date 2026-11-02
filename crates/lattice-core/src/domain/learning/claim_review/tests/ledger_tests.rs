@@ -893,3 +893,73 @@ fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
     assert_eq!(replayed.class(), Some(Class::Sourced));
     assert_eq!(replayed, entry);
 }
+
+#[test]
+fn a_claim_that_was_verified_and_fails_again_resumes_from_what_it_had_left() {
+    // One attempt spent on a rewrite, then verified: failing again it has the
+    // one it had left, not a full budget (claim classes design §3.2).
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    entry
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    entry
+        .append(machine(4), checked(Some(VerdictKind::Unsupported), "v2"))
+        .unwrap();
+    entry.append(machine(5), checked(None, "v3")).unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    entry
+        .append(machine(6), checked(Some(VerdictKind::Unsupported), "v4"))
+        .unwrap();
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Open {
+                machine_attempts_left: 1,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+
+    // With none left it waits for the user the moment it fails again.
+    let mut spent = queued_claim("c2", VerdictKind::Unsupported);
+    spent.append(machine(7), checked(None, "v2")).unwrap();
+    assert!(matches!(
+        spent.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    spent
+        .append(machine(8), checked(Some(VerdictKind::Unsupported), "v3"))
+        .unwrap();
+    assert!(spent.state().awaits_user(), "{:?}", spent.state());
+
+    // A claim born of a repair resumes from its parent's attempts.
+    let mut child = claim("c3");
+    child
+        .append(
+            machine(2),
+            ClaimEvent::BornOfRepair {
+                parent: ClaimId("c0".into()),
+                attempts_left: 1,
+            },
+        )
+        .unwrap();
+    child.append(machine(3), checked(None, "v1")).unwrap();
+    child
+        .append(machine(4), checked(Some(VerdictKind::Unsupported), "v2"))
+        .unwrap();
+    assert!(matches!(
+        child.state(),
+        ClaimState::Open {
+            machine_attempts_left: 1,
+            ..
+        }
+    ));
+}

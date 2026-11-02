@@ -3,7 +3,7 @@
 
 use super::{
     Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
-    ReopenCause, TrustAssessment, TrustCause, VerdictKind, MACHINE_ATTEMPTS,
+    ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
 
 /// The replayed position after an event: the state, plus what the rules
@@ -21,9 +21,12 @@ pub(super) struct Cursor {
     /// What the provenance gate weighed for the latest local check, when
     /// the gate decided it; cleared by every other local check.
     pub(super) trust: Option<TrustAssessment>,
-    /// A claim born of a repair starts with its parent's remaining attempts
-    /// instead of a full budget (claim sources design §9.1).
-    pub(super) inherited_budget: Option<u8>,
+    /// The machine attempts the claim has left for its life, in whatever
+    /// state it is: they only fall, so a claim verified and then failing
+    /// again resumes from what it had left. A claim born of a repair starts
+    /// with its parent's remaining ones (claim sources design §9.1; claim
+    /// classes design §3.2).
+    pub(super) attempts_left: u8,
     /// The statement's class and the strongest authority that decided it.
     pub(super) class: Option<(Class, ClassifiedBy)>,
 }
@@ -49,12 +52,11 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
     }
 }
 
-/// A first failure: the machine gets its full budget for the kinds a rewrite
-/// or research can address, or, for a claim born of a repair, what its
-/// parent had left. A repairable claim with no attempts left waits for the
-/// user.
-fn first_failure(kind: VerdictKind, reason: String, inherited: Option<u8>) -> ClaimState {
-    let budget = inherited.unwrap_or(MACHINE_ATTEMPTS);
+/// A failure of a claim that is not Open: the machine has the attempts the
+/// claim has left, for the kinds a rewrite or research can address. A
+/// repairable claim with none left waits for the user.
+fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimState {
+    let budget = cursor.attempts_left;
     match kind {
         kind if budget == 0 && budgeted(&kind) => queued(kind, reason),
         VerdictKind::Unsupported
@@ -80,9 +82,11 @@ pub(super) fn budgeted(kind: &VerdictKind) -> bool {
     kind.is_repairable() || matches!(kind, VerdictKind::InsufficientStanding { .. })
 }
 
-/// One machine attempt used up on the same evidence; none left queues it.
-pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> ClaimState {
-    match attempts_left.saturating_sub(1) {
+/// One machine attempt used up: the claim's count falls, and none left
+/// queues it.
+pub(super) fn charge(cursor: &mut Cursor, kind: VerdictKind, reason: String) -> ClaimState {
+    cursor.attempts_left = cursor.attempts_left.saturating_sub(1);
+    match cursor.attempts_left {
         0 => queued(kind, reason),
         left => ClaimState::Open {
             kind,
@@ -98,20 +102,14 @@ pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> Cl
 /// evidence may change the verdict; it never restores the budget (claim
 /// classes design §3.2), so a claim's attempts only ever fall.
 fn after_machine_failure(
-    cursor: &Cursor,
+    cursor: &mut Cursor,
     kind: VerdictKind,
     reason: String,
     charged: bool,
 ) -> ClaimState {
-    let ClaimState::Open {
-        machine_attempts_left,
-        ..
-    } = cursor.state
-    else {
-        return first_failure(kind, reason, cursor.inherited_budget);
-    };
+    let machine_attempts_left = cursor.attempts_left;
     match kind {
-        kind if budgeted(&kind) && charged => charge(kind, reason, machine_attempts_left),
+        kind if budgeted(&kind) && charged => charge(cursor, kind, reason),
         kind if budgeted(&kind) && machine_attempts_left > 0 => ClaimState::Open {
             kind,
             reason,
@@ -185,11 +183,11 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
         },
         CheckResult::Failed { kind } => {
             let (kind, reason) = (kind.clone(), check.reason.clone());
-            match &cursor.state {
+            match std::mem::replace(&mut cursor.state, ClaimState::Unchecked) {
                 ClaimState::Open { .. } if attached => queued(kind, reason),
                 ClaimState::Open { .. } => after_machine_failure(cursor, kind, reason, charged),
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => queued(kind, reason),
-                _ => first_failure(kind, reason, cursor.inherited_budget),
+                _ => first_failure(cursor, kind, reason),
             }
         }
     };

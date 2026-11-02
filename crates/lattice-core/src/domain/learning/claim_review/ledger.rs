@@ -161,7 +161,7 @@ impl ClaimLedgerEntry {
             researched: false,
             latest_failure: None,
             trust: None,
-            inherited_budget: None,
+            attempts_left: MACHINE_ATTEMPTS,
             class: None,
         };
         let mut entry = Self {
@@ -542,7 +542,7 @@ impl ClaimLedgerEntry {
                 if !matches!(next.state, ClaimState::Unchecked) {
                     return Err(self.refuse(&record.event));
                 }
-                next.inherited_budget = Some(*attempts_left);
+                next.attempts_left = next.attempts_left.min(*attempts_left);
             }
             ClaimEvent::Reopened { cause } => {
                 if !matches!(
@@ -595,15 +595,17 @@ impl ClaimLedgerEntry {
         else {
             return Err(self.refuse(event));
         };
+        let (kind, reason, machine_attempts_left) =
+            (kind.clone(), reason.clone(), *machine_attempts_left);
         if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
         // A repair not attempted ran no model, so nothing escalated.
         let expected_escalation = match outcome {
             RepairOutcome::NotAttempted { .. } => false,
-            _ => *machine_attempts_left == 1,
+            _ => machine_attempts_left == 1,
         };
-        if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left)
+        if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(machine_attempts_left)
             || escalated != expected_escalation
         {
             return Err(LedgerError::RepairMismatch {
@@ -620,12 +622,8 @@ impl ClaimLedgerEntry {
                     by: Actor::Machine,
                 }
             }
-            RepairOutcome::Rejected { .. } => {
-                next.state = charge(kind.clone(), reason.clone(), *machine_attempts_left)
-            }
-            RepairOutcome::NotAttempted { .. } => {
-                next.state = super::replay::queued(kind.clone(), reason.clone())
-            }
+            RepairOutcome::Rejected { .. } => next.state = charge(next, kind, reason),
+            RepairOutcome::NotAttempted { .. } => next.state = queued(kind, reason),
             RepairOutcome::SupersededByUser => {}
         }
         Ok(())
