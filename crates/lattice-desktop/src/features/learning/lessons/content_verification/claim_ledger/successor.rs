@@ -5,7 +5,7 @@
 //! parent had left, so a rewrite or a split sentence adds no attempts.
 
 use super::super::Classed;
-use super::observe::field_text;
+use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
 use lattice_core::domain::learning::claim_review::{
