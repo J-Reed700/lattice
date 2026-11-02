@@ -532,6 +532,7 @@ mod incremental {
             status,
             cancel: CancellationToken::new(),
             limits: Limits::default(),
+            files_found: None,
             turns: Arc::default(),
         };
         // The store's own directory is inside this folder; ignore it the way
@@ -643,6 +644,7 @@ mod progress {
                 batch_size: 4,
                 save_every: 8,
             },
+            files_found: None,
             turns: Arc::default(),
         };
         assert_eq!(indexer.run().await.unwrap(), Outcome::Done);
@@ -924,6 +926,48 @@ mod registry {
             vec!["src/retry.rs"],
             "paths are relative to the picked folder, and the parent's README is out of scope"
         );
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_save_leaves_a_folder_over_the_bound_saying_so() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let mut config = rig.config();
+        config.limits.max_files = 2;
+        let manager = rig.manager_with(config, Some(Arc::clone(&embedder))).await;
+        let announced = Arc::new(Mutex::new(Vec::<u32>::new()));
+        let sink = Arc::clone(&announced);
+        manager.on_folder_changed(Arc::new(move |status: &FolderIndexStatusDto| {
+            sink.lock().push(status.files_total)
+        }));
+        let root = rig.project(
+            "big",
+            &[
+                ("a.rs", "fn a() {}\n"),
+                ("b.rs", "fn b() {}\n"),
+                ("c.rs", "fn c() {}\n"),
+            ],
+        );
+        let opened = open_settled(&manager, &root).await;
+        assert_eq!(opened.state, FolderIndexState::TooLarge);
+        embedder.forget_calls();
+
+        write(&root, "a.rs", "fn a() { saved(); }\n");
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while embedder.embedded().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the save was never embedded");
+
+        let saved = manager.settled().await;
+        assert_eq!(saved.state, FolderIndexState::TooLarge);
+        assert_eq!(saved.files_total, 3);
+        assert_eq!(saved.message, opened.message);
+        assert!(!announced.lock().is_empty());
+        assert!(announced.lock().iter().all(|total| *total == 3));
         manager.close().await;
     }
 
