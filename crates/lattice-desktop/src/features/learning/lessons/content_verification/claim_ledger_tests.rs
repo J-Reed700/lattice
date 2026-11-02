@@ -384,19 +384,22 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
     let model = Figures::new();
+    // A second section keeps a claim: a lesson with none left is no
+    // extraction the loop accepts.
     let (raw, report) = prepare(
         &repo,
         &job,
         &lesson_id,
         &model,
-        Some(lesson(&[BAD]).to_string()),
+        Some(lesson(&[GOOD, BAD]).to_string()),
         &sources,
     )
     .await?;
     // One rewrite request; the last attempt is made by the code.
     assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
     let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][0]["body"], PRACTICE.repeat(5).trim_start());
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    assert_eq!(lesson["blocks"][1]["body"], PRACTICE.repeat(5).trim_start());
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
     let ledger = ClaimReviewRepository::new(pool.clone())
@@ -444,7 +447,7 @@ async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_i
         &job,
         &lesson_id,
         &model,
-        Some(lesson(&[BAD]).to_string()),
+        Some(lesson(&[GOOD, BAD]).to_string()),
         &sources,
     ))
     .await;
