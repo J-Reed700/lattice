@@ -492,7 +492,42 @@ describe('ChatPanel', () => {
       render(<ChatPanel composerNotice={<span>Folder: /notes</span>} composerChips={<span>chip</span>} />);
       expect(composerProps().notice).toBeTruthy();
       expect(composerProps().chips).toBeTruthy();
-      expect(h.props.ConversationTangents).toMatchObject({ conversationId: 'c1', toolPreferences: { web: true }, unavailable: false });
+      expect(h.props.ConversationTangents).toMatchObject({ conversationId: 'c1' });
+    });
+  });
+
+  describe('tangents and notices', () => {
+    it('gives its tangents this chat to show in their own panel, and shows the app-wide notices', () => {
+      render(<ChatPanel />);
+      expect(h.props.ConversationTangents.chat).toBe(ChatPanel);
+      expect(screen.getByTestId('ImportFailuresNotice')).toBeInTheDocument();
+      expect(screen.getByTestId('UtilityModelNotice')).toBeInTheDocument();
+    });
+
+    it('brings none of them when embedded in another panel, and registers no palette verbs', () => {
+      render(<ChatPanel embedded />);
+      expect(h.props.ConversationTangents).toBeUndefined();
+      expect(h.registered).toEqual([]);
+      expect(screen.queryByTestId('ImportFailuresNotice')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('UtilityModelNotice')).not.toBeInTheDocument();
+      expect(composerProps()).toBeDefined();
+      expect(screen.getByTestId('ChatStarters')).toBeInTheDocument();
+    });
+  });
+
+  describe('focus', () => {
+    it('opens on its composer when asked to', () => {
+      const focus = vi.fn();
+      h.composer.textareaRef = { current: { focus } };
+      render(<ChatPanel autoFocus />);
+      expect(focus).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves focus where it is otherwise', () => {
+      const focus = vi.fn();
+      h.composer.textareaRef = { current: { focus } };
+      render(<ChatPanel />);
+      expect(focus).not.toHaveBeenCalled();
     });
   });
 });
