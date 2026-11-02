@@ -336,7 +336,10 @@ impl ClaimLedger {
     }
 
     /// §4: repair what the rules allow; otherwise publish if every claim is
-    /// resolved, else hand the lesson to the user (BLOCKED, §2.1).
+    /// resolved, else the lesson waits for the user. Only claims in the user's
+    /// hands are left then: a dispute, a reopening, a withdrawn confirmation,
+    /// or a claim whose last attempt could not take its sentence out (claim
+    /// classes design §3.2).
     pub(super) fn decide(&self) -> Decision {
         let repairable: Vec<ClaimId> = self
             .observed()

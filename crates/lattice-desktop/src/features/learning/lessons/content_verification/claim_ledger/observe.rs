@@ -203,15 +203,8 @@ fn shown(passage: &EvidencePassage) -> ShownPassage {
 impl ClaimLedger {
     /// The check a finding records, through the support gate (P4's seam),
     /// with the gate's assessment when the gate decided the check (a
-    /// supported claim whose support it weighed). `propose_general_knowledge`:
-    /// research has had its chance, so an unsupported claim without invented
-    /// specifics is proposed as general knowledge (D1) rather than researched
-    /// or repaired.
-    fn check_of(
-        &self,
-        finding: &Finding,
-        propose_general_knowledge: bool,
-    ) -> (Check, Option<TrustAssessment>) {
+    /// supported claim whose support it weighed).
+    fn check_of(&self, finding: &Finding) -> (Check, Option<TrustAssessment>) {
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
         let ((result, reason), trust) = match finding.verdict {
             ClaimVerdict::Supported => {
@@ -266,9 +259,6 @@ impl ClaimLedger {
                 let kind = match verdict {
                     ClaimVerdict::Contradicted => VerdictKind::Contradicted,
                     ClaimVerdict::Unverified => VerdictKind::CouldNotJudge,
-                    _ if propose_general_knowledge && finding.proposes_general_knowledge() => {
-                        VerdictKind::GeneralKnowledgeProposed
-                    }
                     _ if finding.evidence.is_empty() => VerdictKind::NoSource,
                     _ => VerdictKind::Unsupported,
                 };
@@ -352,7 +342,7 @@ impl ClaimLedger {
         // What this pass found, each with its check and the passages shown.
         let mut found: Vec<Found> = Vec::new();
         for finding in &report.findings {
-            let (check, trust) = self.check_of(finding, false);
+            let (check, trust) = self.check_of(finding);
             found.push((
                 ExtractedClaim {
                     location: locate(
@@ -754,34 +744,6 @@ impl ClaimLedger {
                 },
             )
             .await?;
-        }
-        Ok(())
-    }
-
-    /// Once research has had its chance, an unsupported claim without
-    /// invented specifics is proposed as general knowledge and waits for the
-    /// user; it is never repaired (D1, §13).
-    pub(in crate::features::learning::lessons::content_verification) async fn propose_general_knowledge(
-        &mut self,
-        report: &LessonVerificationReport,
-    ) -> Result<()> {
-        let proposals: Vec<(ClaimId, Check)> = report
-            .findings
-            .iter()
-            .zip(&self.findings)
-            .filter(|(finding, _)| finding.proposes_general_knowledge())
-            .filter_map(|(finding, id)| {
-                let entry = self.entry(id)?;
-                let researched = !entry.may_research()
-                    && matches!(
-                        entry.state().verdict(),
-                        Some(VerdictKind::Unsupported | VerdictKind::NoSource)
-                    );
-                researched.then(|| (id.clone(), self.check_of(finding, true).0))
-            })
-            .collect();
-        for (id, check) in proposals {
-            self.append(&id, ClaimEvent::Checked(check)).await?;
         }
         Ok(())
     }

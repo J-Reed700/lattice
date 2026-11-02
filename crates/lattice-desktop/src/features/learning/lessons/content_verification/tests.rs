@@ -1109,39 +1109,6 @@ async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result
     Ok(())
 }
 
-#[tokio::test]
-async fn general_knowledge_is_proposed_to_the_user_never_repaired_or_published_unaccepted(
-) -> Result<()> {
-    let model = Model::new();
-    // The machine proposes the label; only the user accepts it (D1).
-    let error = verify_and_repair(
-        &model,
-        "{}",
-        &json!({"type":"object"}),
-        candidate("A short factual definition.").to_string(),
-        &[],
-        3000,
-    )
-    .await
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.starts_with("Needs your review:"), "{error}");
-    assert!(
-        !*model.repaired.lock().unwrap(),
-        "general knowledge is never repaired"
-    );
-    let proposed = verify(&model, &candidate("A short factual definition."), &[]).await?;
-    assert!(proposed
-        .findings
-        .iter()
-        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.proposes_general_knowledge()));
-    // An absolute in the same unsupported claim is still an issue.
-    let absolute = verify(&model, &candidate("A definition always applies."), &[]).await?;
-    assert!(!absolute.issues.is_empty());
-    Ok(())
-}
-
 #[test]
 fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     let content = units(&candidate(GOOD)).unwrap();
@@ -1205,8 +1172,7 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
-    // Without evidence a claim stating a figure stays an issue; a plain one
-    // is proposed as general knowledge, for the user (see the test above).
+    // Without evidence a claim stating a figure stays an issue.
     let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
     assert_eq!(no_evidence.findings[0].verdict, ClaimVerdict::Unsupported);
     assert!(!no_evidence.issues.is_empty());

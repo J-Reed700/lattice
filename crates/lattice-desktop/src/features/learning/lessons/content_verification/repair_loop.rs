@@ -212,7 +212,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 }
             }
         }
-        ledger.propose_general_knowledge(&report).await?;
         // A claim supported elsewhere in the course keeps its text; its
         // section's citation moves to the passage found, and the next pass
         // checks it as the section's own citation (§5.1).
