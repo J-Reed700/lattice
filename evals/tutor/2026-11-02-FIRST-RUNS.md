@@ -146,12 +146,43 @@ Things they do not touch:
 - Proving a negative is slow. `not-covered` took 8 and 9 rounds, 43 and 47 seconds, reading every source, because
   hybrid search always returns something.
 
+## After the fixes
+
+The fixes compile and pass their tests with every open branch merged, as CI runs them on Windows. Their six tests
+failed with the fixes reverted, and the other five, which guard what the fixes must keep, passed both ways. The
+pinned digest held on the first run.
+
+`2026-11-02-after-fixes` is the same nine sessions on `/models/Qwen3.8-27B-Q5_K_S.gguf` (named by the server), built
+from that merged tree:
+
+| | Before the fixes | After |
+|---|---|---|
+| Sentences checked as claims | 152 | 123 |
+| Supported | 0.48 | 0.58 |
+| Ratings that moved the card's schedule, read back | 7 of 7 | 12 of 12 |
+| Ratings refused | 6, all made-up ids | 5, all real ids of cards no reply had asked |
+| A teaching stretch reached a question | 1 of 1 | 2 of 2 |
+| Said the course does not cover it | 1 of 2 | 2 of 2 |
+
+Read by hand, two things the numbers hide:
+
+- **A card can be rated that the learner never answered.** In `pick-a-passage` the first reply answered the question
+  first, then asked a card. The learner's next message was "Tell me more about the second one.", meaning the second
+  difference, and the tutor rated the card `again` and told them "you missed both cards". The asked check passed,
+  because the card had been asked; it cannot tell an answer from a change of subject. Replayed from the recorded
+  request (`2026-11-02-rating-replay-moved-on`, 5 samples each): the template as shipped rated it in 2 of 5, and with
+  "A message that asks something else or moves on is no answer: leave that card unrated and ask it again later."
+  added, in 3 of 5. Answers to cards were rated in 5 of 5 under both. The sentence is not a fix, and the template
+  stays as it is. What would be is open.
+- **The learner's first request mostly still waits for the cards.** "Teach me how retries work in Tidewell.", "Teach
+  me what happens to a job that keeps failing, in a few sentences.", "Teach me this lesson." and the lease
+  misconception all opened with the due cards; "Give me the two main differences between tw drain and tw quiesce." was
+  answered first. The design says a session opens with its cards, and the template's "unless the learner's message
+  asks for something else" is the departure that waits on Josh's decision; on this model it mostly does not take.
+
 ## Still unproven
 
-- That the fixes compile, pass their tests, or work end to end.
-- The tests were written before the fixes, but none has been seen failing.
-- The digest in `the_tutor_s_prompt_and_tool_schemas_are_pinned` was computed from the source with a script.
-- The session talk check and the rating check on a real turn. Whether the first message's request now comes first.
+- A rating only for a card the learner answered (above), and the first request first on this model (above).
 - Multiple-choice cards, a test date pulling reviews forward, and the note reaching a real vault: none was exercised.
 - Any model but the 27B, Claude Haiku as the verifier included.
 - Times. A played learner evicts the slot between turns, so the seconds here are not the app's.
