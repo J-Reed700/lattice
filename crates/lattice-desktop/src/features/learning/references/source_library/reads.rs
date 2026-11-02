@@ -11,8 +11,23 @@ pub struct ActiveVersion {
 }
 
 impl LearningSourceLibraryRepository {
+    /// The program's sources, with what the library offers the user to remove
+    /// (claim classes design 3.6).
     pub async fn workspace(&self, program_id: &str) -> Result<LearningSourceWorkspaceDto> {
-        self.workspace_with_deleted(program_id, false).await
+        let mut workspace = self.workspace_with_deleted(program_id, false).await?;
+        workspace.not_sources = self
+            .refused_sources(program_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        workspace.unused_research = self
+            .unused_research_sources(program_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        Ok(workspace)
     }
 
     /// Build a source snapshot for portable exports, including tombstones whose
@@ -97,6 +112,8 @@ impl LearningSourceLibraryRepository {
         Ok(LearningSourceWorkspaceDto {
             program_id: program_id.into(),
             sources,
+            not_sources: Vec::new(),
+            unused_research: Vec::new(),
             recheck: None,
         })
     }
@@ -164,7 +181,7 @@ impl LearningSourceLibraryRepository {
         })
     }
 
-    async fn version_usage(
+    pub(super) async fn version_usage(
         &self,
         program_id: &str,
         version_id: &str,

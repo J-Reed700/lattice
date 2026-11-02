@@ -7741,6 +7741,20 @@ export type LearningRecallDuplicateStatus = "pending" | "confirmed" | "dismissed
 export type LearningRecallDuplicateSuggestionDto = { id: string; cardId: string; possibleDuplicateCardId: string; reason: string; similarity: number | null; status: LearningRecallDuplicateStatus; createdAt: number; decidedAt: number | null }
 export type LearningRecallSchedulerStateDto = { stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
 export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; schedulerDisclosure: string }
+/**
+ * A saved page the admission gate refused, or a source research added that
+ * no lesson cites now, listed for the user to remove (claim classes design
+ * 3.6). Nothing is removed without them.
+ */
+export type LearningRemovableSourceDto = { sourceId: string;
+/**
+ * The source's revision, which a removal names.
+ */
+revision: number; title: string; url: string | null;
+/**
+ * Why the gate refused the page; none for a source research added.
+ */
+reason: string | null }
 export type LearningRubricCriterion = { id: string; title: string; description: string; maxPoints: number }
 export type LearningRuntimePresetDto = { id: LearningRuntimePresetId; name: string; description: string;
 /**
@@ -7883,6 +7897,15 @@ export type LearningSourceVersionSummaryDto = { id: string; versionNumber: numbe
  */
 snapshotHash: string | null }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[];
+/**
+ * Saved pages the admission gate refused, for the user to remove.
+ */
+notSources?: LearningRemovableSourceDto[];
+/**
+ * Sources research added that no lesson cites now, for the user to
+ * remove.
+ */
+unusedResearch?: LearningRemovableSourceDto[];
 /**
  * What checking the course's waiting claims against a source just
  * added found; null when no re-check ran.

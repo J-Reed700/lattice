@@ -3,16 +3,53 @@
 //! library, listed for the user to delete, and leaves retrieval and citation
 //! at once, so nothing is compared with it again.
 use super::*;
+use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::references::admission as gate;
+use std::collections::HashSet;
 
 /// A saved page that is not a source, with the reason the gate gives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefusedSource {
     pub source_id: String,
+    pub revision: i64,
     pub version_id: String,
     pub title: String,
     pub url: Option<String>,
     pub reason: String,
+}
+
+/// A source research added that no lesson cites now: the statement that asked
+/// for it was rewritten or removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnusedSource {
+    pub source_id: String,
+    pub revision: i64,
+    pub title: String,
+    pub url: Option<String>,
+}
+
+impl From<RefusedSource> for LearningRemovableSourceDto {
+    fn from(source: RefusedSource) -> Self {
+        Self {
+            source_id: source.source_id,
+            revision: source.revision,
+            title: source.title,
+            url: source.url,
+            reason: Some(source.reason),
+        }
+    }
+}
+
+impl From<UnusedSource> for LearningRemovableSourceDto {
+    fn from(source: UnusedSource) -> Self {
+        Self {
+            source_id: source.source_id,
+            revision: source.revision,
+            title: source.title,
+            url: source.url,
+            reason: None,
+        }
+    }
 }
 
 /// A saved page the gate admitted that is short, with its size: what the
@@ -34,7 +71,7 @@ impl LearningSourceLibraryRepository {
     /// the pages refused now.
     pub async fn sweep_admission(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
         let rows = sqlx::query(
-            "SELECT s.id AS source_id, v.id AS version_id, v.title, v.full_text, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by<>'user' AND (v.admission_policy IS NULL OR v.admission_policy<>?) ORDER BY s.created_at,s.id",
+            "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.full_text, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by<>'user' AND (v.admission_policy IS NULL OR v.admission_policy<>?) ORDER BY s.created_at,s.id",
         )
         .bind(program_id)
         .bind(gate::POLICY)
@@ -44,6 +81,7 @@ impl LearningSourceLibraryRepository {
         let mut refused = Vec::new();
         for row in rows {
             let source_id: String = row.get("source_id");
+            let revision: i64 = row.get("revision");
             let version_id: String = row.get("version_id");
             let title: String = row.get("title");
             let text: String = row.get("full_text");
@@ -64,6 +102,7 @@ impl LearningSourceLibraryRepository {
             if let Some(reason) = reason {
                 refused.push(RefusedSource {
                     source_id,
+                    revision,
                     version_id,
                     title,
                     url,
@@ -102,7 +141,7 @@ impl LearningSourceLibraryRepository {
     /// user to delete.
     pub async fn refused_sources(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
         let rows = sqlx::query(
-            "SELECT s.id AS source_id, v.id AS version_id, v.title, v.not_a_source AS reason, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NOT NULL ORDER BY s.created_at,s.id",
+            "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.not_a_source AS reason, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NOT NULL ORDER BY s.created_at,s.id",
         )
         .bind(program_id)
         .fetch_all(&self.pool)
@@ -112,11 +151,68 @@ impl LearningSourceLibraryRepository {
             .into_iter()
             .map(|row| RefusedSource {
                 source_id: row.get("source_id"),
+                revision: row.get("revision"),
                 version_id: row.get("version_id"),
                 title: row.get("title"),
                 url: row.get("url"),
                 reason: row.get("reason"),
             })
             .collect())
+    }
+
+    /// The sources research added that the gate admitted and no lesson cites
+    /// now: no finding of a lesson's report rests on them, and no block,
+    /// assessment item or recall card names them. Nothing is listed while a
+    /// lesson is being prepared, as the job may be about to cite what research
+    /// just added.
+    pub async fn unused_research_sources(&self, program_id: &str) -> Result<Vec<UnusedSource>> {
+        let preparing: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM jobs WHERE kind=? AND subject_id=? AND status IN ('pending','running') LIMIT 1",
+        )
+        .bind(LESSON_PREPARATION)
+        .bind(program_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        if preparing.is_some() {
+            return Ok(Vec::new());
+        }
+        let rested_on: HashSet<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT DISTINCT json_extract(e.value, '$.source_id') FROM learning_lesson_verifications r, json_each(r.report_json, '$.findings') f, json_each(f.value, '$.evidence') e WHERE r.program_id=?",
+        )
+        .bind(program_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .flatten()
+        .collect();
+        let rows = sqlx::query(
+            "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by=? AND v.not_a_source IS NULL ORDER BY s.created_at,s.id",
+        )
+        .bind(program_id)
+        .bind(SourceAddedBy::Research.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let mut unused = Vec::new();
+        for row in rows {
+            let version_id: String = row.get("version_id");
+            if rested_on.contains(&version_id)
+                || !self
+                    .version_usage(program_id, &version_id)
+                    .await?
+                    .is_empty()
+            {
+                continue;
+            }
+            unused.push(UnusedSource {
+                source_id: row.get("source_id"),
+                revision: row.get("revision"),
+                title: row.get("title"),
+                url: row.get("url"),
+            });
+        }
+        Ok(unused)
     }
 }

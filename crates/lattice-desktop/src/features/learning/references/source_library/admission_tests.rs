@@ -63,6 +63,30 @@ async fn save(
     Ok(version_id)
 }
 
+/// Records a lesson's verification report with one finding that rests on
+/// `version_id`.
+async fn cite(pool: &SqlitePool, program_id: &str, version_id: &str) -> Result<()> {
+    let lesson: String = sqlx::query_scalar(
+        "SELECT id FROM learning_lessons WHERE program_id=? ORDER BY ordinal LIMIT 1",
+    )
+    .bind(program_id)
+    .fetch_one(pool)
+    .await
+    .map_err(db)?;
+    let report = serde_json::json!({"findings": [{"evidence": [{"source_id": version_id}]}]});
+    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
+        .bind(lesson)
+        .bind(program_id)
+        .bind("test")
+        .bind("hash")
+        .bind(report.to_string())
+        .bind(1_i64)
+        .execute(pool)
+        .await
+        .map_err(db)?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leaves_it_out_of_retrieval(
 ) -> Result<()> {
@@ -163,5 +187,155 @@ async fn the_short_pages_the_gate_admitted_are_listed_for_the_floors_to_be_read(
         .map(|page| (page.title.as_str(), page.words))
         .collect();
     assert_eq!(listed, [("changelog", 200), ("guide", 399)]);
+    Ok(())
+}
+
+fn titles(items: &[LearningRemovableSourceDto]) -> Vec<&str> {
+    items.iter().map(|item| item.title.as_str()).collect()
+}
+
+#[tokio::test]
+async fn the_library_lists_the_pages_the_gate_refused_and_the_research_no_lesson_cites_for_the_user_to_remove(
+) -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let article = format!("# Reading files\n{}", words(400));
+    let cited = save(
+        &library,
+        &program_id,
+        SourceAddedBy::Research,
+        ("https://docs.example.org/cited", "Cited guide", &article),
+    )
+    .await?;
+    save(
+        &library,
+        &program_id,
+        SourceAddedBy::Research,
+        (
+            "https://docs.example.org/uncited",
+            "Uncited guide",
+            &article,
+        ),
+    )
+    .await?;
+    save(
+        &library,
+        &program_id,
+        SourceAddedBy::Research,
+        ("https://access.example.com/login", "Sign in", &words(65)),
+    )
+    .await?;
+    // What the user saved is theirs, cited or not.
+    save(
+        &library,
+        &program_id,
+        SourceAddedBy::User,
+        ("https://example.org/mine", "My notes", &article),
+    )
+    .await?;
+    library.sweep_admission(&program_id).await?;
+    cite(&pool, &program_id, &cited).await?;
+
+    let workspace = library.workspace(&program_id).await?;
+
+    assert_eq!(titles(&workspace.not_sources), ["Sign in"]);
+    assert_eq!(
+        workspace.not_sources[0].reason.as_deref(),
+        Some("login page, 65 words")
+    );
+    // A page the gate refused is not also offered as unused research.
+    assert_eq!(titles(&workspace.unused_research), ["Uncited guide"]);
+    assert_eq!(workspace.unused_research[0].reason, None);
+    // A removal names the source and the revision the list was read at.
+    for listed in workspace
+        .not_sources
+        .iter()
+        .chain(&workspace.unused_research)
+    {
+        let source = workspace
+            .sources
+            .iter()
+            .find(|source| source.id == listed.source_id)
+            .expect("a listed source is in the library");
+        assert_eq!(listed.revision, source.revision);
+        assert_eq!(listed.title, source.active_version.as_ref().unwrap().title);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let article = format!("# Reading files\n{}", words(400));
+    let cited = save(
+        &library,
+        &program_id,
+        SourceAddedBy::Research,
+        ("https://docs.example.org/cited", "Cited guide", &article),
+    )
+    .await?;
+    let lesson: String = sqlx::query_scalar(
+        "SELECT id FROM learning_lessons WHERE program_id=? ORDER BY ordinal LIMIT 1",
+    )
+    .bind(&program_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'explanation','A block','Its text.',?)")
+        .bind(&lesson)
+        .bind(serde_json::json!([cited]).to_string())
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    library.sweep_admission(&program_id).await?;
+
+    let workspace = library.workspace(&program_id).await?;
+
+    assert!(
+        workspace.unused_research.is_empty(),
+        "{:?}",
+        workspace.unused_research
+    );
+    Ok(())
+}
+
+/// A job still preparing a lesson may be about to cite what research just
+/// added: nothing is offered for removal until it is done.
+#[tokio::test]
+async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let article = format!("# Reading files\n{}", words(400));
+    save(
+        &library,
+        &program_id,
+        SourceAddedBy::Research,
+        ("https://docs.example.org/new", "New guide", &article),
+    )
+    .await?;
+    library.sweep_admission(&program_id).await?;
+    assert_eq!(
+        titles(&library.workspace(&program_id).await?.unused_research),
+        ["New guide"]
+    );
+
+    sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,created_at) VALUES(?,?,?,?,'hash','running','{}',0,1,'Preparing',1)")
+        .bind(id())
+        .bind("learning.lesson_preparation")
+        .bind(&program_id)
+        .bind(id())
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    assert!(library
+        .workspace(&program_id)
+        .await?
+        .unused_research
+        .is_empty());
     Ok(())
 }
