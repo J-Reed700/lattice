@@ -10,13 +10,21 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 mod batch;
+mod classes;
 mod prompt;
 mod rooms;
 
 #[cfg(test)]
+mod classes_tests;
+#[cfg(test)]
 mod field_emphasis_tests;
 
 pub use batch::{render_batch_evidence, LocatedClaim};
+pub use classes::{
+    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
+    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_POLICY, KNOWLEDGE_SAMPLES,
+    KNOWLEDGE_SYSTEM,
+};
 
 /// Judgments and the output tokens the model spent writing them, across
 /// every request the check sent: what answering costs the caller's job.
@@ -55,6 +63,14 @@ pub enum CheckPolicy {
     /// Used only by the live fidelity controls in lessons/live_lesson_tests.rs
     /// and live_small_lesson.rs; delete it together with them.
     Fidelity,
+    /// A Reasoning statement against its section's passages: contradicted,
+    /// asserting a specific they lack, or consistent (claim classes design
+    /// §3.1). It answers JSON: see [`ClaimChecker::check_consistency`].
+    Consistency,
+    /// A statement put to the model alone, [`KNOWLEDGE_SAMPLES`] times:
+    /// standard knowledge, false, or in need of a source (§3.1). See
+    /// [`ClaimChecker::check_knowledge`].
+    Knowledge,
 }
 impl CheckPolicy {
     fn strict(self) -> bool {
