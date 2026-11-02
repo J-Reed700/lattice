@@ -159,6 +159,15 @@ class MechanicalChecks(unittest.TestCase):
             declined["question"] = question
             self.assertTrue(spe.mechanical(silent, declined)["passed"], answer)
 
+    def test_a_refusal_in_a_contraction_is_a_refusal(self):
+        for answer in (
+            "The passages don't contain a mobile number for her.",
+            "The handbook doesn’t list a mobile number.",
+            "It isn’t in the notes.",
+            "I couldn’t find one.",
+        ):
+            self.assertTrue(spe.says_unavailable(answer), answer)
+
     def test_a_guess_with_an_aside_about_something_else_is_no_refusal(self):
         silent = rubric(must_mention=[], expected_citations=[], abstain=True)
         guess = turn("Her mobile is 555-0100. The schedule is not stated. Call after nine.")

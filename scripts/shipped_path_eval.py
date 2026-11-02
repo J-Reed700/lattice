@@ -53,11 +53,11 @@ MIN_QUOTE_WORDS = 5
 EXTRA_ABSTENTION_RE = re.compile(
     r"\b(?:no (?:mention|record|reference|document|entry|passage)|there (?:is|are) no|found no|"
     r"no (?:\w+ ){1,6}(?:appears|is (?:given|provided))|"
-    r"isn't (?:mentioned|recorded|in)|is not (?:mentioned|recorded|in the)|"
-    r"(?:couldn't|could not|cannot|can't) (?:find|identify|tell|give|supply|confirm)|"
+    r"isn['’]t (?:mentioned|recorded|in)|is not (?:mentioned|recorded|in the)|"
+    r"(?:couldn['’]t|could not|cannot|can['’]t) (?:find|identify|tell|give|supply|confirm)|"
     r"none of (?:these|the (?:documents|sources|notes|passages))|"
     r"not (?:mentioned|recorded|listed|included|stated|given|named)|"
-    r"do(?:es)? not (?:contain|appear|mention|state|give|name|list|cover)|"
+    r"(?:do(?:es)? not|do(?:es)?n['’]t) (?:contain|appear|mention|state|give|name|list|cover)|"
     r"cannot be determined)\b",
     re.IGNORECASE,
 )
