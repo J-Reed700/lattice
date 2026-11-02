@@ -131,9 +131,9 @@ def main():
         for batch in batches(runs, labels["false_claims"]):
             reply = ask(args.url, model, system, batch["sentences"])
             picked = positions(reply)
-            row = {**batch, "model": model, "reply": reply[:300], "picked": None if picked is None else sorted(picked)}
-            rows.append(row)
-            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+            row = {**batch, "reply": reply[:300], "picked": None if picked is None else sorted(picked)}
+            rows.append({"model": model, **row})
+            out.write(json.dumps({"model": model, **row}, ensure_ascii=False) + "\n")
     print(json.dumps({"model": one_model(rows), **score(rows, labels["subject_openings"])}, indent=2, ensure_ascii=False))
 
 

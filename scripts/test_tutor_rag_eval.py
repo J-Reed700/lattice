@@ -196,8 +196,10 @@ class SessionTalkTests(unittest.TestCase):
         self.assertEqual(kept, ["Good, next card.", "The pen keeps jobs."])
 
     def test_a_reply_is_read_as_the_app_reads_it(self):
-        self.assertEqual(talk.positions("Here: [1, 3]"), {0, 2})
+        self.assertEqual(talk.positions("[1, 3]"), {0, 2})
+        self.assertEqual(talk.positions("```json\n[1, 3]\n```"), {0, 2})
         self.assertEqual(talk.positions("[]"), set())
+        self.assertIsNone(talk.positions("Here: [1, 3]"))
         self.assertIsNone(talk.positions("I could not tell."))
 
     def test_the_score_counts_a_dropped_false_claim_and_a_dropped_subject_sentence(self):
