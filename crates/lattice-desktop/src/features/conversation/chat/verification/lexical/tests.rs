@@ -58,7 +58,7 @@ fn a_heading_names_what_follows_and_is_no_claim() {
     // From a Tutor turn, where the heading was counted among the sentences
     // the sources do not back.
     let claims = lexical_pass(
-        "## Why the distinction matters (your interview ammunition)\n\
+        "## Why the distinction matters\n\
          OCR mistakes flow into the downstream model and get amplified [1].",
         &[source(
             "OCR errors propagate to the downstream model and are amplified during prediction.",
