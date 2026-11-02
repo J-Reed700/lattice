@@ -9,6 +9,7 @@
 //! hook) stay in `infrastructure::setup` and are called from here.
 
 pub mod app;
+pub mod async_runtime;
 mod background_workers;
 pub mod shutdown;
 mod startup_reconciliation;

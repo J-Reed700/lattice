@@ -166,6 +166,10 @@ fn main() {
     }
     // Note: setup_tracing() moved to .setup() hook where Tokio runtime is available for OTEL
 
+    if let Err(e) = bootstrap::async_runtime::install() {
+        eprintln!("Fatal error: Failed to start the async runtime: {}", e);
+        std::process::exit(1);
+    }
     if let Err(e) = run_app() {
         eprintln!("Fatal error: Failed to run application: {}", e);
         std::process::exit(1);
