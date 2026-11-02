@@ -466,6 +466,62 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
     Ok(())
 }
 
+#[tokio::test]
+async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_claim_they_cut_removed(
+) -> Result<()> {
+    let body = "Keep this. Cut this. Fix this.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    // Every claim the ledger holds stands on the sentence the last attempt
+    // takes out: the one it was sent for, and one that went with it.
+    let mut ledger = failed_ledger(
+        &llm,
+        body,
+        &[("last", "Cut this.", 1), ("mate", "Cut this.", 0)],
+    )
+    .await?;
+    let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
+    ledger
+        .begin_repairs(&lesson_of(body), &[last.clone(), mate.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
+            {"unit":0,"claimId":"mate","sentence":"Cut this.","evidence":[]},
+        ],
+    });
+
+    let error = cut::last_attempts(&mut context, &mut ledger)
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "The sources do not support enough of this lesson: every statement in it would have to be taken out."
+    );
+    for id in [&last, &mate] {
+        let entry = ledger.entry(id).unwrap();
+        assert!(
+            matches!(
+                entry.state(),
+                ClaimState::Removed {
+                    by: Actor::Machine,
+                    ..
+                }
+            ),
+            "{:?}",
+            entry.state()
+        );
+    }
+    assert!(ledger.pending.repairs.is_empty());
+    assert!(llm.requests.lock().unwrap().is_empty());
+    Ok(())
+}
+
 #[test]
 fn the_evidence_table_names_the_lessons_source_index_of_a_numbered_source() {
     let source = |id: &str| LearningSourceDto {
