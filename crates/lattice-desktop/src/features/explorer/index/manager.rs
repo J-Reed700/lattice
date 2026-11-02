@@ -43,7 +43,7 @@ use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::{
     runtime::{
         background::BackgroundTasks,
-        jobs::{JobRecord, JobRuntime, NewJob},
+        jobs::{JobRecord, JobRuntime, JobStatus, NewJob},
     },
     Result,
 };
@@ -53,9 +53,11 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+use view::{FolderView, OpenView};
 
 mod folder;
 mod summary;
+mod view;
 
 #[derive(Debug, Clone)]
 pub struct ManagerConfig {
@@ -79,14 +81,6 @@ impl ManagerConfig {
             debounce: Duration::from_millis(1_500),
         }
     }
-}
-
-/// The open folder as builds and searches see it, readable without waiting
-/// for an open or a close in progress.
-#[derive(Clone)]
-pub(super) struct OpenView {
-    pub root: PathBuf,
-    pub status: Arc<StatusCell>,
 }
 
 struct OpenFolder {
@@ -113,7 +107,7 @@ pub struct FolderIndexManager {
     /// Where each open folder's watcher runs, so shutdown stops it.
     background: Arc<BackgroundTasks>,
     open: tokio::sync::Mutex<Option<OpenFolder>>,
-    view: Arc<parking_lot::Mutex<Option<OpenView>>>,
+    view: Arc<FolderView>,
     /// The open folder's build, which runs before any other.
     first: parking_lot::Mutex<Option<String>>,
     /// Index directories in use by the open folder and builds.
@@ -212,10 +206,10 @@ impl FolderIndexManager {
     }
 
     pub(super) fn view(&self) -> Option<OpenView> {
-        self.view.lock().clone()
+        self.view.open()
     }
 
-    pub(super) fn view_handle(&self) -> Arc<parking_lot::Mutex<Option<OpenView>>> {
+    pub(super) fn view_handle(&self) -> Arc<FolderView> {
         Arc::clone(&self.view)
     }
 
@@ -316,12 +310,13 @@ impl FolderIndexManager {
     /// Queues a build of `root` unless it already has a live one, and puts it
     /// first: every other live build gives up its turn. Finished builds of the
     /// same index are forgotten, so the job history stays one per index.
+    /// Returns whether a build already running was kept.
     async fn ensure_build(
         &self,
         root: &Path,
         index_root: &Path,
         wipe_prefix: bool,
-    ) -> Result<JobRecord> {
+    ) -> Result<bool> {
         let subject = root_string(index_root);
         let request = BuildRequest {
             root: root_string(root),
@@ -337,6 +332,7 @@ impl FolderIndexManager {
             !job.status.is_finished()
                 && BuildRequest::of(job).is_some_and(|asked| asked.root == request.root)
         });
+        let running = !wipe_prefix && live.is_some_and(|job| job.status == JobStatus::Running);
         let job = match live {
             Some(job) if !wipe_prefix => job.clone(),
             live => {
@@ -369,7 +365,7 @@ impl FolderIndexManager {
                 self.jobs.requeue(&other.id);
             }
         }
-        Ok(job)
+        Ok(running)
     }
 
     /// Cancels a build and waits for its worker to let go of the index.

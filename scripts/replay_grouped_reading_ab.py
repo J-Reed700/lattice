@@ -186,7 +186,7 @@ def run(args):
             warm(ctx)
             result = shipped(ctx) if arm == "SHIPPED" else grouped(ctx, int(arm[1:]))
             rec = record(ctx, arm, result)
-            out.write(json.dumps(rec) + "\n")
+            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
             out.flush()
             line.append(f"{arm} {len(rec['facts_noted'])}/{len(rec['fact_labels'])} nf{len(rec['nonfact_lines'])} "
                         f"req{rec['requests']} {rec['secs']}s")

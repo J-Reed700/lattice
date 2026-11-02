@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
@@ -123,5 +124,21 @@ describe('Lesson card review state', () => {
       expect(screen.getByText('Waits for the course index · about 11 min left')).toBeVisible();
       expect(prepare).toHaveAccessibleDescription('Waits for the course index · about 11 min left');
     }
+  });
+
+  it('offers Listen on every section of a prepared lesson', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue(noReview);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const blocks = [
+      { kind: 'explanation', title: 'Boiling', body: 'Water boils when its vapour pressure meets the air’s.', sourceIds: [] },
+      { kind: 'recap', title: 'Key takeaways', body: '- Pressure sets the boiling point.', sourceIds: [] },
+    ] as LearningLessonDto['blocks'];
+    render(<QueryClientProvider client={client}><MemoryRouter>
+      <LessonCard lesson={{ ...lesson, preparation: 'ready', blocks }} moduleId="module-1" program={program} isCurrent selected={false} pending={false}
+        onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} />
+    </MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByRole('button', { name: 'Listen to the section “Boiling”' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Listen to the section “Key takeaways”' })).toBeVisible();
   });
 });

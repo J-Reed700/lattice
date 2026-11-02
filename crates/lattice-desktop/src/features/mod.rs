@@ -39,6 +39,7 @@ pub mod recent;
 pub mod references;
 pub mod search;
 pub mod settings;
+pub mod speech;
 pub mod stats;
 pub mod summaries;
 pub mod tags;

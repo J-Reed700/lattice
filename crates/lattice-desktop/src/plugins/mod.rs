@@ -30,6 +30,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::huggingface::plugin::init(),
         crate::features::extraction::plugin::init(),
         crate::features::transcription::plugin::init(),
+        crate::features::speech::plugin::init(),
         crate::features::web::plugin::init(),
         // Final domains
         crate::features::conversation::plugin::init(),

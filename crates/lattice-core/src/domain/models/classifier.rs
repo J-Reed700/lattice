@@ -206,6 +206,14 @@ impl ModelTypeClassifier {
             ));
         }
 
+        if self.matches_speech_pattern(identifier) {
+            return Some(ModelTypeClassification::new(
+                ModelType::Speech,
+                0.8,
+                ClassificationStrategy::PatternMatching,
+            ));
+        }
+
         // Text embeddings patterns
         if self.matches_text_embeddings_pattern(identifier) {
             return Some(ModelTypeClassification::new(
@@ -267,6 +275,10 @@ impl ModelTypeClassifier {
 
     fn matches_transcription_pattern(&self, id: &ModelIdentifier) -> bool {
         id.contains("whisper") || id.contains("transcri") || id.contains("distil-whisper")
+    }
+
+    fn matches_speech_pattern(&self, id: &ModelIdentifier) -> bool {
+        id.contains("kokoro")
     }
 
     fn matches_text_embeddings_pattern(&self, id: &ModelIdentifier) -> bool {

@@ -187,10 +187,7 @@ impl Build<'_> {
         let root = self.root.to_path_buf();
         status.attach(Arc::new(move |snapshot: &FolderIndexStatusDto| {
             sink.send_replace(snapshot.clone());
-            // The open folder shows its build's progress.
-            if let Some(open) = view.lock().as_ref().filter(|open| open.root == root) {
-                open.status.replace(snapshot.clone());
-            }
+            view.report(&root, snapshot);
         }));
         let mut progress = Progress::new(self.context);
         let outcome = self
@@ -252,6 +249,7 @@ impl Build<'_> {
             status: Arc::clone(status),
             cancel: context.cancellation().clone(),
             limits: self.manager.config().limits,
+            files_found: None,
             turns: Arc::clone(&self.manager.turns),
         };
         let run = indexer.run();

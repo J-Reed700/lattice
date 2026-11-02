@@ -69,7 +69,7 @@ def main():
             break
         row = {"call": name, "secs": round(time.time() - t, 1), **{k: usage.get(k) for k in (
             "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")}}
-        out.write(json.dumps(row) + "\n")
+        out.write(json.dumps({"model": MODEL, **row}) + "\n")
         out.flush()
         print(row, flush=True)
 

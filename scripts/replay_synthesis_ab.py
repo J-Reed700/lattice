@@ -203,7 +203,7 @@ def run(args):
                 text = r["content"].strip()
                 if arm == "SENT" and step == "map":
                     notes[sid] = text
-                out.write(json.dumps({"id": sid, "step": step, "arm": arm, "finish": r["finish"], "secs": r["secs"],
+                out.write(json.dumps({"model": base.running_model(), "id": sid, "step": step, "arm": arm, "finish": r["finish"], "secs": r["secs"],
                                       "prompt_tokens": (r.get("usage") or {}).get("prompt_tokens"),
                                       **score(text, facts_of(step, group, arg, notes), heads), "text": text}) + "\n")
                 out.flush()

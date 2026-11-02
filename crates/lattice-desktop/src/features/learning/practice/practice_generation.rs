@@ -275,6 +275,40 @@ pub fn validate_citations(
     Ok(())
 }
 
+/// The grounds come before the decision: a constrained decoder writes these
+/// fields in this order, and with the score first it commits to a number, or to
+/// `uncertain`, before it has read the answer back.
+pub(crate) fn grade_schema(rubric: &[LearningPracticeCriterionDto]) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criteria", "status"],
+        "properties": {
+            "criteria": {
+                "type": "array",
+                "minItems": rubric.len(),
+                "maxItems": rubric.len(),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["criterion_id", "evidence_quote", "observation", "score"],
+                    "properties": {
+                        "criterion_id": { "type": "string" },
+                        "evidence_quote": { "type": ["string", "null"], "maxLength": 500 },
+                        "observation": { "type": "string", "minLength": 1, "maxLength": 900 },
+                        "score": {
+                            "type": ["integer", "null"],
+                            "minimum": 0,
+                            "maximum": rubric.iter().map(|c| c.max_points).max().unwrap_or(4)
+                        }
+                    }
+                }
+            },
+            "status": { "enum": ["provisional", "uncertain"] }
+        }
+    })
+}
+
 pub async fn grade(
     llm: &dyn LLMPort,
     session: &LearningPracticeSessionDto,
@@ -284,7 +318,7 @@ pub async fn grade(
 )> {
     let rubric:Vec<_>=session.rubric.iter().map(|c|serde_json::json!({"id":c.id,"dimension":c.dimension,"title":c.title,"description":c.description,"maxPoints":c.max_points})).collect();
     let task = serde_json::json!({"taskPrompt":session.task_prompt,"artifact":session.artifact.text,"rubric":rubric});
-    let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["status","criteria"],"properties":{"status":{"enum":["provisional","uncertain"]},"criteria":{"type":"array","minItems":session.rubric.len(),"maxItems":session.rubric.len(),"items":{"type":"object","additionalProperties":false,"required":["criterion_id","score","observation","evidence_quote"],"properties":{"criterion_id":{"type":"string"},"score":{"type":["integer","null"],"minimum":0,"maximum":session.rubric.iter().map(|c|c.max_points).max().unwrap_or(4)},"observation":{"type":"string","minLength":1,"maxLength":900},"evidence_quote":{"type":["string","null"],"maxLength":500}}}}}});
+    let schema = grade_schema(&session.rubric);
     let system = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.";
     let mut prompt = task.to_string();
     let budget = session.rubric.len().saturating_mul(500).saturating_add(800);
