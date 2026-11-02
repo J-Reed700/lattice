@@ -267,6 +267,27 @@ mod store {
         store.close().await;
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_rebuild_that_cannot_clear_its_files_says_so() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = store_with(temp.path(), &[("a.md", &["alpha"])]).await;
+        store.set_meta("version", "1").await.unwrap();
+        store.set_meta(META_IDENTITY, "model-a").await.unwrap();
+        store.close().await;
+        let vectors = vectors_path(temp.path(), "model-a");
+        std::fs::write(&vectors, b"old vectors").unwrap();
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&vectors)
+            .unwrap();
+
+        assert!(PassageStore::open(temp.path()).await.is_err());
+    }
+
     #[tokio::test]
     async fn another_schema_version_rebuilds_from_an_empty_directory() {
         let temp = tempfile::tempdir().unwrap();

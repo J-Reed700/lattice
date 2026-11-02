@@ -181,19 +181,31 @@ fn index_file(name: &str) -> bool {
 /// and any vectors file made against it. Anything else in the directory is
 /// left alone, so a wrong directory never loses a file the index did not
 /// write.
-fn clear_directory(dir: &Path) {
+fn clear_directory(dir: &Path) -> Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return Ok(());
     };
     for entry in entries.filter_map(|entry| entry.ok()) {
         let owned = entry.file_name().to_str().is_some_and(index_file);
         if owned && entry.file_type().is_ok_and(|kind| kind.is_file()) {
             let path = entry.path();
-            if let Err(error) = lattice_core::shared::fs::removal::remove_file(&path) {
-                tracing::warn!(path = %path.display(), %error, "Passage index: could not remove an index file");
-            }
+            lattice_core::shared::fs::removal::remove_written_file(&path).map_err(|error| {
+                AppError::FileStorage(format!(
+                    "Passage index: could not remove {}: {error}",
+                    path.display()
+                ))
+            })?;
         }
     }
+    Ok(())
+}
+
+/// Clears `dir` off the runtime, since a held file is waited for.
+async fn cleared(dir: &Path) -> Result<()> {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || clear_directory(&dir))
+        .await
+        .map_err(|error| AppError::FileStorage(format!("Passage index: {error}")))?
 }
 
 async fn connect_pool(dir: &Path) -> Result<SqlitePool> {
@@ -246,13 +258,13 @@ impl PassageStore {
             ))
         })?;
         if !dir.join(DB_FILE).exists() {
-            clear_directory(dir);
+            cleared(dir).await?;
         }
         let mut pool = connect_pool(dir).await?;
         if other_version(&pool).await? {
             tracing::info!(dir = %dir.display(), "Passage index: schema changed; rebuilding");
             pool.close().await;
-            clear_directory(dir);
+            cleared(dir).await?;
             pool = connect_pool(dir).await?;
         }
         sqlx::raw_sql(SCHEMA)
