@@ -20,6 +20,24 @@ fn is_own_page(uri: &str, dev_server: bool) -> bool {
     }
 }
 
+/// What a page asking for the microphone is told: the app's own pages get it,
+/// and any other is refused rather than shown WebView2's prompt.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+enum MicrophoneAnswer {
+    Allow,
+    Refuse,
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn microphone_answer(uri: &str, dev_server: bool) -> MicrophoneAnswer {
+    if is_own_page(uri, dev_server) {
+        MicrophoneAnswer::Allow
+    } else {
+        MicrophoneAnswer::Refuse
+    }
+}
+
 /// Lets the main window's own pages open the microphone.
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -27,7 +45,7 @@ pub fn allow_in_main_window(app: &tauri::App) {
     use tauri::Manager;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
     };
     use webview2_com::{take_pwstr, PermissionRequestedEventHandler};
 
@@ -49,10 +67,12 @@ pub fn allow_in_main_window(app: &tauri::App) {
                 args.Uri(&mut uri)?;
                 take_pwstr(uri)
             };
-            if is_own_page(&uri, cfg!(debug_assertions)) {
-                // SAFETY: as above.
-                unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)? };
-            }
+            let state = match microphone_answer(&uri, cfg!(debug_assertions)) {
+                MicrophoneAnswer::Allow => COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                MicrophoneAnswer::Refuse => COREWEBVIEW2_PERMISSION_STATE_DENY,
+            };
+            // SAFETY: as above.
+            unsafe { args.SetState(state)? };
             Ok(())
         }));
         let mut token = 0;
@@ -74,7 +94,7 @@ pub fn allow_in_main_window(app: &tauri::App) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_own_page;
+    use super::{is_own_page, microphone_answer, MicrophoneAnswer};
 
     #[test]
     fn the_packaged_app_is_its_own_page() {
@@ -101,6 +121,25 @@ mod tests {
             "not a url",
         ] {
             assert!(!is_own_page(uri, true), "{uri}");
+        }
+    }
+
+    #[test]
+    fn a_page_shown_inside_the_app_is_refused_without_a_prompt() {
+        assert_eq!(
+            microphone_answer("http://tauri.localhost/", false),
+            MicrophoneAnswer::Allow
+        );
+        for uri in [
+            "http://lattice-snapshot.localhost/page",
+            "https://example.com/",
+            "about:srcdoc",
+        ] {
+            assert_eq!(
+                microphone_answer(uri, true),
+                MicrophoneAnswer::Refuse,
+                "{uri}"
+            );
         }
     }
 }
