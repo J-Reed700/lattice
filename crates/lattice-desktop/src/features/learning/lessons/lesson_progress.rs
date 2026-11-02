@@ -688,16 +688,20 @@ mod tests {
                         common: 2
                     })
                 );
-                // The sorting call made, the check, the three calls after it
-                // fails, the flow repair of its section and the repeat of an
-                // answer that cannot be read.
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(7));
+                // The sorting call made (1), the Sourced statement's check
+                // (1), the Common ones' samples (6), the three calls after
+                // each statement checked as Sourced fails, those sent to their
+                // source included (9), the flow repair of the section (1),
+                // the two source checks (2) and the repeat of every answer
+                // that cannot be read (7).
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(27));
                 calls_planned(&[], 0);
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(7));
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(27));
 
                 lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
                 strict_checked(&[(Class::Sourced, Fate::Failed)]);
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(6));
+                // The Sourced statement's answer was read: its repeat goes.
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(26));
                 drop(model_calls(3));
                 assert_eq!(progress.snapshot().2.model_calls, 4);
 
