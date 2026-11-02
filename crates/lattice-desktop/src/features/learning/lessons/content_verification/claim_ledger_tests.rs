@@ -980,6 +980,7 @@ pub(super) fn passage_finding(
         trust: None,
         two_pass: Default::default(),
         label: None,
+        class: None,
     }
 }
 

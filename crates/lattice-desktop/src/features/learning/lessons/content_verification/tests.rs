@@ -267,6 +267,21 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
         }).collect();
         return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
     }
+    if prompt.starts_with("You sort statements extracted from a lesson") {
+        // The fixtures' statements are the ones the strict check was written
+        // for.
+        let statements: serde_json::Map<String, Value> =
+            serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
+        return Some(
+            Value::Object(
+                statements
+                    .keys()
+                    .map(|id| (id.clone(), json!("sourced")))
+                    .collect(),
+            )
+            .to_string(),
+        );
+    }
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
     }
@@ -455,6 +470,9 @@ mod coverage_adoption_tests;
 
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
+
+#[path = "class_checks_tests.rs"]
+mod class_checks_tests;
 
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
@@ -1282,6 +1300,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 resolution: None,
                 two_pass: Default::default(),
                 label: None,
+                class: None,
                 trust: None,
             })
         })

@@ -551,6 +551,7 @@ pub(in crate::features::learning) async fn weigh_claim(
         two_pass: Default::default(),
         trust: None,
         label: None,
+        class: None,
     };
     if supporting_passages(&finding).is_empty() {
         return Ok(None);

@@ -284,11 +284,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
             claim_ledger::Decision::Repair(targets) => {
                 remember_failed_claims(&mut repair_history, &report);
-                let escalated = targets.iter().any(|id| {
-                    ledger
-                        .entry(id)
-                        .is_some_and(|entry| entry.next_repair_escalates())
-                });
+                let escalated = targets.iter().any(|id| ledger.cuts_next(id));
                 crate::features::learning::lesson_progress::phase(
                     crate::features::learning::lesson_progress::Phase::Repair,
                     if escalated {
@@ -462,11 +458,7 @@ pub(super) fn repair_context(
     targets: &[ClaimId],
     references: &ReferenceCollection<'_>,
 ) -> Result<Value> {
-    let escalates = |id: &ClaimId| {
-        ledger
-            .entry(id)
-            .is_some_and(|entry| entry.next_repair_escalates())
-    };
+    let escalates = |id: &ClaimId| ledger.cuts_next(id);
     let mates: HashMap<ClaimId, Vec<ClaimId>> = targets
         .iter()
         .map(|id| (id.clone(), ledger.cotenants(id)))

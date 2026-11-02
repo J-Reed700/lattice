@@ -123,6 +123,7 @@ pub(super) fn settle(
         resolution: None,
         two_pass: Default::default(),
         label: Some(Label::Attributed),
+        class: None,
         trust: None,
     }))
 }

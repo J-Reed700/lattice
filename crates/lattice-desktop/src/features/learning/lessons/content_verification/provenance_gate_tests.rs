@@ -88,6 +88,7 @@ fn finding(statement: &str, quote: &str, evidence: Vec<EvidencePassage>) -> Find
         resolution: None,
         two_pass: Default::default(),
         label: None,
+        class: None,
         trust: None,
     }
 }

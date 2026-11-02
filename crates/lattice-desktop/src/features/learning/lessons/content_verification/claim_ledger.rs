@@ -30,9 +30,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 
 pub(in crate::features::learning) use located::{located, located_quote};
-#[cfg(test)]
-pub(in crate::features::learning) use observe::locate;
-pub(in crate::features::learning) use observe::{field_pointer, field_text, unit_texts};
+pub(in crate::features::learning) use observe::{field_pointer, field_text, locate, unit_texts};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";
@@ -396,7 +394,7 @@ impl ClaimLedger {
         // §3.2); a last attempt cuts the sentence and takes them with it.
         let rewritten: Vec<(ClaimId, u8)> = records
             .iter()
-            .filter(|record| !record.escalated)
+            .filter(|record| !self.cuts_next(&record.claim_id))
             .map(|record| (record.claim_id.clone(), record.attempt))
             .collect();
         for (target, attempt) in rewritten {
@@ -422,6 +420,17 @@ impl ClaimLedger {
             .previous
             .get_or_insert_with(|| candidate.clone());
         self.save_pending().await
+    }
+
+    /// Whether the next repair of `claim_id` takes its sentence out: its last
+    /// attempt, or a Common statement the model called false, which has no
+    /// rewrite to make unless its sentence carries other statements (claim
+    /// classes design §3.1, §3.2).
+    pub(super) fn cuts_next(&self, claim_id: &ClaimId) -> bool {
+        self.entry(claim_id).is_some_and(|entry| {
+            entry.next_repair_escalates()
+                || (entry.class() == Some(Class::Common) && self.cotenants(claim_id).is_empty())
+        })
     }
 
     /// The live claims standing on the same sentence as `claim_id`: those in

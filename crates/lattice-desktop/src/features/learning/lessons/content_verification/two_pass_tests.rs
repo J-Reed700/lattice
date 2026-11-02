@@ -471,6 +471,7 @@ fn either_pass_support_with_the_other_contradicting_carries_the_contrary() {
         trust: None,
         two_pass: Default::default(),
         label: None,
+        class: None,
     };
     // The citation says otherwise; the course supports the claim.
     let combined = evidence_checks::combined(
@@ -560,6 +561,7 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
             trust: None,
             two_pass: Default::default(),
             label: None,
+            class: None,
         })
         .collect();
     // A planner that finds nothing public to search: the round ends
@@ -662,6 +664,7 @@ fn decided_by(verdict: ClaimVerdict, id: &str, text: &str) -> Finding {
         trust: None,
         two_pass: Default::default(),
         label: None,
+        class: None,
     }
 }
 

@@ -11,6 +11,7 @@ use lattice_core::application::services::claim_verification::ClaimEvidence;
 use lattice_core::application::services::claim_verification::{
     CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
+use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ pub(in crate::features::learning) use claim_ledger::{
     field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
     HeldForReview,
 };
+mod class_checks;
 mod classify;
 mod coverage;
 #[cfg(test)]
@@ -208,12 +210,23 @@ struct Finding {
     /// `Attributed` for a quotation found in the source it names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<Label>,
+    /// The class the claim was checked as, and who decided it (claim classes
+    /// design §3.1): the check the learner is told of, and the ledger's
+    /// record of the claim's class.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    class: Option<Classed>,
     /// What the two passes made of the claim (course evidence index §5.1):
     /// the pass and page that decided it, where pass B read, the passage it
     /// found when the section's citations gave no support, and a passage
     /// either pass found saying otherwise about a supported claim.
     #[serde(flatten)]
     two_pass: TwoPass,
+}
+/// A statement's class and the authority that decided it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Classed {
+    class: Class,
+    by: ClassifiedBy,
 }
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
@@ -350,6 +363,7 @@ impl ClaimReceipt {
             resolution: None,
             two_pass: Default::default(),
             label: None,
+            class: None,
             trust: None,
         })
     }

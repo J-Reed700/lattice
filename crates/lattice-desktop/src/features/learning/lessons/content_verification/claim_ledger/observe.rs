@@ -6,6 +6,9 @@ use super::super::support_gate::{Sufficiency, Support};
 use super::super::*;
 use super::{is_gone, successor, ClaimLedger, RepairRecord};
 use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
+use lattice_core::application::services::claim_verification::{
+    CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
+};
 use lattice_core::domain::learning::claim_review::{
     identities, new_information, reopen_cause, text_sha256, Actor, Check, CheckResult, Checker,
     ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceFingerprint,
@@ -15,12 +18,14 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::text::{claim_sentence, sentences};
 
 /// A claim of one pass: as extracted, its check, the passages its card
-/// shows, and what the provenance gate weighed for the check, when it did.
+/// shows, what the provenance gate weighed for the check, when it did, and
+/// the class it was checked as.
 type Found = (
     ExtractedClaim,
     Check,
     Vec<ShownPassage>,
     Option<TrustAssessment>,
+    Option<Classed>,
 );
 
 /// The ledger's record of the gate's weighing, after the check it decided.
@@ -206,7 +211,17 @@ impl ClaimLedger {
     /// supported claim whose support it weighed).
     fn check_of(&self, finding: &Finding) -> (Check, Option<TrustAssessment>) {
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
+        let class = finding.class.map(|classed| classed.class);
         let ((result, reason), trust) = match finding.verdict {
+            // A statement the lighter checks passed rests on no quotation.
+            ClaimVerdict::Supported if class == Some(Class::Common) => {
+                ((CheckResult::KnownCommon, finding.reason.clone()), None)
+            }
+            ClaimVerdict::Supported
+                if class == Some(Class::Reasoning) && finding.supporting_quote.is_none() =>
+            {
+                ((CheckResult::Consistent, finding.reason.clone()), None)
+            }
             ClaimVerdict::Supported => {
                 let quote = finding.supporting_quote.clone().unwrap_or_default();
                 let source = finding
@@ -265,7 +280,12 @@ impl ClaimLedger {
                 ((CheckResult::Failed { kind }, finding.reason.clone()), None)
             }
         };
-        (self.check(result, reason, evidence), trust)
+        let policy = match class {
+            Some(Class::Reasoning) => CONSISTENCY_POLICY,
+            Some(Class::Common) => KNOWLEDGE_POLICY,
+            _ => POLICY,
+        };
+        (self.check(policy, result, reason, evidence), trust)
     }
 
     /// The check an example's run records: it completed, or it did not.
@@ -288,17 +308,23 @@ impl ClaimLedger {
                 kind: VerdictKind::Unsupported,
             }
         };
-        self.check(result, evidence, seen)
+        self.check(POLICY, result, evidence, seen)
     }
 
-    fn check(&self, result: CheckResult, reason: String, evidence: Vec<EvidenceSeen>) -> Check {
+    fn check(
+        &self,
+        policy: &str,
+        result: CheckResult,
+        reason: String,
+        evidence: Vec<EvidenceSeen>,
+    ) -> Check {
         Check {
             checker: Checker::Local {
                 model: self.checker_model.clone(),
             },
             result,
             reason,
-            fingerprint: EvidenceFingerprint::of(POLICY, &self.checker_model, &evidence),
+            fingerprint: EvidenceFingerprint::of(policy, &self.checker_model, &evidence),
             evidence,
             window_tokens: self.window_tokens,
         }
@@ -356,6 +382,7 @@ impl ClaimLedger {
                 check,
                 finding.evidence.iter().map(shown).collect(),
                 trust,
+                finding.class,
             ));
         }
         let located = found
@@ -396,6 +423,7 @@ impl ClaimLedger {
                     text: check.reason.clone(),
                     retrieval_kind: "execution".into(),
                 }],
+                None,
                 None,
             ));
             example_ids.push(observation.id.clone());
@@ -457,7 +485,7 @@ impl ClaimLedger {
             .collect();
         let active: HashSet<&str> = report.sources.iter().map(|s| s.id.as_str()).collect();
         let mut claim_ids = Vec::with_capacity(found.len());
-        for (index, ((claim, check, passages, trust), prior)) in
+        for (index, ((claim, check, passages, trust, class), prior)) in
             found.into_iter().zip(assigned.assigned).enumerate()
         {
             let edited = prior.as_ref().is_some_and(|id| self.edited_now.remove(id));
@@ -472,11 +500,12 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, check, trust, None).await?;
+                    self.start(&successor, claim, check, (trust, class), None)
+                        .await?;
                     successor
                 }
                 Some(id) => {
-                    let seen = (claim, check, trust);
+                    let seen = (claim, check, trust, class);
                     self.carry_on(&id, candidate, seen, records.get(&id), &active)
                         .await?;
                     id
@@ -484,7 +513,7 @@ impl ClaimLedger {
                 None => {
                     let id = ClaimId::generate();
                     let born = heirs.children.get(&index).cloned();
-                    self.start(&id, claim, check, trust, born).await?;
+                    self.start(&id, claim, check, (trust, class), born).await?;
                     id
                 }
             };
@@ -566,7 +595,7 @@ impl ClaimLedger {
         id: &ClaimId,
         claim: ExtractedClaim,
         check: Check,
-        trust: Option<TrustAssessment>,
+        (trust, class): (Option<TrustAssessment>, Option<Classed>),
         born: Option<(ClaimId, u8)>,
     ) -> Result<()> {
         self.append(
@@ -577,6 +606,7 @@ impl ClaimLedger {
             },
         )
         .await?;
+        self.classify_claim(id, class).await?;
         if let Some((parent, attempts_left)) = born {
             self.append(
                 id,
@@ -594,6 +624,23 @@ impl ClaimLedger {
         Ok(())
     }
 
+    /// Records the class a claim was checked as, when the ledger does not
+    /// hold it yet.
+    async fn classify_claim(&mut self, id: &ClaimId, class: Option<Classed>) -> Result<()> {
+        let Some(Classed { class, by }) = class else {
+            return Ok(());
+        };
+        if self
+            .entry(id)
+            .is_some_and(|entry| entry.class() == Some(class))
+        {
+            return Ok(());
+        }
+        self.append(id, ClaimEvent::Classified { class, by })
+            .await?;
+        Ok(())
+    }
+
     /// A claim seen before: record what changed, then a check only when
     /// something about it is new (a different decision of the gate counts,
     /// source provenance §18.7) or a repair awaits its verdict.
@@ -601,12 +648,17 @@ impl ClaimLedger {
         &mut self,
         id: &ClaimId,
         candidate: &Value,
-        (claim, check, trust): (ExtractedClaim, Check, Option<TrustAssessment>),
+        (claim, check, trust, class): (
+            ExtractedClaim,
+            Check,
+            Option<TrustAssessment>,
+            Option<Classed>,
+        ),
         repair: Option<&RepairRecord>,
         active: &HashSet<&str>,
     ) -> Result<()> {
         let Some(entry) = self.entry(id).cloned() else {
-            return self.start(id, claim, check, trust, None).await;
+            return self.start(id, claim, check, (trust, class), None).await;
         };
         // A claim stands on its sentence, not on the quote an extraction
         // picked: while the stored quote is still in its field, its sentence
@@ -646,6 +698,7 @@ impl ClaimLedger {
             )
             .await?;
         }
+        self.classify_claim(id, class).await?;
         let mut decides_repair = false;
         if let Some(record) = repair {
             decides_repair = self
@@ -705,7 +758,9 @@ impl ClaimLedger {
                 continue;
             };
             let hint = super::super::review_pass::pending_hint(entry);
-            if entry.may_research() || hint.is_some() {
+            // Only a statement that needs a source is looked up on the web.
+            let sourced = entry.class().is_none_or(|class| class == Class::Sourced);
+            if (sourced && entry.may_research()) || hint.is_some() {
                 claims.push(id.clone());
                 findings.push(finding.clone());
                 hints.extend(hint);

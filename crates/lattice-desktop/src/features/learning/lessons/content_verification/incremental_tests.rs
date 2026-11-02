@@ -273,6 +273,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
                     resolution: None,
                     two_pass: Default::default(),
                     label: None,
+                    class: None,
                     trust: None,
                 }],
                 &transient,
@@ -396,6 +397,7 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
                 trust: None,
                 two_pass: Default::default(),
                 label: None,
+                class: None,
             }],
             &ClaimChecks::default(),
         )

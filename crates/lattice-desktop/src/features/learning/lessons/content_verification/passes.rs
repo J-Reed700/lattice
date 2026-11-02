@@ -95,24 +95,98 @@ pub(super) async fn check_evidence(
             ));
         }
     }
-    let results = evidence_checks::check_with_citations(
-        llm,
-        references,
-        &inventory,
-        &executions,
-        completed,
-        &section_citations(candidate, references)?,
-    )
-    .await?;
-    let findings: Vec<_> = results
-        .into_iter()
-        .map(|(_, key, finding, _)| {
-            completed.record(key, &finding);
-            finding
+    let citations = section_citations(candidate, references)?;
+    let claims: Vec<(usize, Claim)> = inventory
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.claims
+                .iter()
+                .cloned()
+                .map(move |claim| (unit.index, claim))
         })
         .collect();
+    let classes = class_checks::sort(llm, candidate, &claims).await?;
+    let routes = class_checks::check(llm, &claims, classes, &citations).await?;
+    // The strict check is asked about the statements that need a source, a
+    // section at a time in the inventory's order.
+    let mut needs_source: Vec<UnitClaims> = Vec::new();
+    let mut strict_at: Vec<usize> = Vec::new();
+    for (at, ((unit, claim), route)) in claims.iter().zip(&routes).enumerate() {
+        if !matches!(route, class_checks::Route::Strict(_)) {
+            continue;
+        }
+        strict_at.push(at);
+        match needs_source.last_mut() {
+            Some(last) if last.index == *unit => last.claims.push(claim.clone()),
+            _ => needs_source.push(UnitClaims {
+                index: *unit,
+                claims: vec![claim.clone()],
+                non_factual_reason: String::new(),
+            }),
+        }
+    }
+    let checked = evidence_checks::check_with_citations(
+        llm,
+        references,
+        &Inventory {
+            units: needs_source,
+        },
+        &executions,
+        completed,
+        &citations,
+    )
+    .await?;
+    let mut strict: HashMap<usize, (String, Finding)> = HashMap::new();
+    for (ordinal, key, mut finding, _) in checked {
+        let at = strict_at.get(ordinal).copied();
+        if let Some(class_checks::Route::Strict(classed)) = at.and_then(|at| routes.get(at)) {
+            finding.class = Some(*classed);
+        }
+        if let Some(at) = at {
+            strict.insert(at, (key, finding));
+        }
+    }
+    // The statements left out of the lesson's claims are not in its coverage
+    // either: the report accounts for each claim by one finding.
+    let mut left = routes
+        .iter()
+        .map(|route| matches!(route, class_checks::Route::Left));
+    let mut accounted: Vec<UnitClaims> = Vec::new();
+    for unit in &inventory.units {
+        let claims: Vec<Claim> = unit
+            .claims
+            .iter()
+            .filter(|_| !left.next().unwrap_or(false))
+            .cloned()
+            .collect();
+        let non_factual_reason = if claims.is_empty() && unit.non_factual_reason.trim().is_empty() {
+            "Its statements are about the lesson itself: a scenario, a rubric, an option or a remark about its sources.".to_owned()
+        } else {
+            unit.non_factual_reason.clone()
+        };
+        accounted.push(UnitClaims {
+            index: unit.index,
+            claims,
+            non_factual_reason,
+        });
+    }
+    let mut findings = Vec::with_capacity(claims.len());
+    for (at, route) in routes.into_iter().enumerate() {
+        match route {
+            class_checks::Route::Left => {}
+            class_checks::Route::Done(finding) => findings.push(*finding),
+            class_checks::Route::Strict(_) => {
+                let (key, finding) = strict.remove(&at).ok_or_else(|| {
+                    AppError::InternalError("A statement was left without a check".into())
+                })?;
+                completed.record(key, &finding);
+                findings.push(finding);
+            }
+        }
+    }
     // Every claim a passage does not support is an issue until the claim
-    // ledger closes it: a general-knowledge proposal waits for the user (D1).
+    // ledger closes it.
     for finding in &findings {
         if !finding.publishable() {
             issues.push(format!(
@@ -137,7 +211,7 @@ pub(super) async fn check_evidence(
                 sha256: digest(&s.excerpt),
             })
             .collect(),
-        coverage: inventory.units,
+        coverage: accounted,
         coverage_audit: coverage.units,
         findings,
         executions,

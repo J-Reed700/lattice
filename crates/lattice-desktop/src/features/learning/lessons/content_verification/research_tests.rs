@@ -82,6 +82,7 @@ fn gap() -> Finding {
         resolution: None,
         two_pass: Default::default(),
         label: None,
+        class: None,
         trust: None,
     }
 }
