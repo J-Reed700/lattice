@@ -108,7 +108,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     { id: 'review-add-source', keys: 'S', description: 'Add a source', handler: () => click('S') },
     { id: 'review-undo', keys: 'U', description: 'Undo', handler: () => void session.undoLast() },
     { id: 'review-legend', keys: 'Shift+?', description: 'Keyboard keys', handler: () => setLegend((open) => !open) },
-  ], [session, active]);  
+  ], [session]);
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
   const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', handler: () => {
     if (reader || trusting) return; // the dialog closes itself

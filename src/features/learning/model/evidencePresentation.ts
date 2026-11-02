@@ -19,7 +19,7 @@ const SOURCE_WORDS: Record<string, (source: string) => string> = {
 function standsOn(claim: LearningClaimEvidenceDto): LearningEvidencePassageDto | undefined {
   const stated = claim.parts?.find((part) => part.kind === 'stated' && part.sourceVersionId);
   const quote = claim.supportingQuote;
-  return claim.passages.find((passage) => stated !== undefined && passage.sourceVersionId === stated.sourceVersionId)
+  return claim.passages.find((passage) => passage.sourceVersionId === stated?.sourceVersionId)
     ?? (quote ? claim.passages.find((passage) => passage.retrievalKind !== 'execution' && passage.text.includes(quote)) : undefined)
     ?? claim.passages.find((passage) => passage.retrievalKind !== 'execution');
 }
