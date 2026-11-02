@@ -611,6 +611,75 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
     assert_eq!(cited_only.supported_claims, 1);
 }
 
+const LEASE_PASSAGE: &str = "A worker holds a lease of 45 seconds on the job it was given.";
+
+const SESSION_REPLY: &str = "Good work, you have named that part exactly as the handbook does.\n\n\
+     A worker holds a lease of 45 seconds on the job it was given [1].\n\n\
+     Let's move on to the next card in your deck, one at a time.\n\n\
+     The backoff ladder has six rungs in total, each one longer than the last.";
+
+/// What a tutor says to run the session is not a claim, and the uncited false
+/// sentence beside it still is.
+#[tokio::test]
+async fn a_sentence_that_only_runs_a_session_is_no_claim() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let report = GroundingVerifier::new(Some(llm.clone()))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(
+        report.claims_evaluated, 2,
+        "{:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(report.supported_claims, 1);
+    assert_eq!(report.unsupported_claims.len(), 1);
+    assert!(
+        report.unsupported_claims[0].contains("six rungs"),
+        "{:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(llm.call_count(), 1, "one question for the turn");
+}
+
+/// Unsure means checked: nothing is left unflagged because the model could not
+/// be read.
+#[tokio::test]
+async fn every_uncited_sentence_stays_a_claim_when_the_judge_cannot_say() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["I could not tell which are which."]));
+    let report = GroundingVerifier::new(Some(llm))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+    assert_eq!(report.unsupported_claims.len(), 3);
+}
+
+/// Without the judge nothing sorts the sentences, so all of them stay.
+#[tokio::test]
+async fn a_lexical_check_keeps_every_uncited_sentence() {
+    let report = GroundingVerifier::new(None)
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+}
+
+/// An ordinary chat's check costs no extra call.
+#[tokio::test]
+async fn a_chat_turn_never_asks_which_sentences_run_a_session() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let report = GroundingVerifier::new(Some(llm.clone()))
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+    assert_eq!(llm.call_count(), 0);
+}
+
 /// A quotation its passage does not hold is a finding without a model, and
 /// the claims around it still go to the judge.
 #[tokio::test]

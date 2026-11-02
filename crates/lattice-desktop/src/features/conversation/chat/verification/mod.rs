@@ -307,6 +307,9 @@ pub struct GroundingVerifier {
     judge: Option<ClaimJudge>,
     /// Only sentences that cite a passage are claims (`cited_only`).
     cited_only: bool,
+    /// Uncited sentences that say nothing about the subject are no claims
+    /// (`without_session_talk`).
+    without_session_talk: bool,
 }
 
 impl GroundingVerifier {
@@ -325,6 +328,7 @@ impl GroundingVerifier {
                 Self {
                     judge: Some(judge),
                     cited_only: false,
+                    without_session_talk: false,
                 }
             }
             None => {
@@ -336,6 +340,7 @@ impl GroundingVerifier {
                 Self {
                     judge: None,
                     cited_only: false,
+                    without_session_talk: false,
                 }
             }
         }
@@ -368,6 +373,14 @@ impl GroundingVerifier {
     /// source.
     pub(super) fn cited_only(mut self, cited_only: bool) -> Self {
         self.cited_only = cited_only;
+        self
+    }
+
+    /// A tutor's reply runs a session as it teaches: "Good, next card" is no
+    /// claim about the course, but an uncited false claim beside it must still
+    /// be found. So the judge sorts the sentences that cite nothing.
+    pub(super) fn without_session_talk(mut self, without: bool) -> Self {
+        self.without_session_talk = without;
         self
     }
 

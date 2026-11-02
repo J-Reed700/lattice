@@ -48,6 +48,8 @@ pub(crate) const FOLDER_POLICY: TurnSourcePolicy = TurnSourcePolicy {
     offers_library_tools: false,
     infers_intent: false,
     verifies_cited_only: true,
+    reads_passages: true,
+    drops_session_talk: false,
     tool_rounds: 10,
     evidence_template: Some(FOLDER_TEMPLATE),
 };

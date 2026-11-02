@@ -47,6 +47,8 @@ pub(crate) const TUTOR_POLICY: TurnSourcePolicy = TurnSourcePolicy {
     offers_library_tools: true,
     infers_intent: false,
     verifies_cited_only: false,
+    reads_passages: false,
+    drops_session_talk: true,
     tool_rounds: 10,
     evidence_template: Some(TUTOR_TEMPLATE),
 };

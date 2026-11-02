@@ -514,6 +514,63 @@ async fn a_card_that_is_not_due_keeps_its_schedule() {
     assert_eq!(course.schedule(&card).await, reviewed);
 }
 
+/// A review is an answer to a question: a rating for a card nobody asked is a
+/// guess, and it would move the card as a real answer does.
+#[tokio::test]
+async fn a_card_the_tutor_never_asked_keeps_its_schedule() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    let before = course.schedule(&card).await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Fusion sums ranks [1].
+
+What does BM25 score?",
+    )
+    .await;
+
+    let result = course
+        .call(
+            "record_recall",
+            json!({ "card_id": card, "rating": "good" }),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert!(
+        result.error_message.expect("why").contains("as written"),
+        "the model is told how to ask it"
+    );
+    assert_eq!(course.schedule(&card).await, before);
+}
+
+/// Replies dress a card up; its words are what count.
+#[tokio::test]
+async fn a_card_asked_in_a_reply_s_own_emphasis_counts_as_asked() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Card 1 of 6:
+
+**What does *k*   flatten?**",
+    )
+    .await;
+
+    course
+        .text(
+            "record_recall",
+            json!({ "card_id": card, "rating": "good" }),
+        )
+        .await;
+
+    assert_eq!(course.schedule(&card).await.0, 1);
+}
+
 #[tokio::test]
 async fn record_recall_refuses_a_card_of_another_course() {
     let course = course().await;
@@ -835,6 +892,42 @@ async fn each_turn_carries_the_cards_due_and_the_replies_since_the_last_check() 
     );
 }
 
+/// Tool results are gone by the next turn, so the id a card is rated by has to
+/// come with the turn that rates it.
+#[tokio::test]
+async fn each_turn_shows_the_next_due_cards_by_id_and_never_their_answers() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+
+    let block = course.turn().await.context_block(4_000, true, None).await;
+
+    assert!(block.contains(&format!("card_id: {card}")), "{block}");
+    assert!(block.contains("What does k flatten?"), "{block}");
+    assert!(!block.contains("The hidden answer"), "{block}");
+    assert!(
+        !course
+            .turn()
+            .await
+            .context_block(4_000, false, None)
+            .await
+            .contains("card_id"),
+        "a turn without tools cannot rate one"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_shows_a_few_due_cards_and_counts_them_all() {
+    let course = course().await;
+    for number in 0..7 {
+        course.save_card(&format!("Question {number}")).await;
+    }
+
+    let block = course.turn().await.context_block(4_000, true, None).await;
+
+    assert!(block.contains("Cards due now: 7."), "{block}");
+    assert_eq!(block.matches("card_id:").count(), 5, "{block}");
+}
+
 #[test]
 fn a_chat_opened_from_a_lesson_names_it_and_a_turn_without_tools_says_so() {
     let facts = TurnFacts {
@@ -882,6 +975,8 @@ async fn the_tutor_s_reads_run_together_and_its_writes_run_alone() {
 fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     let policy = TUTOR_POLICY;
     assert!(!policy.verifies_cited_only);
+    assert!(!policy.reads_passages);
+    assert!(policy.drops_session_talk);
     assert_eq!(policy.evidence_template, Some(TUTOR_TEMPLATE));
     assert!(policy.offers_library_tools, "it keeps a chat's tools");
     assert!(TUTOR_TEMPLATE.contains("{context}") && TUTOR_TEMPLATE.contains("{question}"));

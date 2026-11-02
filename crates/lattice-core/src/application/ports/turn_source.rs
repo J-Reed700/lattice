@@ -26,6 +26,13 @@ pub struct TurnSourcePolicy {
     pub infers_intent: bool,
     /// Only the claims the answer cites are verified.
     pub verifies_cited_only: bool,
+    /// Numbered passages are read into notes before the answer is written.
+    /// Otherwise the message closes as the source's template does.
+    pub reads_passages: bool,
+    /// Replies run a session as well as state claims: a sentence that cites
+    /// nothing is a claim only if the judge finds it says something about the
+    /// subject.
+    pub drops_session_talk: bool,
     /// Tool rounds one turn may take.
     pub tool_rounds: usize,
     /// The template an evidence-carrying message renders in, in place of the
