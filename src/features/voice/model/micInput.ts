@@ -28,10 +28,7 @@ function failureOf(error: unknown): MicFailure {
   return 'failed';
 }
 
-/**
- * The browser's echo canceller is what lets the mic stay open while the reply
- * plays: on this engine it takes the app's own speech out of what the mic hears.
- */
+/** The echo canceller is what lets the mic stay open while a reply plays. */
 const SPEECH_CONSTRAINTS: MediaStreamConstraints = {
   audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
   video: false,

@@ -44,11 +44,9 @@ pub const MAX_AUDIO_SECS: u64 = 2 * 60 * 60;
 /// each step takes as long as its slowest thread, and a busy machine has one.
 const INFERENCE_THREADS: usize = 4;
 
-/// Candle's q8 kernels exist only in builds with AVX2 switched on, which a
-/// portable x86 build can't assume, so its products run as scalar loops. Loaded
-/// as floats they use the matrix kernels, which pick AVX2 at run time and are
-/// six times faster here. Call first thing in `main`: this sets a variable for
-/// the whole process.
+/// Has candle load q8 weights as floats on x86, where its q8 kernels are scalar
+/// unless the build itself enables AVX2. Sets a process-wide variable, so call
+/// it first thing in `main`.
 pub fn prefer_float_weights() {
     #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
     std::env::set_var("CANDLE_DEQUANTIZE_ALL", "1");

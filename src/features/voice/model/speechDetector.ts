@@ -6,10 +6,7 @@ const frames = (ms: number) => Math.ceil(ms / FRAME_MS);
 
 /** The quietest that counts as a voice, however still the room is. */
 const MIN_LEVEL_DB = -50;
-/**
- * While the app itself is speaking: the echo canceller leaves its peaks near
- * -53 dB on the laptop this was measured on, against -36 dB with it off.
- */
+/** While the app itself is speaking: its echo was measured peaking near -53 dB with the canceller on. */
 const MIN_LEVEL_WHILE_SPEAKING_DB = -40;
 const ABOVE_ROOM_DB = 12;
 /** The room is the quietest moment this far back: speech has gaps, a fan doesn't. */
