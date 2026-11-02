@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
+import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { LocalContextWindowRow } from './LocalContextWindowRow';
 
@@ -17,10 +18,13 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   }),
 }));
 
-function renderRow(localContextWindow: number | null = null) {
+const trainedFor = (windows: Array<number | null>) =>
+  windows.map((trained_context_length) => ({ trained_context_length }) as DownloadedModel);
+
+function renderRow(localContextWindow: number | null = null, models: DownloadedModel[] = []) {
   mockSettings = makeAppSettings();
   mockSettings.llm.localContextWindow = localContextWindow;
-  render(<LocalContextWindowRow />);
+  render(<LocalContextWindowRow models={models} />);
 }
 
 const saved = () => mockUpdateSettings.mock.calls.map(([update]) => update.updates);
@@ -55,6 +59,40 @@ describe('LocalContextWindowRow', () => {
     expect(saved()).toEqual([{ localContextWindow: 60_416 }, { localContextWindow: 512 }]);
     expect(modelMax()).not.toBeChecked();
     expect(windowField()).toHaveValue(512);
+  });
+
+  it('reaches the largest window a model here is trained for', async () => {
+    renderRow(null, trainedFor([32_768, 1_048_576, null]));
+
+    await userEvent.setup().click(modelMax());
+    fireEvent.change(windowField(), { target: { value: '1048576' } });
+    fireEvent.blur(windowField());
+    fireEvent.change(windowField(), { target: { value: '9000000' } });
+    fireEvent.blur(windowField());
+
+    expect(saved()).toEqual([{ localContextWindow: 1_048_576 }]);
+    expect(windowField()).toHaveAttribute('max', '1048576');
+  });
+
+  it('keeps a ceiling when no model reports its window', () => {
+    renderRow(32_768, trainedFor([null]));
+
+    fireEvent.change(windowField(), { target: { value: '9000000' } });
+    fireEvent.blur(windowField());
+
+    expect(saved()).toEqual([{ localContextWindow: 262_144 }]);
+  });
+
+  it('keeps a ceiling when the list of models is empty', () => {
+    renderRow(32_768, []);
+
+    expect(windowField()).toHaveAttribute('max', '262144');
+
+    fireEvent.change(windowField(), { target: { value: '9000000' } });
+    fireEvent.blur(windowField());
+
+    expect(saved()).toEqual([{ localContextWindow: 262_144 }]);
+    expect(windowField()).toHaveValue(262_144);
   });
 
   it('leaving the field empty keeps every model at its maximum', async () => {
