@@ -70,6 +70,14 @@ impl FindingTrust {
         }
     }
 
+    /// The claim's reason when its support is not enough: what it lacks,
+    /// then the rules that fired, verbatim (the first names the claim's kind,
+    /// its subject and the bar).
+    #[cfg(test)]
+    pub(super) fn explain(&self) -> String {
+        explain(&self.decision)
+    }
+
     /// The claim ledger's record of this weighing, for the supported
     /// verdict it decided (`source_version_id` holds `supporting_quote`).
     pub(super) fn assessment(
