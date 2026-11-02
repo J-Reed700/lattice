@@ -97,6 +97,17 @@ opt-level = 3
 [profile.dev.package.tokenizers]
 opt-level = 3
 
+# The matrix kernels under Whisper and Kokoro: without them a sentence takes
+# 40 seconds to hear in `tauri dev`.
+[profile.dev.package.gemm]
+opt-level = 3
+
+[profile.dev.package.gemm-common]
+opt-level = 3
+
+[profile.dev.package.gemm-f32]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "thin"

@@ -7,7 +7,7 @@ import { useApi } from '@/contexts/ApiContext';
 import { describeFailure } from '@/lib/errorHandling';
 import { toast } from '@/stores/toastStore';
 
-import { speechPlayer, type SpeechStatus } from '../model/speechPlayer';
+import { speechPlayer, type SpeechPieces, type SpeechStatus } from '../model/speechPlayer';
 import { speechChunks } from '../model/speechText';
 import { useSpeechPrefsStore } from '../stores/speechPrefsStore';
 
@@ -52,7 +52,7 @@ export function useSpeaker() {
   const voice = useSpeechPrefsStore((state) => state.voice);
   const speed = useSpeechPrefsStore((state) => state.speed);
   return useCallback(
-    async (sourceId: string, pieces: readonly string[], voiceOverride?: string) => {
+    async (sourceId: string, pieces: SpeechPieces, voiceOverride?: string) => {
       await speechPlayer.play(sourceId, pieces, async (text) => {
         const result = await api.synthesizeSpeech(text, voiceOverride ?? voice, speed);
         if (!result.ok) throw new Error(describeFailure(result));

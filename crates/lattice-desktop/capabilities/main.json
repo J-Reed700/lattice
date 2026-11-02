@@ -304,6 +304,7 @@
     "backup:allow-plugin-restore-archive",
     "vault:allow-rescan-vault",
     "transcription:allow-transcribe-file",
+    "transcription:allow-transcribe-speech",
     "transcription:allow-get-transcription-status",
     "speech:allow-get-speech-status",
     "speech:allow-synthesize-speech",

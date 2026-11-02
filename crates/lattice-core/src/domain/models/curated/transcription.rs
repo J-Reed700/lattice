@@ -4,6 +4,10 @@ use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
 
+/// The model offered for a voice conversation: on a CPU only the smallest
+/// hears a sentence quickly enough to answer it.
+pub const VOICE_TRANSCRIPTION_MODEL_ID: &str = "whisper-tiny-q8";
+
 /// Curated on-device transcription models.
 ///
 /// Both entries are quantized in candle's own GGUF layout — the only whisper

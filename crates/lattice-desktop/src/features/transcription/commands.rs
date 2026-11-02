@@ -1,8 +1,9 @@
 //! Transcription command implementations.
 //!
-//! # Commands (2 total)
+//! # Commands (3 total)
 //!
 //! - `transcribe_file` — explicit re-run of the on-device transcriber
+//! - `transcribe_speech` — what was said in a recording made in the app
 //! - `get_transcription_status` — whether a transcription model is downloaded
 //!
 //! Normal ingest transcribes audio automatically through the content-extraction
@@ -10,9 +11,11 @@
 
 use std::path::PathBuf;
 
-use crate::features::transcription::dto::{TranscriptDto, TranscriptionStatusDto};
+use crate::features::transcription::dto::{
+    TranscribedSpeechDto, TranscriptDto, TranscriptionStatusDto,
+};
 use crate::features::transcription::use_cases::{
-    GetTranscriptionStatusUseCase, TranscribeFileUseCase,
+    GetTranscriptionStatusUseCase, TranscribeFileUseCase, TranscribeSpeechUseCase,
 };
 use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use crate::interfaces::di::Container;
@@ -44,6 +47,16 @@ pub async fn transcribe_file_impl(container: &Container, path: &str) -> Result<T
 
     TranscribeFileUseCase::new(container.transcription_port())
         .execute(&validated_path)
+        .await
+}
+
+/// Hears a recording made in the app: `pcm` is mono 16-bit samples at 16 kHz, base64.
+pub async fn transcribe_speech_impl(
+    container: &Container,
+    pcm: &str,
+) -> Result<TranscribedSpeechDto> {
+    TranscribeSpeechUseCase::new(container.transcription_port())
+        .execute(pcm)
         .await
 }
 

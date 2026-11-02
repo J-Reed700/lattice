@@ -43,6 +43,7 @@ pub use speech::{
     SPEECH_LEXICON_SILVER_FILE, SPEECH_MODEL_ID, SPEECH_VOICES, SPEECH_WEIGHTS_FILE,
 };
 pub use transcription::get_curated_transcription_models;
+pub use transcription::VOICE_TRANSCRIPTION_MODEL_ID;
 
 /// Get all curated models across all categories.
 ///

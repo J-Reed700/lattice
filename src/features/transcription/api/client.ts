@@ -15,6 +15,15 @@ export const transcriptionApi = {
     apiCall<Wire.TranscriptDto>('transcribe_file', { path }),
 
   /**
+   * Hears a recording made in the app, on this computer.
+   *
+   * @param pcm - Mono 16-bit little-endian PCM at 16 kHz, base64
+   * @returns What was said; empty when it was not speech
+   */
+  transcribeSpeech: async (pcm: string): Promise<ApiResult<Wire.TranscribedSpeechDto>> =>
+    apiCall<Wire.TranscribedSpeechDto>('transcribe_speech', { pcm }),
+
+  /**
    * Reports whether a transcription model is downloaded.
    *
    * @returns TranscriptionStatus with the model name when ready
