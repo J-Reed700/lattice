@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
-import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { ConversationSnapshotProvider, useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
 
 import { TangentPanel } from './TangentPanel';
 
@@ -42,6 +42,11 @@ function Chat(props: Record<string, any>) {
       {thread.length === 0 && props.renderEmptyState?.(vi.fn())}
     </section>
   );
+}
+
+// A chat that says where it was told its thread begins.
+function FollowingChat() {
+  return <p data-follows={useThreadStartsAfter() ?? 'nothing'}>Chat inside</p>;
 }
 
 const tangent = {
@@ -117,6 +122,11 @@ describe('TangentPanel', () => {
       renderPanel();
       await ready();
       expect(h.chatProps).toMatchObject({ embedded: true, autoFocus: true });
+    });
+
+    it('has its thread follow the last message the tangent inherited, where a branch before the first question forks', async () => {
+      render(<TangentPanel tangent={tangent} chat={FollowingChat} onPromoted={vi.fn()} />, { wrapper });
+      expect(await screen.findByText('Chat inside')).toHaveAttribute('data-follows', 'c2');
     });
 
     it('invites a question about the passage in an empty tangent', async () => {

@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { ConversationSnapshotProvider } from '@/shared/conversations/conversationsStore';
 import { deferred } from '@/tests/deferred';
 
 import { ChatPanel } from './ChatPanel';
@@ -42,7 +43,8 @@ const { stub } = vi.hoisted(() => ({
 }));
 
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/shared/conversations/conversationsStore')>()),
   useConversationsStore: (selector: (state: Record<string, unknown>) => unknown) => selector(h.store),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: h.settings }) }));
@@ -512,6 +514,33 @@ describe('ChatPanel', () => {
       expect(screen.queryByTestId('UtilityModelNotice')).not.toBeInTheDocument();
       expect(composerProps()).toBeDefined();
       expect(screen.getByTestId('ChatStarters')).toBeInTheDocument();
+    });
+  });
+
+  describe('a thread that starts partway through its conversation', () => {
+    const thread = [
+      { id: 'm3', role: 'user', content: 'Which cities joined?' },
+      { id: 'm4', role: 'assistant', content: 'Lübeck led it.' },
+      { key: 'pending', role: 'user', content: 'And Bergen?' },
+    ];
+
+    it('hands its first message the message it follows, so a branch before it keeps what came earlier', () => {
+      h.thread = { messages: thread };
+      render(
+        <ConversationSnapshotProvider value={h.store as never} threadStartsAfter="c2">
+          <ChatPanel />
+        </ConversationSnapshotProvider>,
+      );
+      expect(h.props.messages.m3).toMatchObject({ previousMessageId: 'c2' });
+      expect(h.props.messages.m4).toMatchObject({ previousMessageId: 'm3' });
+      expect(h.props.messages.pending).toMatchObject({ previousMessageId: 'm4' });
+    });
+
+    it('leaves the first message of an ordinary thread with nothing to follow', () => {
+      h.thread = { messages: thread };
+      render(<ChatPanel />);
+      expect(h.props.messages.m3.previousMessageId).toBeUndefined();
+      expect(h.props.messages.m4).toMatchObject({ previousMessageId: 'm3' });
     });
   });
 

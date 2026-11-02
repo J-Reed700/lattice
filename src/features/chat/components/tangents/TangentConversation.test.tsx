@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { speechPlayer } from '@/features/speech/model/speechPlayer';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
-import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { ConversationSnapshotProvider, useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
 import { conversationDraftKey, useDraftStore } from '@/shared/drafts/drafts';
 
 import { TangentConversation } from './TangentConversation';
@@ -15,6 +15,7 @@ import { TangentConversation } from './TangentConversation';
 const h = vi.hoisted(() => ({
   base: {} as Record<string, any>,
   scope: null as null | Record<string, any>,
+  threadStart: undefined as string | undefined,
   fetchMessages: vi.fn(),
   fetchConversationDetail: vi.fn(),
   fetchBookmarks: vi.fn(),
@@ -29,6 +30,12 @@ vi.mock('@/features/chat/api/conversationQueryData', () => ({
 // What the chat inside a tangent sees of the shared controller.
 function Probe() {
   h.scope = useConversationsStore() as unknown as Record<string, any>;
+  return <p>Chat inside</p>;
+}
+
+// Where the chat inside a tangent is told its thread begins.
+function StartProbe() {
+  h.threadStart = useThreadStartsAfter();
   return <p>Chat inside</p>;
 }
 
@@ -54,6 +61,7 @@ describe('TangentConversation', () => {
     vi.clearAllMocks();
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     h.scope = null;
+    h.threadStart = undefined;
     h.base = {
       inFlightGenerations: new Map(),
       optimisticMessages: new Map(),
@@ -167,6 +175,28 @@ describe('TangentConversation', () => {
       h.base.regenerateResponse.mockResolvedValueOnce('failed');
       await act(async () => { await h.scope!.regenerateResponse('t1'); });
       expect(draft()).toBe('Which cities joined?');
+    });
+  });
+
+  describe('where its thread starts', () => {
+    // A branch before the first question forks the tangent up to the message
+    // before it, which is the last of the context the tangent inherited.
+    const startWith = async (inheritedCount: number) => {
+      render(<TangentConversation conversationId="t1" inheritedCount={inheritedCount}><StartProbe /></TangentConversation>, { wrapper });
+      await ready();
+    };
+
+    it.each([
+      [2, 'c2'],
+      [1, 'c1'],
+    ])('follows the last of %i inherited messages, which is %s', async (inheritedCount, last) => {
+      await startWith(inheritedCount);
+      expect(h.threadStart).toBe(last);
+    });
+
+    it.each([0, 9])('follows no message when told it inherited %i', async (inheritedCount) => {
+      await startWith(inheritedCount);
+      expect(h.threadStart).toBeUndefined();
     });
   });
 
