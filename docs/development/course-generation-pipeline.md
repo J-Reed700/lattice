@@ -305,7 +305,7 @@ Design: [`2026-11-01-lesson-claim-classes.md`](../design/2026-11-01-lesson-claim
 - **A checker that gives no answer** teaches nothing about a statement: it is asked once more, and the lesson stops (`checker_unreadable`) when it still cannot be read.
 - **Receipts:** per statement and comparison `claim-v1:<digest of POLICY, model, context size, comparison>` (`ClaimReceipt`, with the bridge's parts); a decision is restored without asking again.
 - **Report** (`LessonVerificationReport`): policy, checker model, source bindings (id + sha256), coverage, coverage audit, findings (each with its class, the gate's label and its parts), executions, issues, retrieval mode.
-- **Progress:** phase `Evidence`, "Checking claims". Once the statements are sorted the panel shows the plan, "N statements: S to check against their sources, R to check for consistency, C common knowledge", and "N calls so far, at most T" (`call_plan.rs`), a ceiling that only comes down.
+- **Progress:** phase `Evidence`, "Checking claims". Once the statements are sorted the panel shows the plan, "N statements: S to check against their sources, R to check for consistency, C common knowledge", and "N calls so far, at most T" (`call_plan.rs`), a ceiling that only comes down. The calls are the requests that sort, check or rewrite statements and a section's flow repair, each counted where it is made; extracting claims, the coverage audit and the teaching review are not.
 
 ### L12. Research after writing
 
