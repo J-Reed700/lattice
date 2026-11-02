@@ -21,11 +21,13 @@ pub(crate) const TUTOR_TEMPLATE: &str =
      - After teaching a point, ask one question the learner answers before you move on, pitched so \
      that a learner who followed usually succeeds. Give feedback that names the misconception, not \
      only the right answer. A missed point becomes a card with save_card.\n\
-     - When cards are due, open the session with them: get them with due_reviews and ask them one \
-     at a time, mixed into the conversation. An answer to a card is a review: rate it with \
-     record_recall, only for a card you asked from due_reviews or saved yourself. The rating comes \
-     from the learner's answer, not from your guess about it: when the answer alone does not \
-     settle it, ask how it went.\n\
+     - When cards are due, open the session with them, unless the learner's message asks for \
+     something else: then do that first and bring the cards in after. Ask them one at a time, as \
+     written, mixed into the conversation; the facts below show the next ones and due_reviews \
+     shows the rest. An answer to a card is a review: as soon as the learner answers a card you \
+     asked, rate it with record_recall and its card_id, before you say anything else. The rating \
+     comes from the learner's answer, not from your guess about it: when the answer alone does \
+     not settle it, ask how it went.\n\
      - Sometimes ask the learner to explain a point as to a beginner, compare it with the passages \
      you taught it from, and name what was missing. Gaps become cards.\n\
      - Set a new idea beside the earlier one it is easily confused with, naming the feature that \
@@ -39,14 +41,19 @@ pub(crate) const TUTOR_TEMPLATE: &str =
 /// How a turn treats the course. The question is about the course, so the
 /// router does not start a library search of its own and the web comes only
 /// when the learner turns it on, but the library's tools stay offered, as in
-/// any chat. Every claim is checked, as in a chat, because a tutor cites. A
-/// session reads, reviews and saves a few things per round, so it gets a
-/// folder's rounds.
+/// any chat. Every claim is checked, as in a chat, because a tutor cites; what
+/// only runs the session is no claim. A session reads, reviews and saves a few
+/// things per round, so it gets a folder's rounds. It does not read its
+/// passages into notes first: the round after the notes answers in the
+/// passages' words whatever the learner said, which restated a card's answer
+/// and left the card unrated.
 pub(crate) const TUTOR_POLICY: TurnSourcePolicy = TurnSourcePolicy {
     routes_to_library: false,
     offers_library_tools: true,
     infers_intent: false,
     verifies_cited_only: false,
+    reads_passages: false,
+    drops_session_talk: true,
     tool_rounds: 10,
     evidence_template: Some(TUTOR_TEMPLATE),
 };
@@ -64,6 +71,8 @@ pub(super) struct TurnFacts {
     pub focus: Option<(String, String)>,
     /// `None` when the schedule could not be read.
     pub cards_due: Option<i64>,
+    /// The next due cards, as the model reads them.
+    pub next_cards: Vec<String>,
     /// Tutor replies since the last that asked the learner something.
     pub replies_since_check: Option<i64>,
 }
@@ -88,6 +97,12 @@ pub(super) fn render_context(facts: &TurnFacts, tools_offered: bool, max_chars: 
     }
     if let Some(due) = facts.cards_due {
         lines.push(format!("Cards due now: {due}."));
+    }
+    if tools_offered && !facts.next_cards.is_empty() {
+        lines.push(format!(
+            "The next ones, each with the card_id to rate it by:\n{}",
+            facts.next_cards.concat().trim_end()
+        ));
     }
     if let Some(replies) = facts.replies_since_check {
         lines.push(format!(

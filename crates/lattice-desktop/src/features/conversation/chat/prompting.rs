@@ -185,7 +185,7 @@ impl<'a> PromptMessageBuilder<'a> {
     /// prices it with the rest, and the request that writes the answer begins
     /// with exactly the prompt the reading round left in the server's cache.
     pub(super) fn build(self) -> String {
-        let reads_passages = self.reads_passages;
+        let reads_passages = self.reads_passages && source_reads(self.source);
         let message = self.message();
         if reads_passages {
             with_reading(&message)
@@ -405,7 +405,17 @@ pub(super) fn evidence_frame(
         CONTINUITY_NOTE,
         question,
     );
-    with_reading(&frame)
+    if source_reads(source) {
+        with_reading(&frame)
+    } else {
+        frame
+    }
+}
+
+/// Whether a message showing numbered passages is read before it is answered:
+/// every turn's but those of a source that says otherwise.
+fn source_reads(source: Option<TurnSourcePolicy>) -> bool {
+    source.is_none_or(|source| source.reads_passages)
 }
 
 /// `message` closed by the reading instruction. The reading comes before the

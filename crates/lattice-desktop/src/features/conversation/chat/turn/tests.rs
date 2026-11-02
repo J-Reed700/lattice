@@ -632,6 +632,8 @@ impl lattice_core::application::ports::turn_source::TurnSourcePort for Folder {
             offers_library_tools: false,
             infers_intent: false,
             verifies_cited_only: true,
+            reads_passages: true,
+            drops_session_talk: false,
             tool_rounds: 10,
             evidence_template: None,
         }
@@ -702,6 +704,8 @@ impl Course {
                 offers_library_tools: true,
                 infers_intent: false,
                 verifies_cited_only: false,
+                reads_passages: true,
+                drops_session_talk: false,
                 tool_rounds: 10,
                 evidence_template: None,
             },

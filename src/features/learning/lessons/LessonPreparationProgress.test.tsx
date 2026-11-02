@@ -174,17 +174,17 @@ describe('Durable lesson preparation progress', () => {
     await openDetails();
     expect(screen.getByText('115 / 115 checked')).toBeVisible();
     expect(screen.getByText(/Every claim has had its first check\. Checking 21 unsupported claims against evidence page 3; 13 left\./)).toBeVisible();
-    expect([count('Supported'), count('Need attention'), count('Left on evidence page 3')]).toEqual(['94', '21', '13']);
+    expect([count('Found in a source'), count('Need attention'), count('Left on evidence page 3')]).toEqual(['94', '21', '13']);
     expect(screen.queryByText('Still to check')).not.toBeInTheDocument();
     current = { ...current, activity: { ...current.activity!, checksUnresolved: 20, deeperEvidence: { page: 3, claims: 21, checked: 9 } } };
     await view.client.invalidateQueries();
     await waitFor(() => expect(count('Left on evidence page 3')).toBe('12'));
-    expect([count('Supported'), count('Need attention')]).toEqual(['95', '20']);
+    expect([count('Found in a source'), count('Need attention')]).toEqual(['95', '20']);
     current = { ...current, activity: { ...current.activity!, deeperEvidence: null } };
     await view.client.invalidateQueries();
     expect(await screen.findByText(/Checking finished\. Preparing the next step\./)).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Claim checks this pass' })).toHaveAttribute('aria-valuenow', '115');
-    expect([count('Supported'), count('Need attention'), count('Still to check')]).toEqual(['95', '20', '0']);
+    expect([count('Found in a source'), count('Need attention'), count('Still to check')]).toEqual(['95', '20', '0']);
     view.unmount(); view.client.clear();
   });
 
@@ -340,6 +340,27 @@ describe('Durable lesson preparation progress', () => {
     unmount(); client.clear();
   });
 
+  it('keeps a claim found in a source in that count when the source check sends it back', async () => {
+    let current: LearningGenerationJob = { ...job, activity: {
+      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: true,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 105,
+      checksTotal: 105, checksReused: 0, checksUnresolved: 64, checksSentBack: 0, newReferences: null, modelChecksTotal: 105,
+      deeperEvidence: null, claims: null, recentSteps: [],
+    } };
+    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    await screen.findByRole('status');
+    await openDetails();
+    expect(count('Found in a source')).toBe('41');
+    current = { ...current, activity: { ...current.activity!, checksSentBack: 21 } };
+    await view.client.invalidateQueries();
+    await waitFor(() => expect(count('Of those, sent back for stronger sources')).toBe('21'));
+    expect(count('Found in a source')).toBe('41');
+    view.unmount(); view.client.clear();
+  });
+
   it('names claims the source check sent back apart from those needing attention, and a re-check against new references', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
       phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
@@ -367,8 +388,8 @@ describe('Durable lesson preparation progress', () => {
     const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
     await screen.findByRole('status');
     await openDetails();
-    await screen.findByText('Sent back for stronger sources');
-    expect([count('Supported'), count('Needed attention in this pass'), count('Sent back for stronger sources')]).toEqual(['8', '9', '72']);
+    await screen.findByText('Of those, sent back for stronger sources');
+    expect([count('Found in a source'), count('Needed attention in this pass'), count('Of those, sent back for stronger sources')]).toEqual(['80', '9', '72']);
     expect(screen.getByText(/9 claims needed attention and 72 were sent back for stronger sources in the last pass/)).toBeVisible();
     view.unmount(); view.client.clear();
   });

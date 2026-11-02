@@ -14,25 +14,6 @@ import { useConversationsStore } from '@/shared/conversations/conversationsStore
 
 import { useTutorChats } from './useTutorChats';
 
-/** Fills the composer rather than sending, as the library's suggested questions do. */
-function TutorStarters({ subject, onPick }: { subject: string; onPick: (_text: string) => void }) {
-  return (
-    <ul className="border-t border-subtle">
-      {[`Teach me ${subject}`, 'Quiz me on what is due', 'What should I work on next?'].map((starter) => (
-        <li key={starter} className="border-b border-subtle">
-          <button
-            type="button"
-            onClick={() => onPick(starter)}
-            className="w-full px-1 py-2.5 text-left font-serif text-sm text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-          >
-            {starter}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /**
  * The Tutor tab: the course's tutor chats beside the shared chat, which brings
  * everything a chat has here. A turn may rate cards and save notes, so when one
@@ -93,7 +74,7 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border">
         {chats.activeId ? (
-          <ChatPanel renderEmptyState={(onPick) => <TutorStarters subject={lesson?.title ?? program.summary.title} onPick={onPick} />} />
+          <ChatPanel starters={[`Teach me ${lesson?.title ?? program.summary.title}`, 'Quiz me on what is due', 'What should I work on next?']} />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             {chats.error

@@ -1,0 +1,16 @@
+{
+  "name": "tutor-local-example",
+  "corpus": "evals/tutor/course-v1.json",
+  "questions": "evals/tutor/sessions-v1.json",
+  "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
+  "embedding_model_id": "qwen3-embedding-0.6b",
+  "server": {
+    "url": "http://127.0.0.1:8080",
+    "model": "served-model-name",
+    "expected_ctx": 131072,
+    "expected_slots": 1,
+    "thinking": "off"
+  },
+  "settings": { "llm": { "contextWindow": 131072 } },
+  "wait": { "verification_secs": 900, "quiet_ms": 3000, "quiet_cap_secs": 900 }
+}

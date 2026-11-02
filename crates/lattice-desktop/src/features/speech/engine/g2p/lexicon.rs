@@ -1,11 +1,12 @@
-//! misaki's British English lexicon: the gold and silver dictionaries, the
-//! suffix rules that stretch them to inflected forms, the special cases for
-//! function words, and numbers. Ported from misaki's `en.py` (`Lexicon`).
+//! misaki's English lexicons: the gold and silver dictionaries of an accent,
+//! the suffix rules that stretch them to inflected forms, the special cases
+//! for function words, and numbers. Ported from misaki's `en.py` (`Lexicon`).
 //! There is no part-of-speech tagger here, so a word with several readings
 //! ("read", "lead") takes its default one.
 
 use std::collections::HashMap;
 
+use lattice_core::domain::models::curated::SpeechAccent;
 use serde_json::Value;
 
 use super::numbers;
@@ -17,6 +18,8 @@ const CONSONANTS: &str = "bdfhjklmnpstvwzðŋɡɹɾʃʒʤʧθ";
 pub(super) const PUNCTS: &str = ";:,.!?—…\"“”";
 pub(super) const NON_QUOTE_PUNCTS: &str = ";:,.!?—…";
 const DIPHTHONGS: &str = "AIOQWYʤʧ";
+/// In American, a `t` after one of these sounds becomes a tap.
+const US_TAUS: &str = "AIOWYiuæɑəɛɪɹʊʌ";
 const ORDINALS: [&str; 4] = ["st", "nd", "rd", "th"];
 
 fn symbol_word(word: &str) -> Option<&'static str> {
@@ -204,37 +207,17 @@ fn restress(ps: &str) -> String {
     keyed.into_iter().map(|(_, c)| c).collect()
 }
 
-fn add_s(stem: &str) -> Option<String> {
-    let last = stem.chars().last()?;
-    Some(if "ptkfθ".contains(last) {
-        format!("{stem}s")
-    } else if "szʃʒʧʤ".contains(last) {
-        format!("{stem}ɪz")
-    } else {
-        format!("{stem}z")
-    })
-}
-
-fn add_ed(stem: &str) -> Option<String> {
-    let last = stem.chars().last()?;
-    Some(if "pkfθʃsʧ".contains(last) {
-        format!("{stem}t")
-    } else if last == 'd' || last == 't' {
-        format!("{stem}ɪd")
-    } else {
-        format!("{stem}d")
-    })
-}
-
-fn add_ing(stem: &str) -> Option<String> {
-    let last = stem.chars().last()?;
-    if last == 'ə' || last == 'ː' {
-        return None;
-    }
-    Some(format!("{stem}ɪŋ"))
+/// `stem` with a final `t` that an American tap replaces, without that `t`.
+fn before_tap(stem: &str) -> Option<&str> {
+    let body = stem.strip_suffix('t')?;
+    body.chars()
+        .last()
+        .is_some_and(|c| US_TAUS.contains(c))
+        .then_some(body)
 }
 
 pub(super) struct Lexicon {
+    accent: SpeechAccent,
     golds: HashMap<String, Entry>,
     silvers: HashMap<String, Entry>,
 }
@@ -275,8 +258,61 @@ fn parse(json: &[u8]) -> Result<HashMap<String, Entry>, serde_json::Error> {
 }
 
 impl Lexicon {
-    pub(super) fn from_json(gold: &[u8], silver: &[u8]) -> Result<Self, serde_json::Error> {
+    /// The vowel of `-es` and `-ed` after a sibilant or a `d`.
+    fn weak_vowel(&self) -> char {
+        match self.accent {
+            SpeechAccent::American => 'ᵻ',
+            SpeechAccent::British => 'ɪ',
+        }
+    }
+
+    fn add_s(&self, stem: &str) -> Option<String> {
+        let last = stem.chars().last()?;
+        Some(if "ptkfθ".contains(last) {
+            format!("{stem}s")
+        } else if "szʃʒʧʤ".contains(last) {
+            format!("{stem}{}z", self.weak_vowel())
+        } else {
+            format!("{stem}z")
+        })
+    }
+
+    fn add_ed(&self, stem: &str) -> Option<String> {
+        let last = stem.chars().last()?;
+        Some(if "pkfθʃsʧ".contains(last) {
+            format!("{stem}t")
+        } else if last == 'd' {
+            format!("{stem}{}d", self.weak_vowel())
+        } else if last != 't' {
+            format!("{stem}d")
+        } else if self.accent == SpeechAccent::British || stem.chars().count() < 2 {
+            format!("{stem}ɪd")
+        } else if let Some(body) = before_tap(stem) {
+            format!("{body}ɾᵻd")
+        } else {
+            format!("{stem}ᵻd")
+        })
+    }
+
+    fn add_ing(&self, stem: &str) -> Option<String> {
+        let last = stem.chars().last()?;
+        match self.accent {
+            SpeechAccent::British if last == 'ə' || last == 'ː' => None,
+            SpeechAccent::British => Some(format!("{stem}ɪŋ")),
+            SpeechAccent::American => Some(match before_tap(stem) {
+                Some(body) => format!("{body}ɾɪŋ"),
+                None => format!("{stem}ɪŋ"),
+            }),
+        }
+    }
+
+    pub(super) fn from_json(
+        accent: SpeechAccent,
+        gold: &[u8],
+        silver: &[u8],
+    ) -> Result<Self, serde_json::Error> {
         Ok(Self {
+            accent,
             golds: parse(gold)?,
             silvers: parse(silver)?,
         })
@@ -425,7 +461,7 @@ impl Lexicon {
                 .map(|stem| format!("{stem}y"))
                 .filter(|stem| self.is_known(stem))?
         };
-        add_s(&self.lookup(&stem, stress, Some(ctx))?)
+        self.add_s(&self.lookup(&stem, stress, Some(ctx))?)
     }
 
     fn stem_ed(&self, word: &str, stress: Option<f32>, ctx: Context) -> Option<String> {
@@ -442,7 +478,7 @@ impl Lexicon {
                 .flatten()
                 .filter(|stem| self.is_known(stem))?
         };
-        add_ed(&self.lookup(stem, stress, Some(ctx))?)
+        self.add_ed(&self.lookup(stem, stress, Some(ctx))?)
     }
 
     fn stem_ing(&self, word: &str, stress: Option<f32>, ctx: Context) -> Option<String> {
@@ -474,7 +510,7 @@ impl Lexicon {
         } else {
             return None;
         };
-        add_ing(&self.lookup(&stem, stress, Some(ctx))?)
+        self.add_ing(&self.lookup(&stem, stress, Some(ctx))?)
     }
 
     fn word(&self, word: &str, stress: Option<f32>, ctx: Context) -> Option<String> {
@@ -656,9 +692,9 @@ impl Lexicon {
         }
         let spoken = words.join(" ");
         match suffix {
-            "s" | "'s" => add_s(&spoken),
-            "ed" | "'d" => add_ed(&spoken),
-            "ing" => add_ing(&spoken),
+            "s" | "'s" => self.add_s(&spoken),
+            "ed" | "'d" => self.add_ed(&spoken),
+            "ing" => self.add_ing(&spoken),
             _ => Some(spoken),
         }
     }

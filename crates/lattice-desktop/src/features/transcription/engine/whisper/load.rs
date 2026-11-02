@@ -180,5 +180,7 @@ pub(super) fn load_whisper(resolved: &ResolvedModel) -> Result<LoadedWhisper, Ap
         no_speech,
         suppress,
         language_tokens,
+        #[cfg(test)]
+        encoder_passes: 0,
     })
 }

@@ -25,6 +25,12 @@ pub fn remove_file(path: &Path) -> io::Result<()> {
     patiently(ATTEMPTS, || std::fs::remove_file(path))
 }
 
+/// [`remove_file`] for a file just written and closed, as an index's are: tried
+/// for longer, since a scan of new files can hold one for seconds.
+pub fn remove_written_file(path: &Path) -> io::Result<()> {
+    patiently(WRITTEN_ATTEMPTS, || std::fs::remove_file(path))
+}
+
 /// [`std::fs::remove_dir_all`], tried again while Windows holds a file in it.
 pub fn remove_dir_all(dir: &Path) -> io::Result<()> {
     patiently(ATTEMPTS, || std::fs::remove_dir_all(dir))

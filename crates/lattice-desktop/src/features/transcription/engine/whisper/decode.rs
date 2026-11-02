@@ -68,23 +68,32 @@ fn mel_window(
         .map_err(inference_error)
 }
 
+/// The encoder's view of one mel window. It is the slowest step on a CPU and
+/// its result holds for every decoder pass over that window.
+fn encode_window(loaded: &mut LoadedWhisper, mel: &Tensor) -> Result<Tensor, AppError> {
+    #[cfg(test)]
+    {
+        loaded.encoder_passes += 1;
+    }
+    loaded
+        .model
+        .encoder
+        .forward(mel, true)
+        .map_err(inference_error)
+}
+
 /// Detect the spoken language from the first window.
-fn detect_language(loaded: &mut LoadedWhisper, mel: &Tensor) -> Result<(u32, String), AppError> {
+fn detect_language(loaded: &mut LoadedWhisper, audio: &Tensor) -> Result<(u32, String), AppError> {
     let language_ids: Vec<u32> = loaded.language_tokens.iter().map(|(id, _)| *id).collect();
     let ids_tensor =
         Tensor::new(language_ids.as_slice(), &loaded.device).map_err(inference_error)?;
 
     loaded.model.reset_kv_cache();
-    let audio = loaded
-        .model
-        .encoder
-        .forward(mel, true)
-        .map_err(inference_error)?;
     let tokens = Tensor::new(&[[loaded.sot]], &loaded.device).map_err(inference_error)?;
     let ys = loaded
         .model
         .decoder
-        .forward(&tokens, &audio, true)
+        .forward(&tokens, audio, true)
         .map_err(inference_error)?;
 
     let logits = loaded
@@ -106,19 +115,14 @@ fn detect_language(loaded: &mut LoadedWhisper, mel: &Tensor) -> Result<(u32, Str
     Ok((*id, tag.clone()))
 }
 
-/// Decode one mel window at one temperature.
+/// Decode one encoded window at one temperature.
 fn decode_window(
     loaded: &mut LoadedWhisper,
-    mel: &Tensor,
+    audio: &Tensor,
     temperature: f64,
     language_token: Option<u32>,
 ) -> Result<DecodeResult, AppError> {
     loaded.model.reset_kv_cache();
-    let audio = loaded
-        .model
-        .encoder
-        .forward(mel, true)
-        .map_err(inference_error)?;
 
     let mut tokens = vec![loaded.sot];
     if let Some(language) = language_token {
@@ -139,7 +143,7 @@ fn decode_window(
         let ys = loaded
             .model
             .decoder
-            .forward(&input, &audio, step == 0)
+            .forward(&input, audio, step == 0)
             .map_err(inference_error)?;
 
         if step == 0 {
@@ -218,13 +222,13 @@ fn decode_window(
 /// This is what rescues whisper's repetition-loop failure mode.
 fn decode_with_fallback(
     loaded: &mut LoadedWhisper,
-    mel: &Tensor,
+    audio: &Tensor,
     language_token: Option<u32>,
 ) -> Result<DecodeResult, AppError> {
     let mut last: Option<DecodeResult> = None;
 
     for (index, temperature) in whisper::TEMPERATURES.iter().enumerate() {
-        let result = decode_window(loaded, mel, *temperature, language_token)?;
+        let result = decode_window(loaded, audio, *temperature, language_token)?;
 
         let plausible = result.avg_logprob >= whisper::LOGPROB_THRESHOLD
             && result.compression_ratio <= whisper::COMPRESSION_RATIO_THRESHOLD;
@@ -319,17 +323,9 @@ pub(super) fn transcribe_pcm(
         return Ok((Vec::new(), "en".to_string()));
     }
 
-    // Language: detected once from the first window, then pinned for the file.
-    let (language_token, language) = if loaded.language_tokens.is_empty() {
-        (None, "en".to_string())
-    } else {
-        let first_frames = content_frames.min(whisper::N_FRAMES);
-        let mel = mel_window(loaded, pcm, 0, first_frames)?;
-        let (token, tag) = detect_language(loaded, &mel)?;
-        (Some(token), tag)
-    };
-
     let mut segments: Vec<TranscriptSegment> = Vec::new();
+    // Language: detected once from the first window, then pinned for the file.
+    let mut language: Option<(Option<u32>, String)> = None;
     let mut seek = 0usize;
 
     while seek < content_frames {
@@ -339,7 +335,21 @@ pub(super) fn transcribe_pcm(
             ((seek + segment_frames) * whisper::HOP_LENGTH * 1000 / whisper::SAMPLE_RATE) as u64;
 
         let mel = mel_window(loaded, pcm, seek, segment_frames)?;
-        let result = decode_with_fallback(loaded, &mel, language_token)?;
+        let audio = encode_window(loaded, &mel)?;
+        let language_token = match &language {
+            Some((token, _)) => *token,
+            None => {
+                let (token, tag) = if loaded.language_tokens.is_empty() {
+                    (None, "en".to_string())
+                } else {
+                    let (token, tag) = detect_language(loaded, &audio)?;
+                    (Some(token), tag)
+                };
+                language = Some((token, tag));
+                token
+            }
+        };
+        let result = decode_with_fallback(loaded, &audio, language_token)?;
 
         let is_silence = result.no_speech_prob > whisper::NO_SPEECH_THRESHOLD
             && result.avg_logprob < whisper::LOGPROB_THRESHOLD;
@@ -356,5 +366,8 @@ pub(super) fn transcribe_pcm(
         seek += segment_frames;
     }
 
-    Ok((segments, language))
+    Ok((
+        segments,
+        language.map_or_else(|| "en".to_string(), |(_, tag)| tag),
+    ))
 }

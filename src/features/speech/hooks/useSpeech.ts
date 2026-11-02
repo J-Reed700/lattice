@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/contexts/ApiContext';
+import type { SpeechStatusDto } from '@/lib/bindings';
 import { describeFailure } from '@/lib/errorHandling';
 import { toast } from '@/stores/toastStore';
 
-import { speechPlayer, type SpeechStatus } from '../model/speechPlayer';
+import { speechPlayer, type SpeechPieces, type SpeechStatus } from '../model/speechPlayer';
 import { speechChunks } from '../model/speechText';
 import { useSpeechPrefsStore } from '../stores/speechPrefsStore';
 
@@ -46,13 +47,21 @@ export function useStopSpeechOnChange(key: unknown) {
   useEffect(() => () => speechPlayer.stop(), [key]);
 }
 
+/** The chosen voice, or the default once its files are gone. */
+function usableVoice(chosen: string, speech: SpeechStatusDto | undefined) {
+  if (!speech || speech.voices.some((voice) => voice.id === chosen && voice.downloaded)) return chosen;
+  return speech.defaultVoice;
+}
+
 /** Speaks pieces of text as a source, in the chosen voice and pace. */
 export function useSpeaker() {
   const api = useApi();
-  const voice = useSpeechPrefsStore((state) => state.voice);
+  const chosen = useSpeechPrefsStore((state) => state.voice);
   const speed = useSpeechPrefsStore((state) => state.speed);
+  const { data: speech } = useSpeechStatusQuery();
+  const voice = usableVoice(chosen, speech);
   return useCallback(
-    async (sourceId: string, pieces: readonly string[], voiceOverride?: string) => {
+    async (sourceId: string, pieces: SpeechPieces, voiceOverride?: string) => {
       await speechPlayer.play(sourceId, pieces, async (text) => {
         const result = await api.synthesizeSpeech(text, voiceOverride ?? voice, speed);
         if (!result.ok) throw new Error(describeFailure(result));

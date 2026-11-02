@@ -17,6 +17,7 @@ import { useSpaceDocuments } from '@/features/chat/hooks/useSpaceDocuments';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { conversationDraftKey, useDraft } from '@/shared/drafts/drafts';
 import type { CustomToolSettings } from '@/types';
 import { voidAsync } from '@/utils/promiseHandlers';
@@ -158,6 +159,38 @@ export function useComposer({
     }
   };
 
+  /** Sends `message` with what is waiting to join it; `accepted` runs once it is going. */
+  const sendTurn = async (message: string, accepted?: () => void): Promise<GenerationOutcome | undefined> => {
+    // Staged files join the conversation *with* this message: import them
+    // first so the turn can already draw on them, and let the message carry
+    // their names and ids. The names draw the chips; the ids are what makes
+    // the turn actually read the files, so a send that has one without the
+    // other is a file the answer will not have seen. A total import failure
+    // aborts the send with the draft intact — sending without the files would
+    // answer the wrong question.
+    let attachmentNames: string[] | undefined;
+    let attachmentDocumentIds: string[] | undefined;
+    if (attachments.staged.length > 0) {
+      const imported = await attachments.importStaged();
+      if (imported === null) return undefined;
+      if (imported.names.length > 0) attachmentNames = imported.names;
+      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
+    }
+    // Pictures are already stored; the send claims them by id.
+    const pictures = attachments.takePictures();
+
+    accepted?.();
+
+    return sendMessage(
+      message,
+      conversationId,
+      resolveEffectiveToolPreferences(),
+      attachmentNames,
+      attachmentDocumentIds,
+      pictures.length > 0 ? pictures : undefined
+    );
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isSending || !conversationId) return;
@@ -184,37 +217,22 @@ export function useComposer({
     // until it is done.
     if (isCompacting) return;
 
-    // Staged files join the conversation *with* this message: import them
-    // first so the turn can already draw on them, and let the message carry
-    // their names and ids. The names draw the chips; the ids are what makes
-    // the turn actually read the files, so a send that has one without the
-    // other is a file the answer will not have seen. A total import failure
-    // aborts the send with the draft intact — sending without the files would
-    // answer the wrong question.
-    let attachmentNames: string[] | undefined;
-    let attachmentDocumentIds: string[] | undefined;
-    if (attachments.staged.length > 0) {
-      const imported = await attachments.importStaged();
-      if (imported === null) return;
-      if (imported.names.length > 0) attachmentNames = imported.names;
-      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
-    }
-    // Pictures are already stored; the send claims them by id.
-    const pictures = attachments.takePictures();
+    await sendTurn(message, () => {
+      setInput('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    });
+  };
 
-    setInput('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    await sendMessage(
-      message,
-      conversationId,
-      resolveEffectiveToolPreferences(),
-      attachmentNames,
-      attachmentDocumentIds,
-      pictures.length > 0 ? pictures : undefined
-    );
+  /**
+   * Sends what was said aloud as a turn, leaving the draft as it is. Resolves
+   * with how the turn ended, or with `undefined` when the chat can't take it.
+   */
+  const sendSpoken = (message: string): Promise<GenerationOutcome | undefined> => {
+    const warming = useModelWarmupStore.getState().chat.phase === 'started';
+    if (!conversationId || warming || isChatUnavailable || isCompacting) return Promise.resolve(undefined);
+    return sendTurn(message);
   };
 
   // `@` may only ever offer documents this conversation can read — its own
@@ -334,6 +352,7 @@ export function useComposer({
   }, [setInput]);
 
   return {
+    conversationId,
     input,
     setInput,
     fill,
@@ -361,6 +380,7 @@ export function useComposer({
     suggest,
     handleKeyDown,
     handleSubmit,
+    sendSpoken,
   };
 }
 

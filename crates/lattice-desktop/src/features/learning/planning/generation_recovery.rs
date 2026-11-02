@@ -54,6 +54,9 @@ pub(in crate::features::learning) fn lesson_failure(
         AppError::RateLimitExceeded(_) => {
             "The model service is rate limiting requests; preparation will retry automatically"
         }
+        error if JobFailure::is_database_busy(error) => {
+            "Another task is writing to the database; preparation will retry automatically"
+        }
         _ => "The model service could not finish the request; preparation will retry automatically",
     };
     let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. If the same failure comes back with nothing saved in between, preparation stops and shows it instead of retrying again. You can leave this screen or cancel.";
