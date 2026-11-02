@@ -210,6 +210,24 @@ describe('SourceReaderBody local citations', () => {
   });
 });
 
+describe('SourceReaderBody course passages', () => {
+  it('reads a course passage from its citation, with no file to open', async () => {
+    renderBody(source({
+      documentId: 'course:version-1',
+      filePath: '',
+      category: 'Course source',
+      content: 'The whole passage of the course source.',
+      excerpt: 'The whole passage…',
+    }));
+
+    expect((await screen.findByTestId('file-content')).textContent).toBe('The whole passage of the course source.');
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+    expect(mocks.resolveSourcePath).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+    expect(screen.queryByText(/Show in|Reveal in/)).toBeNull();
+  });
+});
+
 describe('SourceReaderBody minimize affordance', () => {
   it('offers a minimize button when the surface can tuck it away to a pill', async () => {
     const onMinimize = vi.fn();

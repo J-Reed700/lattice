@@ -305,6 +305,7 @@ async fn run_on(
         message,
         sources: Vec::new(),
         time_budget: TURN_TIME,
+        source: None,
     };
     run_turn(
         runtime,
@@ -323,6 +324,8 @@ struct Turn<'a> {
     message: &'a str,
     sources: Vec<SourceDto>,
     time_budget: Duration,
+    /// What the conversation reads beside the chat.
+    source: Option<crate::features::conversation::chat::TurnSource>,
 }
 
 /// Time enough that no test here meets the deadline unless it means to.
@@ -354,6 +357,7 @@ async fn run_turn(
     };
     let mut sources = turn.sources;
     let mut trace = None;
+    let source = turn.source;
     let outcome = run_agentic_tool_loop(
         &runtime,
         ChatTurn {
@@ -390,7 +394,7 @@ async fn run_turn(
         &mut sources,
         &mut trace,
         FetchMemory::default(),
-        None,
+        source.as_ref(),
     )
     .await;
     let events = events.lock().unwrap().clone();
@@ -431,6 +435,136 @@ fn results_mentioning<'r>(request: &'r CompletionRequest, text: &str) -> Vec<&'r
             _ => None,
         })
         .collect()
+}
+
+/// A source whose search returns citable passages and whose note tool returns
+/// plain text, as a course's tools do.
+#[derive(Debug)]
+struct Course;
+
+fn course_passage(chunk: &str, content: &str) -> Value {
+    json!({
+        "label": format!("Ranking › Fusion › Notes ({chunk})"),
+        "source": {
+            "documentId": "course:version-1",
+            "chunkId": chunk,
+            "content": content,
+            "score": 1.0,
+            "fileName": "Notes",
+            "filePath": "",
+            "mimeType": "text/plain",
+            "category": "Course source",
+            "fileSizeBytes": 0,
+            "modifiedAt": "",
+        },
+    })
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::turn_source::TurnSourcePort for Course {
+    fn policy(&self) -> lattice_core::application::ports::turn_source::TurnSourcePolicy {
+        unreachable!("not asked")
+    }
+    fn owns_tool(&self, tool: &str) -> bool {
+        matches!(tool, "search_course" | "save_note")
+    }
+    fn reads_only(&self, tool: &str) -> bool {
+        tool == "search_course"
+    }
+    fn activity_label(&self, tool: &str, _arguments: &Value) -> String {
+        tool.into()
+    }
+    fn add_tools(&self, _tools: &mut Vec<ToolDefinition>) {}
+    async fn context_block(&self, _: usize, _: bool, _: Option<&str>) -> String {
+        String::new()
+    }
+    async fn execute_tool(&self, call: FunctionCall, _max_chars: usize) -> Result<FunctionResult> {
+        Ok(FunctionResult::success(match call.name.as_str() {
+            "search_course" => json!({
+                "passages": [
+                    course_passage("known", "Fusion sums reciprocal ranks."),
+                    course_passage(call.arguments["chunk"].as_str().unwrap(), "A larger k flattens them."),
+                ],
+                "note": null,
+            }),
+            _ => json!("Saved."),
+        }))
+    }
+}
+
+/// A course's passages join the turn's numbered sources: each is shown under
+/// its number, a repeat keeps it, and the answer's list holds them all, so the
+/// chat's citation checks read them. Text a tool returns stays text.
+#[tokio::test]
+async fn a_source_s_passages_take_the_turn_s_numbers() {
+    let model = Model::new([
+        calls(&[("first", "search_course", json!({ "chunk": "one" }))]),
+        calls(&[("second", "search_course", json!({ "chunk": "two" }))]),
+        calls(&[("third", "save_note", json!({}))]),
+        CompletionResponse::from_text("Fusion sums ranks [2]; k flattens them [4]."),
+    ]);
+    let library = serde_json::from_value::<SourceDto>(json!({
+        "documentId": "doc-1",
+        "chunkId": "library",
+        "content": "A passage from the library.",
+        "score": 1.0,
+        "fileName": "Library.md",
+        "filePath": "/vault/Library.md",
+        "mimeType": "text/markdown",
+        "category": "Markdown",
+        "fileSizeBytes": 0,
+        "modifiedAt": "",
+        "citationId": 1,
+    }))
+    .unwrap();
+    let turn = Turn {
+        message: "How does fusion work?",
+        sources: vec![library],
+        time_budget: TURN_TIME,
+        source: Some(Arc::new(Course)),
+    };
+
+    let run = run_turn(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_course"), tool("save_note")],
+        ROOMY,
+        5,
+        "course-passages",
+        turn,
+    )
+    .await;
+
+    assert!(run.outcome.is_ok());
+    let numbers: Vec<(&str, Option<u32>)> = run
+        .sources
+        .iter()
+        .map(|source| (source.chunk_id.as_str(), source.citation_id))
+        .collect();
+    assert_eq!(
+        numbers,
+        [
+            ("library", Some(1)),
+            ("known", Some(2)),
+            ("one", Some(3)),
+            ("two", Some(4)),
+        ]
+    );
+    let requests = model.requests();
+    let first = last_text(&requests[1]);
+    assert!(
+        first.contains("[2] Ranking › Fusion › Notes (known)\nFusion sums reciprocal ranks."),
+        "{first}"
+    );
+    assert!(first.contains("[3] Ranking"), "{first}");
+    assert!(!first.contains("Citable passage"), "{first}");
+    let second = last_text(&requests[2]);
+    assert!(
+        second.contains("[2] Ranking"),
+        "the repeat keeps it: {second}"
+    );
+    assert!(second.contains("[4] Ranking"), "{second}");
+    assert!(last_text(&requests[3]).contains("Saved."));
 }
 
 #[tokio::test]

@@ -175,6 +175,106 @@ async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
     );
 }
 
+/// A tutor chat bound to a course and one of its lessons.
+async fn seed_tutor_chat(pool: &SqlitePool) -> String {
+    let parent = seed_thread(pool).await;
+    sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,created_at) VALUES('course','Search','Learn','active',0,'',20,'m',0)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json) VALUES('module','course',0,'Ranking','Summary','[]')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation) VALUES('lesson','course','module',0,'Fusion','Explain',20,'outline')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE conversations SET program_id='course', lesson_id='lesson' WHERE id=?")
+        .bind(&parent)
+        .execute(pool)
+        .await
+        .unwrap();
+    parent
+}
+
+async fn projected_binding(
+    repo: &ConversationRepository,
+    id: &str,
+) -> (Option<String>, Option<String>) {
+    let conversation = repo.find_by_id(id).await.unwrap().unwrap();
+    let projected = repo.project_conversation(&conversation).await.unwrap();
+    (projected.program_id, projected.lesson_id)
+}
+
+/// A branch of a tutor chat, and the chat a handoff continues it in, teach from
+/// the same course; without it they would surface in Chat as plain chats.
+#[tokio::test]
+async fn a_tutor_chat_s_branches_stay_on_its_course() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let parent = seed_tutor_chat(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let bound = (Some("course".to_string()), Some("lesson".to_string()));
+    assert_eq!(projected_binding(&repo, &parent).await, bound);
+
+    repo.fork(&parent, None, "branch", "Branch").await.unwrap();
+    assert_eq!(projected_binding(&repo, "branch").await, bound);
+
+    repo.create_continuation(&parent, "next", "Next", "Summary", "{}")
+        .await
+        .unwrap();
+    assert_eq!(projected_binding(&repo, "next").await, bound);
+
+    let tangent = repo.create_tangent(request(&parent, "m2")).await.unwrap();
+    assert_eq!(
+        projected_binding(&repo, &tangent.conversation_id).await,
+        bound
+    );
+}
+
+/// The Tutor tab lists only its own course's chats.
+#[tokio::test]
+async fn the_conversation_list_narrows_to_one_course() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let tutor = seed_tutor_chat(&pool).await;
+    sqlx::query("INSERT INTO conversations (id, title, space_id, created_at, updated_at) VALUES ('plain', 'Plain', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo = ConversationRepository::new(pool.clone());
+    let list = |program_id: Option<&str>| {
+        let repo = repo.clone();
+        let program_id = program_id.map(str::to_string);
+        async move {
+            repo.list_conversations_explorer(ListConversationsExplorerQueryDto {
+                space_id: None,
+                program_id,
+                query: None,
+                saved_only: None,
+                bookmarked_only: None,
+                pinned_only: None,
+                has_message_bookmarks: None,
+                include_archived: None,
+                limit: None,
+                offset: None,
+            })
+            .await
+            .unwrap()
+            .conversations
+        }
+    };
+
+    let course = list(Some("course")).await;
+    assert_eq!(course.len(), 1);
+    assert_eq!(course[0].id, tutor);
+    assert_eq!(course[0].program_id.as_deref(), Some("course"));
+    assert_eq!(course[0].lesson_id.as_deref(), Some("lesson"));
+    assert_eq!(list(None).await.len(), 2);
+    assert!(list(Some("another-course")).await.is_empty());
+}
+
 #[tokio::test]
 async fn explorer_tangent_preserves_folder_prompt_and_sources() {
     let pool = create_test_pool().await;

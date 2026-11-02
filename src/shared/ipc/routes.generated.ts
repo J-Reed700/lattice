@@ -373,6 +373,7 @@ export const COMMAND_PLUGINS = {
   set_cloud_api_key: 'settings',
   set_conversation_archived: 'conversation',
   set_conversation_bookmarked: 'conversation',
+  set_conversation_course: 'learning',
   set_conversation_explorer_root: 'explorer',
   set_conversation_model_choice: 'conversation',
   set_conversation_pinned: 'conversation',

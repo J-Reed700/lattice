@@ -113,6 +113,10 @@ interface SourcePathLike {
   mimeType?: string | null;
 }
 
+/** A passage of a course's source: no file or library document stands behind it. */
+export const isCourseSource = (source: { documentId?: string | null }): boolean =>
+  Boolean(source.documentId?.startsWith('course:'));
+
 export function getSourceExternalUrl(source: SourcePathLike): string | null {
   const filePath = source.filePath ?? '';
   const maybePath = source.path ?? '';

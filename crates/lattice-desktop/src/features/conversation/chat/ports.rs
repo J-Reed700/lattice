@@ -183,9 +183,9 @@ pub trait ChatStorage: Send + Sync {
     /// The corpus-derived starter workflow: the space's document scope and the
     /// fingerprint cache with its aggregate reads.
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache>;
-    /// The folder an Explorer conversation reads beside the chat, with the
-    /// open file the request names checked against it; `None` for every
-    /// other conversation.
+    /// What the conversation reads beside the chat: an Explorer thread's
+    /// folder, with the open file the request names checked against it, or a
+    /// tutor chat's course; `None` for every other conversation.
     async fn turn_source(
         &self,
         conversation_id: &str,

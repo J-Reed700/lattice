@@ -3,8 +3,10 @@
 //! it, and how the turn treats it.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::application::contracts::sources::SourceDto;
 use crate::application::contracts::tools::{FunctionCall, FunctionResult};
 use crate::application::ports::llm_port::ToolDefinition;
 use crate::shared::error::Result;
@@ -29,6 +31,24 @@ pub struct TurnSourcePolicy {
     /// The template an evidence-carrying message renders in, in place of the
     /// saved document-answer template. `{context}` and `{question}` are filled.
     pub evidence_template: Option<&'static str>,
+}
+
+/// A passage of a source that the turn numbers with its library passages, so
+/// the answer cites it and the chat's citation checks read it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcePassage {
+    /// What the model reads the passage under.
+    pub label: String,
+    pub source: SourceDto,
+}
+
+/// A source tool's result when it carries passages: each is shown under the
+/// number the turn gives it. Any other result is plain text.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcePassages {
+    pub passages: Vec<SourcePassage>,
+    /// Closes the result: how to read on, or why nothing came back.
+    pub note: Option<String>,
 }
 
 #[async_trait]
@@ -57,6 +77,13 @@ pub trait TurnSourcePort: Send + Sync + std::fmt::Debug {
         tools_offered: bool,
         question: Option<&str>,
     ) -> String;
+
+    /// What the source found for `question` to number with the library's
+    /// passages, best first, at most about `max_chars` long. A source that
+    /// cites by its own means, as a folder cites lines, has none.
+    async fn passages(&self, _question: &str, _max_chars: usize) -> Vec<SourcePassage> {
+        Vec::new()
+    }
 
     /// Runs one of the source's tool calls, its result cut to `max_chars`.
     async fn execute_tool(&self, call: FunctionCall, max_chars: usize) -> Result<FunctionResult>;

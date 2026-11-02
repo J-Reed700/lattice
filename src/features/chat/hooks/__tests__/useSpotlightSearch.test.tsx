@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({ VaultAPI: api, default: api }));
 
 const chat = { id: 'c1', title: 'Canopy notes', explorerRoot: null };
 const explorerThread = { id: 'c2', title: 'Folder thread', explorerRoot: '/notes' };
+const tutorChat = { id: 'c3', title: 'Tutor chat', programId: 'course-1' };
 const bookmark = { conversationId: 'c1', messageId: 'm1' };
 
 function renderSpotlight(initialProps: { query: string; isOpen: boolean }) {
@@ -21,7 +22,7 @@ function renderSpotlight(initialProps: { query: string; isOpen: boolean }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.listConversationsExplorer.mockResolvedValue({ ok: true, data: { conversations: [chat, explorerThread] } });
+  api.listConversationsExplorer.mockResolvedValue({ ok: true, data: { conversations: [chat, explorerThread, tutorChat] } });
   api.listMessageBookmarks.mockResolvedValue({ ok: true, data: { bookmarks: [bookmark] } });
 });
 

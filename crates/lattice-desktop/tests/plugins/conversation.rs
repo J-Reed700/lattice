@@ -100,6 +100,8 @@ fn test_conversation_dto_complete() {
         forked_from_conversation_id: None,
         forked_from_message_id: None,
         explorer_root: None,
+        program_id: None,
+        lesson_id: None,
         tangent_parent_id: None,
     };
 

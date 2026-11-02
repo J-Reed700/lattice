@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { VaultAPI, type ApiClient } from '@/lib/api';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ConversationDto, ConversationMessageBookmarkDto } from '@/types';
 
@@ -31,8 +32,8 @@ async function searchSpotlight(q: string, api: ApiClient = VaultAPI) {
     conversations: conversationsResult.ok
       ? (Array.isArray(conversationsResult.data)
         ? NO_CONVERSATIONS
-        // Explorer threads open in the Explorer, never in Chat.
-        : conversationsResult.data.conversations.filter((conversation) => !conversation.explorerRoot))
+        // Bound chats open where they live, never in Chat.
+        : conversationsResult.data.conversations.filter((conversation) => !isBoundChat(conversation)))
       : NO_CONVERSATIONS,
     bookmarks: bookmarksResult.ok
       ? (Array.isArray(bookmarksResult.data)

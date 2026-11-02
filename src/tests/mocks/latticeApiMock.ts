@@ -442,6 +442,7 @@ export function createVaultAPIMock() {
         contextMessageCount: 1,
       })),
     listLearningTangents: vi.fn().mockResolvedValue([]),
+    setConversationCourse: vi.fn().mockResolvedValue(undefined),
 
     __reset: vi.fn(() => {
       Object.values(api).forEach((value) => {

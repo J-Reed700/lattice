@@ -421,6 +421,8 @@ impl ConversationRepository {
             c.forked_from_conversation_id,
             c.forked_from_message_id,
             c.explorer_root,
+            c.program_id,
+            c.lesson_id,
             (
                 SELECT m.content
                 FROM conversation_messages m

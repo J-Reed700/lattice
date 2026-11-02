@@ -99,7 +99,7 @@ describe('Course page', () => {
   it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Sources']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Tutor', 'Sources']);
     await userEvent.click(tabs[1]);
     const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
     expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations']);

@@ -16,7 +16,7 @@ mod memory_tests;
 mod progress;
 mod tangents;
 
-pub(crate) use memory::ensure_memory_resources;
+pub(crate) use memory::{ensure_memory_resources, lesson_note_draft};
 
 fn status(v: LearningProgramStatus) -> &'static str {
     match v {

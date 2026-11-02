@@ -304,6 +304,13 @@ export interface Conversation {
    * Such threads live in the Explorer and are left out of Chat.
    */
   explorerRoot?: string | null;
+  /**
+   * The course this conversation teaches from, when it is a tutor chat. Such
+   * chats live in the course's Tutor tab and are left out of Chat.
+   */
+  programId?: string | null;
+  /** The lesson a tutor chat was opened from. */
+  lessonId?: string | null;
   /** Hidden from top-level lists until promoted. */
   tangentParentId?: string | null;
   messages?: ConversationMessage[];

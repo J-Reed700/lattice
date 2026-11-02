@@ -319,6 +319,15 @@ describe('ChatView', () => {
       renderView();
       expect(h.uiSetState).toHaveBeenCalledWith({ activeConversationId: null });
     });
+
+    it('moves off a tutor chat too: it lives in its course', async () => {
+      h.store = makeStore({
+        activeConversationId: 't1',
+        conversations: [{ id: 't1', programId: 'course-1' }, { id: 'x1', explorerRoot: '/notes' }, { id: 'c1' }],
+      });
+      renderView();
+      await waitFor(() => expect(h.store.selectConversation).toHaveBeenCalledWith('c1'));
+    });
   });
 
   it('measures the room the chat and reader share', () => {

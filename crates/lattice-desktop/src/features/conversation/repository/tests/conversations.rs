@@ -395,6 +395,7 @@ async fn the_explorer_root_round_trips_through_the_conversation_projections() {
     let listed = repo
         .list_conversations_explorer(ListConversationsExplorerQueryDto {
             space_id: None,
+            program_id: None,
             query: None,
             saved_only: None,
             bookmarked_only: None,

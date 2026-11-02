@@ -40,6 +40,7 @@ import {
   getSourceExternalUrl,
   getSourcePreviewKind,
   getWebArchiveHtmlPath,
+  isCourseSource,
 } from '@/utils/sourcePreview';
 
 
@@ -388,7 +389,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       isFileLarge={isFileLarge}
       maxPreviewSize={MAX_PREVIEW_SIZE}
       isLoading={isLoading || isResolvingPreviewPath}
-      content={content}
+      content={isCourseSource(source) ? source.content : content}
       error={error}
       savedCitationText={savedCitationText}
       previewFilePath={previewFilePath}
@@ -501,7 +502,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       />}
 
       {/* Footer */}
-      <SourceReaderFooter
+      {!isCourseSource(source) && <SourceReaderFooter
         canShowInFolder={canShowInFolder}
         onShowInFolder={handleAsyncEvent(handleShowInFolder)}
         platformRevealLabel={platformRevealLabel}
@@ -511,7 +512,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         onImportUrl={handleAsyncEvent(handleImportSourceUrl)}
         primaryActionLabel={primaryActionLabel}
         onOpenPrimary={handleAsyncEvent(handleOpenPrimary)}
-      />
+      />}
       {captureDraft !== null && (
         <JournalCapturePreview content={captureDraft} onClose={() => setCaptureDraft(null)}
           onOpenNote={(noteId) => { setCaptureDraft(null); onClose(); navigate(`/journals?noteId=${encodeURIComponent(noteId)}`); }} />

@@ -125,6 +125,18 @@ describe('ConversationList', () => {
     expect(screen.getByText('No conversations yet.')).toBeInTheDocument();
   });
 
+  it('leaves tutor chats to their course', () => {
+    h.store = store({ conversations: [makeConversation('t', 'Tutor chat', { programId: 'course-1' })] });
+    renderList();
+    expect(screen.getByText('No conversations yet.')).toBeInTheDocument();
+  });
+
+  it('shows a chat whose course was deleted as an ordinary chat', () => {
+    h.store = store({ conversations: [makeConversation('t', 'Tutor chat', { programId: null, lessonId: null })] });
+    renderList();
+    expect(screen.getByText('Tutor chat')).toBeInTheDocument();
+  });
+
   it('groups conversations into time buckets, newest first', () => {
     h.store = store({
       conversations: [

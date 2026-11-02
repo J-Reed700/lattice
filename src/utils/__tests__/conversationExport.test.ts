@@ -242,6 +242,11 @@ describe('vaultDocumentIds', () => {
     expect(isWebSource(webPage)).toBe(true);
     expect(vaultDocumentIds([source(), webPage])).toEqual(['doc-halvorsen']);
   });
+
+  it('leaves a course\'s passages out too: no file stands behind them', () => {
+    const passage = source({ documentId: 'course:version-1', filePath: '', category: 'Course source' });
+    expect(vaultDocumentIds([source(), passage])).toEqual(['doc-halvorsen']);
+  });
 });
 
 describe('answerToMarkdown', () => {

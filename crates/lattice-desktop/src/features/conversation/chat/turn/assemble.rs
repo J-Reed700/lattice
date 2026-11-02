@@ -113,6 +113,7 @@ pub(super) fn render_prompt(
         attachments,
         pictures,
         source_context,
+        source_passages,
         attachment_names,
         attachment_ids,
     } = carried;
@@ -121,6 +122,7 @@ pub(super) fn render_prompt(
         prior_left_out,
         mut retrieval,
     } = retrieved;
+    retrieval.lead_with(source_passages);
     let llm = &turn.llm;
 
     // An attachment is in the prompt whole, so its search passages would be a

@@ -11,7 +11,7 @@ use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
 use super::images::{self, FIND_IMAGE};
-use super::tool_sources::{collect_tool_sources, render_with_citations};
+use super::tool_sources::{render_with_citations, result_sources};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
     tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
@@ -634,8 +634,12 @@ impl<'a> ToolCalls<'a> {
             timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
         }
         let settings = self.scope.tool_output_settings;
-        let tool_sources =
-            collect_tool_sources(tool, &result, self.scope.highlight_terms, settings);
+        let source_text = self
+            .scope
+            .source
+            .is_some_and(|source| source.owns_tool(tool));
+        let highlights = self.scope.highlight_terms;
+        let tool_sources = result_sources(tool, &result, source_text, highlights, settings);
         let mut tool_chunk_ids = HashSet::new();
         if !tool_sources.is_empty() {
             let offered = tool_sources.len();
@@ -672,17 +676,13 @@ impl<'a> ToolCalls<'a> {
         // A picture's source page is numbered for its caption, which the app
         // cites; the model is told not to cite the picture line, so the
         // number is not offered to it. A library search shows each result
-        // under its number already.
+        // under its number already, and so does a turn source's.
         let citable: Vec<(u32, &SourceDto)> = sources
             .iter()
-            .filter(|_| tool != FIND_IMAGE && tool != "semantic_search")
+            .filter(|_| tool != FIND_IMAGE && tool != "semantic_search" && !source_text)
             .filter(|source| tool_chunk_ids.contains(&source.chunk_id))
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
-        let source_text = self
-            .scope
-            .source
-            .is_some_and(|source| source.owns_tool(tool));
         let citations = citation_ids_by_chunk(sources);
         let result_text = render_with_citations(&citable, allowance, |room| {
             format_tool_result(
