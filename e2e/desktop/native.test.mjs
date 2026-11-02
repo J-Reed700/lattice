@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,9 @@ const manifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), '
 assert.match(manifest.identifier, /^tech\.lattice\.compatibility\.t[a-f0-9]{32}$/);
 await mkdir(reports, { recursive: true });
 const results = { ...manifest, os: os.release(), checks: [], passed: false };
+// The app keeps imported files under LATTICE_HOME (~/.lattice unless set), which
+// an installed Lattice on this machine shares; the candidate gets a folder of its own.
+const latticeHome = await mkdtemp(path.join(os.tmpdir(), 'lattice-e2e-home-'));
 let app;
 let browser;
 let launches = 0;
@@ -60,7 +63,7 @@ async function launch() {
   const log = openSync(path.join(reports, `app-${++launches}.log`), 'w');
   app = spawn(manifest.binary, [], {
     cwd: path.dirname(manifest.binary),
-    env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port),
+    env: { ...process.env, LATTICE_HOME: latticeHome, TAURI_WEBDRIVER_PORT: String(port),
       ...(process.platform === 'darwin' && process.env.LATTICE_NATIVE_LEAK_SCAN === '1'
         ? { MallocStackLogging: '1' } : {}),
     },
@@ -373,6 +376,7 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       for (let attempt = 0; attempt < 50 && app.exitCode === null && app.signalCode === null; attempt++) await delay(100);
       if (app.exitCode === null && app.signalCode === null) app.kill('SIGKILL');
     }
+    await rm(latticeHome, { recursive: true, force: true }).catch(() => {});
     await writeFile(path.join(reports, 'result.json'), JSON.stringify(results, null, 2));
   }
 });

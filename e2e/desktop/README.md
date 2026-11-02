@@ -99,7 +99,8 @@ Debian extraction does not test package-manager dependency installation.
 The embedded WebDriver server is an optional Cargo dependency behind
 `desktop-e2e`; normal builds omit it. The build script rejects that feature with
 the production app identity. Test bundles use `tech.lattice.compatibility.*`,
-separate application data and a dynamically allocated loopback port. Tauri's
+separate application data, a temporary `LATTICE_HOME` for the files the app
+imports, and a dynamically allocated loopback port. Tauri's
 global API, test-driver capability, and explicit window-focus permission are
 enabled only by the test config. The harness shows and focuses its isolated
 window and waits for webview visibility before interaction. On macOS the desktop

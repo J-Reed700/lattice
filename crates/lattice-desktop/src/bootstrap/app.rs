@@ -330,37 +330,29 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         }
     });
 
-    // Collect library blobs nothing references any more: an import that
-    // crashed before it committed, or a database that was reset out from under
-    // the files. Without this they stay on disk forever and get packed into
-    // every backup.
-    let library_gc = container.library_gc();
-    background.spawn(async move {
-        match library_gc.sweep().await {
-            Ok(report) => tracing::info!(
-                removed = report.removed,
-                retained = report.retained,
-                bytes_freed = report.bytes_freed,
-                "Swept the imported-file library"
-            ),
-            Err(error) => {
-                tracing::error!(%error, "Failed to sweep the imported-file library");
-            }
-        }
-    });
-    // Frozen web snapshots whose rows are gone, and writes a crash cut short.
-    container
-        .web_page_snapshots()
-        .sweep_in_background("startup");
-    // Chat pictures a turn leased and never attached, and files no row
-    // claims. No turn survives a restart except a research turn, which
-    // resumes from its saved rounds and still owns the pictures they found.
+    // Collect files nothing references any more: an import that crashed
+    // before it committed, a snapshot or picture whose row is gone. Without
+    // this they stay on disk forever and get packed into every backup. Only
+    // the database that owns the files may: a fresh one beside them, after a
+    // corrupt database was moved aside or in a second copy of the app, would
+    // take every one.
     let jobs = Arc::clone(container.jobs());
-    container
-        .chat_images_service()
-        .sweep_in_background("startup", async move {
-            crate::features::conversation::chat::resumable_research_requests(jobs.store()).await
-        });
+    match crate::features::indexing::library_owner::LibraryFiles::current() {
+        Ok(files) => {
+            super::startup_reconciliation::LibrarySweeps {
+                library_gc: container.library_gc(),
+                snapshots: container.web_page_snapshots(),
+                images: container.chat_images_service(),
+            }
+            .start(container.db_pool(), &files, &background, async move {
+                crate::features::conversation::chat::resumable_research_requests(jobs.store()).await
+            })
+            .await;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Not collecting unreferenced library files: could not find them");
+        }
+    }
 
     // Collect attachments whose conversation is gone. They are owned by a chat
     // that no longer exists, so they are hidden from the library and reachable

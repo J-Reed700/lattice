@@ -11,8 +11,9 @@
 //!
 //! - [`LibraryGc::release`] runs after a document referencing a hash was
 //!   deleted, or after an import failed before committing its row.
-//! - [`LibraryGc::sweep`] runs at startup and collects everything an
-//!   interrupted import, a crash, or a deleted database left behind.
+//! - [`LibraryGc::sweep`] runs at startup, for the database that owns the
+//!   library (`library_owner`), and collects what an interrupted import or a
+//!   crash left behind.
 
 use std::collections::HashSet;
 use std::sync::Arc;
