@@ -406,8 +406,12 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
             out.push((sentence, citations));
         }
         if !in_list && strip_citation_markers(&block).trim_end().ends_with(':') {
-            introduced = own.into_iter().flatten().collect();
-            introduced.dedup();
+            let mut seen = HashSet::new();
+            introduced = own
+                .into_iter()
+                .flatten()
+                .filter(|id| seen.insert(*id))
+                .collect();
         }
     }
     out
