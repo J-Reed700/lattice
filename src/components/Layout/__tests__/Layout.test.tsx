@@ -12,9 +12,6 @@ vi.mock('@/features/model/components/Downloads/HeaderDownloadsIndicator', () => 
   HeaderDownloadsIndicator: () => null,
 }));
 vi.mock('@/features/files/components/IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
-vi.mock('@/features/activity/components/ActivityIndicator', () => ({
-  ActivityIndicator: () => <button type="button" aria-label="Activity: nothing running" />,
-}));
 vi.mock('@/features/iris/components/Iris', () => ({ Iris: () => null }));
 
 // The rail renders `null` under the mock above (and on a real idle vault), so

@@ -36,8 +36,8 @@ export async function installExplorerFixture(page: Page) {
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: stamp, starters: [], documentCount: 0 }),
     'dialog|open': () => state.picker,
     list_downloads: () => [],
+    // Iris, in the rail, lists what is running and counts the flashcards due.
     activity_snapshot: () => ({ items: [], running: 0 }),
-    // Iris, in the rail, counts the flashcards due.
     list_study_decks: () => [],
     // The folder chat lists each cloud provider's models; no keys are saved here.
     list_cloud_models: () => ({ hasApiKey: false, models: [] }),

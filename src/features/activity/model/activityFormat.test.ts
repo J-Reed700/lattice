@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { ActivityEntryDto } from '@/lib/bindings';
 
 import {
-  activityLabel,
   activitySummary,
   formatProgress,
   formatRetry,
@@ -76,11 +75,8 @@ describe('stateLine', () => {
   });
 });
 
-describe('labels', () => {
-  it('count what runs', () => {
-    expect(activityLabel(3, 5)).toBe('Activity: 3 running');
-    expect(activityLabel(0, 2)).toBe('Activity: 2 waiting or paused');
-    expect(activityLabel(0, 0)).toBe('Activity: nothing running');
+describe('activitySummary', () => {
+  it('counts what runs, pauses and waits', () => {
     expect(activitySummary([])).toBe('Nothing is running.');
     expect(
       activitySummary([entry(), entry({ id: 'b' }), entry({ id: 'c', state: 'paused' }), entry({ id: 'd', state: 'waiting' })]),

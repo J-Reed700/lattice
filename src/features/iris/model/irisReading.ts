@@ -34,6 +34,8 @@ export interface IrisNote {
 
 export interface IrisInputs {
   activity: ActivitySnapshotDto | undefined;
+  /** The last read of the activity snapshot failed. */
+  activityFailed: boolean;
   /** Files the current indexing run could not read. */
   indexingFailures: number;
   /** Downloads that ended in failure, by display name. */
@@ -56,6 +58,8 @@ export interface IrisReading {
   notes: IrisNote[];
   /** Running first, then paused, then waiting, as the snapshot orders them. */
   work: ActivityEntryDto[];
+  /** The last read of `work` failed, so it is what was last read, or nothing. */
+  activityFailed: boolean;
   /** Whether `notes` holds something you have not opened Iris on yet. */
   unseen: boolean;
 }
@@ -78,9 +82,16 @@ export function aggregateProgress(items: readonly ActivityEntryDto[]): number | 
   return fractions.reduce((sum, value) => sum + value, 0) / fractions.length;
 }
 
+const UNREADABLE = 'Could not read what is running.';
+
 /** The facts worth a word, alerts first. */
-export function irisNotes(inputs: Pick<IrisInputs, 'indexingFailures' | 'failedDownloads' | 'dueCards'>): IrisNote[] {
+export function irisNotes(
+  inputs: Pick<IrisInputs, 'activityFailed' | 'indexingFailures' | 'failedDownloads' | 'dueCards'>,
+): IrisNote[] {
   const notes: IrisNote[] = [];
+  if (inputs.activityFailed) {
+    notes.push({ id: 'activity-unreadable', tone: 'alert', text: UNREADABLE, action: null });
+  }
   for (const download of inputs.failedDownloads) {
     notes.push({
       id: `download-failed:${download.id}`,
@@ -157,13 +168,35 @@ export function readIris(inputs: IrisInputs): IrisReading {
     mood = 'idle';
     headline = `${plural(work.length, 'task is', 'tasks are')} paused or waiting.`;
     short = 'Waiting';
+  } else if (inputs.activityFailed) {
+    mood = 'idle';
+    headline = UNREADABLE;
+    short = "Can't tell";
   } else {
     mood = 'idle';
     headline = notes.length > 0 ? 'Nothing is running.' : 'All quiet. Nothing is running.';
     short = 'Quiet';
   }
 
-  return { mood, tone, progress: running.length > 0 ? progress : null, headline, short, notes, work, unseen };
+  return {
+    mood,
+    tone,
+    progress: running.length > 0 ? progress : null,
+    headline,
+    short,
+    notes,
+    work,
+    activityFailed: inputs.activityFailed,
+    unseen,
+  };
+}
+
+/** What a screen reader hears as work starts and stops: counts only, so progress does not chatter. */
+export function irisAnnouncement(work: readonly ActivityEntryDto[]): string {
+  const running = work.filter((item) => item.state === 'running').length;
+  if (running > 0) return `Iris: ${running} running`;
+  if (work.length > 0) return `Iris: ${work.length} waiting or paused`;
+  return 'Iris: nothing running';
 }
 
 /** The button's accessible name: "Iris: All quiet. Nothing is running.", plus how many notes the card holds. */

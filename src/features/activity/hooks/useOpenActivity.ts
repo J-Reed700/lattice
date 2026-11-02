@@ -11,7 +11,7 @@ export function canOpenActivity(item: Pick<ActivityEntryDto, 'kind' | 'target'>)
   return item.target !== null || item.kind === 'download';
 }
 
-/** Opens where an item lives, then calls `onOpened` (the drawer closes). */
+/** Opens where an item lives, then calls `onOpened` (Iris's card closes). */
 export function useOpenActivity(onOpened: () => void) {
   const navigate = useAppNavigate();
   const { openDrawer } = useDownloadState();
