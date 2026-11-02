@@ -97,7 +97,7 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: TOOL_SEARCH_SAVED_KNOWLEDGE.into(),
-            description: "Search saved facts, decisions, preferences and open work in this conversation plus explicitly shared space and personal memory. Every result retains original evidence and source conversation. Use include_history for corrected, superseded or expired facts; never treat those as current. A miss is not proof a fact was never recorded. You cannot choose a foreign conversation or sharing scope.".into(),
+            description: "Search saved facts, decisions, preferences and open work in this conversation, in the chats that share its memory, and in personal memory. Every result retains original evidence and source conversation. Use include_history for corrected, superseded or expired facts; never treat those as current. A miss is not proof a fact was never recorded. You cannot choose a foreign conversation or sharing scope.".into(),
             parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string"},"include_history":{"type":"boolean","default":false}},"required":["query"],"additionalProperties":false}),
         },
         ToolDefinition {

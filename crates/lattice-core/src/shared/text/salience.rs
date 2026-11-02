@@ -331,6 +331,18 @@ pub fn is_stopword(term: &str) -> bool {
     stopword_set().contains(term)
 }
 
+/// The distinct lowercased words of `text` that can tell one passage from
+/// another, in order.
+pub fn informative_terms(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    text.split_whitespace()
+        .map(|term| term.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|term| term.len() > 2)
+        .map(str::to_lowercase)
+        .filter(|term| !is_stopword(term) && seen.insert(term.clone()))
+        .collect()
+}
+
 /// Select a high-signal subset of terms using statistical salience.
 ///
 /// The scoring blends character entropy and token length. This avoids static

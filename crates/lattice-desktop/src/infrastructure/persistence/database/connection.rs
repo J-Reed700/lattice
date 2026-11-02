@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn memory_attributes_are_found_by_space_through_an_index() {
+    async fn memory_attributes_are_found_by_scope_through_an_index() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -505,7 +505,7 @@ mod tests {
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-            "EXPLAIN QUERY PLAN SELECT item_id FROM conversation_memory_attributes WHERE space_id = ?",
+            "EXPLAIN QUERY PLAN SELECT item_id FROM conversation_memory_attributes WHERE scope_kind = 'space' AND scope_key = ?",
         )
         .bind("space-1")
         .fetch_all(&pool)
@@ -515,7 +515,7 @@ mod tests {
         assert!(
             detail
                 .iter()
-                .any(|d| d.contains("idx_memory_attributes_space")),
+                .any(|d| d.contains("idx_memory_attributes_scope")),
             "{detail:?}"
         );
     }

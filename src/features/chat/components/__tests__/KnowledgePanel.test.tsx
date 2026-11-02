@@ -17,7 +17,7 @@ const fact: KnowledgeItemDto = {
   evidence:[{messageId:'m1',sequence:1,role:'user',purpose:'assertion',startByte:0,endByte:14,text:'Budget is $120'}],availabilityReason:'Saved in this conversation',
 };
 function setup(items:KnowledgeItemDto[] = []) {
-  manageKnowledge.mockResolvedValue({ok:true,data:{items,hasMore:false,lastAnswerMemoryIds:items.map(i=>i.id)}});
+  manageKnowledge.mockResolvedValue({ok:true,data:{items,hasMore:false,pool:'space',lastAnswerMemoryIds:items.map(i=>i.id)}});
   render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><KnowledgePanel conversationId="one" /></QueryClientProvider>);
   return userEvent.setup();
 }
@@ -40,11 +40,12 @@ describe('saved knowledge controls',()=>{
     await user.click(screen.getByRole('button',{name:'Save correction'}));
     await waitFor(()=>expect(manageKnowledge).toHaveBeenCalledWith(expect.objectContaining({action:'correct',itemId:'fact-1',text:'Budget is now $240.'})));
   });
-  it('does not offer mutation controls for a foreign shared item',async()=>{
+  it('leaves the sharing, dates and check of a foreign shared item to its source',async()=>{
     setup([{...fact,conversationId:'other',availabilityReason:'Shared with this space'}]);
-    await screen.findByText('Open its source conversation to change this item.');
-    expect(screen.queryByRole('button',{name:'Forget saved item'})).not.toBeInTheDocument();
-    expect(screen.queryByRole('button',{name:'Correct'})).not.toBeInTheDocument();
+    await screen.findByText(/Open its source conversation to change its sharing, dates or check\./);
+    expect(screen.queryByRole('button',{name:'Mark checked'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Forget saved item'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Correct'})).toBeInTheDocument();
   });
   it('retains the correction draft when saving fails',async()=>{
     const user=setup([fact]);await screen.findByText('Budget is $120',{selector:'p'});

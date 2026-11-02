@@ -520,18 +520,37 @@ fn picture_guidance_comes_only_with_find_image() {
         description: String::new(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
-    let without = super::assemble::with_picture_guidance("Policy.", &[tool("web_search")]);
+    let without = super::assemble::with_tool_guidance("Policy.", &[tool("web_search")]);
     assert_eq!(without, "Policy.");
-    let with = super::assemble::with_picture_guidance(
-        "Policy.",
-        &[tool("web_search"), tool("find_image")],
-    );
+    let with =
+        super::assemble::with_tool_guidance("Policy.", &[tool("web_search"), tool("find_image")]);
     assert!(with.starts_with("Policy.\n"));
     assert!(with.contains("find_image"));
     assert_eq!(
         with,
-        super::assemble::with_picture_guidance("Policy.", &[tool("find_image")])
+        super::assemble::with_tool_guidance("Policy.", &[tool("find_image")])
     );
+}
+
+/// The one line on searching memory: it comes with the tool, tells the model
+/// when not to reach for it, and stays ahead of the picture guidance so a web
+/// turn does not move it.
+#[test]
+fn the_line_on_searching_memory_comes_only_with_the_tool() {
+    let tool = |name: &str| lattice_core::application::ports::ToolDefinition {
+        name: name.into(),
+        description: String::new(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    };
+    let memory = tool(super::super::history_tools::TOOL_SEARCH_SAVED_KNOWLEDGE);
+    assert_eq!(
+        super::assemble::with_tool_guidance("Policy.", &[tool("web_search")]),
+        "Policy."
+    );
+    let with = super::assemble::with_tool_guidance("Policy.", std::slice::from_ref(&memory));
+    assert!(with.contains("search_saved_knowledge only for something from before"));
+    let both = super::assemble::with_tool_guidance("Policy.", &[memory, tool("find_image")]);
+    assert!(both.starts_with(&with));
 }
 
 #[test]
