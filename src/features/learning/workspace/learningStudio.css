@@ -112,6 +112,7 @@
 .studio-course-tools > button, .studio-course-tools > section > button { min-height: 34px; padding-inline: 8px; }
 .studio-course-tools > section > button .font-semibold { font-size: 12px; font-weight: 500; }
 .studio-course-tools > section > button > svg { width: 16px; height: 16px; }
+.studio-course-tools .studio-syllabus-module { font-size: inherit; }
 .studio-course-header { padding: 22px 0 18px; }
 .studio-course-header-main { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
 .studio-course-title-group { flex: 1 1 300px; min-width: 0; }
