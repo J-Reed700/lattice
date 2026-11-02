@@ -53,7 +53,7 @@ fn a_claim_that_fails_twice_on_the_same_evidence_is_queued_after_two_repairs() {
 }
 
 #[test]
-fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
+fn a_claims_attempts_never_rise_whatever_evidence_a_later_check_brings() {
     let mut entry = claim("c1");
     entry
         .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
@@ -61,9 +61,8 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
     entry
         .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
         .unwrap();
-    // The rewritten sentence retrieved other passages: what the machine's own
-    // rewrite brings is not new information, so the rewrite still costs its
-    // attempt (§4 "Bounded").
+    // The rewrite costs its attempt whatever passages the rewritten sentence
+    // retrieved.
     entry
         .append(machine(4), checked(Some(VerdictKind::Unsupported), "v2"))
         .unwrap();
@@ -75,7 +74,8 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
             machine_attempts_left: MACHINE_ATTEMPTS - 1
         }
     );
-    // Research found other passages: genuinely new material restores it.
+    // Research found other passages: the verdict may change, the count never
+    // goes back up (claim classes design §3.2).
     entry
         .append(machine(5), checked(Some(VerdictKind::Unsupported), "v3"))
         .unwrap();
@@ -84,7 +84,7 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
         &ClaimState::Open {
             kind: VerdictKind::Unsupported,
             reason: "compared v3".into(),
-            machine_attempts_left: MACHINE_ATTEMPTS
+            machine_attempts_left: MACHINE_ATTEMPTS - 1
         }
     );
     // A recheck on unchanged evidence with no repair in between costs nothing.
@@ -94,7 +94,7 @@ fn new_evidence_restores_the_budget_and_the_same_evidence_does_not() {
     assert!(matches!(
         entry.state(),
         ClaimState::Open {
-            machine_attempts_left: MACHINE_ATTEMPTS,
+            machine_attempts_left: 1,
             ..
         }
     ));
@@ -272,7 +272,8 @@ fn research_that_cannot_change_a_claims_sufficiency_is_not_new_evidence() {
     );
 
     // An independent origin, or a stronger source of the same one, is
-    // progress: the budget is restored and research may go on.
+    // progress: research may go on; the budget, never charged here, stays
+    // (it never rises).
     for (id, gained) in [
         ("c2", counted("v2", "v2", TrustLevel::Established)),
         ("c3", counted("v2", "v1", TrustLevel::Authoritative)),

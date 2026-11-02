@@ -146,6 +146,39 @@ Replaced by:
 
 Related, not designed around: the "database is locked" failures of 2026-10-26 have a root cause being fixed on `fix/source-save-lock` (every source save shingled every other source inside the write transaction, `trust::capture::relate`). `capture::record` will take a `&Comparison` from a `compare`/`compare_all` step before the transaction; the admission gate of §3.5(4) runs before `compare`, so a refused page is never shingled at all.
 
+### 3.9 Work already in the database
+
+The database holds 8 pending `learning.lesson_preparation` jobs (one resumed tonight, the rest from 2026-10-26), saved drafts without statement-level citations, `claim-v1` receipts, `claim-walk-v1` budgets and `inventory-section-v1` checkpoints of the old pipeline, and they all resume by themselves when the app opens. Under the new pipeline a resumed job:
+
+- keeps the draft and nothing else: old receipts, walk budgets, evidence selections, coverage checkpoints and the pending-repair checkpoint are not read (their keys carry policy versions, `lesson-evidence-v21`, `claim-walk-v1`, `coverage-unit-v2`; the new policy names are different, so the lookups miss by construction) and are deleted by the job's first step, so no old walk is resumed and nothing is spent on it;
+- gives an old draft its statement-level citations before anything else by one bounded writer call per section ("cite each sentence that states a specific or an attribution from the section's cited source, or rewrite it without the specific"), counted in the plan like any other call; a draft that cannot be parsed is written again from the outline, which is what today's job does for a missing draft;
+- re-extracts the inventory under the new policy, so Internal statements leave the ledger and the 32 coverage injections never return; existing ledger rows for statements no longer extracted end as `Edited { successor: None, by: Machine }`, the state the domain already has for "re-extraction found no successor";
+- then runs the new loop to `ready`, as a fresh job would.
+
+Test: a job resumed from a copy of tonight's checkpoints for `f36400bc` reaches `preparation='ready'`, its `job_checkpoints` hold only new-policy keys at the end, and its call count equals the plan written at its start (no walk pages, no standing pages, no research beyond §3.6's count).
+
+### 3.10 Sections after cuts
+
+Removal (§3.2) is per statement; a section can lose several sentences, and a cut can leave "this" or "these" pointing at nothing. So every section that took at least one cut gets **one** bounded repair call after the last cut, never before: the existing `repair::candidate` with `confine` to the cut sentences' neighbours, asked only to restore the flow of the surviving text without adding any statement of fact (its output is re-extracted; any new Sourced statement it introduces is a draft defect that fails the call, and the section keeps the cut text as it was). The number of such calls is the number of sections that took cuts, known when the cuts are; a cut never starts another lesson pass. A section left with fewer than two teaching sentences, or a check section whose "Check your thinking" answer lost its claim, is **too little to teach**: it is removed from the lesson with its questions, and the lesson's recap and bridge are the teaching review's to adjust in the one call it already makes after a repair (`teaching::review_lesson`, §6.2 of the claim-review design). A lesson that loses more than a third of its sections, or its first explanation, is not published: the job ends `Stopped` with the reason "the sources do not support enough of this lesson", which is the honest answer and the only one that names the library, not the learner, as the thing to fix.
+
+### 3.11 Acceptance: a real lesson, the real app, nobody touching it
+
+The acceptance run is an isolated app instance on a copy of the real database, the 27B as Learning model, lesson `f36400bc` prepared by the app's own job. Expected, written down so the run is scored against it:
+
+- end state: `learning_lessons.preparation = 'ready'`, `learning_lesson_reviews.state = 'ready'`, a `learning_lesson_verifications` row; every ledger claim in `ResolvedByEvidence`, `Removed { by: Machine }`, `Edited`, or a consistency/knowledge pass state; no `Queued`, no `Open`, no `InsufficientStanding`, no `GeneralKnowledgeProposed`;
+- the ledger holds no Internal statements and at most 73 statements (105 less the 32 coverage injections);
+- calls: at most `7 + 3·S + R + 3·R + 3·C + 2·F + K` where S Sourced, R Reasoning, C Common statements, F the Sourced statements that failed their cited passage, K the sections that took cuts; with the replay's shares (36, 45, 8), F ≤ 3 and K ≤ 3 that is at most 247 + 9 model calls and at most 6 page fetches, shown in the progress panel before the first call; the run fails acceptance if the count shown moves up;
+- content: the two real catches (§1.1) are rewritten or removed; the Tesseract-shaped sentences pass with the "common knowledge" part shown; no sentence cites a page the admission gate refuses;
+- time: under 30 minutes of 27B time for this lesson at today's pace (247 calls at the measured 2–7 s, plus the writer's citation pass).
+
+### 3.12 The user interface
+
+- `LessonPreparationProgress.tsx`: the counters become the plan: "N statements: S to check against their sources, R to check for consistency, C common knowledge; at most M model calls" written before the first call, then done/total; the "sent back", "needs attention" and verification-pass counters go. A run cannot look endless because its denominator never grows.
+- The claim review surface (`2026-10-21-claim-review-ui.md`): the held-claim queue for the machine's claims goes; what stays is the user's own actions (attach evidence, confirm, edit, remove, reopen) on a published lesson's statements, which the ledger still supports, and the list of statements the machine removed with their reasons, so the user can restore one with evidence.
+- The learner's evidence panel (`LessonEvidencePanel.tsx`, `lesson_evidence.rs`): per statement, its class and its check: the cited passage with "per <source>" / "according to <source>" labels from the gate (§3.2), "consistent with <source>" for Reasoning, "common knowledge" for Common and for a bridged part; a removed sentence is not shown to the learner.
+- The library: the admission sweep's list (§3.6) with reasons and bulk removal.
+- Unchanged: the course outline, the lesson reader itself, the tutor and quizzes.
+
 ### 3.7 What goes, and why
 
 - `walk.rs::deepen` and `Depth::BreakEven`, `standing.rs` (the standing walk), `scrutiny.rs`: they exist to find a page for a statement; for Sourced claims one relevance page plus research is the whole search, and for the other classes there is nothing to find.
@@ -242,4 +275,7 @@ For this lesson as replayed: classification 7, strict judge 36 (2.8 s each on a 
 7. `inventory`/`coverage`: no adoption; no extraction from rubric, reflection, options, brief quotations.
 8. `lesson_rules` and the block schema: statement-level `citations` and the specifics rule for the writer (§3.5).
 9. `research`: the per-statement and per-lesson counts of §3.6; `FollowCitation`, `Scrutiny::follow` and the chain fetch deleted; the admission gate before `compare` (expect `capture::record(&Comparison)` from `fix/source-save-lock`); the sweep over existing versions.
-10. Evals: the planted set and the 85-claim gold set under `evals/grounding/`, with the replay script; acceptance = every planted false rejected, every planted true passed, strict-judge accuracy on gold unchanged.
+10. Resumed work (§3.9): old-policy checkpoints ignored and deleted on resume; the citation pass for an old draft; the test of a job resumed from tonight's checkpoints.
+11. Sections after cuts (§3.10): the once-only flow repair, the too-little-to-teach rule, the `Stopped` reason.
+12. The user interface (§3.12): the plan counters in `LessonPreparationProgress.tsx`, the removed-statements list in the review surface, per-statement citations and labels in the learner's evidence panel, the admission sweep's list.
+13. Evals and acceptance: the planted set and the 85-claim gold set under `evals/grounding/` with the replay script (every planted false rejected, every planted true passed, strict-judge accuracy on gold unchanged), then §3.11's run on a copy of the real database, scored against its written call count and end state.

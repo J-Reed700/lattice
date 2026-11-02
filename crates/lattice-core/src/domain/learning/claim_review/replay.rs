@@ -47,10 +47,10 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
     }
 }
 
-/// A first failure, or a failure on new evidence: the machine gets its full
-/// budget for the kinds a rewrite or research can address, or, for a claim
-/// born of a repair, what its parent had left. A repairable claim with no
-/// attempts left waits for the user.
+/// A first failure: the machine gets its full budget for the kinds a rewrite
+/// or research can address, or, for a claim born of a repair, what its
+/// parent had left. A repairable claim with no attempts left waits for the
+/// user.
 fn first_failure(kind: VerdictKind, reason: String, inherited: Option<u8>) -> ClaimState {
     let budget = inherited.unwrap_or(MACHINE_ATTEMPTS);
     match kind {
@@ -91,17 +91,14 @@ pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> Cl
 }
 
 /// §3 `after_machine_failure`, applied to a failing check of an Open claim:
-/// new evidence restores the budget; the check that decides a repair uses an
-/// attempt; a kind the machine cannot repair, or no source after research,
-/// goes to the user. `new_evidence` is false for the check that decides a
-/// rewrite even when the rewritten sentence retrieved other passages: what
-/// the machine's own rewrite brings is not new information, or a claim the
-/// machine keeps rewriting would never reach the user (§4 "Bounded").
+/// the check that decides a repair uses an attempt; a kind the machine
+/// cannot repair, or no source after research, goes to the user. New
+/// evidence may change the verdict; it never restores the budget (claim
+/// classes design §3.2), so a claim's attempts only ever fall.
 fn after_machine_failure(
     cursor: &Cursor,
     kind: VerdictKind,
     reason: String,
-    new_evidence: bool,
     charged: bool,
 ) -> ClaimState {
     let ClaimState::Open {
@@ -111,9 +108,6 @@ fn after_machine_failure(
     else {
         return first_failure(kind, reason, cursor.inherited_budget);
     };
-    if new_evidence {
-        return first_failure(kind, reason, cursor.inherited_budget);
-    }
     match kind {
         kind if budgeted(&kind) && charged => charge(kind, reason, machine_attempts_left),
         kind if budgeted(&kind) && machine_attempts_left > 0 => ClaimState::Open {
@@ -191,9 +185,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
             let (kind, reason) = (kind.clone(), check.reason.clone());
             match &cursor.state {
                 ClaimState::Open { .. } if attached => queued(kind, reason),
-                ClaimState::Open { .. } => {
-                    after_machine_failure(cursor, kind, reason, new_evidence, charged)
-                }
+                ClaimState::Open { .. } => after_machine_failure(cursor, kind, reason, charged),
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => queued(kind, reason),
                 _ => first_failure(kind, reason, cursor.inherited_budget),
             }
