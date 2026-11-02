@@ -1,0 +1,245 @@
+# Lesson claims by class: a verification loop that ends
+
+Date: 2026-11-01. Status: design with measurements, nothing shipped. Code read at `origin/main` `d371b568`. Data read from the app database (read-only) while jobs `63a44651` and `47662b5a` ran on `claude-haiku-5-5`, and from the three lessons checked on 2026-10-26 (`claude-opus-5-5`, `/models/Qwen3.8-27B-Q5_K_S.gguf`). Replays ran on the served model `/models/Qwen3.8-27B-Q5_K_S.gguf`, the name read from the server and stamped on every row.
+
+## 0. The finding in one paragraph
+
+No lesson has ever been published because the pipeline asks every sentence of a lesson the same question, "which saved passage states this?", and two thirds of a lesson's sentences are not the kind of sentence a passage states. Explanations, worked examples, scenario statements, rubric lines and the lesson's own remarks about its sources are extracted as "claims", 30% of them injected by the coverage audit from rubrics and reflection prompts, and the strict judge then rejects them correctly under its rule. Three mechanisms keep the machine busy on those rejections: pass B reads the whole course page after page for a statement no page can state; the standing gate demotes claims that passed; and every research round or new page restores a failed claim's two rewrite attempts. The fix is not a better judge (the 2026-10-29 arms eval already showed no prompt helps the 27B) and not a cap. It is to decide, per statement, what kind of check it needs, give each kind a check that can succeed, and remove what fails from the lesson instead of holding the lesson for a human.
+
+## 1. What is wrong, measured
+
+### 1.1 One lesson, read by hand
+
+Lesson `f36400bc` "Extraction: OCR vs. Vision-Language Models", job `63a44651`, Learning role `claude-haiku-5-5` (log: `model.resolved role=Learning model=cloud:anthropic/claude-haiku-5-5`). 17 sections, 105 claims in `inventory-section-v1`, of which 32 were "assertions the coverage audit found missing" (`coverage-unit-v2.missingAssertions`), adopted as claims before any check. Every claim labelled by hand (`labels_ocr.py`, matched by statement prefix):
+
+| Class | Count | What it is | Example |
+|---|---|---|---|
+| sourced | 36 (34%) | attributes something to a source or states a specific | "The survey states that 'the deployment and inference costs associated with VLMs cannot be ignored.'" |
+| reasoning | 45 (43%) | the lesson's own explanation or consequence | "In a modular pipeline, each stage passes an intermediate representation to the next stage, so an early error can propagate forward." |
+| internal | 16 (15%) | scenario, rubric, quiz option, remark about the sources | "The sources name trade-offs between the two designs, so a design choice can be justified by naming at least two of them." (from an assignment rubric) |
+| common | 8 (8%) | standard knowledge with no specific | "A page number identifies which page of the source document an extracted value appears on." |
+
+Only the first class can be "supported" under the strict judge (`claim_verification.rs:78`, `prompt.rs:43-60`: "do not use your own definitions or domain knowledge to bridge"). The other 64% cannot be, whatever the model.
+
+Of the 36 sourced claims, 33 are backed by the lesson's own sources when the judge is shown the right passage (§4.5), and 2 are real catches the judge was right about: "The study compares settings with and without task-specific fine-tuning" (the study's primary evaluation had no fine-tuning; the fine-tuned model was a baseline) and "the unified paradigm processes the page in a single pass and is the opposite of the modular approach" (one passage of the survey supports it, another puts multi-stage parsing under unified models). A third apparent catch, the quoted phrase 'traceability, compliance, and user trust', was a page artefact: the phrase is in the Microsoft feature table, which the walk never showed the judge. Those two are the pipeline doing its job; everything else it rejected was either an unsourceable sentence or a sourceable one shown the wrong page.
+
+### 1.2 The checks
+
+`claim-v1` receipts for the lesson at 21:16 local: 739 checks for 105 claims, 45 supported (6.1%). By keyword over the judge's reasons (`run_tally`, same shape by hand on the first 230):
+
+| Lesson, model | Checks | Passage off the claim's subject | On subject, "not stated as such" | Other unsupported | Supported |
+|---|---|---|---|---|---|
+| f36400bc, haiku-5-5 | 739 | 382 (52%) | 156 (21%) | 156 (21%) | 45 (6%) |
+| d0c62b54, haiku-5-5 | 875 | 397 (45%) | 258 (30%) | 140 (16%) | 73 (8%), 7 contradicted |
+
+"Off the subject" is the judge being shown a reference list, an evaluation-metrics appendix, Pydantic AI documentation or the OWASP prompt-injection page for a claim about OCR error propagation: pass B's walk through the whole course by relevance (`walk.rs`, `REACHES = [Course]`), one page per round, for a statement no page states. Half of all model calls were spent there. The 7 contradictions in the Pydantic lesson are of the form "the claim asserts that the source text contains the phrase '...idempotency, retries with backoff...'": the inventory turned the lesson's quotation of the course brief into claims that a passage contains that phrase.
+
+Per claim after the first pass, from the ledger (`learning_lesson_claims`), by unit kind:
+
+| Lesson, checker | Verified | Unsupported, passage off subject | Unsupported, on subject | Insufficient standing (passed the judge, failed the gate) |
+|---|---|---|---|---|
+| 2021d96e HIPAA assignment, opus-5-5, 137 claims | 37 (27%) | 40 | 53 | 7 |
+| c3dc6342 Capstone, Qwen 27B, 130 | 30 (23%) | 45 | 50 | 5 |
+| f32ce649 OCR models, Qwen 27B, 122 | 18 (15%) | 50 | 44 | 10 |
+| f36400bc OCR vs VLM, haiku-5-5, 105 (pass 1) | 20 (19%) | 37 | 27 | 21 |
+
+The model is not the variable: Opus, Haiku and the 27B land in the same band, and their rejection reasons read the same ("Passage-6 describes idempotent handlers and reconciliation but does not address a crash between an external call and a ledger write"). Answer-key claims fare worst (8-22% verified): a quiz explanation is applied reasoning by construction.
+
+### 1.3 What the loop then does, step by step
+
+`repair_loop.rs:88-354`, one iteration:
+
+1. `verify_with_references` (`passes.rs:6`): inventory per section (reused by content hash), coverage audit (adds `missingAssertions` as claims, `inventory_checkpoint::complete_inventory`), executions, then `check_with_paging` (`evidence_checks.rs:145`):
+   - pass A: each claim against its section's cited passages;
+   - pass B: `deepen` (`walk.rs:562`), a page per round across the course by relevance, while `Depth::BreakEven` says the next page costs less than one web research (`walk.rs:71-84`); the first page is always read (D1);
+   - `provenance_gate::weigh`: every supported verdict weighed against a bar by claim kind (`sufficiency.rs`, source-provenance §6.1);
+   - `standing::corroborate` (`standing.rs:34`): every claim left unsupported, contradicted or below its bar re-reads the course's highest-standing sources, pages restarting from 1 (the log's "Reading the course's strongest sources for 90 claims", "Corroborating 86 claims across the course, page 2").
+2. `ledger.observe`: claims re-identified, attempts replayed.
+3. Research loop (`repair_loop.rs:157-219`): web research once per claim and evidence fingerprint, recheck, record.
+4. `propose_general_knowledge` (regex, `general_knowledge.rs`): an unsupported claim with no digit or absolute is proposed, and waits for the user (D1).
+5. `cite_where_supported`: citations moved; `continue` (another full pass).
+6. `decide` (`claim_ledger.rs:340`): any Open claim with attempts left and kind Unsupported/Contradicted → `Repair(targets)`; else `Publish` only if every claim resolved (`end_state`), else `NeedsReview`.
+7. Repair: `repair::candidate` rewrites the targeted sentences (per section, confined, `repair/confine.rs`); `continue`.
+
+Where the budget goes back up: `replay.rs:93-95`, "new evidence restores the budget". A claim that failed on page 1, researched, and failed again on the research passages has a new fingerprint, so it has two fresh attempts; its rewrite produces a successor and children (`successor.rs`), which are checked against freshly selected pages (new fingerprint again). `MACHINE_ATTEMPTS = 2` bounds attempts per fingerprint, not per claim. That is the "8 rounds" Josh remembers; this database holds no repair events yet because today's jobs are still in their first pass after an hour (105 claims, 739 checks, 21 of 41 passes demoted by the gate, then research).
+
+Where the gate demotes: a `sourced` claim of the form "The survey states that '…'" has profile Opinion/Attributed; its support is the survey's own text; the rule "a Quotation of a named source counts at Community until the chain is followed" (source-provenance §6.1, "Direct only") and an arXiv origin with `publisher: None` give `have: community` against `bar: attributed`, reason "Its support is below a established source the course has on this subject, which does not state it". The survey is its own origin, so no chain can be followed and the claim can never pass. 21 of 41 passed claims on `f36400bc` were sent back this way; between 21:04 and 21:15 the two jobs ran 544 more checks for 4 new supports.
+
+### 1.4 Can a lesson reach publishable state?
+
+No. `end_state` requires every claim resolved; 64% cannot be supported; the only machine resolutions are support, removal by an escalated repair of a repairable kind, or the user. Removal needs a rewrite that deletes the sentence, which the confinement rules and `withhold_shared` block when the sentence also carries a verified claim; and `InsufficientStanding` is never repaired (`VerdictKind::is_repairable`), so the 21 demoted claims wait for the user by construction. The design decision §2.1 of 2026-10-16 ("a lesson with any unresolved claim is not publishable") was taken when "claim" meant a fact. Applied to explanations and rubric lines it guarantees Needs-review for every lesson, which is what the database shows: 18 lessons, 0 prepared.
+
+Share of model calls that did any good on `f36400bc`: 45 supporting checks plus the 3 real catches, of 739: 6.5%. Time: 25 minutes for the two lessons' first passes on Haiku, not finished; pass 2 of the other job began at 21:23 with 1,179 checks behind it.
+
+## 2. What the field does, and what has numbers
+
+- **Not every sentence is a claim.** VeriScore (Song, Kim, Iyyer, Findings of EMNLP 2024) extracts only *verifiable* claims and skips the rest; annotators preferred its claims to SAFE's whole-text decomposition 93% of the time, and its extractor on Llama-3-70B reached 0.77 Spearman with human claim judgments against GPT-4's 0.79. The CheckThat! lab has run "check-worthiness" as its first task since 2018 (2024: multigenre, English F1 about 0.75 for mid-table RoBERTa systems). FActScore-style "every atomic fact" scoring, which this pipeline implements, was built for biographies, where every sentence is a fact.
+- **Attribution is a property of a statement about the world.** AIS (Rashkin et al., Computational Linguistics 2023) asks "according to P, s?" only of statements that pertain to the external world; interpretation and the writer's own reasoning are outside its scope by definition.
+- **Decomposition does not buy accuracy.** MiniCheck (Tang, Laban, Durrett 2024): on LLM-AggreFact GPT-4 reaches 75.3% balanced accuracy and a 770M fine-tuned model 74.7%; claim decomposition and decontextualization did not consistently help either and raised cost. The repo's own 2026-10-29 arms eval agrees: splitting into parts cost the 27B about a claim, and no prompt arm gained it one.
+- **Grounded judgment is about 70-80% right, so the loop must not amplify judge noise.** SAFE agrees with human annotators 72% of the time (and wins 76% of the disagreements); FACTS Grounding's best models score 62-69% grounding; the local judge is 78.8/85 on the w1 gold set with 6.2 false supports. A pipeline that re-asks a 75%-accurate judge seven times per claim on different pages is sampling its noise.
+- **Closed-book knowledge is reliable for common facts and unreliable for specifics.** Mallen et al. (ACL 2023, PopQA): accuracy falls with entity popularity and scaling does little for the long tail; retrieval fixes the tail. SimpleQA (OpenAI 2024): frontier models answer under 50% of short, specific factual questions correctly. So: a model may vouch for "OCR reads pixels into text"; it may never vouch for "23%", "version 4.0", "in 2019" or "Microsoft describes it as…".
+- **Citation-while-writing is useful and insufficient.** ALCE (Gao et al., EMNLP 2023): the best systems lack complete citation support for 50% of ELI5 sentences. A writer told to cite is a classifier of its own sentences, not a verifier.
+
+Fitted to this app: Qwen 27B is the judge of record; its false supports (6 in 85) are hedges and "so"-as-"and", which argues for keeping the strict judge where it belongs (specifics and attributions) and taking everything else away from it, not for loosening it.
+
+## 3. The design
+
+### 3.1 Classes of statement
+
+A `Statement` extracted from a lesson gets exactly one `Class` before any evidence is read. The class decides which check runs, what counts as passing, and what happens on failure. Deterministic rules run first and are never overridden by the model; the model classifies only what the rules leave.
+
+| Class | Rule layer (code) | Model layer | Check | Pass | On failure |
+|---|---|---|---|---|---|
+| **Sourced** | any digit; quoted wording; an attribution cue ("the study/survey/documentation states/reports/found", "according to", a vendor name) | a named product's or system's behaviour, a rule of a named standard, a measured result | the strict judge, as today, against the section's cited passages and one relevance page (`page_one`) | supported, or supported-with-common (§3.3) | one rewrite to what the passage states or without the specific; then **removed** |
+| **Reasoning** | none | the lesson's own explanation, derivation, comparison, consequence | the consistency judge: against the section's passages, *contradicted* or *unfounded specific* or *consistent* | consistent | contradicted → one rewrite, then removed; unfounded specific → reclassed Sourced |
+| **Common** | none | a definition or elementary mechanism every practitioner accepts, no specific | the knowledge judge, closed-book, k = 3 samples at temperature, unanimous | true_common | false → removed; needs_source → reclassed Sourced |
+| **Internal** | "The sources…", "The other options…", a scenario pronoun, a rubric field, a quiz option | scenario, exercise, rubric, instruction, remark about the lesson's sources | none (the teaching review already reads them) | — | — |
+
+Mixed statements are Sourced ("if any part needs a source"). The rule layer is testable without a model and is where Josh's requirement lives: a hallucinated specific cannot leave the Sourced class because a digit, a quote or an attribution cue is a string property.
+
+Three layers decide Sourced, in this order, and the model is the weakest of them: (1) the writer's own statement-level citation (§3.5: a cited sentence is Sourced whatever anyone later thinks); (2) the rule layer; (3) the model classifier, which only splits what is left into Reasoning, Common and Internal. §4.1 measured why: on cue-less technical findings the model lightened 11 of 16, including one false claim. So every statement a lighter class would pass also gets the **falsity veto**: the knowledge judge's three samples. A Reasoning statement fails when a majority call it `false` (one rewrite, then removal) unless its section's cited passages explicitly state it, in which case the sources outrank the model; `needs_source` never fails a Reasoning statement. A Common statement passes only when all three samples call it true and common; `needs_source` reclasses it Sourced; a majority `false` fails it. §4.5 measured the rules: the "any sample" rule rejected two true explanations on a lone dissent, which is the bug this design exists to remove, and the majority rule caught every false statement the arm was given. The veto costs three two-second calls per statement (§4.6) and is what makes a misclassification cost accuracy nothing: a true statement that lands in a lighter class gets a lighter but still truthful check; a false one meets the veto.
+
+### 3.2 What stops the loop, by construction
+
+- **One class, one check, per statement.** The number of model calls is `sum over statements of calls(class)`, fixed before the first call: Sourced 1 judge call (batched per section as today) + at most 1 research recheck + at most 1 rewrite recheck; Reasoning 1; Common 3 (one request with n = 3, or three cheap calls); Internal 0; classification 1 per 20 statements.
+- **No budget restoration.** `MACHINE_ATTEMPTS` becomes per claim for its life, not per fingerprint: new evidence may change a verdict, never the count. `replay.rs:93-95` goes.
+- **Failure ends in removal, not in a queue.** A Sourced statement still unsupported after its one rewrite is cut from the lesson by the sentence-level edit the repair already knows how to make (`repair/confine.rs`, `Protected`); a Common statement the knowledge judge calls false is cut; a Reasoning statement contradicted after its rewrite is cut. A cut is a terminal state (`ClaimState::Removed { by: Machine }`), already in the domain. The lesson publishes with every surviving statement checked by the check its class names. There is no `NeedsReview` for the machine's own claims; the user's review surface stays for user-added evidence, confirmations and reopenings, which are user actions.
+- **No whole-lesson re-verification after a repair.** Only the sentences a repair changed are re-extracted and checked (the successor and children logic in `successor.rs` already identifies them); unchanged claims keep their receipts. Today's loop re-runs `verify_with_references` on the whole candidate.
+- **One page, not a walk.** Pass B reads one relevance page per Sourced claim (`page_one`), then web research once, then the rewrite. `deepen`'s break-even walk and the standing walk go: half of today's calls were pages off the subject, and the walk cannot find a statement no page makes.
+- **The standing gate labels, it never demotes.** A supported Sourced claim keeps its verdict; the gate attaches the label the source-provenance table already defines ("per <source>", "according to <source>", "a practice, per <source>") and the learner sees it. A quotation attributed to a source and supported by that source's own text is `Attributed` by identity. `InsufficientStanding` stops being a verdict kind that holds a lesson.
+
+Bound: for a lesson of N statements with class shares (s, r, c, i), calls ≤ N/20 + s·N·3 + r·N + 3·c·N. For `f36400bc`: 6 + 108 + 45 + 24 = 183 at the maximum (every Sourced claim researched and rewritten), against 739 and counting today, and the pass count is 1 plus one confined recheck.
+
+### 3.3 Common-knowledge bridging inside a Sourced claim (Josh's Tesseract case)
+
+"Tesseract is an OCR engine that reads pixels into text" is Sourced (a name). The passage says the package contains an OCR engine and not what OCR does. The strict judge is right that the mechanism is "missing", and the lesson is right to say it. The judge therefore reports parts: `stated` (Tesseract is an OCR engine, passage-0), `common` (OCR reads pixels into text), `specific_missing` (none). Pass = every part stated or common, at least one stated. "Tesseract is an OCR engine written by Microsoft in 2019" has `specific_missing` parts (Microsoft, 2019) and fails. The knowledge judge's definition of common (no figure, date, version, product behaviour, measured result, quoted wording) is the same in both places, so the bridge cannot be used to smuggle a specific. Measured in §4.
+
+### 3.4 The writer changes
+
+- The writer already emits `sourceIndex` and `quote` per block (`generation/lesson.rs:95-101`). It gains one rule in `lesson_rules.rs`: a specific (figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence whose cited excerpt contains it; otherwise write the general form. This shrinks the Sourced class to what the writer actually took from a source, which is the only thing a source can confirm.
+- The coverage audit stops adopting `missingAssertions` as claims (`inventory_checkpoint::complete_inventory`). It keeps its job as a *representation* check of the inventory and reports gaps as findings for the teaching review, which is where "the rubric presupposes X" belongs. 32 of 105 claims today, nearly all Internal or Reasoning, came from it.
+- The inventory prompt (`inventory.rs`) extracts statements with a proposed class; the rule layer corrects the class; nothing is extracted from rubric fields, reflection prompts, quiz options or the lesson's quotation of the course brief (the source of the 7 "contradictions" in the Pydantic lesson).
+
+### 3.5 Sources that back statements (Josh's requirement of 2026-11-01)
+
+"Every statement that needs a source must be attached to a source that actually backs it." Four defects, each fixed where it starts:
+
+1. **One citation per section.** The writer's schema gives a block or question exactly one `sourceIndex` and one `quote` (`generation/lesson.rs:95,100`); `citations.rs:103-120` then compares every claim of the section with that one citation, and pass B goes looking across the course for the rest. Fix: the writer cites **per Sourced sentence**. The block schema gains `citations: [{ sentence: <verbatim sentence>, sourceIndex, quote }]`, one entry for every sentence that states a specific or an attribution, with `quote` a verbatim span of that source (the quote check at `teaching.rs:198-215` already refuses a quote the source does not contain). A sentence with a specific and no citation is a draft defect the teaching review returns to the writer, as it returns an unmatched quote today. The Sourced check then compares the sentence with its own quote and that quote's neighbourhood (the containing passage), and with nothing else. Attribution and corroboration become one call against one passage of one source. The inventory's job for Sourced sentences shrinks to locating them; the classifier's rule layer and the writer's citations should agree, and a Sourced sentence without a citation is the measured gap.
+2. **Non-claims in the ledger.** The inventory reads rubric fields, reflection prompts, quiz options and the lesson's quotation of the course brief (`inventory.rs` "Inspect every provided passage, including headings, rubrics…"), and the coverage audit adopts its `missingAssertions` as claims (32 of 105 here; the 7 "contradictions" in the Pydantic lesson are claims that the brief's phrase appears in a passage). Fix: the inventory reads only block bodies and answer explanations; the coverage audit reports gaps as teaching findings, never as claims; a statement classed Internal is counted in the report and never written to `learning_lesson_claims`. The ledger holds Sourced, Reasoning and Common statements only, each with its class.
+3. **Off-subject comparison.** 104 of 105 saved pages for `f36400bc` came from the lesson's own 17 sources, and still 52% of checks were off the subject, because the walk ranks every passage of every lesson source against the claim and reads on until the lists end: once the three relevant papers are exhausted the OWASP page, the Pydantic docs and a bibliography are "next by relevance", and the judge on them produces not only wasted calls but false contradictions (the 27B replay called a claim about the RAG study "contradicted" by the text-classification paper it was shown). Fix: a Sourced sentence is compared with its cited passage (1 above); a Reasoning sentence with its section's cited passages; nothing is compared with a passage retrieved from a source the section does not cite. Research, when the cited source does not back the sentence, fetches a page *for that sentence* and that page becomes its citation or the sentence loses its specific. The relevance walk (`deepen`, `standing`) is deleted; `page_one` stays for the research recheck only.
+4. **Pages that are not sources.** Course `2a86210d` holds 46 versions; 20 are under 400 words, among them the Clarivate login page (65 words), the IEEE Xplore home page (126), a Google Scholar "sorry" page (160), the Scopus welcome page (162), the ACM Digital Library home page via web.archive, and abstract-only pages (297 words) standing in for papers. Fix at admission (`references/web_research.rs` capture, `sources.rs`): a deterministic gate before any page is saved: refuse a page whose text is under a floor for its kind (an abstract page is a pointer, not a source: follow it to the full text or refuse it), whose title or URL is a login, search, "sorry", home or listing page, or whose link density marks it as a directory; the selector (`research.rs::SELECT_SYSTEM`) keeps choosing among what passes. Existing versions that fail the gate are marked `not_a_source` and excluded from citation and retrieval, listed for the user to delete. The standing gate's level for a paper's own text is `Primary` for statements attributed to that paper (identity), so "Document Parsing Unveiled" stops being "distrusted" for what it says itself.
+
+Measured: §4 "targeted" compares the same strict judge on the same Sourced claims against (a) the page the walk last reached and (b) the best windows of the lesson's own sources, the nearest stand-in for a statement-level citation that the saved data allows.
+
+### 3.6 Research bounded by a count fixed before the first fetch
+
+Today `scrutiny::review` (`scrutiny.rs:116`) gathers every `FollowCitation` link that any insufficient claim's supporting passages cite, deduplicated by page and otherwise uncounted, and `research::expand` (`research.rs:377-420`) fetches those first and then whatever the selector picks from the web searches, once per claim *and evidence fingerprint*; since a fetched page is new evidence, the next round has new fingerprints. Nothing in that path counts pages. A copy of the database taken tonight shows course `c7cb9288` with 216 active sources and course `2a86210d` with 46, among them a Slack join page, `aspnet/Entropy` on GitHub and the Pydantic documentation site page by page.
+
+Replaced by:
+
+- **Per Sourced statement, at most one research round, and in it at most two pages**: the selector's first choice among the search results for that statement's gap, and, when the statement names an owner (a product, a standard, a study), one owner-site result. A page is fetched only after the admission gate of §3.5(4) passes it on the search result's own facts (registry, title, kind). The fetched page's passage becomes the statement's citation or the statement loses its specific (§3.1). No second round: a statement research did not back is rewritten once and then removed, whatever evidence later rounds might have found.
+- **Per lesson, a count known before the first fetch**: at most `2 × (Sourced statements whose cited passage failed)`, written to the job's progress ("Looking up 7 statements on the web, at most 14 pages") before any request. For `f36400bc` that is at most 6 pages (3 statements failed on their own sources in §4.5); the course would never have reached 46.
+- **The follow-the-links path is deleted**: `NextStep::FollowCitation`, `Scrutiny::follow`, `Round::follow` and the chain fetch in `research::expand` go, with their tests. A citation inside a supporting passage is shown to the user as a link on the claim card, which is what a citation is for; it is not a crawl frontier. `SearchOwner` survives as the one owner-site search above; `FetchNewer` and `SearchIndependent` go with the standing gate's demotions (§3.2).
+- **What research adds is labelled**: a source added by research is `added_by = research`, cited by the statement that asked for it, and listed under that lesson; a research source cited by no published statement is a candidate for removal and is shown as such.
+
+**The junk already saved.** The admission gate of §3.5(4) runs once over every existing version as a sweep (a maintenance job, no model call): a version it refuses is marked `not_a_source`, leaves retrieval and citation at once, and is listed for deletion with its reason ("login page, 65 words", "home page", "abstract only: 297 words"). A research-added version that no lesson cites is listed as "added by research for a statement that no longer needs it" and can be removed in bulk; nothing is deleted without the user, as the 2026-10-18 design decided, but nothing undeleted is ever compared with a claim again. The sweep's counts for the two courses tonight: at least 20 of 46 and, by the same floor, a majority of the 216.
+
+Related, not designed around: the "database is locked" failures of 2026-10-26 have a root cause being fixed on `fix/source-save-lock` (every source save shingled every other source inside the write transaction, `trust::capture::relate`). `capture::record` will take a `&Comparison` from a `compare`/`compare_all` step before the transaction; the admission gate of §3.5(4) runs before `compare`, so a refused page is never shingled at all.
+
+### 3.7 What goes, and why
+
+- `walk.rs::deepen` and `Depth::BreakEven`, `standing.rs` (the standing walk), `scrutiny.rs`: they exist to find a page for a statement; for Sourced claims one relevance page plus research is the whole search, and for the other classes there is nothing to find.
+- `general_knowledge.rs`'s regex and D1 "the machine proposes, the user accepts": replaced by the knowledge judge with a unanimity rule and the specifics guard. D1 was decided when the only alternative was a regex; the measured judge (§4) is the alternative.
+- `VerdictKind::InsufficientStanding` as a holding verdict; `ClaimState::Queued` for machine claims; `Decision::NeedsReview` for machine outcomes. 2026-10-16 §2.1 is kept for its intent (nothing unchecked reaches the learner) and dropped for its mechanism (hold the lesson for a human): a statement that fails its check leaves the lesson.
+- `MACHINE_ATTEMPTS` per fingerprint (`replay.rs:93-95`).
+
+### 3.8 What stays, reused
+
+`ClaimLedger` and its events (add `Classified { class, by: Rule | Model }`), `ClaimChecks` receipts keyed by (unit, statement, passages), `ClaimChecker` strict policy and `ClaimReceipt`, `page_one`, `research::expand`, `repair::candidate` with `confine`/`Protected`, `successor::heirs`, `provenance_gate` as a labeller, `teaching::review_lesson`, `lesson_progress`. The consistency and knowledge judges are two new `ClaimChecker` policies (`CheckPolicy::Consistency`, `CheckPolicy::Knowledge`) beside `Strict` and `Fidelity`, so sizing, retries and receipts are inherited.
+
+## 4. Evidence from the replay
+
+Replay: `scratchpad/lesson-design/replay_classes.py` (to be moved under `evals/grounding/` with the planted set; the lesson's own claims stay out of the repo). Model: `/models/Qwen3.8-27B-Q5_K_S.gguf`, read from `/v1/models` and written on every row. Inputs: the 105 saved claims of `f36400bc` with the passage each was last judged against (`claim-evidence-v2` spans sliced from `learning_source_versions.full_text`, 104 of 105 verified by sha256), the three claims Josh cited with their saved evidence from `learning_lesson_claims.evidence_json`, and 17 planted statements.
+
+Every row below was read by hand (`run1/*.jsonl`); the counts are the mechanical tally after that reading.
+
+### 4.1 Classification (122 statements: 105 real, 17 planted)
+
+| Layer | Decided | Toward a stricter class | Toward a lighter class |
+|---|---|---|---|
+| rule (digit, quoted wording, attribution cue, meta prefix) | 46 | 10 (cost only: "the source image", "says") | 0 |
+| model, on the 76 the rules left | 76 | 9 | 11 Sourced → Reasoning/Common; 3 Internal → Reasoning; 5 Reasoning → Common |
+
+Exact agreement with the hand labels 90/122 (74%). The 11 lightened Sourced statements are all cue-less technical findings ("Small errors in cell bounding boxes may lead to incorrect pairing between structure tokens and text content", "The unified paradigm … processes the page in a single pass"); the last of those is one of the three real catches, so a model-only classifier would have moved a false claim to a lighter check. Every planted specific was caught by the rule layer alone (`23%`, `2019`, `millimetres`, `2017`, the quoted survey sentence); "Donut is an OCR-free model…" has no cue and the model classed it Sourced. Consequence for the design (§3.1, §3.5): the Sourced class is declared by the writer's citations and the rule layer, never discovered by the model; the model only splits the remainder, and every lighter class carries a falsity veto (§4.6).
+
+### 4.2 Strict judge on Sourced claims, against the page the walk had saved
+
+36 real Sourced claims, the app's strict prompt, the 27B: 9 supported, 25 unsupported, 2 contradicted, 5.0 s a call. Planted: the five invented specifics unsupported, the genuine quotation supported.
+
+This is not a like-for-like comparison with Haiku's verdicts: `claim-evidence-v2` holds the *last* page the walk reached, not the page that supported the claim, so "Spans indicate the element's logical position…" (verified by Haiku on the Microsoft page) was shown a mathematical-expression-recognition passage, and "The survey notes that modular systems face error propagation" the OWASP page. Both 27B "contradictions" are artefacts of that: one is the RAG study "contradicted" by the text-classification paper. The app's own cross-tally for the same 36: 12 that the 27B rejects were demoted by the standing gate after Haiku had supported them (`insufficient_standing`), 5 were Haiku-verified, 8 Haiku-unsupported; of the 9 the 27B supports, 4 were gate-demoted, 3 verified, 2 Haiku-unsupported. What the page is decides more than which model judges.
+
+### 4.3 Consistency judge on Reasoning claims (48: 45 real, 3 planted)
+
+40 consistent, 7 unfounded specific, 1 contradicted (the planted "an early OCR error cannot reach later stages because each later stage re-reads the page image", with the survey's error-cascading sentence as the reason). The planted smuggled specific ("Because Tesseract 5.3 switched to an LSTM recogniser…") was flagged unfounded specific; the planted true explanation passed. Of the 7 unfounded-specific rows, 1 is a real catch ("Fine-tuning helped the vision-based model…": the passages say the evaluation ran without fine-tuning), 1 is the plant, and 5 are mechanisms stated in general terms ("exposes OCR tokens and bounding boxes at every stage") that the prompt's boundary let the judge call specifics; 3 of those 5 were judged against section 5's saved pages, which are API-version and metrics passages, not the Microsoft grounding page the section cites. §4.5 measures the tightened boundary; §3.5 removes the off-subject pages.
+
+### 4.4 Knowledge judge on Common claims (16: 8 real, 8 planted), closed-book, three samples each
+
+16 of 16 as the labels say, unanimous in all 48 samples, 2.0 s a sample: "2+2=4", "OCR reads the pixels of a page image into text", "Tesseract is an OCR engine that reads pixels into text" and "a page number identifies which page…" pass; "OCR engines convert spoken audio into text", "a confidence score tells a reviewer where on the page…", "2+2=5" and "a bounding box is measured in seconds" fail, each with a reason that names the actual definition.
+
+### 4.5 Targeted citation versus the walk's page; the common-knowledge bridge; the falsity veto
+
+**Targeted citation versus the walk's page.** The same strict prompt, the same 36 Sourced claims, the same 27B, with the evidence replaced by the best two 1,500-character windows of the lesson's own 17 sources by word overlap with the claim (`run1/targeted.jsonl`):
+
+| Evidence shown | Supported | Unsupported | Contradicted | Seconds a call |
+|---|---|---|---|---|
+| the page the walk last saved (`claim-evidence-v2`) | 9 | 25 | 2 | 5.0 |
+| best windows of the lesson's own sources | 33 | 3 | 0 | 2.8 |
+
+22 claims moved from unsupported to supported, both "contradictions" vanished, and the planted specifics stayed rejected in both settings. The 3 still unsupported: the fine-tuning overstatement (real), "Unified vision-language models perform the mapping … with fewer handoffs … and with their own deployment cost" (the window states the mapping, not the cost sentence, which is elsewhere in the survey), and "paired with the wrong row" where the source says "incorrect pairing between structure tokens and text content" (the lesson sharpened the source; the rewrite path fixes that). One of the 33 supports, "processes the page in a single pass and is the opposite of the modular approach", rests on the taxonomy passage while the survey's later section qualifies it; that is judge noise neither pipeline removes, and the reason to keep a contrary-passage read within the cited source (one call, the next-best window) rather than a course-wide walk. Word-overlap windows are a floor: a writer's statement-level citation names the passage outright.
+
+**The common-knowledge bridge (§3.3).** The part-wise judge on the five claims Josh cited, with the evidence the app had saved for them (`learning_lesson_claims.evidence_json`), and on five planted claims (`run1/bridge.jsonl`):
+
+| Claim | App's verdict (its reason) | Bridge parts | Bridge decision |
+|---|---|---|---|
+| Tesseract is an OCR engine that reads pixels into text. | unsupported ("does not state that it reads pixels into text") | stated · common | supported with common knowledge |
+| Donut is an OCR-free model that goes from image to output with a single Transformer. | unsupported ("Passage-1 is the Tesseract README and does not mention Donut") | stated · stated | supported (the Donut passage was passage-0) |
+| Donut is an OCR-free document extraction model family. | unsupported | stated · specific_missing ("model family") | unsupported, fairly |
+| Donut is an OCR-free document understanding model. | unchecked | stated | supported |
+| With a multimodal LLM, you can send a page image to a vision-capable model and constrain its reply with a Pydantic type. | unsupported ("does not explicitly connect…") | stated · stated | supported |
+| planted: …improved retrieval recall by 23%… | — | specific_missing | unsupported |
+| planted: …introduced by Google in 2019. | — | contradicted | unsupported |
+| planted: …first proposed in 2017 and reached human parity… in 2021. | — | specific_missing · specific_missing | unsupported |
+| planted: Tesseract is an OCR engine written by Microsoft in 2019 that reads pixels into text. | — | stated · contradicted · contradicted · common | unsupported |
+| planted: Tesseract is an OCR engine, and OCR turns the pixels of a page image into text. | — | stated · common | supported with common knowledge |
+
+Ten of ten as the design needs: the common part bridges, a specific never does, and an invented specific beside a true common part sinks the whole claim. Two of the app's rejections were the judge reading the wrong one of two passages, which a sentence-level citation removes. The same part-wise judge was also run on the 27 real Sourced claims against the walk's off-subject page; there it labelled study quotations "contradicted" by the text-classification paper more readily than the strict judge had. The bridge therefore runs only on a claim's cited passage, never on a retrieved one.
+
+**The falsity veto (§3.1), 56 statements: the 45 Reasoning claims and the 11 Sourced claims the classifier lightened, three closed-book samples each** (`run1/veto.jsonl`, 2 s a sample):
+
+| Rule | Passes | Vetoed `false` | `needs_source` |
+|---|---|---|---|
+| any sample `false` | 45 | 8 | 3 |
+| majority (2 of 3) | 48 | 5 | 3 |
+
+Every veto read by hand. Majority `false`: the lightened real catch "the unified paradigm processes the page in a single pass and is the opposite of the modular approach" (2 of 3: the backstop catching exactly the case it was added for); "Fine-tuning helped the vision-based model…" (3 of 3, agreeing with the consistency judge); two coverage-audit injections that no writer wrote ("…(stated as unconditional, not as something that can happen)" and "…the passage says neither paradigm is free"); and two muddled bounding-box sentences ("A stored bounding box allows an incorrectly placed box to be traced back to the field it was assigned to", "…shows the reviewer when the extractor read the wrong region") whose objection is pedantic and fair: a box records where a value came from; the record that stores it with the field is what allows the tracing. Those two get one rewrite, not removal. Two true explanations ("A downstream text parser does not correct a misread date merely because the misread value looks plausible", "Provenance matters in healthcare review because a reviewer can jump to the highlighted region") drew a lone dissent and pass by majority: the "any sample" rule would have been the checker rejecting true statements, which is the bug this design exists to remove. All 9 lightened true findings pass.
+
+Two rules follow. (1) `needs_source` never fails a Reasoning statement: it flagged "The feature that changes the outcome between such systems is where a failure can enter…" as too vague to be textbook knowledge, which is true of the extracted form and says nothing about its truth; for Reasoning the veto is a falsity veto only, and `needs_source` reclasses only a Common statement. (2) A statement its section's passages explicitly state is not subject to the closed-book veto: the judge's generic view that "pipeline stages are typically isolated, errors handled locally" contradicts the survey's own "inevitably faces error propagation"; what the course's sources say outranks what the model remembers (Mallen et al.: retrieval over parametric memory wherever retrieval has something).
+
+**The consistency judge with the mechanism/specific boundary stated** (`run1/consistent2.jsonl`, the prompt of record): 48 rows, 42 consistent, 3 contradicted, 3 unfounded specific. Against the first arm: the four over-strict mechanism rows ("exposes OCR tokens and bounding boxes at every stage", "two systems can produce identical output while one fails visibly…", "a stored bounding box allows … traced back", and one more) became consistent; "Fine-tuning helped…" moved from unfounded specific to contradicted, the right label; the coverage injection "(stated as unconditional…)" became contradicted ("the passages describe error cascading as a potential outcome rather than unconditional"), correctly; the planted contradiction, smuggled specific and true explanation all held. The two remaining real unfounded-specific rows ("jump to the highlighted region", "shows the reviewer when…") were judged against section 5's off-subject saved pages and follow the Sourced path to the Microsoft grounding page, which states the first ("jump directly to the source paragraph").
+
+### 4.6 Calls
+
+For this lesson as replayed: classification 7, strict judge 36 (2.8 s each on a cited passage), consistency 45 (7 s), knowledge 24 (2 s), falsity veto 135 (2 s) = 247 calls, about 14 minutes of 27B time, all counted before the first is made; against 739 saved checks at the time of the dump (and 1,179 for the other job by its second pass), with no end in sight. Under the design as written (no coverage-audit injections, writer-cited Sourced sentences) the lesson has 73 statements, not 105, and the count falls below 200.
+
+## 5. Build plan on the branch
+
+1. `lattice-core/domain/learning/claim_review`: `Class` enum, `Classified` event, `MACHINE_ATTEMPTS` per claim, `Removed { by: Machine }` reachable from a failed check (domain tests first: a failed claim's attempts never rise; a lesson with a removed claim is `Ready`).
+2. `content_verification/classify.rs`: the rule layer (pure, tested on the planted set) and the model layer as a `structured_call`.
+3. `CheckPolicy::Consistency` and `CheckPolicy::Knowledge` in `claim_verification` with the prompts of §4; receipts as today.
+4. `evidence_checks`: pass A + `page_one` only; `deepen`, `standing` and `scrutiny` deleted with their tests.
+5. `provenance_gate::weigh` returns labels only.
+6. `repair_loop`: decide → repair once → recheck the changed sentences → remove → publish. `NeedsReview` only from user state.
+7. `inventory`/`coverage`: no adoption; no extraction from rubric, reflection, options, brief quotations.
+8. `lesson_rules` and the block schema: statement-level `citations` and the specifics rule for the writer (§3.5).
+9. `research`: the per-statement and per-lesson counts of §3.6; `FollowCitation`, `Scrutiny::follow` and the chain fetch deleted; the admission gate before `compare` (expect `capture::record(&Comparison)` from `fix/source-save-lock`); the sweep over existing versions.
+10. Evals: the planted set and the 85-claim gold set under `evals/grounding/`, with the replay script; acceptance = every planted false rejected, every planted true passed, strict-judge accuracy on gold unchanged.
