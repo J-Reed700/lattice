@@ -164,57 +164,104 @@ fn repairs_the_rules_do_not_allow_are_refused() {
             rewrite(2, true, RepairOutcome::SupersededByUser),
         )
         .unwrap();
-    let mut no_source = claim("c2");
-    no_source
-        .append(machine(2), checked(Some(VerdictKind::NoSource), "v1"))
+    let mut proposed = claim("c2");
+    proposed
+        .append(
+            machine(2),
+            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
+        )
         .unwrap();
-    assert!(!no_source.may_repair());
-    assert!(no_source
+    assert!(!proposed.may_repair());
+    assert!(proposed
         .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
         .is_err());
 }
 
 #[test]
-fn kinds_the_machine_cannot_repair_research_once_or_go_to_the_user() {
-    for kind in [
-        VerdictKind::CouldNotJudge,
-        VerdictKind::GeneralKnowledgeProposed,
-    ] {
-        let mut entry = claim("c1");
-        entry.append(machine(2), checked(Some(kind), "v1")).unwrap();
-        assert!(entry.state().awaits_user(), "{:?}", entry.state());
+fn a_repair_not_attempted_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    entry
+        .append(
+            machine(3),
+            rewrite(
+                1,
+                false,
+                RepairOutcome::NotAttempted {
+                    reason: "another claim stands on its sentence".into(),
+                },
+            ),
+        )
+        .unwrap();
+    assert_eq!(entry.state(), &open(VerdictKind::Unsupported, 1));
+    assert!(entry.may_repair() && entry.next_repair_escalates());
+    entry
+        .append(machine(4), rewrite(2, true, RepairOutcome::Removed))
+        .unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_is_the_machines() {
+    let mut proposed = claim("c1");
+    proposed
+        .append(
+            machine(2),
+            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
+        )
+        .unwrap();
+    assert!(proposed.state().awaits_user(), "{:?}", proposed.state());
+
+    for kind in [VerdictKind::CouldNotJudge, VerdictKind::NoSource] {
+        let mut entry = claim("c2");
+        entry
+            .append(machine(2), checked(Some(kind.clone()), "v1"))
+            .unwrap();
+        assert_eq!(entry.state(), &open(kind, 2));
+        assert!(entry.may_repair());
     }
 
-    let mut entry = claim("c2");
-    entry
-        .append(machine(2), checked(Some(VerdictKind::NoSource), "v1"))
-        .unwrap();
-    assert!(entry.may_research());
+    // Research runs once per fingerprint; a round that finds nothing leaves
+    // the claim to the machine, which rewrites its sentence and then takes
+    // it out.
     let research = |found| ClaimEvent::Researched {
         queries: vec!["boiling point sea level".into()],
         sources_added: vec!["v2".into()],
         passages_found: found,
         round_ms_per_claim: None,
     };
+    let mut entry = claim("c3");
+    entry
+        .append(machine(2), checked(Some(VerdictKind::NoSource), "v1"))
+        .unwrap();
+    assert!(entry.may_research());
     entry.append(machine(3), research(1)).unwrap();
     assert!(!entry.may_research(), "once per fingerprint");
     entry
         .append(machine(4), checked(Some(VerdictKind::NoSource), "v1"))
         .unwrap();
-    assert!(entry.state().awaits_user(), "same evidence after research");
+    assert_eq!(
+        entry.state(),
+        &open(VerdictKind::NoSource, 2),
+        "same evidence after research"
+    );
+    assert!(entry.may_repair());
 
-    let mut entry = claim("c3");
+    let mut entry = claim("c4");
     entry
         .append(machine(2), checked(Some(VerdictKind::NoSource), "v1"))
         .unwrap();
     entry.append(machine(3), research(0)).unwrap();
-    assert!(matches!(
-        entry.state(),
-        ClaimState::Queued {
-            kind: VerdictKind::NoSource,
-            ..
-        }
-    ));
+    assert_eq!(entry.state(), &open(VerdictKind::NoSource, 2));
+    assert!(entry.may_repair() && !entry.may_research());
 }
 
 #[test]
@@ -975,7 +1022,10 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
     };
     let mut reasoning = claim("c1");
     reasoning
-        .append(machine(2), passed(CheckResult::Consistent, vec![seen("v1")]))
+        .append(
+            machine(2),
+            passed(CheckResult::Consistent, vec![seen("v1")]),
+        )
         .unwrap();
     assert_eq!(reasoning.state(), &ClaimState::Consistent { at: 2 });
     assert_eq!(reasoning.latest_failure(), None);

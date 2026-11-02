@@ -344,8 +344,7 @@ impl ClaimCounts {
                 ClaimState::ResolvedByEvidence { .. }
                 | ClaimState::Consistent { .. }
                 | ClaimState::GeneralKnowledge {
-                    by: Actor::Machine,
-                    ..
+                    by: Actor::Machine, ..
                 } => &mut counts.verified,
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
                 ClaimState::GeneralKnowledge {

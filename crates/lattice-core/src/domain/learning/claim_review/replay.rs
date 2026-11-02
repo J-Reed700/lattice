@@ -53,8 +53,8 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
 }
 
 /// A failure of a claim that is not Open: the machine has the attempts the
-/// claim has left, for the kinds a rewrite or research can address. A
-/// repairable claim with none left waits for the user.
+/// claim has left, for every kind but the two the user answers, a proposal
+/// and a dispute. A repairable claim with none left waits for the user.
 fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimState {
     let budget = cursor.attempts_left;
     match kind {
@@ -62,14 +62,15 @@ fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimSta
         VerdictKind::Unsupported
         | VerdictKind::Contradicted
         | VerdictKind::NoSource
+        | VerdictKind::CouldNotJudge
         | VerdictKind::InsufficientStanding { .. } => ClaimState::Open {
             kind,
             reason,
             machine_attempts_left: budget,
         },
-        VerdictKind::CouldNotJudge
-        | VerdictKind::GeneralKnowledgeProposed
-        | VerdictKind::Disputed { .. } => queued(kind, reason),
+        VerdictKind::GeneralKnowledgeProposed | VerdictKind::Disputed { .. } => {
+            queued(kind, reason)
+        }
     }
 }
 
@@ -97,10 +98,10 @@ pub(super) fn charge(cursor: &mut Cursor, kind: VerdictKind, reason: String) -> 
 }
 
 /// §3 `after_machine_failure`, applied to a failing check of an Open claim:
-/// the check that decides a repair uses an attempt; a kind the machine
-/// cannot repair, or no source after research, goes to the user. New
-/// evidence may change the verdict; it never restores the budget (claim
-/// classes design §3.2), so a claim's attempts only ever fall.
+/// the check that decides a repair uses an attempt; a kind the user answers
+/// goes to the user. New evidence may change the verdict; it never restores
+/// the budget (claim classes design §3.2), so a claim's attempts only ever
+/// fall.
 fn after_machine_failure(
     cursor: &mut Cursor,
     kind: VerdictKind,
@@ -111,11 +112,6 @@ fn after_machine_failure(
     match kind {
         kind if budgeted(&kind) && charged => charge(cursor, kind, reason),
         kind if budgeted(&kind) && machine_attempts_left > 0 => ClaimState::Open {
-            kind,
-            reason,
-            machine_attempts_left,
-        },
-        VerdictKind::NoSource if !cursor.researched => ClaimState::Open {
             kind,
             reason,
             machine_attempts_left,

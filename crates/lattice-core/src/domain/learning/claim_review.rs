@@ -207,13 +207,18 @@ impl VerdictKind {
         }
     }
 
-    /// A failure the machine may rewrite: no passage supports the claim, or
-    /// one contradicts it. A claim whose support is below the bar is never
+    /// A failure the machine answers, by a rewrite and then by taking the
+    /// claim's sentence out (claim classes design §3.2): no passage supports
+    /// the claim, one contradicts it, none was found, or the checker could
+    /// not judge it. A claim whose support is below the bar is never
     /// rewritten or removed for lack of standing (claim sources design
     /// §10.4): research may look for a stronger source, then it waits for
     /// the user.
     pub fn is_repairable(&self) -> bool {
-        matches!(self, Self::Unsupported | Self::Contradicted)
+        matches!(
+            self,
+            Self::Unsupported | Self::Contradicted | Self::NoSource | Self::CouldNotJudge
+        )
     }
 
     /// A passage, the local checker's or the Verifier's, says otherwise.

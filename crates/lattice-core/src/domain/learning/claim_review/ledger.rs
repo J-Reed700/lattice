@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::replay::{apply_check, charge, hand_to_user, queued, redecided, reopened, Cursor};
+use super::replay::{apply_check, charge, hand_to_user, redecided, reopened, Cursor};
 use super::{
     Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
     EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind,
@@ -303,8 +303,8 @@ impl ClaimLedgerEntry {
         ) && !self.may_research()
     }
 
-    /// The next repair is the escalated one (`repeatedDefects`): it is the
-    /// claim's last attempt on this evidence.
+    /// The next repair is the escalated one, the machine's last on the claim:
+    /// it takes the claim's sentence out.
     pub fn next_repair_escalates(&self) -> bool {
         matches!(
             self.state(),
@@ -323,8 +323,7 @@ impl ClaimLedgerEntry {
         matches!(
             &cursor.state,
             ClaimState::Open { kind, .. }
-                if kind.is_repairable()
-                    || matches!(kind, VerdictKind::NoSource | VerdictKind::InsufficientStanding { .. })
+                if kind.is_repairable() || matches!(kind, VerdictKind::InsufficientStanding { .. })
         ) && !cursor.researched
             && !cursor.repair_pending
     }
@@ -469,19 +468,7 @@ impl ClaimLedgerEntry {
                 }
             }
             ClaimEvent::Checked(check) => apply_check(&mut next, check, false, at),
-            ClaimEvent::Researched { passages_found, .. } => {
-                next.researched = true;
-                if let ClaimState::Open {
-                    kind: VerdictKind::NoSource,
-                    reason,
-                    ..
-                } = &next.state
-                {
-                    if *passages_found == 0 {
-                        next.state = queued(VerdictKind::NoSource, reason.clone());
-                    }
-                }
-            }
+            ClaimEvent::Researched { .. } => next.researched = true,
             ClaimEvent::RepairAttempted {
                 attempt,
                 escalated,
@@ -623,7 +610,7 @@ impl ClaimLedgerEntry {
                 }
             }
             RepairOutcome::Rejected { .. } => next.state = charge(next, kind, reason),
-            RepairOutcome::NotAttempted { .. } => next.state = queued(kind, reason),
+            RepairOutcome::NotAttempted { .. } => next.state = charge(next, kind, reason),
             RepairOutcome::SupersededByUser => {}
         }
         Ok(())
