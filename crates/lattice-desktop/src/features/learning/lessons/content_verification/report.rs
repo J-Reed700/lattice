@@ -19,7 +19,6 @@ impl LessonVerificationReport {
     ) -> bool {
         self.checker_model == llm.model_name()
             && self.validate(lesson_id, lesson).is_ok()
-            && self.sources.len() == sources.len()
             && self.sources.iter().all(|binding| {
                 sources.iter().any(|source| {
                     source.id == binding.id && digest(&source.excerpt) == binding.sha256
@@ -140,10 +139,9 @@ impl LessonVerificationReport {
     }
 }
 
-/// The publication gate's refusals when the references moved on after the
-/// lesson was verified. The job verifies again instead of failing (§12).
-const SOURCES_CHANGED: &str =
-    "The reference collection changed during verification. Prepare the lesson again.";
+/// The publication gate's refusals when a source the lesson was verified
+/// against moved on. A source added since is none of them (claim classes design
+/// §3.2). The job verifies again, once, instead of failing (§12).
 const SOURCE_INACTIVE: &str = "A verified source is no longer active; verify this lesson again.";
 const SOURCE_CONTENT_CHANGED: &str =
     "Verification source content changed; verify this lesson again.";
@@ -152,7 +150,7 @@ const SOURCE_CONTENT_CHANGED: &str =
 /// since verification.
 pub(in crate::features::learning) fn sources_changed(error: &AppError) -> bool {
     matches!(error, AppError::InvalidInput(message)
-        if [SOURCES_CHANGED, SOURCE_INACTIVE, SOURCE_CONTENT_CHANGED].contains(&message.as_str()))
+        if [SOURCE_INACTIVE, SOURCE_CONTENT_CHANGED].contains(&message.as_str()))
 }
 
 /// Called inside both publication transactions, before marking anything ready.
@@ -167,13 +165,6 @@ pub(in crate::features::learning) async fn persist_report(
         invalid("This lesson has no verification report. Prepare it again before publication.")
     })?;
     report.validate(lesson_id, lesson)?;
-    if !report.sources.is_empty() {
-        let active: Vec<String> = sqlx::query_scalar("SELECT active_version_id FROM learning_source_library WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL").bind(program_id).fetch_all(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
-        let expected: HashSet<_> = report.sources.iter().map(|s| s.id.as_str()).collect();
-        if active.iter().map(String::as_str).collect::<HashSet<_>>() != expected {
-            return Err(invalid(SOURCES_CHANGED));
-        }
-    }
     for source in &report.sources {
         let row = sqlx::query("SELECT v.full_text FROM learning_source_versions v JOIN learning_source_library s ON s.active_version_id=v.id AND s.program_id=v.program_id WHERE v.id=? AND v.program_id=? AND s.deleted_at IS NULL")
             .bind(&source.id).bind(program_id).fetch_optional(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?.ok_or_else(|| invalid(SOURCE_INACTIVE))?;

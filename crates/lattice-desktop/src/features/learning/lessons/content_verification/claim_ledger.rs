@@ -864,8 +864,7 @@ mod tests {
     #[test]
     fn a_reference_change_found_at_publication_is_verified_again_not_an_error() {
         assert!(sources_changed(&AppError::InvalidInput(
-            "The reference collection changed during verification. Prepare the lesson again."
-                .into()
+            "A verified source is no longer active; verify this lesson again.".into()
         )));
         assert!(sources_changed(&AppError::InvalidInput(
             "Verification source content changed; verify this lesson again.".into()

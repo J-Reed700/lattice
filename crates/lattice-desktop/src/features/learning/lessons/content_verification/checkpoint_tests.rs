@@ -589,9 +589,12 @@ async fn verified_lesson_checkpoint_is_bound_to_content_sources_policy_and_model
     let mut changed_sources = sources.clone();
     changed_sources[0].excerpt.push(' ');
     assert!(!report.reusable("lesson", &resumed, &changed_sources, &model));
+    // A source added since is not one the lesson was checked against; one it
+    // is bound to, gone, is.
     changed_sources = sources.clone();
     changed_sources.push(source());
-    assert!(!report.reusable("lesson", &resumed, &changed_sources, &model));
+    assert!(report.reusable("lesson", &resumed, &changed_sources, &model));
+    assert!(!report.reusable("lesson", &resumed, &[], &model));
     let mut obsolete = report.clone();
     obsolete.policy = "obsolete".into();
     assert!(!obsolete.reusable("lesson", &resumed, &sources, &model));

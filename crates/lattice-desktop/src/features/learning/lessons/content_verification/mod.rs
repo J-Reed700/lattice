@@ -93,6 +93,8 @@ mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
+mod rounds;
+pub(in crate::features::learning) use rounds::Rounds;
 mod section_checkpoints;
 mod sections;
 mod support_gate;
