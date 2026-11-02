@@ -7,6 +7,9 @@ use sqlx::SqlitePool;
 
 const MEMORY_POOLS: i64 = 20_261_101_130_000;
 
+/// `item_id`, `scope_kind`, `scope_key`, `valid_until`, `forgotten`.
+type AttributeRow = (String, Option<String>, Option<String>, Option<String>, i64);
+
 async fn before_pools() -> (SqlitePool, Migrator) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -71,7 +74,7 @@ async fn sharing_saved_before_pools_is_carried_over() {
 
     migrator.run(&pool).await.unwrap();
 
-    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, i64)> = sqlx::query_as(
+    let rows: Vec<AttributeRow> = sqlx::query_as(
         "SELECT item_id,scope_kind,scope_key,valid_until,forgotten FROM conversation_memory_attributes ORDER BY item_id",
     )
     .fetch_all(&pool)

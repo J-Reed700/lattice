@@ -755,7 +755,7 @@ async fn a_correction_or_a_forget_in_one_tutor_chat_reaches_the_course() {
     correct.text = Some("My interview moved to Monday.".into());
     let new = repo.knowledge(&correct).await.unwrap().items[0].id.clone();
 
-    assert_eq!(visible(&repo, "one").await, [new.clone()]);
+    assert_eq!(visible(&repo, "one").await, std::slice::from_ref(&new));
 
     let mut forget = request("one", "forget");
     forget.item_id = Some(new);
