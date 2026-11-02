@@ -14,6 +14,7 @@ use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 
 /// The cards of `program_id`'s deck due at `at`, as the Recall badge counts them.
 pub(super) async fn due_count(pool: &SqlitePool, program_id: &str, at: i64) -> Result<i64> {
@@ -37,6 +38,18 @@ pub(super) struct DueCard {
     /// The module its lesson sits in, or the card's own topic: what a session
     /// mixes across.
     pub group: String,
+}
+
+impl DueCard {
+    /// The card as the model reads it: the id to rate it by, its front and any
+    /// options.
+    pub(super) fn entry(&self) -> String {
+        let mut entry = format!("- card_id: {}\n  {}\n", self.id, self.front);
+        for (index, option) in self.options.iter().enumerate() {
+            let _ = writeln!(entry, "  {index}. {option}");
+        }
+        entry
+    }
 }
 
 /// The cards, soonest due first within each group, one group after another in
@@ -113,7 +126,12 @@ impl CourseTurn {
         .fetch_optional(&self.pool)
         .await
         .map_err(db)?
-        .ok_or_else(|| invalid("That card is not in this course's deck."))?;
+        .ok_or_else(|| {
+            invalid(
+                "That card is not in this course's deck. The turn's facts and due_reviews give \
+                 each card's card_id.",
+            )
+        })?;
         if row.get::<i64, _>("due_at") > at {
             return Err(invalid(
                 "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.",

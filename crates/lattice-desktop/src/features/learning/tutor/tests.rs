@@ -969,6 +969,19 @@ async fn the_tutor_s_reads_run_together_and_its_writes_run_alone() {
     assert_eq!(offered.len(), 7, "each tool once");
 }
 
+/// What the model reads, byte for byte. The digest moves only when one of them
+/// does, and then the tutor's evals run again (`evals/tutor`).
+#[test]
+fn the_tutor_s_prompt_and_tool_schemas_are_pinned() {
+    use sha2::{Digest, Sha256};
+    let schemas = serde_json::to_string(&super::tools::definitions()).expect("the schemas");
+    let digest = Sha256::digest(format!("{TUTOR_TEMPLATE}\u{0}{schemas}"));
+    assert_eq!(
+        format!("{digest:x}"),
+        "7c1ad1b16bc3d71fc5ce655b87daeada6345cdfd5b427709031621e4a15a7d3d"
+    );
+}
+
 /// A tutor must cite: every claim is checked as a chat's is, in a template
 /// that asks for citations and carries the study methods.
 #[test]
@@ -992,6 +1005,6 @@ fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     }
     assert!(
         TUTOR_TEMPLATE.ends_with("Answer:"),
-        "the reading takes the cue off"
+        "the learner's words end on the cue"
     );
 }
