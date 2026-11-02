@@ -13,6 +13,8 @@ import { ComposerControls } from '@/features/chat/components/ComposerControls';
 import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import type { ComposerState } from '@/features/chat/hooks/useComposer';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
+import { VOICE_STATUS, VoiceButton } from '@/features/voice/components/VoiceButton';
+import { useVoiceConversation } from '@/features/voice/hooks/useVoiceConversation';
 import { isUnavailableChatModel } from '@/utils/chatModelSelection';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -61,6 +63,11 @@ export function Composer({
     focusDocuments,
     applyFocusDocuments,
   } = composer;
+  const voice = useVoiceConversation({
+    conversationId: composer.conversationId,
+    send: composer.sendSpoken,
+    fill: composer.fill,
+  });
   // Named only when it is known not to see; an unusable model has its own notice.
   const answering = model.effective;
   const blindModelName = answering && !isUnavailableChatModel(answering) && answering.seesImages !== true
@@ -235,8 +242,13 @@ export function Composer({
             />
             </div>
 
-            <span className="hidden shrink-0 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:block">
-              {isSending
+            <span
+              role={voice.phase === 'off' ? undefined : 'status'}
+              className="hidden shrink-0 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:block"
+            >
+              {voice.phase !== 'off'
+                ? VOICE_STATUS[voice.phase]
+                : isSending
                 ? 'Generating…'
                 : isCompacting
                   ? 'Compacting context…'
@@ -244,6 +256,8 @@ export function Composer({
                     ? '↵ send · ⇧↵ new line'
                     : ''}
             </span>
+
+            <VoiceButton phase={voice.phase} onToggle={voice.toggle} />
 
             {/* Send / Stop */}
             {isSending ? (

@@ -245,6 +245,61 @@ async fn a_long_conversation_that_was_never_compacted_still_asks_for_compaction(
     );
 }
 
+/// Pools end to end: what the user said in one chat is in the prompt of another
+/// chat in its pool when it bears on the turn, and only then.
+#[tokio::test]
+async fn a_fact_from_another_chat_in_the_pool_reaches_a_prompt_it_bears_on() {
+    let pool = database().await;
+    let repository = ConversationRepository::new(pool.clone());
+    let source = seed(&pool, 2).await;
+    let elsewhere = seed(&pool, 2).await;
+    repository
+        .knowledge(
+            &crate::features::conversation::knowledge_dto::KnowledgeRequestDto {
+                conversation_id: source,
+                action: "remember".into(),
+                item_id: None,
+                text: Some("My interview is on Friday.".into()),
+                scope: None,
+                kind: None,
+                valid_from: None,
+                valid_until: None,
+                offset: None,
+            },
+        )
+        .await
+        .unwrap();
+    let prompt = |message: &'static str| {
+        let repository = &repository;
+        let elsewhere = &elsewhere;
+        async move {
+            build_memory_plan(
+                repository,
+                repository,
+                &llm(),
+                elsewhere,
+                "You are helpful.",
+                message,
+                0,
+                Vec::new(),
+                true,
+            )
+            .await
+            .unwrap()
+            .expect("the plan assembles")
+            .plan
+            .tokenizable_text()
+        }
+    };
+
+    assert!(prompt("How long is my interview?")
+        .await
+        .contains("My interview is on Friday."));
+    assert!(!prompt("Rename this variable.")
+        .await
+        .contains("My interview is on Friday."));
+}
+
 #[tokio::test]
 async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
     let pool = database().await;

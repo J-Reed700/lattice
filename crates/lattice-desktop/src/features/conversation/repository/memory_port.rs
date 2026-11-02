@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, ConversationMemoryPort, ConversationMemoryReadPort,
     MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions, RecallCandidates,
-    ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
+    ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef, TermHolders,
 };
 use lattice_core::domain::conversation::memory::{
     ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan,
@@ -30,6 +30,10 @@ impl ConversationMemoryPort for ConversationRepository {
         self.prepare_knowledge(conversation_id, query)
             .await
             .map(Some)
+    }
+
+    async fn shared_items(&self, conversation_id: &str, text: &str) -> Result<Vec<MemoryItem>> {
+        self.shared_memory_items(conversation_id, text).await
     }
 
     async fn load_snapshot(&self, conversation_id: &str) -> Result<MemorySnapshot> {
@@ -140,6 +144,14 @@ impl ConversationMemoryReadPort for ConversationRepository {
     ) -> Result<RecallCandidates> {
         self.search_memory_hybrid(conversation_id, query, exact_terms, limit)
             .await
+    }
+
+    async fn messages_holding(
+        &self,
+        conversation_id: &str,
+        terms: &[String],
+    ) -> Result<TermHolders> {
+        self.memory_messages_holding(conversation_id, terms).await
     }
 
     async fn read_adjacent_turns(

@@ -103,9 +103,9 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
   const actionError = cancel.error ?? retry.error;
   const hasChecks = activity && activity.checksTotal > 0;
   const remaining = hasChecks ? Math.max(0, activity.checksTotal - activity.checksCompleted) : 0;
-  // The source check's claims were supported by the checker but not by
-  // strong enough sources: they count apart from both.
-  const supported = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved - activity.checksSentBack) : 0;
+  // A claim the source check sends back was still found in a source, so
+  // it stays in that count and the check shows as a part of it.
+  const found = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved) : 0;
   const restoringChecks = active && activity?.phase === 'evidence' && activity.modelChecksTotal == null;
   const currentChecks = active && !queued && activity?.phase === 'evidence';
   // After every claim's first check, unsupported claims are checked against
@@ -159,9 +159,9 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
         {restoringChecks ? <p className="mt-3 text-sm leading-6 text-text-secondary" role="status">Looking for saved checks to reuse. The number needing model review will appear once all saved results have been compared with the current evidence.</p>
           : activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {deeper ? `Every claim has had its first check. Checking ${deeper.claims} unsupported claims against evidence page ${deeper.page}; ${deeper.claims - deeper.checked} left.` : remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
         <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
-          <div><dt className="text-text-muted">Supported</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{supported}</dd></div>
+          <div><dt className="text-text-muted">Found in a source</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{found}</dd></div>
           <div><dt className="text-text-muted">{currentChecks ? 'Need attention' : 'Needed attention in this pass'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
-          <div><dt className="text-text-muted">Sent back for stronger sources</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksSentBack}</dd></div>
+          <div><dt className="text-text-muted">Of those, sent back for stronger sources</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksSentBack}</dd></div>
           {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : recheck ? 'Still to re-check' : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
         </dl>

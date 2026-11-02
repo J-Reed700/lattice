@@ -1,12 +1,18 @@
 //! Scope, explicit user memory edits and time metadata on the same ledger.
+use super::memory_pool::SHARED_KINDS;
 use super::ConversationRepository;
 use crate::features::conversation::knowledge_dto::{
     KnowledgeItemDto, KnowledgeRequestDto, KnowledgeResponseDto,
 };
 use crate::features::conversation::memory_dto::MemoryEvidenceDto;
+use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::informative_terms;
 use std::collections::HashMap;
+
+/// Items read for one prompt at a time; a larger pool is read in pages.
+const PROMPT_PAGE: usize = 1000;
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -41,15 +47,22 @@ impl ConversationRepository {
         for_prompt: bool,
     ) -> Result<KnowledgeResponseDto> {
         let mut tx = self.pool.begin().await?;
-        let space: String = sqlx::query_scalar("SELECT space_id FROM conversations WHERE id=?")
-            .bind(conversation)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Conversation not found".into()))?;
-        let limit = if for_prompt { 1001 } else { 51 };
-        let rows = sqlx::query_as::<_, Row>("SELECT i.id,i.conversation_id,c.title AS conversation_title,i.label,i.kind,i.state,COALESCE(a.scope,'conversation') AS scope,i.created_at AS learned_at,a.valid_from,a.valid_until,a.verified_at,COALESCE(a.forgotten,0) AS forgotten,i.superseded_by FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id LEFT JOIN conversation_memory_state s ON s.conversation_id=i.conversation_id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=?)) AND (?=0 OR (i.state='active' AND COALESCE(a.forgotten,0)=0 AND s.validity='ready' AND s.schema_version=1 AND (a.valid_from IS NULL OR julianday(a.valid_from)<=julianday('now')) AND (a.valid_until IS NULL OR julianday(a.valid_until)>julianday('now')))) ORDER BY i.created_at DESC,i.id LIMIT ? OFFSET ?")
-            .bind(conversation).bind(&space).bind(for_prompt).bind(limit).bind(offset.max(0)).fetch_all(&mut *tx).await?;
-        let page_size = if for_prompt { 1000 } else { 50 };
+        let chat_pool = Self::chat_pool(&mut tx, conversation).await?;
+        let page_size = if for_prompt { PROMPT_PAGE } else { 50 };
+        let sql = format!(
+            "SELECT i.id,i.conversation_id,c.title AS conversation_title,i.label,i.kind,i.state,COALESCE(a.scope_kind,CASE WHEN i.kind IN ({SHARED_KINDS}) THEN ? ELSE 'conversation' END) AS scope,i.created_at AS learned_at,a.valid_from,a.valid_until,a.verified_at,COALESCE(a.forgotten,0) AS forgotten,i.superseded_by FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id LEFT JOIN conversation_memory_state s ON s.conversation_id=i.conversation_id WHERE {} AND (?=0 OR (i.state='active' AND COALESCE(a.forgotten,0)=0 AND s.validity='ready' AND s.schema_version=1 AND (a.valid_from IS NULL OR julianday(a.valid_from)<=julianday('now')) AND (a.valid_until IS NULL OR julianday(a.valid_until)>julianday('now')))) ORDER BY i.created_at DESC,i.id LIMIT ? OFFSET ?",
+            chat_pool.readable_by_sql(),
+        );
+        let mut rows = sqlx::query_as::<_, Row>(&sql).bind(chat_pool.kind.name());
+        for value in chat_pool.bind_values(conversation)? {
+            rows = rows.bind(value);
+        }
+        let rows = rows
+            .bind(for_prompt)
+            .bind(page_size as i64 + 1)
+            .bind(offset.max(0))
+            .fetch_all(&mut *tx)
+            .await?;
         let has_more = rows.len() > page_size;
         let item_ids: Vec<_> = rows.iter().take(page_size).map(|row| &row.id).collect();
         #[derive(sqlx::FromRow)]
@@ -123,12 +136,12 @@ impl ConversationRepository {
             if for_prompt && (evidence.is_empty() || evidence.iter().any(|e| e.text.is_none())) {
                 continue;
             }
-            let reason = if row.conversation_id == conversation {
-                "Saved in this conversation"
+            let reason: String = if row.conversation_id == conversation {
+                "Saved in this conversation".into()
             } else if row.scope == "personal" {
-                "Explicitly shared with all conversations"
+                "Explicitly shared with all conversations".into()
             } else {
-                "Shared with this space"
+                format!("Shared with this {}", chat_pool.kind.name())
             };
             items.push(KnowledgeItemDto {
                 id: row.id,
@@ -145,7 +158,7 @@ impl ConversationRepository {
                 forgotten: row.forgotten,
                 superseded_by: row.superseded_by,
                 evidence,
-                availability_reason: reason.into(),
+                availability_reason: reason,
             });
         }
         let raw: Option<String> = sqlx::query_scalar("SELECT json_extract(metadata,'$.memory.items') FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC LIMIT 1")
@@ -157,13 +170,16 @@ impl ConversationRepository {
         Ok(KnowledgeResponseDto {
             items,
             has_more,
+            pool: chat_pool.kind.name().into(),
             last_answer_memory_ids,
         })
     }
 
     async fn change_knowledge(&self, r: &KnowledgeRequestDto) -> Result<()> {
-        let scope = r.scope.as_deref().unwrap_or("conversation");
-        if !["conversation", "space", "personal"].contains(&scope) {
+        if r.scope
+            .as_deref()
+            .is_some_and(|scope| !["conversation", "pool", "personal"].contains(&scope))
+        {
             return Err(AppError::InvalidInput("Unknown memory scope".into()));
         }
         let valid_from = timestamp(r.valid_from.as_deref())?;
@@ -176,11 +192,12 @@ impl ConversationRepository {
             }
         }
         let mut tx = self.pool.begin().await?;
-        let space: String = sqlx::query_scalar("SELECT space_id FROM conversations WHERE id=?")
-            .bind(&r.conversation_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Conversation not found".into()))?;
+        let chat_pool = Self::chat_pool(&mut tx, &r.conversation_id).await?;
+        let mut source = r.conversation_id.clone();
+        let (scope_kind, scope_key) = match r.scope.as_deref() {
+            Some("pool") => (Some(chat_pool.kind.name()), Some(chat_pool.key.as_str())),
+            scope => (scope, None),
+        };
         let target = if r.action == "remember" {
             None
         } else {
@@ -188,11 +205,30 @@ impl ConversationRepository {
                 .item_id
                 .as_deref()
                 .ok_or_else(|| AppError::InvalidInput("Memory item is required".into()))?;
-            // A shared read never grants mutation rights through a foreign thread.
-            let owner:Option<String>=sqlx::query_scalar("SELECT id FROM conversation_memory_items WHERE id=? AND conversation_id=? AND state='active'").bind(id).bind(&r.conversation_id).fetch_optional(&mut *tx).await?;
-            Some(owner.ok_or_else(|| {
+            // A correction or a forget reaches a shared item from any chat that
+            // can read it. Its sharing, dates and check stay with its source.
+            let across_chats = ["correct", "forget"].contains(&r.action.as_str());
+            let reach = if across_chats {
+                chat_pool.readable_by_sql()
+            } else {
+                "i.conversation_id=?".to_owned()
+            };
+            let sql = format!(
+                "SELECT i.conversation_id FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE i.id=? AND i.state='active' AND {reach}"
+            );
+            let mut owner = sqlx::query_scalar::<_, String>(&sql).bind(id);
+            if across_chats {
+                for value in chat_pool.bind_values(&r.conversation_id)? {
+                    owner = owner.bind(value);
+                }
+            } else {
+                owner = owner.bind(&r.conversation_id);
+            }
+            let owner = owner.fetch_optional(&mut *tx).await?.ok_or_else(|| {
                 AppError::NotFound("Open the source conversation to change this memory".into())
-            })?)
+            })?;
+            source = owner;
+            Some(id.to_owned())
         };
         let now = chrono::Utc::now().to_rfc3339();
         let mut changed = target.clone();
@@ -245,8 +281,8 @@ impl ConversationRepository {
             if let Some(target) = &target {
                 sqlx::query("UPDATE conversation_memory_items SET state='superseded',superseded_by=?,changed_at_sequence=?,revision=revision+1,updated_at=? WHERE id=? AND state='active'").bind(&id).bind(sequence).bind(&now).bind(target).execute(&mut *tx).await?;
             }
-            sqlx::query("INSERT INTO conversation_memory_attributes(item_id,scope,space_id,valid_from,valid_until,verified_at) VALUES (?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET scope=CASE WHEN ? THEN excluded.scope ELSE scope END,space_id=CASE WHEN ? THEN excluded.space_id ELSE space_id END,valid_from=excluded.valid_from,valid_until=excluded.valid_until,verified_at=excluded.verified_at")
-                .bind(&id).bind(scope).bind(if scope=="space" {Some(&space)} else {None}).bind(valid_from).bind(valid_until).bind(None::<&str>).bind(r.scope.is_some()).bind(r.scope.is_some()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO conversation_memory_attributes(item_id,scope_kind,scope_key,valid_from,valid_until,verified_at) VALUES (?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET scope_kind=CASE WHEN ? THEN excluded.scope_kind ELSE scope_kind END,scope_key=CASE WHEN ? THEN excluded.scope_key ELSE scope_key END,valid_from=excluded.valid_from,valid_until=excluded.valid_until,verified_at=excluded.verified_at")
+                .bind(&id).bind(scope_kind).bind(scope_key).bind(valid_from).bind(valid_until).bind(None::<&str>).bind(r.scope.is_some()).bind(r.scope.is_some()).execute(&mut *tx).await?;
         } else {
             let id = target
                 .as_deref()
@@ -257,7 +293,7 @@ impl ConversationRepository {
                 .await?;
             match r.action.as_str() {
                 "scope" => {
-                    sqlx::query("UPDATE conversation_memory_attributes SET scope=?,space_id=? WHERE item_id=?").bind(scope).bind(if scope=="space" {Some(&space)} else {None}).bind(id).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE conversation_memory_attributes SET scope_kind=?,scope_key=? WHERE item_id=?").bind(scope_kind).bind(scope_key).bind(id).execute(&mut *tx).await?;
                 }
                 "dates" => {
                     sqlx::query("UPDATE conversation_memory_attributes SET valid_from=?,valid_until=? WHERE item_id=?").bind(valid_from).bind(valid_until).bind(id).execute(&mut *tx).await?;
@@ -276,32 +312,35 @@ impl ConversationRepository {
                         .bind(&now).bind(id).execute(&mut *tx).await?;
                     sqlx::query("INSERT OR IGNORE INTO conversation_memory_suppressions(message_id,start_byte,end_byte,content_digest) SELECT message_id,start_byte,end_byte,content_digest FROM conversation_memory_evidence WHERE item_id=? AND purpose='assertion'")
                         .bind(id).execute(&mut *tx).await?;
-                    sqlx::query("UPDATE conversation_memory_attributes SET forgotten=1,scope='conversation',space_id=NULL WHERE item_id=?").bind(id).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE conversation_memory_attributes SET forgotten=1,scope_kind='conversation',scope_key=NULL WHERE item_id=?").bind(id).execute(&mut *tx).await?;
                 }
                 _ => return Err(AppError::InvalidInput("Unknown memory action".into())),
             }
-        }
-        // Invalidate in-flight model commits. A user's edit cannot be overwritten
-        // by a patch extracted before the edit. The original watermark stays put.
-        sqlx::query("INSERT INTO conversation_memory_state(conversation_id,memory_revision) VALUES (?,1) ON CONFLICT(conversation_id) DO UPDATE SET memory_revision=memory_revision+1,updated_at=CURRENT_TIMESTAMP")
-            .bind(&r.conversation_id).execute(&mut *tx).await?;
-        // An old prose summary can contain a corrected/forgotten value. It is
-        // regenerated by consolidation, never served as current after an edit.
-        if ["correct", "forget"].contains(&r.action.as_str()) {
-            sqlx::query("DELETE FROM conversation_summaries WHERE conversation_id=?")
-                .bind(&r.conversation_id)
-                .execute(&mut *tx)
-                .await?;
-        } else {
-            sqlx::query("UPDATE conversation_summaries SET memory_revision=(SELECT memory_revision FROM conversation_memory_state WHERE conversation_id=?) WHERE conversation_id=?").bind(&r.conversation_id).bind(&r.conversation_id).execute(&mut *tx).await?;
         }
         let affected: Vec<&str> = target
             .iter()
             .chain(changed.iter())
             .map(String::as_str)
             .collect();
-        sqlx::query("INSERT INTO conversation_memory_events(id,conversation_id,operation_id,memory_revision,operation,item_ids) SELECT ?,?,?,memory_revision,?,? FROM conversation_memory_state WHERE conversation_id=?")
-            .bind(uuid::Uuid::new_v4().to_string()).bind(&r.conversation_id).bind(uuid::Uuid::new_v4().to_string()).bind(format!("user_{}",r.action)).bind(serde_json::to_string(&affected)?).bind(&r.conversation_id).execute(&mut *tx).await?;
+        let touched = std::collections::BTreeSet::from([&r.conversation_id, &source]);
+        for conversation in touched {
+            // Invalidate in-flight model commits. A user's edit cannot be overwritten
+            // by a patch extracted before the edit. The original watermark stays put.
+            sqlx::query("INSERT INTO conversation_memory_state(conversation_id,memory_revision) VALUES (?,1) ON CONFLICT(conversation_id) DO UPDATE SET memory_revision=memory_revision+1,updated_at=CURRENT_TIMESTAMP")
+                .bind(conversation).execute(&mut *tx).await?;
+            // An old prose summary can contain a corrected/forgotten value. It is
+            // regenerated by consolidation, never served as current after an edit.
+            if ["correct", "forget"].contains(&r.action.as_str()) {
+                sqlx::query("DELETE FROM conversation_summaries WHERE conversation_id=?")
+                    .bind(conversation)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query("UPDATE conversation_summaries SET memory_revision=(SELECT memory_revision FROM conversation_memory_state WHERE conversation_id=?) WHERE conversation_id=?").bind(conversation).bind(conversation).execute(&mut *tx).await?;
+            }
+            sqlx::query("INSERT INTO conversation_memory_events(id,conversation_id,operation_id,memory_revision,operation,item_ids) SELECT ?,?,?,memory_revision,?,? FROM conversation_memory_state WHERE conversation_id=?")
+                .bind(uuid::Uuid::new_v4().to_string()).bind(conversation).bind(uuid::Uuid::new_v4().to_string()).bind(format!("user_{}",r.action)).bind(serde_json::to_string(&affected)?).bind(conversation).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -327,26 +366,27 @@ impl ConversationRepository {
         query: &str,
     ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
         let revisions = self.knowledge_revisions(conversation).await?;
-        let response = self.list_knowledge(conversation, 0, true).await?;
-        if response.has_more {
-            return Err(AppError::InvalidState(
-                "More than 1000 applicable memories; narrow their sharing scope before continuing"
-                    .into(),
-            ));
+        let mut applicable = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self.list_knowledge(conversation, offset, true).await?;
+            applicable.extend(page.items);
+            if !page.has_more {
+                break;
+            }
+            offset += PROMPT_PAGE as i64;
         }
-        let terms: Vec<_> = query
-            .split_whitespace()
-            .filter(|s| s.len() > 2)
-            .take(32)
-            .map(str::to_lowercase)
-            .collect();
+        let terms: Vec<_> = informative_terms(query).into_iter().take(32).collect();
         let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
-        for item in response.items {
+        for item in applicable {
+            let own = item.conversation_id == conversation;
             let text=serde_json::json!({"memory_id":item.id,"source_conversation":item.conversation_id,"source_title":item.conversation_title,"scope":item.scope,"kind":item.kind,"generated_label":item.label,"learned_at":item.learned_at,"valid_from":item.valid_from,"valid_until":item.valid_until,"last_user_verified_at":item.verified_at,"evidence":item.evidence,"why_available":item.availability_reason}).to_string();
-            if ["constraint", "goal", "decision", "unresolved_change"].contains(&item.kind.as_str())
+            if own
+                && ["constraint", "goal", "decision", "unresolved_change"]
+                    .contains(&item.kind.as_str())
             {
                 prepared.mandatory.push(text);
             } else {
@@ -364,15 +404,20 @@ impl ConversationRepository {
                     .iter()
                     .filter(|term| haystack.contains(term.as_str()))
                     .count();
-                optional.push((
-                    matches as f32 + semantic.get(&item.id).copied().unwrap_or(0.0),
-                    text,
-                ));
+                let meaning = semantic.get(&item.id).copied().unwrap_or(0.0);
+                if own || words_shared(&terms, &haystack) > 0 || meaning >= SHARED_RELEVANCE_FLOOR {
+                    optional.push((matches as f32 + meaning, item.label.to_lowercase(), text));
+                }
             }
         }
         optional.sort_by(|a, b| b.0.total_cmp(&a.0));
         // Ranked, not cut: the assembler's evidence pool decides how many fit.
-        prepared.optional = optional.into_iter().map(|(_, text)| text).collect();
+        let mut seen = std::collections::HashSet::new();
+        prepared.optional = optional
+            .into_iter()
+            .filter(|(_, label, _)| seen.insert(label.clone()))
+            .map(|(_, _, text)| text)
+            .collect();
         if self.knowledge_revisions(conversation).await? != revisions {
             return Err(AppError::ConcurrentModification {
                 resource: "conversation memory".into(),
@@ -381,6 +426,62 @@ impl ConversationRepository {
         }
         prepared.revisions = Some(revisions);
         Ok(prepared)
+    }
+}
+
+/// How many of `terms` are whole words of the lowercased `text`.
+fn words_shared(terms: &[String], text: &str) -> usize {
+    let words: std::collections::HashSet<&str> =
+        text.split(|c: char| !c.is_alphanumeric()).collect();
+    terms
+        .iter()
+        .filter(|term| words.contains(term.as_str()))
+        .count()
+}
+
+impl ConversationRepository {
+    /// What another chat in the pool said that bears on `text`, most relevant
+    /// first. One response cannot change more items than it has operations.
+    pub(super) async fn shared_memory_items(
+        &self,
+        conversation: &str,
+        text: &str,
+    ) -> Result<Vec<lattice_core::domain::conversation::memory::MemoryItem>> {
+        let terms = informative_terms(text);
+        let semantic = self.knowledge_semantic_scores(conversation, text).await;
+        let mut ranked = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self.list_knowledge(conversation, offset, true).await?;
+            for item in page.items {
+                if item.conversation_id == conversation {
+                    continue;
+                }
+                let haystack = format!(
+                    "{} {}",
+                    item.label,
+                    item.evidence
+                        .iter()
+                        .filter_map(|e| e.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+                .to_lowercase();
+                let words = words_shared(&terms, &haystack);
+                let meaning = semantic.get(&item.id).copied().unwrap_or(0.0);
+                if words > 0 || meaning >= SHARED_RELEVANCE_FLOOR {
+                    ranked.push((words as f32 + meaning, item.id));
+                }
+            }
+            if !page.has_more {
+                break;
+            }
+            offset += PROMPT_PAGE as i64;
+        }
+        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        ranked.truncate(lattice_core::domain::conversation::memory::MAX_OPERATIONS_PER_RESPONSE);
+        let ids: Vec<String> = ranked.into_iter().map(|(_, id)| id).collect();
+        self.memory_items_by_id(&ids).await
     }
 }
 
@@ -497,13 +598,34 @@ impl ConversationRepository {
             item_id: String,
             embedding: Vec<u8>,
         }
+        let Ok(mut connection) = self.pool.acquire().await else {
+            return scores;
+        };
+        let Ok(chat_pool) = Self::chat_pool(&mut connection, conversation).await else {
+            return scores;
+        };
+        drop(connection);
+        let readable = chat_pool.readable_by_sql();
+        let Ok(values) = chat_pool.bind_values(conversation) else {
+            return scores;
+        };
         // Every applicable item's evidence is scored, a page at a time, each
         // page sized so its vectors stay within a fixed amount of memory.
         let page = (32 * 1024 * 1024 / (vector.len().max(1) * 4)).max(1) as i64;
         let mut offset = 0i64;
         loop {
-            let rows=sqlx::query_as::<_,VectorRow>("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE (i.conversation_id=? OR a.scope='personal' OR (a.scope='space' AND a.space_id=(SELECT space_id FROM conversations WHERE id=?))) AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?")
-                .bind(conversation).bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(page).bind(offset).fetch_all(&self.pool).await;
+            let sql = format!("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversations c ON c.id=i.conversation_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE {readable} AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?");
+            let mut rows = sqlx::query_as::<_, VectorRow>(&sql);
+            for value in &values {
+                rows = rows.bind(value);
+            }
+            let rows = rows
+                .bind(embedder.model_identity())
+                .bind(vector.len() as i64)
+                .bind(page)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await;
             let Ok(rows) = rows else { break };
             let read = rows.len() as i64;
             for row in rows {

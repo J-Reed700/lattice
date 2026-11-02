@@ -125,4 +125,62 @@ describe('decodeClip', () => {
     expect(create).toHaveBeenCalledWith(1, 2, 24000);
     expect(buffer.copyToChannel).toHaveBeenCalledWith(new Float32Array([0.5, -0.5]), 0);
   });
+
+  it('speaks pieces as they arrive, and goes idle only after the last has played', async () => {
+    const { output, player } = setup();
+    const release: Array<() => void> = [];
+    async function* arriving() {
+      yield 'ab';
+      await new Promise<void>((resolve) => release.push(resolve));
+      yield 'abc';
+    }
+    const playing = player.play('reply', arriving(), async (text) => clip(text.length));
+
+    await vi.waitFor(() => expect(output.nodes).toHaveLength(1));
+    output.nodes[0].onended?.();
+    expect(player.getSnapshot().status).toBe('playing');
+
+    release[0]();
+    await playing;
+    expect(output.nodes).toHaveLength(2);
+    expect(player.getSnapshot().status).toBe('playing');
+
+    output.nodes[1].onended?.();
+    expect(player.getSnapshot().status).toBe('idle');
+  });
+
+  it('goes idle when arriving pieces end with nothing to say', async () => {
+    const { output, player } = setup();
+    const nothing: AsyncIterable<string> = {
+      [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true, value: undefined }) }),
+    };
+    await player.play('reply', nothing, async () => clip(1));
+
+    expect(output.nodes).toHaveLength(0);
+    expect(player.getSnapshot()).toEqual({ sourceId: null, status: 'idle', error: null });
+  });
+
+  it('settles whenIdle once playback ends, and at once when nothing plays', async () => {
+    const { output, player } = setup();
+    await player.whenIdle();
+
+    await player.play('answer', ['one'], async () => clip(1));
+    const done = vi.fn();
+    void player.whenIdle().then(done);
+    await Promise.resolve();
+    expect(done).not.toHaveBeenCalled();
+
+    output.nodes[0].onended?.();
+    await vi.waitFor(() => expect(done).toHaveBeenCalled());
+  });
+
+  it('settles whenIdle when stopped', async () => {
+    const { player } = setup();
+    await player.play('answer', ['one'], async () => clip(1));
+    const done = vi.fn();
+    void player.whenIdle().then(done);
+
+    player.stop();
+    await vi.waitFor(() => expect(done).toHaveBeenCalled());
+  });
 });

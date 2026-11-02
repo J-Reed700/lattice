@@ -571,6 +571,16 @@ impl Container {
         let embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource> = Arc::new(
             crate::features::embedding::di::AppEmbedders::new(handle.clone()),
         );
+        self.app_handle = Some(handle);
+        self.with_passage_indexes(embedders)
+    }
+
+    /// The folder and course indexes, embedding through `embedders`. The app
+    /// attaches them with its handle; an eval with no app passes its own.
+    pub fn with_passage_indexes(
+        mut self,
+        embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource>,
+    ) -> Self {
         let searches: Arc<
             dyn lattice_core::application::ports::hybrid_search::HybridSearchFactory,
         > = Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory);
@@ -601,8 +611,6 @@ impl Container {
             ),
         );
         self.index_turns = Some(turns);
-
-        self.app_handle = Some(handle);
         self
     }
 }

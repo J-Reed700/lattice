@@ -324,6 +324,39 @@ impl ConversationRepository {
         })
     }
 
+    /// Active items by id, with their evidence, as another chat would see them:
+    /// sequences zeroed, since they count the source chat's messages.
+    pub(super) async fn memory_items_by_id(&self, ids: &[String]) -> Result<Vec<MemoryItem>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = serde_json::to_string(ids)?;
+        let item_rows = sqlx::query_as::<_, MemoryItemRow>(
+            "SELECT id, conversation_id, kind, state, label, 0 AS created_at_sequence, \
+                    0 AS changed_at_sequence, superseded_by, revision, review, related_item_ids, \
+                    created_at, updated_at \
+             FROM conversation_memory_items \
+             WHERE id IN (SELECT value FROM json_each(?)) AND state = 'active' \
+             ORDER BY created_at ASC, id ASC",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to load shared memory items: {}", e)))?;
+        let evidence_rows = sqlx::query_as::<_, EvidenceRow>(
+            "SELECT item_id, message_id, sequence, role, start_byte, end_byte, \
+                    content_digest, purpose \
+             FROM conversation_memory_evidence \
+             WHERE item_id IN (SELECT value FROM json_each(?)) \
+             ORDER BY item_id ASC, ordinal ASC",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to load shared evidence: {}", e)))?;
+        assemble_items(item_rows, evidence_rows)
+    }
+
     /// State row, or the empty state when nothing has been extracted yet.
     pub async fn load_memory_state(
         &self,

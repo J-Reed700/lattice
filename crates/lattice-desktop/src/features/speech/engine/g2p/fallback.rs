@@ -1,6 +1,6 @@
 //! misaki's fallback for words no lexicon knows: a one-layer BART that spells
-//! graphemes into British phonemes (`PeterReid/graphemes_to_phonemes_en_gb`),
-//! decoded greedily.
+//! graphemes into an accent's phonemes (`PeterReid/graphemes_to_phonemes_en_gb`
+//! and `_en_us`), decoded greedily.
 
 use std::collections::HashMap;
 use std::path::Path;

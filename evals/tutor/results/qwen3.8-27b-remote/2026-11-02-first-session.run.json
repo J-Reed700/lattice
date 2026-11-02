@@ -1,0 +1,56 @@
+{
+  "schema": "lattice-tutor-eval/1",
+  "name": "tutor-qwen3.8-27b-remote",
+  "model": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+  "requested_model": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+  "recipe": {
+    "name": "tutor-qwen3.8-27b-remote",
+    "corpus": "evals/tutor/course-v1.json",
+    "questions": "evals/tutor/sessions-v1.json",
+    "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
+    "embedding_model_id": "qwen3-embedding-0.6b",
+    "server": {
+      "url": "(not kept)",
+      "model": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+      "expected_ctx": 196608,
+      "expected_slots": 1,
+      "thinking": "off"
+    },
+    "index": {
+      "chunk_tokens": 800
+    },
+    "settings": {
+      "llm": {
+        "contextWindow": 131072
+      }
+    },
+    "wait": {
+      "verification_secs": 900,
+      "quiet_ms": 3000,
+      "quiet_cap_secs": 900
+    }
+  },
+  "server": {
+    "n_ctx": 196608,
+    "total_slots": 1,
+    "model_path": "/models/Qwen3.8-27B-Q5_K_S.gguf",
+    "build_info": "b1-34ef0ef"
+  },
+  "thinking": "off",
+  "commit": "d371b5680fc1e182a87ee8a95203424d60e64cab",
+  "dirty_files": 12,
+  "embedding": {
+    "model_id": "qwen3-embedding-0.6b",
+    "model_identity": "sha256:421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340",
+    "dimension": 1024,
+    "activation_ms": 19210
+  },
+  "sessions": 1,
+  "only": [
+    "teach-retries"
+  ],
+  "failed": [],
+  "started_at": "2026-11-02T04:30:49.673625200+00:00",
+  "finished_at": "2026-11-02T04:34:23.000815200+00:00",
+  "run_ms": 213324
+}

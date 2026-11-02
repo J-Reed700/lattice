@@ -21,10 +21,63 @@ const F0_MEAN: f32 = 119.19;
 const SAMPLES: usize = 76_800;
 const RMS: f32 = 0.065_21;
 
+/// The same run on af_heart, on "Hello, the water is better than the butter."
+/// in misaki's American readings of those words. Its `T`s are taps, which only
+/// the American reader writes.
+const US_PHONEMES: &str = "həlˈO, ðə wˈɔTəɹ ɪz bˈɛTəɹ ðən ðə bˈʌTəɹ.";
+const US_DURATIONS: [usize; 43] = [
+    14, 2, 3, 2, 5, 7, 3, 2, 1, 2, 3, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 2, 2, 2, 2, 2, 3, 13, 7, 1,
+];
+const US_F0_MEAN: f32 = 129.26;
+const US_SAMPLES: usize = 69_600;
+const US_RMS: f32 = 0.045_00;
+
+struct Reference<'a> {
+    phonemes: &'a str,
+    voice: PathBuf,
+    durations: &'a [usize],
+    f0_mean: f32,
+    samples: usize,
+    rms: f32,
+}
+
+fn bundle_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("LATTICE_KOKORO_DIR").expect("LATTICE_KOKORO_DIR"))
+}
+
+fn pack_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("LATTICE_KOKORO_PACK_DIR").expect("LATTICE_KOKORO_PACK_DIR"))
+}
+
 #[test]
 #[ignore = "needs the downloaded speech bundle in LATTICE_KOKORO_DIR"]
 fn speaks_as_the_pytorch_reference_does() {
-    let dir = PathBuf::from(std::env::var_os("LATTICE_KOKORO_DIR").expect("LATTICE_KOKORO_DIR"));
+    speaks_as(Reference {
+        phonemes: PHONEMES,
+        voice: bundle_dir().join("voice-bf_emma.bin"),
+        durations: &DURATIONS,
+        f0_mean: F0_MEAN,
+        samples: SAMPLES,
+        rms: RMS,
+    });
+}
+
+#[test]
+#[ignore = "needs the speech bundle and voice pack in LATTICE_KOKORO_DIR and LATTICE_KOKORO_PACK_DIR"]
+fn an_american_voice_speaks_as_the_pytorch_reference_does() {
+    speaks_as(Reference {
+        phonemes: US_PHONEMES,
+        voice: pack_dir().join("voice-af_heart.bin"),
+        durations: &US_DURATIONS,
+        f0_mean: US_F0_MEAN,
+        samples: US_SAMPLES,
+        rms: US_RMS,
+    });
+}
+
+fn speaks_as(reference: Reference) {
+    let dir = bundle_dir();
     let device = Device::Cpu;
     let model = Kokoro::load(
         &dir.join("kokoro-v1_0.json"),
@@ -32,9 +85,9 @@ fn speaks_as_the_pytorch_reference_does() {
         &device,
     )
     .unwrap();
-    let voice = Voice::from_bytes(&std::fs::read(dir.join("voice-bf_emma.bin")).unwrap()).unwrap();
+    let voice = Voice::from_bytes(&std::fs::read(reference.voice).unwrap()).unwrap();
 
-    let ids = model.phoneme_ids(PHONEMES);
+    let ids = model.phoneme_ids(reference.phonemes);
     let style = Tensor::new(voice.style(ids.len()).unwrap(), &device)
         .unwrap()
         .unsqueeze(0)
@@ -54,7 +107,7 @@ fn speaks_as_the_pytorch_reference_does() {
         .unwrap();
     let encoded = model.predictor.encode(&d_en, &prosody_style).unwrap();
     let durations = model.predictor.durations(&encoded, 1.0).unwrap();
-    assert_eq!(durations, DURATIONS);
+    assert_eq!(durations, reference.durations);
 
     let frames: Vec<u32> = durations
         .iter()
@@ -77,20 +130,23 @@ fn speaks_as_the_pytorch_reference_does() {
         .unwrap()
         .to_scalar::<f32>()
         .unwrap();
-    assert!((f0_mean - F0_MEAN).abs() < 0.05, "mean pitch {f0_mean}");
+    assert!(
+        (f0_mean - reference.f0_mean).abs() < 0.05,
+        "mean pitch {f0_mean}"
+    );
 
     let audio = model
-        .synthesize(PHONEMES, &voice, 1.0, &mut Silence)
+        .synthesize(reference.phonemes, &voice, 1.0, &mut Silence)
         .unwrap();
-    assert_eq!(audio.len(), SAMPLES);
+    assert_eq!(audio.len(), reference.samples);
     let rms = (audio.iter().map(|s| s * s).sum::<f32>() / audio.len() as f32).sqrt();
-    assert!((rms / RMS - 1.0).abs() < 0.02, "loudness {rms}");
+    assert!((rms / reference.rms - 1.0).abs() < 0.02, "loudness {rms}");
 }
 
 #[test]
 #[ignore = "needs the downloaded speech bundle in LATTICE_KOKORO_DIR"]
 fn a_faster_pace_is_shorter_and_noise_is_seeded() {
-    let dir = PathBuf::from(std::env::var_os("LATTICE_KOKORO_DIR").expect("LATTICE_KOKORO_DIR"));
+    let dir = bundle_dir();
     let model = Kokoro::load(
         &dir.join("kokoro-v1_0.json"),
         &dir.join("kokoro-v1_0.pth"),

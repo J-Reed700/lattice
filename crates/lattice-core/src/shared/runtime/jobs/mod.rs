@@ -160,9 +160,22 @@ impl JobFailure {
             AppError::Network(_)
             | AppError::ServiceNotAvailable(_)
             | AppError::RateLimitExceeded(_) => true,
+            error => Self::is_database_busy(error),
+        }
+    }
+
+    /// Whether another connection kept this attempt out of the database:
+    /// SQLite's busy and locked errors, or a connection pool that timed out.
+    pub fn is_database_busy(error: &crate::shared::error::AppError) -> bool {
+        use crate::shared::error::AppError;
+        match error {
             AppError::Database(message) => {
                 message.contains("database is locked")
                     || message.contains("database table is locked")
+            }
+            AppError::ServiceNotAvailable(message) => {
+                message.contains("database is temporarily busy")
+                    || message.contains("Passage index: busy")
             }
             _ => false,
         }
@@ -170,12 +183,13 @@ impl JobFailure {
 
     /// Whether an error says the service was not reached, or asked to be left
     /// alone for a while, rather than answering about the work: a lost
-    /// connection, a gateway with nothing behind it, a rate limit. Seeing one
-    /// twice says nothing about the work, so it is retried for as long as the
-    /// outage lasts.
+    /// connection, a gateway with nothing behind it, a rate limit, a database
+    /// another connection is holding. Seeing one twice says nothing about the
+    /// work, so it is retried for as long as the outage lasts.
     pub fn is_outage(error: &crate::shared::error::AppError) -> bool {
         use crate::shared::error::AppError;
         matches!(error, AppError::Network(_) | AppError::RateLimitExceeded(_))
+            || Self::is_database_busy(error)
     }
 
     /// Outages are deferred; anything else fails the attempt.

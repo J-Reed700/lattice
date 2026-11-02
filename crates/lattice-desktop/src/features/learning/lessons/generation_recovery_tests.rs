@@ -80,6 +80,28 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
     }
 }
 
+/// A lesson waiting on a busy database said the model service had failed.
+#[tokio::test]
+async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    let (_, job) = repository_tests::queued_job(&pool).await;
+    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    for busy in [
+        crate::features::learning::persistence::db(sqlx::Error::PoolTimedOut),
+        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+    ] {
+        assert!(JobFailure::is_outage(&busy), "{busy}");
+        let JobFailure::Defer(deferral) = lesson_failure(&job, &busy) else {
+            panic!("a busy database is deferred, not failed");
+        };
+        assert!(
+            !deferral.progress_message.contains("model service"),
+            "{}",
+            deferral.progress_message
+        );
+    }
+}
+
 #[tokio::test]
 async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() -> Result<()> {
     let directory = tempfile::tempdir()?;

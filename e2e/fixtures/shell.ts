@@ -36,8 +36,10 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     list_study_decks: () => [],
     // Every answer and lesson offers Listen; the voice is not downloaded.
     get_speech_status: () => ({
-      modelReady: false, modelId: 'kokoro-82m-british', modelName: 'Kokoro 82M (British voices)', downloadBytes: 0,
-      license: 'Apache-2.0', voices: [{ id: 'bf_emma', name: 'Emma' }], defaultVoice: 'bf_emma',
+      modelReady: false, modelId: 'kokoro-82m-british', modelName: 'Kokoro 82M', downloadBytes: 0, license: 'Apache-2.0',
+      voicePack: { ready: false, modelId: 'kokoro-82m-more-voices', modelName: 'Kokoro 82M: more voices', downloadBytes: 0 },
+      voices: [{ id: 'bf_emma', name: 'Emma', accent: 'british', gender: 'female', grade: 'B-', downloaded: false }],
+      defaultVoice: 'bf_emma',
     }),
     get_indexed_folders: () => [],
     get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: 'idle', paused: false, failures: [] }),

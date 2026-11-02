@@ -9,6 +9,7 @@ mod document_references;
 mod fork;
 mod knowledge;
 mod memory;
+mod memory_pool;
 mod memory_port;
 mod memory_recall;
 mod memory_semantic;

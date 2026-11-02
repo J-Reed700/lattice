@@ -116,10 +116,11 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: TOOL_RECORD_RECALL.to_string(),
             description: "Rate the learner's answer to a card into its review schedule, the same \
-                 schedule the Recall tab uses. Only for a card you asked from due_reviews or saved \
-                 yourself. The rating comes from the learner's answer: again if they missed it, \
-                 hard if they got it with difficulty, good if they recalled it, easy if it was \
-                 effortless. When the answer alone does not settle it, ask them how it went first."
+                 schedule the Recall tab uses. Only for a card you asked: the turn's facts and \
+                 due_reviews give its card_id. The rating comes from the learner's answer: again \
+                 if they missed it, hard if they got it with difficulty, good if they recalled \
+                 it, easy if it was effortless. When the answer alone does not settle it, ask \
+                 them how it went first."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -350,10 +351,7 @@ impl CourseTurn {
         let closing = 120;
         let mut shown = 0;
         for card in &cards {
-            let mut entry = format!("- card_id: {}\n  {}\n", card.id, card.front);
-            for (index, option) in card.options.iter().enumerate() {
-                let _ = writeln!(entry, "  {index}. {option}");
-            }
+            let entry = card.entry();
             if out.chars().count() + entry.chars().count() + closing > max_chars {
                 break;
             }
