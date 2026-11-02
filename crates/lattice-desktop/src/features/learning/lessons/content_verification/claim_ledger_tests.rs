@@ -434,6 +434,155 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     Ok(())
 }
 
+/// What the job says of a lesson none of whose statements is left.
+const NOTHING_LEFT: &str =
+    "The sources do not support enough of this lesson: every statement in it would have to be taken out.";
+
+/// A lesson of one section whose one claim fails its rewrite: the cut that
+/// ends it leaves nothing the sources back. Returns the job, the lesson and
+/// what the preparation ended with.
+async fn prepared_to_nothing(
+    pool: &sqlx::SqlitePool,
+) -> Result<(
+    crate::features::learning::curriculum_repository::LearningCurriculumRepository,
+    String,
+    String,
+    String,
+)> {
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(pool).await?;
+    let model = Figures::new();
+    let error = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[BAD]).to_string()),
+        &[source()],
+    )
+    .await
+    .err()
+    .unwrap()
+    .to_string();
+    Ok((repo, job, lesson_id, error))
+}
+
+#[tokio::test]
+async fn a_lesson_whose_every_statement_is_cut_stops_as_one_its_sources_do_not_support(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (_, job, lesson_id, error) = prepared_to_nothing(&pool).await?;
+
+    assert_eq!(error, NOTHING_LEFT);
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let review = ledger.review.clone().unwrap();
+    assert_eq!(review.state, LessonReviewState::Stopped);
+    assert_eq!(review.job_id, job);
+    let stop = review.stop_reason.unwrap();
+    assert_eq!(stop.code, "sources_do_not_support");
+    assert!(stop.fix.contains("Add sources"), "{}", stop.fix);
+    // The claim ends removed by the machine, as the claim of a section that
+    // goes does, and nothing waits for anyone.
+    let [claim] = ledger.claims.as_slice() else {
+        panic!("one claim: {:?}", ledger.claims);
+    };
+    assert!(
+        matches!(
+            claim.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        claim.state()
+    );
+    assert_eq!(
+        repairs(claim),
+        vec![
+            (1, false, RepairOutcome::Rewritten),
+            (2, true, RepairOutcome::Removed)
+        ]
+    );
+    assert!(waiting(&ledger.claims).is_empty());
+    // The job reads the review row: the lesson is held, stopped, and says why.
+    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
+    assert!(held.stopped);
+    assert_eq!(held.claims, 0);
+    assert_eq!(
+        review_outcome(&[held]),
+        (
+            format!("needs_review:{lesson_id}"),
+            format!("Stopped: {NOTHING_LEFT}")
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_stop_leaves_the_lesson_free_to_be_prepared_again() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id, error) = prepared_to_nothing(&pool).await?;
+    assert_eq!(error, NOTHING_LEFT);
+    // The worker completes the job as held, not failed.
+    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
+    let (result_ref, message) = review_outcome(&[held]);
+    assert!(
+        JobStore::new(pool.clone())
+            .complete(&job, &result_ref, &message)
+            .await?
+    );
+    let stopped = repo.job(&job).await?;
+    assert_eq!(
+        stopped.status,
+        crate::features::learning::curriculum::LearningGenerationJobStatus::Completed
+    );
+
+    // Preparing the lesson again starts a new job, which takes the lesson
+    // from its outline and publishes it once its sources back it.
+    let program = crate::features::learning::repository::LearningRepository::new(pool.clone())
+        .get(&stopped.program_id)
+        .await?;
+    let again = repo
+        .start_lesson_job(
+            &crate::features::learning::plan_dto::StartLearningGenerationJobRequestDto {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                program_id: program.summary.id,
+                expected_revision: program.summary.revision,
+                kind: crate::features::learning::curriculum::LearningGenerationJobKind::LessonPreparation,
+                request_json: json!({"lessonIds":[lesson_id]}).to_string(),
+                progress_total: 1,
+            },
+        )
+        .await?;
+    assert_ne!(again.id, job);
+    assert_eq!(
+        again.status,
+        crate::features::learning::curriculum::LearningGenerationJobStatus::Pending
+    );
+    assert!(JobStore::new(pool.clone())
+        .claim(&again.id)
+        .await?
+        .is_some());
+    let (raw, report) = prepare(
+        &repo,
+        &again.id,
+        &lesson_id,
+        &Figures::new(),
+        Some(lesson(&[GOOD]).to_string()),
+        &[source()],
+    )
+    .await?;
+    let lesson: Value = serde_json::from_str(&raw)?;
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(held_for_review(&pool, &lesson_id, &again.id)
+        .await?
+        .is_none());
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_is_cut() -> Result<()>
 {

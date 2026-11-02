@@ -400,6 +400,82 @@ async fn a_lesson_that_loses_its_first_explanation_stops_with_the_reason_that_na
     Ok(())
 }
 
+/// Claims that ended removed by the machine, as the cuts of the passes
+/// before leave them.
+async fn removed(ledger: &mut ClaimLedger, llm: &dyn LLMPort, claims: &[(&str, usize, &str)]) {
+    for (id, unit, sentence) in claims {
+        let id = standing(ledger, llm, (*id, *unit), (*sentence, *sentence))
+            .await
+            .unwrap();
+        ledger
+            .append(
+                &id,
+                ClaimEvent::Superseded {
+                    successor: None,
+                    by: Actor::Machine,
+                },
+            )
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_lesson_every_statement_of_which_ended_removed_stops_with_the_reason_that_names_the_sources(
+) -> Result<()> {
+    let llm = model(&[]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    removed(
+        &mut ledger,
+        &llm,
+        &[("first", 0, "One."), ("second", 2, "Red.")],
+    )
+    .await;
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let settled = settle(
+        &llm,
+        ("{}", &json!({"type":"object"}), 4_000),
+        &references,
+        &lesson().to_string(),
+        &mut ledger,
+    )
+    .await?;
+
+    let Settled::Stopped(error) = settled else {
+        panic!("the lesson should stop");
+    };
+    assert_eq!(
+        error.to_string(),
+        "The sources do not support enough of this lesson: every statement in it would have to be taken out."
+    );
+    assert!(llm.prompts.lock().unwrap().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_with_a_statement_left_is_settled_as_before_whatever_was_removed() -> Result<()> {
+    let llm = model(&[]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    removed(&mut ledger, &llm, &[("first", 0, "One.")]).await;
+    standing(&mut ledger, &llm, ("second", 2), ("Red.", "Red.")).await?;
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let settled = settle(
+        &llm,
+        ("{}", &json!({"type":"object"}), 4_000),
+        &references,
+        &lesson().to_string(),
+        &mut ledger,
+    )
+    .await?;
+
+    assert!(matches!(settled, Settled::Done));
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_section_left_with_too_little_goes_and_the_checks_let_go_of_its_statements_first(
 ) -> Result<()> {
