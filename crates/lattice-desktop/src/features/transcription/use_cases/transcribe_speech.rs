@@ -30,9 +30,10 @@ fn decode_pcm(pcm: &str) -> Result<Vec<f32>> {
         ));
     }
     Ok(bytes
-        .chunks_exact(2)
-        .filter_map(|sample| <[u8; 2]>::try_from(sample).ok())
-        .map(|sample| f32::from(i16::from_le_bytes(sample)) / 32_768.0)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|sample| f32::from(i16::from_le_bytes(*sample)) / 32_768.0)
         .collect())
 }
 
