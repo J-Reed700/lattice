@@ -37,6 +37,26 @@ async function invoke(command, args = {}) {
   return response.value;
 }
 
+// One WebDriver request gives up after connectionRetryTimeout, so a command that
+// can take longer starts in the page and is polled until it settles.
+async function invokeLong(command, args = {}, timeout = 180_000) {
+  const key = `latticeInvoke${Date.now()}${Math.random().toString(36).slice(2)}`;
+  await browser.execute((command, args, key) => {
+    window[key] = { done: false };
+    window.__TAURI__.core.invoke(command, args)
+      .then(value => { window[key] = { done: true, ok: true, value }; })
+      .catch(error => { window[key] = { done: true, ok: false, failure: error }; });
+  }, command, args, key);
+  let response;
+  await browser.waitUntil(async () => {
+    response = await browser.execute(key => window[key], key);
+    return response?.done === true;
+  }, { timeout, interval: 1_000, timeoutMsg: `${command} did not settle within ${timeout}ms` });
+  await browser.execute(key => { delete window[key]; }, key);
+  assert.equal(response.ok, true, `${command}: ${JSON.stringify(response.failure)}`);
+  return response.value;
+}
+
 async function displayedElement(selector, timeout = 30_000) {
   // React can replace a node while the workspace loads. The native driver's
   // script argument cache retains detached nodes, whose checkVisibility()
@@ -467,7 +487,7 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     const { defaultVoice } = await speech();
     // The first sentence loads the voice as well as reading.
     await browser.setTimeout({ script: 180_000 });
-    await writeFile(capture, captureFile(await invoke('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
+    await writeFile(capture, captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
     await closeNormally();
 
     // No --use-fake-ui-for-media-stream: the app's own permission handler has to let this through.
