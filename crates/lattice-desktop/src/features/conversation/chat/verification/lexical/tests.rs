@@ -107,6 +107,23 @@ fn a_list_item_answers_to_the_citations_of_the_line_that_introduces_it() {
 }
 
 #[test]
+fn a_list_item_takes_each_source_of_its_introducing_line_once() {
+    let claims = lexical_pass(
+        "OCR adds a separate engine to every page [1]. Its errors then reach the model [2][1]:\n\
+         - Misread characters change the words the model sees",
+        &[
+            source("OCR-dependent pipelines run a separate OCR engine on every page."),
+            source("Errors in recognised text propagate into the downstream model."),
+        ],
+    );
+    let item = claims
+        .iter()
+        .find(|claim| claim.sentence.contains("Misread characters"))
+        .expect("the list item is a claim");
+    assert_eq!(item.citation_ids, vec![1, 2]);
+}
+
+#[test]
 fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
     // Verbatim from a turn this got wrong: the bold closes after the full
     // stop, so the splitter cut there and the second claim reached the
