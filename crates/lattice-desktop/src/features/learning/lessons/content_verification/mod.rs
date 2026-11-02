@@ -118,7 +118,7 @@ pub(in crate::features::learning) fn evidence_policy() -> &'static str {
 }
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v7";
+const INVENTORY_POLICY: &str = "lesson-evidence-v8";
 
 pub(in crate::features::learning) async fn normalize_example_fences(
     llm: &dyn LLMPort,
@@ -183,8 +183,8 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// Empty exactly when complete. The inventory adopts these as claims before
-    /// any evidence check, so an audit finding never blocks the lesson by itself.
+    /// Empty exactly when complete. They are not claims: the lesson reports
+    /// them as findings for the teaching review, and they never block it.
     missing_assertions: Vec<MissingAssertion>,
 }
 
@@ -417,7 +417,7 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
     if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
         return Err(invalid("Invalid verification unit count."));
     }
-    Ok(blocks.iter().map(|b| json!({"kind":"teaching", "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
+    Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| json!({"kind":"assessment", "prompt":q["prompt"], "options":q["options"], "correctIndex":q["correctIndex"], "explanation":q["explanation"]}))).collect())
 }
 fn contains_text(value: &Value, quote: &str) -> bool {

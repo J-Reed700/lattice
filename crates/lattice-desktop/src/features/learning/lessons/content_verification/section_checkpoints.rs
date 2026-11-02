@@ -30,8 +30,7 @@ impl SectionCheckpoint {
         let unit = &self.inventory;
         unit.index == index
             && self.coverage.index == index
-            && self.coverage.complete
-            && self.coverage.missing_assertions.is_empty()
+            && self.coverage.complete == self.coverage.missing_assertions.is_empty()
             && unit.non_factual_reason.chars().count() <= 500
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {

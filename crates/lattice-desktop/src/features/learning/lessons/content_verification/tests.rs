@@ -465,8 +465,8 @@ mod checkpoint_tests;
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 
-#[path = "coverage_adoption_tests.rs"]
-mod coverage_adoption_tests;
+#[path = "coverage_gaps_tests.rs"]
+mod coverage_gaps_tests;
 
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;

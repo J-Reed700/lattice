@@ -1,7 +1,11 @@
-//! The coverage audit completes the inventory itself. An assertion the fidelity
-//! judge names as unrepresented is recorded as a claim and decided by the
-//! evidence check, so representation can never stall or fail a lesson.
+//! The coverage audit reports what the claim inventory leaves out; it does not
+//! complete the inventory. An assertion the fidelity judge names as
+//! unrepresented is a finding for the teaching review, never a claim: it is
+//! not checked, repaired or cut, and it does not stop the lesson (claim
+//! classes design §3.4).
 use super::*;
+use crate::features::learning::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
+use crate::features::learning::review_findings::{FindingKind, FindingSite};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// An exercise that presupposes the false default without stating it in the
@@ -130,47 +134,20 @@ fn lesson(second_body: &str) -> Value {
     lesson
 }
 
-/// The 2026-10-14 live failure: extraction missed a factual premise embedded
-/// in an exercise, the mapper proposed the omission and the judge named it.
-/// The named assertion becomes a claim, fails its evidence check and is
-/// repaired, instead of stalling coverage and failing the whole job.
-async fn adopted_assertion_is_checked_and_repaired(
+/// The 2026-10-14 live failure's shape: extraction missed a factual premise
+/// embedded in an exercise, the mapper proposed the omission and the judge
+/// named it. The assertion is reported on its section, as a finding for the
+/// teaching review, and is no claim: no evidence check runs for it, nothing is
+/// repaired, the lesson is not stopped and its text is untouched.
+async fn a_named_assertion_is_a_finding_not_a_claim(
     premise: &'static str,
     statement: &'static str,
-    verdict: ClaimVerdict,
-    removed_wording: &str,
 ) -> Result<()> {
     let model = JudgingModel::new(premise, &[statement], statement);
     let original = lesson(premise);
-    let report = verify(&model, &original, &[source()]).await?;
-    assert!(
-        report.coverage_audit.iter().all(|unit| unit.complete),
-        "the audit's own finding completes coverage"
-    );
-    assert!(report.coverage_audit[1].reason.contains("unit-1-passage"));
-    let adopted: Vec<_> = report.coverage[1]
-        .claims
-        .iter()
-        .filter(|claim| claim.statement == statement)
-        .collect();
-    assert_eq!(adopted.len(), 1);
-    assert_eq!(
-        adopted[0].quote, premise,
-        "an adopted claim is located at the judged passage"
-    );
-    assert!(model.judged_watched_claim.load(Ordering::Relaxed));
-    assert!(report
-        .findings
-        .iter()
-        .any(|f| f.statement == statement && f.verdict == verdict));
-    assert!(
-        !report.issues.is_empty(),
-        "an adopted claim without support blocks publication"
-    );
 
-    let publishing = JudgingModel::new(premise, &[statement], statement);
     let (raw, report) = verify_and_repair(
-        &publishing,
+        &model,
         "{}",
         &json!({}),
         original.to_string(),
@@ -178,50 +155,47 @@ async fn adopted_assertion_is_checked_and_repaired(
         3000,
     )
     .await?;
-    assert!(report.issues.is_empty());
-    assert!(*publishing.inner.repaired.lock().unwrap());
-    let repaired: Value = serde_json::from_str(&raw)?;
+
+    assert!(!report.coverage_audit[1].complete);
     assert_eq!(
-        repaired["blocks"][0], original["blocks"][0],
-        "the sound section is untouched"
+        report.coverage_audit[1].missing_assertions[0].statement,
+        statement
     );
-    assert_ne!(repaired["blocks"][1]["body"], original["blocks"][1]["body"]);
-    assert!(!repaired.to_string().contains(removed_wording));
-    assert!(report.coverage_audit.iter().all(|unit| unit.complete));
-    assert!(report
-        .findings
-        .iter()
-        .all(|f| f.verdict == ClaimVerdict::Supported && f.statement != statement));
+    assert!(
+        report.coverage[1].claims.is_empty(),
+        "the audit does not add to the inventory"
+    );
+    assert!(!model.judged_watched_claim.load(Ordering::Relaxed));
+    assert!(report.findings.iter().all(|f| f.statement != statement));
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(!*model.inner.repaired.lock().unwrap());
+    assert_eq!(serde_json::from_str::<Value>(&raw)?, original);
+
+    let findings = report.coverage_findings(2);
+    let [finding] = findings.as_slice() else {
+        panic!("one finding for the section: {findings:?}");
+    };
+    assert_eq!(finding.kind, FindingKind::Teaching);
+    assert_eq!(finding.site, Some(FindingSite::Section(1)));
+    assert!(finding.note.contains(statement), "{}", finding.note);
     Ok(())
 }
 
 #[tokio::test]
-async fn an_adopted_assertion_the_sources_never_mention_is_repaired_not_fatal() -> Result<()> {
-    adopted_assertion_is_checked_and_repaired(
-        UNSOURCED_PREMISE,
-        UNSOURCED,
-        ClaimVerdict::Unsupported,
-        "logs every parsed row",
-    )
-    .await
+async fn an_assertion_no_source_mentions_is_a_finding_not_a_claim() -> Result<()> {
+    a_named_assertion_is_a_finding_not_a_claim(UNSOURCED_PREMISE, UNSOURCED).await
 }
 
 #[tokio::test]
-async fn an_adopted_assertion_the_sources_contradict_is_repaired() -> Result<()> {
-    adopted_assertion_is_checked_and_repaired(
-        PREMISE,
-        BAD,
-        ClaimVerdict::Contradicted,
-        "strips field-name whitespace",
-    )
-    .await
+async fn an_assertion_the_sources_contradict_is_a_finding_not_a_claim() -> Result<()> {
+    a_named_assertion_is_a_finding_not_a_claim(PREMISE, BAD).await
 }
 
 /// The correct neighbour: a mapper proposing an omission for a deliverable
 /// and rubric is answered by the judge with no missing assertion. Nothing is
-/// adopted, nothing is repaired, and the lesson publishes unchanged.
+/// reported, nothing is repaired, and the lesson publishes unchanged.
 #[tokio::test]
-async fn a_rubric_without_a_missing_assertion_is_neither_adopted_nor_repaired() -> Result<()> {
+async fn a_rubric_without_a_missing_assertion_reports_nothing() -> Result<()> {
     let model = JudgingModel::new(RUBRIC, &[], BAD);
     let original = lesson(RUBRIC);
     let (raw, report) = verify_and_repair(
@@ -238,14 +212,84 @@ async fn a_rubric_without_a_missing_assertion_is_neither_adopted_nor_repaired() 
     assert!(!*model.inner.repaired.lock().unwrap());
     assert_eq!(serde_json::from_str::<Value>(&raw)?, original);
     assert!(report.coverage_audit.iter().all(|unit| unit.complete));
-    assert!(!report.coverage_audit[1]
-        .reason
-        .contains("recorded as claims"));
+    assert!(report.coverage_findings(2).is_empty());
     assert_eq!(
         report.coverage[1].claims.len(),
         1,
-        "only the extractor's own claim remains; no proposal was adopted"
+        "only the extractor's own claim remains"
     );
     assert!(!model.judged_watched_claim.load(Ordering::Relaxed));
     Ok(())
+}
+
+#[test]
+fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
+    let lesson = PreparedLearningLesson {
+        blocks: vec![LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "CSV header names".into(),
+            body: GOOD.into(),
+            rubric: vec![],
+            source_ids: vec![],
+        }],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let mut report = attest("lesson", &lesson);
+    assert!(report.validate("lesson", &lesson).is_ok());
+
+    report.coverage_audit[0] = CoverageUnit {
+        index: 0,
+        complete: false,
+        reason: "unit-0-passage-0: A premise.".into(),
+        missing_assertions: vec![MissingAssertion {
+            passage_id: "unit-0-passage-0".into(),
+            statement: "A premise.".into(),
+        }],
+    };
+
+    assert!(
+        report.validate("lesson", &lesson).is_ok(),
+        "a gap is a finding, not a defect of the report"
+    );
+}
+
+#[test]
+fn gaps_in_questions_follow_the_sections_in_the_findings_sites() {
+    let lesson = PreparedLearningLesson {
+        blocks: vec![LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "CSV header names".into(),
+            body: GOOD.into(),
+            rubric: vec![],
+            source_ids: vec![],
+        }],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let mut report = attest("lesson", &lesson);
+    let gap = |index: usize, statement: &str| CoverageUnit {
+        index,
+        complete: false,
+        reason: statement.into(),
+        missing_assertions: vec![MissingAssertion {
+            passage_id: format!("unit-{index}-passage-0"),
+            statement: statement.into(),
+        }],
+    };
+    report.coverage_audit = vec![gap(0, "In a section."), gap(2, "In a question.")];
+
+    let sites: Vec<_> = report
+        .coverage_findings(2)
+        .into_iter()
+        .map(|finding| (finding.site, finding.note))
+        .collect();
+
+    assert_eq!(sites.len(), 2);
+    assert_eq!(sites[0].0, Some(FindingSite::Section(0)));
+    assert!(sites[0].1.ends_with("In a section."));
+    assert_eq!(sites[1].0, Some(FindingSite::Question(0)));
+    assert!(sites[1].1.ends_with("In a question."));
 }

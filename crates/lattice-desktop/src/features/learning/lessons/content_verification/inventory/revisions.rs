@@ -185,6 +185,9 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
     let input = inputs
         .get(index)
         .ok_or_else(|| invalid("Missing revised section."))?;
+    if input["passages"].as_array().is_none_or(Vec::is_empty) {
+        return Ok(None);
+    }
     let relocated = locations::relocate(&before, section);
     crate::features::learning::lesson_progress::stage(format!(
         "Updating claims only where lesson section {} changed",

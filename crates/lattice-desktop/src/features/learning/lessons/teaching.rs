@@ -20,6 +20,7 @@ mod quotes;
 mod waiting;
 use passes::{Next, Passes};
 use quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
+pub(in crate::features::learning) use waiting::held as held_findings;
 pub(in crate::features::learning) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
