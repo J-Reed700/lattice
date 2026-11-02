@@ -423,9 +423,9 @@ impl Model {
         if let Some(index) = self.coverage_gap_in {
             if prompt.starts_with("Audit inventory fidelity.") {
                 let data = context(prompt);
-                if data["section"]
-                    .to_string()
-                    .contains(&format!("Section {index}"))
+                if data["targetPassage"]["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with(&format!("unit-{index}-")))
                     && data["targetPassage"]["text"] == GOOD
                 {
                     return Ok(json!({"missingAssertions":["An additional original assertion is missing from this fixture inventory."],"reason":"The fixture names one omission."}).to_string());
