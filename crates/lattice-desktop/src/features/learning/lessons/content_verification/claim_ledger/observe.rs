@@ -723,7 +723,9 @@ impl ClaimLedger {
             }
         }
         let unchecked = matches!(entry.state(), ClaimState::Unchecked);
-        if unchecked || decides_repair || information.is_some() {
+        // A claim the checker could not answer for is asked again.
+        let unanswered = entry.unjudged() > 0;
+        if unchecked || unanswered || decides_repair || information.is_some() {
             self.append(id, ClaimEvent::Checked(check)).await?;
             if let Some(trust) = trust {
                 self.append(id, assessed(trust)).await?;

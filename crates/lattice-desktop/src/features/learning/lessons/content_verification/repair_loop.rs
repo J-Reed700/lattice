@@ -247,6 +247,22 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             continue;
         }
         match ledger.decide() {
+            claim_ledger::Decision::Recheck => {
+                crate::features::learning::lesson_progress::phase(
+                    crate::features::learning::lesson_progress::Phase::Evidence,
+                    "Asking again for the answers that could not be read",
+                );
+                continue;
+            }
+            claim_ledger::Decision::Stop(claims) => {
+                crate::features::learning::lesson_drafts::save(&raw).await?;
+                let error = ledger.stop_unreadable(&raw, claims).await?;
+                crate::features::learning::lesson_progress::phase(
+                    crate::features::learning::lesson_progress::Phase::Evidence,
+                    error.to_string(),
+                );
+                return Err(error);
+            }
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.

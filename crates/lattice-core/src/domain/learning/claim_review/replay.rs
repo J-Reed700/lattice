@@ -53,8 +53,10 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
 }
 
 /// A failure of a claim that is not Open: the machine has the attempts the
-/// claim has left, for every kind but the two the user answers, a proposal
-/// and a dispute. A repairable claim with none left waits for the user.
+/// claim has left, for every kind a rewrite or research can address. A
+/// proposal, a dispute and a checker that gave no answer (only a user's
+/// evidence meets one) go to the user. A repairable claim with none left
+/// waits for the user.
 fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimState {
     let budget = cursor.attempts_left;
     match kind {
@@ -62,15 +64,14 @@ fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimSta
         VerdictKind::Unsupported
         | VerdictKind::Contradicted
         | VerdictKind::NoSource
-        | VerdictKind::CouldNotJudge
         | VerdictKind::InsufficientStanding { .. } => ClaimState::Open {
             kind,
             reason,
             machine_attempts_left: budget,
         },
-        VerdictKind::GeneralKnowledgeProposed | VerdictKind::Disputed { .. } => {
-            queued(kind, reason)
-        }
+        VerdictKind::CouldNotJudge
+        | VerdictKind::GeneralKnowledgeProposed
+        | VerdictKind::Disputed { .. } => queued(kind, reason),
     }
 }
 
@@ -127,6 +128,25 @@ fn after_machine_failure(
 /// is when the check was recorded, which a pass that rests on no passage
 /// carries into its state.
 pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at: i64) {
+    // A local checker that gave no answer taught nothing about the claim:
+    // no attempt is charged and a rewrite keeps waiting for its check. A
+    // claim that passed on text since changed has no check now.
+    if !attached && matches!(check.checker, Checker::Local { .. }) && check.result.is_unjudged() {
+        if matches!(
+            cursor.state,
+            ClaimState::ResolvedByEvidence { .. }
+                | ClaimState::Consistent { .. }
+                | ClaimState::GeneralKnowledge {
+                    by: Actor::Machine,
+                    ..
+                }
+        ) {
+            cursor.state = ClaimState::Unchecked;
+            cursor.basis = None;
+            cursor.trust = None;
+        }
+        return;
+    }
     let previous_failure = std::mem::replace(
         &mut cursor.latest_failure,
         match &check.result {

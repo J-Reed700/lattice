@@ -210,7 +210,8 @@ fn a_repair_rejected_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
 }
 
 #[test]
-fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_is_the_machines() {
+fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_the_checker_gives_is_the_machines(
+) {
     let mut proposed = claim("c1");
     proposed
         .append(
@@ -220,14 +221,14 @@ fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_is_the_
         .unwrap();
     assert!(proposed.state().awaits_user(), "{:?}", proposed.state());
 
-    for kind in [VerdictKind::CouldNotJudge, VerdictKind::NoSource] {
-        let mut entry = claim("c2");
-        entry
-            .append(machine(2), checked(Some(kind.clone()), "v1"))
-            .unwrap();
-        assert_eq!(entry.state(), &open(kind, 2));
-        assert!(entry.may_repair());
-    }
+    // No passage on the statement's terms is a failure like any other: no
+    // source supports it.
+    let mut entry = claim("c2");
+    entry
+        .append(machine(2), checked(Some(VerdictKind::NoSource), "v1"))
+        .unwrap();
+    assert_eq!(entry.state(), &open(VerdictKind::NoSource, 2));
+    assert!(entry.may_repair());
 
     // Research runs once per fingerprint; a round that finds nothing leaves
     // the claim to the machine, which rewrites its sentence and then takes
@@ -1191,4 +1192,71 @@ fn a_common_pass_is_checked_again_when_its_sentence_is_rewritten() {
         "{:?}",
         common.state()
     );
+}
+
+#[test]
+fn a_check_that_gave_no_answer_changes_nothing_about_the_claim() {
+    let unjudged = |version: &str| checked(Some(VerdictKind::CouldNotJudge), version);
+
+    // A new claim stays unchecked, and its attempts stay whole.
+    let mut fresh = claim("c1");
+    fresh.append(machine(2), unjudged("v1")).unwrap();
+    assert_eq!(fresh.state(), &ClaimState::Unchecked);
+    assert!(!fresh.may_repair());
+    assert_eq!(fresh.unjudged(), 1);
+    fresh.append(machine(3), unjudged("v1")).unwrap();
+    assert_eq!(fresh.unjudged(), 2);
+    // An answer ends the streak, and the claim is judged as any other.
+    fresh
+        .append(machine(4), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    assert_eq!(fresh.unjudged(), 0);
+    assert_eq!(
+        fresh.state(),
+        &open(VerdictKind::Unsupported, MACHINE_ATTEMPTS)
+    );
+
+    // A rewrite keeps waiting for the check that decides it, and costs
+    // nothing more than the rewrite itself.
+    let mut rewritten = claim("c2");
+    rewritten
+        .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    rewritten
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    rewritten.append(machine(4), unjudged("v2")).unwrap();
+    assert_eq!(rewritten.state(), &open(VerdictKind::Unsupported, 2));
+    assert!(
+        !rewritten.may_repair(),
+        "the rewrite still waits for its check"
+    );
+    rewritten
+        .append(machine(5), checked(Some(VerdictKind::Unsupported), "v2"))
+        .unwrap();
+    assert!(matches!(
+        rewritten.state(),
+        ClaimState::Open {
+            kind: VerdictKind::Unsupported,
+            machine_attempts_left: 1,
+            ..
+        }
+    ));
+
+    // A claim that passed on text since changed has no check now.
+    let mut passed = verified_claim("c3");
+    passed.append(machine(3), unjudged("v2")).unwrap();
+    assert_eq!(passed.state(), &ClaimState::Unchecked);
+    assert!(!passed.state().is_resolved());
+    passed.append(machine(4), checked(None, "v2")).unwrap();
+    assert!(matches!(
+        passed.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    // A claim waiting for the user stays the user's.
+    let mut waiting = queued_claim("c4", VerdictKind::Unsupported);
+    let before = waiting.state().clone();
+    waiting.append(machine(7), unjudged("v3")).unwrap();
+    assert_eq!(waiting.state(), &before);
 }

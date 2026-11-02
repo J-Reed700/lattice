@@ -1200,9 +1200,9 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     };
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
-    // A claim the checker could not judge is the machine's: a rewrite, then
-    // the last attempt; its sentence being the whole field, it stays and
-    // the lesson waits for the user (claim classes design §3.2).
+    // A claim the checker could not answer for is no failure of the claim:
+    // it is asked again once, and the lesson stops when the answer still
+    // cannot be read (claim classes design §3.2).
     let error = verify_and_repair(
         &offline,
         "{}",
@@ -1214,11 +1214,8 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     .await
     .err()
     .unwrap();
-    assert!(
-        error.to_string().starts_with("Needs your review:"),
-        "{error}"
-    );
-    assert!(*offline.repaired.lock().unwrap());
+    assert!(error.to_string().contains("could not be read"), "{error}");
+    assert!(!*offline.repaired.lock().unwrap());
     let incomplete = Model {
         incomplete_coverage: true,
         ..Model::new()

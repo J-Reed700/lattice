@@ -72,7 +72,10 @@ pub(super) struct Figures {
     inner: Model,
     repair_to_good: bool,
     fail_repair_at: Option<usize>,
-    unusable_judge: bool,
+    /// The first passes, counted by the sorting each begins with, whose
+    /// strict judgments come back unreadable.
+    unusable_passes: usize,
+    passes: AtomicUsize,
     repairs: AtomicUsize,
     judged: Mutex<Vec<String>>,
     extracted: Mutex<Vec<Vec<usize>>>,
@@ -84,7 +87,8 @@ impl Figures {
             inner: Model::new(),
             repair_to_good: false,
             fail_repair_at: None,
-            unusable_judge: false,
+            unusable_passes: 0,
+            passes: AtomicUsize::new(0),
             repairs: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
             extracted: Mutex::new(Vec::new()),
@@ -188,7 +192,13 @@ impl Figures {
 impl LLMPort for Figures {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompts = fixture_prompts(request);
-        if self.unusable_judge
+        if prompts
+            .iter()
+            .any(|prompt| prompt.starts_with("You sort statements"))
+        {
+            self.passes.fetch_add(1, Ordering::Relaxed);
+        }
+        if self.passes.load(Ordering::Relaxed) <= self.unusable_passes
             && prompts
                 .iter()
                 .any(|prompt| prompt.starts_with("Source passages:"))
@@ -390,48 +400,133 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
 }
 
 #[tokio::test]
-async fn a_claim_the_checker_cannot_judge_is_the_machines_and_waits_only_where_it_cannot_be_cut(
+async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attempts_and_the_job_stops(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
     let model = Figures {
-        unusable_judge: true,
+        unusable_passes: usize::MAX,
         ..Figures::new()
     };
+    let draft = lesson(&[GOOD]).to_string();
     let error = prepare(
         &repo,
         &job,
         &lesson_id,
         &model,
-        Some(candidate(GOOD).to_string()),
+        Some(draft.clone()),
         &sources,
     )
     .await
     .err()
-    .unwrap();
-    assert!(
-        error.to_string().starts_with("Needs your review:"),
-        "{error}"
-    );
-    assert_eq!(
-        model.repairs.load(Ordering::Relaxed),
-        1,
-        "rewritten once; the last attempt is the code's"
-    );
+    .unwrap()
+    .to_string();
+    assert!(error.contains("could not be read"), "{error}");
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 0, "never rewritten");
+
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
-    let queued = waiting(&ledger.claims);
-    assert!(!queued.is_empty());
-    for claim in queued {
-        let ClaimState::Queued { kind, reason } = claim.state() else {
-            panic!("{:?}", claim.state());
-        };
-        assert_eq!(*kind, VerdictKind::CouldNotJudge);
-        assert!(!reason.trim().is_empty());
-    }
-    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_some());
+    let review = ledger.review.clone().unwrap();
+    assert_eq!(review.state, LessonReviewState::Stopped);
+    let stop = review.stop_reason.unwrap();
+    assert_eq!(stop.code, "checker_unreadable");
+    assert!(stop.message.contains("figures-fixture"), "{}", stop.message);
+    assert!(stop.fix.contains("another verifier model"), "{}", stop.fix);
+    // The statement is as it was: unchecked, asked twice, no attempt spent,
+    // its text in the draft untouched.
+    let [claim] = ledger.claims.as_slice() else {
+        panic!("one claim: {:?}", ledger.claims);
+    };
+    assert_eq!(claim.state(), &ClaimState::Unchecked);
+    assert_eq!(claim.unjudged(), 2);
+    assert!(repairs(claim).is_empty());
+    let saved = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await
+    })
+    .await?;
+    assert_eq!(saved.as_deref(), Some(draft.as_str()));
+    // The job reads the review row: the lesson is held, and says it stopped.
+    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
+    assert!(held.stopped);
+    assert_eq!(
+        review_outcome(&[held]).1,
+        "Stopped: the checking model's answers could not be read for 1 claim"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_normally() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let model = Figures {
+        unusable_passes: 1,
+        ..Figures::new()
+    };
+    let (raw, report) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[GOOD]).to_string()),
+        &sources,
+    )
+    .await?;
+
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 0);
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let lesson: Value = serde_json::from_str(&raw)?;
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let [claim] = ledger.claims.as_slice() else {
+        panic!("one claim: {:?}", ledger.claims);
+    };
+    assert!(matches!(
+        claim.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    assert_eq!(claim.unjudged(), 0);
+    // Asked twice: no answer, then the judgment.
+    let unanswered: Vec<bool> = claim
+        .events()
+        .iter()
+        .filter_map(|record| match &record.event {
+            ClaimEvent::Checked(check) => Some(check.result.is_unjudged()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unanswered, [true, false]);
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_the_checker_did_not_answer_for_is_asked_again_once_and_then_stops_the_lesson(
+) -> Result<()> {
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let mut unanswered = passage_finding(CELL, ATP, true, CELL_SOURCE);
+    unanswered.verdict = ClaimVerdict::Unverified;
+    unanswered.supporting_quote = None;
+    let report = pass_report(vec![unanswered]);
+
+    ledger.observe(&lesson, &report).await?;
+    assert!(matches!(ledger.decide(), claim_ledger::Decision::Recheck));
+    ledger.observe(&lesson, &report).await?;
+    assert!(matches!(ledger.decide(), claim_ledger::Decision::Stop(1)));
+
+    let id = ledger.finding_claims()[0].clone();
+    let entry = ledger.entry(&id).unwrap();
+    assert_eq!(entry.state(), &ClaimState::Unchecked);
+    assert_eq!(entry.unjudged(), 2);
+    assert!(repairs(entry).is_empty());
     Ok(())
 }
 

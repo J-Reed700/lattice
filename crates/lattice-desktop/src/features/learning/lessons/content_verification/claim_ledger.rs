@@ -75,6 +75,11 @@ struct Sink {
 
 /// What the machine does next, once a pass is observed.
 pub(super) enum Decision {
+    /// The checker could not answer for some claim: check again.
+    Recheck,
+    /// The checker could not answer twice for this many claims: the lesson
+    /// stops.
+    Stop(usize),
     /// Repair these claims.
     Repair(Vec<ClaimId>),
     /// Every claim is resolved.
@@ -334,12 +339,26 @@ impl ClaimLedger {
         self.findings.iter().chain(self.examples.values())
     }
 
-    /// §4: repair what the rules allow; otherwise publish if every claim is
-    /// resolved, else the lesson waits for the user. Only claims in the user's
-    /// hands are left then: a dispute, a reopening, a withdrawn confirmation,
-    /// or a claim whose last attempt could not take its sentence out (claim
-    /// classes design §3.2).
+    /// §4: a claim the checker could not answer for twice stops the lesson;
+    /// repair what the rules allow; check again what the checker did not
+    /// answer once; otherwise publish if every claim is resolved, else the
+    /// lesson waits for the user. Only claims in the user's hands are left
+    /// then: a dispute, a reopening, a withdrawn confirmation, or a claim
+    /// whose last attempt could not take its sentence out (claim classes
+    /// design §3.2).
     pub(super) fn decide(&self) -> Decision {
+        let unanswered = |times: usize| {
+            self.observed()
+                .filter(|id| {
+                    self.entry(id)
+                        .is_some_and(|entry| entry.unjudged() >= times)
+                })
+                .count()
+        };
+        let stuck = unanswered(2);
+        if stuck > 0 {
+            return Decision::Stop(stuck);
+        }
         let repairable: Vec<ClaimId> = self
             .observed()
             .filter(|id| self.entry(id).is_some_and(ClaimLedgerEntry::may_repair))
@@ -347,6 +366,9 @@ impl ClaimLedger {
             .collect();
         if !repairable.is_empty() {
             return Decision::Repair(repairable);
+        }
+        if unanswered(1) > 0 {
+            return Decision::Recheck;
         }
         match end_state(self.entries.iter()) {
             LessonReviewState::Ready => Decision::Publish,
@@ -597,6 +619,28 @@ impl ClaimLedger {
             .await
     }
 
+    /// The lesson stops: the checker's answers could not be read for
+    /// `claims` statements, asked twice, so nothing is known about them. The
+    /// review row says so and names the model; the draft is kept as it is,
+    /// and no statement has been rewritten or cut for it (claim classes
+    /// design §3.2). Resuming with another checker starts the checks again.
+    pub(super) async fn stop_unreadable(&mut self, raw: &str, claims: usize) -> Result<AppError> {
+        let reason = StopReason {
+            code: "checker_unreadable".into(),
+            message: format!(
+                "The checking model's answers could not be read for {claims} statement{}: {} gave no answer the checks can use, asked twice.",
+                if claims == 1 { "" } else { "s" },
+                self.checker_model
+            ),
+            fix: "Try another verifier model, or a larger context window, in Settings, then resume this lesson.".into(),
+            at: now(),
+            request: None,
+        };
+        self.write_review(LessonReviewState::Stopped, raw, Some(reason.clone()))
+            .await?;
+        Ok(AppError::Other(reason.message))
+    }
+
     pub(super) fn tally(&self) -> LearningClaimTally {
         claim_tally(&self.entries)
     }
@@ -678,13 +722,17 @@ pub(in crate::features::learning) fn held_lessons(result_ref: &str) -> Option<Ve
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::features::learning) struct HeldForReview {
     pub lesson_id: String,
-    /// Claims waiting for the user.
+    /// Claims waiting for the user, or the checker's answer.
     pub claims: usize,
+    /// The lesson stopped because the checker's answers could not be read,
+    /// rather than waiting for the user's decisions.
+    pub stopped: bool,
 }
 
 /// Whether `lesson_id`'s preparation in `job_id` stopped because the lesson
-/// waits for the user's review (§6.1), and for how many claims: the review
-/// row, not the error that unwound the preparation, is what says so.
+/// waits for the user's review (§6.1) or because the checker could not be
+/// read, and for how many claims: the review row, not the error that unwound
+/// the preparation, is what says so.
 pub(in crate::features::learning) async fn held_for_review(
     pool: &sqlx::SqlitePool,
     lesson_id: &str,
@@ -693,14 +741,23 @@ pub(in crate::features::learning) async fn held_for_review(
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(lesson_id)
         .await?;
-    let held = ledger.review.as_ref().is_some_and(|review| {
-        review.state == LessonReviewState::NeedsReview && review.job_id == job_id
-    });
-    Ok(held.then(|| {
+    let state = ledger
+        .review
+        .as_ref()
+        .filter(|review| review.job_id == job_id)
+        .map(|review| review.state)
+        .filter(|state| {
+            matches!(
+                state,
+                LessonReviewState::NeedsReview | LessonReviewState::Stopped
+            )
+        });
+    Ok(state.map(|state| {
         let counts = ClaimCounts::tally(ledger.claims.iter());
         HeldForReview {
             lesson_id: lesson_id.to_owned(),
             claims: counts.queued + counts.open,
+            stopped: state == LessonReviewState::Stopped,
         }
     }))
 }
@@ -712,7 +769,12 @@ pub(in crate::features::learning) fn review_outcome(held: &[HeldForReview]) -> (
     let claims: usize = held.iter().map(|hold| hold.claims).sum();
     let plural =
         |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
-    let message = if held.len() == 1 {
+    let message = if held.iter().all(|hold| hold.stopped) {
+        format!(
+            "Stopped: the checking model's answers could not be read for {}",
+            plural(claims, "claim")
+        )
+    } else if held.len() == 1 {
         format!("Needs your review: {}", plural(claims, "claim"))
     } else {
         format!(
@@ -747,12 +809,29 @@ mod tests {
         let held = |lesson: &str, claims| HeldForReview {
             lesson_id: lesson.into(),
             claims,
+            stopped: false,
         };
         assert_eq!(
             review_outcome(&[held("a", 2), held("b", 3)]),
             (
                 "needs_review:a,b".to_owned(),
                 "Needs your review: 5 claims in 2 lessons".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_lesson_stopped_for_an_unreadable_checker_says_so_not_that_it_needs_review() {
+        let stopped = HeldForReview {
+            lesson_id: "a".into(),
+            claims: 3,
+            stopped: true,
+        };
+        assert_eq!(
+            review_outcome(&[stopped]),
+            (
+                "needs_review:a".to_owned(),
+                "Stopped: the checking model's answers could not be read for 3 claims".to_owned()
             )
         );
     }

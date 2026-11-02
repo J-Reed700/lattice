@@ -178,7 +178,9 @@ pub enum VerdictKind {
     /// Retrieval found no passage for the claim's terms in any saved source.
     NoSource,
     /// The checker could not answer: the window, an unusable answer, or no
-    /// runtime for a code example.
+    /// runtime for a code example. A local check with this result teaches
+    /// nothing about the claim (claim classes design §3.2): see
+    /// [`CheckResult::is_unjudged`].
     CouldNotJudge,
     /// The machine proposes the general-knowledge label; the user accepts it
     /// or not (D1).
@@ -209,15 +211,15 @@ impl VerdictKind {
 
     /// A failure the machine answers, by a rewrite and then by taking the
     /// claim's sentence out (claim classes design §3.2): no passage supports
-    /// the claim, one contradicts it, none was found, or the checker could
-    /// not judge it. A claim whose support is below the bar is never
-    /// rewritten or removed for lack of standing (claim sources design
-    /// §10.4): research may look for a stronger source, then it waits for
-    /// the user.
+    /// the claim, one contradicts it, or none was found. A checker that gave
+    /// no answer is not a failure of the claim, and a claim whose support is
+    /// below the bar is never rewritten or removed for lack of standing
+    /// (claim sources design §10.4): research may look for a stronger
+    /// source, then it waits for the user.
     pub fn is_repairable(&self) -> bool {
         matches!(
             self,
-            Self::Unsupported | Self::Contradicted | Self::NoSource | Self::CouldNotJudge
+            Self::Unsupported | Self::Contradicted | Self::NoSource
         )
     }
 
@@ -477,6 +479,19 @@ pub enum CheckResult {
 }
 
 impl CheckResult {
+    /// The checker gave no answer: its reply could not be read, or the claim
+    /// and its passage did not fit its window. Nothing is learned about the
+    /// claim, which keeps its text and its attempts (claim classes design
+    /// §3.2).
+    pub fn is_unjudged(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed {
+                kind: VerdictKind::CouldNotJudge
+            }
+        )
+    }
+
     /// The passage that entails the claim, as its source version and
     /// quotation: wherever it was found, the claim stands on it. `None` for a
     /// failed check, and for a pass that rests on no passage.

@@ -303,6 +303,23 @@ impl ClaimLedgerEntry {
         ) && !self.may_research()
     }
 
+    /// How many local checks in a row, back from the latest, gave no answer
+    /// (claim classes design §3.2). One means the claim is checked once more;
+    /// two means the checker cannot answer for it.
+    pub fn unjudged(&self) -> usize {
+        self.events
+            .iter()
+            .rev()
+            .filter_map(|record| match &record.event {
+                ClaimEvent::Checked(check) if matches!(check.checker, Checker::Local { .. }) => {
+                    Some(check.result.is_unjudged())
+                }
+                _ => None,
+            })
+            .take_while(|unjudged| *unjudged)
+            .count()
+    }
+
     /// The next repair is the escalated one, the machine's last on the claim:
     /// it takes the claim's sentence out.
     pub fn next_repair_escalates(&self) -> bool {
