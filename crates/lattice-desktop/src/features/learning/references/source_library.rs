@@ -16,7 +16,7 @@ use std::collections::HashMap;
 mod admission;
 #[cfg(test)]
 mod admission_tests;
-pub use admission::RefusedSource;
+pub use admission::{RefusedSource, ShortSource};
 mod capture;
 mod lifecycle;
 #[cfg(test)]

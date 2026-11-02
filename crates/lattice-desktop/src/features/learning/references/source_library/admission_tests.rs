@@ -122,3 +122,46 @@ async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leave
     assert_eq!(library.refused_sources(&program_id).await?, refused);
     Ok(())
 }
+
+/// The acceptance report reads the floors by eye: what the gate refused and
+/// the short pages it let through.
+#[tokio::test]
+async fn the_short_pages_the_gate_admitted_are_listed_for_the_floors_to_be_read() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let page = |name: &str, count: usize| {
+        (
+            format!("https://docs.example.org/{name}"),
+            name.to_owned(),
+            words(count),
+        )
+    };
+    let pages = [
+        page("changelog", 200),
+        page("guide", 399),
+        page("manual", 400),
+    ];
+    for (url, title, text) in &pages {
+        save(
+            &library,
+            &program_id,
+            SourceAddedBy::Research,
+            (url, title, text),
+        )
+        .await?;
+    }
+    // Nothing is listed before the gate has read the pages.
+    assert!(library.admitted_under(&program_id, 400).await?.is_empty());
+
+    library.sweep_admission(&program_id).await?;
+
+    let short = library.admitted_under(&program_id, 400).await?;
+    let listed: Vec<(&str, usize)> = short
+        .iter()
+        .filter(|page| ["changelog", "guide", "manual"].contains(&page.title.as_str()))
+        .map(|page| (page.title.as_str(), page.words))
+        .collect();
+    assert_eq!(listed, [("changelog", 200), ("guide", 399)]);
+    Ok(())
+}
