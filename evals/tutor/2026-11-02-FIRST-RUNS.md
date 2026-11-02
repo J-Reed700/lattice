@@ -52,8 +52,24 @@ store, not the broker."):
 | Session talk, by hand | 7 of 47 |
 
 That was run from a scratch script with the same prompt, same seed and same sentences as
-`scripts/replay_session_talk.py`, which has not itself been run. The check costs one more call a turn on the verifier
-model. The app is set to Claude Haiku as its verifier, and that has not been tried.
+`scripts/replay_session_talk.py`. The check costs one more call a turn on the verifier model. The app is set to
+Claude Haiku as its verifier, and that has not been tried.
+
+Later the same day `scripts/replay_session_talk.py` itself ran on the 27B, on both runs' rows, twice:
+
+| Prompt | False claims kept | About the subject kept | Session talk kept | Replies it could not read |
+|---|---|---|---|---|
+| As above, with the reply read only when it is one JSON array (`2026-11-02-session-talk-strict-parse`) | 28 of 28 | 27 of 28 | 7 of 47 | 0 of 28 |
+| Asking instead for the numbers of the sentences that only run the session (`2026-11-02-session-talk-naming-the-talk`) | 23 of 28 | 21 of 28 | 2 of 47 | 0 of 28 |
+
+The first is what the app now does: it reads the judge's reply only when the whole reply is the array, so numbers in
+a sentence of prose leave every sentence a claim. Before, it took the first bracketed list anywhere in the reply.
+The second was tried because a judge that names what to drop fails safe when it misses a sentence. It measured
+worse where it matters: it named five false claims as talk, all of them said in a tutor's voice ("Your broker
+refuses enqueues at 80 percent full."), so the prompt that names the sentences to keep stays. Its wording was: "Some
+only run the session: [the same list]. Others state something about the subject being taught; those must be checked.
+Reply with a JSON array of the numbers of the sentences that only run the session, and nothing else. When a sentence
+also states something about the subject, or you are not sure, leave it out."
 
 ## Reading off, and the ids in the facts
 

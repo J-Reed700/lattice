@@ -63,9 +63,20 @@ def listed(sentences):
 
 
 def positions(reply):
-    """The numbers in the first JSON array of `reply`, less one, as the app reads them; None when there is none."""
-    found = re.search(r"\[[\d,\s]*\]", reply or "")
-    return None if found is None else {number - 1 for number in json.loads(found.group(0)) if number >= 1}
+    """The numbers of `reply`, less one, when it is one JSON array of numbers and nothing else, as the app reads it
+    (`listed_positions`); None otherwise."""
+    text = (reply or "").strip()
+    for fence in ("```json", "```"):
+        if text.startswith(fence) and text.endswith("```") and len(text) >= len(fence) + 3:
+            text = text[len(fence):-3]
+            break
+    try:
+        numbers = json.loads(text.strip())
+    except ValueError:
+        return None
+    if not isinstance(numbers, list) or not all(isinstance(number, int) and number >= 0 for number in numbers):
+        return None
+    return {number - 1 for number in numbers if number >= 1}
 
 
 def is_subject(sentence, openings):

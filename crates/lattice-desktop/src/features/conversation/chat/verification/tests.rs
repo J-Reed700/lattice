@@ -659,6 +659,21 @@ async fn every_uncited_sentence_stays_a_claim_when_the_judge_cannot_say() {
     assert_eq!(report.unsupported_claims.len(), 3);
 }
 
+/// Numbers in a sentence of prose are not an answer: every uncited sentence
+/// stays a claim.
+#[tokio::test]
+async fn numbers_inside_prose_are_not_taken_as_the_judges_answer() {
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        "Sentence [3] states a fact about the subject; the others run the session.",
+    ]));
+    let report = GroundingVerifier::new(Some(llm))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+}
+
 /// Without the judge nothing sorts the sentences, so all of them stay.
 #[tokio::test]
 async fn a_lexical_check_keeps_every_uncited_sentence() {

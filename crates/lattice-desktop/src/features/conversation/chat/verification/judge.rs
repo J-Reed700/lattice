@@ -51,11 +51,16 @@ const WINDOW_SEPARATOR: &str = "\n[…]\n";
 /// surrounds it. See evals/tutor/2026-11-02-FIRST-RUNS.md.
 const SESSION_TALK_SYSTEM: &str = "A tutor's reply is being checked against its course. Below are sentences from its replies, each with its number. Some state something about the subject being taught; those must be checked. Others only run the session: greeting, praising or correcting the learner's words in general terms, saying what comes next, what was saved or how many cards are left, asking the learner to do something. Reply with a JSON array of the numbers of the sentences that state something about the subject, and nothing else. When a sentence does both, include it.";
 
-/// The numbers in the first JSON array of `reply`, each less one: positions.
+/// The numbers of `reply`, each less one, when the reply is one JSON array of
+/// numbers and nothing else.
 fn listed_positions(reply: &str) -> Option<HashSet<usize>> {
-    let start = reply.find('[')?;
-    let end = start + reply.get(start..)?.find(']')?;
-    let numbers: Vec<usize> = serde_json::from_str(reply.get(start..=end)?).ok()?;
+    let text = reply.trim();
+    let text = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .and_then(|rest| rest.strip_suffix("```"))
+        .unwrap_or(text);
+    let numbers: Vec<usize> = serde_json::from_str(text.trim()).ok()?;
     Some(
         numbers
             .into_iter()
