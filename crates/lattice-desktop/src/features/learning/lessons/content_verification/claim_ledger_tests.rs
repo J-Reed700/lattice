@@ -923,6 +923,7 @@ pub(super) fn passage_finding(
         resolution: None,
         trust: None,
         two_pass: Default::default(),
+        label: None,
     }
 }
 

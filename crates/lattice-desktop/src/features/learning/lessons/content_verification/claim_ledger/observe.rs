@@ -216,7 +216,6 @@ impl ClaimLedger {
                     source_version_id: &source,
                     supporting_quote: &quote,
                     passages: &finding.evidence,
-                    trust: finding.trust.as_deref(),
                 };
                 let trust = finding
                     .trust
@@ -238,25 +237,16 @@ impl ClaimLedger {
                 };
                 match self.gate.judge(&support) {
                     Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
-                    // Only the bar's failure is the gate's; a quotation that
-                    // is not in its passage is a plain unsupported claim.
-                    Sufficiency::Insufficient { reason, kind } => (
+                    // A quotation that is not in its passage is a plain
+                    // unsupported claim.
+                    Sufficiency::Insufficient { reason } => (
                         (
                             CheckResult::Failed {
-                                kind: kind.clone().unwrap_or(VerdictKind::Unsupported),
+                                kind: VerdictKind::Unsupported,
                             },
                             reason,
                         ),
-                        trust.filter(|_| kind.is_some()),
-                    ),
-                    Sufficiency::Contradicted { reason } => (
-                        (
-                            CheckResult::Failed {
-                                kind: VerdictKind::Contradicted,
-                            },
-                            reason,
-                        ),
-                        trust,
+                        None,
                     ),
                 }
             }

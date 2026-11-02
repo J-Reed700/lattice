@@ -1337,6 +1337,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 supporting_quote: None,
                 resolution: None,
                 two_pass: Default::default(),
+                label: None,
                 trust: None,
             })
         })

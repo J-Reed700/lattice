@@ -87,6 +87,7 @@ fn finding(statement: &str, quote: &str, evidence: Vec<EvidencePassage>) -> Find
         supporting_quote: Some(quote.into()),
         resolution: None,
         two_pass: Default::default(),
+        label: None,
         trust: None,
     }
 }
@@ -121,7 +122,6 @@ fn judge(finding: &Finding) -> Sufficiency {
         source_version_id: &source,
         supporting_quote: &quote,
         passages: &finding.evidence,
-        trust: finding.trust.as_deref(),
     })
 }
 
@@ -185,12 +185,57 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
         &trust.supports[0].passage,
         PassageKind::Testimonial { attributed_to, borne_out: None } if attributed_to == "platform.openai.com"
     ));
-    claim.trust = Some(Box::new(trust));
-    let Sufficiency::Insufficient { reason, .. } = judge(&claim) else {
-        panic!("the ledger records an insufficient support as unsupported");
-    };
+    let reason = trust.explain();
     assert!(reason.starts_with("Its support "), "{reason}");
     assert!(reason.contains("OpenAI API"), "{reason}");
+    // The support is below the bar and the checker's verdict stands: the
+    // claim is labelled for what its support is.
+    assert_eq!(trust.label(), Some(Label::Secondary));
+    claim.trust = Some(Box::new(trust));
+    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
+}
+
+#[test]
+fn a_claim_is_labelled_by_what_its_support_is_whether_or_not_the_bar_was_met() {
+    let text = "Structured Outputs ensures the model always follows the supplied JSON Schema.";
+    let claim = finding(STRUCTURED, text, vec![passage("v", text)]);
+    let label = |kind: ClaimKind, support: &str, added_by: AddedBy| {
+        let mut version = facts(level(support), "web:example.org", text, Vec::new());
+        version.added_by = added_by;
+        let trust = weighed(
+            &profile(kind, Some("OpenAI API")),
+            &claim,
+            &HashMap::from([("v".to_owned(), version)]),
+        );
+        (
+            matches!(trust.decision, Decision::Sufficient { .. }),
+            trust.label(),
+        )
+    };
+    // Below a specification's bar: held to nothing, labelled as secondary.
+    assert_eq!(
+        label(ClaimKind::Specification, "established", AddedBy::Research),
+        (false, Some(Label::Secondary))
+    );
+    // Within the bar of a practice and of an opinion: the decision's own label.
+    assert_eq!(
+        label(ClaimKind::Practice, "established", AddedBy::Research),
+        (true, Some(Label::Practice))
+    );
+    assert_eq!(
+        label(ClaimKind::Opinion, "established", AddedBy::Research),
+        (true, Some(Label::Attributed))
+    );
+    // A kind that takes no label has none, met or not.
+    assert_eq!(
+        label(ClaimKind::Definition, "community", AddedBy::Research),
+        (false, None)
+    );
+    // The user's own evidence is shown as theirs instead.
+    assert_eq!(
+        label(ClaimKind::Specification, "unknown", AddedBy::User),
+        (true, None)
+    );
 }
 
 #[test]
@@ -386,7 +431,6 @@ fn a_quotation_outside_the_named_passage_is_never_sufficient() {
         source_version_id: "docs",
         supporting_quote: &quote,
         passages: &claim.evidence,
-        trust: claim.trust.as_deref(),
     });
     assert!(matches!(verdict, Sufficiency::Insufficient { .. }));
 }
@@ -400,7 +444,7 @@ fn an_unweighed_finding_keeps_the_quotation_rule_alone() {
 }
 
 #[test]
-fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
+fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
     let text = "The current stable Python is 3.13.";
     let mut current = profile(ClaimKind::VersionBound, Some("Python"));
     current.temporal = TemporalScope::Current;
@@ -435,7 +479,10 @@ fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
         Overturn::Contradicted { .. }
     ));
     claim.trust = Some(Box::new(trust));
-    assert!(matches!(judge(&claim), Sufficiency::Contradicted { .. }));
+    assert!(
+        matches!(judge(&claim), Sufficiency::Sufficient),
+        "the weighing records the contradiction and does not take the verdict away"
+    );
 }
 
 #[test]
@@ -577,7 +624,8 @@ impl LLMPort for CountingChecker {
 /// each claim is judged with one model call and no challenge call, and its
 /// support is then weighed by level and kind. The claims backed by the
 /// owner's documentation, and the practices backed by an identified author,
-/// pass; a specification only a third party states waits for the owner's.
+/// meet their bar; a specification only a third party states does not, and
+/// stands with the label of its kind.
 #[tokio::test]
 async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_challenge_call(
 ) -> Result<()> {
@@ -644,9 +692,10 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
             _ => {
                 let trust = claim.trust.as_ref().unwrap();
                 assert!(
-                    matches!(judge(&claim), Sufficiency::Insufficient { .. }),
-                    "{id}"
+                    matches!(judge(&claim), Sufficiency::Sufficient),
+                    "{id}: a support below its bar still stands"
                 );
+                assert_eq!(trust.label(), label_below_primary(&trust.profile), "{id}");
                 let Decision::Insufficient { bar, next, .. } = &trust.decision else {
                     unreachable!()
                 };

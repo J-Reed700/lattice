@@ -63,6 +63,11 @@ fn a_quotation_in_its_named_source_is_supported_by_the_matching_passage() {
         .unwrap()
         .expect("the quotation is in the book");
     assert_eq!(finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(
+        finding.label,
+        Some(Label::Attributed),
+        "a quotation found in the source it names is attributed by identity"
+    );
     assert!(finding.evidence.iter().all(|p| p.source_id == "book"));
     let quote = finding.supporting_quote.unwrap();
     assert!(quote.starts_with("Keep descriptions action-oriented"));

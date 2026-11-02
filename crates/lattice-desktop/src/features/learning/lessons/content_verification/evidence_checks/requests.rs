@@ -48,6 +48,7 @@ pub(super) async fn finish(
         resolution: None,
         trust: None,
         two_pass: TwoPass::default(),
+        label: None,
     };
     if finding.verdict != ClaimVerdict::Unverified {
         crate::features::learning::lesson_drafts::record_checkpoint(

@@ -122,6 +122,7 @@ pub(super) fn settle(
         supporting_quote,
         resolution: None,
         two_pass: Default::default(),
+        label: Some(Label::Attributed),
         trust: None,
     }))
 }

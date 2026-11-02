@@ -77,6 +77,7 @@ impl ClaimLedger {
                         supporting_quote: Some(supporting_quote.clone()),
                         resolution: None,
                         two_pass: Default::default(),
+                        label: None,
                         trust: None,
                     },
                 ))

@@ -11,6 +11,7 @@ use lattice_core::application::services::claim_verification::ClaimEvidence;
 use lattice_core::application::services::claim_verification::{
     CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
+use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -202,6 +203,11 @@ struct Finding {
     /// is most of a finding's size and most findings have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     trust: Option<Box<provenance_gate::FindingTrust>>,
+    /// How the learner is told what the claim's support is (claim classes
+    /// design §3.2): the provenance gate's label for a weighed claim,
+    /// `Attributed` for a quotation found in the source it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<Label>,
     /// What the two passes made of the claim (course evidence index §5.1):
     /// the pass and page that decided it, where pass B read, the passage it
     /// found when the section's citations gave no support, and a passage
@@ -343,6 +349,7 @@ impl ClaimReceipt {
             supporting_quote: self.supporting_quote,
             resolution: None,
             two_pass: Default::default(),
+            label: None,
             trust: None,
         })
     }
