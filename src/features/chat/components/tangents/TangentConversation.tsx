@@ -12,9 +12,10 @@ import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationsState, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import { conversationDraftKey, setDraft } from '@/shared/drafts/drafts';
-import type { ConversationMessage } from '@/types/conversation';
+import type { Conversation, ConversationMessage, ConversationMessageBookmark } from '@/types/conversation';
 
 const EMPTY_MESSAGES: ConversationMessage[] = [];
+const NO_BOOKMARKS: ConversationMessageBookmark[] = [];
 
 /**
  * A tangent's conversation, for the shared chat inside it. Only the view of
@@ -36,7 +37,13 @@ export function TangentConversation({ conversationId: id, inheritedCount, onTurn
   const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id, api) });
   const bookmarksQuery = useQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id, undefined, api) });
   const persisted = messagesQuery.data ?? EMPTY_MESSAGES;
+  const bookmarks = bookmarksQuery.data ?? NO_BOOKMARKS;
   const metadata = useMemo(() => deriveMessageMetadata(persisted), [persisted]);
+  const bookmarkMap = useMemo(() => new Map(bookmarks.map((bookmark) => [bookmark.messageId, bookmark])), [bookmarks]);
+  const conversations = useMemo<Conversation[]>(
+    () => (detailQuery.data ? [{ ...detailQuery.data, messages: persisted.slice(inheritedCount) }] : []),
+    [detailQuery.data, inheritedCount, persisted],
+  );
   const sending = base.inFlightGenerations.has(id);
   const wasSending = useRef(false);
   useStopSpeechOnChange(id);
@@ -59,13 +66,13 @@ export function TangentConversation({ conversationId: id, inheritedCount, onTurn
     return {
       ...base,
       activeConversationId: id,
-      conversations: detailQuery.data ? [{ ...detailQuery.data, messages: persisted.slice(inheritedCount) }] : [],
+      conversations,
       lastMessageSources: metadata.sources,
       messageVerification: metadata.verification,
       messageRetrieval: metadata.retrieval,
       messageTurn: metadata.turn,
-      messageBookmarks: bookmarksQuery.data ?? [],
-      messageBookmarkMap: new Map((bookmarksQuery.data ?? []).map((bookmark) => [bookmark.messageId, bookmark])),
+      messageBookmarks: bookmarks,
+      messageBookmarkMap: bookmarkMap,
       composerDraft: null,
       setComposerDraft: (value: string | null) => setDraft(draftKey, value ?? ''),
       regenerateResponse: async (conversationId: string, options?: RegenerateOptions) => {
@@ -74,7 +81,7 @@ export function TangentConversation({ conversationId: id, inheritedCount, onTurn
         return outcome;
       },
     };
-  }, [base, bookmarksQuery.data, detailQuery.data, id, inheritedCount, metadata, persisted]);
+  }, [base, bookmarkMap, bookmarks, conversations, id, metadata, persisted]);
 
   if (messagesQuery.data && detailQuery.data) return <ConversationSnapshotProvider value={scope}>{children}</ConversationSnapshotProvider>;
   if (messagesQuery.isError || detailQuery.isError || (detailQuery.isSuccess && !detailQuery.data)) return (
