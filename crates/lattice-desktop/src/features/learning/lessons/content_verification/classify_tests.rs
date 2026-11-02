@@ -76,6 +76,21 @@ fn a_remark_about_the_lessons_own_sources_or_options_is_internal_whatever_else_i
 }
 
 #[test]
+fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_sources() {
+    assert_eq!(
+        rule_class(
+            "The sources of latency in a network are queuing and propagation.",
+            "body"
+        ),
+        None
+    );
+    assert_eq!(
+        rule_class("The sources offered no figure for the choice.", "body"),
+        Some(Class::Internal)
+    );
+}
+
+#[test]
 fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
     assert_eq!(
         rule_class(

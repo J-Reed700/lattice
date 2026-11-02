@@ -34,16 +34,18 @@ pub(super) struct ToSort<'a> {
     pub(super) field: &'a str,
 }
 
-/// What the rules alone make of a statement. Internal: a remark about the
-/// lesson's own sources or answer options, or anything in a rubric or an
-/// option. Sourced: a digit, quoted wording or an attribution cue. Otherwise
-/// nothing, and the model sorts it. The cues are the ones the replay
-/// measured: they only ever err toward a check.
+/// What the rules alone make of a statement. Sourced: a digit, quoted wording
+/// or an attribution cue, which can only err toward a check. Internal:
+/// anything in a rubric or an option, or a remark that opens "The sources"
+/// (not "The sources of") or "The other options"; these are the rules that
+/// can lighten a statement, to no check at all. Otherwise nothing, and the
+/// model sorts it.
 pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
     let statement = statement.trim_start();
     let about_the_lesson = field.starts_with("rubric/")
         || field.starts_with("options/")
-        || lazy_regex::regex!(r"(?i)^(the sources|the other options)").is_match(statement);
+        || (lazy_regex::regex!(r"(?i)^(the sources|the other options)").is_match(statement)
+            && !lazy_regex::regex!(r"(?i)^the sources of\b").is_match(statement));
     if about_the_lesson {
         return Some(Class::Internal);
     }
