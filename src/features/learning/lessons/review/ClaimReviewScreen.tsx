@@ -39,7 +39,7 @@ function useNarrow(): boolean {
 
 const ALL_KEYS: Array<[string, string]> = [
   ['A', 'Accept'], ['Shift A', 'Accept the source for all'], ['E', 'Edit the sentence'], ['R', 'Remove it'], ['S', 'Add a source'],
-  ['G', 'General knowledge'], ['J / ↓', 'Next claim'], ['K / ↑', 'Previous claim'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
+  ['J / ↓', 'Next claim'], ['K / ↑', 'Previous claim'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
 ];
 
 /**
@@ -106,7 +106,6 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     { id: 'review-edit', keys: 'E', description: 'Edit the sentence', handler: () => click('E') },
     { id: 'review-remove', keys: 'R', description: 'Remove it', handler: () => click('R') },
     { id: 'review-add-source', keys: 'S', description: 'Add a source', handler: () => click('S') },
-    { id: 'review-general', keys: 'G', description: 'General knowledge', handler: () => { if (active?.availableActions.includes('general_knowledge')) void session.run(active, { action: 'general_knowledge' }, 'general_knowledge'); } },
     { id: 'review-undo', keys: 'U', description: 'Undo', handler: () => void session.undoLast() },
     { id: 'review-legend', keys: 'Shift+?', description: 'Keyboard keys', handler: () => setLegend((open) => !open) },
   ], [session, active]);  
@@ -198,7 +197,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     openedIds={session.opened} settledIds={session.settling}
     onSelect={(claimId) => { session.select(claimId); if (narrow) setNarrowView('claim'); requestAnimationFrame(() => document.getElementById(queueRowId(claimId))?.focus()); }}
     onAcceptSource={(group) => acceptSource(group.claims[0]?.support ?? null)} onAddSource={openGroupSheet}
-    onAcceptProposals={(proposals) => void session.acceptProposals(proposals)} resolved={session.resolved}
+    resolved={session.resolved}
     teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
     removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
     onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;

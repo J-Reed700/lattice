@@ -363,7 +363,6 @@ pub enum UserActionDto {
         after: String,
     },
     Remove,
-    GeneralKnowledge,
     ResearchWithHint {
         hint: String,
     },
@@ -381,7 +380,6 @@ impl From<&UserAction> for UserActionDto {
                 after: after.clone(),
             },
             UserAction::Remove => Self::Remove,
-            UserAction::GeneralKnowledge => Self::GeneralKnowledge,
             UserAction::ResearchWithHint { hint } => Self::ResearchWithHint { hint: hint.clone() },
         }
     }

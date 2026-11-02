@@ -79,18 +79,8 @@ export function Passage({
   );
 }
 
-/** No saved reference supports or contradicts the claim; it was kept unchecked. */
-const GENERAL_KNOWLEDGE = 'general_knowledge';
-
-function isGeneralKnowledge(claim: LearningClaimEvidenceDto) {
-  return claim.resolution === 'general_knowledge' || claim.verdict === GENERAL_KNOWLEDGE;
-}
-
 /** How the claim was settled, in words (§5.6): confirmed never reads as verified. */
 function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
-  if (isGeneralKnowledge(claim)) {
-    return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">General knowledge · not checked against a source</span>;
-  }
   if (claim.resolution === 'confirmed_by_you') {
     return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">Confirmed by you</span>;
   }
@@ -119,7 +109,7 @@ function passedAs(claim: LearningClaimEvidenceDto, checked: 'reasoning' | 'commo
 export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const consistent = report.teachingClaims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
-  const verified = Math.max(0, report.claimCount - report.generalKnowledgeCount - report.confirmedCount - consistent - common);
+  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common);
   const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
   const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`] : [];
   return [
@@ -127,7 +117,6 @@ export function evidenceSummary(report: LearningLessonEvidenceDto): string {
     consistent > 0 ? `${consistent} consistent with their sources` : null,
     common > 0 ? `${common} common knowledge, not checked against a source` : null,
     report.confirmedCount > 0 ? `${report.confirmedCount} confirmed by you` : null,
-    report.generalKnowledgeCount > 0 ? `${report.generalKnowledgeCount} general knowledge, not checked against a source` : null,
   ].filter(Boolean).join(' · ');
 }
 
@@ -288,11 +277,10 @@ export function LessonSectionEvidence({
   const claims = data?.teachingClaims.filter((claim) => claim.sectionIndex === sectionIndex) ?? [];
   const passageNumbers = useMemo(() => passageNumbersFor(data), [data]);
   const sectionPassages = new Set(claims.flatMap((claim) => claim.passages.map(passageKey)));
-  const general = claims.filter(isGeneralKnowledge).length;
   const confirmed = claims.filter((claim) => claim.resolution === 'confirmed_by_you').length;
   const consistent = claims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = claims.filter((claim) => passedAs(claim, 'common')).length;
-  const checked = claims.length - general - confirmed - consistent - common;
+  const checked = claims.length - confirmed - consistent - common;
 
   const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
     setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
@@ -311,8 +299,7 @@ export function LessonSectionEvidence({
           Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
           {consistent > 0 && ` · ${consistent} consistent with their sources`}
           {common > 0 && ` · ${common} common knowledge`}
-          {confirmed > 0 && ` · ${confirmed} confirmed by you`}
-          {general > 0 && ` · ${general} general knowledge`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
+          {confirmed > 0 && ` · ${confirmed} confirmed by you`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
           <span className="ml-auto flex gap-1" aria-label="Citations in this section">
             {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}
           </span>

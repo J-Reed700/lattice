@@ -257,7 +257,7 @@ pub struct LearningClaimTally {
     pub waiting: u32,
     /// Verified against a source.
     pub verified: u32,
-    /// Closed by the user or removed: confirmed, general knowledge, removed.
+    /// Closed by the user: confirmed, removed or edited away.
     pub resolved_by_you: u32,
     /// Rewritten or dropped by the machine's repairs.
     #[serde(default)]

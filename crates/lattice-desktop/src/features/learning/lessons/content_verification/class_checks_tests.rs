@@ -7,7 +7,7 @@ use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::claim_review::{Actor, ClaimState, VerdictKind};
+use lattice_core::domain::learning::claim_review::{ClaimState, VerdictKind};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
@@ -775,13 +775,7 @@ async fn the_ledger_records_each_class_and_the_state_its_check_ends_in() -> Resu
     let ids = ledger.finding_claims().to_vec();
     let state = |index: usize| ledger.entry(&ids[index]).unwrap().state().clone();
     let class = |index: usize| ledger.entry(&ids[index]).unwrap().class();
-    assert!(matches!(
-        state(0),
-        ClaimState::GeneralKnowledge {
-            by: Actor::Machine,
-            ..
-        }
-    ));
+    assert!(matches!(state(0), ClaimState::GeneralKnowledge { .. }));
     assert!(matches!(state(1), ClaimState::Consistent { .. }));
     assert!(matches!(state(2), ClaimState::ResolvedByEvidence { .. }));
     assert!(matches!(
@@ -804,5 +798,41 @@ async fn the_ledger_records_each_class_and_the_state_its_check_ends_in() -> Resu
     // repair takes its sentence out. One that passed is not repaired at all.
     assert!(ledger.cuts_next(&ids[3]));
     assert!(!ledger.cuts_next(&ids[2]));
+    Ok(())
+}
+
+/// A resolution is the user's: the machine's pass of a Common statement is
+/// not one, so the learner is shown its class and not a verdict of someone's.
+#[tokio::test]
+async fn the_report_records_no_resolution_for_a_statement_the_machine_passed() -> Result<()> {
+    let model = Classes::new(&[]);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let body = format!("{COMMON} {GOOD}");
+    let mut common = passage_finding(&body, COMMON, true, SOURCE);
+    common.evidence.clear();
+    common.supporting_quote = None;
+    common.class = Some(Classed {
+        class: Class::Common,
+        by: ClassifiedBy::Model,
+    });
+    let mut sourced = passage_finding(&body, GOOD, true, SOURCE);
+    sourced.class = Some(Classed {
+        class: Class::Sourced,
+        by: ClassifiedBy::Rule,
+    });
+    let report = pass_report(vec![common, sourced]);
+    ledger.observe(&lesson(&body), &report).await?;
+    let ids = ledger.finding_claims().to_vec();
+    assert!(matches!(
+        ledger.entry(&ids[0]).unwrap().state(),
+        ClaimState::GeneralKnowledge { .. }
+    ));
+
+    let bound = ledger.bind(report);
+
+    assert!(bound
+        .findings
+        .iter()
+        .all(|finding| finding.resolution.is_none()));
     Ok(())
 }

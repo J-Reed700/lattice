@@ -122,7 +122,6 @@ describe('whyItWaits', () => {
   it('covers the verdicts without a source', () => {
     expect(whyItWaits(claimItem({ verdictKind: { kind: 'no_source' } as never })).fixes).toEqual(['add_source', 'remove']);
     expect(whyItWaits(claimItem({ verdictKind: { kind: 'could_not_judge' } as never })).chip).toBe('Could not check');
-    expect(whyItWaits(claimItem({ verdictKind: { kind: 'general_knowledge_proposed' } as never }))).toMatchObject({ chip: 'Common knowledge?', fixes: ['general_knowledge', 'add_source'] });
     expect(whyItWaits(claimItem({ verdictKind: null }))).toMatchObject({ chip: 'Waiting for you', reason: 'This claim is waiting for you.' });
   });
 
@@ -160,8 +159,7 @@ describe('resolvedChip', () => {
     [{ state: 'removed', at: 1, by: 'machine' }, 'Removed'],
     [{ state: 'edited', at: 1, successor: 'claim-2' }, 'Edited'],
     [{ state: 'edited', at: 1, successor: null }, 'Removed by an edit'],
-    [{ state: 'general_knowledge', at: 1, by: 'user' }, 'Common knowledge'],
-    [{ state: 'general_knowledge', at: 1, by: 'machine' }, 'Common knowledge'],
+    [{ state: 'general_knowledge', at: 1 }, 'Common knowledge'],
     [{ state: 'unchecked' }, 'Being checked'],
     [{ state: 'open', machineAttemptsLeft: 1 }, 'Being checked'],
     [{ state: 'queued' }, 'Says otherwise'],
@@ -177,7 +175,6 @@ describe('fixGroupOf', () => {
     expect(group('insufficient_standing', { sufficiency: sufficiency('no_measurement_origin') })).toBe('needs_source');
     expect(group('contradicted')).toBe('says_otherwise');
     expect(group('disputed')).toBe('says_otherwise');
-    expect(group('general_knowledge_proposed')).toBe('common_knowledge');
     expect(group('could_not_judge')).toBe('could_not_check');
     expect(group('unsupported')).toBe('needs_source');
     expect(fixGroupOf(claimItem({ verdictKind: null }))).toBe('needs_source');
@@ -201,10 +198,10 @@ describe('triedLine', () => {
 
 describe('tallies', () => {
   it('leaves out zero counts and agrees in number', () => {
-    const counts = { verified: 12, confirmed: 0, generalKnowledge: 2, queued: 1, open: 0, removedByYou: 0, editedByYou: 3, rewritten: 74 };
-    expect(tallyLine(counts)).toBe('1 claim needs you · 12 verified · 2 common knowledge · 74 rewritten by the machine · 3 edited by you');
+    const counts = { verified: 12, confirmed: 0, queued: 1, open: 0, removedByYou: 0, editedByYou: 3, rewritten: 74 };
+    expect(tallyLine(counts)).toBe('1 claim needs you · 12 verified · 74 rewritten by the machine · 3 edited by you');
     expect(tallyLine({ ...counts, queued: 33, confirmed: 1, removedByYou: 1, open: 4 })).toBe(
-      '33 claims need you · 12 verified · 1 confirmed by you · 2 common knowledge · 74 rewritten by the machine · 1 removed by you · 3 edited by you · 4 being checked',
+      '33 claims need you · 12 verified · 1 confirmed by you · 74 rewritten by the machine · 1 removed by you · 3 edited by you · 4 being checked',
     );
   });
 
@@ -234,8 +231,6 @@ describe('announcements', () => {
     expect(announcement('confirm', 0)).toBe(`Accepted. ${ALL_RESOLVED}`);
     expect(announcement('edit', 3)).toBe('Sentence edited. It is checked when you resume.');
     expect(announcement('remove', 1)).toBe('Removed. 1 left.');
-    expect(announcement('general_knowledge', 2)).toBe('Accepted as common knowledge. 2 left.');
-    expect(announcement('accept_all_general_knowledge', 2)).toBe('Common-knowledge proposals accepted. 2 left.');
     expect(announcement('research_with_hint', 2)).toBe('Searched with your hint. 2 left.');
     expect(announcement('unconfirm', 5)).toBe('Acceptance withdrawn. 5 left.');
     expect(announcement('undo', 5)).toBe('Undone. 5 left.');

@@ -1,7 +1,7 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
-use super::general_knowledge::Resolution;
 use super::provenance_gate::FindingTrust;
+use super::resolution::Resolution;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
@@ -149,9 +149,6 @@ impl LessonVerificationReport {
                     Some(Resolution::Confirmed { note, .. }) => {
                         (LearningClaimResolutionDto::ConfirmedByYou, note.clone())
                     }
-                    Some(Resolution::GeneralKnowledge { .. }) => {
-                        (LearningClaimResolutionDto::GeneralKnowledge, None)
-                    }
                     None if source_removed => (LearningClaimResolutionDto::SourceRemoved, None),
                     None => (LearningClaimResolutionDto::Verified, None),
                 };
@@ -160,13 +157,6 @@ impl LessonVerificationReport {
                     content_quote: finding.quote.clone(),
                     claim: finding.statement.clone(),
                     verdict: match finding.verdict {
-                        _ if matches!(
-                            finding.resolution,
-                            Some(Resolution::GeneralKnowledge { .. })
-                        ) =>
-                        {
-                            "general_knowledge"
-                        }
                         ClaimVerdict::Supported => "supported",
                         ClaimVerdict::Contradicted => "contradicted",
                         ClaimVerdict::Unsupported => "unsupported",
@@ -204,16 +194,6 @@ impl LessonVerificationReport {
             embedding_model: self.embedding_model.clone(),
             content_sha256: self.content_sha256.clone(),
             claim_count: self.findings.len(),
-            general_knowledge_count: self
-                .findings
-                .iter()
-                .filter(|finding| {
-                    matches!(
-                        finding.resolution,
-                        Some(Resolution::GeneralKnowledge { .. })
-                    )
-                })
-                .count(),
             confirmed_count: self
                 .findings
                 .iter()

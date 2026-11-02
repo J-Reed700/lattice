@@ -39,7 +39,6 @@ describe('describeEvent', () => {
     [{ kind: 'contradicted' }, 'a source says otherwise'],
     [{ kind: 'no_source' }, 'no saved source mentions it'],
     [{ kind: 'could_not_judge' }, 'could not check'],
-    [{ kind: 'general_knowledge_proposed' }, 'proposed as common knowledge'],
     [{ kind: 'disputed', verifier: { kind: 'contradicted' } }, 'disputed by an independent check · a source says otherwise'],
     [{ kind: 'insufficient_standing', bar: 'primary', have: [] } as VerdictKindDto, 'stated, but not by a source enough on its own'],
   ])('words a failed check (%j)', (kind, words) => {
@@ -63,7 +62,6 @@ describe('describeEvent', () => {
     expect(event({ kind: 'user_action', action: { action: 'unconfirm' }, note: null })).toBe('Acceptance withdrawn');
     expect(event({ kind: 'user_action', action: { action: 'edit', before: 'old', after: 'new' }, note: null })).toBe('Edited: “old” → “new”');
     expect(event({ kind: 'user_action', action: { action: 'remove' }, note: null })).toBe('Removed the sentence');
-    expect(event({ kind: 'user_action', action: { action: 'general_knowledge' }, note: null })).toBe('Accepted as common knowledge');
     expect(event({ kind: 'user_action', action: { action: 'research_with_hint', hint: 'Livy book 1' }, note: null })).toBe('Asked for a search: “Livy book 1”');
   });
 
@@ -131,8 +129,7 @@ describe('claimFilterOf', () => {
     [{ state: 'removed', at: 1, by: 'machine' }, 'machine'],
     [{ state: 'removed', at: 1, by: 'user' }, 'changed'],
     [{ state: 'confirmed', at: 1 }, 'confirmed'],
-    [{ state: 'general_knowledge', at: 1, by: 'user' }, 'general'],
-    [{ state: 'general_knowledge', at: 1, by: 'machine' }, 'machine'],
+    [{ state: 'general_knowledge', at: 1 }, 'machine'],
     [{ state: 'edited', at: 1, successor: null }, 'changed'],
     [{ state: 'reopened', cause: { cause: 'unconfirmed' }, previous: { state: 'confirmed', at: 1 } }, 'needs_you'],
   ])('files %j as %s', (state, filter) => {

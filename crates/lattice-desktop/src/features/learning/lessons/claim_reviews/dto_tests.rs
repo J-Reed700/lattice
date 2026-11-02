@@ -68,8 +68,6 @@ fn every_action_request_round_trips() {
             "unconfirm",
             "edit",
             "remove",
-            "general_knowledge",
-            "accept_all_general_knowledge",
             "research_with_hint",
             "undo",
         ]
@@ -134,12 +132,7 @@ fn claim_states_mirror_the_domain() {
             by: Actor::Machine,
         },
         ClaimState::GeneralKnowledge {
-            at: 1_760_000_600_000,
-            by: Actor::User,
-        },
-        ClaimState::GeneralKnowledge {
             at: 1_760_000_650_000,
-            by: Actor::Machine,
         },
         ClaimState::Reopened {
             cause: ReopenCause::SourceReplaced {
@@ -170,7 +163,6 @@ fn verdict_kinds_mirror_the_domain() {
         VerdictKind::Contradicted,
         VerdictKind::NoSource,
         VerdictKind::CouldNotJudge,
-        VerdictKind::GeneralKnowledgeProposed,
         VerdictKind::Disputed {
             verifier: Box::new(VerdictKind::Contradicted),
         },

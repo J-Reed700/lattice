@@ -13,8 +13,6 @@ use serde::{Deserialize, Serialize};
 pub(in crate::features::learning) enum Resolution {
     /// "Confirmed by you", with the user's note (required over a contradiction).
     Confirmed { at: i64, note: Option<String> },
-    /// The general-knowledge label, accepted by the user.
-    GeneralKnowledge { at: i64 },
 }
 
 impl Finding {
@@ -35,9 +33,13 @@ mod tests {
         use crate::features::learning::dto::{
             LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
         };
-        let accepted = Some(Resolution::GeneralKnowledge { at: 1 });
+        let confirmed = Some(Resolution::Confirmed { at: 1, note: None });
         for (body, resolution, publishable) in [
-            ("Small handlers are easier to test.", accepted.clone(), true),
+            (
+                "Small handlers are easier to test.",
+                confirmed.clone(),
+                true,
+            ),
             ("Small handlers are easier to test.", None, false),
         ] {
             let lesson = PreparedLearningLesson {

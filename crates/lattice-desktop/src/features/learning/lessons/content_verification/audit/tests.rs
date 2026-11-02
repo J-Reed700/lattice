@@ -131,20 +131,8 @@ pub(super) fn confirmed(id: &str, statement: &str) -> ClaimLedgerEntry {
 
 pub(super) fn general_knowledge(id: &str, statement: &str) -> ClaimLedgerEntry {
     let mut entry = extracted(id, statement);
-    let proposed = CheckResult::Failed {
-        kind: VerdictKind::GeneralKnowledgeProposed,
-    };
     entry
-        .append(machine(2), local_check(proposed, "v1"))
-        .unwrap();
-    entry
-        .append(
-            user(3),
-            ClaimEvent::UserAction {
-                action: UserAction::GeneralKnowledge,
-                note: None,
-            },
-        )
+        .append(machine(2), local_check(CheckResult::KnownCommon, "v1"))
         .unwrap();
     entry
 }

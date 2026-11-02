@@ -14,8 +14,8 @@ mod successor;
 pub(super) use audit::Audited;
 pub(super) use successor::Rewrites;
 
-use super::general_knowledge::Resolution;
 use super::provenance_gate::ProvenanceGate;
+use super::resolution::Resolution;
 use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
@@ -614,9 +614,6 @@ impl ClaimLedger {
                 at: *at,
                 note: note.clone(),
             }),
-            Some(ClaimState::GeneralKnowledge { at, .. }) => {
-                Some(Resolution::GeneralKnowledge { at: *at })
-            }
             _ => None,
         };
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {

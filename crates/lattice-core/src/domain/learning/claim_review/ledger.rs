@@ -46,15 +46,12 @@ pub struct CheckBasis {
 }
 
 /// The per-claim actions of the review card (§5.1), in the card's order.
-/// "Accept all general-knowledge proposals" is a lesson action made of one
-/// `GeneralKnowledge` per claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimActionKind {
     Confirm,
     Edit,
     Remove,
-    GeneralKnowledge,
     AttachEvidence,
     ResearchWithHint,
     Unconfirm,
@@ -385,7 +382,6 @@ impl ClaimLedgerEntry {
             ClaimActionKind::Confirm,
             ClaimActionKind::Edit,
             ClaimActionKind::Remove,
-            ClaimActionKind::GeneralKnowledge,
             ClaimActionKind::AttachEvidence,
             ClaimActionKind::ResearchWithHint,
             ClaimActionKind::Unconfirm,
@@ -405,16 +401,6 @@ impl ClaimLedgerEntry {
             ClaimActionKind::Edit | ClaimActionKind::Remove => !matches!(
                 state,
                 ClaimState::Removed { .. } | ClaimState::Edited { .. }
-            ),
-            ClaimActionKind::GeneralKnowledge => matches!(
-                state,
-                ClaimState::Open {
-                    kind: VerdictKind::Unsupported | VerdictKind::GeneralKnowledgeProposed,
-                    ..
-                } | ClaimState::Queued {
-                    kind: VerdictKind::Unsupported | VerdictKind::GeneralKnowledgeProposed,
-                    ..
-                }
             ),
             ClaimActionKind::AttachEvidence => {
                 is_open(state) || matches!(state, ClaimState::Confirmed { .. })
@@ -613,10 +599,7 @@ impl ClaimLedgerEntry {
                 next.state,
                 ClaimState::ResolvedByEvidence { .. }
                     | ClaimState::Consistent { .. }
-                    | ClaimState::GeneralKnowledge {
-                        by: Actor::Machine,
-                        ..
-                    }
+                    | ClaimState::GeneralKnowledge { .. }
             )
         {
             next.attempts_left = next
@@ -674,7 +657,6 @@ impl ClaimLedgerEntry {
             UserAction::Unconfirm => ClaimActionKind::Unconfirm,
             UserAction::Edit { .. } => ClaimActionKind::Edit,
             UserAction::Remove => ClaimActionKind::Remove,
-            UserAction::GeneralKnowledge => ClaimActionKind::GeneralKnowledge,
             UserAction::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
         };
         if !self.allows(kind) {
@@ -711,12 +693,6 @@ impl ClaimLedgerEntry {
             }
             UserAction::Remove => {
                 next.state = ClaimState::Removed {
-                    at,
-                    by: Actor::User,
-                }
-            }
-            UserAction::GeneralKnowledge => {
-                next.state = ClaimState::GeneralKnowledge {
                     at,
                     by: Actor::User,
                 }

@@ -182,9 +182,6 @@ pub enum VerdictKind {
     /// nothing about the claim (claim classes design §3.2): see
     /// [`CheckResult::is_unjudged`].
     CouldNotJudge,
-    /// The machine proposes the general-knowledge label; the user accepts it
-    /// or not (D1).
-    GeneralKnowledgeProposed,
     /// The Verifier audit disagrees with the local checker's "supported"
     /// (§14.5). The local side is always "verified": a human verdict the
     /// Verifier disputes is reopened instead ([`ReopenCause::VerifierDispute`]).
@@ -203,7 +200,6 @@ impl VerdictKind {
             Self::Contradicted => "contradicted",
             Self::NoSource => "no_source",
             Self::CouldNotJudge => "could_not_judge",
-            Self::GeneralKnowledgeProposed => "general_knowledge_proposed",
             Self::Disputed { .. } => "disputed",
             Self::InsufficientStanding { .. } => "insufficient_standing",
         }
@@ -313,8 +309,9 @@ pub enum ClaimState {
         #[serde(default)]
         by: Actor,
     },
-    /// The general-knowledge label, accepted (D1).
-    GeneralKnowledge { at: i64, by: Actor },
+    /// A Common statement the knowledge judge passed: standard knowledge,
+    /// checked against no source (claim classes design §3.11).
+    GeneralKnowledge { at: i64 },
     /// A closed claim reopened; it waits for the user like `Queued`.
     Reopened {
         cause: ReopenCause,
@@ -334,26 +331,19 @@ impl ClaimState {
     }
 
     /// Closed in one of the ways a lesson may publish with (§2.1): verified,
-    /// found consistent, confirmed, removed, edited (the successor answers
-    /// for it) or accepted as general knowledge.
+    /// found consistent, passed as common knowledge, confirmed, removed or
+    /// edited (the successor answers for it).
     pub fn is_resolved(&self) -> bool {
         !self.is_machine_owned() && !self.awaits_user()
     }
 
     /// A verdict no machine check changes: the user's, or a sentence that is
     /// gone. Only [`ClaimEvent::Reopened`], a Verifier dispute or the user
-    /// moves it. The machine's own general-knowledge pass is not one: a
-    /// rewrite of its sentence is checked again.
+    /// moves it.
     pub fn is_settled(&self) -> bool {
         matches!(
             self,
-            Self::Confirmed { .. }
-                | Self::Removed { .. }
-                | Self::Edited { .. }
-                | Self::GeneralKnowledge {
-                    by: Actor::User,
-                    ..
-                }
+            Self::Confirmed { .. } | Self::Removed { .. } | Self::Edited { .. }
         )
     }
 
@@ -520,7 +510,6 @@ pub enum UserAction {
     Unconfirm,
     Edit { before: String, after: String },
     Remove,
-    GeneralKnowledge,
     ResearchWithHint { hint: String },
 }
 

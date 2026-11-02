@@ -234,24 +234,20 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
     removed
         .append(user(7), act(UserAction::Remove, None))
         .unwrap();
-    let mut general = claim("c4");
-    general
+    // A statement the knowledge judge passed is the machine's, and resolves.
+    let mut common = claim("c4");
+    common
         .append(
             machine(2),
-            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
+            ClaimEvent::Checked(Check {
+                result: CheckResult::KnownCommon,
+                evidence: vec![],
+                ..local_check(None, "v1")
+            }),
         )
         .unwrap();
-
     assert_eq!(
-        end_state([&verified, &confirmed, &removed, &general]),
-        LessonReviewState::NeedsReview,
-        "a general-knowledge proposal blocks until accepted"
-    );
-    general
-        .append(user(3), act(UserAction::GeneralKnowledge, None))
-        .unwrap();
-    assert_eq!(
-        end_state([&verified, &confirmed, &removed, &general]),
+        end_state([&verified, &confirmed, &removed, &common]),
         LessonReviewState::Ready
     );
     let unchecked = claim("c5");
@@ -273,11 +269,10 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
         LessonReviewState::NeedsReview
     );
     assert_eq!(
-        ClaimCounts::tally([&verified, &confirmed, &removed, &general, &unchecked, &reopened]),
+        ClaimCounts::tally([&verified, &confirmed, &removed, &common, &unchecked, &reopened]),
         ClaimCounts {
-            verified: 1,
+            verified: 2,
             confirmed: 1,
-            general_knowledge: 1,
             queued: 1,
             open: 1,
             removed_by_you: 1,
@@ -438,10 +433,7 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
     let states = [
         ClaimState::Unchecked,
         ClaimState::Consistent { at: 5 },
-        ClaimState::GeneralKnowledge {
-            at: 6,
-            by: Actor::Machine,
-        },
+        ClaimState::GeneralKnowledge { at: 6 },
         entry.state().clone(),
         ClaimState::Reopened {
             cause: ReopenCause::VerifierDispute,

@@ -107,7 +107,7 @@ describe('claim review presentation', () => {
   });
 
   it('the tally never counts the machine’s rewrites as the user’s', () => {
-    const counts = { verified: 12, confirmed: 0, generalKnowledge: 0, queued: 33, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 };
+    const counts = { verified: 12, confirmed: 0, queued: 33, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 };
     expect(tallyLine(counts)).toBe('33 claims need you · 12 verified · 74 rewritten by the machine');
     expect(tallyLine({ ...counts, queued: 1, confirmed: 2, removedByYou: 1 })).toBe('1 claim needs you · 12 verified · 2 confirmed by you · 74 rewritten by the machine · 1 removed by you');
     const tally = { unchecked: 0, searching: 3, repairing: 0, waiting: 5, verified: 40, resolvedByYou: 0, rewritten: 9 };

@@ -321,8 +321,6 @@ pub struct ClaimCounts {
     /// knowledge.
     pub verified: usize,
     pub confirmed: usize,
-    /// Accepted as general knowledge by the user.
-    pub general_knowledge: usize,
     /// Waiting for the user: Queued, Reopened, or held for standing.
     pub queued: usize,
     /// The machine's: Unchecked or Open.
@@ -343,13 +341,8 @@ impl ClaimCounts {
             let slot = match claim.state() {
                 ClaimState::ResolvedByEvidence { .. }
                 | ClaimState::Consistent { .. }
-                | ClaimState::GeneralKnowledge {
-                    by: Actor::Machine, ..
-                } => &mut counts.verified,
+                | ClaimState::GeneralKnowledge { .. } => &mut counts.verified,
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
-                ClaimState::GeneralKnowledge {
-                    by: Actor::User, ..
-                } => &mut counts.general_knowledge,
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => &mut counts.queued,
                 ClaimState::Open { .. } if claim.held_for_standing() => &mut counts.queued,
                 ClaimState::Unchecked | ClaimState::Open { .. } => &mut counts.open,
@@ -378,9 +371,8 @@ impl ClaimCounts {
         counts
     }
 
-    /// The user's own verdicts: confirmed, accepted as general knowledge,
-    /// removed or edited away.
+    /// The user's own verdicts: confirmed, removed or edited away.
     pub fn resolved_by_you(&self) -> usize {
-        self.confirmed + self.general_knowledge + self.removed_by_you + self.edited_by_you
+        self.confirmed + self.removed_by_you + self.edited_by_you
     }
 }

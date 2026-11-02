@@ -638,7 +638,7 @@ async fn a_confirmed_claim_publishes_on_resume_without_being_checked_again() -> 
     assert_eq!(finding.statement, figure(0));
     assert!(matches!(
         finding.resolution,
-        Some(general_knowledge::Resolution::Confirmed { note: None, .. })
+        Some(resolution::Resolution::Confirmed { note: None, .. })
     ));
     let ledger = store.load(&lesson_id).await?;
     assert!(matches!(
@@ -792,7 +792,7 @@ async fn a_claim_confirmed_while_its_repair_was_interrupted_is_not_sent_on_resum
     let confirmed = report.findings.iter().find(|f| f.unit == 1).unwrap();
     assert!(matches!(
         &confirmed.resolution,
-        Some(general_knowledge::Resolution::Confirmed { note: Some(_), .. })
+        Some(resolution::Resolution::Confirmed { note: Some(_), .. })
     ));
     let ledger = store.load(&lesson_id).await?;
     let first = ledger
@@ -818,13 +818,11 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
         "DictReader buffers 100 rows before parsing.",
         "DictReader caches every header.",
         "DictReader strips quotes from field names.",
-        "DictReader is the usual way to read CSV.",
     ];
     let kinds = [
         VerdictKind::Unsupported,
         VerdictKind::Unsupported,
         VerdictKind::Contradicted,
-        VerdictKind::Unsupported,
     ];
     let draft = lesson(&sentences).to_string();
     lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -922,14 +920,13 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
             before: "strips quotes from".into(),
             after: "keeps quotes in".into(),
         },
-        ClaimActionRequestDto::GeneralKnowledge,
     ];
     for (id, action) in ids.iter().zip(actions) {
         revision = service.resolve(&lesson_id, &id.0, action, revision).await?;
     }
     let examples = CheckerExamples::new(pool.clone());
     let labelled = examples.list(Some(&program_id)).await?;
-    // General knowledge is not scored; each other verdict is one example.
+    // Each verdict is one example.
     assert_eq!(
         labelled
             .iter()

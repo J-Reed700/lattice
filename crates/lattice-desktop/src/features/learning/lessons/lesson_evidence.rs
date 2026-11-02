@@ -22,14 +22,13 @@ pub struct LearningEvidencePassageDto {
     pub trust: Option<crate::features::learning::dto::LearningSourceTrustDto>,
 }
 /// How a published claim stands (§5.6): verified against a source, confirmed
-/// by the user, accepted as general knowledge, or verified against a source
-/// since removed. A string union, like the review panel's.
+/// by the user, or verified against a source since removed. A string union,
+/// like the review panel's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningClaimResolutionDto {
     Verified,
     ConfirmedByYou,
-    GeneralKnowledge,
     SourceRemoved,
 }
 
@@ -112,10 +111,6 @@ pub struct LearningLessonEvidenceDto {
     pub embedding_model: Option<String>,
     pub content_sha256: String,
     pub claim_count: usize,
-    /// Of `claim_count`, the claims kept as general knowledge: no saved
-    /// reference supports or contradicts them, and they were not checked
-    /// against a source.
-    pub general_knowledge_count: usize,
     /// Of `claim_count`, the claims the user confirmed without a supporting
     /// passage; shown apart from the machine-verified ones (§5.6).
     pub confirmed_count: usize,

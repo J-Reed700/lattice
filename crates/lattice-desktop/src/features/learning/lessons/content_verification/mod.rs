@@ -47,7 +47,6 @@ use evidence_checks::{
 use evidence_checks::{CheckedPart, ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
-mod general_knowledge;
 mod judge;
 pub(in crate::features::learning) use judge::{
     judge_for_publication, judge_in_order, ranking, shown_of,
@@ -57,6 +56,7 @@ mod inventory_checkpoint;
 mod learner_view;
 mod portability;
 mod quote_claims;
+mod resolution;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
 #[cfg(test)]
@@ -205,7 +205,7 @@ struct Finding {
     supporting_quote: Option<String>,
     /// The user's resolution, set from the claim ledger at publication.
     #[serde(skip_serializing_if = "Option::is_none")]
-    resolution: Option<general_knowledge::Resolution>,
+    resolution: Option<resolution::Resolution>,
     /// What the provenance gate weighed for a supported finding: the
     /// supports' levels for the claim's subject and the decision. Boxed: it
     /// is most of a finding's size and most findings have none.

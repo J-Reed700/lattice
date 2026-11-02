@@ -37,7 +37,7 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[], onBack = vi.f
 
 const statement = () => document.querySelector<HTMLElement>('[data-claim-statement]');
 const confirmedFrom = (claims: ClaimReviewItemDto[], id: string) => claims.map((claim) => (claim.claimId === id ? { ...claim, state: { state: 'confirmed' as const, at: 2 } } : claim));
-const counts = (queued: number) => ({ verified: 12, confirmed: 0, generalKnowledge: 0, queued, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 });
+const counts = (queued: number) => ({ verified: 12, confirmed: 0, queued, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 });
 
 describe('Claim review screen', () => {
   beforeEach(() => {
@@ -111,7 +111,6 @@ describe('Claim review screen', () => {
       { ...unsupportedItem(20), support: null, tried: tried(), presentation: waitingOnSource(20).presentation, alsoSupported: [] },
       { ...unsupportedItem(21), verdictKind: { kind: 'no_source' }, support: null, tried: tried(), presentation: waitingOnSource(21).presentation, alsoSupported: [] },
       { ...waitingOnSource(22), verdictKind: { kind: 'contradicted' }, support: support({ role: 'contradicts' }) },
-      { ...waitingOnSource(23), verdictKind: { kind: 'general_knowledge_proposed' }, support: null },
       { ...waitingOnSource(24), verdictKind: { kind: 'could_not_judge' } },
       { ...waitingOnSource(25), verdictKind: { kind: 'disputed', verifier: { kind: 'unsupported' } } },
     ];
@@ -228,14 +227,6 @@ describe('Claim review screen', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Remove it' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This claim changed; reload and act again.');
     await waitFor(() => expect(api.review).toHaveBeenCalledTimes(2));
-  });
-
-  it('accepts every common-knowledge proposal of the no-source group in one action', async () => {
-    const proposals = [1, 2].map((index) => ({ ...waitingOnSource(index), support: null, verdictKind: { kind: 'general_knowledge_proposed' as const } }));
-    show(review(proposals));
-    api.resolve.mockResolvedValue(ok({ revision: 8 }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Accept all 2 common-knowledge proposals' }));
-    await waitFor(() => expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({ claimId: 'claim-1', action: { action: 'accept_all_general_knowledge' } })));
   });
 
   it('keeps the first and the independent check under More › History', async () => {

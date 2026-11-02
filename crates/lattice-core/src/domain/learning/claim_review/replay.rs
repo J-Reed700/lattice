@@ -2,7 +2,7 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Actor, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
+    Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
     ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
 
@@ -55,8 +55,8 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
 
 /// A failure of a claim that is not Open: the machine has the attempts the
 /// claim has left, for every kind a rewrite or research can address. A
-/// proposal, a dispute and a checker that gave no answer (only a user's
-/// evidence meets one) go to the user. A repairable claim with none left
+/// dispute and a checker that gave no answer (only a user's evidence meets
+/// one) go to the user. A repairable claim with none left
 /// waits for the user.
 fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimState {
     let budget = cursor.attempts_left;
@@ -70,9 +70,7 @@ fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimSta
             reason,
             machine_attempts_left: budget,
         },
-        VerdictKind::CouldNotJudge
-        | VerdictKind::GeneralKnowledgeProposed
-        | VerdictKind::Disputed { .. } => queued(kind, reason),
+        VerdictKind::CouldNotJudge | VerdictKind::Disputed { .. } => queued(kind, reason),
     }
 }
 
@@ -137,10 +135,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
             cursor.state,
             ClaimState::ResolvedByEvidence { .. }
                 | ClaimState::Consistent { .. }
-                | ClaimState::GeneralKnowledge {
-                    by: Actor::Machine,
-                    ..
-                }
+                | ClaimState::GeneralKnowledge { .. }
         ) {
             cursor.state = ClaimState::Unchecked;
             cursor.basis = None;
@@ -192,10 +187,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
             supporting_quote: supporting_quote.clone(),
         },
         CheckResult::Consistent => ClaimState::Consistent { at },
-        CheckResult::KnownCommon => ClaimState::GeneralKnowledge {
-            at,
-            by: Actor::Machine,
-        },
+        CheckResult::KnownCommon => ClaimState::GeneralKnowledge { at },
         CheckResult::Failed { kind } => {
             let (kind, reason) = (kind.clone(), check.reason.clone());
             match std::mem::replace(&mut cursor.state, ClaimState::Unchecked) {

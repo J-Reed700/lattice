@@ -46,7 +46,7 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
  * one tab stop; arrows, Home and End move between them.
  */
 export function ClaimQueue({
-  groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource, onAcceptProposals,
+  groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource,
   resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, removedActive, onOpenRemoved, busy,
 }: {
   groups: ClaimGroup[];
@@ -59,8 +59,6 @@ export function ClaimQueue({
   onSelect: (claimId: string) => void;
   onAcceptSource: (group: ClaimGroup) => void;
   onAddSource: (group: ClaimGroup) => void;
-  /** Accepts every common-knowledge proposal of the lesson, in one action. */
-  onAcceptProposals: (claims: ClaimReviewItemDto[]) => void;
   /** Claims that no longer wait, for "Show resolved". */
   resolved: ClaimReviewItemDto[];
   teachingWaiting: number;
@@ -108,7 +106,6 @@ export function ClaimQueue({
   };
 
   const total = groups.reduce((sum, group) => sum + group.claims.length, 0);
-  const proposals = groups.flatMap((group) => group.claims).filter((claim) => claim.verdictKind?.kind === 'general_knowledge_proposed' && !settledIds.has(claim.claimId));
   return (
     <nav aria-label="Claims waiting for you" className="flex min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
@@ -121,9 +118,6 @@ export function ClaimQueue({
         </label>
         {total > 1 && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => onAddSource({ key: 'queue', label: '', detail: null, claims: groups.flatMap((group) => group.claims), source: null })}>
           Add a source for these {total}
-        </Button>}
-        {proposals.length > 0 && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => onAcceptProposals(proposals)}>
-          Accept all {proposals.length} common-knowledge {proposals.length === 1 ? 'proposal' : 'proposals'}
         </Button>}
       </div>
 

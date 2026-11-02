@@ -31,17 +31,17 @@ import type {
 export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
 
 /** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
-export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'general' | 'changed' {
+export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
   switch (state.state) {
     case 'queued': return 'needs_you';
     case 'unchecked':
     case 'open': return 'repairing';
     case 'resolved_by_evidence':
-    case 'consistent': return 'machine';
+    case 'consistent':
+    case 'general_knowledge': return 'machine';
     case 'removed': return state.by === 'machine' ? 'machine' : 'changed';
     case 'confirmed': return 'confirmed';
-    case 'general_knowledge': return state.by === 'machine' ? 'machine' : 'general';
     case 'edited': return 'changed';
     case 'reopened': return 'needs_you';
   }
@@ -316,7 +316,6 @@ function verdictWords(kind: VerdictKindDto): string {
     case 'contradicted': return 'A source says otherwise';
     case 'no_source': return 'No saved source mentions it';
     case 'could_not_judge': return 'Could not check';
-    case 'general_knowledge_proposed': return 'Proposed as common knowledge';
     case 'disputed': return `Disputed by an independent check · ${verdictWords(kind.verifier).toLowerCase()}`;
     case 'insufficient_standing': return 'Stated, but not by a source enough on its own';
   }
@@ -341,7 +340,6 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
     case 'unconfirm': return `Acceptance withdrawn${quoted}`;
     case 'edit': return `Edited: “${action.before}” → “${action.after}”`;
     case 'remove': return 'Removed the sentence';
-    case 'general_knowledge': return 'Accepted as common knowledge';
     case 'research_with_hint': return `Asked for a search: “${action.hint}”`;
   }
 }

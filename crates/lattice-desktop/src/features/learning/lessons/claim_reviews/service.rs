@@ -8,7 +8,7 @@
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger,
-    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
+    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -117,8 +117,7 @@ impl ClaimReviewService {
         self.drafts.continue_review_job(&request).await
     }
 
-    /// Applies the user's `action` to `claim_id` (to every general-knowledge
-    /// proposal for `AcceptAllGeneralKnowledge`) and returns the review's new
+    /// Applies the user's `action` to `claim_id` and returns the review's new
     /// revision. Refused, writing nothing, when `expected_revision` is stale
     /// or the claim's state does not allow the action.
     pub async fn resolve(
@@ -137,9 +136,6 @@ impl ClaimReviewService {
             return Err(AppError::InvalidState(
                 "This claim changed; reload and act again.".into(),
             ));
-        }
-        if matches!(action, ClaimActionRequestDto::AcceptAllGeneralKnowledge) {
-            return self.accept_all_general_knowledge(&ledger, &review).await;
         }
         let entry = ledger
             .claims
@@ -217,40 +213,6 @@ impl ClaimReviewService {
             return Ok(true);
         }
         self.stale_standing(ledger).await
-    }
-
-    async fn accept_all_general_knowledge(
-        &self,
-        ledger: &Ledger,
-        review: &LessonReview,
-    ) -> Result<i64> {
-        let mut revision = ledger.revision;
-        let proposals: Vec<&ClaimLedgerEntry> = ledger
-            .claims
-            .iter()
-            .filter(|entry| entry.state().verdict() == Some(&VerdictKind::GeneralKnowledgeProposed))
-            .collect();
-        if proposals.is_empty() {
-            return Err(AppError::InvalidInput(
-                "No claim of this lesson is proposed as general knowledge.".into(),
-            ));
-        }
-        for entry in proposals {
-            revision = self
-                .store
-                .append(
-                    &ledger.lesson_id,
-                    entry.claim_id(),
-                    provenance(review),
-                    ClaimEvent::UserAction {
-                        action: UserAction::GeneralKnowledge,
-                        note: None,
-                    },
-                    revision,
-                )
-                .await?;
-        }
-        Ok(revision.0)
     }
 
     async fn resolution(
@@ -333,9 +295,6 @@ impl ClaimReviewService {
                 }
                 user(UserAction::Remove, None, Some(LabelSource::UserRemove))
             }
-            ClaimActionRequestDto::GeneralKnowledge => {
-                user(UserAction::GeneralKnowledge, None, None)
-            }
             ClaimActionRequestDto::ResearchWithHint { hint } => {
                 let hint = hint.trim().to_owned();
                 if hint.is_empty() {
@@ -344,9 +303,6 @@ impl ClaimReviewService {
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
             ClaimActionRequestDto::Undo => self.undo(review, lesson_id, entry).await,
-            ClaimActionRequestDto::AcceptAllGeneralKnowledge => Err(AppError::InternalError(
-                "Accepting every proposal is a lesson action".into(),
-            )),
         }
     }
 

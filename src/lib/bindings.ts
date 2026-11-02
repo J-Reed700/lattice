@@ -4791,13 +4791,13 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "general_knowledge" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -4836,7 +4836,7 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
  * The card's lines, in order.
  */
 lines: string[] }
-export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number;
+export type ClaimCountsDto = { verified: number; confirmed: number; queued: number; open: number;
 /**
  * Removed by the user.
  */
@@ -4950,7 +4950,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */
@@ -7142,10 +7142,10 @@ claimKind: string; subject: LearningClaimSubjectDto | null; measurementOrigin: s
 reasons: LearningTrustReasonDto[] }
 /**
  * How a published claim stands (§5.6): verified against a source, confirmed
- * by the user, accepted as general knowledge, or verified against a source
- * since removed. A string union, like the review panel's.
+ * by the user, or verified against a source since removed. A string union,
+ * like the review panel's.
  */
-export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "general_knowledge" | "source_removed"
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed"
 /**
  * The subject a claim is about, with what a site-for-subject override can
  * be scoped to: the subject, its aliases and its broader classes.
@@ -7183,7 +7183,7 @@ waiting: number;
  */
 verified: number;
 /**
- * Closed by the user or removed: confirmed, general knowledge, removed.
+ * Closed by the user: confirmed, removed or edited away.
  */
 resolvedByYou: number;
 /**
@@ -7398,12 +7398,6 @@ publishable: boolean; audit: LearningLessonAuditDto | null }
 export type LearningLessonAuditState = "running" | "completed" | "stopped"
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
-/**
- * Of `claim_count`, the claims kept as general knowledge: no saved
- * reference supports or contradicts them, and they were not checked
- * against a source.
- */
-generalKnowledgeCount: number;
 /**
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
@@ -10279,7 +10273,7 @@ keywords?: string[] }
  * A recorded user action. A confirmation shows the sources it was bound
  * to; the quote digest it is bound to stays on the backend.
  */
-export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "research_with_hint"; hint: string }
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -10331,7 +10325,7 @@ export type VectorQuantizationDto =
  * searches rescore against full-precision vectors.
  */
 "i8"
-export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } | { kind: "general_knowledge_proposed" } |
+export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } |
 /**
  * The Verifier's verdict on a claim the local checker verified.
  */

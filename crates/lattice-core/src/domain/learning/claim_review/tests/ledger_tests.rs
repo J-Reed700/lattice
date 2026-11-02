@@ -164,17 +164,6 @@ fn repairs_the_rules_do_not_allow_are_refused() {
             rewrite(2, true, RepairOutcome::SupersededByUser),
         )
         .unwrap();
-    let mut proposed = claim("c2");
-    proposed
-        .append(
-            machine(2),
-            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
-        )
-        .unwrap();
-    assert!(!proposed.may_repair());
-    assert!(proposed
-        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
-        .is_err());
 }
 
 #[test]
@@ -210,17 +199,8 @@ fn a_repair_rejected_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
 }
 
 #[test]
-fn only_a_proposal_or_a_dispute_goes_to_the_user_and_every_other_failure_the_checker_gives_is_the_machines(
-) {
-    let mut proposed = claim("c1");
-    proposed
-        .append(
-            machine(2),
-            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
-        )
-        .unwrap();
-    assert!(proposed.state().awaits_user(), "{:?}", proposed.state());
-
+fn every_failure_the_checker_gives_stays_with_the_machine_which_researches_once_rewrites_and_cuts()
+{
     // No passage on the statement's terms is a failure like any other: no
     // source supports it.
     let mut entry = claim("c2");
@@ -298,9 +278,7 @@ fn evidence_a_round_saved_never_earns_a_claim_another_round() {
             .append(machine(2), checked(Some(kind.clone()), "v1"))
             .unwrap();
         entry.append(machine(3), research()).unwrap();
-        entry
-            .append(machine(4), checked(Some(kind), "v2"))
-            .unwrap();
+        entry.append(machine(4), checked(Some(kind), "v2")).unwrap();
         assert!(!entry.may_research(), "{id}: other evidence is not a round");
         assert!(matches!(
             entry.state(),
@@ -664,22 +642,20 @@ fn the_card_offers_only_what_the_state_allows() {
         ]
     );
     let mut unsupported = queued_claim("c2", VerdictKind::Unsupported);
-    assert!(unsupported.allows(ClaimActionKind::GeneralKnowledge));
     unsupported
-        .append(user(7), act(UserAction::GeneralKnowledge, None))
+        .append(user(7), act(confirm(), Some("Checked by hand.")))
         .unwrap();
     assert_eq!(
         unsupported.available_actions(),
         vec![
             ClaimActionKind::Edit,
             ClaimActionKind::Remove,
+            ClaimActionKind::AttachEvidence,
+            ClaimActionKind::Unconfirm,
             ClaimActionKind::Undo
         ]
     );
     let mut fresh = claim("c3");
-    assert!(fresh
-        .append(user(2), act(UserAction::GeneralKnowledge, None))
-        .is_err());
     assert!(fresh.append(user(2), act(confirm(), None)).is_err());
 }
 
@@ -1023,11 +999,7 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
     common
         .append(machine(2), passed(CheckResult::KnownCommon, vec![]))
         .unwrap();
-    let machines = ClaimState::GeneralKnowledge {
-        at: 2,
-        by: Actor::Machine,
-    };
-    assert_eq!(common.state(), &machines);
+    assert_eq!(common.state(), &ClaimState::GeneralKnowledge { at: 2 });
 
     // Both passes resolve the lesson, and neither is the user's doing.
     let verified = verified_claim("c3");
@@ -1036,14 +1008,7 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
         LessonReviewState::Ready
     );
     let counts = ClaimCounts::tally([&verified, &reasoning, &common]);
-    assert_eq!(
-        (
-            counts.verified,
-            counts.general_knowledge,
-            counts.resolved_by_you()
-        ),
-        (3, 0, 0)
-    );
+    assert_eq!((counts.verified, counts.resolved_by_you()), (3, 0));
 
     // A later failing check demotes a consistent claim as it does a verified
     // one, with the attempts it has.
@@ -1162,10 +1127,7 @@ fn a_common_pass_is_checked_again_when_its_sentence_is_rewritten() {
         .unwrap();
     assert!(matches!(
         common.state(),
-        ClaimState::GeneralKnowledge {
-            by: Actor::Machine,
-            ..
-        }
+        ClaimState::GeneralKnowledge { .. }
     ));
     common
         .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))

@@ -142,10 +142,6 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
     }
   };
 
-  const acceptProposals = async (proposals: ClaimReviewItemDto[]) => {
-    if (proposals[0]) await run(proposals[0], { action: 'accept_all_general_knowledge' }, 'accept_all_general_knowledge');
-  };
-
   const trusted = (result: LearningTrustChangeResultDto, support: ClaimSupportDto) => {
     setMessage(trustedAnnouncement(support.source.title, result.redecided.verified, result.redecided.stillFailing));
     setUndo({ kind: 'trust', scope: { scope: 'source', programId, sourceId: support.source.sourceId } });
@@ -196,7 +192,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   return {
     query, review, claims, waiting, groups, ordered, resolved, settling, opened,
     mode: currentMode, setMode, active, activeIndex, teachingActive, removed, removedActive, select, step, openTeaching, openRemoved,
-    form, setForm, acting, error, message, setMessage, undo, undoLast, run, acceptProposals, trusted, added,
+    form, setForm, acting, error, message, setMessage, undo, undoLast, run, trusted, added,
     closestSupport, focusTick,
   };
 }

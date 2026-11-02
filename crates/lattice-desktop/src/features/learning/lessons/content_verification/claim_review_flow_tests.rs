@@ -479,7 +479,7 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
     let report = lesson.verification.unwrap();
     assert!(report.findings.iter().any(|finding| matches!(
         finding.resolution,
-        Some(general_knowledge::Resolution::Confirmed { .. })
+        Some(resolution::Resolution::Confirmed { .. })
     )));
     course.assert_published(&next.id).await
 }
