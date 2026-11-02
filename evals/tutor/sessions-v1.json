@@ -1,10 +1,10 @@
 {
   "schema": "lattice-tutor-sessions/1",
-  "note": "Each session is one tutor chat on a fresh copy of course-v1.json. A say turn sends its text as written. A play turn is the learner played by the model under test from the reply just given: `right` answers from the course's sources, `wrong` holds the misconception written beside it. `done` lists what the course must hold after the last turn, read from the database.",
+  "note": "Each session is one tutor chat on a fresh copy of course-v1.json. A say turn sends its text as written. A play turn is the learner played by the model under test from the reply just given: `right` answers from the course's sources, `wrong` holds the misconception written beside it. `expect` is what the course must hold after the last turn, read from the database.",
   "sessions": [
     {
       "id": "teach-retries",
-      "tags": ["teach", "retrieval-question"],
+      "tags": ["teach", "retrieval-question", "ask-first"],
       "turns": [
         { "say": "Teach me how retries work in Tidewell." },
         { "play": "right" },
@@ -63,7 +63,7 @@
     },
     {
       "id": "lesson-fences",
-      "tags": ["lesson-bound", "contrast"],
+      "tags": ["lesson-bound", "contrast", "retrieval-question", "ask-first"],
       "lesson": "m2.l2",
       "turns": [
         { "say": "Teach me this lesson." },
@@ -74,7 +74,7 @@
     },
     {
       "id": "pick-a-passage",
-      "tags": ["reading-rounds"],
+      "tags": ["reading-rounds", "ask-first"],
       "turns": [
         { "say": "Give me the two main differences between tw drain and tw quiesce." },
         { "say": "Tell me more about the second one." },

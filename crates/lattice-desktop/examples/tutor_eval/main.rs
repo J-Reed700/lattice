@@ -132,7 +132,10 @@ fn main() -> Res<()> {
         .tempdir()?;
     let home = workdir.path().join("home");
     std::fs::create_dir_all(&home)?;
-    // Before any thread exists: the library root is derived from HOME.
+    // Before any thread exists. It covers Unix only: on Windows `dirs` reads the
+    // profile folder, so `~/.lattice` is the real library here too. What keeps a
+    // run out of it is that a run imports nothing, deletes no conversation (that
+    // sweeps web snapshots against this fresh database) and has no vault.
     std::env::set_var("HOME", &home);
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -284,6 +287,9 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     )
     .await?;
     let settings = recipe.settings(&proxy_url)?;
+    if settings.vault.enabled {
+        return Err("a run keeps out of the real vault: leave vault.enabled off".into());
+    }
     let tool_preferences = recipe.tool_preferences()?;
 
     let data_dir = workdir.join("app-data");
@@ -546,6 +552,22 @@ fn tool_trace(calls: &[proxy::CallRecord]) -> Value {
     Value::Array(asked)
 }
 
+/// The fronts of the due cards the turn's facts showed the model.
+fn cards_shown(calls: &[proxy::CallRecord]) -> Vec<String> {
+    let message = calls
+        .iter()
+        .filter_map(|call| call.request.as_ref()?.get("messages")?.as_array()?.last())
+        .find_map(|message| message.get("content")?.as_str());
+    let mut lines = message.unwrap_or_default().lines();
+    let mut fronts = Vec::new();
+    while let Some(line) = lines.next() {
+        if line.starts_with("- card_id: ") {
+            fronts.extend(lines.next().map(|front| front.trim().to_owned()));
+        }
+    }
+    fronts
+}
+
 async fn run_turn(
     bench: &Bench<'_>,
     conversation_id: &str,
@@ -647,6 +669,7 @@ async fn run_turn(
     let mut row = record::turn(&outcome, &HashMap::new());
     if let Some(row) = row.as_object_mut() {
         row.insert("tool_calls".into(), tool_trace(&calls));
+        row.insert("cards_shown".into(), json!(cards_shown(&calls)));
     }
     (row, response, error)
 }

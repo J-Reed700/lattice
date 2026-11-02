@@ -10,6 +10,9 @@ those rows, from what the database and the requests show rather than from the wo
 * a teaching stretch reaches a question within `MAX_TURNS_TO_A_CHECK` turns;
 * a session with due cards opens with them, and the cards it shows span modules;
 * a rated answer moved the card's FSRS schedule, read back from the database;
+* tool calls the tools refused, such as a rating for a card id the model made up;
+* a first message that asks for something gets it, with citations, before any cards;
+* what the course does not cover is said to be missing, in the turn that asks;
 * each session's `expect` block.
 
 A pass here is an upper bound: rows are still read by hand before a score is reported.
@@ -19,6 +22,7 @@ Commands:
   score COURSE ROWS OUT      grade a run; OUT is the JSON summary
 """
 import argparse
+import gzip
 import json
 import re
 from collections import Counter
@@ -26,6 +30,7 @@ from pathlib import Path
 
 from chat_rag_eval import CITATION_RE
 from replay_model import one_model
+from shipped_path_eval import declines
 
 ROW_SCHEMA = "lattice-shipped-path-answers/1"
 SUMMARY_SCHEMA = "lattice-tutor-eval-summary/1"
@@ -43,7 +48,9 @@ def load_json(path):
 
 
 def load_rows(path):
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    opened = gzip.open(path, "rt", encoding="utf-8") if str(path).endswith(".gz") else open(path, encoding="utf-8")
+    with opened as lines:
+        return [json.loads(line) for line in lines if line.strip()]
 
 
 def validate_course(course):
@@ -122,6 +129,15 @@ def tool_names(turn):
     return [call.get("name") for call in turn.get("tool_calls") or []]
 
 
+def refused_calls(turn):
+    """The tool calls this turn that came back with an error, each with its arguments."""
+    return [
+        f"{call.get('name')} {call.get('arguments')}"
+        for call in turn.get("tool_calls") or []
+        if str(call.get("result") or "").startswith("Error")
+    ]
+
+
 def card_index(course):
     """Each card's module, by its question: what a due list shows of it."""
     modules = {
@@ -131,14 +147,20 @@ def card_index(course):
 
 
 def modules_shown(turn, modules_of_card):
-    """The modules of the cards `due_reviews` showed this turn."""
-    shown = set()
+    """The modules of the cards this turn showed: in its facts, or from `due_reviews`."""
+    shown = {modules_of_card[front] for front in turn.get("cards_shown") or [] if front in modules_of_card}
     for call in turn.get("tool_calls") or []:
         if call.get("name") != "due_reviews":
             continue
         result = call.get("result") or ""
         shown |= {module for question, module in modules_of_card.items() if question in result}
     return shown
+
+
+def opened_with_due(turn, modules_of_card):
+    """The first turn got the due cards or put one to the learner, in the card's own words."""
+    answer = turn.get("answer") or ""
+    return "due_reviews" in tool_names(turn) or any(question in answer for question in modules_of_card)
 
 
 def schedule_moves(before, after):
@@ -184,10 +206,12 @@ def score_session(row, course):
     invalid = []
     moves = []
     tools = Counter()
+    refused = []
     previous = row.get("course_before")
     for turn in turns:
         verdicts.update(verdicts_of(turn))
         tools.update(tool_names(turn))
+        refused += refused_calls(turn)
         known = {int(number) for number in turn.get("citation_map") or {}}
         invalid += [number for number in cited_numbers(turn.get("answer")) if number not in known]
         after = turn.get("course_after") or {}
@@ -207,9 +231,12 @@ def score_session(row, course):
         "invalid_citations": invalid,
         "turns_citing": sum(1 for turn in turns if cited_numbers(turn.get("answer"))),
         "tools": dict(tools),
+        "refused_calls": refused,
         "first_check_turn": first_check,
         "reached_a_check": first_check is not None and first_check < MAX_TURNS_TO_A_CHECK,
-        "opened_with_due": "due_reviews" in tool_names(opening),
+        "opened_with_due": opened_with_due(opening, modules_of_card),
+        "answered_first": bool(cited_numbers(opening.get("answer"))),
+        "declined": [declines(turn.get("answer"), turn.get("question")) for turn in turns],
         "modules_due": sorted(modules_shown(opening, modules_of_card)),
         "reviews": moves,
         "expect_failed": expectations(row, moves, last),
@@ -249,6 +276,15 @@ def summarize(rows, course):
             "of": len(due),
         },
         "reviews_moved": {"passed": sum(1 for move in reviews if move["moved"]), "of": len(reviews)},
+        "refused_calls": {s["session"]: s["refused_calls"] for s in scored if s["refused_calls"]},
+        "answered_first": {
+            "passed": sum(1 for session in tagged("ask-first") if session["answered_first"]),
+            "of": len(tagged("ask-first")),
+        },
+        "said_not_covered": {
+            "passed": sum(sum(session["declined"]) for session in tagged("honesty")),
+            "of": sum(len(session["declined"]) for session in tagged("honesty")),
+        },
         "expect_failed": {s["session"]: s["expect_failed"] for s in scored if s["expect_failed"]},
         "by_session": scored,
     }
