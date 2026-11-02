@@ -224,6 +224,29 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = hash(req)?;
+        let saved_text: Option<String> = sqlx::query_scalar(
+            "SELECT v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.id=?",
+        )
+        .bind(&req.program_id)
+        .bind(&req.source_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        let comparison = trust::capture::compare(
+            &self.pool,
+            &req.program_id,
+            trust::capture::VersionText {
+                source_id: &req.source_id,
+                version_id: &req.version_id,
+                text: &normalized(
+                    req.replacement_text
+                        .as_deref()
+                        .or(saved_text.as_deref())
+                        .unwrap_or_default(),
+                ),
+            },
+        )
+        .await?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
@@ -344,7 +367,7 @@ impl LearningSourceLibraryRepository {
                 text: &text,
                 acquired_at_ms: timestamp,
             };
-            trust::capture::record(&mut tx, &restored, &signals).await?;
+            trust::capture::record(&mut tx, &restored, &signals, &comparison).await?;
             mirror_legacy(
                 &mut tx,
                 &req.program_id,
