@@ -465,6 +465,8 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
 
     const capture = path.join(reports, 'spoken.wav');
     const { defaultVoice } = await speech();
+    // The first sentence loads the voice as well as reading.
+    await browser.setTimeout({ script: 180_000 });
     await writeFile(capture, captureFile(await invoke('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
     await closeNormally();
 
