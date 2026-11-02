@@ -810,3 +810,58 @@ fn histories_written_before_sentence_locations_replay_unchanged() {
         serde_json::json!({ "not_attempted": { "reason": "shared" } })
     );
 }
+
+#[test]
+fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
+    // The model only splits what the rule layer leaves, so its class never
+    // lightens the rule layer's (claim classes design §3.1).
+    let mut entry = claim("c1");
+    assert_eq!(entry.class(), None);
+    entry
+        .append(
+            machine(2),
+            classified(Class::Reasoning, ClassifiedBy::Model),
+        )
+        .unwrap();
+    assert_eq!(entry.class(), Some(Class::Reasoning));
+    entry
+        .append(machine(3), classified(Class::Sourced, ClassifiedBy::Rule))
+        .unwrap();
+    assert_eq!(
+        entry.class(),
+        Some(Class::Sourced),
+        "a rule outranks the model"
+    );
+    entry
+        .append(machine(4), classified(Class::Common, ClassifiedBy::Model))
+        .unwrap();
+    assert_eq!(
+        entry.class(),
+        Some(Class::Sourced),
+        "a model never lightens a rule"
+    );
+
+    // A judge reclassing what the model classed is the model deciding again.
+    let mut reclassed = claim("c2");
+    reclassed
+        .append(machine(2), classified(Class::Common, ClassifiedBy::Model))
+        .unwrap();
+    reclassed
+        .append(machine(3), classified(Class::Sourced, ClassifiedBy::Model))
+        .unwrap();
+    assert_eq!(reclassed.class(), Some(Class::Sourced));
+
+    // Every classification stays in the log, and the log replays to the class.
+    let classifications = |entry: &ClaimLedgerEntry| {
+        entry
+            .events()
+            .iter()
+            .filter(|e| e.event.kind_name() == "classified")
+            .count()
+    };
+    assert_eq!(classifications(&entry), 3);
+    let replayed =
+        ClaimLedgerEntry::from_events(entry.claim_id().clone(), entry.events().to_vec()).unwrap();
+    assert_eq!(replayed.class(), Some(Class::Sourced));
+    assert_eq!(replayed, entry);
+}

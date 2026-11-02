@@ -132,3 +132,7 @@ fn verified_claim(id: &str) -> ClaimLedgerEntry {
     entry.append(machine(2), checked(None, "v1")).unwrap();
     entry
 }
+
+fn classified(class: Class, by: ClassifiedBy) -> ClaimEvent {
+    ClaimEvent::Classified { class, by }
+}

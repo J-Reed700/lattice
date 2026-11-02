@@ -288,6 +288,64 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
 }
 
 #[test]
+fn a_lesson_whose_failed_claims_the_machine_cut_is_ready() {
+    let research = || ClaimEvent::Researched {
+        queries: vec!["boiling point sea level".into()],
+        sources_added: vec!["v2".into()],
+        passages_found: 1,
+        round_ms_per_claim: None,
+    };
+    // A statement the knowledge judge calls false is cut at once.
+    let mut false_at_once = claim("c1");
+    false_at_once
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    // A sourced statement is judged, researched and rechecked, rewritten once
+    // and rechecked, then cut (claim classes design §3.2).
+    let mut after_a_rewrite = claim("c2");
+    for (at, event) in [
+        (2, checked(Some(VerdictKind::Unsupported), "v1")),
+        (3, research()),
+        (4, checked(Some(VerdictKind::Unsupported), "v2")),
+        (5, rewrite(1, false, RepairOutcome::Rewritten)),
+        (6, checked(Some(VerdictKind::Unsupported), "v3")),
+    ] {
+        after_a_rewrite.append(machine(at), event).unwrap();
+    }
+    let verified = verified_claim("c3");
+    assert_eq!(
+        end_state([&verified, &false_at_once, &after_a_rewrite]),
+        LessonReviewState::Verifying,
+        "a failed claim is the machine's until it cuts it"
+    );
+
+    false_at_once
+        .append(machine(3), rewrite(1, false, RepairOutcome::Removed))
+        .unwrap();
+    after_a_rewrite
+        .append(machine(7), rewrite(2, true, RepairOutcome::Removed))
+        .unwrap();
+    for cut in [&false_at_once, &after_a_rewrite] {
+        assert!(
+            matches!(
+                cut.state(),
+                ClaimState::Removed {
+                    by: Actor::Machine,
+                    ..
+                }
+            ),
+            "{:?}",
+            cut.state()
+        );
+    }
+    let claims = [&verified, &false_at_once, &after_a_rewrite];
+    assert_eq!(end_state(claims), LessonReviewState::Ready);
+    let counts = ClaimCounts::tally(claims);
+    assert_eq!((counts.verified, counts.rewritten), (1, 2));
+    assert_eq!(counts.queued + counts.open, 0);
+}
+
+#[test]
 fn fingerprints_ignore_order_and_change_with_model_or_policy() {
     let (a, b) = (seen("v1"), seen("v2"));
     let forward = EvidenceFingerprint::of("strict-v1", MODEL, &[a.clone(), b.clone()]);
@@ -342,6 +400,7 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
             },
         },
         ClaimEvent::Undone { event_ordinal: 4 },
+        classified(Class::Reasoning, ClassifiedBy::Model),
         ClaimEvent::Stopped {
             reason: StopReason {
                 code: "model_rejected".into(),
@@ -392,6 +451,10 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
     assert_eq!(
         serde_json::to_value(entry.state()).unwrap(),
         json!({"state": "queued", "kind": "contradicted", "reason": "compared v1"})
+    );
+    assert_eq!(
+        serde_json::to_value(classified(Class::Sourced, ClassifiedBy::Rule)).unwrap(),
+        json!({"kind": "classified", "class": "sourced", "by": "rule"})
     );
     for (value, column) in [
         (UnitKind::AnswerKey.as_str(), "answer_key"),

@@ -14,6 +14,8 @@ import type {
   ClaimLocationDto,
   ClaimReviewItemDto,
   ClaimSupportDto,
+  ClassDto,
+  ClassifiedByDto,
   LearningGenerationJob,
   LearningSourceKind,
   LessonClaimReviewDto,
@@ -263,6 +265,14 @@ const REOPEN_CAUSES: Record<ReopenCauseDto['cause'], string> = {
   trust_changed: 'Reopened: how far a source is trusted changed',
 };
 
+const CLASSES: Record<ClassDto, string> = {
+  sourced: 'a statement that needs a source',
+  reasoning: 'the lesson’s own reasoning',
+  common: 'common knowledge',
+  internal: 'a remark about the lesson itself',
+};
+const CLASSIFIERS: Record<ClassifiedByDto, string> = { rule: 'by a rule', model: 'by the model' };
+
 /** A verdict in words, for the history and the checks. */
 function verdictWords(kind: VerdictKindDto): string {
   switch (kind.kind) {
@@ -336,6 +346,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
     case 'born_of_repair': return 'Added while repairing another claim';
+    case 'classified': return `Sorted as ${CLASSES[payload.class]}, ${CLASSIFIERS[payload.by]}`;
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
     case 'standing_assessed': {

@@ -963,10 +963,7 @@ async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -
                 let repair = self
                     .repairs
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(
-                    repair < 2,
-                    "A claim gets two attempts per piece of evidence"
-                );
+                assert!(repair < 2, "A claim gets two attempts in its life");
                 let mut body = candidate(if repair == 0 || (self.repeats_once && repair == 1) {
                     SECOND
                 } else {

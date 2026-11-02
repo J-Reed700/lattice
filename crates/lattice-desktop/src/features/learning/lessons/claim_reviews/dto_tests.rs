@@ -4,9 +4,9 @@
 
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
-    ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, HumanBinding, Provenance,
-    RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason, SupportedBy,
-    TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
+    ClaimState, Class, ClassifiedBy, EventProvenance, EvidenceFingerprint, EvidenceSeen,
+    HumanBinding, Provenance, RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason,
+    SupportedBy, TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
 };
 use lattice_core::domain::provenance::{
     AddedBy, Bar, ClaimKind, ClaimProfile, ClusterId, CountedSupport, Decision, Missing,
@@ -369,6 +369,10 @@ fn claim_events_mirror_the_domain() {
             cause: Some(TrustCause::Override {
                 source_version_ids: vec!["v1".into()],
             }),
+        },
+        ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule,
         },
     ];
     let records: Vec<RecordedEvent> = events

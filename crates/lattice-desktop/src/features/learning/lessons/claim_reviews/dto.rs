@@ -23,8 +23,8 @@ pub use trust::{
 };
 
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimActionKind, ClaimCounts, ClaimState, LessonReviewState, ReopenCause, RepairOutcome,
-    RequestFacts, SourceAddedBy, StopReason, UnitKind, VerdictKind,
+    Actor, ClaimActionKind, ClaimCounts, ClaimState, Class, ClassifiedBy, LessonReviewState,
+    ReopenCause, RepairOutcome, RequestFacts, SourceAddedBy, StopReason, UnitKind, VerdictKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -309,6 +309,42 @@ impl From<Actor> for ActorDto {
         match actor {
             Actor::Machine => Self::Machine,
             Actor::User => Self::User,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassDto {
+    Sourced,
+    Reasoning,
+    Common,
+    Internal,
+}
+
+impl From<Class> for ClassDto {
+    fn from(class: Class) -> Self {
+        match class {
+            Class::Sourced => Self::Sourced,
+            Class::Reasoning => Self::Reasoning,
+            Class::Common => Self::Common,
+            Class::Internal => Self::Internal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifiedByDto {
+    Model,
+    Rule,
+}
+
+impl From<ClassifiedBy> for ClassifiedByDto {
+    fn from(by: ClassifiedBy) -> Self {
+        match by {
+            ClassifiedBy::Model => Self::Model,
+            ClassifiedBy::Rule => Self::Rule,
         }
     }
 }

@@ -4864,7 +4864,11 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */
-{ kind: "standing_assessed"; assessment: StandingAssessedDto }
+{ kind: "standing_assessed"; assessment: StandingAssessedDto } |
+/**
+ * The statement's class and who decided it (claim classes design §3.1).
+ */
+{ kind: "classified"; class: ClassDto; by: ClassifiedByDto }
 /**
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
@@ -4983,6 +4987,8 @@ quote: string;
  */
 quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
+export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
+export type ClassifiedByDto = "model" | "rule"
 /**
  * Clean article content extracted from HTML (reader mode).
  *

@@ -8,7 +8,8 @@ use lattice_core::domain::learning::claim_review::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ActorDto, ReopenCauseDto, RepairOutcomeDto, StandingAssessedDto, StopReasonDto, VerdictKindDto,
+    ActorDto, ClassDto, ClassifiedByDto, ReopenCauseDto, RepairOutcomeDto, StandingAssessedDto,
+    StopReasonDto, VerdictKindDto,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -113,6 +114,11 @@ pub enum ClaimEventPayloadDto {
     StandingAssessed {
         assessment: StandingAssessedDto,
     },
+    /// The statement's class and who decided it (claim classes design §3.1).
+    Classified {
+        class: ClassDto,
+        by: ClassifiedByDto,
+    },
 }
 
 impl From<&ClaimEvent> for ClaimEventPayloadDto {
@@ -211,6 +217,10 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 cause,
             } => Self::StandingAssessed {
                 assessment: StandingAssessedDto::of(trust, reason, cause.as_ref()),
+            },
+            ClaimEvent::Classified { class, by } => Self::Classified {
+                class: (*class).into(),
+                by: (*by).into(),
             },
         }
     }

@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use super::replay::{apply_check, charge, hand_to_user, queued, redecided, reopened, Cursor};
 use super::{
-    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, EvidenceFingerprint,
-    ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind, MACHINE_ATTEMPTS,
+    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
+    EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind,
+    MACHINE_ATTEMPTS,
 };
 use crate::shared::error::AppError;
 
@@ -161,6 +162,7 @@ impl ClaimLedgerEntry {
             latest_failure: None,
             trust: None,
             inherited_budget: None,
+            class: None,
         };
         let mut entry = Self {
             claim_id,
@@ -222,6 +224,12 @@ impl ClaimLedgerEntry {
     /// closes so a card can say what the user confirmed over.
     pub fn latest_failure(&self) -> Option<&VerdictKind> {
         self.cursor().latest_failure.as_ref()
+    }
+
+    /// The statement's class as the strongest authority that decided it gave
+    /// it; `None` until a `Classified` event.
+    pub fn class(&self) -> Option<Class> {
+        self.cursor().class.map(|(class, _)| class)
     }
 
     /// What the provenance gate weighed for the claim's latest local check,
@@ -483,6 +491,11 @@ impl ClaimLedgerEntry {
             ClaimEvent::Executed { .. }
             | ClaimEvent::CitationRepaired { .. }
             | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::Classified { class, by } => {
+                if next.class.is_none_or(|(_, before)| *by >= before) {
+                    next.class = Some((*class, *by));
+                }
+            }
             ClaimEvent::StandingAssessed {
                 trust,
                 reason,

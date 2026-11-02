@@ -2,8 +2,8 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Check, CheckBasis, CheckResult, Checker, ClaimState, GateVerdict, ReopenCause, TrustAssessment,
-    TrustCause, VerdictKind, MACHINE_ATTEMPTS,
+    Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
+    ReopenCause, TrustAssessment, TrustCause, VerdictKind, MACHINE_ATTEMPTS,
 };
 
 /// The replayed position after an event: the state, plus what the rules
@@ -24,6 +24,8 @@ pub(super) struct Cursor {
     /// A claim born of a repair starts with its parent's remaining attempts
     /// instead of a full budget (claim sources design §9.1).
     pub(super) inherited_budget: Option<u8>,
+    /// The statement's class and the strongest authority that decided it.
+    pub(super) class: Option<(Class, ClassifiedBy)>,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {

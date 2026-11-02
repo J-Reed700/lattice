@@ -1,7 +1,8 @@
 //! The claim ledger drives the verify-and-repair loop (§4, §12): a claim gets
-//! two machine attempts per piece of evidence and then waits for the user,
-//! with everything compared kept; the user's verdicts are never re-litigated
-//! and are labelled examples of the checker's accuracy (§15).
+//! two machine attempts in its life, whatever evidence later checks bring, and
+//! then waits for the user, with everything compared kept; the user's verdicts
+//! are never re-litigated and are labelled examples of the checker's accuracy
+//! (§15).
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::checker_examples::{

@@ -1,12 +1,13 @@
 //! Lesson claim review: every factual claim a lesson makes, what the machine
 //! and the user did about it, and the rules that decide what happens next.
 //!
-//! A claim is checked by the machine at most twice per piece of evidence it
-//! has seen; after that it waits for the user, who resolves it with an action
-//! that is recorded, undoable and never re-litigated by the machine unless the
-//! sentence or a cited source changes. A lesson with any unresolved claim is
-//! not ready. Pure types and rules, no I/O: the learning feature stores the
-//! ledger through `application::ports::claim_review::ClaimReviewStore`.
+//! A claim gets at most two machine repairs in its life, whatever evidence
+//! later checks bring; after that it waits for the user, who resolves it with
+//! an action that is recorded, undoable and never re-litigated by the machine
+//! unless the sentence or a cited source changes. A lesson with any unresolved
+//! claim is not ready. Pure types and rules, no I/O: the learning feature
+//! stores the ledger through
+//! `application::ports::claim_review::ClaimReviewStore`.
 //!
 //! Storage forms: [`ClaimState`] and [`ClaimEvent`] are internally tagged
 //! (`state`, `kind`; the event tag is also the events table's `kind` column);
@@ -38,8 +39,9 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::provenance::{Bar, CountedSupport};
 
-/// Machine repairs a claim gets per piece of evidence: one correction, then
-/// one escalated rewrite that may remove the sentence (§3).
+/// Machine repairs a claim gets in its life, whatever evidence later checks
+/// bring: one correction, then one escalated rewrite that may remove the
+/// sentence (§3; claim classes design §3.2).
 pub const MACHINE_ATTEMPTS: u8 = 2;
 
 /// Lower-case hex SHA-256 of `text`: quote bindings and passage digests.
@@ -135,6 +137,32 @@ pub fn span_of(text: &str, quote: &str) -> Option<(usize, usize)> {
         Some(_) => None,
         None => Some((start, start + quote.len())),
     }
+}
+
+/// What a statement needs to be checked for (claim classes design §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Class {
+    /// Attributes something to a source or states a specific: checked
+    /// against its cited passage.
+    Sourced,
+    /// The lesson's own explanation: checked for consistency with its
+    /// section's passages and for falsity.
+    Reasoning,
+    /// Standard knowledge with no specific: checked closed-book.
+    Common,
+    /// Scenario, rubric, option or remark about the sources: not a claim.
+    Internal,
+}
+
+/// Who decided a statement's class, weakest first. The model only splits
+/// what the rule layer leaves, so its class never lightens the rule layer's
+/// (claim classes design §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifiedBy {
+    Model,
+    Rule,
 }
 
 /// Why a claim is not verified, in honest words, one per case.
@@ -631,6 +659,11 @@ pub enum ClaimEvent {
     Reopened {
         cause: ReopenCause,
     },
+    /// The statement's class and who decided it (claim classes design §3.1).
+    Classified {
+        class: Class,
+        by: ClassifiedBy,
+    },
     Undone {
         event_ordinal: u32,
     },
@@ -663,6 +696,7 @@ impl ClaimEvent {
             Self::Superseded { .. } => "superseded",
             Self::BornOfRepair { .. } => "born_of_repair",
             Self::Reopened { .. } => "reopened",
+            Self::Classified { .. } => "classified",
             Self::Undone { .. } => "undone",
             Self::Stopped { .. } => "stopped",
             Self::StandingAssessed { .. } => "standing_assessed",
