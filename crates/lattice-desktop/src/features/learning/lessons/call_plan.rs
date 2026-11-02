@@ -204,6 +204,12 @@ impl CallPlan {
         .fold(0, u32::saturating_add)
     }
 
+    /// The cuts are known: only `sections` of the lesson's sections took one
+    /// and are left, so only they can need a flow repair.
+    pub(crate) fn cuts_known(&mut self, sections: u32) {
+        self.flow_repairs = self.flow_repairs.min(sections);
+    }
+
     /// Every Reasoning and Common statement has met the check its class
     /// names, and these are the classes and fates.
     pub(crate) fn lighter_checked(&mut self, fates: &[(Class, Fate)]) {

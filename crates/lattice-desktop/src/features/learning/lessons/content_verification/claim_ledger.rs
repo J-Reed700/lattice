@@ -5,6 +5,7 @@
 //! allow (§3, §4, §6.1). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 mod audit;
+mod cuts;
 mod located;
 mod observe;
 mod receipts;
@@ -15,6 +16,7 @@ pub(super) use successor::Rewrites;
 
 use super::general_knowledge::Resolution;
 use super::provenance_gate::ProvenanceGate;
+use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
 use crate::features::learning::curriculum::LearningClaimTally;
@@ -132,6 +134,9 @@ pub(super) struct ClaimLedger {
     /// Claims whose user edit was just applied: re-extraction names their
     /// successors (§5.1 Edit).
     pub(super) edited_now: HashSet<ClaimId>,
+    /// What the lesson's cuts left: the sections that go and the flow repairs
+    /// made (claim classes design §3.10).
+    pub(super) cuts: Cuts,
     gate: Box<dyn SupportGate>,
 }
 
@@ -167,6 +172,7 @@ impl ClaimLedger {
             findings: Vec::new(),
             examples: HashMap::new(),
             edited_now: HashSet::new(),
+            cuts: Cuts::default(),
             gate: Box::new(ProvenanceGate),
         };
         let Some(scope) = crate::features::learning::lesson_drafts::scope() else {
@@ -190,6 +196,7 @@ impl ClaimLedger {
             .await?
             .and_then(|saved| serde_json::from_value(saved).ok())
             .unwrap_or_default();
+        ledger.load_cuts().await?;
         Ok(ledger)
     }
 
@@ -773,6 +780,8 @@ pub(in crate::features::learning) struct HeldForReview {
     /// The lesson stopped because the checker's answers could not be read,
     /// rather than waiting for the user's decisions.
     pub stopped: bool,
+    /// Why it stopped, when its sources do not support enough of it.
+    pub unsupported: Option<String>,
 }
 
 /// Whether `lesson_id`'s preparation in `job_id` stopped because the lesson
@@ -787,23 +796,27 @@ pub(in crate::features::learning) async fn held_for_review(
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(lesson_id)
         .await?;
-    let state = ledger
+    let review = ledger
         .review
         .as_ref()
         .filter(|review| review.job_id == job_id)
-        .map(|review| review.state)
-        .filter(|state| {
+        .filter(|review| {
             matches!(
-                state,
+                review.state,
                 LessonReviewState::NeedsReview | LessonReviewState::Stopped
             )
         });
-    Ok(state.map(|state| {
+    Ok(review.map(|review| {
         let counts = ClaimCounts::tally(ledger.claims.iter());
         HeldForReview {
             lesson_id: lesson_id.to_owned(),
             claims: counts.queued + counts.open,
-            stopped: state == LessonReviewState::Stopped,
+            stopped: review.state == LessonReviewState::Stopped,
+            unsupported: review
+                .stop_reason
+                .as_ref()
+                .filter(|stop| stop.code == cuts::UNSUPPORTED)
+                .map(|stop| stop.message.clone()),
         }
     }))
 }
@@ -816,10 +829,22 @@ pub(in crate::features::learning) fn review_outcome(held: &[HeldForReview]) -> (
     let plural =
         |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
     let message = if held.iter().all(|hold| hold.stopped) {
-        format!(
-            "Stopped: the checking model's answers could not be read for {}",
-            plural(claims, "claim")
-        )
+        match held {
+            [only] if only.unsupported.is_some() => {
+                format!(
+                    "Stopped: {}",
+                    only.unsupported.as_deref().unwrap_or_default()
+                )
+            }
+            _ if held.iter().all(|hold| hold.unsupported.is_some()) => format!(
+                "Stopped: the sources do not support enough of {}",
+                plural(held.len(), "lesson")
+            ),
+            _ => format!(
+                "Stopped: the checking model's answers could not be read for {}",
+                plural(claims, "claim")
+            ),
+        }
     } else if held.len() == 1 {
         format!("Needs your review: {}", plural(claims, "claim"))
     } else {
@@ -856,6 +881,7 @@ mod tests {
             lesson_id: lesson.into(),
             claims,
             stopped: false,
+            unsupported: None,
         };
         assert_eq!(
             review_outcome(&[held("a", 2), held("b", 3)]),
@@ -867,11 +893,31 @@ mod tests {
     }
 
     #[test]
+    fn a_lesson_its_sources_do_not_support_enough_of_says_so() {
+        const WHY: &str = "The sources do not support enough of this lesson: its first explanation would have to be taken out.";
+        let unsupported = |lesson: &str| HeldForReview {
+            lesson_id: lesson.into(),
+            claims: 0,
+            stopped: true,
+            unsupported: Some(WHY.into()),
+        };
+        assert_eq!(
+            review_outcome(&[unsupported("a")]).1,
+            format!("Stopped: {WHY}")
+        );
+        assert_eq!(
+            review_outcome(&[unsupported("a"), unsupported("b")]).1,
+            "Stopped: the sources do not support enough of 2 lessons"
+        );
+    }
+
+    #[test]
     fn a_lesson_stopped_for_an_unreadable_checker_says_so_not_that_it_needs_review() {
         let stopped = HeldForReview {
             lesson_id: "a".into(),
             claims: 3,
             stopped: true,
+            unsupported: None,
         };
         assert_eq!(
             review_outcome(&[stopped]),

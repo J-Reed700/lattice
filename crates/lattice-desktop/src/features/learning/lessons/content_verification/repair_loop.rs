@@ -93,6 +93,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         let active = expanded.as_ref().unwrap_or(references);
         checks.settled = ledger.user_evidence(active);
         checks.rewrites = ledger.rewrites();
+        checks.removed = ledger.cuts.units();
         if review_pass::apply_user_changes(&mut ledger, &mut candidate).await? {
             raw = candidate.to_string();
             crate::features::learning::lesson_drafts::save(&raw).await?;
@@ -153,6 +154,13 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         let mut report =
             verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
         ledger.observe(&candidate, &report).await?;
+        // A flow repair that wrote a statement is taken back (claim classes
+        // design §3.10).
+        if let Some(restored) = sections::unmend(&mut ledger, &candidate).await? {
+            raw = restored;
+            crate::features::learning::lesson_drafts::save(&raw).await?;
+            continue;
+        }
         // Research once per claim: what it saves is checked at once; what it
         // does not find is recorded as tried (§4).
         loop {
@@ -272,6 +280,28 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 {
                     continue;
                 }
+                // Sections after cuts (claim classes design §3.10): the flow
+                // repairs and the sections that go are settled and checked
+                // before the lesson is final, and the sections that go are then
+                // taken out.
+                match sections::settle(
+                    llm,
+                    (prompt, schema, output_tokens),
+                    active,
+                    &raw,
+                    &mut ledger,
+                )
+                .await?
+                {
+                    sections::Settled::Again(next) => {
+                        raw = next;
+                        continue;
+                    }
+                    sections::Settled::Stopped(error) => return Err(error),
+                    sections::Settled::Done => {}
+                }
+                (raw, candidate, report) =
+                    sections::excise(&mut ledger, raw, candidate, report).await?;
                 // Then the Verifier audit, when the course opted in (§14.3):
                 // review pass → audit → publish. Its checks, and anything the
                 // user did while it ran, are read back before publishing.

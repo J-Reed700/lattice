@@ -89,6 +89,11 @@ pub(super) async fn check_evidence(
     executions: Vec<execution::Observation>,
     completed: &mut ClaimChecks,
 ) -> Result<LessonVerificationReport> {
+    let removed = completed.removed.clone();
+    let executions: Vec<_> = executions
+        .into_iter()
+        .filter(|run| run.unit.is_none_or(|unit| !removed.contains(unit)))
+        .collect();
     let mut issues = Vec::new();
     if executions
         .iter()
@@ -109,6 +114,7 @@ pub(super) async fn check_evidence(
     let claims: Vec<(usize, Claim)> = inventory
         .units
         .iter()
+        .filter(|unit| !removed.contains(unit.index))
         .flat_map(|unit| {
             unit.claims
                 .iter()
@@ -174,6 +180,15 @@ pub(super) async fn check_evidence(
         .map(|route| matches!(route, class_checks::Route::Left));
     let mut accounted: Vec<UnitClaims> = Vec::new();
     for unit in &inventory.units {
+        if removed.contains(unit.index) {
+            accounted.push(UnitClaims {
+                index: unit.index,
+                claims: Vec::new(),
+                non_factual_reason: "Taken out of the lesson: its sources do not support it."
+                    .to_owned(),
+            });
+            continue;
+        }
         let claims: Vec<Claim> = unit
             .claims
             .iter()

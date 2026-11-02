@@ -573,6 +573,39 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 }
 
 #[tokio::test]
+async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_report() -> Result<()>
+{
+    let model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut lesson = candidate(GOOD);
+    lesson["blocks"]
+        .as_array_mut()
+        .unwrap()
+        .push(candidate(BAD)["blocks"][0].clone());
+    let mut checks = ClaimChecks {
+        removed: sections::Going::new([1]),
+        ..ClaimChecks::default()
+    };
+
+    let report =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
+
+    // The section that goes holds a statement the references contradict; it
+    // is neither judged nor an issue, and the report still accounts for the
+    // unit.
+    assert_eq!(*model.judge_calls.lock().unwrap(), 1);
+    assert_eq!(report.findings.len(), 1);
+    assert_eq!(report.findings[0].unit, 0);
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert_eq!(report.coverage.len(), 2);
+    assert!(report.coverage[1].claims.is_empty());
+    assert_eq!(report.coverage_audit.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
     let model = Model::new();
     let runtimes = BuiltinRuntimes::for_tests();

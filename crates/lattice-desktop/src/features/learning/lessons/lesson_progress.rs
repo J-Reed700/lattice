@@ -300,6 +300,18 @@ pub(in crate::features::learning) fn calls_planned(statements: &[Counted], secti
     });
 }
 
+/// The cuts are known: `sections` took one and are left, and only they get a
+/// flow repair (claim classes design §3.10).
+pub(in crate::features::learning) fn cuts_known(sections: usize) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.cuts_known(u32::try_from(sections).unwrap_or(u32::MAX));
+        }
+        publish_ceiling(&mut state);
+    });
+}
+
 /// Every Reasoning and Common statement has met the check its class names.
 pub(in crate::features::learning) fn lighter_checked(fates: &[(Class, Fate)]) {
     let _ = CURRENT.try_with(|progress| {

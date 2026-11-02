@@ -100,8 +100,8 @@ fn without_marker(sentence: &str) -> &str {
     text
 }
 
-/// The sentences of `text` outside its code fences, as a writer lists them.
-fn prose_sentences(text: &str) -> Vec<String> {
+/// `text` without its code fences.
+fn prose(text: &str) -> String {
     let mut prose = String::new();
     let mut fenced = false;
     for line in text.split_inclusive('\n') {
@@ -111,6 +111,25 @@ fn prose_sentences(text: &str) -> Vec<String> {
             prose.push_str(line);
         }
     }
+    prose
+}
+
+/// The sentences of `text` that teach: its prose outside code fences, without
+/// headings (claim classes design §3.10).
+pub(in crate::features::learning) fn teaching_sentences(text: &str) -> Vec<String> {
+    let prose = prose(text);
+    sentences(&prose)
+        .into_iter()
+        .filter_map(|(from, to)| prose.get(from..to))
+        .filter(|sentence| !sentence.starts_with('#'))
+        .map(|sentence| without_marker(sentence.trim()).to_owned())
+        .filter(|sentence| sentence.chars().any(char::is_alphabetic))
+        .collect()
+}
+
+/// The sentences of `text` outside its code fences, as a writer lists them.
+fn prose_sentences(text: &str) -> Vec<String> {
+    let prose = prose(text);
     sentences(&prose)
         .into_iter()
         .filter_map(|(from, to)| prose.get(from..to))
@@ -661,6 +680,18 @@ mod tests {
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].key().site, FindingSite::Question(2));
+    }
+
+    /// What a section is left to teach with: prose, not headings, markers or
+    /// code.
+    #[test]
+    fn a_sections_teaching_sentences_are_its_prose_without_headings_and_code() {
+        let body = "### A heading\nFirst point. Second point.\n```python\nprint(1)\n```\n- A listed point.\n\n1. ...";
+        assert_eq!(
+            teaching_sentences(body),
+            ["First point.", "Second point.", "A listed point."]
+        );
+        assert!(teaching_sentences("```text\nOnly code.\n```\n## Heading").is_empty());
     }
 
     #[test]

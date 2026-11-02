@@ -1,7 +1,7 @@
 //! The claim ledger drives the verify-and-repair loop (§4, §12): a claim gets
 //! two machine attempts in its life, whatever evidence later checks bring, a
-//! rewrite and then taking its sentence out, and waits for the user only when
-//! the sentence cannot be taken out, with everything compared kept; the user's
+//! rewrite and then taking its sentence out, or its section when the sentence
+//! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
 use super::*;
@@ -272,7 +272,7 @@ pub(super) fn waiting(entries: &[ClaimLedgerEntry]) -> Vec<&ClaimLedgerEntry> {
 }
 
 #[tokio::test]
-async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_the_claim_to_the_user_with_everything_kept(
+async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed_and_a_lesson_left_without_its_first_explanation_stops(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -290,33 +290,50 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_the_claim_to_th
     .err()
     .unwrap()
     .to_string();
-    assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
+    assert!(
+        error.starts_with("The sources do not support enough of this lesson"),
+        "{error}"
+    );
+    assert!(error.contains("first explanation"), "{error}");
     // A rewrite, then the last attempt, which the code makes: the sentence
-    // is the whole of its field, so it stays and the claim is the user's.
+    // is the whole of its field, so the section goes with it, and it was the
+    // lesson's only explanation.
     assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
 
     let store = ClaimReviewRepository::new(pool.clone());
     let ledger = store.load(&lesson_id).await?;
     let review = ledger.review.clone().unwrap();
-    assert_eq!(review.state, LessonReviewState::NeedsReview);
+    assert_eq!(review.state, LessonReviewState::Stopped);
     assert_eq!(review.job_id, job);
-    // The rewrites kept the claim: one card, with both attempts on it.
+    let stop = review.stop_reason.unwrap();
+    assert_eq!(stop.code, "sources_do_not_support");
+    assert!(stop.fix.contains("Add sources"), "{}", stop.fix);
+    // The rewrites kept the claim: one card, with both attempts on it, and it
+    // is terminal: no claim waits for anyone.
     assert_eq!(ledger.claims.len(), 1, "{:?}", ledger.claims);
-    let claim = waiting(&ledger.claims)[0];
+    let claim = &ledger.claims[0];
     assert_eq!(claim.statement(), figure(0));
     assert_eq!(claim.location().unit_index, 0);
     assert_eq!(claim.location().unit_kind, UnitKind::Block);
     assert_eq!(claim.location().field, "body");
-    let ClaimState::Queued { kind, reason } = claim.state() else {
-        panic!("{:?}", claim.state());
-    };
-    assert_eq!(*kind, VerdictKind::Unsupported);
-    assert!(reason.contains("buffer size"), "{reason}");
-    let spent = repairs(claim);
-    assert_eq!(spent[0], (1, false, RepairOutcome::Rewritten));
     assert!(
-        matches!(&spent[1..], [(2, true, RepairOutcome::Rejected { .. })]),
-        "{spent:?}"
+        matches!(
+            claim.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        claim.state()
+    );
+    assert!(waiting(&ledger.claims).is_empty());
+    assert_eq!(
+        repairs(claim),
+        vec![
+            (1, false, RepairOutcome::Rewritten),
+            (2, true, RepairOutcome::Removed)
+        ]
     );
     // Research ran once (no web here: nothing found) and is on the record.
     assert_eq!(
@@ -339,14 +356,15 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_the_claim_to_th
     assert!(passages
         .iter()
         .all(|passage| sources[0].excerpt.contains(&passage.text)));
-    // The job reads the review row: held for review, not failed.
+    // The job reads the review row: the lesson is held, and says why.
     let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
-    assert_eq!(held.claims, 1);
+    assert!(held.stopped);
+    assert_eq!(held.claims, 0);
     assert_eq!(
         review_outcome(&[held]),
         (
             format!("needs_review:{lesson_id}"),
-            "Needs your review: 1 claim".to_owned()
+            "Stopped: The sources do not support enough of this lesson: its first explanation would have to be taken out.".to_owned()
         )
     );
     Ok(())

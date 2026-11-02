@@ -94,6 +94,7 @@ mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
 mod section_checkpoints;
+mod sections;
 mod support_gate;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -249,6 +250,10 @@ struct ClaimChecks {
     /// passes: the answer size a pass B page is budgeted by
     /// (`evidence_checks::page_budget`).
     answers: std::sync::Mutex<evidence_checks::AnswerSize>,
+    /// The sections that go out of the lesson (claim classes design §3.10):
+    /// their statements are not sorted or judged and their examples not
+    /// reported.
+    removed: sections::Going,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 

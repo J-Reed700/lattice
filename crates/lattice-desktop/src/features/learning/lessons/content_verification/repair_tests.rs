@@ -1,9 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::super::sections::Gap;
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::domain::learning::claim_review::{
-    Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, EvidenceFingerprint,
-    RepairOutcome, UnitKind, VerdictKind,
+    Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState,
+    EvidenceFingerprint, RepairOutcome, UnitKind, VerdictKind,
 };
 use std::sync::Mutex;
 #[test]
@@ -292,12 +293,25 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
         .iter()
         .any(|record| record.claim_id == last));
     assert!(llm.requests.lock().unwrap().is_empty());
+    // The section remembers where the sentence was, for its flow repair.
+    let taken = &ledger.cuts.taken[&0];
+    assert_eq!(taken.label, "T");
+    assert_eq!(
+        taken.gaps,
+        vec![Gap {
+            field: "body".into(),
+            before: Some("Keep this.".into()),
+            after: Some("Fix this.".into()),
+        }]
+    );
+    assert!(!taken.answer_lost);
+    assert!(ledger.cuts.going.is_empty());
     Ok(())
 }
 
 #[tokio::test]
-async fn a_last_attempt_that_cannot_take_the_sentence_out_uses_the_attempt_and_waits() -> Result<()>
-{
+async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed_with_its_section(
+) -> Result<()> {
     let body = "Cut this.";
     let llm = SmallWindow {
         window: 4_000,
@@ -318,11 +332,64 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_uses_the_attempt_and_w
 
     assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
 
+    // The sentence stays where it is; its section is the one that goes.
     assert_eq!(context["candidate"]["blocks"][0]["body"], body);
     assert!(section_failures(&context, 0).is_empty());
+    assert_eq!(ledger.cuts.going.get(&0).map(String::as_str), Some("T"));
+    // The claim is terminal, and nothing waits for the user.
     let entry = ledger.entry(&last).unwrap();
-    assert!(entry.state().awaits_user(), "{:?}", entry.state());
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert!(ledger.entries().iter().all(|entry| {
+        !entry.state().awaits_user() && !matches!(entry.state(), ClaimState::Open { .. })
+    }));
     assert!(ledger.pending.repairs.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> Result<()> {
+    let body = "Cut this.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        body,
+        &[("last", "Cut this.", 1), ("other", "Cut this.", 0)],
+    )
+    .await?;
+    let (last, other) = (ClaimId("last".into()), ClaimId("other".into()));
+    ledger
+        .begin_repairs(&lesson_of(body), &[last.clone(), other.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
+            {"unit":0,"claimId":"other","sentence":"Cut this.","evidence":[]},
+        ],
+    });
+
+    cut::last_attempts(&mut context, &mut ledger).await?;
+
+    assert!(
+        section_failures(&context, 0).is_empty(),
+        "a section that goes is not rewritten"
+    );
+    assert!(targets(&context)?.is_empty());
+    assert!(llm.requests.lock().unwrap().is_empty());
     Ok(())
 }
 

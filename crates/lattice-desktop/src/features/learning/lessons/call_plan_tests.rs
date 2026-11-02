@@ -128,6 +128,25 @@ fn statements_sharing_a_sentence_add_the_most_one_check_of_their_class_makes() {
 }
 
 #[test]
+fn the_cuts_known_bring_the_flow_repairs_to_the_sections_that_took_one_and_never_raise_them() {
+    let mut plan = replay();
+    let before = plan.ceiling();
+
+    // Of the lesson's three sections that could take cuts, one did.
+    plan.cuts_known(1);
+    assert_eq!(plan.ceiling(), before - 2);
+
+    // Knowing them again, or more of them, changes nothing.
+    plan.cuts_known(1);
+    plan.cuts_known(3);
+    assert_eq!(plan.ceiling(), before - 2);
+
+    // A lesson with no cut has no flow repair.
+    plan.cuts_known(0);
+    assert_eq!(plan.ceiling(), before - 3);
+}
+
+#[test]
 fn no_first_check_raises_the_ceiling() {
     let all = [
         Fate::Passed,

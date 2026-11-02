@@ -3,12 +3,10 @@
 //! here, whole, in no request to the model.
 use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger};
 use super::super::repair_work::{withdraw, withdraw_resolved};
+use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label};
 use super::super::*;
 use lattice_core::domain::learning::claim_review::ClaimId;
 use lattice_core::shared::text::sentences;
-
-/// Why a claim whose text cannot be taken out uses its attempt instead.
-const KEPT: &str = "Taking this sentence out would leave nothing in its place, or it is part of a code block; it stays for you to resolve.";
 
 /// What taking a claim's text out of its field comes to.
 enum Cut {
@@ -144,9 +142,11 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
 
 /// Takes out of `context`'s lesson the text of every claim sent on its last
 /// attempt, and those claims out of the work that remains: the code makes
-/// the cut, so the model is never asked to. A claim whose text cannot be
-/// taken out uses its attempt and waits for the user, as it does after a
-/// repair that produced nothing. Returns how many claims it dealt with.
+/// the cut, so the model is never asked to. The ledger keeps the sentences
+/// left beside each cut for the section's flow repair. A claim whose text
+/// cannot be taken out, because it is the whole of its field or sits in a code
+/// block, ends removed with its section, which goes out of the lesson (claim
+/// classes design §3.10). Returns how many claims it dealt with.
 pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger) -> Result<usize> {
     ledger.sync().await?;
     let dropped = withdraw_resolved(context, ledger);
@@ -165,23 +165,41 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
                 continue;
             };
             let pointer = field_pointer(&lesson, place.unit_index, &place.field);
-            let cut = pointer
+            let text = pointer
                 .as_deref()
                 .and_then(|pointer| lesson.pointer(pointer))
                 .and_then(Value::as_str)
+                .map(str::to_owned);
+            let cut = text
+                .as_deref()
                 .map_or(Cut::Absent, |text| out(example, text, &place.quote));
+            let label = unit_label(&before, place.unit_index);
             match cut {
-                Cut::Done(text) => {
+                Cut::Done(after) => {
+                    if let (Some(text), Some(label)) = (text.as_deref(), label) {
+                        let lost = !example && place.field == "body" && answer_lost(text, &after);
+                        let places = if example {
+                            gap_around_code(&place.field, text, &after)
+                        } else {
+                            gaps(&place.field, text, &after)
+                        };
+                        ledger.cuts.take(place.unit_index, label, (places, lost));
+                    }
                     if let Some(slot) = pointer
                         .as_deref()
                         .and_then(|pointer| lesson.pointer_mut(pointer))
                     {
-                        *slot = Value::String(text);
+                        *slot = Value::String(after);
                     }
                     taken.push(id);
                 }
                 Cut::Absent => taken.push(id),
-                Cut::Refused => refused.push(id),
+                Cut::Refused => {
+                    if let Some(label) = label {
+                        ledger.cuts.go(place.unit_index, label);
+                    }
+                    refused.push(id);
+                }
             }
         }
     }
@@ -197,14 +215,24 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
             holds(&before) && !holds(&lesson)
         })
     };
+    // A claim in a section that goes is no work either: the section's
+    // statements leave the checks and end removed with it.
+    let goes = |id: &ClaimId| {
+        ledger
+            .entry(id)
+            .is_some_and(|entry| ledger.cuts.going.contains_key(&entry.location().unit_index))
+    };
     withdraw(context, |id| {
-        taken.contains(id) || refused.contains(id) || vanished(id)
+        taken.contains(id) || refused.contains(id) || vanished(id) || goes(id)
     });
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;
     }
     if !refused.is_empty() {
-        ledger.reject(&refused, KEPT).await?;
+        ledger.remove(&refused).await?;
+    }
+    if !taken.is_empty() || !refused.is_empty() {
+        ledger.save_cuts().await?;
     }
     Ok(taken.len() + refused.len())
 }
