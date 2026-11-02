@@ -82,6 +82,7 @@ impl ConversationRepository {
                     excerpt: row.content,
                     score,
                     exact_identifier: false,
+                    similarity: Some(score),
                 });
             }
             keep_best(&mut semantic, limit);
@@ -121,7 +122,7 @@ pub(super) fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
 /// and lexical the keyword weight. Exact-identifier hits still come first;
 /// equal scores fall back to transcript order. A message both modes found
 /// keeps its lexical record, which is the one that can carry
-/// `exact_identifier`.
+/// `exact_identifier`, with the semantic record's similarity.
 fn fuse(
     lexical: Vec<RecallCandidate>,
     semantic: Vec<RecallCandidate>,
@@ -136,7 +137,11 @@ fn fuse(
     ];
     let mut records: HashMap<String, RecallCandidate> = HashMap::new();
     for hit in lexical.into_iter().chain(semantic) {
-        records.entry(hit.message_id.clone()).or_insert(hit);
+        let similarity = hit.similarity;
+        records
+            .entry(hit.message_id.clone())
+            .and_modify(|kept| kept.similarity = kept.similarity.or(similarity))
+            .or_insert(hit);
     }
     let mut hits: Vec<RecallCandidate> = ReciprocalRankFusion::new(DEFAULT_RRF_K)
         .fuse_ranked(rankings)
@@ -176,6 +181,7 @@ mod tests {
             excerpt: id.into(),
             score: 0.0,
             exact_identifier,
+            similarity: None,
         }
     }
 
@@ -191,12 +197,16 @@ mod tests {
         semantic.extend((1..=5).map(|i| hit(&format!("sem{i}"), 10 + i, false)));
         semantic.push(hit("both", 7, false));
         // Found by both modes, it keeps the lexical record and its flag.
-        semantic.push(hit("exact", 50, false));
+        semantic.push(RecallCandidate {
+            similarity: Some(0.8),
+            ..hit("exact", 50, false)
+        });
 
         let fused = fuse(lexical, semantic, 20);
         let order: Vec<&str> = fused.iter().map(|h| h.message_id.as_str()).collect();
         assert_eq!(order[..2], ["exact", "meaning"], "{order:?}");
         assert!(fused[0].exact_identifier);
+        assert_eq!(fused[0].similarity, Some(0.8));
         let position = |id: &str| order.iter().position(|m| *m == id);
         assert!(position("meaning") < position("both"), "{order:?}");
         let both = fused.iter().find(|h| h.message_id == "both").unwrap();

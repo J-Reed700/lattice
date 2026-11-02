@@ -7,7 +7,9 @@
 //! matches words, not meanings, and does not segment CJK.
 
 use super::ConversationRepository;
-use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
+use lattice_core::application::ports::conversation_memory::{
+    RecallCandidate, RecallCandidates, TermHolders,
+};
 use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
 use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
@@ -136,6 +138,7 @@ impl ConversationRepository {
                     excerpt: excerpt(&row.content),
                     score: 0.0,
                     exact_identifier: true,
+                    similarity: None,
                 });
             }
         }
@@ -193,11 +196,46 @@ impl ConversationRepository {
                 // bm25 returns a negative score where more negative is better.
                 score: row.score as f32,
                 exact_identifier: false,
+                similarity: None,
             });
         }
 
         out.candidates.truncate(limit);
         Ok(out)
+    }
+
+    /// The messages of this conversation holding each of `terms`.
+    pub(super) async fn memory_messages_holding(
+        &self,
+        conversation_id: &str,
+        terms: &[String],
+    ) -> Result<TermHolders> {
+        let messages: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = ?",
+        )
+        .bind(conversation_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to count messages: {}", e)))?;
+        let mut holders = Vec::with_capacity(terms.len());
+        for term in terms {
+            let ids: Vec<String> = sqlx::query_scalar(
+                "SELECT message_id FROM conversation_search_fts \
+                 WHERE conversation_search_fts.content MATCH ? \
+                   AND conversation_search_fts.source = 'message' \
+                   AND conversation_search_fts.conversation_id = ?",
+            )
+            .bind(quote_fts(term))
+            .bind(conversation_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to look up a term: {}", e)))?;
+            holders.push(ids);
+        }
+        Ok(TermHolders {
+            messages: messages as usize,
+            holders,
+        })
     }
 
     /// Generated item labels matching free text, for the details view.

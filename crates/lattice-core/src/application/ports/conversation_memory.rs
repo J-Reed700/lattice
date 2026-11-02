@@ -69,11 +69,23 @@ pub struct RecallCandidate {
     /// True when this came from exact identifier matching rather than ranking.
     /// These survive lexical-query truncation.
     pub exact_identifier: bool,
+    /// Cosine with the query, when semantic search found it. Unlike `score` it
+    /// means the same in any conversation.
+    pub similarity: Option<f32>,
 }
 
 /// How close in meaning a passage or shared item must be to a turn it shares no
 /// word with. Not measured yet: set from the memory eval.
 pub const SHARED_RELEVANCE_FLOOR: f32 = 0.6;
+
+/// Which of a conversation's messages hold a turn's words.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TermHolders {
+    /// Messages in the conversation.
+    pub messages: usize,
+    /// For each term asked about, in order, the messages that hold it.
+    pub holders: Vec<Vec<String>>,
+}
 
 /// What recall returned, and which modes actually ran.
 ///
@@ -372,6 +384,15 @@ pub trait ConversationMemoryReadPort: Send + Sync {
         exact_terms: &[String],
         limit: usize,
     ) -> Result<RecallCandidates>;
+
+    /// The messages holding each of `terms`, as the word index reads them.
+    async fn messages_holding(
+        &self,
+        _conversation_id: &str,
+        _terms: &[String],
+    ) -> Result<TermHolders> {
+        Ok(TermHolders::default())
+    }
 
     /// Messages immediately around `sequence`, for explaining a short reply.
     async fn read_adjacent_turns(

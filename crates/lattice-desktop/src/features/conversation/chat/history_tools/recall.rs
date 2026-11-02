@@ -4,15 +4,27 @@ use super::{
     MAX_CONTEXT_TOKENS, MAX_EXACT_TERMS,
 };
 use lattice_core::application::ports::conversation_memory::{
-    ConversationMemoryReadPort, RecallCandidate, SourceReadLimits,
+    ConversationMemoryReadPort, RecallCandidate, SourceReadLimits, TermHolders,
+    SHARED_RELEVANCE_FLOOR,
 };
 use lattice_core::application::services::context_assembler::{RecallDiagnostics, SelectedPassage};
 use lattice_core::domain::conversation::memory::SourceMessage;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::text::informative_terms;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Automatic per-turn retrieval
 // ---------------------------------------------------------------------------
+
+/// How much of a turn's weight a message must hold to be recalled for it. Not
+/// measured yet: set from the memory eval, like [`SHARED_RELEVANCE_FLOOR`].
+pub(super) const RECALL_RELEVANCE_FLOOR: f32 = 0.25;
+/// A turn's weight is that of its rarest words, this many of them, so a long
+/// message does not ask more of a passage than a short one.
+const TURN_WEIGHT_TERMS: usize = 2;
+/// Words of a turn weighed against the conversation.
+const MAX_TURN_TERMS: usize = 16;
 
 /// What automatic retrieval is given about the turn.
 #[derive(Debug, Default)]
@@ -130,7 +142,8 @@ pub async fn recall_for_turn(
 ) -> Result<RecalledContext> {
     let mut diagnostics = RecallDiagnostics::default();
     let query = build_recall_query(request.user_input, request.recent_turns);
-    let exact_terms = exact_identifiers(request.user_input, request.recent_turns);
+    let (terms, context) = what_the_turn_asks(request.user_input, request.recent_turns);
+    let exact_terms = exact_identifiers(request.user_input, context);
     if query.trim().is_empty() && exact_terms.is_empty() {
         return Ok(RecalledContext {
             groups: Vec::new(),
@@ -162,10 +175,28 @@ pub async fn recall_for_turn(
     let mut claimed: Vec<String> = Vec::new();
     let mut considered: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    let held = port
+        .messages_holding(scope.conversation_id(), &terms)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "Could not weigh this turn's words against the conversation");
+            TermHolders::default()
+        });
+    let relevance = relevance_by_message(&held);
+    let bears_on_turn = |candidate: &RecallCandidate| {
+        candidate.exact_identifier
+            || relevance
+                .get(candidate.message_id.as_str())
+                .is_some_and(|share| *share >= RECALL_RELEVANCE_FLOOR)
+            || candidate
+                .similarity
+                .is_some_and(|similarity| similarity >= SHARED_RELEVANCE_FLOOR)
+    };
+
     // Groups fill the byte budget, which the turn sizes from its recall pool,
     // rather than stopping at a fixed count. Candidates are searched a page at
     // a time, each page twice the last, while the budget has room and the
-    // search may hold more than it returned.
+    // search may hold more that clears the floor.
     let mut limit = MAX_CANDIDATES;
     loop {
         let found = port
@@ -185,6 +216,9 @@ pub async fn recall_for_turn(
             if remaining == 0 {
                 break;
             }
+            if !bears_on_turn(candidate) {
+                continue;
+            }
             if let Some(group) = pack_group(
                 port,
                 scope,
@@ -200,7 +234,10 @@ pub async fn recall_for_turn(
                 groups.push(group);
             }
         }
-        if remaining == 0 || exhausted || !had_fresh {
+        let more_to_find = relevance
+            .iter()
+            .any(|(id, share)| *share >= RECALL_RELEVANCE_FLOOR && !considered.contains(*id));
+        if remaining == 0 || exhausted || !had_fresh || !more_to_find {
             break;
         }
         limit = limit.saturating_mul(2);
@@ -324,6 +361,57 @@ const CUT_MARK_BYTES: usize = 96;
 /// The mark on a passage cut to the recall budget.
 fn cut_mark(left_out_bytes: usize) -> String {
     format!(" […cut: {left_out_bytes} more bytes of this message are not shown]")
+}
+
+// ---------------------------------------------------------------------------
+// Relevance
+// ---------------------------------------------------------------------------
+
+/// The words the turn asks about, and the recent turns they may be read from.
+/// A message with no words of its own ("and then?") stands on the turns before
+/// it; any other answers for itself, so what was just discussed brings back
+/// nothing it did not ask for.
+fn what_the_turn_asks<'a>(
+    user_input: &str,
+    recent_turns: &'a [String],
+) -> (Vec<String>, &'a [String]) {
+    let mut terms = informative_terms(user_input);
+    let context = if terms.is_empty() {
+        let newest_first: Vec<&str> = recent_turns.iter().rev().map(String::as_str).collect();
+        terms = informative_terms(&newest_first.join(" "));
+        recent_turns
+    } else {
+        &[]
+    };
+    terms.truncate(MAX_TURN_TERMS);
+    (terms, context)
+}
+
+/// How much of the turn each message holds: the weight of the turn's words it
+/// contains over the weight of the turn. A word weighs what BM25 gives it,
+/// counted in this conversation alone, so one that most messages hold says
+/// little and one that a single message holds picks it out. Raw BM25 scores
+/// run on no fixed scale, but this share reads the same in any conversation.
+pub(super) fn relevance_by_message(held: &TermHolders) -> HashMap<&str, f32> {
+    let messages = held.messages as f32;
+    let weights: Vec<f32> = held
+        .holders
+        .iter()
+        .map(|holders| {
+            let holding = holders.len() as f32;
+            (1.0_f32 + ((messages - holding).max(0.0) + 0.5) / (holding + 0.5)).ln()
+        })
+        .collect();
+    let mut rarest = weights.clone();
+    rarest.sort_by(|a, b| b.total_cmp(a));
+    let turn: f32 = rarest.iter().take(TURN_WEIGHT_TERMS).sum();
+    let mut relevance: HashMap<&str, f32> = HashMap::new();
+    for (holders, weight) in held.holders.iter().zip(&weights) {
+        for message in holders {
+            *relevance.entry(message.as_str()).or_default() += weight / turn;
+        }
+    }
+    relevance
 }
 
 // ---------------------------------------------------------------------------
