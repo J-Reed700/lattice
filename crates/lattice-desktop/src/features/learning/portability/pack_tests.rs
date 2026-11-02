@@ -16,6 +16,7 @@ use lattice_core::shared::error::Result;
 mod destinations;
 mod evidence_entries;
 mod export_all;
+mod found_by_search;
 mod guards;
 mod r#move;
 mod provenance;
