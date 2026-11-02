@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
 
@@ -27,6 +27,7 @@ import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels'
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -43,18 +44,23 @@ import {
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-interface ChatPanelProps {
+export interface ChatPanelProps {
   /** A line above the composer from the surface hosting this chat. */
   composerNotice?: ReactNode;
   /** Chips at the top of the composer for what the host sends with the next turn. */
   composerChips?: ReactNode;
   /** What an empty thread offers, in place of the library's suggested questions. */
   renderEmptyState?: (_onPick: (_text: string) => void) => ReactNode;
+  /** A chat inside another panel, a tangent: no tangents, palette verbs or app-wide notices of its own. */
+  embedded?: boolean;
+  /** Focus the composer when the chat opens. */
+  autoFocus?: boolean;
 }
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
+const NO_COMMANDS: PaletteCommand[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: ChatPanelProps = {}) {
+export function ChatPanel({ composerNotice, composerChips, renderEmptyState, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
@@ -211,6 +217,9 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: C
   });
   const { applyFocusDocuments, resolveEffectiveToolPreferences } = composer;
   const { chooseFiles } = attachments;
+  useEffect(() => {
+    if (autoFocus) composer.textareaRef.current?.focus();
+  }, [autoFocus, composer.textareaRef]);
   const { handleChangeSpace, handleSearchGeneral, handleChooseChatModel, handleUseDefault } = useChatSwitchActions({
     activeConversationId,
     applyFocusDocuments,
@@ -276,7 +285,7 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: C
       resolveEffectiveToolPreferences,
     ]
   );
-  useRegisterPaletteCommands(paletteCommands);
+  useRegisterPaletteCommands(embedded ? NO_COMMANDS : paletteCommands);
 
   if (!activeConversationId) {
     return (
@@ -287,8 +296,7 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: C
     );
   }
 
-  return (
-    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={composer.toolPreferences} unavailable={isChatUnavailable}>
+  const panel = (
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
@@ -301,8 +309,12 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: C
           </p>
         </div>
       )}
-      <ImportFailuresNotice />
-      <UtilityModelNotice />
+      {!embedded && (
+        <>
+          <ImportFailuresNotice />
+          <UtilityModelNotice />
+        </>
+      )}
       <ConversationMemoryPanel
         conversationId={activeConversationId}
         isOpen={isMemoryOpen}
@@ -451,6 +463,12 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState }: C
         onCancel={() => void handleCancel()}
       />
     </div>
+  );
+
+  if (embedded) return panel;
+  return (
+    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} chat={ChatPanel}>
+      {panel}
     </ConversationTangents>
   );
 }
