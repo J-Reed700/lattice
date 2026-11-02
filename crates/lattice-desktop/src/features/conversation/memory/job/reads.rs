@@ -217,7 +217,10 @@ impl CompactionJob {
             .collect();
         evidence.learn_from(
             window,
-            targeted.iter().flat_map(|item| item.evidence.iter()),
+            targeted
+                .iter()
+                .filter(|item| item.conversation_id == conversation_id)
+                .flat_map(|item| item.evidence.iter()),
         );
 
         // A shared item's passages live in the chat it came from.
