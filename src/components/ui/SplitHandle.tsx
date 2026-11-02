@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 
+import './interactions.css';
+
 const KEY_STEP = 24;
 
 export interface SplitHandleProps {
@@ -54,7 +56,7 @@ export function SplitHandle({ label, width, min, max, side, onResize, onReset }:
   };
 
   return (
-    <div className="explorer-split">
+    <div className="ui-split">
       <div
         role="separator"
         aria-orientation="vertical"
