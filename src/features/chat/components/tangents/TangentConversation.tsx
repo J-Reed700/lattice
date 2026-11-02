@@ -83,7 +83,9 @@ export function TangentConversation({ conversationId: id, inheritedCount, onTurn
     };
   }, [base, bookmarkMap, bookmarks, conversations, id, metadata, persisted]);
 
-  if (messagesQuery.data && detailQuery.data) return <ConversationSnapshotProvider value={scope}>{children}</ConversationSnapshotProvider>;
+  if (messagesQuery.data && detailQuery.data) {
+    return <ConversationSnapshotProvider value={scope} threadStartsAfter={persisted[inheritedCount - 1]?.id}>{children}</ConversationSnapshotProvider>;
+  }
   if (messagesQuery.isError || detailQuery.isError || (detailQuery.isSuccess && !detailQuery.data)) return (
     <div role="alert" className="p-4 text-sm">
       <p>Couldn’t open this tangent.</p>

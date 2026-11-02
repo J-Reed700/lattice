@@ -32,7 +32,7 @@ import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { ChatModelChoice } from '@/lib/bindings';
-import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import {
   buildChatModelOptions,
@@ -78,6 +78,7 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState, emb
   const forkConversation = useConversationsStore((state) => state.forkConversation);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const settings = useSettingsQuery().data;
+  const threadStartsAfter = useThreadStartsAfter();
 
   const isSending = activeConversationId
     ? inFlightGenerations.has(activeConversationId)
@@ -378,7 +379,7 @@ export function ChatPanel({ composerNotice, composerChips, renderEmptyState, emb
                       isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
                       isLastTurn={index === messages.length - 1}
                       previousMessageId={
-                        previous && 'id' in previous ? previous.id : undefined
+                        previous ? ('id' in previous ? previous.id : undefined) : threadStartsAfter
                       }
                       nextMessageId={next && 'id' in next ? next.id : undefined}
                       chatModelSeesImages={chatModelSeesImages}
