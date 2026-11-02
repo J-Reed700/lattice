@@ -518,6 +518,12 @@ impl ClaimLedgerEntry {
                         successor: successor.clone(),
                         by: *editor,
                     },
+                    // The machine's change left nothing that answers for the
+                    // claim: its sentence went with another claim's cut.
+                    _ if successor.is_none() && *by == Actor::Machine => ClaimState::Removed {
+                        at,
+                        by: Actor::Machine,
+                    },
                     _ => ClaimState::Edited {
                         at,
                         successor: successor.clone(),
@@ -574,6 +580,27 @@ impl ClaimLedgerEntry {
         if *outcome == RepairOutcome::SupersededByUser {
             return Ok(());
         }
+        // A sentence rewritten for a claim that shares it is the attempt of
+        // the claims that passed on it too: they are checked again on the new
+        // text, with no more attempts than the claim whose repair it was
+        // (claim classes design §3.2).
+        if *outcome == RepairOutcome::Rewritten
+            && matches!(
+                next.state,
+                ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::Consistent { .. }
+                    | ClaimState::GeneralKnowledge {
+                        by: Actor::Machine,
+                        ..
+                    }
+            )
+        {
+            next.attempts_left = next
+                .attempts_left
+                .min(MACHINE_ATTEMPTS.saturating_sub(attempt));
+            next.repair_pending = true;
+            return Ok(());
+        }
         let ClaimState::Open {
             kind,
             reason,
@@ -587,13 +614,8 @@ impl ClaimLedgerEntry {
         if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
-        // A repair not attempted ran no model, so nothing escalated.
-        let expected_escalation = match outcome {
-            RepairOutcome::NotAttempted { .. } => false,
-            _ => machine_attempts_left == 1,
-        };
         if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(machine_attempts_left)
-            || escalated != expected_escalation
+            || escalated != (machine_attempts_left == 1)
         {
             return Err(LedgerError::RepairMismatch {
                 claim: self.claim_id.0.clone(),
@@ -610,7 +632,6 @@ impl ClaimLedgerEntry {
                 }
             }
             RepairOutcome::Rejected { .. } => next.state = charge(next, kind, reason),
-            RepairOutcome::NotAttempted { .. } => next.state = charge(next, kind, reason),
             RepairOutcome::SupersededByUser => {}
         }
         Ok(())

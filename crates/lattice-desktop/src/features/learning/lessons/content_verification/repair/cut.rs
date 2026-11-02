@@ -1,7 +1,7 @@
 //! The machine's last attempt on a claim takes its text out of the lesson
 //! (claim classes design §3.2): the sentence-level edit a repair makes, made
 //! here, whole, in no request to the model.
-use super::super::claim_ledger::{field_pointer, ClaimLedger};
+use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger};
 use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::*;
 use lattice_core::domain::learning::claim_review::ClaimId;
@@ -157,6 +157,7 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
         .get("candidate")
         .cloned()
         .ok_or_else(|| invalid("Missing repair candidate."))?;
+    let before = lesson.clone();
     let (mut taken, mut refused) = (Vec::new(), Vec::new());
     for (key, example) in [("failedClaims", false), ("exampleClaims", true)] {
         for id in last(context, key) {
@@ -184,10 +185,24 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
             }
         }
     }
+    // A claim whose text went with a cut sentence is no work any more: the
+    // pass after the repair finds it gone.
+    let vanished = |id: &ClaimId| {
+        ledger.entry(id).is_some_and(|entry| {
+            let place = entry.location();
+            let holds = |whole: &Value| {
+                field_text(whole, place.unit_index, &place.field)
+                    .is_some_and(|text| text.contains(&place.quote))
+            };
+            holds(&before) && !holds(&lesson)
+        })
+    };
+    withdraw(context, |id| {
+        taken.contains(id) || refused.contains(id) || vanished(id)
+    });
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;
     }
-    withdraw(context, |id| taken.contains(id) || refused.contains(id));
     if !refused.is_empty() {
         ledger.reject(&refused, KEPT).await?;
     }

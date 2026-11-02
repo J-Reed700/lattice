@@ -29,7 +29,6 @@ use lattice_core::domain::learning::claim_review::{
     UserAction, VerdictKind, MACHINE_ATTEMPTS,
 };
 
-use lattice_core::shared::text::sentences;
 pub(in crate::features::learning) use located::{located, located_quote};
 #[cfg(test)]
 pub(in crate::features::learning) use observe::locate;
@@ -40,9 +39,6 @@ const PENDING_KEY: &str = "claim-ledger-v1:pending";
 /// The prefix of a job's result reference when lessons wait for review.
 const NEEDS_REVIEW_REF: &str = "needs_review:";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Why a failed claim was left to the user unrepaired (claim sources design
-/// §18.5).
-const SHARED_SENTENCE: &str = "This sentence also states something that is verified or waiting for you; rewriting it would change that too.";
 
 /// A repair sent for a claim, awaiting the pass that shows what became of
 /// its sentence: rewritten (the check decides) or removed.
@@ -53,6 +49,11 @@ pub(super) struct RepairRecord {
     attempt: u8,
     escalated: bool,
     before: String,
+    /// Set on a claim that stands on a sentence this other claim's repair
+    /// rewrites: it is checked again with the rewrite, and its record is
+    /// dropped with the repair's when the sentence is not rewritten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) rides_on: Option<ClaimId>,
 }
 
 /// What the ledger keeps between a change to the lesson and the pass that
@@ -369,7 +370,7 @@ impl ClaimLedger {
         candidate: &Value,
         claims: &[ClaimId],
     ) -> Result<()> {
-        let records: Vec<RepairRecord> = claims
+        let mut records: Vec<RepairRecord> = claims
             .iter()
             .filter_map(|id| {
                 let entry = self.entry(id)?;
@@ -386,9 +387,36 @@ impl ClaimLedger {
                     attempt: (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left),
                     escalated: entry.next_repair_escalates(),
                     before: entry.location().quote.clone(),
+                    rides_on: None,
                 })
             })
             .collect();
+        // The claims standing on a sentence a rewrite changes are checked
+        // again with it, with the repair's attempt (claim classes design
+        // §3.2); a last attempt cuts the sentence and takes them with it.
+        let rewritten: Vec<(ClaimId, u8)> = records
+            .iter()
+            .filter(|record| !record.escalated)
+            .map(|record| (record.claim_id.clone(), record.attempt))
+            .collect();
+        for (target, attempt) in rewritten {
+            for mate in self.cotenants(&target) {
+                if claims.contains(&mate) || records.iter().any(|record| record.claim_id == mate) {
+                    continue;
+                }
+                let Some(entry) = self.entry(&mate) else {
+                    continue;
+                };
+                records.push(RepairRecord {
+                    unit: entry.location().unit_index,
+                    attempt,
+                    escalated: false,
+                    before: entry.location().quote.clone(),
+                    rides_on: Some(target.clone()),
+                    claim_id: mate,
+                });
+            }
+        }
         self.pending.repairs.extend(records);
         self.pending
             .previous
@@ -396,75 +424,42 @@ impl ClaimLedger {
         self.save_pending().await
     }
 
-    /// The targets a repair may rewrite (claim sources design §18.5): editable
-    /// when some sentence of its quote is not one another live, settled or
-    /// waiting claim stands on, and always on the claim's last attempt, which
-    /// takes the sentence out whole. The rest use their attempt, recorded as a
-    /// repair not attempted.
-    pub(super) async fn withhold_shared(&mut self, targets: &[ClaimId]) -> Result<Vec<ClaimId>> {
-        let protected = Protected::of_ledger(self, targets);
-        let mut editable = Vec::new();
-        let mut withheld = Vec::new();
-        for id in targets {
-            let Some(entry) = self.entry(id) else {
-                editable.push(id.clone());
-                continue;
-            };
-            let location = entry.location();
-            let shared = |sentence: &str| {
-                protected.iter().any(|other| {
-                    other.unit == location.unit_index
-                        && other.field == location.field
-                        && (sentence.contains(other.quote.as_str())
-                            || other.quote.contains(sentence))
-                })
-            };
-            let quote = &location.quote;
-            let free = quote.trim().is_empty()
-                || sentences(quote)
-                    .into_iter()
-                    .filter_map(|(start, end)| quote.get(start..end))
-                    .any(|sentence| !shared(sentence));
-            let ClaimState::Open {
-                machine_attempts_left,
-                ..
-            } = entry.state()
-            else {
-                editable.push(id.clone());
-                continue;
-            };
-            if free || entry.next_repair_escalates() {
-                editable.push(id.clone());
-            } else {
-                withheld.push((
-                    id.clone(),
-                    (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left),
-                    quote.clone(),
-                ));
+    /// The live claims standing on the same sentence as `claim_id`: those in
+    /// its unit and field whose quote holds its quote or is held by it. A
+    /// rewrite of the sentence changes them all (claim classes design §3.2).
+    pub(super) fn cotenants(&self, claim_id: &ClaimId) -> Vec<ClaimId> {
+        let Some(entry) = self.entry(claim_id) else {
+            return Vec::new();
+        };
+        let place = entry.location();
+        if place.quote.trim().is_empty() {
+            return Vec::new();
+        }
+        self.entries
+            .iter()
+            .filter(|other| other.claim_id() != claim_id && !is_gone(other.state()))
+            .filter(|other| {
+                let there = other.location();
+                there.unit_index == place.unit_index
+                    && there.field == place.field
+                    && !there.quote.trim().is_empty()
+                    && (place.quote.contains(&there.quote) || there.quote.contains(&place.quote))
+            })
+            .map(|other| other.claim_id().clone())
+            .collect()
+    }
+
+    /// `claims` and the claims standing on their sentences.
+    pub(super) fn with_cotenants(&self, claims: &[ClaimId]) -> Vec<ClaimId> {
+        let mut all = claims.to_vec();
+        for id in claims {
+            for mate in self.cotenants(id) {
+                if !all.contains(&mate) {
+                    all.push(mate);
+                }
             }
         }
-        for (id, attempt, before) in withheld {
-            let recorded = self
-                .append(
-                    &id,
-                    ClaimEvent::RepairAttempted {
-                        attempt,
-                        escalated: false,
-                        before,
-                        after: None,
-                        outcome: RepairOutcome::NotAttempted {
-                            reason: SHARED_SENTENCE.into(),
-                        },
-                    },
-                )
-                .await?;
-            // A claim whose state refused the event is left as the decision
-            // named it.
-            if !recorded {
-                editable.push(id);
-            }
-        }
-        Ok(editable)
+        all
     }
 
     /// The repair of these claims produced nothing usable; each uses its
@@ -490,7 +485,16 @@ impl ClaimLedger {
         let (closed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending.repairs)
             .into_iter()
             .partition(|record| claims.contains(&record.claim_id));
-        self.pending.repairs = kept;
+        // The claims that rode on these repairs were not rewritten.
+        self.pending.repairs = kept
+            .into_iter()
+            .filter(|record| {
+                !record
+                    .rides_on
+                    .as_ref()
+                    .is_some_and(|target| claims.contains(target))
+            })
+            .collect();
         for record in closed {
             self.append(
                 &record.claim_id,

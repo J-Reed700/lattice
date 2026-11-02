@@ -1144,76 +1144,177 @@ async fn a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sente
 }
 
 #[tokio::test]
-async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_not_rewritten_and_is_cut_on_its_last_attempt(
+async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_and_both_are_checked_again(
 ) -> Result<()> {
     let model = Model::new();
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
+    let before = cell_lesson(CELL);
+    let report = pass_report(vec![
+        passage_finding(CELL, ATP, true, CELL_SOURCE),
+        passage_finding(CELL, overstated, false, CELL_SOURCE),
+    ]);
+    ledger.observe(&before, &report).await?;
+    let ids = ledger.finding_claims().to_vec();
+    let (verified, shared) = (ids[0].clone(), ids[1].clone());
+    assert_eq!(ledger.cotenants(&shared), std::slice::from_ref(&verified));
+    assert_eq!(ledger.cotenants(&verified), std::slice::from_ref(&shared));
+
+    // The rewrite is told what else the sentence says.
+    let references = ReferenceCollection::lexical(&[])?;
+    let context = repair_context(
+        "{}",
+        &before,
+        &report,
+        &[],
+        &ledger,
+        std::slice::from_ref(&shared),
+        &references,
+    )?;
+    assert_eq!(context["failedClaims"][0]["alsoStates"], json!([ATP]));
+    assert!(context["failedClaims"][0].get("lastAttempt").is_none());
+
+    // The repair is the failed claim's; the claim that passed rides on it.
+    ledger
+        .begin_repairs(&before, std::slice::from_ref(&shared))
+        .await?;
+    assert_eq!(ledger.pending.repairs.len(), 2);
+    let rider = ledger
+        .pending
+        .repairs
+        .iter()
+        .find(|record| record.claim_id == verified)
+        .unwrap();
+    assert_eq!(rider.rides_on.as_ref(), Some(&shared));
+
+    // The sentence is rewritten, and both statements stand on the new one.
+    let rewritten =
+        "Mitochondria make most, though not all, of a cell's ATP by oxidative phosphorylation.";
+    let after = CELL.replace(ATP_SENTENCE, rewritten);
+    let both = "Mitochondria make most, though not all, of a cell's ATP.";
     ledger
         .observe(
-            &cell_lesson(CELL),
+            &cell_lesson(&after),
+            &pass_report(vec![
+                passage_finding(&after, ATP, false, CELL_SOURCE),
+                passage_finding(&after, both, false, CELL_SOURCE),
+            ]),
+        )
+        .await?;
+
+    // Each is checked once on the new text, and takes the attempts the
+    // rewrite left: the next is their last.
+    for id in [&verified, &shared] {
+        let entry = ledger.entry(id).unwrap();
+        assert_eq!(entry.location().quote, rewritten);
+        assert!(
+            matches!(
+                entry.state(),
+                ClaimState::Open {
+                    kind: VerdictKind::Unsupported,
+                    machine_attempts_left: 1,
+                    ..
+                }
+            ),
+            "{:?}",
+            entry.state()
+        );
+        assert!(entry.next_repair_escalates());
+    }
+    assert!(ledger
+        .entry(&verified)
+        .unwrap()
+        .events()
+        .iter()
+        .any(|record| matches!(
+            &record.event,
+            ClaimEvent::RepairAttempted {
+                attempt: 1,
+                escalated: false,
+                outcome: RepairOutcome::Rewritten,
+                ..
+            }
+        )));
+    assert!(ledger.pending.repairs.is_empty());
+    assert_eq!(*model.judge_calls.lock().unwrap(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_machine() -> Result<()>
+{
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let overstated = "Mitochondria produce all of a cell's ATP.";
+    let before = cell_lesson(CELL);
+    ledger
+        .observe(
+            &before,
             &pass_report(vec![
                 passage_finding(CELL, ATP, true, CELL_SOURCE),
                 passage_finding(CELL, overstated, false, CELL_SOURCE),
-                passage_finding(CELL, TWELVE, false, CELL_SOURCE),
             ]),
         )
         .await?;
     let ids = ledger.finding_claims().to_vec();
-    let (verified, shared, own) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
-    assert_eq!(
-        ledger.entry(&shared).unwrap().location().quote,
-        ATP_SENTENCE
-    );
-    assert_eq!(
-        ledger.entry(&own).unwrap().location().quote,
-        TWELVE_SENTENCE
-    );
-    let untouched = ledger.entry(&verified).unwrap().clone();
-
-    let editable = ledger
-        .withhold_shared(&[shared.clone(), own.clone()])
-        .await?;
-    assert_eq!(
-        editable,
-        std::slice::from_ref(&own),
-        "a sentence of its own stays a target"
-    );
-    let entry = ledger.entry(&shared).unwrap();
-    assert!(
-        matches!(
-            &entry.events().last().unwrap().event,
+    let (verified, shared) = (ids[0].clone(), ids[1].clone());
+    // The failed claim has had its rewrite.
+    ledger
+        .append(
+            &shared,
             ClaimEvent::RepairAttempted {
                 attempt: 1,
                 escalated: false,
+                before: ATP_SENTENCE.into(),
                 after: None,
-                outcome: RepairOutcome::NotAttempted { .. },
-                ..
-            }
-        ),
-        "{:?}",
-        entry.events().last()
-    );
-    assert!(matches!(
-        entry.state(),
-        ClaimState::Open {
-            kind: VerdictKind::Unsupported,
-            machine_attempts_left: 1,
-            ..
-        }
-    ));
-    assert!(ledger.may_repair(&shared));
-    assert!(ledger.may_repair(&own));
-    // The last attempt takes the sentence out whole, shared or not.
+                outcome: RepairOutcome::Rejected {
+                    reason: "unusable".into(),
+                },
+            },
+        )
+        .await?;
+    let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+        panic!("the failed claim is repaired");
+    };
+    assert_eq!(targets, std::slice::from_ref(&shared));
+    assert!(ledger.entry(&shared).unwrap().next_repair_escalates());
+
+    // Its last attempt cuts the sentence: no repair record rides on it, and
+    // the claim that passed goes with the sentence.
+    ledger.begin_repairs(&before, &targets).await?;
+    assert_eq!(ledger.pending.repairs.len(), 1);
+    let cut = CELL.replace(&format!("{ATP_SENTENCE} "), "");
+    ledger
+        .observe(&cell_lesson(&cut), &pass_report(vec![]))
+        .await?;
+
+    for id in [&shared, &verified] {
+        assert!(
+            matches!(
+                ledger.entry(id).unwrap().state(),
+                ClaimState::Removed {
+                    by: Actor::Machine,
+                    ..
+                }
+            ),
+            "{:?}",
+            ledger.entry(id).unwrap().state()
+        );
+    }
     assert_eq!(
-        ledger
-            .withhold_shared(std::slice::from_ref(&shared))
-            .await?,
-        std::slice::from_ref(&shared)
+        repairs(ledger.entry(&shared).unwrap()),
+        vec![
+            (
+                1,
+                false,
+                RepairOutcome::Rejected {
+                    reason: "unusable".into()
+                }
+            ),
+            (2, true, RepairOutcome::Removed)
+        ]
     );
-    assert_eq!(ledger.entry(&verified).unwrap(), &untouched);
-    assert!(!*model.repaired.lock().unwrap());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 0);
+    assert!(repairs(ledger.entry(&verified).unwrap()).is_empty());
     Ok(())
 }
 

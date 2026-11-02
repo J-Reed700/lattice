@@ -101,7 +101,6 @@ describe('labels', () => {
   it('words every repair outcome and actor', () => {
     expect(repairOutcomeLabel({ outcome: 'rejected', reason: 'changed the meaning' })).toBe('Repair rejected: changed the meaning');
     expect(repairOutcomeLabel({ outcome: 'superseded_by_user' })).toBe('Your change superseded this repair');
-    expect(repairOutcomeLabel({ outcome: 'not_attempted', reason: 'no budget' } as never)).toBe('Not repaired: no budget');
     expect(actorLabel('machine')).toBe('Machine');
     expect(actorLabel('user')).toBe('You');
   });

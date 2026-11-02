@@ -353,3 +353,48 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
     assert!(section_examples(&context, 0).is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Result<()> {
+    let body = "Keep this. Cut this. Fix this.";
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        body,
+        &[("last", "Cut this.", 1), ("mate", "Cut this.", 0)],
+    )
+    .await?;
+    let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
+    ledger
+        .begin_repairs(&lesson_of(body), &[last.clone(), mate.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
+            {"unit":0,"claimId":"mate","sentence":"Cut this.","evidence":[]},
+        ],
+    });
+
+    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        "Keep this. Fix this."
+    );
+    assert!(
+        section_failures(&context, 0).is_empty(),
+        "the other claim's sentence is gone with the cut"
+    );
+    // Its record stays: the pass after finds the claim gone and removes it.
+    assert!(ledger
+        .pending
+        .repairs
+        .iter()
+        .any(|record| record.claim_id == mate));
+    Ok(())
+}

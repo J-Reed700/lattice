@@ -8755,12 +8755,7 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 { cause: "trust_changed"; trust: TrustCauseDto }
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
-export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" } |
-/**
- * Left to the user without a rewrite: the sentence also states
- * something verified or waiting (claim sources design §18.5).
- */
-{ outcome: "not_attempted"; reason: string }
+export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**

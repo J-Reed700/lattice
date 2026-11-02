@@ -161,6 +161,7 @@ mod tests {
             attempt,
             escalated: false,
             before: before.into(),
+            rides_on: None,
         }
     }
 

@@ -527,7 +527,11 @@ impl ClaimLedger {
                         after: None,
                         outcome: RepairOutcome::Removed,
                     };
-                    self.append(&id, event).await?;
+                    // A claim that passed on the sentence has no repair to
+                    // record: it went with the sentence.
+                    if !self.append(&id, event).await? {
+                        self.append(&id, gone).await?;
+                    }
                 }
             }
         }

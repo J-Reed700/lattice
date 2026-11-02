@@ -200,7 +200,7 @@ pub struct ExtractedClaim {
 }
 
 /// Which prior claim each extracted claim continues, and which prior claims
-/// have no successor (they become `Edited { successor: None }`).
+/// have no successor (their sentence is gone: the machine removes them).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identities {
     /// Per extracted claim, in order: the prior id it keeps, or `None` for a

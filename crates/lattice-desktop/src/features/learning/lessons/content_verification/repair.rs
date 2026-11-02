@@ -159,7 +159,7 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
 }
 
 fn repair_system() -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. A failed claim's alsoStates lists other statements its sentence makes that the lesson keeps: write the corrected sentence so that each of them is still said, and true. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::INSTRUCTIONS)
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
@@ -434,9 +434,10 @@ async fn repair_sections(
     if pending.is_empty() {
         return Err(invalid("No affected sections were recorded for repair."));
     }
-    // Every claim this repair was sent for; the ledger's other live claims
+    // Every claim this repair was sent for, and those standing on their
+    // sentences, which it changes with them; the ledger's other live claims
     // are what it leaves as it is (claim sources design §18.5).
-    let sent_claims = context_claims(&context);
+    let sent_claims = ledger.with_cotenants(&context_claims(&context));
     let mut candidate = context
         .get("candidate")
         .cloned()
@@ -527,6 +528,7 @@ async fn repair_sections(
             if part == 1 {
                 sent.extend(claim_ids(&section_examples(&context, unit)));
             }
+            let sent = ledger.with_cotenants(&sent);
             let of_unit = |set: Vec<Protected>| -> Vec<Protected> {
                 set.into_iter().filter(|item| item.unit == unit).collect()
             };

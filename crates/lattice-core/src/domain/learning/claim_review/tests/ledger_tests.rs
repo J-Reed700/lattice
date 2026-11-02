@@ -178,7 +178,7 @@ fn repairs_the_rules_do_not_allow_are_refused() {
 }
 
 #[test]
-fn a_repair_not_attempted_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
+fn a_repair_rejected_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
     let mut entry = claim("c1");
     entry
         .append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
@@ -189,8 +189,8 @@ fn a_repair_not_attempted_uses_its_attempt_and_the_last_one_takes_the_claim_out(
             rewrite(
                 1,
                 false,
-                RepairOutcome::NotAttempted {
-                    reason: "another claim stands on its sentence".into(),
+                RepairOutcome::Rejected {
+                    reason: "the answer could not be used".into(),
                 },
             ),
         )
@@ -848,14 +848,6 @@ fn histories_written_before_sentence_locations_replay_unchanged() {
         let read: Vec<RecordedEvent> = serde_json::from_str(&written).unwrap();
         assert_eq!(read, histories[id]);
     }
-    // The one new outcome reads as its own variant, beside the old ones.
-    assert_eq!(
-        serde_json::to_value(RepairOutcome::NotAttempted {
-            reason: "shared".into()
-        })
-        .unwrap(),
-        serde_json::json!({ "not_attempted": { "reason": "shared" } })
-    );
 }
 
 #[test]
@@ -1042,11 +1034,6 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
         by: Actor::Machine,
     };
     assert_eq!(common.state(), &machines);
-    // The machine's own pass is settled: no later check of its moves it.
-    common
-        .append(machine(3), checked(Some(VerdictKind::Unsupported), "v2"))
-        .unwrap();
-    assert_eq!(common.state(), &machines);
 
     // Both passes resolve the lesson, and neither is the user's doing.
     let verified = verified_claim("c3");
@@ -1077,4 +1064,131 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
             ..
         }
     ));
+}
+
+#[test]
+fn a_claim_whose_sentence_goes_with_a_cut_is_removed_and_one_with_a_successor_is_edited() {
+    let mut cut_with_another = verified_claim("c1");
+    cut_with_another
+        .append(
+            machine(3),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(
+            cut_with_another.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        cut_with_another.state()
+    );
+    assert!(cut_with_another.state().is_resolved());
+
+    let mut continued = verified_claim("c2");
+    continued
+        .append(
+            machine(3),
+            ClaimEvent::Superseded {
+                successor: Some(ClaimId("c3".into())),
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        continued.state(),
+        ClaimState::Edited {
+            successor: Some(_),
+            by: Actor::Machine,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_passed_claim_on_a_rewritten_sentence_is_checked_again_with_the_lower_attempts() {
+    let mut passed = verified_claim("c1");
+    passed
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    assert!(
+        matches!(passed.state(), ClaimState::ResolvedByEvidence { .. }),
+        "the check moves it, not the rewrite"
+    );
+    assert!(!passed.may_repair(), "the rewrite waits for its check");
+    passed
+        .append(machine(4), checked(Some(VerdictKind::Unsupported), "v2"))
+        .unwrap();
+    assert_eq!(
+        passed.state(),
+        &ClaimState::Open {
+            kind: VerdictKind::Unsupported,
+            reason: "compared v2".into(),
+            machine_attempts_left: MACHINE_ATTEMPTS - 1,
+        },
+        "it resumes from the attempts the claim whose repair it was has left"
+    );
+    assert!(passed.next_repair_escalates());
+
+    // A rewrite that still passes leaves it verified.
+    let mut still = verified_claim("c2");
+    still
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    still.append(machine(4), checked(None, "v2")).unwrap();
+    assert!(matches!(
+        still.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    // Only a rewrite rides on a sentence a claim shares.
+    assert!(verified_claim("c3")
+        .append(machine(3), rewrite(1, false, RepairOutcome::Removed))
+        .is_err());
+}
+
+#[test]
+fn a_common_pass_is_checked_again_when_its_sentence_is_rewritten() {
+    let mut common = claim("c1");
+    common
+        .append(
+            machine(2),
+            ClaimEvent::Checked(Check {
+                result: CheckResult::KnownCommon,
+                evidence: vec![],
+                ..local_check(None, "v1")
+            }),
+        )
+        .unwrap();
+    assert!(matches!(
+        common.state(),
+        ClaimState::GeneralKnowledge {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    common
+        .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
+        .unwrap();
+    common
+        .append(machine(4), checked(Some(VerdictKind::Contradicted), "v2"))
+        .unwrap();
+    assert!(
+        matches!(
+            common.state(),
+            ClaimState::Open {
+                kind: VerdictKind::Contradicted,
+                machine_attempts_left: 1,
+                ..
+            }
+        ),
+        "{:?}",
+        common.state()
+    );
 }

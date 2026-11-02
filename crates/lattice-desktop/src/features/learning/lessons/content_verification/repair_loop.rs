@@ -246,22 +246,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             crate::features::learning::lesson_drafts::save(&raw).await?;
             continue;
         }
-        // A failed claim whose every sentence another live claim stands on
-        // waits for the user without a repair call (claim sources design
-        // §18.5); with none left to repair the decision is the review.
-        let decision = loop {
-            match ledger.decide() {
-                claim_ledger::Decision::Repair(targets) => {
-                    let editable = ledger.withhold_shared(&targets).await?;
-                    if editable.is_empty() {
-                        continue;
-                    }
-                    break claim_ledger::Decision::Repair(editable);
-                }
-                decision => break decision,
-            }
-        };
-        match decision {
+        match ledger.decide() {
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.
@@ -466,7 +451,8 @@ impl PendingRepair {
 /// finding; nothing is discarded. Passages carry their source titles so a
 /// source index is not read as evidence N. Only `targets` are sent, each with
 /// its claim id and, on its last attempt, `lastAttempt`: that attempt takes
-/// the sentence out in code, so the model never reads the flag.
+/// the sentence out in code, so the model never reads the flag. A claim whose
+/// sentence says more carries `alsoStates`, the other statements on it.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
@@ -481,6 +467,10 @@ pub(super) fn repair_context(
             .entry(id)
             .is_some_and(|entry| entry.next_repair_escalates())
     };
+    let mates: HashMap<ClaimId, Vec<ClaimId>> = targets
+        .iter()
+        .map(|id| (id.clone(), ledger.cotenants(id)))
+        .collect();
     let citations = section_citations(candidate, references)?;
     let title = |id: &str| {
         references
@@ -509,6 +499,18 @@ pub(super) fn repair_context(
             let mut claim = json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence});
             if escalates(id) {
                 claim["lastAttempt"] = json!(true);
+            }
+            // What the sentence says besides the failed claim, which the
+            // rewrite keeps (claim classes design §3.2).
+            let also: Vec<&str> = mates
+                .get(id)
+                .into_iter()
+                .flatten()
+                .filter(|mate| !targets.contains(mate))
+                .filter_map(|mate| ledger.entry(mate).map(|entry| entry.statement()))
+                .collect();
+            if !also.is_empty() {
+                claim["alsoStates"] = json!(also);
             }
             claim
         }).collect();

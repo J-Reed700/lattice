@@ -697,7 +697,6 @@ mod loop_bound {
         let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
             panic!("the failed claim is repaired");
         };
-        let targets = ledger.withhold_shared(&targets).await?;
         assert_eq!(targets, std::slice::from_ref(&target));
         ledger.begin_repairs(&before, &targets).await?;
         let verified: Vec<ClaimLedgerEntry> = ids[..2]

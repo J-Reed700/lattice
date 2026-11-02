@@ -300,9 +300,11 @@ pub enum ClaimState {
     },
     /// The sentence or claim was deleted.
     Removed { at: i64, by: Actor },
-    /// The text changed; the successor claim owns the state. `None` is
-    /// "removed by the edit". `by`: who changed the text, the user's edit or
-    /// the machine's repair (claim sources design §11).
+    /// The text changed; the successor claim owns the state. `None` is the
+    /// user's edit that left no successor, "removed by the edit": the
+    /// machine's change with none is [`ClaimState::Removed`]. `by`: who
+    /// changed the text, the user's edit or the machine's repair (claim
+    /// sources design §11).
     Edited {
         at: i64,
         successor: Option<ClaimId>,
@@ -338,14 +340,18 @@ impl ClaimState {
 
     /// A verdict no machine check changes: the user's, or a sentence that is
     /// gone. Only [`ClaimEvent::Reopened`], a Verifier dispute or the user
-    /// moves it.
+    /// moves it. The machine's own general-knowledge pass is not one: a
+    /// rewrite of its sentence is checked again.
     pub fn is_settled(&self) -> bool {
         matches!(
             self,
             Self::Confirmed { .. }
                 | Self::Removed { .. }
                 | Self::Edited { .. }
-                | Self::GeneralKnowledge { .. }
+                | Self::GeneralKnowledge {
+                    by: Actor::User,
+                    ..
+                }
         )
     }
 
@@ -516,10 +522,6 @@ pub enum RepairOutcome {
     /// The user edited the unit meanwhile; the result was discarded and the
     /// attempt is not charged (§9).
     SupersededByUser,
-    /// The machine did not rewrite the sentence: it also states something
-    /// verified or waiting for the user, so the claim waits for the user at
-    /// once, with no attempt charged (claim sources design §18.5).
-    NotAttempted { reason: String },
 }
 
 /// What the user attached as evidence (§5.4).
@@ -659,8 +661,9 @@ pub enum ClaimEvent {
         result: AttachOutcome,
     },
     /// Re-extraction found the claim's successor (`None`: no successor, the
-    /// sentence went with the edit). `by`: whose edit, the user's or the
-    /// machine's repair.
+    /// sentence went with the change). `by`: whose change, the user's edit
+    /// or the machine's repair; the machine's with no successor removes the
+    /// claim, as it does a claim on a sentence cut for another's failure.
     Superseded {
         successor: Option<ClaimId>,
         #[serde(default)]
