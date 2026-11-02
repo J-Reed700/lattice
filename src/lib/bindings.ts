@@ -9532,6 +9532,10 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  */
 { mode: "mtpDraft"; nMax: number }
 /**
+ * The English a voice speaks.
+ */
+export type SpeechAccentDto = "american" | "british"
+/**
  * Speech for one piece of text.
  */
 export type SpeechClipDto = { sampleRate: number;
@@ -9539,6 +9543,10 @@ export type SpeechClipDto = { sampleRate: number;
  * Mono 16-bit little-endian PCM, base64.
  */
 pcm: string; durationMs: number }
+/**
+ * How a voice's speaker is described in Kokoro's voice list.
+ */
+export type SpeechGenderDto = "female" | "male"
 /**
  * Whether read-aloud can speak now, and what downloading it involves.
  */
@@ -9554,15 +9562,39 @@ modelId: string; modelName: string;
 /**
  * Total bytes of the download.
  */
-downloadBytes: number; license: string; voices: SpeechVoiceDto[]; defaultVoice: string }
+downloadBytes: number; license: string; voicePack: SpeechVoicePackDto; voices: SpeechVoiceDto[]; defaultVoice: string }
 /**
- * One of the voices the downloaded model speaks in.
+ * One of the voices Kokoro can speak in.
  */
 export type SpeechVoiceDto = {
 /**
  * Kokoro's voice id, e.g. `bf_emma`.
  */
-id: string; name: string }
+id: string; name: string; accent: SpeechAccentDto; gender: SpeechGenderDto;
+/**
+ * hexgrad's overall grade for the voice's training data, `A` to `F+`.
+ */
+grade: string;
+/**
+ * True when everything this voice needs is on disk.
+ */
+downloaded: boolean }
+/**
+ * The second download: the voices and accents the first one leaves out.
+ */
+export type SpeechVoicePackDto = {
+/**
+ * True when the pack is downloaded and complete.
+ */
+ready: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
