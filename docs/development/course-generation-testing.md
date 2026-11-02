@@ -34,8 +34,11 @@ Where the tests live (paths under `crates/lattice-desktop/src/features/learning/
 | Reason-first calls and checkpoints | `lessons/structured_call_tests.rs` |
 | No fixed caps: retrieval, catalog, web paging, research, assessments, tutor context | `content_caps_tests.rs` |
 | Outline outage wait | `patient_model_tests.rs` |
-| Evidence paging and deepening, subject test | `lessons/content_verification/evidence_paging_tests.rs`, `lessons/reference_collection/tests.rs` |
-| General-knowledge gate | `lessons/content_verification/general_knowledge.rs` (inline), `content_verification/tests.rs` |
+| The page a statement is read against, subject test | `lessons/content_verification/evidence_paging_tests.rs`, `lessons/reference_collection/tests.rs` |
+| Statement classes: sorting, the checks of each class, the bridge, the plan's calls | `lessons/content_verification/classify_tests.rs`, `class_checks_tests.rs`, `bridge_tests.rs`, `claim_ledger_tests.rs`, `lessons/call_plan_tests.rs` |
+| Cuts, sections that go, flow repairs | `lessons/content_verification/repair_tests.rs`, `sections_tests.rs` |
+| The admission gate and the sweep | `references/admission.rs` (inline), `references/source_library/admission_tests.rs` |
+| The acceptance run's scoring (claim classes design §3.11) | `scripts/test_score_lesson_acceptance.py` for `scripts/score_lesson_acceptance.py` |
 | Repair progress stop | `lessons/content_verification/repair_progress_tests.rs` |
 | Claim extraction, coverage, checks, research, repair, resume | `lessons/content_verification/*_tests.rs`, `tests.rs`, and the `*_cases.json` fixtures beside them |
 | Quote re-anchoring | `lessons/teaching/citation_tests.rs` |

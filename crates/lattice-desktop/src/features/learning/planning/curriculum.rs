@@ -220,6 +220,11 @@ pub struct LearningGenerationActivity {
     /// the first checks find.
     #[serde(default)]
     pub model_calls_ceiling: Option<u32>,
+    /// How many times the ceiling was published higher than the one before
+    /// it: the design allows none (§3.12), and the acceptance run reads this
+    /// count from the job.
+    #[serde(default)]
+    pub model_calls_ceiling_rises: u32,
     /// Where the lesson's claims stand after the latest pass; none before
     /// the first pass observed them.
     pub claims: Option<LearningClaimTally>,

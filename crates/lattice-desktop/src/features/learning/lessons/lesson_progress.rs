@@ -329,7 +329,11 @@ pub(in crate::features::learning) fn strict_checked(fates: &[(Class, Fate)]) {
 }
 
 fn publish_ceiling(state: &mut State) {
-    state.activity.model_calls_ceiling = state.plan.as_ref().map(CallPlan::ceiling);
+    let ceiling = state.plan.as_ref().map(CallPlan::ceiling);
+    if let (Some(before), Some(now)) = (state.activity.model_calls_ceiling, ceiling) {
+        state.activity.model_calls_ceiling_rises += u32::from(now > before);
+    }
+    state.activity.model_calls_ceiling = ceiling;
     #[cfg(test)]
     {
         if let Some(ceiling) = state.activity.model_calls_ceiling {
@@ -390,6 +394,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     activity.phase_started_at = 0;
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
+    activity.model_calls_ceiling_rises = 0;
     activity.statements = None;
     activity
 }
@@ -707,10 +712,40 @@ mod tests {
     }
 
     #[test]
+    fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
+        let statements = [Counted {
+            class: Class::Sourced,
+            shares: false,
+        }];
+        let mut state = State {
+            plan: Some(CallPlan::new(1, &statements, 1)),
+            ..Default::default()
+        };
+        publish_ceiling(&mut state);
+        let first = state.activity.model_calls_ceiling.unwrap();
+        assert_eq!(state.activity.model_calls_ceiling_rises, 0);
+
+        // The plan's own events only lower it.
+        if let Some(plan) = state.plan.as_mut() {
+            plan.lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
+            plan.strict_checked(&[(Class::Sourced, Fate::Failed)]);
+        }
+        publish_ceiling(&mut state);
+        assert!(state.activity.model_calls_ceiling.unwrap() <= first);
+        assert_eq!(state.activity.model_calls_ceiling_rises, 0);
+
+        // A ceiling shown lower and then published higher is a rise.
+        state.activity.model_calls_ceiling = Some(1);
+        publish_ceiling(&mut state);
+        assert_eq!(state.activity.model_calls_ceiling_rises, 1);
+    }
+
+    #[test]
     fn a_restarted_job_counts_its_calls_again_and_keeps_the_rest() {
         let saved = LearningGenerationActivity {
             model_calls: 40,
             model_calls_ceiling: Some(300),
+            model_calls_ceiling_rises: 2,
             checks_total: 10,
             phase_started_at: 5,
             ..Default::default()
@@ -722,9 +757,10 @@ mod tests {
             (
                 activity.model_calls,
                 activity.model_calls_ceiling,
+                activity.model_calls_ceiling_rises,
                 activity.phase_started_at
             ),
-            (0, None, 0)
+            (0, None, 0, 0)
         );
         assert_eq!(activity.checks_total, 10);
     }

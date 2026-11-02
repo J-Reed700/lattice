@@ -7290,6 +7290,12 @@ modelCalls?: number;
  */
 modelCallsCeiling?: number | null;
 /**
+ * How many times the ceiling was published higher than the one before
+ * it: the design allows none (§3.12), and the acceptance run reads this
+ * count from the job.
+ */
+modelCallsCeilingRises?: number;
+/**
  * Where the lesson's claims stand after the latest pass; none before
  * the first pass observed them.
  */
