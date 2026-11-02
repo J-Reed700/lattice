@@ -26,6 +26,7 @@ pub(in crate::features::learning) use claim_ledger::{
     field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
     HeldForReview,
 };
+mod classify;
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
