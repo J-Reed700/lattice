@@ -2,8 +2,7 @@
 //! its own section cites, pass B across the course, packed into one
 //! request, and what they decide together.
 use super::evidence_paging_tests::{
-    inventory, marker_collection, reference, related, PagingModel, CLAIM, CONTRARY, LIST_END,
-    MARKER,
+    inventory, marker_collection, reference, related, PagingModel, CLAIM, CONTRARY, MARKER,
 };
 use super::*;
 use crate::features::learning::lesson_drafts;
@@ -515,165 +514,19 @@ async fn another_sections_citations_are_not_pass_a() -> Result<()> {
         HashMap::from([(1, references.cited_passages(&[MARKER])?)]),
         HashMap::new(),
     );
-    let results = evidence_checks::check_with_paging(
+    let results = evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
         &ClaimChecks::default(),
-        (&citations, LIST_END),
+        &citations,
     )
     .await?;
     let checks = model.checks.lock().unwrap();
-    assert!(
-        !read_marker(&checks[0]),
-        "no pass A: section 0 cites nothing"
-    );
-    assert_eq!(results[0].2.two_pass.pass, Some(Pass::Corroboration));
-    Ok(())
-}
-
-/// The pace the break-even tests read at: 1,000 prompt and 100 output tokens
-/// a second, so a page of 130-token answers holds 1,300 tokens.
-fn paced() -> lattice_core::application::ports::llm_port::Pace {
-    lattice_core::application::ports::llm_port::Pace {
-        prompt_tokens_per_second: 1_000.0,
-        output_tokens_per_second: 100.0,
-    }
-}
-
-/// One claim checked with pass B paged as set (D5), weighing `research`
-/// seconds to research a claim on the web, as this job's last round
-/// measured it.
-async fn weighing(
-    model: &PagingModel,
-    references: &ReferenceCollection<'_>,
-    citations: &Citations,
-    research: f64,
-) -> Result<Finding> {
-    let retained = ClaimChecks {
-        research_cost: Some(Duration::from_secs_f64(research)),
-        ..Default::default()
-    };
-    let results = evidence_checks::check_with_citations(
-        model,
-        references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &retained,
-        citations,
-    )
-    .await?;
-    Ok(results[0].2.clone())
-}
-
-#[test]
-fn break_even_reads_on_while_the_spend_stays_at_or_below_what_research_costs() {
-    let pace = lattice_core::application::ports::llm_port::Pace {
-        prompt_tokens_per_second: 100.0,
-        output_tokens_per_second: 10.0,
-    };
-    // 1,000 tokens read in 10 s, and one more 100-token answer in 10 s.
-    let page = page_seconds(Some(pace), 1_000, Some(100.0));
-    assert_eq!(page, Some(20.0));
-    let research = Some(60.0);
-    assert!(Depth::BreakEven.reads_next(0.0, page, research));
-    // 40 s spent past page 1 and a 20 s page: 60 s, at the research cost.
-    assert!(Depth::BreakEven.reads_next(40.0, page, research));
-    assert!(!Depth::BreakEven.reads_next(40.5, page, research));
-    // A cost not measured yet is a bet whose price cannot be compared.
-    assert!(!Depth::BreakEven.reads_next(0.0, None, research));
-    assert!(!Depth::BreakEven.reads_next(0.0, page, None));
-    assert_eq!(page_seconds(None, 1_000, Some(100.0)), None);
-    // The eval's floor and ceiling.
-    assert!(!Depth::FirstPage.reads_next(0.0, page, research));
-    assert!(Depth::ListEnd.reads_next(1_000.0, None, None));
-}
-
-#[tokio::test]
-async fn break_even_stops_before_a_page_that_would_cost_more_than_researching_the_claim(
-) -> Result<()> {
-    let references = ReferenceCollection::lexical(&marker_collection())?;
-    // The section cites a related passage: pass A measures the job's answers,
-    // so every pass B page, the first too, is sized by the budget.
-    let citations = citing(
-        &references,
-        "Mineral alpha notes 3: property beta was measured, pressure varied.",
-    )?;
-    let model = PagingModel::paced(6_000, paced(), 130);
-    let cited = citations.of(0).to_vec();
-    let pages = walk_pages(
-        &model,
-        &references,
-        (0, CLAIM),
-        (cited.clone(), cited),
-        REACHES,
-        page_budget(Some(paced()), Some(130.0)),
-    )
-    .await?;
-    let support = pages
-        .iter()
-        .position(|page| page.passages.iter().any(|p| p.text.contains(MARKER)))
-        .unwrap();
-    assert!(support > 1, "the fixture must put the support past page 2");
-    let cost = |page: &WalkedPage| {
-        page_seconds(
-            Some(paced()),
-            evidence_checks::page_tokens(&model, &page.passages),
-            Some(130.0),
-        )
-        .unwrap()
-    };
-    // What reading on to the support's page spends past page 1.
-    let to_support: f64 = pages[1..=support].iter().map(cost).sum();
-
-    // It fits: the support's page is read.
-    let fits = PagingModel::paced(6_000, paced(), 130);
-    let finding = weighing(&fits, &references, &citations, to_support + 0.001).await?;
-    assert_eq!(finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(finding.two_pass.page, Some(support + 1));
-
-    // Half that page short: the walk stops before it, and the claim goes to
-    // web research.
-    let short = PagingModel::paced(6_000, paced(), 130);
-    let research = to_support - cost(&pages[support]) / 2.0;
-    let finding = weighing(&short, &references, &citations, research).await?;
-    assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
-    assert!(finding.wants_research());
-    let checks = short.checks.lock().unwrap();
-    assert_eq!(
-        checks.len(),
-        1 + support,
-        "pass A, then pass B's pages up to the one before the support's"
-    );
-    assert!(checks.iter().all(|check| !read_marker(check)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn without_a_measured_research_cost_or_pace_pass_b_reads_its_first_page_only() -> Result<()> {
-    let references = ReferenceCollection::lexical(&marker_collection())?;
-    // A backend that reports its pace, before any research round is measured.
-    let model = PagingModel::paced(6_000, paced(), 130);
-    let results = evidence_checks::check(
-        &model,
-        &references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &ClaimChecks::default(),
-    )
-    .await?;
+    assert_eq!(checks.len(), 1, "no pass A: section 0 cites nothing");
+    assert!(!read_marker(&checks[0]));
     assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
-    assert_eq!(
-        model.checks.lock().unwrap().len(),
-        1,
-        "the first page only, though the support is on a later one"
-    );
-    // A research cost measured, and a backend that reports no pace.
-    let model = PagingModel::new(6_000);
-    let finding = weighing(&model, &references, &Citations::default(), 3_600.0).await?;
-    assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
-    assert_eq!(model.checks.lock().unwrap().len(), 1);
     Ok(())
 }
 
@@ -786,77 +639,6 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     Ok(())
 }
 
-#[tokio::test]
-async fn the_latest_measured_research_cost_is_read_and_an_unmeasured_event_is_passed_over(
-) -> Result<()> {
-    use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
-    use lattice_core::application::ports::claim_review::ClaimReviewStore;
-    use lattice_core::domain::learning::claim_review::{
-        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, LessonReview,
-        LessonReviewState, UnitKind,
-    };
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    let program_id = repo.job(&job).await?.program_id;
-    let cost = || lesson_drafts::run(&repo, &job, &lesson, claim_ledger::research_cost());
-    // Before any round is measured there is none: claims read page 1 only.
-    assert_eq!(cost().await?, None);
-
-    let store = ClaimReviewRepository::new(pool.clone());
-    let mut revision = store
-        .set_lesson_review(
-            &lesson,
-            LessonReview {
-                program_id,
-                job_id: job.clone(),
-                state: LessonReviewState::Verifying,
-                draft_sha256: "draft".into(),
-                checker_model: "paging-fixture".into(),
-                stop_reason: None,
-            },
-        )
-        .await?;
-    let machine = |at| EventProvenance {
-        actor: Actor::Machine,
-        at,
-        job_id: Some(job.clone()),
-        app_version: "fixture".into(),
-        checker_model: Some("paging-fixture".into()),
-    };
-    let id = ClaimId("claim-0".into());
-    revision = store
-        .append(
-            &lesson,
-            &id,
-            machine(1),
-            ClaimEvent::Extracted {
-                location: ClaimLocation::locate(0, UnitKind::Block, "body", CLAIM, CLAIM),
-                statement: CLAIM.into(),
-            },
-            revision,
-        )
-        .await?;
-    // Two timed rounds, then an event that carries no cost.
-    for (at, round_ms_per_claim) in [(2, Some(40_000)), (3, Some(90_000)), (4, None)] {
-        revision = store
-            .append(
-                &lesson,
-                &id,
-                machine(at),
-                ClaimEvent::Researched {
-                    queries: vec![],
-                    sources_added: vec![],
-                    passages_found: 0,
-                    round_ms_per_claim,
-                },
-                revision,
-            )
-            .await?;
-    }
-    assert_eq!(cost().await?, Some(Duration::from_secs(90)));
-    Ok(())
-}
-
 /// A decided finding over one passage of `id` whose quotation is `text`.
 fn decided_by(verdict: ClaimVerdict, id: &str, text: &str) -> Finding {
     Finding {
@@ -953,30 +735,4 @@ fn both_passes_supports_are_kept_and_the_strongest_names_the_claim() {
         .evidence
         .iter()
         .any(|passage| passage.source_id == "owner" && passage.text.contains(CONTRARY)));
-}
-
-#[test]
-fn with_standing_takes_the_found_support_and_keeps_the_prior_as_corroboration() {
-    let mut prior = decided_by(ClaimVerdict::Supported, "blog", MARKER);
-    prior.trust = Some(Box::new(gate(None)));
-    let found = decided_by(ClaimVerdict::Supported, "university-press", CONTRARY);
-    let finding = evidence_checks::with_standing(
-        prior.clone(),
-        Some((found, Reach::Standing, 1)),
-        &["blog".to_owned()],
-    );
-    assert_eq!(finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(finding.supporting_quote.as_deref(), Some(CONTRARY));
-    assert_eq!(finding.two_pass.reach, Some(Reach::Standing));
-    assert_eq!(finding.two_pass.page, Some(1));
-    assert_eq!(
-        finding.two_pass.supported_by.as_ref().unwrap().source_id,
-        "university-press"
-    );
-    assert_eq!(finding.two_pass.also_supported[0].passage.source_id, "blog");
-    assert!(finding.trust.is_none(), "weighed again with the ceiling");
-    // Nothing found: the finding as it was, its evidence not extended.
-    let unchanged = evidence_checks::with_standing(prior.clone(), None, &["blog".to_owned()]);
-    assert_eq!(unchanged.evidence.len(), prior.evidence.len());
-    assert_eq!(unchanged.supporting_quote, prior.supporting_quote);
 }

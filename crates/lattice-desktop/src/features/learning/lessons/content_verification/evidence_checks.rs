@@ -1,11 +1,11 @@
 //! Claim checks in two passes (course evidence index §5), each decision
 //! keeping its own evidence binding and durable receipt. Pass A (attribution)
 //! checks a claim against the passages its own section cites; pass B
-//! (corroboration) against the course by relevance (see `walk`), page by page
-//! until a page decides it, then web research. Requests hold one section's
-//! claims while the window holds them with their answers, and pass B pages
-//! are sized by what the job's answers cost (`page_budget`). What the two
-//! passes decide together is `outcome`'s.
+//! (corroboration) against the course's first page for it by relevance (see
+//! `walk`), and a claim neither supports goes to web research. Requests hold
+//! one section's claims while the window holds them with their answers, and
+//! pass B pages are sized by what the job's answers cost (`page_budget`).
+//! What the two passes decide together is `outcome`'s.
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
 use std::collections::BTreeMap;
@@ -15,32 +15,25 @@ mod outcome;
 mod page_budget;
 mod requests;
 mod run;
-mod standing;
 mod walk;
 
 use claims::{Compared, Comparison, Context, Prepared};
-#[cfg(test)]
-pub(super) use outcome::with_standing;
 #[cfg(test)]
 pub(in crate::features::learning) use outcome::ContraryPassage;
 use outcome::{combine, decision_key};
 pub(in crate::features::learning) use outcome::{
     same_passage, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
 };
-pub(in crate::features::learning) use page_budget::{page_budget, page_seconds, AnswerSize};
+pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
 use requests::{finish, group, pack};
 use run::Run;
-use walk::{deepen, log_page, walk_budget, Walk};
 #[cfg(test)]
-pub(super) use walk::{first_page, page_tokens};
+pub(super) use walk::first_page;
+use walk::log_page;
+pub(in crate::features::learning) use walk::Reach;
 pub(super) use walk::{page_of, page_one, within_page, PageBudget, PageNote, Sizing};
-#[cfg(test)]
-pub(in crate::features::learning) use walk::{walk_pages, walk_standing_pages, WalkedPage};
-#[cfg(test)]
-pub(in crate::features::learning) use walk::{Depth, ORDERS, REACHES};
-pub(in crate::features::learning) use walk::{Paging, Reach};
 
 /// The most output a claim check may write, which the checker is built
 /// with: the largest an answer can be.
@@ -63,19 +56,10 @@ pub(super) fn page_budget_note(llm: &dyn LLMPort, retained: &ClaimChecks) -> Str
 /// Each passage's label, by source version (`provenance_gate::passage_labels`).
 type Labels = HashMap<String, String>;
 
-/// Tells a pass's bookkeeping that one comparison finished.
+/// Tells a pass's bookkeeping that one comparison finished, so a claim is
+/// counted the moment its last comparison is done, even while its request's
+/// other comparisons are pending.
 type Answered<'a> = dyn Fn(Pass, &CheckedClaim) + Sync + 'a;
-
-/// What a finished comparison reports to lesson progress.
-#[derive(Clone, Copy)]
-enum Check<'a> {
-    /// A claim's pass A comparison or its pass B first page: each is told
-    /// as it finishes, so a claim is counted the moment its last comparison
-    /// is done, even while its request's other comparisons are pending.
-    First(&'a Answered<'a>),
-    /// An unsupported claim's check against a deeper pass B page.
-    Deeper,
-}
 
 struct PendingClaim {
     ordinal: usize,
@@ -119,7 +103,10 @@ pub(super) async fn check(
 }
 
 /// Check every claim of `inventory` in two passes: against the passages its
-/// own section cites (`citations`, by unit), and across the course.
+/// own section cites (`citations`, by unit), and against the course's first
+/// page for it. Pages are sized by the job's measured answers (§5.3), so the
+/// first request carries pass A only and every later one packs pass A and
+/// pass B together.
 pub(super) async fn check_with_citations(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
@@ -127,28 +114,6 @@ pub(super) async fn check_with_citations(
     executions: &[execution::Observation],
     retained: &ClaimChecks,
     citations: &Citations,
-) -> Result<Vec<CheckedClaim>> {
-    check_with_paging(
-        llm,
-        references,
-        inventory,
-        executions,
-        retained,
-        (citations, Paging::SET),
-    )
-    .await
-}
-
-/// [`check_with_citations`] with pass B paged by `paging`. Pages are sized by
-/// the job's measured answers (§5.3), so the first request carries pass A
-/// only and every later one packs pass A and pass B together.
-pub(super) async fn check_with_paging(
-    llm: &dyn LLMPort,
-    references: &ReferenceCollection<'_>,
-    inventory: &Inventory,
-    executions: &[execution::Observation],
-    retained: &ClaimChecks,
-    (citations, paging): (&Citations, Paging),
 ) -> Result<Vec<CheckedClaim>> {
     let entries: Vec<_> = inventory
         .units
@@ -171,7 +136,6 @@ pub(super) async fn check_with_paging(
         executions,
         retained,
         citations,
-        paging,
     };
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Evidence,
@@ -243,7 +207,7 @@ pub(super) async fn check_with_paging(
                     .unwrap_or_else(|error| error.into_inner())
                     .answer(pass, result);
             };
-            let (_, answered) = group(llm, first, Check::First(&tell), &labels).await?;
+            let (_, answered) = group(llm, first, &tell, &labels).await?;
             answers.add(answered);
             run = shared
                 .into_inner()
@@ -298,7 +262,7 @@ pub(super) async fn check_with_paging(
                 .answer(pass, result);
         };
         let mut groups = futures::stream::iter(pack(llm, pending, &labels))
-            .map(|request| group(llm, request, Check::First(&tell), &labels))
+            .map(|request| group(llm, request, &tell, &labels))
             .buffer_unordered(1);
         while let Some(batch) = groups.next().await {
             let (_, answered) = batch?;
@@ -313,24 +277,14 @@ pub(super) async fn check_with_paging(
     let mut run = shared
         .into_inner()
         .unwrap_or_else(|error| error.into_inner());
-    let mut results = run.finish(&context, &labels, &mut answers).await?;
+    let mut results = run.finish()?;
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);
     // The gate call (§18.6): every supported verdict's support is weighed
     // before the claim ledger sees it.
     provenance_gate::weigh(llm, &mut results, &run.decided).await?;
-    // A claim the gate leaves unsupported, insufficient or contradicted reads
-    // the course's strongest sources on its subject before it waits, and is
-    // weighed again against what the course has (claim sources design §7).
-    standing::corroborate(&context, &mut results, &run.decided, &labels, &mut answers).await?;
     *retained
         .answers
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = answers;
-    crate::features::learning::lesson_progress::sent_back(
-        results
-            .iter()
-            .filter(|(_, _, finding, _)| finding.scrutinised().is_some())
-            .count(),
-    );
     Ok(results)
 }

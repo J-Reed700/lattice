@@ -1,7 +1,6 @@
 //! The passages a lesson section cites, which pass A checks a claim of that
 //! section against and nothing else (course evidence index §5.1), and the
-//! sources the lesson cites anywhere, which pass B can read first when the
-//! order of its reaches says so (§5.2).
+//! sources the lesson cites anywhere.
 use super::*;
 
 /// The retrieval kind of a passage a claim's own section cites.
@@ -79,11 +78,6 @@ impl Citations {
     /// Whether the lesson cites `source_id` anywhere.
     pub(super) fn cites(&self, source_id: &str) -> bool {
         self.sources.contains(source_id)
-    }
-
-    /// The source versions the lesson cites anywhere.
-    pub(super) fn sources(&self) -> &HashSet<String> {
-        &self.sources
     }
 }
 

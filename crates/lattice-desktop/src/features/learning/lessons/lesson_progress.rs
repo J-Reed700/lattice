@@ -3,8 +3,7 @@
 //! concurrent chat, outline generation, or other jobs.
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
-    LearningClaimTally, LearningDeeperEvidence, LearningGenerationActivity,
-    LearningGenerationPhase, LearningGenerationStep,
+    LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
@@ -185,8 +184,8 @@ pub(in crate::features::learning) fn checkpoint_saved() {
 }
 
 /// A new candidate text is about to be verified: the first draft, a repair or
-/// the user's edits (§6.3). Research rechecks and deeper evidence pages are
-/// steps inside a pass, not passes.
+/// the user's edits (§6.3). Research rechecks are steps inside a pass, not
+/// passes.
 pub(in crate::features::learning) fn new_pass() {
     let _ = CURRENT.try_with(|progress| {
         progress
@@ -245,19 +244,6 @@ pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
     });
 }
 
-/// The source check sent back `count` of this pass's supported claims: their
-/// sources are too weak for them, and research looks for stronger ones.
-pub(in crate::features::learning) fn sent_back(count: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .checks_sent_back = u32::try_from(count).unwrap_or(u32::MAX);
-    });
-}
-
 /// The checks that follow compare claims with `count` references research
 /// has just saved (a step inside the pass, §6.3); `None` once they are done.
 pub(in crate::features::learning) fn new_references(count: Option<usize>) {
@@ -269,60 +255,6 @@ pub(in crate::features::learning) fn new_references(count: Option<usize>) {
             .activity
             .new_references = count.map(|count| u32::try_from(count).unwrap_or(u32::MAX));
     });
-}
-
-/// Unsupported claims of this pass start their check against evidence `page`.
-pub(in crate::features::learning) fn deeper_page(page: usize, claims: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .deeper_evidence = Some(LearningDeeperEvidence {
-            page: page as u32,
-            claims: claims as u32,
-            checked: 0,
-        });
-    });
-}
-
-/// An unsupported claim's check against the current deeper page finished.
-/// The claim was counted when first checked; support moves it out of the
-/// unresolved count, and any other verdict leaves it there.
-pub(in crate::features::learning) fn rechecked(supported: bool) {
-    let _ = CURRENT.try_with(|progress| {
-        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        let activity = &mut state.activity;
-        if let Some(deeper) = &mut activity.deeper_evidence {
-            deeper.checked += 1;
-        }
-        if supported {
-            activity.checks_unresolved = activity.checks_unresolved.saturating_sub(1);
-        }
-    });
-}
-
-/// No unsupported claim of this pass has another evidence page to check.
-pub(in crate::features::learning) fn deeper_done() {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .deeper_evidence = None;
-    });
-}
-
-/// Runs `future` with fresh progress and returns the activity it left.
-#[cfg(test)]
-pub(in crate::features::learning) async fn observed<T>(
-    future: impl std::future::Future<Output = T>,
-) -> (T, LearningGenerationActivity) {
-    let progress = Progress::default();
-    let value = CURRENT.scope(progress.clone(), future).await;
-    (value, progress.snapshot().2)
 }
 
 impl Progress {
@@ -473,72 +405,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_deeper_page_moves_claims_between_counts_without_adding_checks() {
+    async fn a_recheck_against_new_references_is_named() {
         let progress = Progress::default();
         CURRENT
             .scope(progress.clone(), async {
-                begin_checks(4);
-                checked(true, false);
-                checked(false, true);
-                checked(false, true);
-                checked(false, true);
-                deeper_page(2, 3);
-                rechecked(true);
-                rechecked(false);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_completed, activity.checks_unresolved),
-                    (4, 2),
-                    "A re-check is not a new check; support resolves the claim"
-                );
-                assert_eq!(
-                    activity.deeper_evidence,
-                    Some(LearningDeeperEvidence {
-                        page: 2,
-                        claims: 3,
-                        checked: 2
-                    })
-                );
-                rechecked(false);
-                deeper_page(3, 2);
-                rechecked(false);
-                rechecked(false);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_completed, activity.checks_unresolved),
-                    (4, 2),
-                    "A claim still unsupported on another page counts once"
-                );
-                deeper_done();
-                assert_eq!(progress.snapshot().2.deeper_evidence, None);
-                deeper_page(2, 1);
-                begin_checks(4);
-                assert_eq!(progress.snapshot().2.deeper_evidence, None);
-            })
-            .await;
-    }
-
-    #[tokio::test]
-    async fn sent_back_claims_and_a_recheck_against_new_references_are_named() {
-        let progress = Progress::default();
-        CURRENT
-            .scope(progress.clone(), async {
-                begin_checks(3);
-                checked(false, true);
-                checked(false, false);
-                checked(false, false);
-                sent_back(2);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_unresolved, activity.checks_sent_back),
-                    (1, 2),
-                    "the source check's claims are not the checker's"
-                );
                 new_references(Some(5));
                 begin_checks(3);
                 let activity = progress.snapshot().2;
                 assert_eq!(activity.new_references, Some(5));
-                assert_eq!(activity.checks_sent_back, 0, "a new check counts afresh");
                 new_references(None);
                 assert_eq!(progress.snapshot().2.new_references, None);
             })

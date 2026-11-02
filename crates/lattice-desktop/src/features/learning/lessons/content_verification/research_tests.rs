@@ -20,7 +20,6 @@ pub(in crate::features::learning) const CAPTURE: &str =
 pub(in crate::features::learning) struct ResearchWeb(
     MockWebService,
     Arc<Mutex<Vec<WebSearchInput>>>,
-    Arc<Mutex<Vec<String>>>,
 );
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
@@ -29,7 +28,6 @@ impl WebServiceTrait for ResearchWeb {
         self.0.search_web(input).await
     }
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        self.2.lock().unwrap().push(url.to_owned());
         self.0.fetch_url_content(url).await
     }
     async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {
@@ -42,9 +40,6 @@ impl WebServiceTrait for ResearchWeb {
 impl ResearchWeb {
     pub(in crate::features::learning) fn recorded_inputs(&self) -> Vec<WebSearchInput> {
         self.1.lock().unwrap().clone()
-    }
-    fn fetched(&self) -> Vec<String> {
-        self.2.lock().unwrap().clone()
     }
 }
 pub(in crate::features::learning) fn web(truncated: bool) -> Arc<ResearchWeb> {
@@ -73,11 +68,7 @@ fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
             read_via: Default::default(),
         },
     );
-    Arc::new(ResearchWeb(
-        web,
-        Arc::new(Mutex::new(Vec::new())),
-        Arc::new(Mutex::new(Vec::new())),
-    ))
+    Arc::new(ResearchWeb(web, Arc::new(Mutex::new(Vec::new()))))
 }
 fn gap() -> Finding {
     Finding {
@@ -674,54 +665,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     Ok(())
 }
 
-fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
-    use crate::features::learning::lessons::content_verification::provenance_gate::FindingTrust;
-    use lattice_core::domain::provenance::*;
-    Finding {
-        unit: 0,
-        quote: statement.into(),
-        statement: statement.into(),
-        verdict: ClaimVerdict::Supported,
-        reason: "Supported".into(),
-        evidence: vec![],
-        supporting_quote: None,
-        resolution: None,
-        two_pass: Default::default(),
-        trust: Some(Box::new(FindingTrust {
-            profile: ClaimProfile {
-                kind: ClaimKind::Specification,
-                subject: Some(ClaimSubject {
-                    name: subject.into(),
-                    kind: SubjectKind::Product,
-                    aliases: vec![],
-                    classes: vec![],
-                    key: SubjectKey::of(subject),
-                }),
-                temporal: TemporalScope::Current,
-                measurement_origin: None,
-                attributed_to: None,
-                reasons: vec![],
-                policy: "test".into(),
-                model: "test".into(),
-            },
-            supports: vec![],
-            contrary: vec![],
-            decision: Decision::Insufficient {
-                bar: Bar::Primary,
-                have: vec![],
-                missing: Missing::NoPrimaryForSubject,
-                next: vec![NextStep::SearchOwner {
-                    origin_hints: vec![owner_hint.into()],
-                }],
-                reasons: vec![],
-            },
-            available: None,
-        })),
-    }
-}
-
 #[tokio::test]
-async fn specification_gap_with_known_owner_issues_official_docs_search_need() -> Result<()> {
+async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let mut program = crate::features::learning::tests::fixture();
@@ -764,14 +709,16 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
             read_via: Default::default(),
         },
     );
-    let finding = spec_finding("AsyncLocal in .NET", ".NET", "learn.microsoft.com");
+    let finding = Finding {
+        quote: "AsyncLocal in .NET".into(),
+        statement: "AsyncLocal in .NET".into(),
+        ..gap()
+    };
 
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                // The subject comes from the gap the need serves; the host
-                // only because the planner set it.
-                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","site":"learn.microsoft.com"}]}).to_string(),
+                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
                 json!({"needs":[{"gap":0,"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
@@ -812,162 +759,6 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
         },
     )
     .await
-}
-
-/// A supported finding whose gate asks only to follow `urls`.
-fn citing_finding(urls: &[&str]) -> Finding {
-    use lattice_core::domain::provenance::{Decision, NextStep};
-    let mut finding = spec_finding(CAPTURE, "Random assignment", "example.org");
-    if let Some(Decision::Insufficient { next, .. }) =
-        finding.trust.as_mut().map(|trust| &mut trust.decision)
-    {
-        *next = urls
-            .iter()
-            .map(|url| NextStep::FollowCitation {
-                url: (*url).into(),
-                from: "citing-version".into(),
-            })
-            .collect();
-    }
-    finding
-}
-
-#[tokio::test]
-async fn a_link_to_a_place_in_a_saved_page_never_fetches_it_again() -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let mut program = crate::features::learning::tests::fixture();
-    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
-    repo.create(&program).await?;
-    let sources = repo.verification_sources(&program.summary.id).await?;
-    let references = ReferenceCollection::lexical(&sources)?;
-    let web = web(false);
-    let empty_plan = || json!({"needs":[]}).to_string();
-    let llm = ScriptedModel {
-        outputs: Mutex::new([empty_plan(), empty_plan()].into()),
-        prompts: Mutex::new(vec![]),
-    };
-    run(
-        pool,
-        program.summary.id,
-        program.summary.goal,
-        Some(web.clone()),
-        async {
-            let page = "https://example.org/research";
-            let first = [citing_finding(&[page])];
-            let expanded = expand(&llm, &references, &first, &[], &ClaimChecks::default())
-                .await?
-                .saved()
-                .expect("the cited page is saved");
-            assert_eq!(web.fetched(), vec![page.to_owned()]);
-            let places = [citing_finding(&[
-                "https://example.org/research#why-models-need-tools",
-                "https://example.org/research#exercises",
-            ])];
-            let again = expand(&llm, &expanded, &places, &[], &ClaimChecks::default()).await?;
-            assert!(again.saved().is_none(), "nothing new to save");
-            assert_eq!(
-                web.fetched(),
-                vec![page.to_owned()],
-                "links to places in the saved page are that page"
-            );
-            Ok(())
-        },
-    )
-    .await
-}
-
-#[tokio::test]
-async fn a_search_for_an_independent_source_never_offers_the_supports_own_origin() -> Result<()> {
-    use lattice_core::domain::provenance::{
-        AddedBy, ClusterId, Decision, NextStep, PassageKind, SourceDates, Support,
-        TemporalValidity, Trust, TrustLevel,
-    };
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let mut program = crate::features::learning::tests::fixture();
-    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
-    repo.create(&program).await?;
-    // The claim's one support is a blog post on example.com.
-    let blog = crate::features::learning::dto::LearningSourceDto {
-        id: "blog-version".into(),
-        title: "Strict mode explained".into(),
-        url: Some("https://blog.example.com/strict-mode".into()),
-        excerpt: "Strict mode makes the model follow the schema.".into(),
-        acquired_at: 0,
-    };
-    let references = ReferenceCollection::lexical(std::slice::from_ref(&blog))?;
-    let mut finding = spec_finding(
-        "Strict mode follows the schema.",
-        "OpenAI API",
-        "openai.com",
-    );
-    if let Some(trust) = finding.trust.as_mut() {
-        trust.supports = vec![Support {
-            source_version_id: blog.id.clone(),
-            origin_cluster: ClusterId(blog.id.clone()),
-            trust: Trust {
-                level: TrustLevel::Established,
-                reasons: vec![],
-                override_: None,
-            },
-            dates: SourceDates::default(),
-            passage: PassageKind::Direct,
-            temporal: TemporalValidity::Valid,
-            added_by: AddedBy::Research,
-            cited_urls: vec![],
-            owner_hints: vec![],
-        }];
-        if let Decision::Insufficient { next, .. } = &mut trust.decision {
-            *next = vec![NextStep::SearchIndependent];
-        }
-    }
-    let web = web(false);
-    let result = |url: &str| WebSearchResult {
-        title: "Strict mode".into(),
-        url: url.into(),
-        snippet: String::new(),
-        published_date: None,
-        source: Some("duckduckgo".into()),
-    };
-    web.0.set_search_results(vec![
-        result("https://docs.example.com/strict-mode"),
-        result("https://independent.org/structured-outputs-review"),
-    ]);
-    let llm = ScriptedModel {
-        outputs: Mutex::new(
-            [
-                json!({"needs":[{"gap":0,"query":"structured outputs strict mode review","kind":"web"}]}).to_string(),
-                selection(&[]),
-            ]
-            .into(),
-        ),
-        prompts: Mutex::new(vec![]),
-    };
-    run(
-        pool,
-        program.summary.id,
-        program.summary.goal,
-        Some(web.clone()),
-        async {
-            expand(&llm, &references, &[finding], &[], &ClaimChecks::default()).await?;
-            Ok::<_, AppError>(())
-        },
-    )
-    .await?;
-    let prompts = llm.prompts.lock().unwrap();
-    assert!(
-        prompts[0].contains("\"independentOf\":[\"example.com\"]"),
-        "the planner is told which origins to avoid"
-    );
-    let offered = &prompts[1];
-    assert!(offered.contains("independent.org"));
-    assert!(
-        !offered.contains("docs.example.com"),
-        "the supports' own origin is dropped before selection"
-    );
-    assert!(offered.contains("\"needKind\":\"web\""));
-    Ok(())
 }
 
 /// Counts as a tokenizer does on notation and formulas: plain text at four
@@ -1189,10 +980,10 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
                     &ClaimChecks::default(),
                 )
                 .await?;
-                assert!(outcome.per_claim().is_some(), "the round is still timed");
                 let Expansion::Unchanged(searched) = outcome else {
                     panic!("research adds evidence; it never stops the lesson");
                 };
+                assert!(searched.per_claim.is_some(), "the round is still timed");
                 assert!(searched.sources_added.is_empty());
             }
             assert_eq!(

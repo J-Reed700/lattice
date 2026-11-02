@@ -97,10 +97,7 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
         let Some(found) = finding.two_pass.supported_by.as_ref() else {
             continue;
         };
-        if finding.verdict != ClaimVerdict::Supported
-            || finding.scrutinised().is_some()
-            || rewritten.contains(&finding.unit)
-        {
+        if finding.verdict != ClaimVerdict::Supported || rewritten.contains(&finding.unit) {
             continue;
         }
         let Some(source) = references

@@ -32,18 +32,13 @@ mod coverage;
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
 mod claim_reuse;
 mod evidence_checks;
-pub(in crate::features::learning) use evidence_checks::Reach;
 #[cfg(test)]
-pub(in crate::features::learning) use evidence_checks::ORDERS;
-#[cfg(test)]
-pub(in crate::features::learning) use evidence_checks::{
-    page_budget, page_seconds, walk_pages, walk_standing_pages, Depth, WalkedPage,
-};
+pub(in crate::features::learning) use evidence_checks::page_budget;
 use evidence_checks::{
-    same_passage, Paging, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
+    same_passage, Reach, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
 };
 #[cfg(test)]
-use evidence_checks::{ContraryPassage, Pass, REACHES};
+use evidence_checks::{ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
 mod general_knowledge;
@@ -82,8 +77,6 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
 mod passes;
 use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
-#[cfg(test)]
-pub(in crate::features::learning) use provenance_gate::Judgements;
 pub(in crate::features::learning) use provenance_gate::{
     gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
 };
@@ -94,7 +87,6 @@ mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
-mod scrutiny;
 mod section_checkpoints;
 mod support_gate;
 #[cfg(test)]
@@ -232,10 +224,6 @@ struct ClaimChecks {
     /// passes: the answer size a pass B page is budgeted by
     /// (`evidence_checks::page_budget`).
     answers: std::sync::Mutex<evidence_checks::AnswerSize>,
-    /// What researching one claim on the web cost when this job's last
-    /// research round measured it: pass B's break-even weighs it before the
-    /// ledger's latest (`evidence_checks::walk`, D5).
-    research_cost: Option<std::time::Duration>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
@@ -265,7 +253,7 @@ impl ClaimChecks {
             finding.quote = claim.quote.clone();
             finding.statement = claim.statement.clone();
             // A decision on this evidence takes its fresh retrieval metadata;
-            // one reached on a deeper page keeps that page's passages.
+            // one asked for with none keeps its own passages.
             let identity = |p: &EvidencePassage| {
                 (
                     p.source_id.clone(),
@@ -547,9 +535,7 @@ async fn evidence_for(
     observations: &[execution::Observation],
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = example_runs(observations, unit);
-    evidence.extend(
-        evidence_checks::first_page(llm, references, claim, &Citations::default(), &[]).await?,
-    );
+    evidence.extend(evidence_checks::first_page(llm, references, claim, &[]).await?);
     Ok(evidence)
 }
 

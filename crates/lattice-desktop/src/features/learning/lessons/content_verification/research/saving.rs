@@ -1,4 +1,4 @@
-//! Saving the pages a research round captures, and the citations between them.
+//! Saving the pages a research round captures.
 use super::*;
 
 /// Where a research round saves what it captures.
@@ -58,43 +58,5 @@ impl Saving<'_> {
             .verification_sources(&self.context.program_id)
             .await?;
         Ok(Some(version_id))
-    }
-
-    /// Records that the supporting version cites the page saved as
-    /// `version_id` (§8 `Cites`), with the link's place in its text.
-    pub(super) async fn record_citation(
-        &self,
-        cited: &scrutiny::Follow,
-        version_id: &str,
-    ) -> Result<()> {
-        use lattice_core::application::ports::SourceTrustStore;
-        use lattice_core::domain::provenance::{
-            RelationEvidence, RelationKind, RelationTarget, SourceRelation,
-        };
-        let store = crate::features::learning::references::trust::SqliteSourceTrustStore::new(
-            self.context.pool.clone(),
-        );
-        let Some(link) = store
-            .provenance(&cited.from)
-            .await?
-            .and_then(|record| record.links.into_iter().find(|link| link.url == cited.url))
-        else {
-            return Ok(());
-        };
-        store
-            .save_relations(
-                &self.context.program_id,
-                &[SourceRelation {
-                    from: cited.from.clone(),
-                    to: RelationTarget::Version(version_id.to_owned()),
-                    kind: RelationKind::Cites,
-                    evidence: RelationEvidence::Citation {
-                        start_byte: link.start_byte,
-                        end_byte: link.end_byte,
-                        anchor: link.anchor,
-                    },
-                }],
-            )
-            .await
     }
 }

@@ -14,7 +14,7 @@ use super::*;
 pub(in crate::features::learning) enum Pass {
     /// The claim against the passages its own section cites.
     Attribution,
-    /// The claim against the course, page by page by relevance.
+    /// The claim against the course's first page for it, by relevance.
     Corroboration,
 }
 
@@ -68,14 +68,14 @@ pub(in crate::features::learning) struct TwoPass {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(in crate::features::learning) contrary: Vec<ContraryPassage>,
     /// Other passages that support the claim, one per source version: the
-    /// other pass's support, or the support the standing reach moved aside.
+    /// other pass's support.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(in crate::features::learning) also_supported: Vec<SupportingPassage>,
 }
 
 /// The key of a claim's whole decision: its pass A comparison, when it has
 /// one, and pass B's first page. A later pass whose two comparisons are the
-/// same restores the decision, deeper pages included, without reading them.
+/// same restores the decision without reading them.
 pub(super) fn decision_key(attribution: Option<&str>, corroboration: &str) -> String {
     digest(&json!({"attribution": attribution, "corroboration": corroboration}).to_string())
 }
@@ -125,76 +125,6 @@ fn supporting_of(finding: &Finding) -> Option<SupportingPassage> {
         passage: supporting_passage(finding)?.clone(),
         quote: finding.supporting_quote.clone()?,
     })
-}
-
-/// A finding with what the standing reach found on the course's strongest
-/// sources for its subject (claim sources design §7.5). Found support becomes
-/// the claim's support (the prior one moving to `also_supported`); found
-/// contradiction is weighed by the overturn rule, or decides an unsupported
-/// claim; nothing found leaves the finding unchanged, receipts included.
-pub(in crate::features::learning::lessons::content_verification) fn with_standing(
-    mut prior: Finding,
-    found: Option<(Finding, Reach, usize)>,
-    cited: &[String],
-) -> Finding {
-    let Some((found, reach, page)) = found else {
-        return prior;
-    };
-    match found.verdict {
-        ClaimVerdict::Supported => {
-            let Some(support) = supporting_of(&found) else {
-                return prior;
-            };
-            let moved = (prior.verdict == ClaimVerdict::Supported)
-                .then(|| supporting_of(&prior))
-                .flatten();
-            // What the checker found saying otherwise stays for the overturn
-            // rule to weigh against the found support.
-            if prior.verdict == ClaimVerdict::Contradicted {
-                let contrary = contrary_of(&prior);
-                prior.two_pass.contrary.extend(contrary);
-            }
-            prior
-                .two_pass
-                .also_supported
-                .retain(|other| other.passage.source_id != support.passage.source_id);
-            prior.two_pass.also_supported.extend(moved);
-            prior.two_pass.supported_by =
-                (!cited.contains(&support.passage.source_id)).then(|| SupportedElsewhere {
-                    source_id: support.passage.source_id.clone(),
-                    start_byte: support.passage.start_byte,
-                    end_byte: support.passage.end_byte,
-                    cited: cited.to_vec(),
-                });
-            if !prior
-                .evidence
-                .iter()
-                .any(|passage| same_passage(passage, &support.passage))
-            {
-                prior.evidence.push(support.passage.clone());
-            }
-            prior.supporting_quote = Some(support.quote);
-            prior.verdict = ClaimVerdict::Supported;
-            prior.reason = found.reason;
-            prior.trust = None;
-            prior.two_pass.pass = Some(Pass::Corroboration);
-            prior.two_pass.reach = Some(reach);
-            prior.two_pass.page = Some(page);
-            prior
-        }
-        ClaimVerdict::Contradicted if prior.verdict == ClaimVerdict::Supported => {
-            prior.two_pass.contrary.extend(contrary_of(&found));
-            prior
-        }
-        ClaimVerdict::Contradicted if prior.verdict == ClaimVerdict::Unsupported => {
-            let mut found = found;
-            found.two_pass.pass = Some(Pass::Corroboration);
-            found.two_pass.reach = Some(reach);
-            found.two_pass.page = Some(page);
-            found
-        }
-        _ => prior,
-    }
 }
 
 /// The same bytes of the same source version.

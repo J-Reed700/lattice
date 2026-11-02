@@ -551,9 +551,7 @@ async fn lesson_stage(
             let courses = CourseIndexes::new(
                 run.dir.join("course-index"),
                 pool.clone(),
-                Arc::new(super::super::page_recall::GivenModel(Some(
-                    run.embedder.clone(),
-                ))),
+                Arc::new(super::super::GivenModel(Some(run.embedder.clone()))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 Arc::clone(&runtime),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

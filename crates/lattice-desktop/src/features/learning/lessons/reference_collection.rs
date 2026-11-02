@@ -576,7 +576,6 @@ mod pages;
 mod ranking;
 mod snapshots;
 mod subject;
-pub(in crate::features::learning) use pages::ClaimList;
 pub(in crate::features::learning) use snapshots::{snapshot_passages, snapshot_room};
 pub(in crate::features::learning) use subject::shared_terms;
 

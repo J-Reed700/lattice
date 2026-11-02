@@ -142,7 +142,6 @@ fn a_primary_source_meets_a_specification_bar() {
         &facts,
     );
     assert!(matches!(trust.decision, Decision::Sufficient { .. }));
-    assert!(!trust.needs_scrutiny());
     assert_eq!(trust.supports.len(), 1);
     assert_eq!(trust.supports[0].passage, PassageKind::Direct);
     claim.trust = Some(Box::new(trust));
@@ -186,7 +185,6 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
         &trust.supports[0].passage,
         PassageKind::Testimonial { attributed_to, borne_out: None } if attributed_to == "platform.openai.com"
     ));
-    assert!(trust.needs_scrutiny());
     claim.trust = Some(Box::new(trust));
     let Sufficiency::Insufficient { reason, .. } = judge(&claim) else {
         panic!("the ledger records an insufficient support as unsupported");
@@ -432,7 +430,6 @@ fn a_contrary_that_outranks_the_support_contradicts_the_claim() {
         temporal: TemporalValidity::Valid,
         quote: "The current stable release is Python 3.14.".into(),
     });
-    assert!(trust.needs_scrutiny());
     assert!(matches!(
         trust.assessment("v1", "").overturn(),
         Overturn::Contradicted { .. }
@@ -470,7 +467,6 @@ fn a_contradiction_the_other_pass_found_is_weighed_as_a_contrary() {
     assert_eq!(trust.contrary[0].source_version_id, "python-org");
     assert_eq!(trust.contrary[0].trust.level, TrustLevel::Primary);
     assert_eq!(trust.contrary[0].quote, newer);
-    assert!(trust.needs_scrutiny(), "research looks further");
     // A contrary version with no facts is not counted, as a support is not.
     let unweighed = weighed(
         &current,
@@ -647,7 +643,6 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
             ),
             _ => {
                 let trust = claim.trust.as_ref().unwrap();
-                assert!(trust.needs_scrutiny(), "{id}");
                 assert!(
                     matches!(judge(&claim), Sufficiency::Insufficient { .. }),
                     "{id}"

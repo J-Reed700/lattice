@@ -4,7 +4,7 @@
 //! judgement is made once with the lesson's model (§12) and saved, so later
 //! re-decisions need no model (§18.3).
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
-//! docs/design/2026-10-21-claim-official-sources.md §4.3, §7.3.
+//! docs/design/2026-10-21-claim-official-sources.md §4.3.
 
 use super::{SavedText, VersionFacts};
 use crate::features::learning::references::trust::{calibration, SqliteSourceTrustStore};
@@ -24,8 +24,6 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-mod scope;
 
 /// Milliseconds in a second: the library stores times in milliseconds, the
 /// provenance domain in seconds.
@@ -160,9 +158,6 @@ pub(in crate::features::learning) struct Judgements {
     /// their wording and class matching stays exact.
     known_classes: Vec<String>,
     versions: HashMap<String, Arc<VersionRecord>>,
-    /// The course's versions as the standing scope reads them, loaded once
-    /// per pass (`scope`).
-    course: Option<Arc<Vec<scope::CourseVersion>>>,
 }
 
 impl Judgements {
@@ -211,23 +206,7 @@ impl Judgements {
             bars,
             known_classes,
             versions: HashMap::new(),
-            course: None,
         })
-    }
-
-    /// The profile stored for `statement` under this pass's model, if any;
-    /// never a model call (the page-recall eval's standing order).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::features::learning) async fn profile_if_stored(
-        &self,
-        statement: &str,
-    ) -> Result<Option<ClaimProfile>> {
-        let key = claim_profile_key(statement, &self.known_classes, &self.model);
-        Ok(self
-            .store
-            .claim_profile(&key)
-            .await?
-            .map(|saved| saved.value))
     }
 
     pub(in crate::features::learning::lessons::content_verification) fn relations(

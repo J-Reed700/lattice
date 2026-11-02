@@ -1,9 +1,7 @@
-//! Pass B reads the course page by page (course evidence index §5.2–§5.4):
-//! one fused list per reach, consecutive pages sized by the budget and the
-//! window, ending at the last passage on the claim's subject, then web
-//! research.
+//! Pass B reads the course's first page for a claim (course evidence index
+//! §5.2–§5.4): one fused list, its page sized by the budget and the window,
+//! then web research for a claim that page leaves unsupported.
 use super::*;
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -31,11 +29,6 @@ pub(super) struct PagingModel {
     pace: Option<lattice_core::application::ports::llm_port::Pace>,
     /// Output tokens it reports per answer.
     answer_tokens: u64,
-    /// A host whose pages it judges a vendor's institutional documentation
-    /// when asked for a source's standing.
-    institutional_host: Option<&'static str>,
-    /// Standing judgements it was asked for on that host.
-    pub(super) standing_requests: AtomicUsize,
 }
 
 impl PagingModel {
@@ -49,15 +42,7 @@ impl PagingModel {
             request_sizes: Mutex::new(Vec::new()),
             pace: None,
             answer_tokens: 0,
-            institutional_host: None,
-            standing_requests: AtomicUsize::new(0),
         }
-    }
-
-    /// Judges pages on `host` a vendor's institutional documentation.
-    pub(super) fn judging_institutional(mut self, host: &'static str) -> Self {
-        self.institutional_host = Some(host);
-        self
     }
 
     /// A backend that reports its pace and `answer_tokens` per answer, so a
@@ -75,20 +60,6 @@ impl PagingModel {
     }
 
     async fn respond(&self, prompt: &str) -> Result<String> {
-        if let Some(host) = self.institutional_host {
-            if prompt.contains("Source signals and content evidence") && prompt.contains(host) {
-                self.standing_requests.fetch_add(1, Ordering::SeqCst);
-                return Ok(serde_json::json!({
-                    "standing": "institutional",
-                    "publisher": { "name": "Example Vendor", "kind": "vendor" },
-                    "editorial": "editorial",
-                    "nature": "documentation",
-                    "flags": [],
-                    "reasons": [{ "code": "publisher_metadata", "text": "The vendor's own documentation." }],
-                })
-                .to_string());
-            }
-        }
         if let Some(rest) = prompt.strip_prefix("Source passages:\n") {
             let (shown, claim) = rest.split_once("\n\nClaim: ").unwrap_or_default();
             self.claims
@@ -196,13 +167,6 @@ pub(super) fn marker_collection() -> Vec<LearningSourceDto> {
     sources
 }
 
-/// Pass B read to its lists' end whatever the pages cost, as the
-/// page-recall eval's ceiling reads it: the walk these tests watch.
-pub(super) const LIST_END: Paging = Paging {
-    reaches: REACHES,
-    depth: Depth::ListEnd,
-};
-
 pub(super) fn inventory(statements: &[String]) -> Inventory {
     Inventory {
         units: vec![UnitClaims {
@@ -217,58 +181,6 @@ pub(super) fn inventory(statements: &[String]) -> Inventory {
             non_factual_reason: String::new(),
         }],
     }
-}
-
-#[tokio::test]
-async fn a_claim_supported_only_past_its_first_page_is_found_on_a_later_one() -> Result<()> {
-    let references = ReferenceCollection::lexical(&marker_collection())?;
-    let model = PagingModel::new(6_000);
-    let first = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
-    assert!(!first.is_empty());
-    assert!(
-        first.iter().all(|passage| !passage.text.contains(MARKER)),
-        "the fixture must put the support past page 1"
-    );
-
-    let (results, activity) =
-        crate::features::learning::lesson_progress::observed(evidence_checks::check_with_paging(
-            &model,
-            &references,
-            &inventory(&[CLAIM.into()]),
-            &[],
-            &ClaimChecks::default(),
-            (&Citations::default(), LIST_END),
-        ))
-        .await;
-    let results = results?;
-
-    let finding = &results[0].2;
-    assert_eq!(finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(finding.two_pass.pass, Some(Pass::Corroboration));
-    assert!(finding.two_pass.page.is_some_and(|page| page > 1));
-    assert_eq!(finding.two_pass.reach, Some(Reach::Course));
-    // The section cites nothing, so the support is a citation it lacks.
-    let found = finding.two_pass.supported_by.as_ref().unwrap();
-    assert_eq!(found.source_id, "marker");
-    assert!(found.cited.is_empty());
-    assert_eq!(
-        (
-            activity.checks_completed,
-            activity.checks_total,
-            activity.checks_unresolved
-        ),
-        (1, 1, 0),
-        "The later page's support resolves the claim without a second check"
-    );
-    assert_eq!(activity.deeper_evidence, None);
-    assert!(finding.evidence.iter().any(|p| p.text.contains(MARKER)));
-    let checks = model.checks.lock().unwrap();
-    assert!(checks.len() >= 2, "page 1, then at least one more");
-    // No page repeats a passage an earlier page showed.
-    let shown: Vec<&String> = checks.iter().flatten().collect();
-    let unique: HashSet<&String> = shown.iter().copied().collect();
-    assert_eq!(shown.len(), unique.len());
-    Ok(())
 }
 
 /// Twelve related sources, then ten that share only a function word with
@@ -288,8 +200,7 @@ fn subject_then_shelf() -> Vec<LearningSourceDto> {
 }
 
 #[tokio::test]
-async fn the_list_ends_at_its_last_passage_on_the_subject_and_the_claim_then_goes_to_research(
-) -> Result<()> {
+async fn a_list_ends_at_its_last_passage_on_the_claims_subject() -> Result<()> {
     let references = ReferenceCollection::lexical(&subject_then_shelf())?;
     let subject = references.subject_of(CLAIM).await?;
     let list = references
@@ -312,31 +223,6 @@ async fn the_list_ends_at_its_last_passage_on_the_subject_and_the_claim_then_goe
         .passages
         .iter()
         .all(|passage| passage.source_id.starts_with("related-")));
-
-    let model = PagingModel::new(6_000);
-    let results = evidence_checks::check_with_paging(
-        &model,
-        &references,
-        &inventory(&[CLAIM.into()]),
-        &[],
-        &ClaimChecks::default(),
-        (&Citations::default(), LIST_END),
-    )
-    .await?;
-
-    let finding = &results[0].2;
-    assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
-    assert!(
-        finding.wants_research(),
-        "past the list's end: web research"
-    );
-    let checks = model.checks.lock().unwrap();
-    assert!(checks.len() >= 2, "the list takes more than one page");
-    // Every page was read, up to the list's end and no further, and no round
-    // that settled nothing stopped the walk early.
-    let read: Vec<&String> = checks.iter().flatten().collect();
-    assert_eq!(read.len(), 12);
-    assert!(read.iter().all(|text| !text.contains("shelf")));
     Ok(())
 }
 
@@ -420,109 +306,24 @@ fn a_page_never_exceeds_its_budget_while_it_fits_the_window() {
 }
 
 #[tokio::test]
-async fn first_page_only_stops_pass_b_after_one_page() -> Result<()> {
+async fn pass_b_reads_one_page_and_an_unsupported_claim_goes_to_research() -> Result<()> {
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(6_000);
-    let results = evidence_checks::check_with_paging(
+    let results = evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
         &ClaimChecks::default(),
-        (
-            &Citations::default(),
-            Paging {
-                reaches: REACHES,
-                depth: Depth::FirstPage,
-            },
-        ),
+        &Citations::default(),
     )
     .await?;
     assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
+    assert!(results[0].2.wants_research());
     assert_eq!(
         model.checks.lock().unwrap().len(),
         1,
         "the first page only, though the support is on a later one"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_three_orders_read_the_lesson_sources_where_each_says() -> Result<()> {
-    let mut sources: Vec<_> = (0..12).map(related).collect();
-    let archive = "Archive index entry. ".repeat(80);
-    sources.push(reference(
-        "lesson-source".into(),
-        format!("{archive} Mineral alpha pressure readings were archived. {archive}"),
-    ));
-    // Two sources alike, so their passages rank equal.
-    let twin = "Mineral alpha twin note: property beta under pressure was logged.";
-    sources.push(reference("twin-a".into(), twin.into()));
-    sources.push(reference("twin-b".into(), twin.into()));
-    let references = ReferenceCollection::lexical(&sources)?;
-    let model = PagingModel::new(6_000);
-    // Another section of the lesson cites the lesson source and twin-b.
-    let lesson = references.cited_passages(&["Mineral alpha pressure readings were archived."])?;
-    let mut lesson_twin = references.cited_passages(&[twin])?;
-    lesson_twin.retain(|passage| passage.source_id == "twin-b");
-    let lesson_twin = if lesson_twin.is_empty() {
-        references.source_passages("twin-b", &[(0, twin.len())])?
-    } else {
-        lesson_twin
-    };
-    let cited = [lesson.clone(), lesson_twin].concat();
-    let walk = |order: &'static [Reach]| {
-        let cited = cited.clone();
-        let references = &references;
-        let model = &model;
-        async move {
-            walk_pages(
-                model,
-                references,
-                (0, CLAIM),
-                (Vec::new(), cited),
-                order,
-                None,
-            )
-            .await
-        }
-    };
-    let page_of = |pages: &[WalkedPage], source: &str| {
-        pages
-            .iter()
-            .position(|page| page.passages.iter().any(|p| p.source_id == source))
-    };
-    let order = |name: &str| ORDERS.iter().find(|(n, _)| *n == name).unwrap().1;
-
-    let relevance = walk(order("relevance")).await?;
-    assert!(relevance.iter().all(|page| page.reach == Reach::Course));
-    assert!(
-        page_of(&relevance, "lesson-source").is_some_and(|page| page > 0),
-        "by relevance alone the lesson's source is past page 1"
-    );
-
-    let lesson_first = walk(order("lesson-sources")).await?;
-    assert_eq!(lesson_first[0].reach, Reach::LessonSources);
-    assert!(lesson_first[0]
-        .passages
-        .iter()
-        .all(|p| p.source_id == "lesson-source" || p.source_id == "twin-b"));
-    assert_eq!(page_of(&lesson_first, "lesson-source"), Some(0));
-    assert!(lesson_first
-        .iter()
-        .skip_while(|page| page.reach == Reach::LessonSources)
-        .all(|page| page.reach == Reach::Course
-            && page.passages.iter().all(|p| p.source_id != "lesson-source")));
-
-    let ties = walk(order("tie-break")).await?;
-    let sequence: Vec<&str> = ties
-        .iter()
-        .flat_map(|page| page.passages.iter().map(|p| p.source_id.as_str()))
-        .collect();
-    let at = |source: &str| sequence.iter().position(|id| *id == source).unwrap();
-    assert!(
-        at("twin-b") < at("twin-a"),
-        "equal scores: the lesson's first"
     );
     Ok(())
 }
@@ -546,7 +347,7 @@ async fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
 }
 
 #[tokio::test]
-async fn research_found_for_a_claim_leads_its_first_page_and_its_walk() -> Result<()> {
+async fn research_found_for_a_claim_leads_its_first_page() -> Result<()> {
     let sources: Vec<_> = (0..12).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
@@ -857,13 +658,13 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
         refused: Default::default(),
     };
     let first = evidence_for(&model, CLAIM, 0, &references, &[]).await?;
-    let results = evidence_checks::check_with_paging(
+    let results = evidence_checks::check_with_citations(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
         &[],
         &ClaimChecks::default(),
-        (&Citations::default(), LIST_END),
+        &Citations::default(),
     )
     .await?;
 
@@ -883,18 +684,6 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
         .evidence
         .iter()
         .all(|passage| saw(&checks[0], &passage.text)));
-    // A passage cut for size was not shown, so the next page carries it.
-    let cut: Vec<_> = first
-        .iter()
-        .filter(|passage| !saw(&checks[0], &passage.text))
-        .collect();
-    assert!(!cut.is_empty());
-    assert!(checks.len() >= 2, "page 1, then the next page of the list");
-    assert!(cut.iter().any(|passage| saw(&checks[1], &passage.text)));
-    // No page repeats a passage an earlier page showed.
-    let shown: Vec<&String> = checks.iter().flatten().collect();
-    let unique: HashSet<&String> = shown.iter().copied().collect();
-    assert_eq!(shown.len(), unique.len());
     Ok(())
 }
 

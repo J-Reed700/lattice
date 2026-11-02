@@ -59,12 +59,8 @@ pub(super) struct Compared {
     shown_by_a: Vec<EvidencePassage>,
     /// The reach pass B's first page was read from.
     pub(super) reach: Option<Reach>,
-    /// Source versions research saved for the claim, which its walk reads.
-    pub(super) researched: Vec<String>,
     /// The source versions the claim's section cites.
     pub(super) cited: Vec<String>,
-    /// The receipt key of pass B's first page.
-    pub(super) first_receipt: String,
 }
 
 impl Compared {
@@ -115,8 +111,8 @@ impl Compared {
 }
 
 pub(super) enum Prepared {
-    /// A finished decision: `true` when it is a retained final decision that
-    /// already walked its pages, `false` for one decided on the spot.
+    /// A finished decision: `true` when it is a retained final decision,
+    /// `false` for one decided on the spot.
     Complete(Box<CheckedClaim>, bool),
     Compared(Box<Compared>),
 }
@@ -129,7 +125,6 @@ pub(super) struct Context<'c, 'r> {
     pub(super) executions: &'c [execution::Observation],
     pub(super) retained: &'c ClaimChecks,
     pub(super) citations: &'c Citations,
-    pub(super) paging: Paging,
 }
 
 impl Context<'_, '_> {
@@ -189,9 +184,7 @@ impl Context<'_, '_> {
             corroboration: None,
             shown_by_a,
             reach: None,
-            researched: Vec::new(),
             cited,
-            first_receipt: String::new(),
         };
         if let Some(a_key) = a_key {
             let pending = pending(llm, &compared, a_key, attribution, Pass::Attribution);
@@ -226,7 +219,7 @@ impl Context<'_, '_> {
             self.references,
             self.sources,
             self.retained,
-            (self.citations, &claim.shown_by_a, self.paging, sizing),
+            (&claim.shown_by_a, sizing),
         )
         .await?
         else {
@@ -238,9 +231,7 @@ impl Context<'_, '_> {
         };
         let b_key = ClaimChecks::key(claim.unit, &checked, &selected.evidence);
         claim.key = decision_key(claim.a_key.as_deref(), &b_key);
-        claim.first_receipt = claim_receipt_key(llm, &b_key);
         claim.reach = selected.reach;
-        claim.researched = selected.researched;
         if let Some(finding) = self.retained.get(&claim.key, claim.unit, &claim.claim, &[]) {
             return Ok(Some(finding));
         }

@@ -133,8 +133,7 @@ pub(super) fn unlabelled(
 
 /// One comparison checked alone. A page too long for the judge's window
 /// loses its least needed passages (see [`ranking`]); the finding and its
-/// receipt name only the passages the judge was shown, so one cut for size
-/// is still unshown and a deeper page can carry it. The check comes with
+/// receipt name only the passages the judge was shown. The check comes with
 /// what its answer cost.
 pub(super) async fn individual(
     llm: &dyn LLMPort,
@@ -164,19 +163,12 @@ pub(super) async fn individual(
 pub(super) fn completed(
     results: &mut Vec<(Pass, CheckedClaim)>,
     done: (Pass, CheckedClaim),
-    check: Check<'_>,
+    tell: &Answered<'_>,
 ) {
     // Individual fallbacks and smaller groups can take minutes: each
     // finished comparison is reported at once, even while its siblings are
-    // pending. A deeper page moves its claim out of the unresolved count when
-    // it supports it; a first check counts its claim once all of the claim's
-    // comparisons are done.
-    match check {
-        Check::Deeper => crate::features::learning::lesson_progress::rechecked(
-            done.1 .2.verdict == ClaimVerdict::Supported,
-        ),
-        Check::First(tell) => tell(done.0, &done.1),
-    }
+    // pending.
+    tell(done.0, &done.1);
     results.push(done);
 }
 
@@ -185,7 +177,7 @@ pub(super) fn completed(
 pub(super) async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
-    check: Check<'_>,
+    tell: &Answered<'_>,
     labels: &Labels,
 ) -> Result<(Vec<(Pass, CheckedClaim)>, AnswerSize)> {
     let mut results = Vec::new();
@@ -206,7 +198,7 @@ pub(super) async fn group(
             for item in pending {
                 let (result, answer) = individual(llm, item, labels).await?;
                 answers.add(answer);
-                completed(&mut results, result, check);
+                completed(&mut results, result, tell);
             }
             continue;
         }
@@ -294,14 +286,14 @@ pub(super) async fn group(
                 completed(
                     &mut results,
                     (pass, finish(item, judgment, None).await?),
-                    check,
+                    tell,
                 );
             }
         }
         for item in unresolved {
             let (result, answer) = individual(llm, item, labels).await?;
             answers.add(answer);
-            completed(&mut results, result, check);
+            completed(&mut results, result, tell);
         }
     }
     Ok((results, answers))

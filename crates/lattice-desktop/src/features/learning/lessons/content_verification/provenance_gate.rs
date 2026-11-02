@@ -24,7 +24,6 @@ mod context;
 mod relevel;
 mod strongest;
 pub(super) use context::passage_labels;
-pub(in crate::features::learning) use context::Judgements;
 pub(in crate::features::learning) use context::{outline_trust, with_outline_trust, with_trust};
 pub(in crate::features::learning) use relevel::relevel;
 #[cfg(test)]
@@ -60,12 +59,6 @@ pub(in crate::features::learning) struct FindingTrust {
 }
 
 impl FindingTrust {
-    /// Whether research should look further for this claim (§11: scrutiny
-    /// runs only on an insufficient decision or a contrary).
-    pub(super) fn needs_scrutiny(&self) -> bool {
-        matches!(self.decision, Decision::Insufficient { .. }) || !self.contrary.is_empty()
-    }
-
     /// The claim's reason when its support is not enough: what it lacks,
     /// then the rules that fired, verbatim (the first names the claim's kind,
     /// its subject and the bar).

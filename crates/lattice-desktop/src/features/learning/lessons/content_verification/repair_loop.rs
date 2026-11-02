@@ -163,11 +163,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             let expansion = research::expand(llm, active, &findings, &hints, &checks)
                 .boxed()
                 .await?;
-            // What the round cost per claim is what this job's later walks
-            // weigh against reading on (D5).
-            if let Some(per_claim) = expansion.per_claim() {
-                checks.research_cost = Some(per_claim);
-            }
             match expansion {
                 research::Expansion::Saved(additional, searched) => {
                     expanded = Some(*additional);

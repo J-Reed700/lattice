@@ -149,6 +149,12 @@ committed unless the user chooses to.
 
 ## Page recall: where does the cited passage reach the judge?
 
+> Removed with the walk it measured. `live_page_recall_eval` is gone from the
+> code: the claim-classes design (`docs/design/2026-11-01-lesson-claim-classes.md`
+> §3.7) deletes the relevance walk, so there are no pages past the first to
+> measure. What follows and `results/README.md` stay as the record of what the
+> walk measured.
+
 `live_page_recall_eval` (in
 `crates/lattice-desktop/src/features/learning/lessons/live_page_recall_eval.rs`)
 measures the two-pass claim pages of
@@ -283,8 +289,9 @@ Inputs for why the lesson checker left the "Function Calling & Tool
 Schemas" lesson's claims waiting while the course held the official docs
 that state them. Two evals read them. `live_claim_pairs_eval` now also
 takes a pair whose evidence is a page of `passages`, each `{label, text}`,
-labelled as the lesson check labels it. `live_page_recall_eval` takes a
-recall set through `LATTICE_PAGE_RECALL_TARGETS` in place of the stored
-reports: claims with the passages that should be found. How the inputs were
-built, the commands and what each result would mean are in
+labelled as the lesson check labels it. `live_page_recall_eval` (removed,
+see above) took a recall set through `LATTICE_PAGE_RECALL_TARGETS` in
+place of the stored reports: claims with the passages that should be
+found. How the inputs were built, the commands and what each result would
+mean are in
 [`claim-corroboration-db8397ff/README.md`](claim-corroboration-db8397ff/README.md).

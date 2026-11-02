@@ -1,7 +1,7 @@
 //! Pass B's first page for a claim, kept stable as research grows (course
 //! evidence index §5.6): saved before its check and restored while the
 //! course's sources are unchanged. For a research target, what research found
-//! leads its page and its walk reads nothing else.
+//! leads its page.
 use super::*;
 use crate::features::learning::reference_collection::Scope;
 
@@ -37,21 +37,16 @@ struct ResearchTarget {
 pub(super) struct Selection {
     sources: Vec<SourceBinding>,
     passages: Vec<Passage>,
-    /// The reach the page was read from; `None` for a page research led or
-    /// one with nothing on the claim's subject.
+    /// The reach the page was read from; `None` for a page with nothing on
+    /// the claim's subject.
     #[serde(default)]
     reach: Option<Reach>,
-    /// The versions research saved for the claim that lead the page: the
-    /// claim's walk reads only these.
-    #[serde(default)]
-    researched: Vec<String>,
 }
 
-/// Pass B's first page for a claim, and where its walk goes on from.
+/// Pass B's first page for a claim, and where it was read from.
 pub(super) struct Selected {
     pub(super) evidence: Vec<EvidencePassage>,
     pub(super) reach: Option<Reach>,
-    pub(super) researched: Vec<String>,
     /// What the page's list said, when it was read now rather than restored.
     pub(super) note: Option<evidence_checks::PageNote>,
 }
@@ -73,7 +68,6 @@ pub(super) fn selection_of(sources: &[SourceBinding], evidence: &[EvidencePassag
             })
             .collect(),
         reach: None,
-        researched: Vec::new(),
     }
 }
 
@@ -262,8 +256,8 @@ impl Selection {
 }
 
 /// Pass B's first page for `claim`: restored when saved under this ranking
-/// with every source unchanged, otherwise read from the walk's first reach,
-/// and never overlapping `attribution`. Saved before any model work; `None`,
+/// with every source unchanged, otherwise read from the course's list, and
+/// never overlapping `attribution`. Saved before any model work; `None`,
 /// saving nothing, while `sizing` is unmeasured.
 pub(super) async fn select(
     llm: &dyn LLMPort,
@@ -271,12 +265,7 @@ pub(super) async fn select(
     references: &ReferenceCollection<'_>,
     current: &[SourceBinding],
     retained: &ClaimChecks,
-    (citations, attribution, paging, sizing): (
-        &Citations,
-        &[EvidencePassage],
-        Paging,
-        &evidence_checks::Sizing,
-    ),
+    (attribution, sizing): (&[EvidencePassage], &evidence_checks::Sizing),
 ) -> Result<Option<Selected>> {
     let budget = match sizing {
         evidence_checks::Sizing::Sized(budget) => Some(budget),
@@ -300,7 +289,7 @@ pub(super) async fn select(
         .and_then(|saved| saved.restore(references, current));
     let research_scope = research_scope(current, retained).await?;
     let mut note = None;
-    let (mut evidence, mut reach, mut researched, changed) =
+    let (mut evidence, reach, changed) =
         if let (Some(saved), Some(evidence)) = (saved.as_ref(), restored) {
             let added: HashSet<String> = current
                 .iter()
@@ -328,17 +317,8 @@ pub(super) async fn select(
                 None
             };
             match led {
-                Some(page) => {
-                    let mut added: Vec<String> = added.into_iter().collect();
-                    added.sort();
-                    (page, Some(Reach::Researched), added, true)
-                }
-                None => (
-                    evidence,
-                    saved.reach,
-                    saved.researched.clone(),
-                    saved.sources != current,
-                ),
+                Some(page) => (page, Some(Reach::Researched), true),
+                None => (evidence, saved.reach, saved.sources != current),
             }
         } else {
             let Some(budget) = budget else {
@@ -349,15 +329,13 @@ pub(super) async fn select(
                 references,
                 &claim.statement,
                 checked,
-                citations,
                 attribution,
-                paging.reaches,
                 budget,
             )
             .await?;
             let reach = read.as_ref().map(|note| note.reach);
             note = read;
-            (page, reach, Vec::new(), true)
+            (page, reach, true)
         };
     // Pass B never shows what pass A does, even when the section's citation
     // moved onto a passage the saved page holds.
@@ -371,17 +349,9 @@ pub(super) async fn select(
             && a.end_byte == b.end_byte
             && a.text == b.text
     });
-    if reach.is_none() && !researched.is_empty() {
-        reach = Some(Reach::Researched);
-    }
-    if researched.is_empty() && reach == Some(Reach::Researched) {
-        reach = None;
-        researched.clear();
-    }
     if changed || saved.is_none() {
         let mut selection = selection_of(current, &evidence);
         selection.reach = reach;
-        selection.researched = researched.clone();
         // Save the plan before model work. An interrupted comparison will use
         // exactly this evidence again, but cannot inherit an older approval.
         crate::features::learning::lesson_drafts::record_checkpoint(
@@ -399,7 +369,6 @@ pub(super) async fn select(
     Ok(Some(Selected {
         evidence,
         reach,
-        researched,
         note,
     }))
 }

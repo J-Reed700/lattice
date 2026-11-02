@@ -317,9 +317,8 @@ pub(super) struct Searched {
     /// Source version ids this round saved.
     pub(super) sources_added: Vec<String>,
     /// A claim research round's time from its start to its result over the
-    /// claims it researched: what researching one claim on the web costs,
-    /// which pass B's break-even weighs (course evidence index D5). `None`
-    /// when no round ran.
+    /// claims it researched: what researching one claim on the web costs.
+    /// `None` when no round ran.
     pub(super) per_claim: Option<Duration>,
     /// The round could not research: every search and page read it tried
     /// failed (the search engines down, the network gone), or its planner
@@ -349,15 +348,6 @@ impl<'a> Expansion<'a> {
         }
     }
 
-    /// What the round cost per claim it researched, once timed.
-    pub(super) fn per_claim(&self) -> Option<Duration> {
-        match self {
-            Self::Saved(_, searched) | Self::Exhausted(_, searched) | Self::Unchanged(searched) => {
-                searched.per_claim
-            }
-        }
-    }
-
     /// The round with what it cost per claim it researched.
     fn timed(mut self, per_claim: Option<Duration>) -> Self {
         match &mut self {
@@ -366,6 +356,17 @@ impl<'a> Expansion<'a> {
             }
         }
         self
+    }
+}
+
+impl Finding {
+    /// Whether research should look for evidence for this finding: the
+    /// checker found none or found it contradicted.
+    pub(super) fn wants_research(&self) -> bool {
+        matches!(
+            self.verdict,
+            ClaimVerdict::Unsupported | ClaimVerdict::Contradicted
+        )
     }
 }
 
@@ -386,22 +387,12 @@ pub(super) async fn expand<'a>(
     };
     // The round times itself from here to its result, whatever it is: the
     // searches that failed and the pages that could not be read are part of
-    // what researching a claim costs (D5).
+    // what researching a claim costs.
     let started = Instant::now();
-    // Claims the gate found insufficiently supported are scrutinised: their
-    // gaps name the subject, the kind and where the owner publishes, and the
-    // citations their supports carry are followed first (§11).
-    let scrutiny = scrutiny::review(findings, &references.sources);
     let gaps: Vec<_> = findings
         .iter()
-        .filter(|f| {
-            matches!(
-                f.verdict,
-                ClaimVerdict::Unsupported | ClaimVerdict::Contradicted
-            )
-        })
+        .filter(|f| f.wants_research())
         .map(|f| json!({"claim":f.statement,"missingEvidence":f.reason}))
-        .chain(scrutiny.gaps)
         .collect();
     if gaps.is_empty() {
         return Ok(Expansion::Unchanged(Searched::default()));
@@ -409,7 +400,6 @@ pub(super) async fn expand<'a>(
     let round = Round {
         gaps: &gaps,
         hints,
-        follow: &scrutiny.follow,
         kind: Gaps::Claims,
     };
     let claims = u32::try_from(findings.len()).unwrap_or(u32::MAX);
@@ -466,7 +456,6 @@ pub(in crate::features::learning) async fn research_topics<'a>(
     let round = Round {
         gaps: &gaps,
         hints: &[],
-        follow: &[],
         kind: Gaps::Topics,
     };
     match research(llm, references, &context, round).await {
@@ -499,8 +488,6 @@ struct Round<'r> {
     gaps: &'r [Value],
     /// The user's hints, searched verbatim before the planned queries.
     hints: &'r [String],
-    /// Citations to capture before any search (§8).
-    follow: &'r [scrutiny::Follow],
     kind: Gaps,
 }
 
@@ -518,21 +505,15 @@ fn origin_facts(url: &str, owner_hints: &[String]) -> Value {
     }
 }
 
-/// Follow the cited pages, plan searches for the round's gaps, choose and
-/// capture credible results, save them to the program, and reload the
-/// collection.
+/// Plan searches for the round's gaps, choose and capture credible results,
+/// save them to the program, and reload the collection.
 async fn research<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
     context: &Context,
     round: Round<'_>,
 ) -> Result<Expansion<'a>> {
-    let Round {
-        gaps,
-        hints,
-        follow,
-        kind,
-    } = round;
+    let Round { gaps, hints, kind } = round;
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Research,
         match kind {
@@ -573,30 +554,27 @@ async fn research<'a>(
         &already_searched,
     )
     .await?;
-    // Each search with the gap it serves; the user's hints serve none, and
-    // are searches like the planner's, their site written where they wrote it.
-    let mut needs: Vec<(Option<usize>, web_research::PlannedNeed)> = Vec::new();
+    // The user's hints are searches like the planner's, their site written
+    // where they wrote it.
+    let mut needs: Vec<web_research::PlannedNeed> = Vec::new();
     for hint in hints {
         match web_research::PlannedNeed::web(hint.clone()).searches() {
-            Some(searches) => needs.extend(searches.into_iter().map(|need| (None, need))),
+            Some(searches) => needs.extend(searches),
             None => tracing::warn!(
                 chars = hint.chars().count(),
                 "A research hint is not a search: it needs 3 to 240 characters besides any site: operators"
             ),
         }
     }
-    for web_research::GapNeed { gap, need } in planned {
-        if !needs
-            .iter()
-            .any(|(_, existing)| existing.line() == need.line())
-        {
-            needs.push((Some(gap), need));
+    for web_research::GapNeed { need, .. } in planned {
+        if !needs.iter().any(|existing| existing.line() == need.line()) {
+            needs.push(need);
         }
     }
     // An empty plan is the planner's answer that public search cannot help
     // these gaps, not a failure: topics stay uncovered, and claims go on to
     // the repair that follows research, or to the user.
-    if needs.is_empty() && follow.is_empty() {
+    if needs.is_empty() {
         let exhausted = Exhausted {
             claims: gaps.len(),
             searched: already_searched.len(),
@@ -636,36 +614,7 @@ async fn research<'a>(
         program_repo: &program_repo,
         library: &library,
     };
-    for cited in follow {
-        if urls.contains(&identity(&cited.url)) {
-            continue;
-        }
-        crate::features::learning::lesson_progress::stage(
-            "Reading a page a supporting source cites",
-        );
-        let captured = match web_research::capture_url(context.web.as_ref(), &cited.url).await {
-            Ok(Some(captured)) => captured,
-            Ok(None) => {
-                reached = true;
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(%error, "A cited page could not be read");
-                failed = true;
-                continue;
-            }
-        };
-        reached = true;
-        if let Some(version_id) = saving
-            .save(&mut sources, &mut urls, &cited.url, captured, None)
-            .await?
-        {
-            saving.record_citation(cited, &version_id).await?;
-            searched.sources_added.push(version_id);
-            added += 1;
-        }
-    }
-    for (gap, need) in needs {
+    for need in needs {
         let line = need.line();
         if !context
             .searched
@@ -702,18 +651,9 @@ async fn research<'a>(
         };
         reached = true;
         let mut capture_failed = false;
-        // A search for an independent source never brings back the origins
-        // the claim's supports already come from, whatever the planner wrote.
-        let excluded = gap
-            .and_then(|gap| gaps.get(gap))
-            .map(scrutiny::excluded_sites)
-            .unwrap_or_default();
         let candidates = results
             .into_iter()
-            .filter(|candidate| {
-                !urls.contains(&identity(&candidate.result.url))
-                    && !scrutiny::published_on(&candidate.result.url, &excluded)
-            })
+            .filter(|candidate| !urls.contains(&identity(&candidate.result.url)))
             .collect();
         let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
         for (result, note) in selected {
