@@ -136,6 +136,18 @@ describe('TangentConversation', () => {
       expect(h.scope!.messageTurn).toBeInstanceOf(Map);
     });
 
+    it('keeps the thread and the bookmarks steady while only the controller’s state moves', async () => {
+      const view = renderTangent();
+      await ready();
+      const { conversations, messageBookmarkMap, lastMessageSources } = h.scope!;
+      h.base = { ...h.base, inFlightGenerations: new Map([['elsewhere', 'r1']]) };
+      view.rerender(tangent());
+      await waitFor(() => expect(h.scope!.inFlightGenerations.has('elsewhere')).toBe(true));
+      expect(h.scope!.conversations).toBe(conversations);
+      expect(h.scope!.messageBookmarkMap).toBe(messageBookmarkMap);
+      expect(h.scope!.lastMessageSources).toBe(lastMessageSources);
+    });
+
     it('writes a draft handed to the composer into this tangent’s own draft', async () => {
       renderTangent();
       await ready();
