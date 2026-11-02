@@ -471,6 +471,13 @@ async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
         recall.workspace(&program).await.expect("cards").due_count,
         1
     );
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does k flatten?",
+    )
+    .await;
 
     let recorded = course
         .text(
@@ -500,6 +507,13 @@ async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
 async fn a_card_that_is_not_due_keeps_its_schedule() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does k flatten?",
+    )
+    .await;
     let rate = json!({ "card_id": card, "rating": "good" });
     course.text("record_recall", rate.clone()).await;
     let reviewed = course.schedule(&card).await;
@@ -512,6 +526,63 @@ async fn a_card_that_is_not_due_keeps_its_schedule() {
         "the model is told why"
     );
     assert_eq!(course.schedule(&card).await, reviewed);
+}
+
+/// A review is an answer to a question: a rating for a card nobody asked is a
+/// guess, and it would move the card as a real answer does.
+#[tokio::test]
+async fn a_card_the_tutor_never_asked_keeps_its_schedule() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    let before = course.schedule(&card).await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Fusion sums ranks [1].
+
+What does BM25 score?",
+    )
+    .await;
+
+    let result = course
+        .call(
+            "record_recall",
+            json!({ "card_id": card, "rating": "good" }),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert!(
+        result.error_message.expect("why").contains("as written"),
+        "the model is told how to ask it"
+    );
+    assert_eq!(course.schedule(&card).await, before);
+}
+
+/// Replies dress a card up; its words are what count.
+#[tokio::test]
+async fn a_card_asked_in_a_reply_s_own_emphasis_counts_as_asked() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Card 1 of 6:
+
+**What does *k*   flatten?**",
+    )
+    .await;
+
+    course
+        .text(
+            "record_recall",
+            json!({ "card_id": card, "rating": "good" }),
+        )
+        .await;
+
+    assert_eq!(course.schedule(&card).await.0, 1);
 }
 
 #[tokio::test]
@@ -574,6 +645,13 @@ async fn a_multiple_choice_card_is_rated_by_the_option_the_learner_chose() {
 
     let due = course.text("due_reviews", json!({})).await;
     assert!(due.contains("1. A larger k"), "{due}");
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "Which flattens the top ranks?",
+    )
+    .await;
 
     let unsaid = course
         .call(
@@ -627,6 +705,13 @@ async fn save_card_cites_its_source_and_joins_the_recall_deck() {
         std::slice::from_ref(&course.version)
     );
     assert_eq!(workspace.due_count, 1, "the tutor can ask it at once");
+    reply(
+        &course.pool,
+        &course.conversation,
+        1,
+        "What does a larger k do?",
+    )
+    .await;
     course
         .text(
             "record_recall",
@@ -835,6 +920,42 @@ async fn each_turn_carries_the_cards_due_and_the_replies_since_the_last_check() 
     );
 }
 
+/// Tool results are gone by the next turn, so the id a card is rated by has to
+/// come with the turn that rates it.
+#[tokio::test]
+async fn each_turn_shows_the_next_due_cards_by_id_and_never_their_answers() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+
+    let block = course.turn().await.context_block(4_000, true, None).await;
+
+    assert!(block.contains(&format!("card_id: {card}")), "{block}");
+    assert!(block.contains("What does k flatten?"), "{block}");
+    assert!(!block.contains("The hidden answer"), "{block}");
+    assert!(
+        !course
+            .turn()
+            .await
+            .context_block(4_000, false, None)
+            .await
+            .contains("card_id"),
+        "a turn without tools cannot rate one"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_shows_a_few_due_cards_and_counts_them_all() {
+    let course = course().await;
+    for number in 0..7 {
+        course.save_card(&format!("Question {number}")).await;
+    }
+
+    let block = course.turn().await.context_block(4_000, true, None).await;
+
+    assert!(block.contains("Cards due now: 7."), "{block}");
+    assert_eq!(block.matches("card_id:").count(), 5, "{block}");
+}
+
 #[test]
 fn a_chat_opened_from_a_lesson_names_it_and_a_turn_without_tools_says_so() {
     let facts = TurnFacts {
@@ -876,12 +997,27 @@ async fn the_tutor_s_reads_run_together_and_its_writes_run_alone() {
     assert_eq!(offered.len(), 7, "each tool once");
 }
 
+/// What the model reads, byte for byte. The digest moves only when one of them
+/// does, and then the tutor's evals run again (`evals/tutor`).
+#[test]
+fn the_tutor_s_prompt_and_tool_schemas_are_pinned() {
+    use sha2::{Digest, Sha256};
+    let schemas = serde_json::to_string(&super::tools::definitions()).expect("the schemas");
+    let digest = Sha256::digest(format!("{TUTOR_TEMPLATE}\u{0}{schemas}"));
+    assert_eq!(
+        format!("{digest:x}"),
+        "7c1ad1b16bc3d71fc5ce655b87daeada6345cdfd5b427709031621e4a15a7d3d"
+    );
+}
+
 /// A tutor must cite: every claim is checked as a chat's is, in a template
 /// that asks for citations and carries the study methods.
 #[test]
 fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     let policy = TUTOR_POLICY;
     assert!(!policy.verifies_cited_only);
+    assert!(!policy.reads_passages);
+    assert!(policy.drops_session_talk);
     assert_eq!(policy.evidence_template, Some(TUTOR_TEMPLATE));
     assert!(policy.offers_library_tools, "it keeps a chat's tools");
     assert!(TUTOR_TEMPLATE.contains("{context}") && TUTOR_TEMPLATE.contains("{question}"));
@@ -897,6 +1033,6 @@ fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     }
     assert!(
         TUTOR_TEMPLATE.ends_with("Answer:"),
-        "the reading takes the cue off"
+        "the learner's words end on the cue"
     );
 }

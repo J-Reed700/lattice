@@ -19,6 +19,8 @@ fn policy(evidence_template: Option<&'static str>) -> TurnSourcePolicy {
         offers_library_tools: false,
         infers_intent: false,
         verifies_cited_only: true,
+        reads_passages: true,
+        drops_session_talk: false,
         tool_rounds: 10,
         evidence_template,
     }
@@ -112,6 +114,34 @@ fn the_evidence_frame_is_the_template_the_turn_sends() {
     let document_opening = opening(&settings.rag_prompt_template);
     assert!(evidence_frame(&settings, QUESTION, Some(policy(None))).starts_with(document_opening));
     assert!(evidence_frame(&settings, QUESTION, None).starts_with(document_opening));
+}
+
+/// A source that talks with the learner does not read first: its message
+/// closes as its template does, and the budget charges that message.
+#[test]
+fn a_source_that_does_not_read_closes_on_its_own_template() {
+    let settings = settings();
+    let policy = TurnSourcePolicy {
+        reads_passages: false,
+        ..policy(Some(TEMPLATE))
+    };
+    let prompt = PromptMessageBuilder::new(
+        &settings,
+        QUESTION,
+        false,
+        SearchFlags::from_preferences(None),
+    )
+    .for_source(Some(policy))
+    .with_source_context(Some(SOURCE.into()))
+    .with_kb_context(Some(PASSAGE.into()))
+    .reading_passages(true)
+    .build();
+
+    assert!(!prompt.contains(READING_INSTRUCTION), "{prompt}");
+    assert!(prompt.ends_with("Answer:"), "{prompt}");
+    let frame = evidence_frame(&settings, QUESTION, Some(policy));
+    assert!(!frame.contains(READING_INSTRUCTION), "{frame}");
+    assert!(frame.ends_with("Answer:"), "{frame}");
 }
 
 /// Every prompt a turn outside the tutor renders, byte for byte. The digest
