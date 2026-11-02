@@ -157,7 +157,8 @@ The database holds 8 pending `learning.lesson_preparation` jobs (one resumed ton
 
 - it cancels every unfinished `learning.lesson_preparation` job (`pending`, `running`, retry-queued) with the message "Preparation starts again under the new pipeline" and deletes their `job_checkpoints`;
 - it deletes the old pipeline's unpublished state: lesson drafts, pending repairs, claim inventories, `learning_lesson_claims` and `learning_lesson_claim_events`, `learning_lesson_reviews`, `learning_lesson_teaching_findings` and `learning_lesson_audits` of every lesson whose `preparation` is not `ready`;
-- it keeps programs, modules, lesson rows and outlines, the source library and its provenance, and everything of a lesson that is `preparation = 'ready'` (none exists, 0 of 18; the rule still holds for any database that has one);
+- a job that had already finished keeps its status (a failed or interrupted one can still be retried, as a new attempt that starts the lesson again): its drafts, pending repairs and claim inventories staged for a lesson that is not ready, and the checkpoints saved for such a lesson, are deleted with the rest, and those of a ready lesson stay;
+- it keeps programs, modules, lesson rows and outlines, the source library and its provenance, the checker's labelled examples, and everything of a lesson that is `preparation = 'ready'` (none exists, 0 of 18; the rule still holds for any database that has one);
 - it is tested on a database holding the old rows: after it, no unfinished preparation job, no checkpoint of one, no claim or review row of an unprepared lesson, and every program, outline, source version and `ready` lesson exactly as before.
 
 A lesson is then prepared from its outline by the new pipeline when the user asks, as a new lesson is. The admission sweep of §3.6 over the existing library is separate and stays.
