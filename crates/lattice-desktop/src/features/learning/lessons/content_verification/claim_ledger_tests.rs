@@ -51,7 +51,7 @@ const PRACTICE: &str = " Try it yourself: open the sample file, read its first r
 
 /// A section's body: its one claim, then enough practice to be a section
 /// the teaching review accepts (600 characters), as a real lesson's is.
-fn section(statement: &str) -> String {
+pub(super) fn section(statement: &str) -> String {
     format!("{statement}{}", PRACTICE.repeat(5))
 }
 

@@ -116,7 +116,8 @@ pub(in crate::features::learning) fn model_calls(count: u32) -> ModelCall {
         state.activity.model_calls = before.saturating_add(count);
         if let Some(ceiling) = state.activity.model_calls_ceiling {
             if before <= ceiling && state.activity.model_calls > ceiling {
-                tracing::warn!(
+                tracing::error!(
+                    pass = state.activity.verification_pass,
                     calls = state.activity.model_calls,
                     ceiling,
                     "claim.plan: the checks made more calls than the plan allowed"

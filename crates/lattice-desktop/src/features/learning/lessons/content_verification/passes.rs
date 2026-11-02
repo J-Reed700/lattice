@@ -107,7 +107,7 @@ pub(super) async fn check_evidence(
                 .map(move |claim| (unit.index, claim))
         })
         .collect();
-    let classes = class_checks::sort(llm, candidate, &claims).await?;
+    let classes = class_checks::sort(llm, candidate, &claims, &completed.rewrites).await?;
     let origins: Vec<Class> = classes.iter().map(|classed| classed.class).collect();
     let routes = class_checks::check(llm, &claims, classes, &citations).await?;
     // The strict check is asked about the statements that need a source, a

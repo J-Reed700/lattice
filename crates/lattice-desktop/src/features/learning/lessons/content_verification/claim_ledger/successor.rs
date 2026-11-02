@@ -4,9 +4,13 @@
 //! other claims that repair wrote are its children and start with what the
 //! parent had left, so a rewrite or a split sentence adds no attempts.
 
+use super::super::Classed;
+use super::observe::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
-use lattice_core::domain::learning::claim_review::{ClaimId, ExtractedClaim, MACHINE_ATTEMPTS};
+use lattice_core::domain::learning::claim_review::{
+    ClaimId, Class, ExtractedClaim, MACHINE_ATTEMPTS,
+};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -56,6 +60,92 @@ fn sentence_region(current: &str, (start, end): (usize, usize)) -> (usize, usize
         })
 }
 
+/// Whether `claim` is text a repair wrote in `field` of section `unit`: not
+/// in the field as it was `before`, and in the sentences `region` of the
+/// repaired field that the repair changed.
+fn written(
+    claim: &ExtractedClaim,
+    unit: usize,
+    field: &str,
+    before: &str,
+    (start, end): (usize, usize),
+) -> bool {
+    claim.location.unit_index == unit
+        && claim.location.field == field
+        && !before.contains(&claim.location.quote)
+        && claim
+            .location
+            .span
+            .is_some_and(|(from, to)| from < end && to > start)
+}
+
+/// How much checking a class gets: the stricter the class, the more.
+fn strictness(class: Class) -> u8 {
+    match class {
+        Class::Sourced => 3,
+        Class::Reasoning => 2,
+        Class::Common => 1,
+        Class::Internal => 0,
+    }
+}
+
+/// What the repairs of one step leave for the pass that checks their text:
+/// the lesson as it was before them, and each repaired claim with the field
+/// its sentence stood in and the class it was checked as.
+#[derive(Default)]
+pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
+    previous: Option<Value>,
+    parents: Vec<(RepairRecord, String, Classed)>,
+}
+
+impl Rewrites {
+    pub(super) fn new(
+        previous: Option<Value>,
+        parents: Vec<(RepairRecord, String, Classed)>,
+    ) -> Self {
+        Self { previous, parents }
+    }
+
+    /// For each of `extracted`, taken from `current`, the class of the
+    /// repaired claim whose rewrite wrote it: a statement that is new text in
+    /// the sentences a repair changed in its field. Several repairs in one
+    /// field give the strictest of their classes, so nothing is lighter than
+    /// any claim it may descend from.
+    pub(in crate::features::learning::lessons::content_verification) fn classes(
+        &self,
+        current: &Value,
+        extracted: &[ExtractedClaim],
+    ) -> Vec<Option<Classed>> {
+        let regions: Vec<Option<(String, (usize, usize))>> = self
+            .parents
+            .iter()
+            .map(|(record, field, _)| {
+                let before = field_text(self.previous.as_ref()?, record.unit, field)?;
+                let after = field_text(current, record.unit, field)?;
+                let region = sentence_region(&after, changed_region(&before, &after));
+                Some((before, region))
+            })
+            .collect();
+        extracted
+            .iter()
+            .map(|claim| {
+                let mut found: Option<Classed> = None;
+                for ((record, field, classed), region) in self.parents.iter().zip(&regions) {
+                    let Some((before, span)) = region else {
+                        continue;
+                    };
+                    let lighter = found
+                        .is_some_and(|held| strictness(held.class) >= strictness(classed.class));
+                    if !lighter && written(claim, record.unit, field, before, *span) {
+                        found = Some(*classed);
+                    }
+                }
+                found
+            })
+            .collect()
+    }
+}
+
 /// The heirs of `repairs` (claims orphaned by the identity rules): for each,
 /// the unowned extracted claims of its field whose quote is new text in the
 /// changed region (claim sources design §18.4 iv). The one sharing most words
@@ -81,15 +171,8 @@ pub(super) fn heirs(
         };
         let region = changed_region(&before, &after);
         let (start, end) = sentence_region(&after, region);
-        let qualifies = |claim: &ExtractedClaim| {
-            claim.location.unit_index == record.unit
-                && claim.location.field == field
-                && !before.contains(&claim.location.quote)
-                && claim
-                    .location
-                    .span
-                    .is_some_and(|(from, to)| from < end && to > start)
-        };
+        let qualifies =
+            |claim: &ExtractedClaim| written(claim, record.unit, &field, &before, (start, end));
         let mut found: Vec<(usize, &ExtractedClaim)> = extracted
             .iter()
             .enumerate()

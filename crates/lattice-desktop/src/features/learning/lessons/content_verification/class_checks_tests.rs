@@ -2,15 +2,20 @@
 //! own left out, a Reasoning statement read for consistency and put to the
 //! falsity veto, a Common one put to the model alone, and what neither can
 //! pass sent to the strict check as Sourced.
-use super::claim_ledger_tests::{pass_report, passage_finding};
+use super::claim_ledger_tests::{pass_report, passage_finding, prepare, section};
 use super::*;
 use crate::features::learning::lesson_drafts;
+use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
+use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{Actor, ClaimState, VerdictKind};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
     "The reader hands over one row at a time, so memory stays flat however long the file is.";
 const OWN: &str = "The sources name two trade-offs between the designs.";
+const REWRITTEN: &str =
+    "The reader hands over one row at a time, so it never holds the whole file in memory.";
+const WITH_A_FIGURE: &str = "The reader hands over one row at a time, so a file of 10 million rows costs no more memory than one of 10.";
 
 /// A model that sorts, judges consistency and answers for knowledge as
 /// scripted by statement, extracts the statements it is given from a lesson,
@@ -21,6 +26,7 @@ struct Classes {
     classes: Vec<(&'static str, &'static str)>,
     consistency: Vec<(&'static str, &'static str)>,
     knowledge: Vec<(&'static str, [&'static str; 3])>,
+    rewrite: Option<(&'static str, &'static str)>,
     asked: Mutex<Vec<&'static str>>,
     samples: Mutex<HashMap<String, usize>>,
 }
@@ -33,6 +39,7 @@ impl Classes {
             classes: Vec::new(),
             consistency: Vec::new(),
             knowledge: Vec::new(),
+            rewrite: None,
             asked: Mutex::new(Vec::new()),
             samples: Mutex::new(HashMap::new()),
         }
@@ -50,6 +57,12 @@ impl Classes {
 
     fn knows(mut self, samples: &[(&'static str, [&'static str; 3])]) -> Self {
         self.knowledge = samples.to_vec();
+        self
+    }
+
+    /// A repair writes `to` where the section's body says `from`.
+    fn rewrites(mut self, from: &'static str, to: &'static str) -> Self {
+        self.rewrite = Some((from, to));
         self
     }
 
@@ -139,6 +152,38 @@ impl Classes {
             let verdict = verdicts[*taken % 3];
             *taken += 1;
             return Ok(json!({"verdict":verdict,"reason":"A textbook says so."}).to_string());
+        }
+        if let (true, Some((from, to))) = (
+            prompt.starts_with("Repair verified lesson defects."),
+            self.rewrite,
+        ) {
+            self.asked.lock().unwrap().push("repair");
+            let data = context(prompt);
+            let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
+            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+        }
+        if prompt.starts_with("Update claims after a lesson edit.") {
+            let data = context(prompt);
+            let passages = data["revisedSection"]["passages"].as_array().unwrap();
+            let passage = passages
+                .iter()
+                .find(|p| p["field"] == "/body")
+                .unwrap_or(&passages[0]);
+            let text = passage["text"].as_str().unwrap();
+            let statement = self.statements.iter().find(|part| text.contains(**part));
+            let changes: Vec<Value> = data["existingClaims"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|claim| {
+                    let statement = match statement {
+                        Some(part) if claim["statement"] != json!(part) => json!(part),
+                        _ => Value::Null,
+                    };
+                    json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":statement})
+                })
+                .collect();
+            return Ok(json!({"changes":changes,"nonFactualReason":""}).to_string());
         }
         self.inner.respond(prompt).await
     }
@@ -390,6 +435,187 @@ async fn the_calls_ceiling_only_comes_down_while_a_pass_checks_a_mix_of_classes(
     // The sort, the knowledge samples of five statements, the consistency
     // call and the strict checks.
     assert!(trace.calls >= 1 + 5 * 3 + 1 + 1, "{} calls", trace.calls);
+    assert!(
+        trace.within_the_ceiling(),
+        "{} calls, ceilings {:?}",
+        trace.calls,
+        trace.ceilings
+    );
+    Ok(())
+}
+
+/// The rewrites a repair of `statement` leaves for the next pass, when the
+/// statement was checked as `classed` and failed.
+async fn rewrites_after_repair(
+    statement: &str,
+    classed: Classed,
+) -> Result<claim_ledger::Rewrites> {
+    let model = Classes::new(&[]);
+    let before = lesson(statement);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let mut failed = passage_finding(statement, statement, false, SOURCE);
+    failed.verdict = ClaimVerdict::Contradicted;
+    failed.evidence.clear();
+    failed.class = Some(classed);
+    ledger.observe(&before, &pass_report(vec![failed])).await?;
+    let claim = ledger.finding_claims()[0].clone();
+    ledger.begin_repairs(&before, &[claim]).await?;
+    Ok(ledger.rewrites())
+}
+
+/// What the sort makes of `statement`, which a repair wrote into the lesson.
+async fn sorted_after(
+    model: &Classes,
+    rewrites: &claim_ledger::Rewrites,
+    statement: &str,
+) -> Result<Vec<Classed>> {
+    let claims = vec![(
+        0,
+        Claim {
+            quote: statement.to_owned(),
+            statement: statement.to_owned(),
+        },
+    )];
+    class_checks::sort(model, &lesson(statement), &claims, rewrites).await
+}
+
+#[tokio::test]
+async fn a_statement_a_repair_wrote_keeps_the_class_of_the_one_it_replaced_and_is_not_sorted_again(
+) -> Result<()> {
+    // Sorted, the model would call it Common.
+    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
+    let parent = Classed {
+        class: Class::Reasoning,
+        by: ClassifiedBy::Model,
+    };
+    let rewrites = rewrites_after_repair(REASONED, parent).await?;
+
+    let classes = sorted_after(&model, &rewrites, REWRITTEN).await?;
+
+    assert_eq!(classes, [parent]);
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rewrite_that_brings_in_a_figure_is_sourced_by_the_rule_layer_with_no_sort_call(
+) -> Result<()> {
+    let model = Classes::new(&[]).classed(&[(WITH_A_FIGURE, "common")]);
+    let rewrites = rewrites_after_repair(
+        REASONED,
+        Classed {
+            class: Class::Reasoning,
+            by: ClassifiedBy::Model,
+        },
+    )
+    .await?;
+
+    let classes = sorted_after(&model, &rewrites, WITH_A_FIGURE).await?;
+
+    assert_eq!(
+        classes,
+        [Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule
+        }]
+    );
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rule_that_leaves_a_statement_out_does_not_apply_to_a_rewrite() -> Result<()> {
+    // Alone, a remark about the lesson's sources is left out of its claims; a
+    // rewrite of a checked statement keeps its check.
+    let model = Classes::new(&[]);
+    let parent = Classed {
+        class: Class::Common,
+        by: ClassifiedBy::Model,
+    };
+    let rewrites = rewrites_after_repair(COMMON, parent).await?;
+
+    let classes = sorted_after(&model, &rewrites, OWN).await?;
+
+    assert_eq!(classes, [parent]);
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_class_a_rewrite_took_is_found_again_by_a_resumed_pass_without_its_parent() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
+    let parent = Classed {
+        class: Class::Reasoning,
+        by: ClassifiedBy::Model,
+    };
+    let rewrites = rewrites_after_repair(REASONED, parent).await?;
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        let first = sorted_after(&model, &rewrites, REWRITTEN).await?;
+        // After a restart the repair's record is gone.
+        let resumed = sorted_after(&model, &claim_ledger::Rewrites::default(), REWRITTEN).await?;
+        assert_eq!(first, [parent]);
+        assert_eq!(resumed, [parent]);
+        assert_eq!(model.calls("sort"), 0);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_rewritten_statement_is_checked_as_its_parent_was_and_the_calls_are_the_plans(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    // Sorted again, the rewrite would be Common and meet no consistency check.
+    let model = Classes::new(&[REASONED, REWRITTEN])
+        .classed(&[(REASONED, "reasoning"), (REWRITTEN, "common")])
+        .consistent(&[(REASONED, "contradicted")])
+        .rewrites(REASONED, REWRITTEN);
+
+    let (prepared, trace) = crate::features::learning::lesson_progress::traced(prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&section(REASONED)).to_string()),
+        &[source()],
+    ))
+    .await;
+    let (raw, report) = prepared?;
+
+    let written: Value = serde_json::from_str(&raw)?;
+    assert!(written["blocks"][0]["body"]
+        .as_str()
+        .is_some_and(|body| body.contains(REWRITTEN) && !body.contains(REASONED)));
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    // The first pass sorted; the rewrite did not meet the sort again but the
+    // consistency check and the veto, as the statement it replaced would have.
+    assert_eq!(model.calls("sort"), 1);
+    assert_eq!(model.calls("repair"), 1);
+    assert_eq!(model.calls("consistency"), 2);
+    assert_eq!(model.calls("knowledge"), 3);
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let [claim] = ledger.claims.as_slice() else {
+        panic!("one claim: {:?}", ledger.claims);
+    };
+    assert!(matches!(claim.state(), ClaimState::Consistent { .. }));
+    assert_eq!(
+        claim.classified(),
+        Some((Class::Reasoning, ClassifiedBy::Model))
+    );
+    // The calls are the sum of the plan's terms along this path: the sort,
+    // the statement's consistency call, then the rewrite, its consistency
+    // re-check and the veto's three samples of the part of G a rewrite that
+    // passes uses.
+    assert_eq!(trace.calls, 1 + 1 + (1 + 1 + 3));
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     assert!(
         trace.within_the_ceiling(),
         "{} calls, ceilings {:?}",

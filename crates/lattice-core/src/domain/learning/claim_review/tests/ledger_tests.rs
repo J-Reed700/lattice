@@ -872,6 +872,10 @@ fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
         Some(Class::Sourced),
         "a rule outranks the model"
     );
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Sourced, ClassifiedBy::Rule))
+    );
     entry
         .append(machine(4), classified(Class::Common, ClassifiedBy::Model))
         .unwrap();
@@ -893,6 +897,10 @@ fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
         cited.class(),
         Some(Class::Sourced),
         "the writer outranks a rule"
+    );
+    assert_eq!(
+        cited.classified(),
+        Some((Class::Sourced, ClassifiedBy::Writer))
     );
     cited
         .append(machine(4), classified(Class::Internal, ClassifiedBy::Rule))

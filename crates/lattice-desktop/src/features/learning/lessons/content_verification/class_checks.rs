@@ -6,7 +6,7 @@
 //! a lighter check cannot pass on its own goes to the strict check as
 //! Sourced. Every judgment is saved as a receipt, so a resumed pass asks
 //! nothing twice.
-use super::claim_ledger::{stand_together, Place};
+use super::claim_ledger::{stand_together, Place, Rewrites};
 use super::classify::{classify, rule_class, ToSort};
 use super::*;
 use crate::features::learning::lessons::call_plan::{Counted, Fate, SAMPLES};
@@ -14,6 +14,7 @@ use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
     KnowledgeVerdict, CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
+use lattice_core::domain::learning::claim_review::ExtractedClaim;
 
 /// What becomes of a statement once it is sorted and has met its lighter
 /// check.
@@ -42,27 +43,44 @@ impl Route {
 /// label and the blank line after it.
 const LABEL_TOKENS: usize = 12;
 
-/// The class of each of `claims`, in order: the rule layer's where it
+/// The class of each of `claims`, in order: that of the statement it
+/// replaces when a repair wrote it, otherwise the rule layer's where it
 /// decides, otherwise the model's, which is asked once per statement.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
     candidate: &Value,
     claims: &[(usize, Claim)],
+    rewrites: &Rewrites,
 ) -> Result<Vec<Classed>> {
-    let fields: Vec<String> = claims
+    let extracted: Vec<ExtractedClaim> = claims
         .iter()
-        .map(|(unit, claim)| {
-            claim_ledger::locate(candidate, *unit, &claim.quote, Some(&claim.statement)).field
+        .map(|(unit, claim)| ExtractedClaim {
+            location: claim_ledger::locate(candidate, *unit, &claim.quote, Some(&claim.statement)),
+            statement: claim.statement.clone(),
         })
         .collect();
+    let fields: Vec<String> = extracted
+        .iter()
+        .map(|claim| claim.location.field.clone())
+        .collect();
+    let parents = rewrites.classes(candidate, &extracted);
     let mut sorted: Vec<Option<Classed>> = Vec::with_capacity(claims.len());
-    for ((_, claim), field) in claims.iter().zip(&fields) {
-        sorted.push(match rule_class(&claim.statement, field) {
-            Some(class) => Some(Classed {
+    for (((_, claim), field), parent) in claims.iter().zip(&fields).zip(parents) {
+        let rule = rule_class(&claim.statement, field);
+        sorted.push(match (parent, rule) {
+            (Some(parent), rule) => {
+                let inherited = carried(parent, rule);
+                // A resumed pass finds the class again without its parent.
+                if rule != Some(inherited.class) {
+                    save_class(llm, &claim.statement, inherited.class).await?;
+                }
+                Some(inherited)
+            }
+            (None, Some(class)) => Some(Classed {
                 class,
                 by: ClassifiedBy::Rule,
             }),
-            None => saved_class(llm, &claim.statement)
+            (None, None) => saved_class(llm, &claim.statement)
                 .await?
                 .map(|class| Classed {
                     class,
@@ -95,6 +113,23 @@ pub(super) async fn sort(
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
     plan_calls(&classes, claims, &fields);
     Ok(classes)
+}
+
+/// The class a statement a repair wrote takes: its parent's, which the rule
+/// layer can only make stricter (a digit, a quotation or an attribution the
+/// rewrite introduced makes it Sourced). A rewrite is held to what the
+/// passage states or the same point without the specific, so it keeps the
+/// nature of what it replaces, and a rule that would leave a statement out of
+/// the claims does not apply to one: that would cut the check from a rewrite
+/// (claim classes design §3.1).
+fn carried(parent: Classed, rule: Option<Class>) -> Classed {
+    match rule {
+        Some(Class::Sourced) if parent.class != Class::Sourced => Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule,
+        },
+        _ => parent,
+    }
 }
 
 /// The calls the statements' checks can make, now that each has a class.

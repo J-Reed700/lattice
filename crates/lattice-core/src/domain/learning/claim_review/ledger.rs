@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::replay::{apply_check, charge, hand_to_user, redecided, reopened, Cursor};
 use super::{
-    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
+    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class, ClassifiedBy,
     EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind,
     MACHINE_ATTEMPTS,
 };
@@ -230,6 +230,12 @@ impl ClaimLedgerEntry {
     /// it; `None` until a `Classified` event.
     pub fn class(&self) -> Option<Class> {
         self.cursor().class.map(|(class, _)| class)
+    }
+
+    /// The statement's class and the authority that decided it; `None` until
+    /// a `Classified` event.
+    pub fn classified(&self) -> Option<(Class, ClassifiedBy)> {
+        self.cursor().class
     }
 
     /// What the provenance gate weighed for the claim's latest local check,

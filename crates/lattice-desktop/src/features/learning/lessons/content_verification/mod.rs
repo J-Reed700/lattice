@@ -236,6 +236,9 @@ struct ClaimChecks {
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
+    /// What the repairs the next pass checks replaced: what they wrote takes
+    /// the class of the claim they rewrote (`claim_ledger`).
+    rewrites: claim_ledger::Rewrites,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,

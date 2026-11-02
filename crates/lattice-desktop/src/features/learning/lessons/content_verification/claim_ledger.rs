@@ -11,6 +11,7 @@ mod receipts;
 mod successor;
 
 pub(super) use audit::Audited;
+pub(super) use successor::Rewrites;
 
 use super::general_knowledge::Resolution;
 use super::provenance_gate::ProvenanceGate;
@@ -409,6 +410,27 @@ impl ClaimLedger {
                 Decision::NeedsReview(counts.queued + counts.open)
             }
         }
+    }
+
+    /// The repairs awaiting the pass that checks their text, for that pass
+    /// to give what they wrote the class of what they replaced (claim classes
+    /// design §3.1).
+    pub(super) fn rewrites(&self) -> Rewrites {
+        let parents = self
+            .pending
+            .repairs
+            .iter()
+            .filter_map(|record| {
+                let entry = self.entry(&record.claim_id)?;
+                let (class, by) = entry.classified()?;
+                Some((
+                    record.clone(),
+                    entry.location().field.clone(),
+                    Classed { class, by },
+                ))
+            })
+            .collect();
+        Rewrites::new(self.pending.previous.clone(), parents)
     }
 
     /// The repair sent for `claims` (§4): which attempt it is for each claim,

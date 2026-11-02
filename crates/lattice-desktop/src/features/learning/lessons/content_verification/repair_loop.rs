@@ -92,6 +92,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         ledger.sync().await?;
         let active = expanded.as_ref().unwrap_or(references);
         checks.settled = ledger.user_evidence(active);
+        checks.rewrites = ledger.rewrites();
         if review_pass::apply_user_changes(&mut ledger, &mut candidate).await? {
             raw = candidate.to_string();
             crate::features::learning::lesson_drafts::save(&raw).await?;
