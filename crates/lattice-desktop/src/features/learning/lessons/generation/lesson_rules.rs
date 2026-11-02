@@ -1,11 +1,14 @@
 //! The lesson's own rules beyond its schema: distinct, titled sections in the
 //! mix the lesson is written for, checks that hold their answer back, an
 //! order that tests what was taught and recalls before it recaps, and
-//! distinct, answerable questions of every kind. A broken rule is a finding:
+//! distinct, answerable questions of every kind, and a specific that stands
+//! only in a sentence the writer cited. A broken rule is a finding:
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text, MAX_BODY, MAX_EXPLANATION, MAX_OPTION, MAX_QUESTION};
+use crate::features::learning::content_verification::needs_citation;
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -67,6 +70,110 @@ fn text<'a>(item: &'a Value, field: &str) -> &'a str {
 
 fn structure(site: FindingSite, note: String) -> ReviewFinding {
     ReviewFinding::new(FindingKind::Structure, Some(site), note)
+}
+
+/// The sections that state what is so, where a specific needs its citation:
+/// a worked example's, a practice's and a check's cases are hypothetical.
+const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
+
+/// `sentence` without the Markdown that opens it, a heading's hashes or a
+/// list item's marker, which is no part of what it states.
+fn without_marker(sentence: &str) -> &str {
+    let text = sentence.trim_start_matches('#').trim_start();
+    if let Some(rest) = ["- ", "* ", "+ "]
+        .iter()
+        .find_map(|bullet| text.strip_prefix(bullet))
+    {
+        return rest.trim_start();
+    }
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    let rest = text.get(digits..).unwrap_or_default();
+    if digits > 0 && (rest.starts_with(". ") || rest.starts_with(") ")) {
+        return rest.get(2..).unwrap_or_default().trim_start();
+    }
+    text
+}
+
+/// The sentences of `text` outside its code fences, as a writer lists them.
+fn prose_sentences(text: &str) -> Vec<String> {
+    let mut prose = String::new();
+    let mut fenced = false;
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        } else if !fenced {
+            prose.push_str(line);
+        }
+    }
+    sentences(&prose)
+        .into_iter()
+        .filter_map(|(from, to)| prose.get(from..to))
+        .map(|sentence| without_marker(sentence.trim()).to_owned())
+        .filter(|sentence| sentence.chars().any(char::is_alphabetic))
+        .collect()
+}
+
+/// The figures and the quoted wording of `sentence`, which the quote cited
+/// for it must hold.
+fn specifics(sentence: &str) -> Vec<String> {
+    let figures = lazy_regex::regex!(r"\d+(?:[.,]\d+)*")
+        .find_iter(sentence)
+        .map(|found| found.as_str().to_owned());
+    let quoted = lazy_regex::regex!(r#"['"‘’“”]([^'"‘’“”]{12,})['"‘’“”]"#)
+        .captures_iter(sentence)
+        .filter_map(|captures| captures.get(1))
+        .map(|found| found.as_str().to_owned());
+    figures.chain(quoted).collect()
+}
+
+fn same_sentence(a: &str, b: &str) -> bool {
+    let (a, b) = (normalize(a), normalize(b));
+    !a.is_empty() && !b.is_empty() && (a == b || a.contains(&b) || b.contains(&a))
+}
+
+/// A specific stands only in a sentence the writer lists in the part's
+/// citations, with a quote that contains it; otherwise the part is written in
+/// its general form (claim classes design §3.4, §3.5). Code is exempt.
+fn uncited_specifics(
+    item: &Value,
+    field: &str,
+    (site, label): (FindingSite, &str),
+    findings: &mut Vec<ReviewFinding>,
+) {
+    let cited: Vec<(&str, &str)> = item
+        .get("citations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
+        .collect();
+    for sentence in prose_sentences(text(item, field)) {
+        if !needs_citation(&sentence) {
+            continue;
+        }
+        let shown: String = sentence.chars().take(90).collect();
+        let Some((_, quote)) = cited
+            .iter()
+            .find(|(cited, _)| same_sentence(cited, &sentence))
+        else {
+            findings.push(structure(
+                site,
+                format!("{label} states a specific in \"{shown}\" without citing it: list the sentence in its citations with the source and a quote that contains it, or write the general form."),
+            ));
+            continue;
+        };
+        let held = normalize(quote);
+        let missing: Vec<String> = specifics(&sentence)
+            .into_iter()
+            .filter(|specific| !held.contains(&normalize(specific)))
+            .collect();
+        if !missing.is_empty() {
+            findings.push(structure(
+                site,
+                format!("{label}: the quote cited for \"{shown}\" does not contain {}; cite a quote that does, or write the general form.", missing.join(", ")),
+            ));
+        }
+    }
 }
 
 /// What `lesson_rules` reports, as its notes: for evals outside the crate,
@@ -228,6 +335,26 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
             ));
         }
     }
+    for (index, block) in blocks.iter().enumerate() {
+        if CITED_KINDS.contains(&text(block, "kind")) {
+            let label = format!("Section {} (candidate blocks-{index})", index + 1);
+            uncited_specifics(
+                block,
+                "body",
+                (FindingSite::Section(index), &label),
+                &mut findings,
+            );
+        }
+    }
+    for (index, question) in questions.iter().enumerate() {
+        let label = format!("Question {}", index + 1);
+        uncited_specifics(
+            question,
+            "explanation",
+            (FindingSite::Question(index), &label),
+            &mut findings,
+        );
+    }
     let per_kind: Vec<_> = ["practice", "quiz", "test"]
         .iter()
         .map(|kind| (*kind, kinds(questions, kind)))
@@ -371,6 +498,85 @@ mod tests {
         let findings = lesson_rules(&candidate);
         let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
         assert_eq!(sites, [FindingSite::Section(5)]);
+    }
+
+    const TIMEOUT: &str = "The default timeout is 30 seconds.";
+
+    fn cited(candidate: &mut Value, quote: &str) {
+        candidate["blocks"][0]["citations"] =
+            json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
+    }
+
+    /// A specific stands only in a sentence the writer cited.
+    #[test]
+    fn a_specific_without_a_citation_is_a_finding_at_its_section() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
+
+        let findings = lesson_rules(&candidate);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key().site, FindingSite::Section(0));
+        assert_eq!(findings[0].kind, FindingKind::Structure);
+        assert!(findings[0].note.contains("without citing it"));
+        assert!(findings[0].note.contains(TIMEOUT));
+
+        cited(
+            &mut candidate,
+            "A timeout of 30 seconds applies to each request.",
+        );
+        assert!(lesson_rules(&candidate).is_empty());
+    }
+
+    #[test]
+    fn a_quote_that_lacks_the_figure_does_not_cite_it() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] = json!(TIMEOUT);
+        cited(
+            &mut candidate,
+            "A timeout applies to each request, in seconds.",
+        );
+
+        let findings = lesson_rules(&candidate);
+
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].note.contains("does not contain 30"));
+    }
+
+    #[test]
+    fn an_attribution_needs_a_citation_but_no_figure_in_its_quote() {
+        let mut candidate = lesson();
+        let sentence = "The documentation describes a retry for failed requests.";
+        candidate["blocks"][0]["body"] = json!(sentence);
+        assert_eq!(lesson_rules(&candidate).len(), 1);
+
+        candidate["blocks"][0]["citations"] = json!([{
+            "sentence":sentence,"sourceIndex":0,
+            "quote":"Failed requests are retried once, as the reference describes."}]);
+        assert!(lesson_rules(&candidate).is_empty());
+    }
+
+    /// A worked example's case, code and a list's markers are not specifics a
+    /// source has to hold.
+    #[test]
+    fn hypothetical_cases_code_and_list_markers_need_no_citation() {
+        let mut candidate = lesson();
+        candidate["blocks"][1]["body"] = json!("Suppose a list holds 5 items and 3 are removed.");
+        candidate["blocks"][0]["body"] = json!(
+            "Read the file like this:\n```python\nrows = 100\nprint(rows)\n```\n1. Open the file.\n2) Read it row by row.\n- Close it."
+        );
+        assert!(lesson_rules(&candidate).is_empty());
+    }
+
+    #[test]
+    fn a_question_explanation_is_held_to_the_same_rule() {
+        let mut candidate = lesson();
+        candidate["questions"][2]["explanation"] = json!("The cache holds 128 entries.");
+
+        let findings = lesson_rules(&candidate);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key().site, FindingSite::Question(2));
     }
 
     #[test]

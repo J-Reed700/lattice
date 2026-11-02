@@ -476,7 +476,93 @@ async fn sorted_after(
             statement: statement.to_owned(),
         },
     )];
-    class_checks::sort(model, &lesson(statement), &claims, rewrites).await
+    class_checks::sort(
+        model,
+        &lesson(statement),
+        &claims,
+        rewrites,
+        &Citations::default(),
+    )
+    .await
+}
+
+/// A lesson whose one section cites `sentence`, as its writer lists it.
+fn cited(sentence: &str) -> Value {
+    json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":sentence,"rubric":[],
+        "sourceIndex":0,"quote":GOOD,
+        "citations":[{"sentence":sentence,"sourceIndex":0,"quote":GOOD}]}],"questions":[]})
+}
+
+#[tokio::test]
+async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call() -> Result<()> {
+    let model = Classes::new(&[REASONED]).classed(&[(REASONED, "reasoning")]);
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = cited(REASONED);
+    let citations = section_citations(&candidate, &references)?;
+    let claims = vec![(
+        0,
+        Claim {
+            quote: REASONED.to_owned(),
+            statement: REASONED.to_owned(),
+        },
+    )];
+    let nothing = claim_ledger::Rewrites::default();
+
+    let classes = class_checks::sort(&model, &candidate, &claims, &nothing, &citations).await?;
+
+    assert_eq!(
+        classes,
+        [Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer
+        }]
+    );
+    assert_eq!(model.calls("sort"), 0);
+    // Uncited, the model's word stands.
+    let uncited = class_checks::sort(
+        &model,
+        &lesson(REASONED),
+        &claims,
+        &nothing,
+        &Citations::default(),
+    )
+    .await?;
+    assert_eq!(
+        uncited,
+        [Classed {
+            class: Class::Reasoning,
+            by: ClassifiedBy::Model
+        }]
+    );
+    assert_eq!(model.calls("sort"), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_sorted(
+) -> Result<()> {
+    // Sorted, it would be Reasoning and meet the consistency check and the veto.
+    let model = Classes::new(&[GOOD]).classed(&[(GOOD, "reasoning")]);
+
+    let report = verify(&model, &cited(GOOD), &[source()]).await?;
+
+    assert_eq!(
+        outcomes(&report),
+        vec![(GOOD, ClaimVerdict::Supported, Some(Class::Sourced))]
+    );
+    assert_eq!(
+        report.findings[0].class,
+        Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer
+        })
+    );
+    assert_eq!(model.calls("sort"), 0);
+    assert_eq!(model.calls("consistency"), 0);
+    assert_eq!(model.calls("knowledge"), 0);
+    assert!(model.strict_calls() >= 1);
+    Ok(())
 }
 
 #[tokio::test]

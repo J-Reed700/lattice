@@ -742,3 +742,91 @@ fn both_passes_supports_are_kept_and_the_strongest_names_the_claim() {
         .iter()
         .any(|passage| passage.source_id == "owner" && passage.text.contains(CONTRARY)));
 }
+
+/// The section cites the wrong passage; the sentence of the claim cites the
+/// marker's, as source 1.
+fn sentence_cited() -> Value {
+    let mut candidate = wrongly_cited();
+    candidate["blocks"][0]["citations"] =
+        json!([{"sentence":CLAIM,"sourceIndex":1,"quote":MARKER}]);
+    candidate
+}
+
+#[tokio::test]
+async fn a_claim_is_read_against_the_passage_its_own_sentence_cites() -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let citations = section_citations(&sentence_cited(), &references)?;
+    const OTHER: &str = "Tides rise twice a day on most coasts.";
+
+    let own = citations.of_claim(0, CLAIM);
+    assert!(!own.is_empty() && own.iter().all(|passage| passage.source_id == "marker"));
+    // A statement of no cited sentence reads the section's: the passage its
+    // own quote cites, and the sentence's.
+    let section = citations.of_claim(0, OTHER);
+    assert!(section
+        .iter()
+        .any(|passage| passage.source_id == "related-3"));
+    assert!(section.iter().any(|passage| passage.source_id == "marker"));
+    assert!(citations.is_cited(0, CLAIM) && !citations.is_cited(0, OTHER));
+    assert_eq!(citations.source_at(1), Some("marker"));
+
+    let results = evidence_checks::check_with_citations(
+        &model,
+        &references,
+        &inventory(&[CLAIM.into()]),
+        &[],
+        &ClaimChecks::default(),
+        &citations,
+    )
+    .await?;
+    let finding = &results[0].2;
+    assert_eq!(finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(
+        finding.two_pass.pass,
+        Some(Pass::Attribution),
+        "pass A read the sentence's passage, not the section's"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_supported_elsewhere_has_the_citation_of_its_own_sentence_repaired() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = supported_elsewhere(&references).await?;
+    let source = |id: &str| {
+        sources
+            .iter()
+            .find(|source| source.id == id)
+            .unwrap()
+            .clone()
+    };
+    let mut numbered = vec![source("related-3"), source("marker")];
+    let mut candidate = wrongly_cited();
+    let wrong = candidate["blocks"][0]["quote"].clone();
+    candidate["blocks"][0]["citations"] = json!([{"sentence":CLAIM,"sourceIndex":0,"quote":wrong}]);
+
+    let repairs = repair::cite_where_supported(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &mut numbered,
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert_eq!(repairs.len(), 1);
+    let block = &candidate["blocks"][0];
+    assert_eq!(block["sourceIndex"], 0, "the section's own citation stands");
+    assert_eq!(block["quote"], wrong);
+    assert_eq!(block["citations"][0]["sourceIndex"], 1);
+    assert_eq!(
+        block["citations"][0]["quote"],
+        "Mineral alpha notes 99: property was logged."
+    );
+    // The next pass reads the claim against the passage found.
+    let next = section_citations(&candidate, &references)?;
+    let read = next.of_claim(0, CLAIM);
+    assert!(!read.is_empty() && read.iter().all(|passage| passage.source_id == "marker"));
+    Ok(())
+}

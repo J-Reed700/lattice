@@ -1,18 +1,30 @@
 //! The passages a lesson section cites, which pass A checks a claim of that
 //! section against and nothing else (course evidence index §5.1), and the
-//! sources the lesson cites anywhere.
+//! sources the lesson cites anywhere. A sentence the writer cited has its own,
+//! which the claim that restates it is read against instead (claim classes
+//! design §3.5).
 use super::*;
+use lattice_core::shared::text::claim_sentence;
 
 /// The retrieval kind of a passage a claim's own section cites.
 pub(super) const CITED: &str = "cited";
 
+/// A sentence the writer cited, with the passages its quote resolves to.
+struct CitedSentence {
+    unit: usize,
+    sentence: String,
+    passages: Vec<EvidencePassage>,
+}
+
 /// What a lesson cites. Per section (unit), the source passages it cites:
-/// each block's and question's quote resolved to its span in the saved
-/// references and widened like a retrieved passage. A claim's pass A reads
-/// its own section's.
+/// each block's and question's quote, and the quote of each sentence listed in
+/// its citations, resolved to its span in the saved references and widened
+/// like a retrieved passage. A claim's pass A reads those of the sentence it
+/// restates when the writer cited one, otherwise its section's.
 #[derive(Default)]
 pub(super) struct Citations {
     by_unit: HashMap<usize, Vec<EvidencePassage>>,
+    sentences: Vec<CitedSentence>,
     sources: HashSet<String>,
     /// The source each `sourceIndex` of the lesson stands for, as its
     /// citations resolve: what "Source 2" in the lesson's text names.
@@ -31,6 +43,7 @@ impl Citations {
             .collect();
         Self {
             by_unit,
+            sentences: Vec::new(),
             sources,
             by_index,
         }
@@ -75,6 +88,31 @@ impl Citations {
         self.by_unit.get(&unit).map_or(&[], Vec::as_slice)
     }
 
+    /// Whether the writer cited a sentence of section `unit` that `statement`
+    /// restates.
+    pub(super) fn is_cited(&self, unit: usize, statement: &str) -> bool {
+        self.sentences
+            .iter()
+            .any(|cited| cited.unit == unit && restates(&cited.sentence, statement))
+    }
+
+    /// The passages the claim `statement` of section `unit` is read against:
+    /// those the sentences it restates cite, and when the writer cited none of
+    /// them, the section's.
+    pub(super) fn of_claim(&self, unit: usize, statement: &str) -> Vec<EvidencePassage> {
+        let mut own = Vec::new();
+        for cited in &self.sentences {
+            if cited.unit == unit && restates(&cited.sentence, statement) {
+                merge(&mut own, &cited.passages);
+            }
+        }
+        if own.is_empty() {
+            self.of(unit).to_vec()
+        } else {
+            own
+        }
+    }
+
     /// Whether the lesson cites `source_id` anywhere.
     pub(super) fn cites(&self, source_id: &str) -> bool {
         self.sources.contains(source_id)
@@ -87,6 +125,7 @@ pub(super) fn section_citations(
 ) -> Result<Citations> {
     let mut citations = HashMap::new();
     let mut by_index = HashMap::new();
+    let mut sentences = Vec::new();
     let items = ["blocks", "questions"].into_iter().flat_map(|field| {
         candidate
             .get(field)
@@ -95,23 +134,70 @@ pub(super) fn section_citations(
             .flatten()
     });
     for (unit, item) in items.enumerate() {
-        let Some(quote) = item.get("quote").and_then(Value::as_str) else {
-            continue;
-        };
-        let passages = references.cited_passages(&[quote])?;
-        if let (Some(index), Some(passage)) = (
-            item.get("sourceIndex").and_then(Value::as_u64),
-            passages.first(),
-        ) {
-            by_index
-                .entry(index)
-                .or_insert_with(|| passage.source_id.clone());
+        let mut passages = resolve(references, &mut by_index, item)?;
+        for entry in item
+            .get("citations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let own = resolve(references, &mut by_index, entry)?;
+            merge(&mut passages, &own);
+            if let (Some(sentence), false) = (
+                entry.get("sentence").and_then(Value::as_str),
+                own.is_empty(),
+            ) {
+                sentences.push(CitedSentence {
+                    unit,
+                    sentence: sentence.to_owned(),
+                    passages: own,
+                });
+            }
         }
         if !passages.is_empty() {
             citations.insert(unit, passages);
         }
     }
-    Ok(Citations::new(citations, by_index))
+    let mut cited = Citations::new(citations, by_index);
+    cited.sentences = sentences;
+    Ok(cited)
+}
+
+/// The passages the quote of a block, a question or a cited sentence resolves
+/// to, noting the source its `sourceIndex` stands for.
+fn resolve(
+    references: &ReferenceCollection<'_>,
+    by_index: &mut HashMap<u64, String>,
+    part: &Value,
+) -> Result<Vec<EvidencePassage>> {
+    let Some(quote) = part.get("quote").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let passages = references.cited_passages(&[quote])?;
+    if let (Some(index), Some(passage)) = (
+        part.get("sourceIndex").and_then(Value::as_u64),
+        passages.first(),
+    ) {
+        by_index
+            .entry(index)
+            .or_insert_with(|| passage.source_id.clone());
+    }
+    Ok(passages)
+}
+
+/// Add to `into` the `passages` that overlap none it holds.
+fn merge(into: &mut Vec<EvidencePassage>, passages: &[EvidencePassage]) {
+    for passage in passages {
+        if !into.iter().any(|held| overlaps(held, passage)) {
+            into.push(passage.clone());
+        }
+    }
+}
+
+/// Whether `statement` restates `sentence` as the locator reads it: the
+/// sentence holds the greater part of the statement's words.
+pub(super) fn restates(sentence: &str, statement: &str) -> bool {
+    claim_sentence(sentence, (0, sentence.len()), statement).is_some()
 }
 
 /// Where a text names one of the lesson's sources by its index.

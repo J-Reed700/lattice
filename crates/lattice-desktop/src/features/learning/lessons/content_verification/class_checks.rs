@@ -44,13 +44,15 @@ impl Route {
 const LABEL_TOKENS: usize = 12;
 
 /// The class of each of `claims`, in order: that of the statement it
-/// replaces when a repair wrote it, otherwise the rule layer's where it
-/// decides, otherwise the model's, which is asked once per statement.
+/// replaces when a repair wrote it, otherwise Sourced when the writer cited
+/// its sentence, otherwise the rule layer's where it decides, otherwise the
+/// model's, which is asked once per statement.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
     candidate: &Value,
     claims: &[(usize, Claim)],
     rewrites: &Rewrites,
+    citations: &Citations,
 ) -> Result<Vec<Classed>> {
     let extracted: Vec<ExtractedClaim> = claims
         .iter()
@@ -65,7 +67,7 @@ pub(super) async fn sort(
         .collect();
     let parents = rewrites.classes(candidate, &extracted);
     let mut sorted: Vec<Option<Classed>> = Vec::with_capacity(claims.len());
-    for (((_, claim), field), parent) in claims.iter().zip(&fields).zip(parents) {
+    for (((unit, claim), field), parent) in claims.iter().zip(&fields).zip(parents) {
         let rule = rule_class(&claim.statement, field);
         sorted.push(match (parent, rule) {
             (Some(parent), rule) => {
@@ -76,6 +78,10 @@ pub(super) async fn sort(
                 }
                 Some(inherited)
             }
+            (None, _) if citations.is_cited(*unit, &claim.statement) => Some(Classed {
+                class: Class::Sourced,
+                by: ClassifiedBy::Writer,
+            }),
             (None, Some(class)) => Some(Classed {
                 class,
                 by: ClassifiedBy::Rule,

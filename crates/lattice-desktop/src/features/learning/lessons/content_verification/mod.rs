@@ -21,7 +21,9 @@ use std::collections::{HashMap, HashSet};
 
 mod citations;
 mod claim_ledger;
-use citations::{overlaps, section_citations, source_mentions, take_cited, Citations, CITED};
+use citations::{
+    overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
+};
 #[cfg(test)]
 pub(in crate::features::learning) use claim_ledger::locate;
 pub(in crate::features::learning) use claim_ledger::{
@@ -30,6 +32,7 @@ pub(in crate::features::learning) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
+pub(in crate::features::learning) use classify::needs_citation;
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;

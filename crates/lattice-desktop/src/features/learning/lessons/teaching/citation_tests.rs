@@ -241,3 +241,63 @@ async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
         .to_string()
         .contains("revised lesson contains 1 source quotation")));
 }
+
+const REPLICATION: &str =
+    "Replication copies each write to several machines so a single failure loses nothing.";
+
+#[test]
+fn a_cited_sentences_quote_is_checked_like_the_sections() {
+    let mut candidate = lesson(EXCERPT);
+    candidate["blocks"][0]["citations"] = json!([{"sentence":"The tool behaves exactly as described.","sourceIndex":0,"quote":EXCERPT}]);
+    assert!(lesson_quote_checks(&candidate, &context()).is_empty());
+
+    candidate["blocks"][0]["citations"][0]["quote"] =
+        json!("An invented quotation that does not appear in the selected source.");
+    let checks = lesson_quote_checks(&candidate, &context());
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["path"], "blocks[0]");
+    assert!(checks[0]["error"]
+        .as_str()
+        .unwrap()
+        .starts_with("Citation 1 of this part:"));
+
+    // A citation of a source the lesson was not given is refused too.
+    candidate["blocks"][0]["citations"][0] =
+        json!({"sentence":"A sentence.","sourceIndex":3,"quote":EXCERPT});
+    assert_eq!(lesson_quote_checks(&candidate, &context()).len(), 1);
+}
+
+#[test]
+fn the_typography_of_a_cited_sentences_quote_is_restored_with_the_sections() {
+    let exact =
+        "We’ll download Rust through rustup, a command line tool for managing Rust versions.";
+    let authoring = json!({"sources":[{"sourceIndex":0,"excerpt":exact}]});
+    let mut candidate = lesson(exact);
+    candidate["blocks"][0]["citations"] = json!([{"sentence":"Rust is downloaded through rustup.",
+        "sourceIndex":0,"quote":exact.replace('’', "'")}]);
+
+    assert_eq!(restore_lesson_quotes(&mut candidate, &authoring), 1);
+
+    assert_eq!(candidate["blocks"][0]["citations"][0]["quote"], exact);
+}
+
+#[test]
+fn a_cited_sentence_whose_quote_matches_nothing_is_cited_to_the_nearest_passage_of_the_sentence() {
+    let authoring = json!({"sources":[
+        {"sourceIndex":0,"excerpt":"Navigation home page. The cache stores computed values so repeated requests return quickly."},
+        {"sourceIndex":1,"excerpt":REPLICATION}
+    ]});
+    let mut candidate = json!({"blocks":[{"body":"Why replicas matter. Writes are copied to several machines.","sourceIndex":0,
+        "quote":"The cache stores computed values so repeated requests return quickly.",
+        "citations":[{"sentence":"Replication copies every write to several machines so one failure loses nothing.",
+            "sourceIndex":0,"quote":"Completely different wording appears here instead."}]}],"questions":[]});
+
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+
+    assert_eq!(
+        candidate["blocks"][0]["sourceIndex"], 0,
+        "the section's quote holds"
+    );
+    assert_eq!(candidate["blocks"][0]["citations"][0]["sourceIndex"], 1);
+    assert_eq!(candidate["blocks"][0]["citations"][0]["quote"], REPLICATION);
+}

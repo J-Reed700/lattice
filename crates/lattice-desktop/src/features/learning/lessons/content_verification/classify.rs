@@ -49,13 +49,33 @@ pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
     if about_the_lesson {
         return Some(Class::Internal);
     }
-    let specific = lazy_regex::regex!(r"\d").is_match(statement)
-        || lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(statement)
+    states_a_specific(statement).then_some(Class::Sourced)
+}
+
+/// Whether a text names what a source must hold: a digit, quoted wording or
+/// an attribution to a source. The writer's rule asks this of a sentence
+/// before it must be cited, and the rule layer's answer contains it, so a
+/// sentence the writer has to cite is one the rule layer sorts Sourced
+/// (claim classes design §3.5).
+pub(in crate::features::learning) fn needs_citation(text: &str) -> bool {
+    lazy_regex::regex!(r"\d").is_match(text)
+        || lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(text)
         || lazy_regex::regex!(
-            r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to|states?|reports?|found|notes? that|describes?|says?|documented)\b"
+            r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
         )
-        .is_match(statement);
-    specific.then_some(Class::Sourced)
+        .is_match(text)
+}
+
+/// Whether a text states a specific: what needs a citation, or a verb of
+/// saying, which the rule layer reads as an attribution and so errs toward a
+/// check. The writer's rule leaves that to the check: an imperative to
+/// "state your assumptions" is no attribution.
+fn states_a_specific(text: &str) -> bool {
+    needs_citation(text)
+        || lazy_regex::regex!(
+            r"(?i)\b(states?|reports?|found|notes? that|describes?|says?|documented)\b"
+        )
+        .is_match(text)
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,

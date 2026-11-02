@@ -18,13 +18,13 @@ fn source() -> LearningSourceDto {
 fn block(kind: &str, title: &str, body: &str, cited: bool) -> Value {
     json!({"kind":kind,"title":title,"body":body,"rubric":[],
         "sourceIndex":if cited { json!(0) } else { Value::Null },
-        "quote":if cited { EXCERPT } else { "" }})
+        "quote":if cited { EXCERPT } else { "" },"citations":[]})
 }
 
 fn question(kind: &str, prompt: &str, cited: bool) -> Value {
     json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":1,"explanation":"Two follows.",
         "sourceIndex":if cited { json!(0) } else { Value::Null },
-        "quote":if cited { EXCERPT } else { "" }})
+        "quote":if cited { EXCERPT } else { "" },"citations":[]})
 }
 
 /// Seven sections, two sharing a title, one too short, no reflection; five
@@ -93,6 +93,54 @@ fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     assert_eq!(citations.len(), 1);
     assert_eq!(citations[0].key().id(), "quotation:section-2");
     assert!(citations[0].note.contains("blocks[2]"));
+}
+
+#[test]
+fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_finding() {
+    const KETTLE: &str = "The kettle whistles once the water inside it has boiled away.";
+    let kettle = LearningSourceDto {
+        id: "source-b".into(),
+        title: "Kettle notes".into(),
+        url: None,
+        excerpt: KETTLE.into(),
+        acquired_at: 2,
+    };
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![
+        GeneratedCitation {
+            sentence: "A kettle whistles when it runs dry.".into(),
+            source_index: Some(1),
+            quote: KETTLE.into(),
+        },
+        GeneratedCitation {
+            sentence: "Water boils at 50 degrees Celsius.".into(),
+            source_index: Some(0),
+            quote: "Water boils at exactly fifty degrees in every kitchen.".into(),
+        },
+    ];
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), kettle], &owned).unwrap();
+
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
+    assert_eq!(prepared.blocks[3].source_ids, ["source-a"]);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].key().id(), "quotation:section-2");
+    assert!(findings[0].note.contains("Water boils at 50 degrees"));
+}
+
+#[test]
+fn the_schema_asks_for_a_citation_list_per_part_and_none_without_sources() {
+    let pointer = "/properties/blocks/items/properties/citations/maxItems";
+    assert_eq!(lesson_schema(2).pointer(pointer), Some(&json!(24)));
+    assert_eq!(lesson_schema(0).pointer(pointer), Some(&json!(0)));
+    for part in ["blocks", "questions"] {
+        let required = lesson_schema(2)
+            .pointer(&format!("/properties/{part}/items/required"))
+            .cloned()
+            .unwrap();
+        assert!(required.as_array().unwrap().contains(&json!("citations")));
+    }
 }
 
 #[test]

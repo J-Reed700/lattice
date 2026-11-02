@@ -1,9 +1,9 @@
 //! The citation repair (course evidence index §5.1): a claim pass B found
-//! support for elsewhere in the course keeps its text, and its section's
-//! citation moves to the passage found. No model writes it: the found
-//! passage is the citation. A source the lesson does not number yet is
-//! added to the lesson's numbered sources, as the writer's are, so the
-//! citation can name it.
+//! support for elsewhere in the course keeps its text, and the citation of its
+//! sentence (its section's when the writer cited none) moves to the passage
+//! found. No model writes it: the found passage is the citation. A source the
+//! lesson does not number yet is added to the lesson's numbered sources, as
+//! the writer's are, so the citation can name it.
 use super::super::*;
 use crate::features::learning::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
 use crate::features::learning::reference_collection::shared_terms;
@@ -79,10 +79,11 @@ pub(in crate::features::learning::lessons::content_verification) fn number_sourc
 }
 
 /// Rewrites the citation of each section one of whose claims pass B supported
-/// elsewhere to the passage found: `quote` becomes the best-matching run of
-/// its sentences ([`quotation`]) and `sourceIndex` its source, numbered if
-/// new. Only sections with a citation and undoubted support; `tried`
-/// citations are never written again, so two passages cannot trade places.
+/// elsewhere to the passage found, the citation of the claim's sentence when
+/// the writer cited it: `quote` becomes the best-matching run of its
+/// sentences ([`quotation`]) and `sourceIndex` its source, numbered if new.
+/// Only sections with a citation and undoubted support; `tried` citations are
+/// never written again, so two passages cannot trade places.
 /// Returns the finding's position and ledger event per rewritten section.
 pub(in crate::features::learning::lessons::content_verification) fn cite_where_supported(
     candidate: &mut Value,
@@ -134,18 +135,40 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
         else {
             continue;
         };
+        let entry = section
+            .get("citations")
+            .and_then(Value::as_array)
+            .and_then(|cited| {
+                cited.iter().position(|entry| {
+                    entry
+                        .get("sentence")
+                        .and_then(Value::as_str)
+                        .is_some_and(|sentence| restates(sentence, &finding.statement))
+                })
+            });
+        let target = match entry {
+            Some(at) => section
+                .get_mut("citations")
+                .and_then(Value::as_array_mut)
+                .and_then(|cited| cited.get_mut(at))
+                .and_then(Value::as_object_mut),
+            None => Some(section),
+        };
+        let Some(target) = target else {
+            continue;
+        };
         let numbered_at = numbered.iter().position(|known| known.id == source.id);
         let index = numbered_at.unwrap_or(numbered.len());
-        if section.get("quote").and_then(Value::as_str) == Some(quote)
-            && section.get("sourceIndex").and_then(Value::as_u64) == Some(index as u64)
+        if target.get("quote").and_then(Value::as_str) == Some(quote)
+            && target.get("sourceIndex").and_then(Value::as_u64) == Some(index as u64)
         {
             continue;
         }
         if numbered_at.is_none() {
             numbered.push(source.clone());
         }
-        section.insert("quote".into(), json!(quote));
-        section.insert("sourceIndex".into(), json!(index));
+        target.insert("quote".into(), json!(quote));
+        target.insert("sourceIndex".into(), json!(index));
         rewritten.insert(finding.unit);
         tracing::info!(
             unit = finding.unit,

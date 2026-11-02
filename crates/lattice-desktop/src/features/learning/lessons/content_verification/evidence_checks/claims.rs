@@ -156,14 +156,15 @@ impl Context<'_, '_> {
             ));
         }
         let checked = as_checked(&claim, citations, references);
-        // Pass A: the section's passed example runs and the passages it
-        // cites, while a check of them alone fits the window.
+        // Pass A: the section's passed example runs and the passages the
+        // claim's sentence cites (the section's when the writer cited none),
+        // while a check of them alone fits the window.
         let mut attribution = example_runs(self.executions, unit);
         let shown_by_a = take_cited(
             llm,
             &checked.statement,
             &mut attribution,
-            citations.of(unit),
+            &citations.of_claim(unit, &claim.statement),
         );
         canonicalize_evidence(&mut attribution);
         let a_key =
