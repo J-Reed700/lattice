@@ -219,7 +219,7 @@ def run(args):
             if (ctx["key"], name) in done:
                 continue
             rec = record(ctx, name, *arm(ctx, name))
-            out.write(json.dumps(rec) + "\n")
+            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
             out.flush()
             line.append(f"{name} {rec['kept']}/{rec['facts']} cited {rec['cited']} usable {rec['usable']}/"
                         f"{rec['requests']} calls {rec['calls_written']} {rec['results_chars']}->{rec['after_chars']} "
