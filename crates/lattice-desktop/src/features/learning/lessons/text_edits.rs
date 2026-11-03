@@ -187,6 +187,7 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
     if patch.edits.is_empty() && patch.citations.is_empty() {
         return Err(fail("it gave no edits.".into()));
     }
+    let edited = !patch.edits.is_empty();
     let mut allowed = Vec::new();
     paths(candidate, "", &mut allowed);
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
@@ -259,9 +260,28 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
             .pointer_mut(&path)
             .ok_or_else(|| fail(format!("{path} is not in the draft.")))? = value;
     }
-    for (index, cite) in patch.citations.iter().enumerate() {
-        append(&mut result, cite).map_err(|reason| fail(format!("citation {index} {reason}")))?;
+    // A citation comes on top of the edits: one the draft cannot hold is left
+    // out, not charged to the edits and citations that apply.
+    let refused: Vec<String> = patch
+        .citations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, cite)| {
+            append(&mut result, cite)
+                .err()
+                .map(|reason| format!("citation {index} {reason}"))
+        })
+        .collect();
+    if refused.is_empty() {
+        return Ok(result);
     }
+    if !edited && refused.len() == patch.citations.len() {
+        return Err(fail(refused.join(" ")));
+    }
+    tracing::warn!(
+        refused = %refused.join(" "),
+        "Left out the citations of a repair that the draft cannot hold"
+    );
     Ok(result)
 }
 
