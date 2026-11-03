@@ -141,7 +141,7 @@ fn apply(
         .enumerate()
         .filter(|(_, c)| {
             c.quote.trim().is_empty()
-                || c.quote.chars().count() > MAX_QUOTE_CHARS
+                || c.quote.chars().count() > MAX_CLAIM_QUOTE_CHARS
                 || !contains_text(section, &c.quote)
         })
         .map(|(id, c)| json!({"claimId":id,"statement":c.statement}))

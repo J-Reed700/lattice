@@ -3,7 +3,7 @@
 //! hold a whole passage; the review screen and the sync points narrow it
 //! the way the next pass will, so they agree with the pass before it runs.
 
-use super::super::MAX_QUOTE_CHARS;
+use super::super::MAX_CLAIM_QUOTE_CHARS;
 use lattice_core::domain::learning::claim_review::ClaimLocation;
 use lattice_core::shared::text::{claim_sentence, sentences};
 
@@ -19,7 +19,7 @@ pub(in crate::features::learning) fn claim_quote<'p>(passage: &'p str, statement
 /// `text` cut to the longest quote an inventory keeps.
 pub(in crate::features::learning) fn clip(text: &str) -> &str {
     text.char_indices()
-        .nth(MAX_QUOTE_CHARS)
+        .nth(MAX_CLAIM_QUOTE_CHARS)
         .and_then(|(end, _)| text.get(..end))
         .unwrap_or(text)
 }
