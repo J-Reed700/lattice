@@ -257,6 +257,32 @@ async fn a_low_confidence_negative_is_not_presented_as_a_contradiction() {
 }
 
 #[tokio::test]
+async fn a_contradiction_quoting_none_of_the_claims_words_is_not_shown_as_one() {
+    // From a Tutor turn: the passage stops at "(iii)", the third input it was
+    // about to name, and the judge called the claim contradicted on that alone.
+    let passage = "LayoutLMv3 is a general-purpose pretrained multimodal Transformer encoder. Its \
+                   architecture integrates three input modalities: (i) text embeddings from \
+                   OCR-derived word-token sequences, (ii) layout embeddings encoding the 2D \
+                   bounding-box positions of these tokens, and (iii)";
+    let answer = "LayoutLMv3 fuses three input modalities: OCR-derived word tokens, 2D \
+                  bounding-box positions, and the image itself [1].";
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        "contradicted\nReason: The source lists the third modality as layout embeddings, not the image.\nSource quote: (iii)",
+    ]));
+    let report = GroundingVerifier::new(Some(llm))
+        .verify(answer, &[source(passage)])
+        .await;
+
+    assert_eq!(report.contradicted_count(), 0);
+    assert_eq!(report.claims[0].verdict, ClaimVerdict::Unsupported);
+    assert_eq!(report.claims[0].evidence_quote, None);
+    assert_eq!(
+        report.claims[0].reason.as_deref(),
+        Some("The cited passage does not state this.")
+    );
+}
+
+#[tokio::test]
 async fn a_plain_near_verbatim_claim_never_reaches_the_judge() {
     // No digits, no negation, and the passage's own sentence word for word.
     let response = "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress [1].";

@@ -28,6 +28,7 @@ use lattice_core::application::services::claim_verification::{
 pub(super) use lattice_core::application::services::claim_verification::{
     ClaimEvidence, ClaimJudgment, MIN_VERDICT_CONFIDENCE,
 };
+use lattice_core::application::services::evidence_retrieval::extract_normalized_tokens;
 use lattice_core::application::services::evidence_retrieval::{
     join_windows, scored_windows, WINDOW_OVERLAP_CHARS,
 };
@@ -205,7 +206,15 @@ impl ClaimJudge {
                 .filter(|(slot, _)| tallies.get(*slot).is_some_and(Tally::is_open))
                 .filter_map(|(slot, (_, claim, parts))| {
                     let part = parts.get(round)?;
-                    Some(async move { (slot, self.checker().check(claim, part).await) }.boxed())
+                    Some(
+                        async move {
+                            (
+                                slot,
+                                founded(claim, self.checker().check(claim, part).await),
+                            )
+                        }
+                        .boxed(),
+                    )
                 })
                 .collect();
             let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
@@ -270,6 +279,32 @@ impl Tally {
         }
         self.strongest
             .map_or(ClaimJudgment::Unusable, ClaimJudgment::Judged)
+    }
+}
+
+/// A contradiction rests on the passage words that state the incompatible
+/// fact. A quote holding none of the claim's words states nothing about it, so
+/// all the judge found is that the passage does not state the claim.
+fn founded(claim: &str, judgment: ClaimJudgment) -> ClaimJudgment {
+    let quotes_the_claim = |outcome: &JudgeOutcome| {
+        outcome
+            .quote
+            .as_deref()
+            .map(extract_normalized_tokens)
+            .is_some_and(|quoted| !quoted.is_disjoint(&extract_normalized_tokens(claim)))
+    };
+    match judgment {
+        ClaimJudgment::Judged(outcome)
+            if outcome.verdict == ClaimVerdict::Contradicted && !quotes_the_claim(&outcome) =>
+        {
+            ClaimJudgment::Judged(JudgeOutcome {
+                verdict: ClaimVerdict::Unsupported,
+                quote: None,
+                reason: Some("The cited passage does not state this.".into()),
+                confidence: outcome.confidence,
+            })
+        }
+        other => other,
     }
 }
 

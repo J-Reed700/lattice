@@ -54,6 +54,76 @@ fn a_follow_on_sentence_answers_to_the_marker_of_its_own_point() {
 }
 
 #[test]
+fn a_heading_names_what_follows_and_is_no_claim() {
+    // From a Tutor turn, where the heading was counted among the sentences
+    // the sources do not back.
+    let claims = lexical_pass(
+        "## Why the distinction matters\n\
+         OCR mistakes flow into the downstream model and get amplified [1].",
+        &[source(
+            "OCR errors propagate to the downstream model and are amplified during prediction.",
+        )],
+    );
+    let sentences: Vec<&str> = claims.iter().map(|claim| claim.sentence.as_str()).collect();
+    assert_eq!(
+        sentences,
+        ["OCR mistakes flow into the downstream model and get amplified [1]."]
+    );
+}
+
+#[test]
+fn a_list_item_answers_to_the_citations_of_the_line_that_introduces_it() {
+    let sources = [
+        source(
+            "OCR-dependent pipelines suffer from high computational costs, inflexibility across \
+             languages and error propagation into the downstream model.",
+        ),
+        source(
+            "Kafka keeps the order of records within one partition; consumers in a group split \
+             the partitions of a topic between them.",
+        ),
+    ];
+    let claims = lexical_pass(
+        "The OCR-based approach has three well-documented problems [1]:\n\
+         \n\
+         1. High computational cost of running a separate OCR engine on every page\n\
+         2. Errors in the recognised text flow into the downstream model and grow\n\
+         \n\
+         Kafka keeps the order of records within one partition [2].\n\
+         - Consumers in one group split the partitions of a topic between them",
+        &sources,
+    );
+    let cites = |words: &str| {
+        claims
+            .iter()
+            .find(|claim| claim.sentence.contains(words))
+            .map(|claim| claim.citation_ids.clone())
+            .unwrap_or_else(|| panic!("no claim holds {words:?}"))
+    };
+    assert_eq!(cites("High computational cost"), vec![1]);
+    assert_eq!(cites("Errors in the recognised text"), vec![1]);
+    // A line that ends its statement with a full stop introduces nothing.
+    assert!(cites("Consumers in one group").is_empty());
+}
+
+#[test]
+fn a_list_item_takes_each_source_of_its_introducing_line_once() {
+    let claims = lexical_pass(
+        "OCR adds a separate engine to every page [1]. Its errors then reach the model [2][1]:\n\
+         - Misread characters change the words the model sees",
+        &[
+            source("OCR-dependent pipelines run a separate OCR engine on every page."),
+            source("Errors in recognised text propagate into the downstream model."),
+        ],
+    );
+    let item = claims
+        .iter()
+        .find(|claim| claim.sentence.contains("Misread characters"))
+        .expect("the list item is a claim");
+    assert_eq!(item.citation_ids, vec![1, 2]);
+}
+
+#[test]
 fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
     // Verbatim from a turn this got wrong: the bold closes after the full
     // stop, so the splitter cut there and the second claim reached the

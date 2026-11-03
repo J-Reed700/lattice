@@ -369,11 +369,21 @@ pub(super) fn prose_lines(response: &str) -> Vec<String> {
 /// Every sentence with the citations it answers to. A full stop inside a token
 /// ("1.2 °C", "example.com") does not end a sentence. A sentence without a
 /// marker of its own takes the next marker in its paragraph or list item, or
-/// failing that the previous one; a line with no marker at all stays uncited.
+/// failing that the previous one. A list item with no marker at all takes the
+/// markers of the line ending in a colon that introduces its list; any other
+/// line with none stays uncited. A heading only names what follows.
 fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
     let mut out = Vec::new();
-    for block in response.split('\n') {
-        let block = strip_emphasis_markers(block);
+    let mut introduced: Vec<u32> = Vec::new();
+    for line in response.split('\n') {
+        let in_list = is_list_item(line) || line.starts_with(char::is_whitespace);
+        if !in_list && !line.trim().is_empty() {
+            introduced.clear();
+        }
+        if is_heading(line) {
+            continue;
+        }
+        let block = strip_emphasis_markers(line);
         let sentences = split_sentences(&block);
         let own: Vec<Vec<u32>> = sentences
             .iter()
@@ -386,11 +396,44 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
                 .or_else(|| own.iter().skip(index + 1).find(|ids| !ids.is_empty()))
                 .or_else(|| own.iter().take(index).rev().find(|ids| !ids.is_empty()))
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    if in_list {
+                        introduced.clone()
+                    } else {
+                        Vec::new()
+                    }
+                });
             out.push((sentence, citations));
+        }
+        if !in_list && strip_citation_markers(&block).trim_end().ends_with(':') {
+            let mut seen = HashSet::new();
+            introduced = own
+                .into_iter()
+                .flatten()
+                .filter(|id| seen.insert(*id))
+                .collect();
         }
     }
     out
+}
+
+fn is_heading(line: &str) -> bool {
+    let line = line.trim_start();
+    let hashes = line.chars().take_while(|ch| *ch == '#').count();
+    (1..=6).contains(&hashes) && line.get(hashes..).is_some_and(|rest| rest.starts_with(' '))
+}
+
+fn is_list_item(line: &str) -> bool {
+    let line = line.trim_start();
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    let numbered = digits > 0
+        && line
+            .get(digits..)
+            .is_some_and(|rest| rest.starts_with(". ") || rest.starts_with(") "));
+    numbered
+        || ["- ", "* ", "+ "]
+            .iter()
+            .any(|bullet| line.starts_with(bullet))
 }
 
 /// Drops markdown emphasis so it cannot be read as sentence structure: a
