@@ -11,6 +11,7 @@
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::rejected;
 use super::*;
+use crate::features::learning::dto::LessonQuestionKind;
 use crate::features::learning::generation::{parse_json, split_check, teaching_sentences};
 use crate::features::learning::lessons::text_edits;
 use lattice_core::domain::learning::claim_review::ClaimId;
@@ -268,8 +269,9 @@ fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
 }
 
 /// Why a lesson that loses the sections that go cannot be published, when it
-/// cannot: more than a third of its sections, its first explanation or all
-/// its questions.
+/// cannot: more than a third of its sections, its first explanation, all its
+/// questions or every question of a kind it asks, without which it cannot be
+/// saved.
 fn thin(lesson: &Value, going: &Going) -> Option<String> {
     let blocks = lesson.get("blocks")?.as_array()?;
     let sections = blocks.len();
@@ -284,6 +286,18 @@ fn thin(lesson: &Value, going: &Going) -> Option<String> {
     let questions_lost = (sections..sections + questions)
         .filter(|unit| going.contains(*unit))
         .count();
+    let asks = |unit: usize, kind: &LessonQuestionKind| {
+        lesson
+            .pointer(&format!("/questions/{}/kind", unit - sections))
+            .and_then(Value::as_str)
+            == Some(kind.as_str())
+    };
+    let kind_lost = LessonQuestionKind::ALL.into_iter().find(|kind| {
+        let asked: Vec<usize> = (sections..sections + questions)
+            .filter(|unit| asks(*unit, kind))
+            .collect();
+        !asked.is_empty() && asked.iter().all(|unit| going.contains(*unit))
+    });
     if first.is_some_and(|unit| going.contains(unit)) {
         Some("its first explanation would have to be taken out".to_owned())
     } else if 3 * lost > sections {
@@ -293,7 +307,7 @@ fn thin(lesson: &Value, going: &Going) -> Option<String> {
     } else if questions > 0 && questions_lost == questions {
         Some("all of its questions would have to be taken out".to_owned())
     } else {
-        None
+        kind_lost.map(|kind| format!("it would be left without a {} question", kind.as_str()))
     }
 }
 

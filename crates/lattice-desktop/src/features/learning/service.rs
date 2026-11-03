@@ -431,13 +431,10 @@ pub(super) fn validate_prepared(
             "Every generated question needs exactly one answer key.".into(),
         ));
     }
-    let counts = [
-        LessonQuestionKind::Practice,
-        LessonQuestionKind::Quiz,
-        LessonQuestionKind::Test,
-    ]
-    .map(|kind| p.questions.iter().filter(|q| q.kind == kind).count());
-    if counts.contains(&0) {
+    if LessonQuestionKind::ALL
+        .iter()
+        .any(|kind| !p.questions.iter().any(|q| q.kind == *kind))
+    {
         return Err(AppError::InvalidInput(
             "Each prepared lesson needs practice, quiz, and test questions.".into(),
         ));

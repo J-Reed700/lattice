@@ -63,7 +63,8 @@ pub(in crate::features::learning) fn split_check(body: &str) -> Option<(&str, &s
     Some((body.get(..start)?, body.get(end..)?))
 }
 
-/// Questions a lesson asks of each kind, at least.
+/// Questions the writer is asked for of each kind; a lesson is saved with
+/// one of each (`LessonQuestionKind::ALL`).
 const QUESTIONS_PER_KIND: usize = 2;
 
 fn text<'a>(item: &'a Value, field: &str) -> &'a str {
@@ -392,9 +393,9 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
             &mut findings,
         );
     }
-    let per_kind: Vec<_> = ["practice", "quiz", "test"]
+    let per_kind: Vec<_> = crate::features::learning::dto::LessonQuestionKind::ALL
         .iter()
-        .map(|kind| (*kind, kinds(questions, kind)))
+        .map(|kind| (kind.as_str(), kinds(questions, kind.as_str())))
         .collect();
     if per_kind
         .iter()

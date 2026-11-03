@@ -217,14 +217,19 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .collect()
 }
 
-/// Whether the structure findings hold up the content review. Structure the
-/// machine stopped repairing no longer does, and neither does a missing
-/// citation, which the edits of the repair after the review can append
-/// (claim classes design §3.5).
-fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
+/// The structure findings a repair of the whole material answers: all but a
+/// missing citation, which the edits of the repair after the review can
+/// append (claim classes design §3.5).
+fn whole_repairs(structure: &[ReviewFinding]) -> impl Iterator<Item = &ReviewFinding> {
     structure
         .iter()
         .filter(|finding| finding.kind != FindingKind::Quotation)
+}
+
+/// Whether the structure findings hold up the content review. Structure the
+/// machine stopped repairing no longer does.
+fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
+    whole_repairs(structure)
         .any(|finding| passes.is_none_or(|passes| passes.repairable(&finding.key())))
 }
 
@@ -530,6 +535,12 @@ async fn review_material(
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
         let structure = structural_findings(schema, &candidate)?;
+        // A rewrite of the whole lesson changes the sentences its checked
+        // claims stand on, so once there are any, what its shape asks waits
+        // for the user (claim classes design §3.10).
+        if let (Some(passes), false) = (passes.as_mut(), context.protected.is_empty()) {
+            passes.hold(whole_repairs(&structure).map(ReviewFinding::key));
+        }
         let blocking = holds_up_review(&structure, passes.as_ref());
         let can_edit_spans = !is_outline && !blocking;
         let issues = if !blocking {
