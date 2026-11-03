@@ -78,7 +78,7 @@ describe('Lesson card review state', () => {
     ['repair', { unchecked: 0, verified: 44 }, 44, 'Preparing · Repairing the draft'],
     ['review', { unchecked: 0, verified: 44 }, 44, 'Preparing · Reviewing teaching and assessments'],
   ] as const)('says what a preparation in its %s phase is doing', async (phase, counts, checksCompleted, row) => {
-    const claims = { unchecked: 0, searching: 0, repairing: 0, waiting: 0, verified: 0, resolvedByYou: 0, ...counts };
+    const claims = { searching: 0, repairing: 0, waiting: 0, resolvedByYou: 0, ...counts };
     const preparing: LearningGenerationJob = {
       ...held, status: 'running', progressMessage: '', resultId: null, finishedAt: null,
       activity: {
