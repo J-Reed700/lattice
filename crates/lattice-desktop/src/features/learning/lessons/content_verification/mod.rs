@@ -32,7 +32,7 @@ pub(in crate::features::learning) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
-pub(in crate::features::learning) use classify::{needs_citation, CITED_KINDS};
+pub(in crate::features::learning) use classify::{figures, needs_citation, Givens, CITED_KINDS};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;

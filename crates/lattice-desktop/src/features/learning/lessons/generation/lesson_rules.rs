@@ -6,7 +6,9 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text, MAX_BODY, MAX_EXPLANATION, MAX_OPTION, MAX_QUESTION};
-use crate::features::learning::content_verification::{needs_citation, CITED_KINDS};
+use crate::features::learning::content_verification::{
+    figures, needs_citation, Givens, CITED_KINDS,
+};
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -134,17 +136,17 @@ fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The figures and the quoted wording of `sentence`, which the quote cited
-/// for it must hold.
-fn specifics(sentence: &str) -> Vec<String> {
-    let figures = lazy_regex::regex!(r"\d+(?:[.,]\d+)*")
-        .find_iter(sentence)
-        .map(|found| found.as_str().to_owned());
+/// The figures beyond its part's `givens` and the quoted wording of
+/// `sentence`, which the quote cited for it must hold.
+fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
+    let own = figures(sentence)
+        .filter(|figure| !givens.holds(figure))
+        .map(str::to_owned);
     let quoted = lazy_regex::regex!(r#"['"‘’“”]([^'"‘’“”]{12,})['"‘’“”]"#)
         .captures_iter(sentence)
         .filter_map(|captures| captures.get(1))
         .map(|found| found.as_str().to_owned());
-    figures.chain(quoted).collect()
+    own.chain(quoted).collect()
 }
 
 fn same_sentence(a: &str, b: &str) -> bool {
@@ -174,8 +176,9 @@ fn uncited_specifics(
         .flatten()
         .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
         .collect();
+    let givens = Givens::of(item);
     for sentence in prose_sentences(text(item, field)) {
-        if !needs_citation(&sentence) {
+        if !needs_citation(&sentence, &givens) {
             continue;
         }
         let shown: String = sentence.chars().take(90).collect();
@@ -184,7 +187,7 @@ fn uncited_specifics(
             .filter(|(cited, _)| same_sentence(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
-        let wanted = specifics(&sentence);
+        let wanted = specifics(&sentence, &givens);
         let lacking = |quote: &str| -> Vec<String> {
             let held = normalize(quote);
             wanted
@@ -612,8 +615,12 @@ mod tests {
         candidate["questions"][0]["prompt"] = json!(
             "A classifier outputs a confidence score of 0.75. Your threshold for automatic routing is 0.80. What should the system do?"
         );
-        candidate["questions"][0]["options"] =
-            json!(["Route it automatically", "Send it to review", "Retry", "Lower it to 0.70"]);
+        candidate["questions"][0]["options"] = json!([
+            "Route it automatically",
+            "Send it to review",
+            "Retry",
+            "Lower it to 0.70"
+        ]);
         candidate["questions"][0]["explanation"] = json!(
             "Since 0.75 is below the 0.80 threshold, the document goes to review. Lowering the threshold to 0.70 would route it automatically."
         );

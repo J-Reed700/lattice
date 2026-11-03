@@ -9,7 +9,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Statements sorted in one model call, as the replay measured it.
 const BATCH: usize = 20;
@@ -41,40 +41,87 @@ pub(super) struct ToSort<'a> {
 pub(in crate::features::learning) const CITED_KINDS: [&str; 3] =
     ["explanation", "contrast", "recap"];
 
+/// The figures of a text: each run of digits, with its decimal or thousands
+/// separators.
+pub(in crate::features::learning) fn figures(text: &str) -> impl Iterator<Item = &str> {
+    lazy_regex::regex!(r"\d+(?:[.,]\d+)*")
+        .find_iter(text)
+        .map(|found| found.as_str())
+}
+
+/// The figures a part's own case states, which a sentence of it restates
+/// without needing a source: a question's prompt and options state the
+/// givens its answer explanation reasons from. A section has none.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(in crate::features::learning) struct Givens(BTreeSet<String>);
+
+impl Givens {
+    pub(in crate::features::learning) const NONE: Self = Self(BTreeSet::new());
+
+    /// The figures of `part`'s prompt and options.
+    pub(in crate::features::learning) fn of(part: &Value) -> Self {
+        let options = part
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        let texts = part
+            .get("prompt")
+            .and_then(Value::as_str)
+            .into_iter()
+            .chain(options);
+        Self(texts.flat_map(figures).map(str::to_owned).collect())
+    }
+
+    pub(in crate::features::learning) fn holds(&self, figure: &str) -> bool {
+        self.0.contains(figure)
+    }
+}
+
 /// Whether a part of a lesson states what is so or works a hypothetical
 /// case, as the writer's rule reads it (claim classes design §3.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::features::learning) enum Case {
-    Stated,
+    /// A section that states what is so, or an answer explanation, whose
+    /// question's figures are its givens.
+    Stated(Givens),
+    /// A worked example's, a practice's or a check's case, whose figures are
+    /// its own.
     Hypothetical,
 }
 
 impl Case {
     /// The case of the part at `unit` of `candidate`: a block whose kind is
     /// not one of [`CITED_KINDS`] works a hypothetical case, and a question's
-    /// answer explanation states what is so.
+    /// answer explanation states what is so from its question's givens.
     pub(in crate::features::learning) fn of(candidate: &Value, unit: usize) -> Self {
-        let kind = candidate
+        let blocks = candidate
             .get("blocks")
             .and_then(Value::as_array)
-            .and_then(|blocks| blocks.get(unit))
-            .and_then(|block| block.get("kind"))
-            .and_then(Value::as_str);
-        match kind {
+            .map_or(&[][..], Vec::as_slice);
+        let Some(block) = blocks.get(unit) else {
+            let question = candidate
+                .get("questions")
+                .and_then(Value::as_array)
+                .and_then(|questions| questions.get(unit - blocks.len()));
+            return Self::Stated(question.map(Givens::of).unwrap_or_default());
+        };
+        match block.get("kind").and_then(Value::as_str) {
             Some(kind) if !CITED_KINDS.contains(&kind) => Self::Hypothetical,
-            _ => Self::Stated,
+            _ => Self::Stated(Givens::NONE),
         }
     }
 }
 
-/// What the rules alone make of a statement. Sourced: a digit, quoted wording
-/// or an attribution cue, which can only err toward a check; in a
-/// hypothetical case, whose figures are its own, only the quotation or the
-/// attribution. Internal: anything in a rubric or an option, or a remark that
-/// opens "The sources" (not "The sources of") or "The other options"; these
-/// are the rules that can lighten a statement, to no check at all. Otherwise
-/// nothing, and the model sorts it.
-pub(super) fn rule_class(statement: &str, field: &str, case: Case) -> Option<Class> {
+/// What the rules alone make of a statement. Sourced: a figure beyond its
+/// part's givens, quoted wording or an attribution cue, which can only err
+/// toward a check; in a hypothetical case, whose figures are its own, only
+/// the quotation or the attribution. Internal: anything in a rubric or an
+/// option, or a remark that opens "The sources" (not "The sources of") or
+/// "The other options"; these are the rules that can lighten a statement, to
+/// no check at all. Otherwise nothing, and the model sorts it.
+pub(super) fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Class> {
     let statement = statement.trim_start();
     let about_the_lesson = field.starts_with("rubric/")
         || field.starts_with("options/")
@@ -84,19 +131,19 @@ pub(super) fn rule_class(statement: &str, field: &str, case: Case) -> Option<Cla
         return Some(Class::Internal);
     }
     let sourced = match case {
-        Case::Stated => states_a_specific(statement),
+        Case::Stated(givens) => needs_citation(statement, givens) || says(statement),
         Case::Hypothetical => quotes_or_attributes(statement) || says(statement),
     };
     sourced.then_some(Class::Sourced)
 }
 
-/// Whether a text names what a source must hold: a digit, quoted wording or
-/// an attribution to a source. The writer's rule asks this of a sentence
-/// before it must be cited, and the rule layer's answer contains it, so a
-/// sentence the writer has to cite is one the rule layer sorts Sourced
-/// (claim classes design §3.5).
-pub(in crate::features::learning) fn needs_citation(text: &str) -> bool {
-    lazy_regex::regex!(r"\d").is_match(text) || quotes_or_attributes(text)
+/// Whether a text names what a source must hold: a figure its part's
+/// `givens` do not state, quoted wording or an attribution to a source. The
+/// writer's rule asks this of a sentence before it must be cited, and the
+/// rule layer's answer contains it, so a sentence the writer has to cite is
+/// one the rule layer sorts Sourced (claim classes design §3.5).
+pub(in crate::features::learning) fn needs_citation(text: &str, givens: &Givens) -> bool {
+    figures(text).any(|figure| !givens.holds(figure)) || quotes_or_attributes(text)
 }
 
 /// Whether a text quotes wording or attributes something to a source.
@@ -119,7 +166,7 @@ fn says(text: &str) -> bool {
 /// Whether a text states a specific: what needs a citation, or a verb of
 /// saying.
 pub(super) fn states_a_specific(text: &str) -> bool {
-    needs_citation(text) || says(text)
+    needs_citation(text, &Givens::NONE) || says(text)
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,
@@ -131,7 +178,7 @@ pub(super) async fn classify(
     let mut sorted: Vec<Option<(Class, ClassifiedBy)>> = statements
         .iter()
         .map(|to_sort| {
-            rule_class(to_sort.statement, to_sort.field, to_sort.case)
+            rule_class(to_sort.statement, to_sort.field, &to_sort.case)
                 .map(|class| (class, ClassifiedBy::Rule))
         })
         .collect();

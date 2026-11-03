@@ -74,7 +74,7 @@ pub(super) async fn sort(
     for ((((unit, claim), field), case), parent) in
         claims.iter().zip(&fields).zip(&cases).zip(parents)
     {
-        let rule = rule_class(&claim.statement, field, *case);
+        let rule = rule_class(&claim.statement, field, case);
         sorted.push(match (parent, rule) {
             (Some(parent), rule) => {
                 let inherited = carried(parent, rule);
@@ -101,12 +101,12 @@ pub(super) async fn sort(
         });
     }
     {
-        let mut open: Vec<(&mut Option<Classed>, &str, &str, Case)> = Vec::new();
+        let mut open: Vec<(&mut Option<Classed>, &str, &str, &Case)> = Vec::new();
         for (((slot, (_, claim)), field), case) in
             sorted.iter_mut().zip(claims).zip(&fields).zip(&cases)
         {
             if slot.is_none() {
-                open.push((slot, claim.statement.as_str(), field.as_str(), *case));
+                open.push((slot, claim.statement.as_str(), field.as_str(), case));
             }
         }
         if !open.is_empty() {
@@ -115,7 +115,7 @@ pub(super) async fn sort(
                 .map(|(_, statement, field, case)| ToSort {
                     statement,
                     field,
-                    case: *case,
+                    case: (*case).clone(),
                 })
                 .collect();
             let answered = classify(llm, &to_sort).await?;

@@ -31,7 +31,7 @@ fn body(statement: &str) -> ToSort<'_> {
     ToSort {
         statement,
         field: "body",
-        case: Case::Stated,
+        case: Case::Stated(Givens::NONE),
     }
 }
 
@@ -46,7 +46,7 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 fn the_rules_catch_a_figure_a_quotation_or_a_cue_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
         assert_eq!(
-            rule_class(statement, "body", Case::Stated),
+            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
             expected,
             "{statement}"
         );
@@ -62,7 +62,7 @@ fn a_vendors_name_alone_is_no_cue_and_the_model_sorts_what_a_named_product_does(
         "The Kafka documentation is long.",
     ] {
         assert_eq!(
-            rule_class(statement, "body", Case::Stated),
+            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
             None,
             "{statement}"
         );
@@ -77,7 +77,7 @@ fn a_remark_about_the_lessons_own_sources_or_options_is_internal_whatever_else_i
         "The other options each remove the evidence needed to check a table.",
     ] {
         assert_eq!(
-            rule_class(statement, "body", Case::Stated),
+            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
             Some(Class::Internal),
             "{statement}"
         );
@@ -90,7 +90,7 @@ fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_
         rule_class(
             "The sources of latency in a network are queuing and propagation.",
             "body",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         None
     );
@@ -98,7 +98,7 @@ fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_
         rule_class(
             "The sources offered no figure for the choice.",
             "body",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         Some(Class::Internal)
     );
@@ -110,7 +110,7 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
         rule_class(
             "The answer names at least 2 trade-offs.",
             "rubric/2/description",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         Some(Class::Internal)
     );
@@ -118,7 +118,7 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
         rule_class(
             "Retries use exponential backoff three times, up to 30 seconds.",
             "options/1",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         Some(Class::Internal)
     );
@@ -126,7 +126,7 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
         rule_class(
             "Retries use exponential backoff up to 30 seconds.",
             "body",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         Some(Class::Sourced)
     );
@@ -138,40 +138,64 @@ fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest
         {"kind":"explanation"},{"kind":"worked_example"},{"kind":"contrast"},{"kind":"check"},
         {"kind":"guided_practice"},{"kind":"independent_practice"},{"kind":"reflection"},
         {"kind":"recap"},{"title":"No kind"}],
-        "questions":[{"kind":"quiz"}]});
-    let cases: Vec<Case> = (0..10).map(|unit| Case::of(&lesson, unit)).collect();
-    use Case::{Hypothetical, Stated};
+        "questions":[{"kind":"practice","prompt":"A score of 0.75 meets a threshold of 0.80.",
+            "options":["Review it","Route it","Retry it","Lower it to 0.70"]}]});
+    let stated = || Case::Stated(Givens::NONE);
+    let hypothetical = || Case::Hypothetical;
+    let cases: Vec<Case> = (0..9).map(|unit| Case::of(&lesson, unit)).collect();
     assert_eq!(
         cases,
         [
-            Stated,
-            Hypothetical,
-            Stated,
-            Hypothetical,
-            Hypothetical,
-            Hypothetical,
-            Hypothetical,
-            Stated,
-            Stated,
-            Stated
+            stated(),
+            hypothetical(),
+            stated(),
+            hypothetical(),
+            hypothetical(),
+            hypothetical(),
+            hypothetical(),
+            stated(),
+            stated()
         ]
+    );
+    let answer = Case::of(&lesson, 9);
+    assert_eq!(
+        answer,
+        Case::Stated(Givens::of(&lesson["questions"][0])),
+        "an answer states what is so from its question's givens"
     );
     // In a case, a figure is the case's own; a quotation or an attribution
     // still needs a source.
     let figure = "Suppose 5 documents score below 0.70.";
-    assert_eq!(rule_class(figure, "body", Hypothetical), None);
-    assert_eq!(rule_class(figure, "body", Stated), Some(Class::Sourced));
+    assert_eq!(rule_class(figure, "body", &hypothetical()), None);
+    assert_eq!(rule_class(figure, "body", &stated()), Some(Class::Sourced));
     for attributed in [
         "According to the survey, most teams retrain monthly.",
         "The vendor reports that 5 documents in 100 need review.",
         "The page reads \"Total due on receipt of goods\" at the foot.",
     ] {
         assert_eq!(
-            rule_class(attributed, "body", Hypothetical),
+            rule_class(attributed, "body", &hypothetical()),
             Some(Class::Sourced),
             "{attributed}"
         );
     }
+    // An answer restates its question's figures as givens; one of its own
+    // still needs a source.
+    let restated = "Since 0.75 is below 0.80, review it; lowering it to 0.70 would route it.";
+    assert_eq!(rule_class(restated, "explanation", &answer), None);
+    assert_eq!(
+        rule_class(
+            "About 30% of documents need review.",
+            "explanation",
+            &answer
+        ),
+        Some(Class::Sourced)
+    );
+    assert_eq!(
+        rule_class("0.8 is below 0.80.", "explanation", &answer),
+        Some(Class::Sourced),
+        "a figure is a given only as its question writes it"
+    );
 }
 
 #[test]
@@ -180,7 +204,7 @@ fn quoted_wording_is_sourced_but_a_lone_apostrophe_is_not() {
         rule_class(
             "The page reads \"Total due on receipt of goods\" at the foot.",
             "body",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         Some(Class::Sourced)
     );
@@ -188,7 +212,7 @@ fn quoted_wording_is_sourced_but_a_lone_apostrophe_is_not() {
         rule_class(
             "The model's output is parsed by the next stage.",
             "body",
-            Case::Stated
+            &Case::Stated(Givens::NONE)
         ),
         None
     );

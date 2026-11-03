@@ -109,7 +109,7 @@ pub(super) fn adopt_specifics(
                 .find(|passage| passage["id"] == missing.passage_id)
                 .and_then(|passage| {
                     let (field, quote) = (passage["field"].as_str()?, passage["text"].as_str()?);
-                    (rule_class(&missing.statement, field, case) == Some(Class::Sourced)).then(
+                    (rule_class(&missing.statement, field, &case) == Some(Class::Sourced)).then(
                         || Claim {
                             quote: quote.to_owned(),
                             statement: missing.statement.clone(),
